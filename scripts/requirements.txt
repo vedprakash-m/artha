@@ -1,0 +1,29 @@
+# Artha Google API dependencies
+# Install: pip3 install -r scripts/requirements.txt
+#
+# All packages are official Google-published or widely-trusted stdlib wrappers.
+# No third-party MCP servers. No npm packages. Full source visibility.
+
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Microsoft Graph / Outlook (setup_msgraph_oauth.py, msgraph_fetch.py, etc.)
+msal>=1.28.0
+requests>=2.31.0
+
+# Cross-platform credential storage (replaces macOS-only `security` CLI)
+# macOS → Keychain, Windows → Credential Manager, Linux → SecretService
+keyring>=25.0.0
+
+# Apple iCloud CalDAV (icloud_calendar_fetch.py)
+# iCloud Mail uses stdlib imaplib — no package needed
+caldav>=1.3.0
+vobject>=0.9.6  # required by caldav.vobject_instance for VEVENT + VTODO parsing
+
+# Testing & Quality Framework
+pytest>=7.4.0
+pytest-mock>=3.11.0
+pytest-snapshot>=0.9.0
+datadiff>=2.2.0

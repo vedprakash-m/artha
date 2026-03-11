@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""
+setup_todo_lists.py — Artha: Create domain-tagged Microsoft To Do lists
+=======================================================================
+Idempotent script that creates 7 named To Do lists (one per Artha domain)
+via Microsoft Graph API, then writes the returned list IDs to
+~/OneDrive/Artha/config/artha_config.yaml.
+
+Usage:
+  python scripts/setup_todo_lists.py          # Create lists (idempotent)
+  python scripts/setup_todo_lists.py --dry-run # Print what would be created
+
+Prerequisites:
+  - setup_msgraph_oauth.py completed (valid token at {ARTHA_DIR}/.tokens/msgraph-token.json)
+
+Ref: T-1B.6.2, TS §7.2, UX §10.5
+"""
+
+from __future__ import annotations
+
+import sys, os as _os
+_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+if _os.name == "nt":
+    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
+    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
+else:
+    # Check project-relative .venv first (symlink on Mac → ~/.artha-venvs/.venv; real dir pre-move)
+    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
+    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
+    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
+    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
+    # Auto-create venv from requirements.txt if not found (e.g. first run in Cowork VM)
+    if not _os.path.exists(_VENV_PY):
+        import subprocess as _sp
+        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
+        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
+        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
+                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
+        _VENV_PY = _local_venv + "/bin/python"
+        _VENV_PREFIX = _os.path.realpath(_local_venv)
+if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
+    if _os.name == "nt":
+        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
+    else:
+        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+ARTHA_DIR   = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_FILE = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
+
+GRAPH_TODO_BASE = "https://graph.microsoft.com/v1.0/me/todo/lists"
+
+# Domain list definitions: internal_key → display name in Microsoft To Do
+TODO_LISTS = {
+    "kids":        "Artha · Kids",
+    "immigration": "Artha · Immigration",
+    "finance":     "Artha · Finance",
+    "health":      "Artha · Health",
+    "home":        "Artha · Home",
+    "comms":       "Artha · Comms",
+    "general":     "Artha · General",
+}
+
+# ---------------------------------------------------------------------------
+# HTTP helper
+# ---------------------------------------------------------------------------
+
+def _graph_request(
+    url: str,
+    method: str = "GET",
+    body: Optional[dict] = None,
+    access_token: str = "",
+) -> dict:
+    """Make an authenticated Graph API request. Returns parsed JSON dict."""
+    data    = json.dumps(body).encode() if body else None
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type":  "application/json",
+        "Accept":        "application/json",
+    }
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.load(resp)
+
+
+def _get_existing_lists(access_token: str) -> dict[str, str]:
+    """Return {displayName: listId} for all existing To Do lists."""
+    result   = _graph_request(GRAPH_TODO_BASE, access_token=access_token)
+    existing = {}
+    for item in result.get("value", []):
+        existing[item["displayName"]] = item["id"]
+    return existing
+
+
+def _create_list(display_name: str, access_token: str) -> str:
+    """Create a To Do list and return its ID."""
+    result = _graph_request(
+        GRAPH_TODO_BASE,
+        method="POST",
+        body={"displayName": display_name},
+        access_token=access_token,
+    )
+    return result["id"]
+
+
+# ---------------------------------------------------------------------------
+# Config file helpers (simple YAML-ish writer — no pyyaml dependency)
+# ---------------------------------------------------------------------------
+
+def _read_config() -> str:
+    """Read existing artha_config.yaml, return empty string if missing."""
+    if not os.path.exists(CONFIG_FILE):
+        return ""
+    with open(CONFIG_FILE) as f:
+        return f.read()
+
+
+def _write_todo_lists_section(list_ids: dict[str, str]) -> None:
+    """
+    Write/replace the todo_lists: section in artha_config.yaml.
+    Preserves all other content.
+    """
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+
+    new_section_lines = ["todo_lists:\n"]
+    for key, list_id in list_ids.items():
+        new_section_lines.append(f"  {key}: \"{list_id}\"\n")
+    new_section = "".join(new_section_lines)
+
+    existing = _read_config()
+    if not existing:
+        # Fresh file
+        header = (
+            "# artha_config.yaml — Runtime configuration generated by Artha setup scripts\n"
+            "# Do not edit manually — use the appropriate setup script.\n"
+            "# Ref: TS §1.3\n\n"
+        )
+        with open(CONFIG_FILE, "w") as f:
+            f.write(header + new_section)
+        return
+
+    # Replace existing todo_lists: block or append
+    import re
+    # Match todo_lists: followed by any indented lines
+    pattern = re.compile(r"^todo_lists:\n(?:  [^\n]*\n)*", re.MULTILINE)
+    if pattern.search(existing):
+        updated = pattern.sub(new_section, existing)
+    else:
+        updated = existing.rstrip("\n") + "\n\n" + new_section
+
+    with open(CONFIG_FILE, "w") as f:
+        f.write(updated)
+
+
+def _load_todo_list_ids() -> dict[str, str]:
+    """Read existing list IDs from artha_config.yaml. Returns {} if missing."""
+    content = _read_config()
+    if not content:
+        return {}
+    import re
+    # Find the todo_lists: block
+    m = re.search(r"^todo_lists:\n((?:  [^\n]*\n)*)", content, re.MULTILINE)
+    if not m:
+        return {}
+    ids: dict[str, str] = {}
+    for line in m.group(1).splitlines():
+        parts = line.strip().split(":", 1)
+        if len(parts) == 2:
+            key = parts[0].strip()
+            val = parts[1].strip().strip('"\'')
+            if key and val:
+                ids[key] = val
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Create Artha domain task lists in Microsoft To Do (idempotent)."
+    )
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print what would be created without calling API")
+    args = parser.parse_args()
+
+    if args.dry_run:
+        print("DRY RUN — would create the following To Do lists:")
+        for key, name in TODO_LISTS.items():
+            print(f"  [{key}] {name}")
+        print(f"\nConfig would be written to: {CONFIG_FILE}")
+        return
+
+    # Load token
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    try:
+        from setup_msgraph_oauth import ensure_valid_token
+    except ImportError:
+        print("ERROR: setup_msgraph_oauth.py not found in scripts/", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        token_data   = ensure_valid_token()
+        access_token = token_data["access_token"]
+    except Exception as exc:
+        print(f"ERROR: Could not get valid Graph token: {exc}", file=sys.stderr)
+        print("Run: python scripts/setup_msgraph_oauth.py", file=sys.stderr)
+        sys.exit(1)
+
+    print("Fetching existing To Do lists...")
+    try:
+        existing = _get_existing_lists(access_token)
+    except Exception as exc:
+        print(f"ERROR: Could not fetch existing lists: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  {len(existing)} existing list(s) found")
+
+    list_ids: dict[str, str] = _load_todo_list_ids()  # pre-existing IDs from config
+    created = 0
+    skipped = 0
+
+    for key, display_name in TODO_LISTS.items():
+        if display_name in existing:
+            list_ids[key] = existing[display_name]
+            print(f"  ✓ Already exists: '{display_name}'")
+            skipped += 1
+        else:
+            print(f"  + Creating: '{display_name}'...", end=" ", flush=True)
+            try:
+                list_id     = _create_list(display_name, access_token)
+                list_ids[key] = list_id
+                print(f"✓ ({list_id[:12]}...)")
+                created += 1
+                time.sleep(0.3)  # gentle rate limiting
+            except Exception as exc:
+                print(f"✗ Failed: {exc}", file=sys.stderr)
+
+    # Save to config file
+    _write_todo_lists_section(list_ids)
+    print(f"\n✓ Done: {created} created, {skipped} already existed")
+    print(f"  List IDs saved to: {CONFIG_FILE}")
+
+    # Print summary
+    print("\nTo Do lists:")
+    for key, name in TODO_LISTS.items():
+        list_id = list_ids.get(key, "MISSING")
+        print(f"  [{key}] {name} → {list_id[:16]}...")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.artha.vault-watchdog.plist
+  Artha crash-recovery watchdog — auto-encrypts sensitive state if Claude session dies
+
+  Logic:
+    1. Runs every 5 minutes via StartInterval
+    2. Checks for .artha-decrypted lock file (signal that vault.sh decrypt was run)
+    3. Checks if any 'claude' process is currently running
+    4. If lock file exists AND no claude process → vault.sh encrypt (session died without cleanup)
+
+  Installation:
+    cp com.artha.vault-watchdog.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+
+  Verification:
+    launchctl list | grep artha
+    cat /tmp/artha-watchdog.log     (watchdog activity log)
+
+  Ref: TS §8.5, T-1A.1.4
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.artha.vault-watchdog</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string>
+            LOCK_FILE="${HOME}/OneDrive/Artha/.artha-decrypted"
+            VAULT="${HOME}/OneDrive/Artha/scripts/vault.sh"
+            WATCHDOG_LOG="/tmp/artha-watchdog.log"
+            TIMESTAMP=$(date -Iseconds)
+
+            # Only act if lock file exists (session was started)
+            if [[ -f "${LOCK_FILE}" ]]; then
+                # Check if any claude process is running
+                if ! pgrep -x "claude" > /dev/null 2>&1 &amp;&amp; \
+                   ! pgrep -f "claude-code" > /dev/null 2>&1; then
+                    # No active Claude session — encrypt stale plaintext
+                    echo "[${TIMESTAMP}] WATCHDOG: Lock file found, no claude process. Auto-encrypting." >> "${WATCHDOG_LOG}"
+                    if [[ -x "${VAULT}" ]]; then
+                        "${VAULT}" encrypt >> "${WATCHDOG_LOG}" 2>&amp;1
+                        echo "[${TIMESTAMP}] WATCHDOG: Auto-encrypt complete." >> "${WATCHDOG_LOG}"
+                    else
+                        echo "[${TIMESTAMP}] WATCHDOG: ERROR — vault.sh not executable at ${VAULT}" >> "${WATCHDOG_LOG}"
+                    fi
+                else
+                    echo "[${TIMESTAMP}] WATCHDOG: Lock file present + claude process active. No action." >> "${WATCHDOG_LOG}"
+                fi
+            fi
+        </string>
+    </array>
+
+    <!-- Run every 5 minutes -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <!-- Start on login -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/artha-watchdog-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/artha-watchdog-stderr.log</string>
+
+    <!-- Keep alive if it crashes -->
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
