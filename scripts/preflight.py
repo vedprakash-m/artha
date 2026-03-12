@@ -92,7 +92,7 @@ STALE_LOCK_SECONDS = 1800   # 30 minutes
 TOKEN_EXPIRY_WARN_SECONDS = 300  # warn within 5 min of expiry
 WORKIQ_CACHE_FILE = os.path.join(ARTHA_DIR, "tmp", ".workiq_cache.json")
 WORKIQ_CACHE_MAX_AGE = 86400  # 24 hours
-WORKIQ_VERSION_PIN = "1.x"   # pinned version constraint, NOT @latest
+WORKIQ_VERSION_PIN = "0.x"   # pinned version constraint, NOT @latest
 
 # Force UTF-8 output in child processes (Windows cp1252 can't encode ✓/✗)
 _SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -515,12 +515,40 @@ def check_workiq() -> CheckResult:
             pass  # stale/corrupt cache — fall through to live check
 
     # Live combined detection + auth check
+    # Refresh PATH from registry to pick up newly-installed Node.js (Windows)
+    import platform as _plat
+    if _plat.system() == "Windows":
+        fresh_path = os.environ.get("PATH", "")
+        for scope in ("Machine", "User"):
+            try:
+                import winreg
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE if scope == "Machine" else winreg.HKEY_CURRENT_USER,
+                    r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                    if scope == "Machine" else r"Environment",
+                )
+                val, _ = winreg.QueryValueEx(key, "Path")
+                winreg.CloseKey(key)
+                for p in val.split(";"):
+                    if p and p not in fresh_path:
+                        fresh_path += ";" + p
+            except (OSError, FileNotFoundError):
+                pass
+        sub_env = {**_SUBPROCESS_ENV, "PATH": fresh_path}
+    else:
+        sub_env = _SUBPROCESS_ENV
+
     try:
+        # Find npx using refreshed PATH (handles post-install Windows PATH lag)
+        import shutil
+        npx_cmd = shutil.which("npx", path=sub_env.get("PATH"))
+        if not npx_cmd:
+            raise FileNotFoundError("npx not on PATH")
         result = subprocess.run(
-            ["npx", "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}",
+            [npx_cmd, "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}",
              "ask", "-q", "What is my name?"],
             capture_output=True, text=True, timeout=30,
-            env=_SUBPROCESS_ENV,
+            env=sub_env,
         )
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
