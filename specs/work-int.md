@@ -1,5 +1,5 @@
 # Work-IQ Integration Spec — Artha Feature Specification
-<!-- specs/work-int.md | v1.0 | authored: 2026-03-12 -->
+<!-- specs/work-int.md | v1.1 | authored: 2026-03-12 | revised: 2026-03-12 -->
 
 ---
 
@@ -31,6 +31,7 @@ Ved uses Artha from **two machines**:
 3. **Ephemeral, not persisted** — Work meeting data is used in the current briefing session only. It is NOT written to `state/` files (avoids syncing corporate data to OneDrive personal, avoids PII in state).
 4. **Separate cache, separate state** — Work calendar snapshot lives in `tmp/` (ephemeral) and `state/work-calendar.md` (minimal metadata only — no meeting bodies, no attendee details).
 5. **Platform detection at runtime** — Artha detects WorkIQ availability at preflight, not via static config flag.
+6. **Local redaction before LLM transit** — Sensitive project codenames and keywords are redacted *locally* before meeting titles enter the Claude API context. A configurable redaction list in `config/settings.md` ensures corporate IP never leaves the machine in identifiable form.
 
 ---
 
@@ -99,32 +100,96 @@ Ved uses Artha from **two machines**:
 
 ### 4.1 Preflight Enhancement (Step 0)
 
-Add a **P1 (non-blocking)** check to `preflight.py`:
+Add **two** checks to `preflight.py`:
+
+#### 4.1.1 WorkIQ Availability (P1, non-blocking)
+
+**Optimized detection:** Instead of running `npx -y @microsoft/workiq@latest version` every session (slow, requires network), use a two-tier check:
 
 ```python
-# WorkIQ availability check
+import os, json, platform, shutil, subprocess
+from pathlib import Path
+
+WORKIQ_CACHE = Path("state/.workiq_cache.json")  # gitignored
+CACHE_TTL_HOURS = 24
+
 def check_workiq():
-    """Detect if WorkIQ MCP is available on this machine."""
-    try:
-        result = subprocess.run(
-            ["npx", "-y", "@microsoft/workiq@latest", "version"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0:
-            return {"available": True, "version": result.stdout.strip()}
-        else:
-            return {"available": False, "reason": "workiq exited non-zero"}
-    except FileNotFoundError:
-        return {"available": False, "reason": "npx not found"}
-    except subprocess.TimeoutExpired:
-        return {"available": False, "reason": "timeout"}
+    """Detect WorkIQ availability with cached fast path."""
+    os_name = platform.system()
+    
+    # Fast path: check cache first (avoids npx network call)
+    if WORKIQ_CACHE.exists():
+        try:
+            cache = json.loads(WORKIQ_CACHE.read_text())
+            age_hours = (time.time() - cache.get("checked_at", 0)) / 3600
+            if age_hours < CACHE_TTL_HOURS:
+                return {**cache, "platform": os_name, "from_cache": True}
+        except (json.JSONDecodeError, KeyError):
+            pass  # stale/corrupt cache — fall through to live check
+    
+    # Slow path: live detection (only runs once per 24h or on cache miss)
+    if not shutil.which("npx"):
+        result = {"available": False, "reason": "npx not found"}
+    else:
+        try:
+            proc = subprocess.run(
+                ["npx", "-y", "@microsoft/workiq@latest", "version"],
+                capture_output=True, text=True, timeout=20
+            )
+            if proc.returncode == 0:
+                result = {"available": True, "version": proc.stdout.strip()}
+            else:
+                result = {"available": False, "reason": f"exit code {proc.returncode}"}
+        except subprocess.TimeoutExpired:
+            result = {"available": False, "reason": "timeout (>20s)"}
+        except Exception as e:
+            result = {"available": False, "reason": str(e)}
+    
+    # Cache result for fast path on next run
+    result["checked_at"] = time.time()
+    WORKIQ_CACHE.write_text(json.dumps(result))
+    
+    return {**result, "platform": os_name, "from_cache": False}
 ```
 
 **Preflight output:**
 - If available: `✓ [P1] WorkIQ MCP: Available (v1.x.x) — work calendar will be fetched ✓`
 - If unavailable: `⚠ [P1] WorkIQ MCP: Not available ([reason]) — work calendar skipped`
+- If from cache: append `(cached — re-check in [N]h)`
 
-**Session flag:** Set `workiq_available = true|false` for use in Step 4.
+#### 4.1.2 M365 Auth Refresh (P1, non-blocking — Windows only)
+
+WorkIQ requires periodic re-authentication. Detect auth failures early:
+
+```python
+def check_workiq_auth():
+    """Verify WorkIQ auth is valid by running a minimal query."""
+    if not workiq_available:
+        return None  # skip on Mac / no WorkIQ
+    try:
+        result = subprocess.run(
+            ["npx", "-y", "@microsoft/workiq@latest", "ask",
+             "-q", "What is my name?"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0 or "error" in result.stderr.lower():
+            return {
+                "auth_valid": False,
+                "error": result.stderr.strip() or "non-zero exit",
+                "action": "Run: npx -y @microsoft/workiq@latest logout && retry"
+            }
+        return {"auth_valid": True}
+    except Exception as e:
+        return {"auth_valid": False, "error": str(e)}
+```
+
+**Preflight output on auth failure:**
+```
+🔴 [P1] WorkIQ Auth: EXPIRED — work calendar unavailable until re-auth
+   → Run: npx -y @microsoft/workiq@latest logout && npx -y @microsoft/workiq@latest ask -q "test"
+```
+
+**Session flag:** Set `workiq_available = true|false` and `workiq_auth_valid = true|false` for use in Step 4.
 
 ### 4.2 Fetch Enhancement (Step 4)
 
@@ -147,12 +212,13 @@ npx -y @microsoft/workiq@latest ask \
 **Output handling:**
 1. Parse WorkIQ response (markdown text) into structured event list
 2. Save raw response to `tmp/work_calendar.json`
-3. Normalize each event to the standard Artha calendar schema:
+3. **Apply local redaction** (see §4.2.1) before any data enters Claude context
+4. Normalize each event to the standard Artha calendar schema:
    ```json
    {
      "id": "workiq-<hash>",
      "calendar": "Microsoft Work",
-     "summary": "<event title>",
+     "summary": "<event title — redacted if matched>",
      "start": "<ISO-8601>",
      "end": "<ISO-8601>",
      "all_day": false,
@@ -171,40 +237,123 @@ npx -y @microsoft/workiq@latest ask \
 - WorkIQ returns empty → log, continue (may be a light day)
 - **On Mac (npx/@microsoft/workiq not found)** → footer: `"ℹ️ Work calendar: available on Windows laptop only"`
 
+#### 4.2.1 Local Redaction List (Corporate IP Protection)
+
+**Problem:** Meeting titles like "Project [Confidential] Review" or "Azure Cobalt Roadmap" contain codenames that should not transit to the Anthropic API in identifiable form.
+
+**Solution:** A configurable redaction list in `config/settings.md`:
+
+```yaml
+## WorkIQ Redaction
+# Keywords/patterns replaced with [REDACTED] before meeting data enters Claude context.
+# Case-insensitive. Supports simple glob patterns (* wildcard).
+workiq_redaction:
+  keywords:
+    - "Project Cobalt"
+    - "Project Silica"
+    - "ITAR"
+    - "FedRAMP*"
+    - "Confidential"
+  patterns:
+    - "CVE-*"           # vulnerability identifiers
+    - "MSRC-*"          # security response center cases
+  replace_with: "[PROJECT-REDACTED]"
+```
+
+**Implementation:**
+
+```python
+import re
+
+def redact_work_events(events: list, redaction_config: dict) -> list:
+    """Apply local redaction to meeting titles before LLM transit."""
+    keywords = [k.lower() for k in redaction_config.get("keywords", [])]
+    patterns = redaction_config.get("patterns", [])
+    replacement = redaction_config.get("replace_with", "[REDACTED]")
+    
+    # Compile glob patterns into regexes
+    compiled = [re.compile(p.replace("*", ".*"), re.IGNORECASE) for p in patterns]
+    
+    for event in events:
+        title = event.get("summary", "")
+        for kw in keywords:
+            if kw in title.lower():
+                event["summary"] = replacement
+                event["redacted"] = True
+                break
+        if not event.get("redacted"):
+            for pat in compiled:
+                if pat.search(title):
+                    event["summary"] = replacement
+                    event["redacted"] = True
+                    break
+    return events
+```
+
+**Redaction happens locally BEFORE** the data is included in any Claude API prompt. The raw (unredacted) data in `tmp/work_calendar.json` is deleted at Step 18.
+
+**Briefing display of redacted events:**
+```
+9:00am  💼 [PROJECT-REDACTED] (60 min, Teams)
+```
+
 ### 4.3 Calendar Deduplication Enhancement
 
-Update existing dedup rule (§2 Step 4) to include work calendar:
+Update existing dedup rule (§2 Step 4) to include work calendar with **field merging**:
 
 ```
 After merging all FOUR calendar feeds (Google, Outlook personal, iCloud, WorkIQ work):
   - If two events match on (summary ± minor variation) AND (start time ± 5 minutes):
-    keep one record, set "source": "both" (or "work+personal")
+    MERGE fields from both sources (not simply discard):
+      • summary:  prefer Personal version (more readable / user-created)
+      • location: prefer Work version (has Teams link / room booking)
+      • organizer: prefer Work version (has full org identity)
+      • times:    prefer Work version (canonical / Exchange-authoritative)
+      • set "source": "work+personal"
   - Events tagged source="work_calendar" that have NO personal calendar match:
     tag as work-only (display with 💼 prefix in briefing)
   - Personal events with NO work match: tag as personal-only (no prefix)
 ```
 
+**Why merge, not discard:** Work calendar entries typically carry the Teams meeting link and room location, while personal copies have user-friendly titles (e.g., "School Pickup" vs. "Block: School Pickup"). Merging retains the best of both.
+
 **Common dedup scenarios:**
-- "School Pickup" appears on both personal Google Cal and work Outlook → dedup, keep personal
+- "School Pickup" (personal) + "Block: School Pickup" (work) → merged: title from personal, location from work
 - "Tulsidevi Bhakti Gita" on personal Outlook only → personal-only
 - "XPF Weekly" on work only → work-only (💼)
 - "Parth SAT Exam" on iCloud only → personal-only
 
 ### 4.4 Cross-Domain Reasoning Enhancement (Step 8)
 
-Add two new compound signal rules to Step 8f:
+Add new compound signal rules to Step 8f with **conflict type distinction**:
 
 ```
-Rule 7: Work meeting + personal event overlap
+Rule 7a: Cross-Domain Conflict (work ↔ personal) — HIGH IMPACT
   IF work_calendar event overlaps (±15 min) with personal calendar event:
-    Surface: "⚠️ CONFLICT: [work event] overlaps [personal event] at [time]"
-    Score: Urgency based on proximity, Impact=2 (scheduling), Agency=3 (can reschedule)
-    
+    Surface: "🔴 CROSS-DOMAIN CONFLICT: [work event] ↔ [personal event] at [time]"
+    Score: Urgency based on proximity, Impact=3 (cross-domain — requires lifestyle trade-off), Agency=3
+    Reasoning: Cross-domain conflicts require harder trade-offs (can't just decline, 
+    often involves family obligations). These carry higher U×I×A than internal work conflicts.
+
+Rule 7b: Internal Work Conflict (work ↔ work) — LOWER IMPACT
+  IF two work_calendar events overlap:
+    Surface: "⚠️ WORK CONFLICT: [event A] overlaps [event B] at [time]"
+    Score: Urgency based on proximity, Impact=1 (internal — resolvable via decline/delegate), Agency=3
+    Reasoning: Back-to-back Teams calls are common and self-resolvable. Don't flood 
+    the briefing with internal scheduling noise — surface them, but don't escalate.
+
 Rule 8: Meeting density warning
   IF work_calendar events for today > 8:
     Surface: "📊 Heavy meeting day: [N] work meetings. Focus time: [gaps if any]"
     Identify largest gap ≥30 min and surface as "🟢 Best focus window: [start]–[end]"
 ```
+
+**U×I×A scoring example:**
+| Conflict type | Urgency | Impact | Agency | Score | Alert tier |
+|---------------|---------|--------|--------|-------|------------|
+| Work call ↔ School pickup | 3 | 3 | 3 | 27 | 🔴 Critical |
+| Work call ↔ Kid's concert | 3 | 3 | 2 | 18 | 🟠 Action |
+| Work call ↔ Work call | 2 | 1 | 3 | 6 | ℹ️ Info |
 
 ### 4.5 Briefing Output Enhancement (Step 11)
 
@@ -322,52 +471,105 @@ schedule_metrics:
 
 This activates the employment domain from ⚪ grey to 🟢 green on the dashboard.
 
+### 4.9 Meeting-Triggered Open Items (Employment Domain)
+
+Certain work meeting types should auto-generate Open Items when detected:
+
+```yaml
+# config/settings.md — meeting_triggers section
+meeting_triggers:
+  critical:   # → 🔴 Critical alert tier, auto-create Employment OI
+    - "Interview"
+    - "Performance Review"
+    - "Connect*"         # manager connects (e.g., "Connect with Ramjee")
+    - "Calibration"
+    - "Promotion*"
+    - "PIP*"
+  action:     # → 🟠 Action tier, suggest OI creation
+    - "All-Hands"
+    - "Reorg*"
+    - "Town Hall"
+    - "Skip Level"
+```
+
+**Behavior:**
+- When a `critical` meeting is detected in today/tomorrow's work calendar:
+  - Auto-create an Employment domain Open Item: `OI-AUTO-xxx: Prepare for [Meeting Title] on [Date]`
+  - Surface in briefing with 🔴 tier: `"🔴 [Employment] Performance Review tomorrow at 2pm — prep needed"`
+  - If a matching OI already exists (fuzzy match on title + date), skip creation
+- When an `action` meeting is detected:
+  - Surface in briefing with 🟠 tier
+  - Suggest OI creation: `"Consider: prepare talking points for All-Hands Thursday"`
+  - Do NOT auto-create (user must confirm)
+
+**Deduplication with existing OIs:** Before creating, check `state/open_items.md` for any OI with the same meeting name and date within ±2 days. If found, skip and append a note to the existing OI instead.
+
 ---
 
 ## 5. Platform Detection Logic
 
 ```python
-import platform, shutil, subprocess
+import platform, shutil, subprocess, json, time
+from pathlib import Path
+
+WORKIQ_CACHE = Path("state/.workiq_cache.json")  # gitignored
+CACHE_TTL_HOURS = 24  # re-check every 24 hours
 
 def detect_workiq_availability():
     """
     Runtime detection — called at preflight.
+    Uses a cached fast path to avoid slow npx network calls every session.
     Returns dict with availability status and reason.
     """
     os_name = platform.system()  # "Windows", "Darwin", "Linux"
     
+    # ── Fast path: use cache if fresh ──
+    if WORKIQ_CACHE.exists():
+        try:
+            cache = json.loads(WORKIQ_CACHE.read_text())
+            age_hours = (time.time() - cache.get("checked_at", 0)) / 3600
+            if age_hours < CACHE_TTL_HOURS:
+                return {**cache, "platform": os_name, "from_cache": True}
+        except (json.JSONDecodeError, KeyError):
+            pass  # corrupt cache — fall through
+    
+    # ── Slow path: live check (once per 24h) ──
+    
     # Check 1: Is npx available?
     if not shutil.which("npx"):
-        return {
+        result = {
             "available": False,
             "reason": "npx not found",
-            "platform": os_name,
             "suggestion": "Install Node.js to enable WorkIQ" if os_name == "Windows" else None
         }
+    else:
+        # Check 2: Can WorkIQ binary run?
+        try:
+            proc = subprocess.run(
+                ["npx", "-y", "@microsoft/workiq@latest", "version"],
+                capture_output=True, text=True, timeout=20
+            )
+            if proc.returncode == 0:
+                result = {"available": True, "version": proc.stdout.strip()}
+            else:
+                result = {"available": False, "reason": f"workiq exit code {proc.returncode}"}
+        except subprocess.TimeoutExpired:
+            result = {"available": False, "reason": "timeout (>20s)"}
+        except Exception as e:
+            result = {"available": False, "reason": str(e)}
     
-    # Check 2: Can WorkIQ binary run?
+    # Cache for fast path on subsequent runs
+    result["checked_at"] = time.time()
+    result["platform"] = os_name
     try:
-        result = subprocess.run(
-            ["npx", "-y", "@microsoft/workiq@latest", "version"],
-            capture_output=True, text=True, timeout=20
-        )
-        if result.returncode == 0:
-            return {
-                "available": True,
-                "version": result.stdout.strip(),
-                "platform": os_name
-            }
-        else:
-            return {
-                "available": False,
-                "reason": f"workiq exit code {result.returncode}",
-                "platform": os_name
-            }
-    except subprocess.TimeoutExpired:
-        return {"available": False, "reason": "timeout (>20s)", "platform": os_name}
-    except Exception as e:
-        return {"available": False, "reason": str(e), "platform": os_name}
+        WORKIQ_CACHE.write_text(json.dumps(result))
+    except Exception:
+        pass  # non-critical if cache write fails
+    
+    return {**result, "from_cache": False}
 ```
+
+> **Performance note:** The cached approach avoids a 10–20 second `npx` network hit on every session start. Cache invalidates after 24 hours or on explicit `--force-recheck` flag. On Mac where WorkIQ is never available, the cache persists indefinitely (always returns "npx not found" instantly).
 
 ---
 
@@ -377,11 +579,12 @@ def detect_workiq_availability():
 
 | Data | Enters Claude context? | Mitigation |
 |------|----------------------|-----------|
-| Work meeting titles | ✅ Yes (during briefing generation) | Ephemeral — not persisted. Same as personal email bodies. |
+| Work meeting titles | ✅ Yes — **after local redaction** | Sensitive codenames replaced with `[PROJECT-REDACTED]` per `config/settings.md` redaction list before API transit. Ephemeral — not persisted. |
 | Work meeting attendee names | ✅ Yes (during conflict detection) | Not persisted to state files. |
 | Meeting bodies/agendas | ❌ NO — not requested from WorkIQ | Query explicitly asks for titles + times only. |
 | Teams chat content | ❌ NO — not requested | Out of scope. |
 | Work emails | ❌ NO — not requested | Out of scope. Explicitly excluded. |
+| Redacted meeting titles | ✅ Yes (as `[PROJECT-REDACTED]`) | Original titles never leave machine. Only the redacted placeholder enters API context. |
 
 ### 6.2 Corporate policy check
 
@@ -400,7 +603,8 @@ Add WorkIQ to the privacy surface disclosure:
 ```
 WorkIQ (work calendar):
   Data fetched: Meeting titles, times, organizers (calendar only)
-  Sent to Claude API: Yes (ephemeral, during briefing generation)
+  Local redaction: Sensitive project names replaced per config/settings.md redaction list
+  Sent to Claude API: Yes (redacted + ephemeral, during briefing generation only)
   Persisted to state: Counts only (no titles, no attendees)
   Available on: Windows laptop only (corp M365 Copilot license)
 ```
@@ -428,15 +632,18 @@ WorkIQ (work calendar):
 
 | Step | Task | Files changed |
 |------|------|---------------|
-| 1 | Add WorkIQ detection to `scripts/preflight.py` | `scripts/preflight.py` |
-| 2 | Create `state/work-calendar.md` with schema | `state/work-calendar.md` (new) |
-| 3 | Update `config/Artha.md` Step 4 to include WorkIQ as 7th source | `config/Artha.md` |
-| 4 | Update `config/Artha.md` Step 8f with Rules 7–8 (conflict + density) | `config/Artha.md` |
-| 5 | Update `config/Artha.md` Step 11 briefing format for merged calendar | `config/Artha.md` |
-| 6 | Update `config/Artha.md` Step 16 health-check schema | `config/Artha.md` |
-| 7 | Update `state/health-check.md` schema with workiq fields | `state/health-check.md` |
-| 8 | Test on Windows (full flow) | — |
-| 9 | Test on Mac (graceful degradation) | — |
+| 1 | Add WorkIQ detection (cached) + auth check to `scripts/preflight.py` | `scripts/preflight.py` |
+| 2 | Add `workiq_redaction` section to `config/settings.md` | `config/settings.md` |
+| 3 | Create `state/work-calendar.md` with schema | `state/work-calendar.md` (new) |
+| 4 | Add `state/.workiq_cache.json` to `.gitignore` | `.gitignore` |
+| 5 | Update `config/Artha.md` Step 4 to include WorkIQ as 7th source + redaction | `config/Artha.md` |
+| 6 | Update `config/Artha.md` Step 8f with Rules 7a/7b/8 (cross-domain + internal + density) | `config/Artha.md` |
+| 7 | Update `config/Artha.md` Step 11 briefing format for merged calendar | `config/Artha.md` |
+| 8 | Update `config/Artha.md` Step 16 health-check schema | `config/Artha.md` |
+| 9 | Update `state/health-check.md` schema with workiq fields | `state/health-check.md` |
+| 10 | Add `meeting_triggers` config for auto-OI creation | `config/settings.md` |
+| 11 | Test on Windows (full flow — fetch, redact, merge, brief) | — |
+| 12 | Test on Mac (graceful degradation — no errors, personal-only briefing) | — |
 
 ### Phase 2 — Schedule Intelligence (Future)
 
@@ -457,19 +664,25 @@ WorkIQ (work calendar):
 
 ### Windows (WorkIQ available)
 
-- [ ] Preflight detects WorkIQ and reports version
+- [ ] Preflight detects WorkIQ and reports version (cached fast path after first run)
+- [ ] Preflight auth check validates M365 token; surfaces P1 warning on expiry
 - [ ] Step 4 fetches work calendar in parallel with personal sources
-- [ ] Calendar dedup correctly merges "School Pickup" from both work and personal
-- [ ] Conflicts between work and personal events surface in briefing
+- [ ] Local redaction replaces configured keywords before Claude API transit
+- [ ] Calendar dedup merges fields (title from personal, Teams link from work)
+- [ ] Cross-domain conflicts (work ↔ personal) scored at Impact=3
+- [ ] Internal work conflicts (work ↔ work) scored at Impact=1
 - [ ] Meeting density shown in footer
+- [ ] Critical meetings (Interview, Perf Review) auto-create Employment OIs
 - [ ] `tmp/work_calendar.json` created and deleted at Step 18
 - [ ] `state/work-calendar.md` updated with counts only (no titles)
+- [ ] `state/.workiq_cache.json` persists for 24h fast path
 - [ ] `state/employment.md` schedule_metrics updated
 - [ ] `health-check.md` workiq section populated
 
 ### Mac (WorkIQ unavailable)
 
 - [ ] Preflight reports WorkIQ unavailable (P1 warning, non-blocking)
+- [ ] Cache returns "npx not found" instantly (no network call)
 - [ ] Step 4 runs all 6 personal sources identically to today
 - [ ] No WorkIQ-related errors in audit.md
 - [ ] Briefing footer shows "ℹ️ Work calendar: available on Windows laptop only" (or silent)
@@ -480,10 +693,14 @@ WorkIQ (work calendar):
 ### Edge Cases
 
 - [ ] WorkIQ returns 0 events (weekend or PTO) → no error, no work section
-- [ ] WorkIQ auth token expired mid-session → graceful skip
+- [ ] WorkIQ auth token expired mid-session → graceful skip, P1 warning with re-auth command
 - [ ] WorkIQ returns >50 events (conference day) → cap at 25, show count
-- [ ] Personal and work calendar both have same event → dedup keeps one
+- [ ] Personal and work calendar both have same event → dedup merges fields (title from personal, link from work)
 - [ ] Network timeout on WorkIQ (>30s) → skip, log, continue
+- [ ] Redaction list is empty → no redaction applied, all titles pass through
+- [ ] Meeting title matches multiple redaction keywords → single replacement (not double-redacted)
+- [ ] Critical meeting (e.g., "Interview") already has matching OI → skip auto-creation, append note
+- [ ] Cache file `.workiq_cache.json` is corrupt → fall through to live check gracefully
 
 ---
 
@@ -496,7 +713,13 @@ WorkIQ (work calendar):
 | Count-only state file | Enables trend analysis without storing corporate content | No state file (rejected: loses density trends) |
 | Runtime platform detection | Avoids config drift between Mac and Windows | Static config flag (rejected: user must remember to toggle) |
 | WorkIQ CLI (not MCP server) | Simpler integration; MCP requires persistent server process | MCP server mode (considered for Phase 2 if needed) |
+| **Local redaction before API transit** | Meeting titles may contain confidential project names; redacting locally prevents corporate IP from reaching Anthropic API | No redaction (rejected: compliance risk), server-side redaction (rejected: data already left machine) |
+| **Cached platform detection** | `npx -y @latest version` takes 10-20s and requires network; 24h cache avoids this overhead on every session start | Always run live check (rejected: slow), static flag (rejected: config drift) |
+| **Field-merge dedup** | Work events carry Teams links/rooms while personal copies have friendly titles; merging retains best of both | Discard one (rejected: loses useful metadata) |
+| **Cross-domain > internal conflicts** | Work↔personal conflicts require harder life trade-offs than back-to-back Teams calls; different Impact scores prevent alert fatigue | Uniform scoring (rejected: floods briefing with internal noise) |
+| **Meeting-triggered OIs** | Critical work events (interviews, perf reviews) need advance prep; auto-OI creation ensures they aren't missed in Employment domain | Manual-only OI creation (rejected: easily missed when Employment domain is new) |
+| **M365 auth refresh in preflight** | WorkIQ requires periodic re-auth; detecting expiry early surfaces a clear P1 warning with actionable command | No auth check (rejected: catch-up silently skips work calendar with unclear error) |
 
 ---
 
-*End of spec. Authored by Artha · March 12, 2026.*
+*End of spec. Authored by Artha · March 12, 2026. Revised v1.1 incorporating feedback on redaction, caching, dedup merging, conflict scoring, meeting-triggered OIs, and auth refresh.*
