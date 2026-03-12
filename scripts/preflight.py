@@ -31,6 +31,7 @@ P1 checks (logged as warnings, do NOT block catch-up):
   15 msgraph_cal_fetch --health    — Outlook Calendar API live (Calendars.Read)
   16 icloud_mail_fetch --health    — iCloud Mail IMAP live (app-specific password)
   17 icloud_cal_fetch --health     — iCloud Calendar CalDAV live
+  18 WorkIQ Calendar               — WorkIQ M365 detection + auth (Windows only, v2.2)
 
 Ref: TS §3.8, TS §7.1 Step 0, T-1A.11.3, PRD §9.4 Step 0
 """
@@ -69,9 +70,11 @@ if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
 import argparse
 import json
 import os
+import pathlib
 import subprocess
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -87,6 +90,9 @@ TOKEN_DIR   = os.path.join(ARTHA_DIR, ".tokens")
 
 STALE_LOCK_SECONDS = 1800   # 30 minutes
 TOKEN_EXPIRY_WARN_SECONDS = 300  # warn within 5 min of expiry
+WORKIQ_CACHE_FILE = os.path.join(ARTHA_DIR, "tmp", ".workiq_cache.json")
+WORKIQ_CACHE_MAX_AGE = 86400  # 24 hours
+WORKIQ_VERSION_PIN = "1.x"   # pinned version constraint, NOT @latest
 
 # Force UTF-8 output in child processes (Windows cp1252 can't encode ✓/✗)
 _SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -455,6 +461,120 @@ def check_msgraph_token() -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# WorkIQ combined detection + auth check (v2.2 — T-2A.24.1)
+# ---------------------------------------------------------------------------
+
+def check_workiq() -> CheckResult:
+    """Combined WorkIQ detection + auth. P1 non-blocking.
+
+    Strategy:
+      1. Platform gate: if not Windows, skip silently (Mac has no WorkIQ).
+      2. Check tmp/.workiq_cache.json — if fresh (<24h), reuse cached result.
+      3. If cache miss/stale: single npx call that validates both availability
+         and M365 auth: "What is my name?"
+      4. Write result to cache for next run.
+
+    Ref: Tech Spec §3.2b, §7.1 Step 0(f)
+    """
+    import platform
+    if platform.system() != "Windows":
+        return CheckResult(
+            "WorkIQ Calendar", "P1", True,
+            "Skipped (not Windows) — Mac graceful degradation ✓",
+        )
+
+    # Check cache
+    cache_path = Path(WORKIQ_CACHE_FILE)
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            checked_at = cache.get("checked_at", "")
+            if checked_at:
+                from datetime import datetime, timezone
+                cache_time = datetime.fromisoformat(checked_at)
+                age = (datetime.now(timezone.utc) - cache_time).total_seconds()
+                if age < WORKIQ_CACHE_MAX_AGE:
+                    if cache.get("available") and cache.get("auth_valid"):
+                        return CheckResult(
+                            "WorkIQ Calendar", "P1", True,
+                            f"Available + authenticated (cached {int(age//3600)}h ago) ✓",
+                        )
+                    elif cache.get("available") and not cache.get("auth_valid"):
+                        return CheckResult(
+                            "WorkIQ Calendar", "P1", False,
+                            "WorkIQ available but auth expired (cached)",
+                            fix_hint="npx workiq logout && retry",
+                        )
+                    else:
+                        return CheckResult(
+                            "WorkIQ Calendar", "P1", False,
+                            "WorkIQ not available (cached)",
+                            fix_hint="Install: npm i -g @microsoft/workiq",
+                        )
+        except (json.JSONDecodeError, KeyError, ValueError):
+            pass  # stale/corrupt cache — fall through to live check
+
+    # Live combined detection + auth check
+    try:
+        result = subprocess.run(
+            ["npx", "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}",
+             "ask", "-q", "What is my name?"],
+            capture_output=True, text=True, timeout=30,
+            env=_SUBPROCESS_ENV,
+        )
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        available = result.returncode == 0 and len(result.stdout.strip()) > 0
+        # Auth is valid if we got a meaningful response (not an error message)
+        auth_valid = available and "error" not in result.stdout.lower()[:100]
+        user_name = result.stdout.strip()[:50] if auth_valid else ""
+
+        # Write cache
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_data = {
+            "available": available,
+            "auth_valid": auth_valid,
+            "platform": "Windows",
+            "checked_at": now_iso,
+            "user_name": user_name,
+        }
+        cache_path.write_text(
+            json.dumps(cache_data, indent=2), encoding="utf-8"
+        )
+
+        if available and auth_valid:
+            return CheckResult(
+                "WorkIQ Calendar", "P1", True,
+                f"Available + authenticated ✓",
+            )
+        elif available and not auth_valid:
+            return CheckResult(
+                "WorkIQ Calendar", "P1", False,
+                "WorkIQ available but M365 auth failed",
+                fix_hint="npx workiq logout && retry",
+            )
+        else:
+            return CheckResult(
+                "WorkIQ Calendar", "P1", False,
+                f"WorkIQ not available: {result.stderr.strip()[:80]}",
+                fix_hint="Install: npm i -g @microsoft/workiq",
+            )
+    except FileNotFoundError:
+        return CheckResult(
+            "WorkIQ Calendar", "P1", False,
+            "npx not found — Node.js not installed",
+            fix_hint="Install Node.js (includes npx)",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            "WorkIQ Calendar", "P1", False,
+            "WorkIQ check timed out (>30s)",
+            fix_hint="Check network connectivity; WorkIQ requires npm registry access",
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main preflight runner
 # ---------------------------------------------------------------------------
 
@@ -488,6 +608,20 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_open_items())
     checks.append(check_briefings_directory())
     checks.append(check_msgraph_token())  # T-1B.6.1: non-blocking, To Do sync optional
+
+    # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
+    checks.append(check_workiq())
+
+    # ── P1 — Skill dependencies ───────────────────────────────────────────
+    try:
+        import bs4
+        checks.append(CheckResult("BeautifulSoup", "P1", True, "beautifulsoup4 found"))
+    except ImportError:
+        checks.append(CheckResult(
+            "BeautifulSoup", "P1", False, 
+            "beautifulsoup4 not installed — Data Skills will be disabled",
+            fix_hint="pip install beautifulsoup4"
+        ))
 
     # MS Graph live connectivity (P1 — email/calendar fetch can still partially succeed
     # if only one script fails; non-blocking matches the spirit of direct fetch being
@@ -529,6 +663,14 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                 "iCloud health check timed out (>45s) — iCloud data may be unavailable",
                 fix_hint="Check network or re-run: python scripts/setup_icloud_auth.py --health",
             ))
+
+    # Canvas LMS (P2 — informational only; skip silently if not configured)
+    canvas_token_mac = Path.home() / ".artha-tokens" / "canvas-token-parth.json"
+    canvas_token_trisha = Path.home() / ".artha-tokens" / "canvas-token-trisha.json"
+    if canvas_token_mac.exists() or canvas_token_trisha.exists():
+        checks.append(check_script_health(
+            "canvas_fetch.py", ["--health"], severity="P1"
+        ))
 
     return checks
 
