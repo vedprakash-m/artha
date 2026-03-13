@@ -12,6 +12,8 @@ google-auth-httplib2>=0.1.1
 # Microsoft Graph / Outlook (setup_msgraph_oauth.py, msgraph_fetch.py, etc.)
 msal>=1.28.0
 requests>=2.31.0
+beautifulsoup4>=4.12.0
+PyYAML>=6.0.1
 
 # Cross-platform credential storage (replaces macOS-only `security` CLI)
 # macOS → Keychain, Windows → Credential Manager, Linux → SecretService

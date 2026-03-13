@@ -9,7 +9,7 @@ last_updated: 2026-03-07T22:52:33
 
 ## Purpose
 Track bills, account balances, financial transactions, tax matters, payroll, investments,
-and net-worth-relevant events for the Mishra family.
+and net-worth-relevant events for the family.
 
 ## Sender Signatures (route here)
 - `*@wellsfargo.com`, `*@chase.com`, `*@bankofamerica.com`, `*@fidelity.com`, `*@vanguard.com`
@@ -198,4 +198,162 @@ leading_indicators:
 **Leading indicator summary line (in briefing):**
 ```
 💰 Finance Leading: Savings [X%] [↑↓ trend] | Credit util [X%] | E-fund [N.N] months | [any alert]
+```
+
+---
+
+## Phase 2B Expansions
+
+### Tax Preparation Manager (F3.10, F3.13)
+Track tax preparation end-to-end. Maintain in `state/finance.md → tax`:
+```yaml
+tax:
+  current_year: YYYY
+  filing_status: "[MFJ/MFS/etc]"
+  deadline_standard: YYYY-04-15
+  deadline_extension: YYYY-10-15     # if extension filed
+  extension_filed: false
+  documents_checklist:
+    - name: "W-2 (Employer)"
+      expected_by: YYYY-01-31
+      received: false
+      notes: ""
+    - name: "1099-INT / 1099-DIV (Fidelity)"
+      expected_by: YYYY-02-15
+      received: false
+    - name: "1099-INT / 1099-DIV (Vanguard)"
+      expected_by: YYYY-02-15
+      received: false
+    - name: "Mortgage interest (1098)"
+      expected_by: YYYY-01-31
+      received: false
+    - name: "Property tax paid"
+      expected_by: "Q4 statement"
+      received: false
+    - name: "Charitable donation receipts"
+      expected_by: YYYY-04-01
+      received: false
+    - name: "HSA form 5498-SA"
+      expected_by: YYYY-05-31
+      received: false
+    - name: "1099-G (state tax refund, if applicable)"
+      expected_by: YYYY-01-31
+      received: false
+  estimated_payments:
+    - due: YYYY-04-15
+      amount: XXXX
+      paid: false
+    - due: YYYY-06-15
+      amount: XXXX
+      paid: false
+    - due: YYYY-09-15
+      amount: XXXX
+      paid: false
+    - due: YYYY-01-15
+      amount: XXXX
+      paid: false
+  carryforward_items:
+    - description: "[e.g., capital loss carryforward]"
+      amount: XXXX
+      tax_year: YYYY
+  prior_year_refund: XXXX
+  expected_refund_or_owe: XXXX  # estimated after documents collected
+```
+
+**Alert thresholds:**
+- 🟠 URGENT: Estimated payment due ≤7 days and not marked paid
+- 🟠 URGENT: Filing deadline ≤30 days and any required document not received
+- 🟡 STANDARD: Document expected by date passed and not received (>7 days overdue)
+- 🟡 STANDARD: 60 days before standard filing deadline — trigger checklist review
+
+**Routing:** W-2 emails, 1099 emails, IRS correspondence, mortgage interest statements, charitable receipts.
+
+### Subscription Ledger & Credit Health (F3.4, F3.5, F3.6, F3.11)
+
+**Subscription ledger** in `state/finance.md → subscriptions`:
+```yaml
+subscriptions:
+  - name: "[service name]"
+    category: streaming|saas|cloud|news|other
+    monthly_cost: XXXX       # converted to monthly for comparison
+    billing_cycle: monthly|annual
+    next_billing: YYYY-MM-DD
+    payment_method: "[card or bank]"
+    auto_renews: true|false
+    roi_score: null          # computed by Artha (usage × value / cost) — see §8.12
+    notes: ""
+```
+Trigger: any subscription renewal/billing confirmation email.
+Alert: subscription billing on card that expired or approaching limit.
+Monthly review: surface total subscription spend and any ROI < threshold.
+
+**Credit health monitor (F3.5):**
+Track in `state/finance.md → credit_health`:
+```yaml
+credit_health:
+  equifax_score: XXXX
+  experian_score: XXXX
+  transunion_score: XXXX
+  last_pulled: YYYY-MM-DD
+  alerts_active: []          # list of any active credit alerts from monitoring services
+  utilization_pct: XX        # recomputed each catch-up from balance/limit data
+  notes: ""
+```
+🔴 CRITICAL: Any credit alert email from Equifax, Experian, or TransUnion — surface immediately.
+🟡 STANDARD: Monthly credit score update if available.
+
+**Insurance premium aggregator (F3.11):**
+Track in `state/finance.md → insurance_premiums`:
+```yaml
+insurance_premiums:
+  - type: "health"
+    provider: "[name]"
+    monthly_cost: XXXX
+    annual_cost: XXXX
+    next_renewal: YYYY-MM-DD
+  - type: "auto"
+    provider: "[name]"
+    monthly_cost: XXXX
+    annual_cost: XXXX
+    next_renewal: YYYY-MM-DD
+  - type: "home/renters"
+    provider: "[name]"
+    monthly_cost: XXXX
+    annual_cost: XXXX
+    next_renewal: YYYY-MM-DD
+  - type: "life"
+    provider: "[name]"
+    monthly_cost: XXXX
+    annual_cost: XXXX
+    next_renewal: YYYY-MM-DD
+  - type: "umbrella"
+    provider: "[name]"
+    monthly_cost: XXXX
+    annual_cost: XXXX
+    next_renewal: YYYY-MM-DD
+total_monthly_insurance: XXXX  # updated automatically from sum of above
+```
+Cross-reference with insurance.md for coverage details. Alert on renewals ≤45 days.
+
+### Credit Card Benefit Optimizer (F3.12)
+Cross-domain trigger: When a travel booking, hotel confirmation, or large purchase arrives:
+1. Check `state/finance.md → credit_cards[].benefits` for applicable travel/purchase benefits
+2. Surface relevant benefits the user might not use:
+   - Travel credit: "Your [card] has $[X] travel credit unused — this booking qualifies"
+   - Lounge access: "Your [card] offers Priority Pass — check lounge availability at [airport]"
+   - Trip insurance: "Your [card] provides trip cancellation insurance — no need for separate add-on"
+   - Purchase protection: "Your [card] offers [X] months purchase protection for this item"
+3. Alert once per booking — do not repeat in same session
+
+Schema addition to `state/finance.md → credit_cards[].benefits`:
+```yaml
+benefits:
+  travel_credit_annual: XXXX
+  travel_credit_used_ytd: XXXX
+  lounge_access: "[program name or none]"
+  trip_insurance: true|false
+  purchase_protection_months: N
+  extended_warranty: true|false
+  cell_phone_protection: true|false
+  cash_back_categories: ["[category]: [%]"]
 ```

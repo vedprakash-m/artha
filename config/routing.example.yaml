@@ -1,0 +1,232 @@
+# config/routing.example.yaml
+# Artha Domain Routing — example / template file
+#
+# Purpose: Maps sender/subject patterns to domain state files.
+# This file ships with the distribution as an example.
+# During /bootstrap --with-routing, generate_identity.py writes config/routing.yaml
+# (in .gitignore) with your school domains and finance institutions injected.
+#
+# Structure:
+#   system_routes: — universal patterns (shipped with Artha, all users)
+#   user_routes:   — populated by generate_identity.py from user_profile.yaml
+#
+# These routes are HINTS to the AI, not hard gates. Content-based classification
+# overrides if the content is clearly domain-relevant.
+#
+# Ref: standardization.md §6.5.2, generate_identity.py --with-routing
+
+schema_version: "1.0"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Universal routes — ship with distribution, apply to all users
+# ─────────────────────────────────────────────────────────────────────────────
+
+system_routes:
+
+  immigration:
+    priority: critical
+    senders:
+      - "*@uscis.gov"
+    subject_keywords:
+      - "receipt notice"
+      - "approval notice"
+      - "RFE"
+      - "request for evidence"
+      - "I-485"
+      - "I-539"
+      - "I-765"
+      - "I-131"
+      - "I-140"
+      - "biometrics"
+      - "Visa Bulletin"
+      - "priority date"
+      - "EAD"
+      - "H-1B"
+      - "H-4"
+      - "green card"
+      - "naturalization"
+      - "advance parole"
+      - "EB-2"
+      - "EB-3"
+      - "I-90"
+      - "N-400"
+
+  finance:
+    priority: urgent
+    senders:
+      - "*@fidelity.com"
+      - "*@wellsfargo.com"
+      - "*@vanguard.com"
+      - "*@chase.com"
+      - "*@bankofamerica.com"
+      - "*@equifax.com"
+      - "*@experian.com"
+      - "*@transunion.com"
+    subject_keywords:
+      - "bill"
+      - "payment due"
+      - "statement"
+      - "ACH"
+      - "wire transfer"
+      - "payroll"
+      - "tax"
+      - "IRS"
+      - "W-2"
+      - "1099"
+      - "credit alert"
+      - "identity alert"
+
+  travel:
+    priority: standard
+    senders:
+      - "*@alaskaair.com"
+      - "*@delta.com"
+      - "*@united.com"
+      - "*@marriott.com"
+      - "*@airbnb.com"
+      - "*@southwest.com"
+      - "*@expedia.com"
+      - "*@kayak.com"
+    subject_keywords:
+      - "flight"
+      - "hotel"
+      - "itinerary"
+      - "check-in"
+      - "boarding pass"
+      - "passport renewal"
+      - "reservation confirmed"
+
+  health:
+    priority: urgent
+    senders:
+      - "*@zocdoc.com"
+      - "*@providence.org"
+      - "*@uwmedicine.org"
+      - "*@mychart.com"
+    subject_keywords:
+      - "appointment"
+      - "prescription"
+      - "refill"
+      - "lab result"
+      - "EOB"
+      - "health insurance"
+      - "FSA"
+      - "HSA"
+      - "immunization"
+      - "vaccination"
+
+  shopping:
+    priority: low
+    senders:
+      - "*@amazon.com"
+      - "*@costco.com"
+      - "*@usps.com"
+      - "*@fedex.com"
+      - "*@ups.com"
+    subject_keywords:
+      - "shipped"
+      - "delivery"
+      - "tracking"
+      - "order confirmed"
+      - "return"
+      - "warranty"
+      - "out for delivery"
+
+  home:
+    priority: standard
+    subject_keywords:
+      - "HOA"
+      - "maintenance"
+      - "repair"
+      - "inspection"
+      - "property tax"
+      - "mortgage"
+
+  vehicle:
+    priority: standard
+    subject_keywords:
+      - "car registration"
+      - "insurance renewal"
+      - "service appointment"
+      - "recall notice"
+
+  estate:
+    priority: urgent
+    subject_keywords:
+      - "estate"
+      - "will"
+      - "trust"
+      - "beneficiary"
+      - "POA"
+      - "power of attorney"
+
+  kids:
+    priority: standard
+    senders:
+      # NOTE: school-specific senders are in user_routes.school_domains below
+      - "*@schoology.com"
+      - "*@powerschool.com"
+    subject_keywords:
+      - "grade"
+      - "assignment"
+      - "attendance"
+      - "absent"
+      - "tardy"
+      - "AP"
+      - "SAT"
+      - "ACT"
+      - "PSAT"
+      - "college application"
+      - "Common App"
+      - "scholarship"
+      - "ParentSquare"
+      - "Remind"
+      - "progress report"
+      - "report card"
+      - "transcript"
+      - "GPA"
+
+  suppress:
+    # These are discarded — not processed
+    subject_keywords:
+      - "unsubscribe"
+      - "20% off"
+      - "sale ends"
+      - "limited time offer"
+      - "flash sale"
+      - "weekly digest"
+    headers:
+      - "List-Unsubscribe"  # unless sender is in a trusted domain
+
+# ─────────────────────────────────────────────────────────────────────────────
+# User-specific routes — populated by generate_identity.py from user_profile.yaml
+# Copy this section to config/routing.yaml and fill in your values,
+# OR run: python scripts/generate_identity.py --with-routing
+# ─────────────────────────────────────────────────────────────────────────────
+
+user_routes:
+
+  # School email domains for the kids domain routing
+  # Example: ["issaquahschools.org", "seattleschools.org"]
+  # Source: user_profile.yaml → family.children[].school.email_domain
+  school_domains: []
+    # - "your-school-district.org"    # District domain
+    # - "school-name.org"             # School-specific domain
+
+  # Financial institution sender domains beyond the universal ones
+  # Example additional institutions: schwab.com, merrilledge.com, capitalone.com
+  # Source: user_profile.yaml → domains.finance.institutions
+  finance_institutions: []
+    # - "schwab.com"
+    # - "tdameritrade.com"
+
+  # Immigration attorney domain (routes to immigration.md)
+  # Source: user_profile.yaml → domains.immigration.attorney_domain
+  immigration_attorney_domain: ""
+    # example: "fragomen.com"
+
+  # Healthcare provider domains beyond the universal ones
+  # Source: user_profile.yaml → domains.health.providers
+  health_provider_domains: []
+    # - "example-health.org"
+    # - "example-medical.com"

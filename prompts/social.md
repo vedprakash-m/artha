@@ -16,8 +16,8 @@ Track relationships — birthdays, cultural occasions, reconnect opportunities,
 and greeting actions. Generate action proposals for occasion-appropriate greetings
 (WhatsApp messages, email greetings, visual cards via Gemini Imagen).
 
-The Mishra family maintains close ties with family in India and friends in the
-US. South Asian cultural occasions (Diwali, Holi, Navratri, Eid, Raksha Bandhan)
+The family maintains close ties with relatives and friends near and far.
+Cultural occasions relevant to the family's background (defined in §1)
 are first-class events — no less important than Western holidays.
 
 ---
@@ -56,7 +56,7 @@ Check `config/occasions.md` for upcoming cultural occasions:
 
 **Occasion-triggered visual generation:**
 ```
-bash scripts/safe_cli.sh gemini -p "Generate a [occasion] greeting card with traditional [motif] elements. High quality, vibrant colors, warm tone. Save as PNG."
+python scripts/safe_cli.py gemini -p "Generate a [occasion] greeting card with traditional [motif] elements. High quality, vibrant colors, warm tone. Save as PNG."
 ```
 (No personal data in Gemini prompt — descriptive only. No PII wrapper needed per TS §8.7.)
 

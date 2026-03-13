@@ -20,7 +20,7 @@ During catch-up, scan all processed emails for goal-relevant signals:
 - Finance goal (e.g., "save $X/month"): bill payment confirmations, payroll deposits → update savings estimate
 - Health goal (e.g., "complete annual physicals"): appointment confirmation → mark action done
 - Immigration goal (e.g., "get Green Card"): case status update → note milestone
-- Kids goal (e.g., "Parth SAT score X"): test result emails → update progress
+- Kids goal (e.g., "[child] test score target"): test result emails → update progress
 - Home goal (e.g., "pay off mortgage early"): mortgage statements → update principal
 
 ## Alert Thresholds

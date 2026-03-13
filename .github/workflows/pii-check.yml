@@ -1,0 +1,72 @@
+name: PII Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  pii-check:
+    name: Scan staged files for PII
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so we can diff against base branch
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Artha scripts (stdlib-only, no extra deps needed for pii_guard)
+        run: echo "No install needed — pii_guard.py uses stdlib only"
+
+      - name: Determine files to scan
+        id: changed_files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed_files.txt
+          else
+            git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt || \
+              git ls-files --others --cached > /tmp/changed_files.txt
+          fi
+          echo "Files to scan:"
+          cat /tmp/changed_files.txt
+
+      - name: Run PII guard on changed files
+        run: |
+          FAIL=0
+          while IFS= read -r file; do
+            # Skip binary files, encrypted .age files, token files, and .gitignored patterns
+            case "$file" in
+              *.age|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff*|*.ttf|*.eot) continue ;;
+              *token*.json|*-token.json|*creds*.json) continue ;;
+              .venv/*|node_modules/*|__pycache__/*) continue ;;
+            esac
+
+            if [ ! -f "$file" ]; then
+              continue
+            fi
+
+            echo "Scanning: $file"
+            if ! python scripts/pii_guard.py scan < "$file"; then
+              echo "::error file=$file::PII detected in $file"
+              FAIL=1
+            fi
+          done < /tmp/changed_files.txt
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo ""
+            echo "PII CHECK FAILED — one or more files contain PII patterns."
+            echo "Run: python scripts/pii_guard.py filter < <file> | diff <file> -"
+            echo "to see what will be redacted, then update the file before committing."
+            exit 1
+          fi
+          echo "PII check passed."
+
+      - name: Verify demo fixtures contain no real PII
+        run: python scripts/demo_catchup.py --verify

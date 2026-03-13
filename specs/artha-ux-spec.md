@@ -784,7 +784,7 @@ User: "What's our total insurance premium?"
 Artha: I don't have insurance policy details yet.
        To set this up: provide carrier names, policy numbers,
        and premium amounts — or forward a recent premium
-       statement to mi.vedprakash@gmail.com and I'll extract
+       statement to your configured Gmail address and I'll extract
        the details on next catch-up.
 ```
 

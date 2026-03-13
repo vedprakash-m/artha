@@ -22,7 +22,7 @@ and health-related actions for all family members.
 - `*@anthem.com`, `*@premera.com`, `*@regence.com`, `*@kaiserpermanente.org`
 
 ## Extraction Rules
-1. **Person**: who is this for? (Ved, Archana, Parth, Trisha)
+1. **Person**: who is this for? (primary user, spouse, or which child — as defined in §1)
 2. **Type**: appointment / prescription / lab result / claim / insurance / FSA
 3. **Date/time** (for appointments) or refill due date (for prescriptions)
 4. **Provider/pharmacy** (first name + last initial only — no full last name in state)
@@ -69,3 +69,73 @@ Omit if nothing actionable.
 - Health information is sensitive — state/health.md is encrypted
 - FSA has use-it-or-lose-it deadline; alert in Q4
 - All four family members have health events; track separately
+
+---
+
+## Phase 2B Expansions
+
+### EOB Monitor (F6.4)
+For each Explanation of Benefits received:
+1. Extract: service date, provider, amount billed, insurance adjustment, patient responsibility
+2. Flag discrepancies: if patient responsibility is unexpected (>$200 for routine visit or >$500 for specialist)
+3. Track deductible progress: update `state/health.md → deductible_progress` section
+4. Alert if out-of-pocket max is >70% reached (surface before Q4 heavy use)
+5. Store format: `EOB-YYYY-MM-DD-[person]-[provider]: $[billed] → $[patient_owes]`
+
+Schema for state/health.md:
+```yaml
+insurance:
+  plan_name: "[plan name]"
+  individual_deductible: {annual: XXXX, used: XXXX, remaining: XXXX}
+  family_deductible: {annual: XXXX, used: XXXX, remaining: XXXX}
+  out_of_pocket_max: {individual: XXXX, family: XXXX, used: XXXX}
+  eob_log:
+    - date: YYYY-MM-DD
+      person: [person]
+      provider: "[provider first + last initial]"
+      billed: XXXX
+      adjustment: XXXX
+      patient_owes: XXXX
+      status: paid|pending|disputed
+```
+
+### Open Enrollment Decision Support (F6.7)
+Trigger: any email containing "open enrollment", "benefits election", or similar during Oct–Dec.
+1. Extract enrollment window dates
+2. Surface comparison prompt: current plan vs. offered plans
+3. Check HSA/FSA contribution changes suggested
+4. Alert if enrollment deadline is ≤7 days
+5. Cross-reference with finance.md for budget impact
+
+### Employer Benefits Inventory (F6.8)
+Maintain in `state/health.md → employer_benefits`:
+```yaml
+employer_benefits:
+  medical:
+    plan: "[plan name]"
+    employee_premium_monthly: XXXX
+    employer_contributes: XXXX
+    hsa_eligible: true|false
+  dental:
+    plan: "[plan name]"
+    annual_max: XXXX
+    orthodontia_lifetime_max: XXXX  # important for children with orthodontia
+  vision:
+    plan: "[plan name]"
+    exam_frequency: "annual"
+    allowance_frames: XXXX
+  life_insurance:
+    coverage: XXXX
+    employee_paid: true|false
+  fsa_hsa:
+    type: FSA|HSA
+    annual_limit: XXXX
+    employer_contribution: XXXX
+    balance: XXXX
+    deadline: YYYY-MM-DD
+  supplemental:
+    - name: "[benefit name]"
+      monthly_cost: XXXX
+      notes: "[brief description]"
+```
+Update when benefits confirmation emails arrive. Alert in October for enrollment review.

@@ -17,7 +17,7 @@ and Obsidian vault signal (if accessible). Connect learning activity to goal
 metrics. Surface when the monthly learning goal is at risk. Prevent newsletter
 content from becoming noise.
 
-This domain does NOT track Parth's or Trisha's school learning — that belongs in
+This domain does NOT track the children's school learning — that belongs in
 `kids.md`. This domain is Ved's personal growth only.
 
 ---

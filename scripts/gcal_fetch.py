@@ -21,31 +21,9 @@ Ref: TS §3.2, T-1A.3.3
 
 from __future__ import annotations
 
-import sys, os as _os
-_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _os.name == "nt":
-    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
-    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
-else:
-    # Check project-relative .venv first (symlink on Mac → ~/.artha-venvs/.venv; real dir pre-move)
-    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
-    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
-    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
-    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
-    # Auto-create venv from requirements.txt if not found (e.g. first run in Cowork VM)
-    if not _os.path.exists(_VENV_PY):
-        import subprocess as _sp
-        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
-        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
-        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
-                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
-        _VENV_PY = _local_venv + "/bin/python"
-        _VENV_PREFIX = _os.path.realpath(_local_venv)
-if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
-    if _os.name == "nt":
-        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
-    else:
-        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+import sys
+# Ensure we run inside the Artha venv. Ref: standardization.md §7.3
+from _bootstrap import reexec_in_venv; reexec_in_venv()
 
 import argparse
 import json
@@ -188,11 +166,12 @@ def fetch_events(
         list of parsed event dicts, sorted by start time
     """
     if calendars is None:
-        calendars = [
-            "primary",
-            "family11404897395673522332@group.calendar.google.com",
-            "en.usa#holiday@group.v.calendar.google.com",
-        ]
+        try:
+            from profile_loader import get as _pget
+            _ids = _pget("integrations.google_calendar.calendar_ids")
+            calendars = _ids if isinstance(_ids, list) else ([_ids] if _ids else ["primary"])
+        except Exception:
+            calendars = ["primary"]
 
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
     if scripts_dir not in sys.path:
@@ -329,10 +308,28 @@ def main() -> None:
         "--to", dest="to_date", type=str,
         help='End date/datetime, e.g. "2026-03-14" or "2026-03-14T23:59:59"',
     )
+    try:
+        from profile_loader import get as _pget
+        _cal_ids = _pget("integrations.google_calendar.calendar_ids")
+        if isinstance(_cal_ids, list):
+            _cal_default = ",".join(_cal_ids)
+        elif isinstance(_cal_ids, dict):
+            # Flatten dictionary (handles primary/additional/holidays structure)
+            _ids = []
+            for val in _cal_ids.values():
+                if isinstance(val, list):
+                    _ids.extend(val)
+                elif isinstance(val, str):
+                    _ids.append(val)
+            _cal_default = ",".join(_ids)
+        else:
+            _cal_default = _cal_ids or "primary"
+    except Exception:
+        _cal_default = "primary"
     parser.add_argument(
         "--calendars", type=str,
-        default="primary,family11404897395673522332@group.calendar.google.com,en.usa#holiday@group.v.calendar.google.com",
-        help="Comma-separated calendar IDs (default: primary + Mishra family + US holidays)",
+        default=_cal_default,
+        help="Comma-separated calendar IDs (default: from user_profile.yaml or 'primary')",
     )
     parser.add_argument(
         "--max", type=int, default=250, dest="max_results",

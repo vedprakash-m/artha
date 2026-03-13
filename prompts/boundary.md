@@ -49,7 +49,7 @@ personal time.
 3. Multi-message work threads started on weekends
 
 ### Family Time Signals (positive detection)
-1. Calendar events tagged with family members (Archana, Parth, Trisha)
+1. Calendar events tagged with family members (spouse, children — as defined in §1)
 2. Events on personal calendar outside work hours (not work-related)
 3. Estimated from calendar blocks ≥ 1 hour involving family
 

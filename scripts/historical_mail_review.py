@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 # Date ranges for each half-year period
 # ---------------------------------------------------------------------------
 PERIODS = {
+    "2026-H1": ("2026-01-01T00:00:00-08:00", "2026-07-01T00:00:00-08:00"),
     "2025-H1": ("2025-01-01T00:00:00-08:00", "2025-07-01T00:00:00-08:00"),
     "2025-H2": ("2025-07-01T00:00:00-08:00", "2026-01-01T00:00:00-08:00"),
     "2024-H1": ("2024-01-01T00:00:00-08:00", "2024-07-01T00:00:00-08:00"),
@@ -45,6 +46,40 @@ PERIODS = {
     "2022-H2": ("2022-07-01T00:00:00-08:00", "2023-01-01T00:00:00-08:00"),
     "2021-H1": ("2021-01-01T00:00:00-08:00", "2021-07-01T00:00:00-08:00"),
     "2021-H2": ("2021-07-01T00:00:00-08:00", "2022-01-01T00:00:00-08:00"),
+    "2020-H1": ("2020-01-01T00:00:00-08:00", "2020-07-01T00:00:00-08:00"),
+    "2020-H2": ("2020-07-01T00:00:00-08:00", "2021-01-01T00:00:00-08:00"),
+    "2019-H1": ("2019-01-01T00:00:00-08:00", "2019-07-01T00:00:00-08:00"),
+    "2019-H2": ("2019-07-01T00:00:00-08:00", "2020-01-01T00:00:00-08:00"),
+    "2018-H1": ("2018-01-01T00:00:00-08:00", "2018-07-01T00:00:00-08:00"),
+    "2018-H2": ("2018-07-01T00:00:00-08:00", "2019-01-01T00:00:00-08:00"),
+    "2017-H1": ("2017-01-01T00:00:00-08:00", "2017-07-01T00:00:00-08:00"),
+    "2017-H2": ("2017-07-01T00:00:00-08:00", "2018-01-01T00:00:00-08:00"),
+    "2016-H1": ("2016-01-01T00:00:00-08:00", "2016-07-01T00:00:00-08:00"),
+    "2016-H2": ("2016-07-01T00:00:00-08:00", "2017-01-01T00:00:00-08:00"),
+    "2015-H1": ("2015-01-01T00:00:00-08:00", "2015-07-01T00:00:00-08:00"),
+    "2015-H2": ("2015-07-01T00:00:00-08:00", "2016-01-01T00:00:00-08:00"),
+    "2014-H1": ("2014-01-01T00:00:00-08:00", "2014-07-01T00:00:00-08:00"),
+    "2014-H2": ("2014-07-01T00:00:00-08:00", "2015-01-01T00:00:00-08:00"),
+    "2013-H1": ("2013-01-01T00:00:00-08:00", "2013-07-01T00:00:00-08:00"),
+    "2013-H2": ("2013-07-01T00:00:00-08:00", "2014-01-01T00:00:00-08:00"),
+    "2012-H1": ("2012-01-01T00:00:00-08:00", "2012-07-01T00:00:00-08:00"),
+    "2012-H2": ("2012-07-01T00:00:00-08:00", "2013-01-01T00:00:00-08:00"),
+    "2011-H1": ("2011-01-01T00:00:00-08:00", "2011-07-01T00:00:00-08:00"),
+    "2011-H2": ("2011-07-01T00:00:00-08:00", "2012-01-01T00:00:00-08:00"),
+    "2010-H1": ("2010-01-01T00:00:00-08:00", "2010-07-01T00:00:00-08:00"),
+    "2010-H2": ("2010-07-01T00:00:00-08:00", "2011-01-01T00:00:00-08:00"),
+    "2009-H1": ("2009-01-01T00:00:00-08:00", "2009-07-01T00:00:00-08:00"),
+    "2009-H2": ("2009-07-01T00:00:00-08:00", "2010-01-01T00:00:00-08:00"),
+    "2008-H1": ("2008-01-01T00:00:00-08:00", "2008-07-01T00:00:00-08:00"),
+    "2008-H2": ("2008-07-01T00:00:00-08:00", "2009-01-01T00:00:00-08:00"),
+    "2007-H1": ("2007-01-01T00:00:00-08:00", "2007-07-01T00:00:00-08:00"),
+    "2007-H2": ("2007-07-01T00:00:00-08:00", "2008-01-01T00:00:00-08:00"),
+    "2006-H1": ("2006-01-01T00:00:00-08:00", "2006-07-01T00:00:00-08:00"),
+    "2006-H2": ("2006-07-01T00:00:00-08:00", "2007-01-01T00:00:00-08:00"),
+    "2005-H1": ("2005-01-01T00:00:00-08:00", "2005-07-01T00:00:00-08:00"),
+    "2005-H2": ("2005-07-01T00:00:00-08:00", "2006-01-01T00:00:00-08:00"),
+    "2004-H1": ("2004-01-01T00:00:00-08:00", "2004-07-01T00:00:00-08:00"),
+    "2004-H2": ("2004-07-01T00:00:00-08:00", "2005-01-01T00:00:00-08:00"),
 }
 
 MAX_PER_SOURCE = 2000  # max emails per source per half-year
@@ -73,6 +108,27 @@ def fetch_outlook(since: str, before: str, max_results: int) -> list[dict]:
         return emails
     except Exception as exc:
         print(f"  [WARN] Outlook fetch failed: {exc}", file=sys.stderr)
+        return []
+
+
+def fetch_icloud(since: str, before: str, max_results: int) -> list[dict]:
+    """Fetch iCloud Mail emails for a date range."""
+    try:
+        from setup_icloud_auth import ensure_valid_credentials
+        from icloud_mail_fetch import fetch_emails
+        apple_id, app_pwd = ensure_valid_credentials()
+        # fetch_emails takes a datetime object, not ISO string
+        since_dt = datetime.fromisoformat(since).astimezone(timezone.utc)
+        # Fetch with 2x budget since IMAP SINCE has no upper-bound
+        emails = list(fetch_emails(apple_id, app_pwd, since_dt, max_results=max_results * 2))
+        # Filter upper bound by date_iso in Python
+        emails = [e for e in emails if e.get("date_iso", "") < before]
+        emails = emails[:max_results]
+        for e in emails:
+            e["_source"] = "icloud"
+        return emails
+    except BaseException as exc:
+        print(f"  [WARN] iCloud fetch failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return []
 
 
@@ -266,22 +322,29 @@ def analyze_period(emails: list[dict], period_label: str) -> str:
     return "\n".join(report_lines)
 
 
-def process_period(period_key: str, since: str, before: str, out_dir: str) -> str:
+def process_period(period_key: str, since: str, before: str, out_dir: str, icloud_only: bool = False) -> str:
     """Fetch, save, analyze one half-year period. Returns report text."""
     print(f"\n{'=' * 60}", file=sys.stderr)
-    print(f"  Processing {period_key}: {since} → {before}", file=sys.stderr)
+    mode = "iCloud-only" if icloud_only else "Gmail+Outlook+iCloud"
+    print(f"  Processing {period_key} [{mode}]: {since} → {before}", file=sys.stderr)
     print(f"{'=' * 60}", file=sys.stderr)
 
-    # Fetch from both sources
-    gmail_emails = fetch_gmail(since, before, MAX_PER_SOURCE)
-    outlook_emails = fetch_outlook(since, before, MAX_PER_SOURCE)
-    all_emails = gmail_emails + outlook_emails
+    if icloud_only:
+        gmail_emails = []
+        outlook_emails = []
+        icloud_emails = fetch_icloud(since, before, MAX_PER_SOURCE)
+    else:
+        gmail_emails = fetch_gmail(since, before, MAX_PER_SOURCE)
+        outlook_emails = fetch_outlook(since, before, MAX_PER_SOURCE)
+        icloud_emails = fetch_icloud(since, before, MAX_PER_SOURCE)
+    all_emails = gmail_emails + outlook_emails + icloud_emails
 
-    print(f"  {period_key}: Gmail={len(gmail_emails)}, Outlook={len(outlook_emails)}, Total={len(all_emails)}",
+    print(f"  {period_key}: Gmail={len(gmail_emails)}, Outlook={len(outlook_emails)}, iCloud={len(icloud_emails)}, Total={len(all_emails)}",
           file=sys.stderr)
 
     # Save JSONL
-    jsonl_path = os.path.join(out_dir, f"emails_{period_key}.jsonl")
+    suffix = "-icloud" if icloud_only else ""
+    jsonl_path = os.path.join(out_dir, f"emails_{period_key}{suffix}.jsonl")
     with open(jsonl_path, "w", encoding="utf-8") as f:
         for e in all_emails:
             f.write(json.dumps(e, ensure_ascii=False) + "\n")
@@ -297,18 +360,34 @@ def main():
     parser.add_argument("--year", type=int, help="Year to process (e.g. 2025)")
     parser.add_argument("--half", type=str, choices=["H1", "H2"], help="Half year (H1=Jan-Jun, H2=Jul-Dec)")
     parser.add_argument("--all", action="store_true", help="Process all years 2021-2025")
+    parser.add_argument("--icloud-only", action="store_true",
+                        help="Fetch iCloud only (skip Gmail/Outlook). For --all covers 2019-2025.")
     args = parser.parse_args()
+    icloud_only = args.icloud_only
 
     out_dir = _ARTHA_DIR
 
     if args.all:
-        periods_to_process = [
-            "2025-H2", "2025-H1",
-            "2024-H2", "2024-H1",
-            "2023-H2", "2023-H1",
-            "2022-H2", "2022-H1",
-            "2021-H2", "2021-H1",
-        ]
+        if icloud_only:
+            # iCloud catch-up: 2026 H1 down to 2019
+            periods_to_process = [
+                "2026-H1",
+                "2025-H2", "2025-H1",
+                "2024-H2", "2024-H1",
+                "2023-H2", "2023-H1",
+                "2022-H2", "2022-H1",
+                "2021-H2", "2021-H1",
+                "2020-H2", "2020-H1",
+                "2019-H2", "2019-H1",
+            ]
+        else:
+            periods_to_process = [
+                "2025-H2", "2025-H1",
+                "2024-H2", "2024-H1",
+                "2023-H2", "2023-H1",
+                "2022-H2", "2022-H1",
+                "2021-H2", "2021-H1",
+            ]
     elif args.year:
         if args.half:
             periods_to_process = [f"{args.year}-{args.half}"]
@@ -321,11 +400,12 @@ def main():
     full_report = []
     for pkey in periods_to_process:
         since, before = PERIODS[pkey]
-        report = process_period(pkey, since, before, out_dir)
+        report = process_period(pkey, since, before, out_dir, icloud_only=icloud_only)
         full_report.append(report)
 
         # Write incremental report per period
-        period_report_path = os.path.join(out_dir, f"review_{pkey}.txt")
+        suffix = "-icloud" if icloud_only else ""
+        period_report_path = os.path.join(out_dir, f"review_{pkey}{suffix}.txt")
         with open(period_report_path, "w", encoding="utf-8") as f:
             f.write(report)
         print(f"  Report written: {period_report_path}", file=sys.stderr)

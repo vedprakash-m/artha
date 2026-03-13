@@ -144,6 +144,38 @@ Report in briefing if total > $150/month or if increased > 10% vs prior month.
 
 ---
 
+## Phase 2B: Subscription ROI Scoring (F12.6)
+
+For each subscription in `state/digital.md`, compute ROI score each month:
+```
+roi_score = (usage_frequency × value_rating) / monthly_cost
+  usage_frequency: 4 = daily | 3 = weekly | 2 = monthly | 1 = rare | 0 = unused
+  value_rating:    5 = essential/unique | 4 = very useful | 3 = nice-to-have | 2 = marginal | 1 = negligible
+  monthly_cost:    actual USD (annual subscriptions divided by 12)
+```
+
+**ROI thresholds:**
+- `roi_score ≥ 3.0` → Keep (Good ROI)
+- `roi_score 1.5–2.9` → Monitor (Marginal ROI)
+- `roi_score < 1.5` → Flag for cancellation review
+- `usage_frequency = 0` → Zombie → immediate flag regardless of ROI
+
+**Monthly ROI review** (trigger: 1st of month):
+Surface any subscriptions with `roi_score < 1.5` or `usage_frequency = 0`:
+```
+### Digital — Monthly Subscription Review
+  ⚠️ Low ROI: [service] ($[cost]/mo) — ROI: [score] — consider cancelling
+  🚫 Zombie: [service] ($[cost]/mo) — last used: [date or "never"]
+  Total spend: $[X]/mo ($[Y]/yr) across [N] active subscriptions
+```
+
+**Usage tracking rules:**
+- "Used" = login confirmation, activity email, or app receipt within 30 days
+- Artha cannot directly monitor usage — infer from emails and ask user quarterly
+- Quarterly usage prompt (Q2 and Q4): "Quick check: are you still using [list of monitored subs]?"
+
+---
+
 ## PII Allowlist
 
 ```

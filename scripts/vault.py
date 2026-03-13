@@ -87,6 +87,7 @@ SENSITIVE_FILES = [
     "health",
     "audit",
     "vehicle",
+    "skills_cache",
 ]
 
 STALE_THRESHOLD = 1800  # 30 minutes in seconds
