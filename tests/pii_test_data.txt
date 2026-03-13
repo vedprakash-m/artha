@@ -1,0 +1,115 @@
+# Artha PII Test Data — SYNTHETIC ONLY
+# Do NOT use real PII values. All values below are publicly documented test/synthetic numbers.
+# Ref: T-1A.1.7, TS §8.6
+
+# ═══════════════════════════════════════════════════════
+# SECTION A: Should be DETECTED and BLOCKED/FILTERED
+# ═══════════════════════════════════════════════════════
+
+## Test 1: SSN with dashes
+Your Social Security Number is 123-45-6789 on file.
+
+## Test 2: SSN context
+SSN: 987654321 is associated with this account.
+
+## Test 3: Visa credit card
+Please charge card 4111-1111-1111-1111 for the full amount.
+
+## Test 4: Mastercard
+Mastercard ending in 5500 0000 0000 0004 was declined.
+
+## Test 5: American Express
+AmEx card 3714 496353 98431 approved.
+
+## Test 6: Discover card
+Discover 6011 1111 1111 1117 statement ready.
+
+## Test 7: Bank routing number
+Please use ABA routing number: 021000021 for the transfer.
+
+## Test 8: Bank account number
+Account number: 123456789012 associated with your checking account.
+
+## Test 9: US Passport number
+Passport number: A12345678 expires in 2028.
+
+## Test 10: USCIS A-number (Alien Registration)
+Your Alien Registration Number A123456789 is referenced in your petition.
+
+## Test 11: ITIN
+ITIN 912-78-1234 is on file with the IRS.
+
+## Test 12: Washington State Driver's License
+License number WDLMISH123AB was verified.
+
+## Test 13: SSN in different format
+My social security is 111-22-3333, please redact.
+
+## Test 14: Credit card no spaces/dashes
+Card number 4532015112830366 was used for this purchase.
+
+
+# ═══════════════════════════════════════════════════════
+# SECTION B: Should PASS THROUGH (allowlisted patterns)
+# ═══════════════════════════════════════════════════════
+
+## Allowlist Test 1: USCIS receipt number IOE format
+Immigration receipt number: IOE0915220715
+
+## Allowlist Test 2: USCIS receipt number SRC format
+Case SRC2190050001 has been received.
+
+## Allowlist Test 3: USCIS receipt number LIN format
+Receipt LIN2190050001 is pending.
+
+## Allowlist Test 4: Amazon order number
+Order 112-3456789-1234567 has shipped.
+
+## Allowlist Test 5: Masked account number (already redacted)
+Your account ****1234 was charged $47.99.
+
+## Allowlist Test 6: USCIS EAC format
+Receipt: EAC2190050001 approved.
+
+## Allowlist Test 7: USCIS WAC format
+Case WAC2190050001 is under review.
+
+
+# ═══════════════════════════════════════════════════════
+# SECTION C: Mixed — PII and allowlisted content together
+# ═══════════════════════════════════════════════════════
+
+## Mixed Test 1: A-number AND USCIS receipt in same email
+Your USCIS case SRC2190050001 for Alien Number A123456789 is pending review.
+# Expected: A123456789 → filtered, SRC2190050001 → preserved
+
+## Mixed Test 2: SSN in email with Amazon order
+Regarding order 112-3456789-1234567 — we need to verify your SSN 111-22-3333.
+# Expected: SSN filtered, order number preserved
+
+## Mixed Test 3: Regular financial email (no PII)
+Your Fidelity statement for March 2026 is available.
+Account balance: $142,387.23
+Period: February 1 – February 28, 2026
+# Expected: No PII detected, pass through cleanly
+
+## Mixed Test 4: Masked CC data (already safe)
+Your purchase of $47.99 was charged to Visa ****5678.
+# Expected: No real CC number, pass through
+
+
+# ═══════════════════════════════════════════════════════
+# SECTION D: Edge cases
+# ═══════════════════════════════════════════════════════
+
+## Edge 1: Phone number (NOT in PII list — should pass through)
+Call us at (206) 555-0100 for support.
+
+## Edge 2: ZIP code 9-digit (NOT routing — should pass through)
+Please ship to ZIP code 980520000.
+
+## Edge 3: Date in YYYYMMDD format (NOT a number PII)
+Priority date: 20190415 for EB-2 India category.
+
+## Edge 4: EIN (employer ID — NOT redacted by pii_guard.sh, handled by Claude §8.2)
+Federal EIN: 91-1144442 (Microsoft Corporation)

@@ -23,31 +23,9 @@ Ref: TS §3.1, T-1A.3.2
 
 from __future__ import annotations
 
-import sys, os as _os
-_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _os.name == "nt":
-    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
-    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
-else:
-    # Check project-relative .venv first (symlink on Mac → ~/.artha-venvs/.venv; real dir pre-move)
-    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
-    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
-    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
-    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
-    # Auto-create venv from requirements.txt if not found (e.g. first run in Cowork VM)
-    if not _os.path.exists(_VENV_PY):
-        import subprocess as _sp
-        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
-        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
-        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
-                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
-        _VENV_PY = _local_venv + "/bin/python"
-        _VENV_PREFIX = _os.path.realpath(_local_venv)
-if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
-    if _os.name == "nt":
-        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
-    else:
-        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+import sys
+# Ensure we run inside the Artha venv. Ref: standardization.md §7.3
+from _bootstrap import reexec_in_venv; reexec_in_venv()
 
 import argparse
 import base64
@@ -460,10 +438,16 @@ def fetch_emails(
 
 def run_health_check() -> None:
     """Test authentication and connectivity. Exit 0 on success, 1 on failure."""
+    import sys
+    import os
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+        
     try:
         from google_auth import build_service, check_stored_credentials
     except ImportError:
-        print("ERROR: google_auth.py not found. Run from ~/OneDrive/Artha/.")
+        print(f"ERROR: google_auth.py not found in {sys.path}. Run from ~/OneDrive/Artha/.")
         sys.exit(1)
 
     print("Gmail Health Check")

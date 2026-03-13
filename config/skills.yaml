@@ -1,0 +1,28 @@
+skills:
+  uscis_status:
+    enabled: true
+    priority: P0
+    cadence: every_run
+  # property_tax is the generalized skill (reads provider URL from user_profile.yaml).
+  # king_county_tax is a backward-compatibility alias for the same skill.
+  property_tax:
+    enabled: false  # Enable for new installations; king_county_tax entry below covers existing users
+    priority: P1
+    cadence: daily
+  king_county_tax:
+    enabled: true
+    priority: P1
+    cadence: daily
+  visa_bulletin:
+    enabled: true
+    priority: P0
+    cadence: weekly
+  noaa_weather:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    trigger_keywords: ["hike", "summit", "trail", "peak"]
+  nhtsa_recalls:
+    enabled: true
+    priority: P1
+    cadence: weekly

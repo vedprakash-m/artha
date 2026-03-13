@@ -11,7 +11,7 @@ Strategy:
 
 Usage:
   python scripts/parse_contacts.py \\
-    --vcf "/Users/ved/Downloads/contacts/[Speaker Name] and 1,911 others.vcf" \\
+    --vcf ~/Downloads/contacts/my_contacts.vcf \\
     --warm-days 365 \\
     --output /tmp/warm_contacts.json
 
@@ -36,7 +36,7 @@ APPLE_EPOCH = 978307200
 
 WA_CHAT_DB = Path.home() / "Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ChatStorage.sqlite"
 WA_CONTACTS_DB = Path.home() / "Library/Group Containers/group.net.whatsapp.WhatsApp.shared/ContactsV2.sqlite"
-VCF_DEFAULT = Path.home() / "Downloads/contacts/[Speaker Name] and 1,911 others.vcf"
+VCF_DEFAULT = Path.home() / "Downloads/contacts/my_contacts.vcf"
 
 
 # ---------------------------------------------------------------------------
@@ -378,10 +378,10 @@ def generate_markdown_report(warm_matched: list, wa_only: list, groups: list, wa
         "### Family (fill in manually from top of report)",
         "| Name | Relationship | Phone | Email | Notes |",
         "|---|---|---|---|---|",
-        "| Vedprakash (Ved) | Self | +1 ([REDACTED-phone] | [REDACTED-email] | |",
-        "| Spouse | Spouse | +1 ([REDACTED-phone] | | |",
-        "| Child1 | Son (17) | +1 ([REDACTED-phone] | | School: Tesla STEM HS |",
-        "| Child2 | Daughter (12) | +1 ([REDACTED-phone] | | |",
+        "| [primary user] | Self | [phone] | [email] | |",
+        "| [spouse] | Spouse | [phone] | | |",
+        "| [child 1] | Child | [phone] | | |",
+        "| [child 2] | Child | [phone] | | |",
         "",
     ]
 

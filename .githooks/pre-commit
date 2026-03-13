@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""
+pre-commit — Artha PII guard pre-commit hook
+============================================
+Scans staged files for PII before allowing a commit.
+
+Install:
+  git config core.hooksPath .githooks
+
+Or copy to .git/hooks/pre-commit (not recommended — .githooks/ is version-controlled).
+
+Ref: standardization.md §8.2, T-4.x
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ARTHA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PII_GUARD = ARTHA_DIR / "scripts" / "pii_guard.py"
+
+
+def get_staged_files() -> list[Path]:
+    """Return list of staged file paths (added/modified, not deleted)."""
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        capture_output=True, text=True, cwd=str(ARTHA_DIR),
+    )
+    if result.returncode != 0:
+        return []
+    return [ARTHA_DIR / p.strip() for p in result.stdout.splitlines() if p.strip()]
+
+
+def scan_file(path: Path) -> tuple[bool, str]:
+    """
+    Scan a file for PII using pii_guard.py.
+    Returns (pii_found, message).
+    """
+    if not path.exists():
+        return False, ""
+
+    # Skip binary files (images, compiled files, age-encrypted blobs, etc.)
+    skip_suffixes = {".age", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".pdf",
+                     ".zip", ".tar", ".gz", ".db", ".sqlite", ".bin", ".exe"}
+    if path.suffix.lower() in skip_suffixes:
+        return False, ""
+
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False, ""
+
+    result = subprocess.run(
+        [sys.executable, str(PII_GUARD), "scan"],
+        input=content, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+
+    pii_found = result.returncode != 0
+    pii_types = ""
+    for line in (result.stderr or "").splitlines():
+        if line.startswith("PII_FOUND:"):
+            pii_types = line[len("PII_FOUND:"):].strip()
+
+    if pii_found:
+        return True, pii_types or "unknown"
+    return False, ""
+
+
+def main() -> int:
+    if not PII_GUARD.exists():
+        print("⚠  pre-commit: pii_guard.py not found — PII check skipped")
+        return 0  # Don't block commit if guard is missing
+
+    staged = get_staged_files()
+    if not staged:
+        return 0
+
+    violations: list[tuple[Path, str]] = []
+    for path in staged:
+        found, pii_types = scan_file(path)
+        if found:
+            violations.append((path, pii_types))
+
+    if violations:
+        print("⛔  COMMIT BLOCKED — PII detected in staged files:\n")
+        for path, pii_types in violations:
+            rel = path.relative_to(ARTHA_DIR)
+            print(f"   {rel}  [{pii_types}]")
+        print()
+        print("   Review the files above and remove or redact PII before committing.")
+        print("   To bypass (dangerous — for emergency use only):")
+        print("     git commit --no-verify")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

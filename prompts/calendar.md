@@ -27,7 +27,7 @@ During catch-up Step 3 (Fetch), always call:
 
 🟡 **STANDARD** (Today section + This Week in summary):
 - All events in next 7 days
-- School events for Child1 and Child2
+- School events for children (as defined in §1)
 - Recurring events that parents need to manage (pickup, dropoff)
 
 ## Cross-Domain Awareness

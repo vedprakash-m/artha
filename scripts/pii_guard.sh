@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED: This script is superseded by scripts/pii_guard.py.
+# It will be removed in Artha v5.1. Ref: standardization.md §7.6.4
+>&2 echo "WARNING: pii_guard.sh is deprecated. Use: python scripts/pii_guard.py"
+
 # pii_guard.sh — Artha pre-persist PII filter (Layer 1 of defense-in-depth)
 #
 # Usage:

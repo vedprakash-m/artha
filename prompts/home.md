@@ -59,6 +59,105 @@ Omit if nothing active or upcoming.
 ## Home Value Tracking (quarterly)
 When home value update is due (>90 days since last check):
 ```
-bash scripts/safe_cli.sh gemini "What is the current Zillow Zestimate for [address] [city] WA? Also provide Redfin estimate."
+python scripts/safe_cli.py gemini "What is the current Zillow Zestimate for [address] [city] [state]? Also provide Redfin estimate."
 ```
 Update home.md with estimate + date. Note in finance.md net worth section.
+
+---
+
+## Phase 2B Expansions
+
+### Service Provider Rolodex (F7.7)
+Maintain in `state/home.md → service_providers`:
+```yaml
+service_providers:
+  - role: "[plumber, electrician, HVAC, etc]"
+    name: "[business or person name]"
+    phone: "[CONTACT-ON-FILE]"
+    last_used: YYYY-MM-DD
+    rating: 1-5
+    notes: ""
+```
+Routing: when a "service complete" or "estimate" email arrives from a home service provider,
+update or add entry. Surface relevant provider when home-related alerts arise.
+
+### Waste & Recycling Calendar (F7.9)
+Track in `state/home.md → waste_schedule`:
+```yaml
+waste_schedule:
+  regular_trash: "[day of week, e.g., Tuesday]"
+  recycling: "[day and frequency, e.g., Tuesday biweekly (odd weeks)]"
+  yard_waste: "[day and season, e.g., Tuesday Apr-Nov]"
+  bulk_item_pickup: "[month or as-scheduled]"
+  next_recycling_pickup: YYYY-MM-DD  # updated each catch-up
+```
+Surface as reminder in briefing the day before pickup (from calendar event or computed schedule).
+
+### HOA / Community Dues (F7.10)
+```yaml
+hoa:
+  monthly_dues: XXXX
+  due_date: "[day of month]"
+  auto_pay: true|false
+  contact_email: "[CONTACT-ON-FILE]"
+  next_meeting: YYYY-MM-DD
+  outstanding_balance: 0
+```
+Alert: HOA dues overdue or special assessment notice received.
+
+### Property Tax Tracker (F7.12)
+```yaml
+property_tax:
+  annual_amount: XXXX
+  county: "[King County]"
+  first_half_due: YYYY-04-30
+  second_half_due: YYYY-10-31
+  first_half_paid: false
+  second_half_paid: false
+  auto_pay: false
+  notes: ""
+```
+🟠 URGENT: Property tax due ≤14 days and `paid: false`.
+
+### Lawn & Landscaping (F7.11)
+```yaml
+landscaping:
+  service_provider: "[name]"
+  schedule: "[weekly Apr–Oct, biweekly Nov–Mar]"
+  next_service: YYYY-MM-DD
+  monthly_cost: XXXX
+  seasonal_tasks:
+    - task: "Spring cleanup"
+      target_month: 3
+      scheduled: false
+    - task: "Fall leaf cleanup"
+      target_month: 10
+      scheduled: false
+    - task: "Irrigation winterization"
+      target_month: 10
+      scheduled: false
+```
+
+### Emergency Preparedness (F7.13)
+Track in `state/home.md → emergency_kit`:
+```yaml
+emergency_kit:
+  last_reviewed: YYYY-MM-DD
+  next_review_due: YYYY-MM-DD  # annual review
+  items:
+    - name: "Water (1 gallon/person/day × 14 days)"
+      status: stocked|needs_refresh|missing
+    - name: "Food (14-day supply)"
+      status: stocked|needs_refresh|missing
+    - name: "First aid kit"
+      status: stocked|needs_refresh|missing
+    - name: "Flashlights + batteries"
+      status: stocked|needs_refresh|missing
+    - name: "Emergency radio"
+      status: stocked|needs_refresh|missing
+    - name: "Important documents copy"
+      status: stocked|needs_refresh|missing
+    - name: "Cash ($200)"
+      status: stocked|needs_refresh|missing
+```
+Alert: `next_review_due` passed without update → 🟡 Standard "Emergency kit overdue for annual review."

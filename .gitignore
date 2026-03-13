@@ -1,0 +1,58 @@
+# ─── User data (NEVER committed) ─────────────────────────────────────────────
+config/user_profile.yaml          # Personal profile — created by /bootstrap
+config/artha_config.yaml          # To Do list IDs — generated at setup
+config/contacts.md.age            # Encrypted contacts
+config/contacts.md                # Decrypted contacts (transient)
+config/occasions.md               # User's personal occasions
+config/routing.yaml               # User-specific sender→domain routing
+config/Artha.identity.md          # Generated §1 Identity block — personal data
+
+# ─── State files (all user-generated) ────────────────────────────────────────
+state/*.md
+state/*.md.age
+!state/.gitkeep
+!state/templates/
+
+# ─── Briefing and summary archives ───────────────────────────────────────────
+briefings/
+summaries/
+
+# ─── Email archives and raw review files ─────────────────────────────────────
+emails_*.jsonl
+review_*.txt
+*.jsonl
+gmail_*.jsonl
+icloud_*.jsonl
+outlook_*.jsonl
+*_errors.txt
+*_err.txt
+
+# ─── Token and credential files ──────────────────────────────────────────────
+.tokens/
+*.token.json
+~/.artha-tokens/
+
+# ─── Virtual environments ────────────────────────────────────────────────────
+.venv/
+.venv-win/
+
+# ─── Python bytecode ─────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+
+# ─── OneDrive artifacts ──────────────────────────────────────────────────────
+*conflicted*
+.DS_Store
+
+# ─── Archive and working directories ─────────────────────────────────────────
+.archive/
+.claude/
+tmp/
+
+# ─── Personal one-time analysis scripts (not for distribution) ───────────────
+scripts/deep_mail_review.py
+scripts/deep_mail_review2.py
+scripts/historical_mail_review.py
+
+# ─── Decrypted state transient files ─────────────────────────────────────────
+.artha-decrypted
