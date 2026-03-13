@@ -1,0 +1,41 @@
+---
+name: south-asian-american
+description: |
+  South Asian family with strong academic emphasis. Immigration is highest stakes.
+  Active ties to extended family in India/South Asia. Religious and cultural festivals
+  are first-class calendar events. Family obligations are real scheduling constraints.
+domain_priorities:
+  immigration: P0
+  kids: P0
+  finance: P1
+  health: P1
+occasions:
+  - name: Diwali
+    type: cultural
+    calendar: hindu-lunar
+    greeting: true
+  - name: Holi
+    type: cultural
+    calendar: hindu-lunar
+    greeting: true
+  - name: Navratri
+    type: cultural
+    calendar: hindu-lunar
+    greeting: true
+  - name: Raksha Bandhan
+    type: cultural
+    calendar: hindu-lunar
+    greeting: true
+  - name: Ganesh Chaturthi
+    type: cultural
+    calendar: hindu-lunar
+    greeting: false
+  - name: Makar Sankranti
+    type: cultural
+    calendar: hindu-lunar
+    greeting: false
+traits:
+  academic_emphasis: high
+  extended_family_ties: active
+  immigration_awareness: true
+  dietary_preferences_common: ["vegetarian", "no-beef"]

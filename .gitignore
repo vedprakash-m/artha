@@ -44,15 +44,19 @@ __pycache__/
 *conflicted*
 .DS_Store
 
+# ─── IDE settings ────────────────────────────────────────────────────────────
+.vscode/
+
 # ─── Archive and working directories ─────────────────────────────────────────
 .archive/
 .claude/
 tmp/
 
-# ─── Personal one-time analysis scripts (not for distribution) ───────────────
-scripts/deep_mail_review.py
-scripts/deep_mail_review2.py
-scripts/historical_mail_review.py
+# ─── Spec files (contain personal data in design examples) ───────────────────
+specs/
+
+# ─── Assembled instruction file (contains personal identity) ─────────────────
+config/Artha.md
 
 # ─── Decrypted state transient files ─────────────────────────────────────────
 .artha-decrypted

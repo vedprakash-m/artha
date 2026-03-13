@@ -20,7 +20,7 @@ This is a **passive signal domain** — it does not process inbound emails for
 content. It analyzes the *metadata* (timestamps, senders) of emails sent/received
 outside configured work hours.
 
-**Work hours**: 08:00 – 18:00 America/Los_Angeles (OQ-4). Weekends are always
+**Work hours**: as defined in user_profile.yaml → system.work_hours (OQ-4). Weekends are always
 personal time.
 
 ---

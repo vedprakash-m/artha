@@ -55,5 +55,5 @@ Omit if no travel within 30 days and no loyalty events.
 
 ## Important Context
 - Check immigration.md: if I-485 pending, flag ALL international travel as requiring advance parole review
-- Alaska Airlines is likely primary carrier (PNW)
+- Primary carrier based on user's location and loyalty programs (see user_profile.yaml)
 - Family includes 4 members — track all travelers per booking

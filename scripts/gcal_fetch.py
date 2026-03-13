@@ -32,20 +32,10 @@ import sys
 import time
 from datetime import datetime, timezone
 from typing import Optional
+from lib.retry import with_retry
 
 
-# ---------------------------------------------------------------------------
-# Retry / back-off helper
-# ---------------------------------------------------------------------------
 
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES  = 3
-_BASE_DELAY   = 1.0
-_BACKOFF_MULT = 2.0
-_MAX_DELAY    = 30.0
-
-
-def _with_retry(fn, *, retries: int = _MAX_RETRIES, context: str = ""):
     """
     Call fn() and retry on transient Google API errors (rate-limit / quota / 5xx).
     Raises on the final attempt or on non-retryable errors.
@@ -169,7 +159,15 @@ def fetch_events(
         try:
             from profile_loader import get as _pget
             _ids = _pget("integrations.google_calendar.calendar_ids")
-            calendars = _ids if isinstance(_ids, list) else ([_ids] if _ids else ["primary"])
+            if isinstance(_ids, dict):
+                # Support name→id mapping: {friendly_name: calendar_id, ...}
+                calendars = list(_ids.values()) or ["primary"]
+            elif isinstance(_ids, list):
+                calendars = _ids or ["primary"]
+            elif _ids:
+                calendars = [_ids]
+            else:
+                calendars = ["primary"]
         except Exception:
             calendars = ["primary"]
 
@@ -196,7 +194,7 @@ def fetch_events(
     for cal_id in calendars:
         try:
             # Get calendar display name for labeling events
-            cal_meta = _with_retry(
+            cal_meta = with_retry(
                 lambda: service.calendars().get(calendarId=cal_id).execute(),
                 context=f"calendars.get({cal_id})",
             )
@@ -207,7 +205,7 @@ def fetch_events(
         print(f"[gcal_fetch] Fetching from calendar: '{cal_name}'", file=sys.stderr)
 
         try:
-            response = _with_retry(
+            response = with_retry(
                 lambda: service.events().list(
                     calendarId=cal_id,
                     timeMin=time_min,

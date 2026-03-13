@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "artha"
+version = "5.1.0"
+description = "Personal Intelligence OS — AI-powered life management"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0.1",
+    "keyring>=25.0.0",
+]
+
+[project.optional-dependencies]
+google = [
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.23.0",
+    "google-auth-oauthlib>=1.1.0",
+    "google-auth-httplib2>=0.1.1",
+]
+microsoft = [
+    "msal>=1.28.0",
+    "requests>=2.31.0",
+]
+apple = [
+    "caldav>=1.3.0",
+    "vobject>=0.9.6",
+]
+skills = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+]
+all = ["artha[google,microsoft,apple,skills]"]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-mock>=3.11.0",
+    "pytest-snapshot>=0.9.0",
+]
+
+[project.urls]
+Repository = "https://github.com/user/artha"
+Documentation = "https://github.com/user/artha/tree/main/docs"
+
+[tool.setuptools]
+packages = ["scripts", "scripts.lib", "scripts.skills"]

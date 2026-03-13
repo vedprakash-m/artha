@@ -29,7 +29,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   `user_profile.yaml:integrations.google_calendar.calendar_ids` instead of
   hardcoded personal calendar IDs
 - `scripts/skills/noaa_weather.py` — fallback coordinates changed from
-  hardcoded Sammamish WA (`47.6162, -122.0355`) to neutral `0.0, 0.0`
+  hardcoded personal location to neutral `0.0, 0.0`
 - `scripts/pii_guard.sh` and `scripts/safe_cli.sh` — deprecation banners added;
   Python equivalents are now the canonical versions
 
@@ -76,3 +76,48 @@ deployment — no personal PII in any tracked file.
 
 v4.x was a functional but PII-embedded personal deployment. Not released publicly.
 Migration guide: see `scripts/migrate.py`.
+
+---
+
+## Spec Version History
+
+Detailed per-version changes previously maintained inline in spec headers.
+Relocated here during hardening v5.1 to reduce spec context overhead.
+
+### PRD Versions
+
+- **v4.1** (2026-03): WorkIQ Work Calendar Integration — F8.8–F8.13, employment domain activation
+- **v4.0** (2026-03): Intelligence Amplification — 29 enhancements (goal sprints, Canvas LMS, Apple Health, `/diff`, coaching engine)
+- **v3.9** (2026-02): Supercharge — data integrity guard, dashboard, coaching, bootstrap, pattern detection, consequence forecasting
+- **v3.8** (2026-02): Phase 2A — relationship intelligence, tiered context, decision graphs, digest mode, accuracy pulse
+- **v3.7** (2026-01): Operational robustness — pre-flight gate, open items, To Do sync, email coverage matrix
+- **v3.6** (2026-01): Critical assessment hardening — 18 items from independent review
+- **v3.5** (2025-12): Multi-LLM orchestration, action execution framework
+- **v3.4** (2025-12): Governance & evolution framework
+- **v3.3** (2025-11): Pre-flight PII guardrails, Claude Code capabilities
+- **v3.2** (2025-11): OneDrive sync layer for cross-device state
+- **v3.1** (2025-10): Data sensitivity classification, document repository model
+- **v3.0** (2025-10): Architectural pivot from push daemon to pull model
+- **v2.x** (2025): Household coverage audit, expert reviews, daemon architecture
+
+### Tech Spec Versions
+
+- **v2.2** (2026-03): WorkIQ Calendar MCP, work calendar state schema, parallel fetch
+- **v2.1** (2026-03): Intelligence amplification — Canvas LMS, `/diff`, monthly retrospective, Apple Health
+- **v2.0** (2026-02): Supercharge — data integrity, bootstrap workflow, coaching, email volume scaling
+- **v1.9** (2026-02): Phase 2A — relationship graph, decisions, scenarios, tiered context
+- **v1.8** (2026-01): MS Graph direct integration replacing hub-and-spoke forwarding
+- **v1.7** (2026-01): Pre-flight gate, open items, To Do sync, email coverage
+- **v1.6** (2025-12): Critical assessment hardening, safe_cli, contacts encryption
+- **v1.5** (2025-12): Multi-LLM orchestration, action framework
+- **v1.4** (2025-11): Governance framework
+- **v1.3** (2025-11): PII guardrails, Claude Code capabilities
+- **v1.2** (2025-10): OneDrive sync layer
+
+### UX Spec Versions
+
+- **v1.5** (2026-03): WorkIQ calendar UX, merged view, Teams join actions
+- **v1.4** (2026-03): Intelligence amplification UX — `/diff`, weekend planner, coaching display
+- **v1.3** (2026-02): Supercharge UX — flash briefing, bootstrap interview, dashboard, scorecard
+- **v1.2** (2026-02): Phase 2A — digest mode, relationship pulse, leading indicators
+- **v1.1** (2026-01): Pre-flight gate errors, `/items` command
