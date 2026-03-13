@@ -40,6 +40,8 @@ jobs:
       - name: Run PII guard on changed files
         run: |
           FAIL=0
+          # Files that contain PII patterns by design (regex definitions, test fixtures)
+          EXEMPT="scripts/pii_guard.py tests/unit/test_pii_guard.py tests/pii_test_data.txt .githooks/pre-commit"
           while IFS= read -r file; do
             # Skip binary files, encrypted .age files, token files, and .gitignored patterns
             case "$file" in
@@ -49,6 +51,19 @@ jobs:
             esac
 
             if [ ! -f "$file" ]; then
+              continue
+            fi
+
+            # Skip files that contain PII patterns by design
+            skip=false
+            for exempt in $EXEMPT; do
+              if [ "$file" = "$exempt" ]; then
+                skip=true
+                break
+              fi
+            done
+            if [ "$skip" = true ]; then
+              echo "Skipping (exempt): $file"
               continue
             fi
 
