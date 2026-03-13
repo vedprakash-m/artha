@@ -91,6 +91,46 @@ def _create_venv_and_install() -> None:
         )
 
 
+def _ensure_deps_installed() -> None:
+    """Verify critical project dependencies are importable. If any are missing,
+    run `pip install -r requirements.txt` to repair the venv in-place.
+
+    Called only in 'preflight' mode to avoid slowing down normal script startup.
+    Uses only stdlib (importlib.util + subprocess) — safe to call pre-import.
+    """
+    import importlib.util
+
+    # Minimal check set — these packages cause the most common cascade failures
+    _CHECK_MODULES = ["yaml", "keyring", "bs4", "requests"]
+    missing = [m for m in _CHECK_MODULES if importlib.util.find_spec(m) is None]
+
+    if not missing:
+        return  # venv is healthy
+
+    print(
+        f"[bootstrap] Missing packages detected: {missing}\n"
+        f"[bootstrap] Repairing venv — running pip install -r requirements.txt ...",
+        file=sys.stderr,
+    )
+    if _REQUIREMENTS.exists():
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--quiet", "-r", str(_REQUIREMENTS)],
+            check=False,
+        )
+        if result.returncode != 0:
+            print(
+                "[bootstrap] WARNING: pip install failed. Some scripts may not work.\n"
+                f"[bootstrap] Fix: pip install -r {_REQUIREMENTS}",
+                file=sys.stderr,
+            )
+    else:
+        print(
+            f"[bootstrap] WARNING: requirements.txt not found at {_REQUIREMENTS}.\n"
+            "[bootstrap] Cannot auto-repair venv. Install packages manually.",
+            file=sys.stderr,
+        )
+
+
 def reexec_in_venv(mode: str = "standard") -> None:
     """
     Ensure this script runs inside the Artha venv.
@@ -117,8 +157,11 @@ def reexec_in_venv(mode: str = "standard") -> None:
         return
 
     if _in_venv():
-        # Already in a venv — trust it and continue.
+        # Already in a venv — verify critical dependencies are installed.
+        # This guards against stale venvs after a `git pull` that added new deps.
         os.environ.setdefault("ARTHA_DIR", str(ARTHA_DIR))
+        if mode == "preflight":
+            _ensure_deps_installed()
         return
 
     venv_py = _venv_python()

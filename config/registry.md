@@ -51,9 +51,9 @@ ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "La
 |------|---------|-------------|-----------|
 | `CLAUDE.md` | Auto-loaded by Claude Code — delegates to config/Artha.md | none | no |
 | `config/Artha.md` | Full operating instructions (466 lines, 11 sections) | internal | no |
-| `config/settings.md` | Global settings, email config, capabilities flags | internal | no |
+| `config/settings.md` | Capabilities, feature flags, budget, encryption | internal | no |
 | `config/contacts.md` | Family/professional contacts with phone numbers | high | yes (.age) |
-| `config/occasions.md` | Annual occasion calendar | low | no |
+| `config/occasions.md` | Annual occasion calendar (MOVED to state/) | high | yes (.age) |
 | `config/registry.md` | This file — component manifest | internal | no |
 
 ---
@@ -106,6 +106,45 @@ ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "La
 | Learning | `state/learning.md` | low | no | ✅ Created — monthly learning target tracking |
 | Social | `state/social.md` | low | no | ✅ Created — birthday/occasion/greeting log |
 | Digital | `state/digital.md` | low | no | ✅ Created — subscription ledger, security alerts |
+| Occasions | `state/occasions.md` | high | yes | Annual dates, birthdays, anniversaries, deadlines |
+
+---
+
+## Versioning
+
+- State files carry YAML frontmatter: `schema_version:`, `last_updated:`, `updated_by:`
+- When updating a state file, increment `last_updated` timestamp; `updated_by: artha-catchup` or `artha-interactive`
+- If Artha.md schema_version changes, add migration notes to `audit.md`
+
+### `state/goals.md` Sprint schema (v2.1)
+Active sprints are tracked in a `sprints:` list within `goals.md`:
+```yaml
+sprints:
+  - id: SPR-001
+    name: "[sprint name]"
+    linked_goal: "[goal name from goals list]"
+    target: "[specific, measurable outcome]"
+    sprint_start: YYYY-MM-DD
+    sprint_end: YYYY-MM-DD
+    duration_days: 30
+    status: active
+    progress_pct: 0
+    calibrated_at_14d: false
+    outcome: ""
+```
+
+### `state/decisions.md` Deadline schema (v2.1)
+```yaml
+- id: DEC-001
+  date: YYYY-MM-DD
+  summary: "[concise decision description]"
+  context: "[background]"
+  domains_affected: [domain1, domain2]
+  alternatives_considered: "[options weighed]"
+  deadline: YYYY-MM-DD
+  review_trigger: "[condition for re-evaluation]"
+  status: active
+```
 
 ---
 
@@ -133,7 +172,7 @@ ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "La
 - [ ] Set up Google Cloud project, enable Gmail API + Calendar API
 - [ ] `pip install -r scripts/requirements.txt`
 - [ ] `python3 scripts/setup_google_oauth.py` (stores OAuth tokens in Keychain)
-- [ ] Set `briefing_email` in config/settings.md
+- [ ] Set `briefing_email` in config/user_profile.yaml
 - [ ] Bootstrap state files with real family data
 - [ ] Run first `/catch-up` and validate briefing output
 

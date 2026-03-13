@@ -141,6 +141,15 @@ def _build_identity_block(profile: dict) -> str:
     timezone = location.get("timezone", "")
 
     cultural_ctx = _get(profile, "family.cultural_context", "")
+    # Resolve cultural preset if the value is a preset name
+    if cultural_ctx and not cultural_ctx.strip().startswith((".", "/", "\n")):
+        preset_path = _ARTHA_DIR / "config" / "presets" / "cultural" / f"{cultural_ctx.strip()}.yaml"
+        if preset_path.exists():
+            try:
+                preset = yaml.safe_load(preset_path.read_text(encoding="utf-8"))
+                cultural_ctx = preset.get("description", cultural_ctx)
+            except Exception:
+                pass  # Fall back to raw value
 
     domains = _get(profile, "domains", {}) or {}
     enabled_domains = [d for d, v in domains.items() if isinstance(v, dict) and v.get("enabled", False)]

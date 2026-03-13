@@ -1,53 +1,17 @@
 ---
-schema_version: "1.0"
+schema_version: "2.0"
 last_updated: "YYYY-MM-DDTHH:MM:SS"
 ---
-# Artha Settings (Example)
+# Artha Settings — Capabilities & Feature Flags (Example)
+# Identity & integration config → config/user_profile.yaml
 
 > **NOTE:** This file is an example for reference only.
-> 
-> Personal configuration has moved to `config/user_profile.yaml` (Phase 0+).
-> Run `python scripts/migrate.py` to generate `user_profile.yaml` from an
-> existing `settings.md`.
 >
-> New users should copy `config/user_profile.example.yaml` to
-> `config/user_profile.yaml` and fill it in directly.
+> All identity and integration configuration has moved to `config/user_profile.yaml`.
+> This file contains ONLY system capabilities, feature flags, budget, and encryption config.
+> Run `python scripts/migrate.py` to generate `user_profile.yaml` from a legacy `settings.md`.
 
 ---
-
-## Identity
-```yaml
-family_name: "YourFamily"
-primary_user: "FirstName (Nickname)"
-family_members:
-  - name: "FirstName"
-    nickname: "Nickname"
-    role: primary
-  - name: "SpouseName"
-    role: spouse
-  - name: "ChildName"
-    age: 16
-    role: child
-```
-
-## Email Configuration
-```yaml
-briefing_email: "your.email@gmail.com"
-gmail_accounts:
-  - account: "your.email@gmail.com"
-    label: primary
-    from_outlook_label: from-outlook
-    from_apple_label: from-apple
-```
-
-## Calendar Configuration
-```yaml
-calendars:
-  primary: "primary"
-  family: ""   # family calendar ID from Google Calendar settings
-  holidays: "en.usa#holiday@group.v.calendar.google.com"
-  catch_up_ids: "primary"
-```
 
 ## Budget
 ```yaml
@@ -63,6 +27,20 @@ timezone: America/Los_Angeles
 age_recipient: ""
 ```
 
+## WorkIQ Integration (v2.2)
+```yaml
+workiq:
+  enabled: false
+  version_pin: "0.x"
+  query_variant: auto
+  redact_keywords: []
+  redact_replacement: "[REDACTED]"
+  oi_trigger_keywords:
+    - "Interview"
+    - "Performance Review"
+    - "360 Review"
+```
+
 ## Capabilities
 ```yaml
 capabilities:
@@ -74,6 +52,7 @@ capabilities:
   email_briefings: false
   weekly_summary: false
   action_proposals: false
+  ensemble_reasoning: false
   todo_sync: false
   icloud_direct_api: false
   preflight_gate: true

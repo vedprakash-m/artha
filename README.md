@@ -1,5 +1,8 @@
 # Artha — Personal Intelligence OS
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
 **Your context-aware personal chief of staff, powered by AI CLIs.**
 
 Artha is an open-source **Personal Intelligence OS** — a structured system that gives AI assistants (Gemini CLI, GitHub Copilot, Claude) deep, persistent context about your life so they can be genuinely useful across every domain: health, finance, immigration, kids, travel, home, work, and more.
@@ -32,7 +35,7 @@ Instead of starting every AI conversation from scratch, Artha:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/artha.git
+git clone https://github.com/vedprakash-m/artha.git
 cd artha
 
 # 2. Create your profile (copy + edit the example)
@@ -80,39 +83,69 @@ config/
   user_profile.example.yaml ← Template for new users
   routing.example.yaml  ← Email routing template
   skills.yaml           ← Skill scheduler configuration
+  presets/cultural/      ← Cultural context presets for identity generation
 
 scripts/
   generate_identity.py  ← Assembles Artha.md from profile + core
   preflight.py          ← Pre-catch-up health gate
   pii_guard.py          ← PII pre-screening for outbound AI queries
   safe_cli.py           ← PII-safe AI CLI wrapper
+  vault.py              ← age encryption for sensitive state files
   profile_loader.py     ← Profile access (all scripts use this)
   migrate.py            ← Migrate legacy settings.md to user_profile.yaml
   _bootstrap.py         ← Cross-platform venv re-exec helper
   skill_runner.py       ← Autonomous background skill scheduler
   skills/               ← Individual data-pull skills
-    noaa_weather.py
-    nhtsa_recalls.py
-    property_tax.py     ← Generic property tax (king_county_tax.py is a shim)
-    uscis_status.py
-    visa_bulletin.py
+  lib/                  ← Shared library modules
 
 state/
   templates/            ← Blank starter files for new users
   *.md                  ← Your live domain state (gitignored)
 
 prompts/                ← Domain-specific reasoning prompts for AI CLIs
-tests/                  ← pytest test suite (46+ tests)
+tests/                  ← pytest test suite (130+ test cases)
+.githooks/              ← Git hooks (PII & secrets pre-commit guard)
+docs/                   ← Extended documentation
 ```
 
 ---
 
 ## Privacy & Security
 
-- **PII Guard**: All queries to AI CLIs pass through `pii_guard.py`, which detects and blocks PII before it leaves your machine
-- **Encryption at rest**: Sensitive state files encrypted with `age` (health, finance, immigration, estate, insurance, vehicle)
-- **Audit logging**: Every outbound AI query is logged (query length only, not content) to `state/audit.md`
-- **Gitignored personal data**: `user_profile.yaml`, all state files, tokens, and briefings are `.gitignore`d
+Artha is **privacy-first, local-first**. Your personal data never leaves your machine unscreened.
+
+- **Three-layer PII defense**:
+  1. `pii_guard.py` — regex-based PII scanner (SSN, credit cards, passport numbers, ITINs, and more)
+  2. `vault.py` — `age` encryption at rest for sensitive state files (health, finance, immigration, estate, insurance, vehicle, contacts)
+  3. Pre-commit git hook — blocks PII, secrets, and forbidden files from ever reaching the repository
+- **Audit logging**: Every vault operation is logged to `state/audit.md`
+- **Gitignored personal data**: `user_profile.yaml`, all state files, tokens, briefings, and encrypted `.age` files are `.gitignore`d
+- **No telemetry, no cloud dependencies**: Everything runs locally
+
+See [docs/security.md](docs/security.md) for the full threat model and security architecture.
+
+---
+
+## Documentation
+
+- [Quick Start Guide](docs/quickstart.md)
+- [Domain Reference](docs/domains.md)
+- [Skills System](docs/skills.md)
+- [Security Model](docs/security.md)
+- [Supported AI CLIs](docs/supported-clis.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
+
+---
+
+## Contributing
+
+Contributions are welcome. Please ensure:
+
+1. All tests pass: `python -m pytest tests/`
+2. No PII in committed files (the pre-commit hook enforces this)
+3. New scripts use `scripts/lib/` shared modules
+4. State file changes include corresponding `state/templates/` updates
 
 ---
 

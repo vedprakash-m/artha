@@ -36,123 +36,15 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
-from html.parser import HTMLParser
 from typing import Optional
+from lib.retry import with_retry
+from lib.html_processing import strip_html, clean_email_body
 
 
-# ---------------------------------------------------------------------------
-# Retry / rate-limit guard
-# ---------------------------------------------------------------------------
-
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES   = 3
-_BASE_DELAY    = 1.0   # seconds
-_BACKOFF_MULT  = 2.0
-_MAX_DELAY     = 30.0  # seconds cap per wait
 
 
-def _with_retry(fn, *, retries: int = _MAX_RETRIES, context: str = ""):
-    """
-    Execute fn() with exponential back-off on HTTP 429 / 5xx responses.
-
-    Args:
-        fn:       zero-argument callable that performs one API call and returns a result.
-        retries:  maximum number of *retry* attempts after the first failure.
-        context:  label shown in log messages to identify which call failed.
-
-    Returns:
-        The return value of fn() on success.
-
-    Raises:
-        Exception re-raised after all retries exhausted, with context in the message.
-    """
-    delay = _BASE_DELAY
-    last_exc: Optional[Exception] = None
-
-    for attempt in range(retries + 1):
-        try:
-            return fn()
-        except Exception as exc:
-            # Check if this is a retryable HTTP error
-            exc_str = str(exc).lower()
-            is_retryable = (
-                any(str(code) in exc_str for code in _RETRYABLE_STATUS_CODES)
-                or "rate limit" in exc_str
-                or "quota" in exc_str
-                or "too many requests" in exc_str
-                or "service unavailable" in exc_str
-                or "backend error" in exc_str
-            )
-
-            if not is_retryable or attempt == retries:
-                label = f" [{context}]" if context else ""
-                raise type(exc)(
-                    f"[gmail_fetch]{label} API call failed after {attempt + 1} "
-                    f"attempt(s): {exc}"
-                ) from exc
-
-            wait = min(delay, _MAX_DELAY)
-            print(
-                f"[gmail_fetch] ⚠ Rate-limited or server error (attempt {attempt + 1}/{retries + 1}). "
-                f"Retrying in {wait:.0f}s... ({context})",
-                file=sys.stderr,
-            )
-            time.sleep(wait)
-            delay = min(delay * _BACKOFF_MULT, _MAX_DELAY)
-            last_exc = exc
-
-    # Should not reach here
-    raise last_exc  # type: ignore
-
-# ---------------------------------------------------------------------------
-# HTML → plain text stripper (stdlib only — no external deps)
-# ---------------------------------------------------------------------------
-
-class _HTMLStripper(HTMLParser):
-    """Minimal HTML → plain text converter."""
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip_tags = {"script", "style", "head", "meta", "noscript"}
-        self._skip = False
-        self._parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag.lower() in self._skip_tags:
-            self._skip = True
-        # Add whitespace around block elements
-        if tag.lower() in {"p", "br", "div", "tr", "li", "h1", "h2", "h3",
-                            "h4", "h5", "h6", "blockquote", "hr"}:
-            self._parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in self._skip_tags:
-            self._skip = False
-        if tag.lower() in {"p", "div", "tr", "li", "blockquote"}:
-            self._parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self._parts.append(data)
-
-    def get_text(self) -> str:
-        raw = "".join(self._parts)
-        # Unescape HTML entities
-        raw = html.unescape(raw)
-        # Collapse 3+ consecutive blank lines into 2
-        raw = re.sub(r"\n{3,}", "\n\n", raw)
-        return raw.strip()
 
 
-def _strip_html(html_content: str) -> str:
-    """Strip HTML tags and return plain text."""
-    stripper = _HTMLStripper()
-    try:
-        stripper.feed(html_content)
-        return stripper.get_text()
-    except Exception:
-        # Fallback: regex strip
-        text = re.sub(r"<[^>]+>", " ", html_content)
-        return html.unescape(text).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +108,7 @@ def _extract_body(payload: dict) -> str:
         return _decode_base64_safe(body_data)
 
     if mime_type == "text/html" and body_data:
-        return _strip_html(_decode_base64_safe(body_data))
+        return strip_html(_decode_base64_safe(body_data))
 
     # Recurse into multipart
     if mime_type.startswith("multipart/"):
@@ -232,7 +124,7 @@ def _extract_body(payload: dict) -> str:
             if part.get("mimeType") == "text/html":
                 data = part.get("body", {}).get("data", "")
                 if data:
-                    return _strip_html(_decode_base64_safe(data))
+                    return strip_html(_decode_base64_safe(data))
         # Third pass: recurse into nested multipart
         for part in parts:
             if part.get("mimeType", "").startswith("multipart/"):
@@ -379,7 +271,7 @@ def fetch_emails(
             kwargs["pageToken"] = page_token
 
         try:
-            response = _with_retry(
+            response = with_retry(
                 lambda: service.users().messages().list(**kwargs).execute(),
                 context="messages.list",
             )
@@ -413,7 +305,7 @@ def fetch_emails(
         if i % 20 == 0 and i > 0:
             print(f"[gmail_fetch] Fetching messages: {i}/{total}...", file=sys.stderr)
         try:
-            msg = _with_retry(
+            msg = with_retry(
                 lambda ref=ref: service.users().messages().get(
                     userId="me",
                     id=ref["id"],

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pii-guard: ignore-file — this source file contains PII pattern strings as code, not PII
 """
 pii_guard.py — Artha pre-persist PII filter (Layer 1 of defense-in-depth)
 
@@ -150,16 +151,30 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
         "[PII-FILTERED-ANUM]",
         "ANUM",
     ),
-    # WA state driver's license format
+    # WA state driver's license format: WDL + 9 alphanumeric characters
     (
         re.compile(r"\bWDL[A-Z0-9]{9}\b"),
         "[PII-FILTERED-DL]",
         "DL",
     ),
-    # Generic driver's license in context
+    # Florida DL: 1 letter + exactly 12 digits — structurally unambiguous vs
+    # A-number (8-9 digits) and CA DL (1 letter + 7 digits).
+    # AAMVA AAMVA DL/ID Card Design Standard §7.4 (FL format).
+    (
+        re.compile(r"\b[A-Z]\d{12}\b"),
+        "[PII-FILTERED-DL]",
+        "DL",
+    ),
+    # Context-gated multi-state DL patterns (AAMVA standard, applied only when
+    # preceded by explicit license/ID keyword on the same line/sentence).
+    # Covers CA ([A-Z]\d{7}), TX/CO/IL/OH/WI (8 digits), NY (9 digits or
+    # 3-letters+6-digits), NJ (1-letter+14-alphanumeric), and other formats.
+    # The keyword gate prevents false positives on phone/account numbers.
     (
         re.compile(
-            r"\b(driver.?s?\s*licen[sc]e|DL)\s*[:#]?\s*([A-Z0-9]{7,14})\b",
+            r"\b(driver.?s?\s*licen[sc]e|state\s*id|state\s*identification|"
+            r"id\s*(?:card|number|no)|DL\s*(?:number|no|#)?|"
+            r"license\s*(?:number|no|#))\s*[:#]?\s*([A-Z]{0,3}\d{6,14}[A-Z0-9]{0,3})\b",
             re.IGNORECASE,
         ),
         r"\1:[PII-FILTERED-DL]",
@@ -250,6 +265,28 @@ def _log_to_audit(pii_types: str, action: str) -> None:
 # CLI modes
 # ─────────────────────────────────────────────────────────────────────────────
 
+_IGNORE_DIRECTIVE = "pii-guard: ignore-file"
+
+
+def _is_ignored_file(file_path: Path) -> bool:
+    """Return True if the file contains the pii-guard: ignore-file directive in its first 5 lines.
+
+    Use this to mark system source files whose content contains PII-like string
+    literals as code/documentation rather than as actual PII.  Example:
+        # pii-guard: ignore-file
+    """
+    try:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
+            for i, line in enumerate(f):
+                if _IGNORE_DIRECTIVE in line:
+                    return True
+                if i >= 4:  # only scan first 5 lines
+                    break
+    except OSError:
+        pass
+    return False
+
+
 def _read_input(args: list[str]) -> str:
     """Read from file argument or stdin."""
     if args:
@@ -263,6 +300,8 @@ def _read_input(args: list[str]) -> str:
 
 def do_scan(args: list[str]) -> None:
     """Scan mode: detect PII, exit 1 if found. Does not modify text."""
+    if args and _is_ignored_file(Path(args[0])):
+        sys.exit(0)  # file marked as known-safe; skip scanning
     text = _read_input(args)
     pii_found, found_types = scan(text)
     if pii_found:
@@ -275,6 +314,10 @@ def do_scan(args: list[str]) -> None:
 
 def do_filter(args: list[str]) -> None:
     """Filter mode: replace PII tokens, print filtered text to stdout."""
+    if args and _is_ignored_file(Path(args[0])):
+        # File is marked as known-safe; pass through unchanged, exit 0.
+        print(_read_input(args), end="")
+        sys.exit(0)
     text = _read_input(args)
     filtered, found_types = filter_text(text)
     print(filtered, end="")
@@ -344,6 +387,13 @@ def do_test() -> None:
     check("Bank routing",         "routing number: 021000021 active",      True,  "[PII-FILTERED-ROUTING]")
     check("US Passport",          "Passport number: A12345678 verified",   True,  "[PII-FILTERED-PASSPORT]")
     check("WA Driver License",    "License: WDLMISH123AB issued",          True,  "[PII-FILTERED-DL]")
+    # AAMVA multi-state DL formats (B7/M8)
+    check("FL Driver License",    "ID: G123456789012 FL DL",               True,  "[PII-FILTERED-DL]")
+    check("CA DL in context",     "Driver's License: A1234567 CA",         True,  "[PII-FILTERED-DL]")
+    check("TX DL in context",     "DL number: 12345678",                   True,  "[PII-FILTERED-DL]")
+    check("NY DL in context",     "license number: ABC123456",             True,  "[PII-FILTERED-DL]")
+    check("State ID in context",  "State ID: B98765432 issued",            True,  "[PII-FILTERED-DL]")
+    check("DL no. keyword",       "License No: 98765432 valid",            True,  "[PII-FILTERED-DL]")
 
     print("")
     print("── Section B: Allowlist (must NOT block) ───")

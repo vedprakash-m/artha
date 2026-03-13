@@ -43,8 +43,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone, timedelta
-from html.parser import HTMLParser
 from typing import Optional
+from lib.retry import with_retry
+from lib.html_processing import strip_html, clean_email_body
 
 
 # ---------------------------------------------------------------------------
@@ -89,81 +90,8 @@ _MSG_SELECT = ",".join([
 _PAGE_SIZE    = 50      # messages per Graph API page (recommended ≤50 when body is selected)
 _MAX_BODY_CHARS = 8000  # hard cap on body length before truncation (same as gmail_fetch.py)
 
-# ---------------------------------------------------------------------------
-# Retry / rate-limit guard
-# ---------------------------------------------------------------------------
-
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES   = 4
-_BASE_DELAY    = 1.5    # seconds
-_BACKOFF_MULT  = 2.0
-_MAX_DELAY     = 60.0   # MS Graph throttle windows can be longer than Google's
 
 
-def _with_retry(fn, *, retries: int = _MAX_RETRIES, context: str = ""):
-    """
-    Execute fn() with exponential back-off on MS Graph 429 / 5xx responses.
-
-    MS Graph throttling docs:
-      https://learn.microsoft.com/en-us/graph/throttling
-    When throttled, Graph returns 429 with a Retry-After header (seconds).
-    We respect the Retry-After header when present.
-
-    Args:
-        fn:       zero-argument callable that performs one API call.
-        retries:  maximum retry attempts after the first failure.
-        context:  label shown in log messages.
-
-    Returns:
-        Return value of fn() on eventual success.
-
-    Raises:
-        Exception re-raised after all retries exhausted, with context label.
-    """
-    delay    = _BASE_DELAY
-    last_exc: Optional[Exception] = None
-
-    for attempt in range(retries + 1):
-        try:
-            return fn()
-        except Exception as exc:
-            exc_str = str(exc).lower()
-            is_retryable = (
-                any(str(code) in exc_str for code in _RETRYABLE_STATUS_CODES)
-                or "rate limit"           in exc_str
-                or "quota"                in exc_str
-                or "too many requests"    in exc_str
-                or "throttl"              in exc_str
-                or "service unavailable"  in exc_str
-                or "temporarily unavail"  in exc_str
-                or "gateway timeout"      in exc_str
-            )
-
-            if not is_retryable or attempt == retries:
-                label = f" [{context}]" if context else ""
-                raise type(exc)(
-                    f"[msgraph_fetch]{label} API call failed after {attempt + 1} "
-                    f"attempt(s): {exc}"
-                ) from exc
-
-            # Try to extract Retry-After from the exception string
-            retry_after = None
-            match = re.search(r"retry.after[^\d]*(\d+)", exc_str)
-            if match:
-                retry_after = int(match.group(1))
-
-            wait = retry_after if retry_after else min(delay, _MAX_DELAY)
-            print(
-                f"[msgraph_fetch] ⚠ Throttled / server error "
-                f"(attempt {attempt + 1}/{retries + 1}). "
-                f"Retrying in {wait:.0f}s... ({context})",
-                file=sys.stderr,
-            )
-            time.sleep(wait)
-            delay    = min(delay * _BACKOFF_MULT, _MAX_DELAY)
-            last_exc = exc
-
-    raise last_exc  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -216,56 +144,6 @@ def _graph_get(access_token: str, path: str, params: Optional[dict] = None) -> d
     return response.json()
 
 
-# ---------------------------------------------------------------------------
-# HTML → plain text stripper (stdlib only)
-# ---------------------------------------------------------------------------
-
-class _HTMLStripper(HTMLParser):
-    """Minimal HTML → plain text converter. No external deps."""
-    _SKIP = {"script", "style", "head", "meta", "noscript"}
-    _BLOCK = {"p", "br", "div", "tr", "li", "h1", "h2", "h3",
-              "h4", "h5", "h6", "blockquote", "hr", "section", "article"}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip  = False
-        self._parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        t = tag.lower()
-        if t in self._SKIP:
-            self._skip = True
-        if t in self._BLOCK:
-            self._parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        t = tag.lower()
-        if t in self._SKIP:
-            self._skip = False
-        if t in {"p", "div", "tr", "li", "blockquote", "section", "article"}:
-            self._parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            self._parts.append(data)
-
-    def get_text(self) -> str:
-        raw = "".join(self._parts)
-        raw = html.unescape(raw)
-        raw = re.sub(r"\n{3,}", "\n\n", raw)
-        return raw.strip()
-
-
-def _strip_html(html_content: str) -> str:
-    """Strip HTML tags and return clean plain text."""
-    stripper = _HTMLStripper()
-    try:
-        stripper.feed(html_content)
-        return stripper.get_text()
-    except Exception:
-        # Fallback: regex-based strip
-        text = re.sub(r"<[^>]+>", " ", html_content)
-        return html.unescape(re.sub(r" {2,}", " ", text)).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +246,7 @@ def _parse_message(msg: dict, folder: str = "inbox") -> dict:
     raw_content   = body_obj.get("content", "")
 
     if content_type == "html":
-        body_text = _strip_html(raw_content)
+        body_text = strip_html(raw_content)
     else:
         body_text = raw_content
 
@@ -563,12 +441,12 @@ def fetch_emails(
         try:
             if next_url:
                 # nextLink already has all params baked in  --  call it as-is
-                response = _with_retry(
+                response = with_retry(
                     lambda u=next_url: _graph_get_full_url(access_token, u),
                     context=f"messages.list (page {len(all_messages) // _PAGE_SIZE + 1})",
                 )
             else:
-                response = _with_retry(
+                response = with_retry(
                     lambda: _graph_get(access_token, url, params),
                     context="messages.list (page 1)",
                 )
@@ -689,7 +567,7 @@ def run_health_check() -> None:
 
     # 3. Identity check
     try:
-        profile = _with_retry(
+        profile = with_retry(
             lambda: _graph_get(access_token, "/me"),
             context="/me",
         )
@@ -702,7 +580,7 @@ def run_health_check() -> None:
 
     # 4. Inbox access check  --  just count, don't download
     try:
-        result = _with_retry(
+        result = with_retry(
             lambda: _graph_get(
                 access_token,
                 "/me/mailFolders/inbox/messages",

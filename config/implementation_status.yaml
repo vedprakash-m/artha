@@ -1,0 +1,156 @@
+# config/implementation_status.yaml
+# Machine-readable feature registry. Artha reads this to know what it CAN do.
+# Status: implemented | partial | not_started | deprecated
+# Confidence: high | medium | low
+
+features:
+  # ── Core Workflow ────────────────────────────────────────────────────────
+  catch_up_workflow:
+    spec: "PRD §9.4"
+    status: implemented
+    confidence: high
+  preflight_gate:
+    spec: "TS §7.1 Step 0"
+    status: implemented
+    confidence: high
+  email_fetch_gmail:
+    spec: "TS §3.1"
+    status: implemented
+    confidence: high
+  email_fetch_outlook:
+    spec: "TS §3.8"
+    status: implemented
+    confidence: high
+  email_fetch_icloud:
+    spec: "TS §3.9"
+    status: implemented
+    confidence: high
+  calendar_google:
+    spec: "TS §3.2"
+    status: implemented
+    confidence: high
+  calendar_outlook:
+    spec: "TS §3.8"
+    status: implemented
+    confidence: high
+  calendar_icloud:
+    spec: "TS §3.9"
+    status: implemented
+    confidence: high
+  calendar_workiq:
+    spec: "TS §3.10"
+    status: implemented
+    confidence: medium
+  canvas_lms:
+    spec: "PRD F4.10"
+    status: implemented
+    confidence: medium
+
+  # ── Briefing & Output ───────────────────────────────────────────────────
+  standard_briefing:
+    spec: "UX §4.1"
+    status: implemented
+    confidence: high
+  flash_briefing:
+    spec: "UX §4.6"
+    status: implemented
+    confidence: high
+  digest_briefing:
+    spec: "UX §4.5"
+    status: implemented
+    confidence: high
+  deep_briefing:
+    spec: "UX §8.9"
+    status: implemented
+    confidence: medium
+  weekly_summary:
+    spec: "UX §5.1"
+    status: implemented
+    confidence: high
+  monthly_retrospective:
+    spec: "UX §8.10"
+    status: partial
+    confidence: low
+  email_send_briefing:
+    spec: "TS §7.1 Step 14"
+    status: implemented
+    confidence: high
+
+  # ── Security ────────────────────────────────────────────────────────────
+  pii_guard_regex:
+    spec: "TS §8.6"
+    status: implemented
+    confidence: high
+  pii_semantic_redaction:
+    spec: "PRD §12.2"
+    status: implemented
+    confidence: high
+  safe_cli_outbound:
+    spec: "TS §8.7"
+    status: implemented
+    confidence: high
+  vault_encryption:
+    spec: "TS §8.5"
+    status: implemented
+    confidence: high
+  net_negative_write_guard:
+    spec: "PRD F15.28"
+    status: implemented
+    confidence: high
+
+  # ── Commands ────────────────────────────────────────────────────────────
+  catch_up:
+    status: implemented
+  status:
+    status: implemented
+  goals:
+    status: implemented
+  domain:
+    status: implemented
+  items:
+    status: implemented
+  items_quick:
+    status: implemented
+  bootstrap:
+    status: implemented
+  dashboard:
+    status: implemented
+  scorecard:
+    status: partial
+  diff:
+    status: partial
+    note: "requires git init in Artha dir"
+  privacy:
+    status: implemented
+  teach:
+    status: implemented
+  power:
+    status: partial
+  decisions:
+    status: partial
+  scenarios:
+    status: partial
+  relationships:
+    status: partial
+  cost:
+    status: implemented
+  health:
+    status: implemented
+
+  # ── Phase 2B — NOT IMPLEMENTED ──────────────────────────────────────────
+  sentiment_tracking:
+    spec: "PRD §14"
+    status: not_started
+  pattern_recognition:
+    spec: "PRD §14"
+    status: not_started
+  decision_intelligence:
+    spec: "PRD §14"
+    status: not_started
+  whatsapp_bridge:
+    spec: "PRD F1.7"
+    status: not_started
+  apple_health_import:
+    spec: "PRD F6.9"
+    status: partial
+    note: "parse_apple_health.py exists, not wired to catch-up"

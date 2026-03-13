@@ -54,6 +54,7 @@ import sys
 import time
 from datetime import datetime, timezone, timedelta, date
 from typing import Optional
+from lib.retry import with_retry
 
 
 # ---------------------------------------------------------------------------
@@ -67,18 +68,7 @@ SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PAGE_SIZE  = 100   # events per page (no body content → can go higher than email)
 
 
-# ---------------------------------------------------------------------------
-# Retry / rate-limit guard (same pattern as msgraph_fetch.py)
-# ---------------------------------------------------------------------------
 
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES   = 4
-_BASE_DELAY    = 1.5
-_BACKOFF_MULT  = 2.0
-_MAX_DELAY     = 60.0
-
-
-def _with_retry(fn, *, retries: int = _MAX_RETRIES, context: str = ""):
     """
     Execute fn() with exponential back-off on MS Graph 429 / 5xx responses.
     Respects the Retry-After header when present.
@@ -385,7 +375,7 @@ def list_calendars(access_token: str) -> list[dict]:
     Return all calendars visible to the authenticated user.
     Each entry: {id, name, is_default, can_edit, color, owner_email}
     """
-    response = _with_retry(
+    response = with_retry(
         lambda: _graph_get(access_token, "/me/calendars",
                            params={"$select": "id,name,isDefaultCalendar,canEdit,color,owner",
                                    "$top": 50}),
@@ -454,7 +444,7 @@ def fetch_events(
     else:
         print("[msgraph_calendar_fetch] Enumerating calendars...", file=sys.stderr)
         try:
-            all_cals = _with_retry(
+            all_cals = with_retry(
                 lambda: list_calendars(access_token),
                 context="calendars.enumerate",
             )
@@ -499,12 +489,12 @@ def fetch_events(
 
             try:
                 if next_url:
-                    response = _with_retry(
+                    response = with_retry(
                         lambda u=next_url: _graph_get_full_url(access_token, u),
                         context=f"{cal_name} (page {len(cal_events) // _PAGE_SIZE + 1})",
                     )
                 else:
-                    response = _with_retry(
+                    response = with_retry(
                         lambda: _graph_get(access_token, url, params),
                         context=f"{cal_name} page 1",
                     )
@@ -589,7 +579,7 @@ def run_health_check() -> None:
 
     # Identity
     try:
-        profile  = _with_retry(lambda: _graph_get(access_token, "/me"), context="/me")
+        profile  = with_retry(lambda: _graph_get(access_token, "/me"), context="/me")
         email    = profile.get("mail") or profile.get("userPrincipalName", "")
         print(f"  Identity:      ✓ {profile.get('displayName', '?')} <{email}>")
     except Exception as exc:
@@ -598,7 +588,7 @@ def run_health_check() -> None:
 
     # Calendar enumeration
     try:
-        cals = _with_retry(lambda: list_calendars(access_token), context="calendars.list")
+        cals = with_retry(lambda: list_calendars(access_token), context="calendars.list")
         print(f"  Calendars:     ✓ {len(cals)} visible")
         for cal in cals[:6]:
             marker = " ← default" if cal.get("is_default") else ""
@@ -690,7 +680,7 @@ def main() -> None:
     if args.list_calendars:
         access_token = _get_valid_token()
         try:
-            cals = _with_retry(lambda: list_calendars(access_token), context="list-calendars")
+            cals = with_retry(lambda: list_calendars(access_token), context="list-calendars")
         except Exception as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)

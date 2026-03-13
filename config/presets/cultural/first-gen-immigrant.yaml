@@ -1,0 +1,24 @@
+---
+name: first-gen-immigrant
+description: |
+  First-generation immigrant family managing dual-country obligations. Immigration
+  status tracking is critical. Financial remittances may be a factor. Balancing
+  home-country cultural norms with local integration. Extended family communication
+  across time zones is a scheduling consideration.
+domain_priorities:
+  immigration: P0
+  finance: P0
+  social: P1
+  kids: P1
+occasions:
+  - name: "Home country national day"
+    type: cultural
+    calendar: user-defined
+    greeting: false
+    note: "User should specify their home country's key celebrations"
+traits:
+  immigration_awareness: true
+  dual_country_obligations: true
+  remittance_tracking: possible
+  extended_family_ties: active
+  timezone_spanning: true

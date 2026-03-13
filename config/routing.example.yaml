@@ -207,7 +207,7 @@ system_routes:
 user_routes:
 
   # School email domains for the kids domain routing
-  # Example: ["issaquahschools.org", "seattleschools.org"]
+  # Example: ["myschooldistrict.org", "cityschools.org"]
   # Source: user_profile.yaml → family.children[].school.email_domain
   school_domains: []
     # - "your-school-district.org"    # District domain
