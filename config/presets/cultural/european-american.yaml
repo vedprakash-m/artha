@@ -1,0 +1,26 @@
+---
+name: european-american
+description: |
+  European-American family with emphasis on work-life balance and individual
+  achievement. Nuclear family structure typical. Standard US holiday calendar
+  with possible European heritage celebrations.
+domain_priorities:
+  finance: P1
+  health: P1
+  kids: P1
+  learning: P1
+occasions:
+  - name: Thanksgiving
+    type: cultural
+    calendar: fixed
+    date: "fourth Thursday of November"
+    greeting: false
+  - name: Independence Day
+    type: cultural
+    calendar: fixed
+    date: "07-04"
+    greeting: false
+traits:
+  work_life_balance: prioritized
+  individualism: moderate
+  nuclear_family_focus: true

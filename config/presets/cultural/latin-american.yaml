@@ -1,0 +1,34 @@
+---
+name: latin-american
+description: |
+  Latin American family with strong community and family ties. Religious observance
+  is common. Family gatherings and cultural celebrations are central to social life.
+  Multi-generational household dynamics may apply.
+domain_priorities:
+  social: P0
+  kids: P0
+  health: P1
+  finance: P1
+occasions:
+  - name: Día de los Muertos
+    type: cultural
+    calendar: fixed
+    date: "11-02"
+    greeting: true
+  - name: Navidad
+    type: cultural
+    calendar: fixed
+    date: "12-25"
+    greeting: true
+  - name: Quinceañera
+    type: milestone
+    greeting: true
+  - name: Semana Santa
+    type: cultural
+    calendar: easter-relative
+    greeting: false
+traits:
+  family_centricity: high
+  community_ties: strong
+  religious_observance: common
+  extended_family_ties: active

@@ -39,13 +39,28 @@ When these fail, note them in the briefing footer with the message "run catch-up
 - Store PII outside the designated encrypted state files
 - Propose irreversible actions (cancel subscription, delete data) without explicit confirmation
 
+### First-Run Detection
+If `config/user_profile.yaml` does not exist:
+1. Say: "Welcome to Artha. I notice this is a fresh install."
+2. Offer demo mode: "Want to see a sample briefing first? (yes/no)"
+   - If yes: run `python scripts/demo_catchup.py` then continue to setup
+   - If no: proceed to setup
+3. Run conversational bootstrap — read `config/bootstrap-interview.md` for the interview flow
+4. After profile created: "Ready. Say 'catch me up' for your first briefing."
+
+### Implementation Status
+Read `config/implementation_status.yaml` to know which features are implemented.
+Do NOT attempt to execute features with status: `not_started` or `partial`.
+If a user asks for an unimplemented feature, say:
+"That feature is specified but not yet implemented. Status: [status]."
+
 ---
 
 ## §2 Catch-Up Workflow
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up`
 
-Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `audit.md` and continue — partial catch-up is better than no catch-up.
+Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `state/audit.md` and continue — partial catch-up is better than no catch-up.
 
 ### Step 0 — Pre-flight Go/No-Go Gate
 **This step runs BEFORE any data is touched. A failed gate = no catch-up.**
@@ -54,6 +69,9 @@ python scripts/preflight.py
 ```
 - Exit 0 = all P0 checks pass → proceed
 - Exit 1 = at least one P0 check failed → halt with error: `⛔ Pre-flight failed: [check] — [error]. Fix before retrying.`
+- Exit 3 = cold start (no `config/user_profile.yaml`) → route to first-run experience:
+  - If user said "catch me up": run `python scripts/demo_catchup.py`, then suggest `/bootstrap`
+  - If user said anything else: run conversational bootstrap (see `config/bootstrap-interview.md`)
 - P1 warnings are logged to `health-check.md` but do NOT block
 - Log gate result (pass/warn/fail + timestamp) to `state/health-check.md` under `preflight_runs:`
 
@@ -185,7 +203,7 @@ python scripts/gcal_fetch.py \
   --to "$TODAY_PLUS_7" \
   --calendars "primary,<family_calendar_id>,en.usa#holiday@group.v.calendar.google.com"
 ```
-**Important:** Always include all three Google calendars: `primary`, the family shared calendar, and US Holidays. **Read all calendar IDs from `config/settings.md` under `calendars:`** — do NOT silently drop the family calendar.
+**Important:** Always include all three Google calendars: `primary`, the family shared calendar, and US Holidays. **Read all calendar IDs from `config/user_profile.yaml` under `integrations.google_calendar.calendar_ids`** — do NOT silently drop the family calendar.
 Output: JSONL — fields: id, calendar, summary, start, end, all_day, location, attendees. Field `source` absent (Google Calendar is implicit).
 
 **Outlook Calendar (MS Graph — direct API):**
@@ -245,7 +263,7 @@ if workiq_ready:
     # Handle: extra whitespace, missing fields (default empty), header rows (skip),
     #         non-conforming lines (skip with warning)
     # If 0 events from non-empty response → retry once with explicit format reminder
-    # If still 0 → log "format_change_warning" to audit.md, skip WorkIQ this session
+    # If still 0 → log "format_change_warning" to state/audit.md, skip WorkIQ this session
 
     # Apply partial redaction from config/settings.md → workiq.redact_keywords:
     # For each event title, replace matched keyword SUBSTRINGS with [REDACTED]
@@ -254,7 +272,7 @@ if workiq_ready:
 
     # Save parsed+redacted events to tmp/work_calendar.json (ephemeral — deleted at Step 18)
 ```
-If WorkIQ fails at any point, log to audit.md and continue. Briefing footer: "⚠️ Work calendar unavailable — [reason]".
+If WorkIQ fails at any point, log to state/audit.md and continue. Briefing footer: "⚠️ Work calendar unavailable — [reason]".
 
 **Calendar deduplication rule:** After merging all calendar feeds (Google, Outlook, iCloud, WorkIQ), if two events match on (summary ± minor variation) AND (start time ± 5 minutes), keep one record and set `"source": "both"`. For WorkIQ↔personal matches specifically, use field-merge dedup: keep personal event as primary, merge in work title + Teams link from work event, set `"merged": true`. Merged events are excluded from cross-domain conflict detection. Do NOT deduplicate email feeds — each email source is a distinct inbox.
 
@@ -443,7 +461,7 @@ Before writing ANY state file during domain processing (Step 7), apply this guar
        Options: [show full diff] | [write anyway] | [skip domain this session]"
    c. Wait for user input:
       - "show full diff" → display before/after comparison
-      - "write anyway" → proceed with write, log override to audit.md
+      - "write anyway" → proceed with write, log override to state/audit.md
       - "skip domain" → preserve existing file, continue catch-up
    d. Log event: INTEGRITY_NET_NEGATIVE | file: [domain].md | loss_pct: [N] | action: [blocked|override|skip]
 5. IF loss_pct ≤ 20%: proceed with write normally
@@ -720,7 +738,7 @@ If MS Graph OAuth is configured (`~/.artha-tokens/msgraph-token.json` exists):
 python scripts/todo_sync.py
 ```
 This pushes open items with `todo_id: ""` to the appropriate domain-tagged To Do list and writes the returned `todo_id` back to `open_items.md`.
-Failure is **non-blocking** — catch-up continues if To Do sync fails. Log failure to `audit.md`.
+Failure is **non-blocking** — catch-up continues if To Do sync fails. Log failure to `state/audit.md`.
 
 ### Step 16 — Update health-check
 Append/update the structured YAML block in `state/health-check.md`:
@@ -792,7 +810,7 @@ signal_ratio = actionable_items / total_items_extracted × 100
 Track 30-day rolling average. If signal ratio drops below 30%, generate prompt tuning alert in weekly summary.
 
 ### Step 17 — Log PII stats
-Append to audit.md: total emails scanned, PII detections, PII filtered. One line summary:
+Append to state/audit.md: total emails scanned, PII detections, PII filtered. One line summary:
 `[timestamp] CATCH_UP | emails=[N] | pii_detected=[N] | pii_filtered=[N] | open_items_added=[N]`
 
 ### Step 18 — Ephemeral cleanup + Re-encrypt
@@ -879,20 +897,20 @@ After calibration check, if `state/goals.md` has active goals and `state/memory.
 
 Route emails and events to domain state files based on sender/subject signals. Rules are **hints**, not gates — content-based classification overrides if the content is clearly domain-relevant.
 
-| Sender / Subject Pattern | Domain | Priority |
+| Sender / Subject Pattern | State File | Priority |
 |---|---|---|
-| `*@uscis.gov`, `receipt notice`, `approval notice`, `RFE`, `I-485`, `I-539`, `I-765`, `I-131`, `biometrics`, `Visa Bulletin`, `priority date`, `EAD`, `H-1B`, `H-4`, `green card` | `immigration.md` | 🔴 Critical |
-| `*@fidelity.com`, `*@wellsfargo.com`, `*@vanguard.com`, `*@chase.com`, `*@bankofamerica.com`, `bill`, `payment due`, `statement`, `ACH`, `wire transfer`, `payroll`, `tax`, `IRS`, `W-2`, `1099` | `finance.md` | 🟠 Urgent |
+| `*@uscis.gov`, `receipt notice`, `approval notice`, `RFE`, `I-485`, `I-539`, `I-765`, `I-131`, `biometrics`, `Visa Bulletin`, `priority date`, `EAD`, `H-1B`, `H-4`, `green card` | `state/immigration.md` | 🔴 Critical |
+| `*@fidelity.com`, `*@wellsfargo.com`, `*@vanguard.com`, `*@chase.com`, `*@bankofamerica.com`, `bill`, `payment due`, `statement`, `ACH`, `wire transfer`, `payroll`, `tax`, `IRS`, `W-2`, `1099` | `state/finance.md` | 🟠 Urgent |
 | Family's school domains (defined in `user_profile.yaml`), `*@schoology.com`, `ParentSquare`, `grade`, `assignment`, `attendance`, `AP`, `SAT`, `college`, `orthodontist`, `pediatric`, soccer/sports activities, music/arts | `kids.md` | 🟡 Standard |
 | `*@alaskaair.com`, `*@delta.com`, `*@united.com`, `*@marriott.com`, `*@airbnb.com`, `flight`, `hotel`, `itinerary`, `check-in`, `boarding pass`, `passport renewal` | `travel.md` | 🟡 Standard |
-| `*@providence.org`, `*@uwmedicine.org`, `*@zocdoc.com`, `appointment`, `prescription`, `refill`, `lab result`, `EOB`, `health insurance`, `FSA`, `HSA` | `health.md` | 🟠 Urgent |
+| `*@providence.org`, `*@uwmedicine.org`, `*@zocdoc.com`, `appointment`, `prescription`, `refill`, `lab result`, `EOB`, `health insurance`, `FSA`, `HSA` | `state/health.md` | 🟠 Urgent |
 | `*@amazon.com`, `*@costco.com`, `shipped`, `delivery`, `tracking`, `order`, `return`, `warranty` | `shopping.md` | 🔵 Low |
 | `*@usps.com`, `*@fedex.com`, `*@ups.com`, `delivery scheduled`, `out for delivery` | `shopping.md` | 🔵 Low |
 | HOA, `*@propertymanagement.com`, `maintenance`, `repair`, `inspection`, `property tax`, `mortgage` | `home.md` | 🟡 Standard |
-| `*@equifax.com`, `*@experian.com`, `*@transunion.com`, credit alert, identity alert | `finance.md` | 🔴 Critical |
+| `*@equifax.com`, `*@experian.com`, `*@transunion.com`, credit alert, identity alert | `state/finance.md` | 🔴 Critical |
 | Google Calendar event | `calendar.md` | 🟡 Standard |
-| Car registration, insurance renewal, service appointment, `*@geico.com`, `*@pemco.com` | `vehicle.md` | 🟡 Standard |
-| Estate, will, trust, `*@estateattorney.com`, beneficiary, POA | `estate.md` | 🟠 Urgent |
+| Car registration, insurance renewal, service appointment, `*@geico.com`, `*@pemco.com` | `state/vehicle.md` | 🟡 Standard |
+| Estate, will, trust, `*@estateattorney.com`, beneficiary, POA | `state/estate.md` | 🟠 Urgent |
 | Marketing, promotions, newsletters, unsubscribe | SUPPRESS — do not process | — |
 | No match | Classify by content; if still ambiguous, route to `comms.md` | 🔵 Low |
 
@@ -935,7 +953,7 @@ Before writing any extracted data to state files, apply these rules:
 
 ### Sensitive state files (encrypted at rest)
 The following files are encrypted when not in active session:
-`immigration.md`, `finance.md`, `insurance.md`, `estate.md`, `health.md`, `audit.md`, `vehicle.md`, `config/contacts.md`
+`state/immigration.md`, `state/finance.md`, `state/insurance.md`, `state/estate.md`, `state/health.md`, `state/audit.md`, `state/vehicle.md`, `state/contacts.md`
 
 ### Outbound filter
 Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the tool automatically scans for PII. If PII detected, the query is blocked and logged. Do NOT bypass `safe_cli.py` for outbound queries.
@@ -969,370 +987,15 @@ Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the too
 - [ ] Sensitive domains (immigration, finance) are read during catch-up; this content enters the Claude API context window
 - Recommendation: Treat Artha sessions as equivalent to asking a trusted advisor who records session notes — content shared = content processed
 
+
 ---
 
 ## §5 Slash Commands
 
-### `/catch-up`
-Full catch-up workflow (§2). Equivalent to "catch me up", "morning briefing", "SITREP".
-
-### `/status`
-Quick health check — no email fetch. Display:
-```
-━━ ARTHA STATUS ━━━━━━━━━━━━━━━━━━━━━━━━━━
-Last catch-up:  [N] hrs ago ([time])
-Active alerts:  [N 🔴] [N 🟠] [N 🟡]
-Domain freshness: [table — domain + last update + staleness]
-MCP Tools:  Gmail [✅/❌]  Calendar [✅/❌]
-CLIs:       Gemini [✅/❌]   Copilot [✅/❌]
-Encryption: [locked/unlocked + file count]
-Monthly cost: $[X] / $50 budget ([%]%)
-```
-Read from `health-check.md` and test MCP/CLI connectivity.
-
-### `/goals`
-Goal scorecard only — no email fetch. Read from `state/goals.md`. Display:
-```
-━━ GOAL PULSE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[goal bar: NAME  ████████░░ 80%  ON TRACK]
-[goal bar: NAME  ████░░░░░░ 40%  AT RISK ]
-```
-Show 2-week trend if available.
-
-**Sprint display (if any sprint is active):**
-```
-━━ GOAL SPRINTS ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[SPRINT NAME]  ██████░░░░  60%  Day 18/30
-  Goal: [linked goal] | Target: [description] | ⚡ Pace: [on track|behind|ahead]
-  [Calibration note if at 2-week mark: "Calibration pending — pace review?"]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-**Sprint commands:**
-- `/goals sprint new` — create a new sprint (Artha asks: name, linked goal, target, duration 14–90 days; default 30 days)
-- `/goals sprint pause [name]` — pause sprint progress tracking
-- `/goals sprint close [name]` — mark sprint complete; log outcome to memory.md
-
-### `/domain <name>`
-Deep-dive into a single domain. Read `state/<name>.md` and `prompts/<name>.md`. Display:
-- Last updated timestamp
-- All active items (not archived) with status
-- Any open alerts for this domain
-- Suggested next action (if any)
-Valid domain names: immigration, finance, kids, travel, health, home, shopping, goals, calendar, vehicle, estate, insurance, comms
-
-### `/cost`
-Show current month API cost estimate vs. $50 monthly budget. Read from `health-check.md:cost_tracking`. Estimate tokens used × current Claude pricing.
-
-### `/health`
-System integrity check:
-- Verify all files in `config/registry.md` exist on disk
-- Verify state file schema versions match prompt expectations
-- Test: `vault.py status`, `python scripts/pii_guard.py test` (quiet), Gemini CLI ping, Copilot CLI ping
-- Report any drift, missing files, or version mismatches
-Display: `✅ N/N checks passed` or itemized failures.
-
-### `/items`
-Display all open action items from `state/open_items.md`. Groups:
-```
-━━ OPEN ITEMS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔴 OVERDUE (deadline passed)
-  OI-NNN [domain] [description] — due [date] ([N days overdue])
-
-🟠 DUE SOON (≤7 days)
-  OI-NNN [domain] [description] — due [date]
-
-🟡 UPCOMING
-  OI-NNN [domain] [description] — due [date]
-
-🔵 OPEN (no deadline)
-  OI-NNN [domain] [description]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[N] open items · [N] synced to Microsoft To Do
-```
-Also accepts: `/items add [description]` to interactively add a new item (Artha asks: domain, deadline, priority, then appends to `open_items.md` and pushes to To Do if configured).
-
-Markdown: `/items done OI-NNN` marks item done; `/items defer OI-NNN [days]` defers.
-
-### `/items quick`
-Show only the 5-Minute task list from `state/memory.md → quick_tasks`. Quick display:
-```
-━━ ⚡ QUICK TASKS (≤5 min, phone-ready) ━━
-• [QT-001] [domain] [description]
-• [QT-002] [domain] [description]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[N] quick tasks · updated [time]
-```
-If `quick_tasks` is empty or not yet populated: "No quick tasks identified — run a catch-up to detect them."
-
-### `/bootstrap` and `/bootstrap <domain>`
-Guided interview to systematically populate state files. Replaces empty/bootstrap placeholder data with real user-provided information.
-
-**Usage:**
-- `/bootstrap` — show all domains with population status, then select one to populate
-- `/bootstrap <domain>` — jump directly to that domain's interview
-- `/bootstrap quick` — rapid setup mode: collect only the 3–5 highest-priority fields per domain
-- `/bootstrap validate` — re-run validation on all existing state files; report field gaps, format errors, and stale data without modifying anything
-- `/bootstrap integration` — guided setup for a new data integration (Gmail, Calendar, Outlook, iCloud)
-
-**Workflow:**
-```
-1. If no domain specified, display population status table:
-   ━━ BOOTSTRAP STATUS ━━━━━━━━━━━━━━━━━━━━
-   Domain          Status           Action
-   immigration     ⚠ placeholder    /bootstrap immigration
-   finance         ⚠ placeholder    /bootstrap finance
-   kids            ✅ populated     —
-   health          ⚠ placeholder    /bootstrap health
-   ...
-   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-2. For selected domain:
-   a. Read state file schema from prompts/<domain>.md
-   b. Derive interview questions from schema fields
-   c. Ask ONE question at a time — never dump a form
-   d. Validate input:
-      - Dates: must be ISO 8601 (YYYY-MM-DD)
-      - Amounts: must be numeric
-      - Required enum fields: offer valid options
-   e. For sensitive fields (SSN, case numbers, account numbers):
-      "This field is stored encrypted at rest. Enter your value:"
-      Apply Layer 2 semantic redaction before writing
-   f. After each domain section, confirm:
-      "Here's what I'll save for [section]. Correct? [yes / edit / skip]"
-
-3. Progress tracking:
-   - Save progress per domain in memory.md → context_carryover
-   - User can exit mid-interview: "Saved progress — resume with /bootstrap <domain>"
-   - Already-answered fields preserved on resume
-
-4. After writing:
-   a. Run Layer 2 post-write verification (Step 8c)
-   b. Update frontmatter: updated_by: user_interview (replaces 'bootstrap')
-   c. Update last_updated timestamp
-   d. Show completion summary:
-      "✅ [domain].md populated: [N] fields written, verification passed"
-   e. If domain is encrypted: vault.py decrypt → write → verify → vault.py encrypt
-
-5. Detection rules for population status:
-   - `updated_by: bootstrap` → ⚠ placeholder
-   - `updated_by: user_interview` or `updated_by: artha-catchup` with >5 populated fields → ✅ populated
-   - File missing → ❌ missing
-```
-
-**`/bootstrap quick` — Rapid setup mode:**
-```
-Ask only the 3–5 highest-priority fields per domain (marked `priority: high` in each prompt schema).
-Skip optional / enrichment fields entirely.
-Suitable for first-run users who want to get started in under 10 minutes.
-After completing all high-priority fields, summarize:
-  "✅ Quick setup complete. You can deepen any domain with /bootstrap <domain>."
-```
-
-**`/bootstrap validate` — Validation-only mode:**
-```
-For each populated state file:
-  1. Check required fields are present and non-empty
-  2. Validate date formats (ISO 8601)
-  3. Validate numeric fields (no units embedded in numeric values)
-  4. Check for stale data (last_updated older than 180 days)
-  5. Scan for residual bootstrap placeholders (e.g. "[TBD]", "placeholder")
-  6. Run PII guard sanity check (no raw PII in encrypted-at-rest fields)
-Output a report card — do NOT modify any files.
-  ━━ VALIDATION REPORT ━━━━━━━━━━━━━━━━━━━━━
-  Domain         Result   Issues
-  immigration    ✅ OK    —
-  finance        ⚠ stale  last_updated 210 days ago
-  health         ❌ gaps  3 required fields missing
-  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-**`/bootstrap integration` — Add a new data integration:**
-```
-Present a menu of available integrations:
-  1. Gmail / Google Calendar  (setup_google_oauth.py)
-  2. Outlook / Microsoft To Do / Teams  (setup_msgraph_oauth.py)
-  3. iCloud Mail / Calendar  (setup_icloud_auth.py)
-  4. Canvas LMS  (canvas_fetch.py)
-  5. Apple Health  (parse_apple_health.py)
-Guide user through the selected setup script with step-by-step prompts.
-After completion, run the corresponding --health check and report status.
-```
-
-### `/dashboard`
-Life dashboard — comprehensive system overview. Read from `state/dashboard.md` (rebuilt each catch-up).
-```
-━━ ARTHA DASHBOARD ━━━━━━━━━━━━━━━━━━━━━━━
-
-📊 LIFE PULSE
-Domain          Status    Alert   Last Updated
-immigration     🟡        —       2 days ago
-finance         🟡        —       2 days ago
-kids            🟢        —       today
-health          ⚪        —       never
-[...all 17 domains...]
-
-⚡ ACTIVE ALERTS (ranked by U×I×A)
-1. [U×I×A=27] [domain] [description]
-2. [U×I×A=18] [domain] [description]
-
-📋 OPEN ITEMS: [N] total ([N] overdue · [N] due this week)
-[Top 5 items by priority]
-
-🏥 SYSTEM HEALTH
-Context pressure: [green/yellow/red] | OAuth: [N/N healthy] | Last catch-up: [N]h ago
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### `/scorecard`
-Life Scorecard — 7-dimension life quality assessment. Generated during Sunday catch-up.
-```
-━━ LIFE SCORECARD ━━━━━━━━━━━━━━━━━━━━━━━━
-Dimension               Score   Trend   Notes
-Physical Health         [N]/10  [↑↓→]   [brief note]
-Financial Health        [N]/10  [↑↓→]   [brief note]
-Career & Growth         [N]/10  [↑↓→]   [brief note]
-Family & Relationships  [N]/10  [↑↓→]   [brief note]
-Immigration & Legal     [N]/10  [↑↓→]   [brief note]
-Home & Environment      [N]/10  [↑↓→]   [brief note]
-Personal Development    [N]/10  [↑↓→]   [brief note]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Composite: [N.N]/10 [trend]    Week of [date]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-Dimensions scored 1–10 using state file data. Composite = average of 7 dimensions. Week-over-week trend comparison when ≥2 weeks of data available.
-
-### `/relationships`
-Relationship graph overview. Read `state/social.md`. Display:
-```
-━━ RELATIONSHIP PULSE ━━━━━━━━━━━━━━━━━━━━━
-Close family:     [N/N on cadence]
-Close friends:    [N/N on cadence | X overdue]
-Extended family:  [N/N on cadence | X overdue]
-
-🔴 Overdue reconnects:
-  [Name] ([tier]) — [N] days since contact (target: [frequency])
-
-📅 Upcoming (14 days):
-  [Name]: [birthday/occasion] — [date]
-
-⚡ Life events needing acknowledgment:
-  [Name]: [event] ([N] days since detected)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### `/decisions`
-View active decision log. Read `state/decisions.md`. Display all active decisions with ID, summary, and review trigger.
-Optional: `/decisions DEC-NNN` for full detail of one decision.
-Optional: `/decisions add` to interactively log a new decision (Artha asks for context, domains, alternatives).
-
-### `/scenarios`
-View and run scenario analyses. Read `state/scenarios.md`. Display:
-```
-━━ SCENARIO ENGINE ━━━━━━━━━━━━━━━━━━━━━━━━
-WATCHING (not triggered):
-  SCN-001: Mortgage Refinance — trigger: rate < 6.0%
-  SCN-002: Job Change Impact — trigger: mention of job transition
-  SCN-003: College Cost Planning — trigger: SAT score / annual
-  SCN-004: Immigration Timeline — trigger: PD movement / EAD risk
-  SCN-005: Emergency Fund Stress Test — trigger: finance review
-
-ACTIVE (triggered this session): [if any]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-`/scenarios SCN-NNN` runs a specific scenario analysis with current state data.
-
-### `/goals leading`
-Goal scorecard with leading indicators. Read `state/goals.md` + leading indicator data from domain prompts. Display:
-```
-━━ GOAL PULSE + LEADING INDICATORS ━━━━━━━━
-[GOAL NAME]  ████████░░  80%  ON TRACK
-  Leading: [domain] — [indicator name]: [value] [trend ↑↓→] [status]
-
-[GOAL NAME]  ████░░░░░░  40%  AT RISK
-  Leading: [indicator]: [value]  ⚠️ [alert if triggered]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### `/diff [period]`
-Show meaningful state changes over a period. Uses git history of the `state/` directory.
-- `/diff` → changes since last catch-up (default)
-- `/diff 7d` → changes in last 7 days
-- `/diff 30d` → changes in last 30 days
-- `/diff DEC-NNN` → changes since a specific decision was logged
-
-**Implementation:**
-```bash
-git log --since="[period]" --name-only --format="" -- state/*.md \
-  | sort -u \
-  | while read f; do git diff HEAD~N -- "$f"; done
-```
-Summarize each changed file as:
-```
-state/immigration.md  [+N/-N lines]
-  + Added: [brief description of additions]
-  - Removed: [brief description of removals]
-```
-Filter out `last_updated:` timestamp changes as noise. Show only semantic content changes.
-If git history not available: "No git history found — run `git init && git add state/ && git commit -m 'Artha baseline'` to enable /diff."
-
-### `/privacy`
-Show the current privacy surface. Display:
-```
-━━ PRIVACY SURFACE ━━━━━━━━━━━━━━━━━━━━━━━━
-Encrypted at rest (age):
-  ✅ immigration.md · finance.md · health.md · insurance.md
-  ✅ estate.md · audit.md · vehicle.md · contacts.md
-
-PII filtering accuracy (last 30 days):
-  Scanned: [N] emails | Redactions applied: [N] | Patterns caught: [N]
-  False positive rate: [N]% | False negative rate: estimated [N]%
-
-Data flows to external services:
-  Claude API:   email bodies + state excerpts (PII pre-filtered)
-  Gemini CLI:   web research queries only (via safe_cli.py, PII scanned)
-  Copilot CLI:  code queries only (via safe_cli.py, PII scanned)
-  MS To Do:     open item descriptions (no PII policy: never store PII in titles)
-  Gmail:        briefing emails to self only (sensitivity-filtered for sensitive domains)
-  OneDrive:     encrypted state files at rest
-
-Last encryption cycle: [timestamp from vault.py status]
-Vault lock state: [locked|unlocked]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-Read PII stats from `health-check.md → pii_footer` (aggregated over rolling 30 days). Read vault state from `vault.py status`.
-
-### `/teach [topic]`
-Domain-aware explanation using the user's own data as context. `[topic]` can be a concept, acronym, or question.
-
-**Examples:**
-- `/teach EAD` → explains Employment Authorization Document using current immigration state
-- `/teach priority date` → explains USCIS Visa Bulletin priority dates using actual PD from immigration.md
-- `/teach EB-2 NIW` → explains National Interest Waiver with case context from state files
-- `/teach compound interest` → explains with reference to actual account values from finance.md
-
-**Format:**
-```
-━━ TEACH: [topic] ━━━━━━━━━━━━━━━━━━━━━━━━━
-[2–4 paragraph explanation in plain English]
-[What this means for YOUR situation (using state file data):]
-  • [Specific implication 1]
-  • [Specific implication 2]
-[Related: [linked concept if relevant]]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-If topic is immigration-related, load `state/immigration.md` for context (even if encrypted — decrypt first).
-If topic is finance-related, load `state/finance.md`.
-If topic not recognized: "I don't have specific state data for '[topic]' but here's a general explanation: [...]"
-
-### `/power`
-**Power Half Hour** — focused 30-minute session. Artha becomes a rapid-fire action assistant:
-1. Lists all open items due ≤7 days (ordered by U×I×A score)
-2. Presents each item with FNA annotation
-3. For each item: "Done / Defer / Escalate / Skip?"
-4. Executes approved actions (email draft, calendar event) with minimal friction
-5. At completion: "Power Hour complete — [N] items resolved, [N] deferred"
-Log session to `state/audit.md` as `POWER_HOUR | [timestamp] | items_handled: [N]`
-
+When the user invokes any slash command, read `config/commands.md` for the full command
+reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
+`/domain`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
+`/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`.
 ---
 
 ## §6 Multi-LLM Routing
@@ -1374,286 +1037,14 @@ These flags control which features are active. Update in `config/settings.md` un
 
 At the start of each catch-up, read `config/settings.md` and skip disabled features gracefully with a note in the briefing footer.
 
+
 ---
 
 ## §8 Briefing Output Format
 
-### 8.1 Standard Briefing Template (full day)
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ARTHA · [Weekday], [Month Day, Year]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Last catch-up: [N] hrs ago | Emails: [N] | Period: since [date/time]
-
-━━ 🔴 CRITICAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-(none) — or —
-• [Immigration] EAD renewal deadline in 28 days — attorney contact needed
-
-━━ 🟠 URGENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• [Finance] PSE bill $247 due [date] — not on auto-pay
-• [Immigration] Visa Bulletin EB-2 India → [date]; PD gap now [N] months
-
-━━ 📅 TODAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[Time] — [Event] ([source])
-[Time] — [Event] ([source])
-(none if no events)
-
-━━ 📬 BY DOMAIN ━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-### Immigration
-[1–4 bullet points of actionable items; omit if nothing new]
-"No new activity." (if nothing to report — never hide empty sections)
-
-### Finance
-[1–4 bullet points]
-
-### Kids
-[1–4 bullet points: one section per child defined in §1]
-
-### [other domains with new items — omit domains with no activity]
-
-━━ 🎯 GOAL PULSE ━━━━━━━━━━━━━━━━━━━━━━━━━
-[GOAL NAME]  ████████░░  80%  ON TRACK  → Leading: [indicator] [value] [↑↓→]
-[GOAL NAME]  ████░░░░░░  40%  AT RISK   ⚠️ Leading: [indicator] [alert]
-[SPRINT] [name]  ██████░░░░  60%  Day 18/30  ← (if sprint active)
-(omit if goals.md is empty)
-
-━━ 🤝 RELATIONSHIP PULSE ━━━━━━━━━━━━━━━━━
-• On cadence: [N] close family · [N] friends | Overdue: [N reconnects]
-• Upcoming 14 days: [birthday/occasion list or "none"]
-• [Top 1 reconnect suggestion if overdue: "Consider reaching out to [Name] — [N] days"]
-(omit if social.md has no overdue contacts and no upcoming occasions)
-
-━━ 💡 ONE THING ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[The single most important insight — specific, actionable, not generic]
-[U×I×A = N] [domain] · [scoring: Urgency:[N] Impact:[N] Agency:[N]]
-
-⚡ FNA: [fastest action — 1 line — only if alerts present]
-→ Ask [spouse from §1]: [shared-domain decision topic — only if detected]
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[N] emails → [N] actionable items · signal:noise [N]:[N] · next catch-up: [time]
-🔒 PII: [N] scanned · [N] redacted · [N] patterns
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### 8.2 Design rules
-- Empty sections are **stated**, not hidden: write "No new activity." not silence
-- Domain items in prose bullets (not tables) — 1 sentence per item
-- Goal pulse uses fixed-width bars for visual consistency
-- ONE THING is always specific: "Call Dr. Smith to confirm [child]'s appointment" not "Handle health matters"
-- Footer shows signal-to-noise ratio (actionable items / total emails processed)
-
-### 8.3 Quiet day (no alerts, ≤2 actionable items)
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ARTHA · [Weekday], [Date] — ✅ All clear
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[N] emails processed. No alerts. [Any items worth a quick note.]
-━━ 📅 TODAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[Calendar items]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### 8.4 Crisis day (≥3 🔴 Critical alerts)
-Prepend full count: "⚠️ [N] critical alerts require your attention today." Then standard format with all Critical items numbered.
-
-### 8.5 Sensitivity filter for emailed briefings
-When the briefing is **emailed** (not just shown in terminal), sensitive domains (`immigration`, `finance`, `estate`, `health`) contribute summary lines only:
-- "Immigration: 1 item processed. Details in next terminal session."
-- "Finance: 2 items processed. 1 requires action (details in terminal)."
-Kids, Calendar, and low-sensitivity domains display normally in email.
-
-### 8.6 Weekly summary (Mondays or trigger)
-```
-# Artha Weekly Summary — Week of [Mon]–[Sun], [Year]
-
-## Week in Numbers
-- Emails processed: [N] (marketing suppressed: [N])
-- Catch-ups: [N] | Alerts: [N] (🔴[N] 🟠[N] 🟡[N])
-- Goals on track: [N]/[total]
-- Action acceptance rate: [N]% ([N] proposed, [N] accepted, [N] deferred)
-
-## Domain Summaries
-[One paragraph per active domain with week's highlights]
-
-## Goal Progress
-[Full scorecard with week-over-week trend arrows ↑↓→ and leading indicator status]
-
-## 🤝 Relationship Health
-- On cadence this week: [N close family] · [N close friends] · [N extended family]
-- Overdue reconnects: [list top 3 or "none"]
-- Occasions next 14 days: [list or "none"]
-
-## ⚡ Leading Indicator Alerts
-[Finance/Kids/Immigration leading indicators that crossed thresholds this week]
-[Or: "All leading indicators within normal range"]
-
-## 📊 Accuracy Pulse
-- Actions proposed this week: [N] | Accepted: [N] ([%]) | Deferred: [N] | Declined: [N]
-- Corrections logged: [N] | Dismissed alerts: [N]
-- Domain with most corrections: [domain or "none"]
-
-## 📉 Signal:Noise & Top Noise Sources
-- Signal ratio this week: [N]% (target: >30%)
-- Top noise sources (consider unsubscribing):
-  1. [sender] — [N] emails, [N] actionable
-  2. [sender] — [N] emails, [N] actionable
-  3. [sender] — [N] emails, [N] actionable
-[Or: "Signal ratio healthy — no action needed"]
-
-## Coming Up (next 7 days)
-[Key dates, deadlines, appointments, occasions]
-```
-
-### 8.7 Digest Mode Briefing (digest_mode=true)
-For catch-ups with hours_elapsed > 48hrs. Compressed format focusing on critical items only.
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ARTHA · [Date] — 📦 DIGEST MODE ([N] days)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Period: [start date] → [end date] | [N] emails | [N] days
-
-━━ 🔴 CRITICAL (action needed now) ━━━━━━━
-[Critical items — all of them, no cap]
-(none if clear)
-
-━━ 🟠 URGENT (due within 7 days) ━━━━━━━━
-[Top 5 urgent items max]
-
-━━ 📅 TODAY & TOMORROW ━━━━━━━━━━━━━━━━━━
-[Calendar items for today + tomorrow only]
-
-━━ TOP 3 PER ACTIVE DOMAIN ━━━━━━━━━━━━━━
-[domain]: [item 1] | [item 2] | [item 3]
-[...other active domains...]
-
-━━ 💡 ONE THING ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[Single most important insight with score]
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-[N] emails → [N] actionable items · [N] days compressed · next catch-up: [time]
-🔒 PII: [N] scanned · [N] redacted · [N] patterns
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-
-### 8.8 Flash Briefing (gap < 4 hours)
-Maximum 8 lines. ≤30 seconds reading time. No domain sections, no greetings, no goals.
-```
-━━ ARTHA · [Time] — ⚡ FLASH ━━━━━━━━━━━━━
-Since [last catch-up time] | [N] emails
-
-🔴 [Critical item if any — max 1 line]
-🟠 [Urgent item if any — max 2 items, 1 line each]
-
-📅 Next: [next calendar event today, if any]
-
-[1 consequence forecast line, if applicable]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Say "more" for full briefing
-🔒 PII: [N] scanned · [N] redacted · [N] patterns
-```
-**Design rules:** No domain sections. No relationship pulse. No goals. Critical/Urgent only. If no alerts: "✅ All clear since [time]. [N] emails, nothing actionable."
-
-### 8.9 Deep Briefing (user requests `/catch-up deep`)
-Extends standard briefing with analysis sections. Intended for Sunday catch-ups or user-requested deep dives.
-```
-[Full standard briefing §8.1 PLUS:]
-
-━━ 📈 TREND ANALYSIS ━━━━━━━━━━━━━━━━━━━━
-[Cross-domain trends observed over past 7-30 days]
-[Each trend: domains involved, direction, significance]
-
-━━ ⚡ SCENARIO IMPLICATIONS ━━━━━━━━━━━━━━
-[Active scenarios with current data applied]
-[What-if analysis for top scenario]
-
-━━ 🧠 COACHING ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[Extended coaching section — multiple goals reviewed]
-[Obstacle anticipation for upcoming milestones]
-[Behavioral pattern observations]
-
-━━ 🔗 COMPOUND SIGNALS ━━━━━━━━━━━━━━━━━━
-[All compound signals detected, with reasoning chains]
-[Not just alerts — include informational cross-domain observations]
-
-━━ ⚠️ CONSEQUENCE FORECASTS ━━━━━━━━━━━━━━
-[Full consequence chains for all Critical/Urgent items]
-[Extended to include Medium-priority items with deadlines]
-```
-
-### 8.10 Monthly Retrospective (1st of month)
-Generated automatically when `generate_monthly_retro = true` (Step 3). Saved to `summaries/YYYY-MM-retro.md`.
-```
-# Artha Monthly Retrospective — [Month Year]
-
-## Month in Numbers
-- Catch-ups: [N] | Total emails: [N] | Marketing suppressed: [N]
-- Alerts: [N] 🔴 Critical · [N] 🟠 Urgent · [N] 🟡 Standard
-- Open items: [N] added · [N] closed · [N] overdue at month end
-- Action acceptance rate: [N]% ([N] proposed · [N] accepted · [N] deferred · [N] declined)
-
-## Goal Progress
-[Each active goal: start-of-month vs end-of-month progress % + trend arrow]
-[Any sprints: started, closed, paused this month]
-
-## Domain Highlights
-[One 2–3 sentence summary per active domain — what happened, any notable changes]
-
-## Decisions Logged This Month
-[List DEC-NNN entries logged or resolved this month]
-
-## Relationship Health
-- Occasions handled/missed: [list]
-- Reconnect cadence: [N] kept · [N] missed
-
-## System Health
-- Preflight failures: [N] | OAuth issues: [N]
-- PII stats: [N total scanned · N redacted this month]
-- Signal:noise average: [N]% (target >30%)
-- Average catch-up duration: [N] seconds
-
-## What Worked / What to Improve
-[Artha's self-assessment based on correction logs and metrics in health-check.md]
-[Any prompt tuning recommendations]
-```
-
-### 8.11 Week Ahead (Mondays — added to §8.1 after BY DOMAIN section)
-```
-━━ 📅 WEEK AHEAD ━━━━━━━━━━━━━━━━━━━━━━━━
-Mon [date]: [events or "Free"]   ← Today
-Tue [date]: [events or "Free"]
-Wed [date]: [events or "Free"]
-Thu [date]: [events or "Free"]
-Fri [date]: [events or "Free"]
-Sat–Sun:    [events or "Weekend clear"]
-
-Key this week:
-• [deadline/appointment/prep note 1]
-• [deadline/appointment/prep note 2 if applicable]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-Pull from merged 7-day calendar. Cross-reference `open_items.md` for deadlines falling this week. Highlight days with ≥3 events as busy. Omit section if calendar feeds all failed.
-
-### 8.12 Weekend Planner (Fridays — added to §8.1 after BY DOMAIN section)
-```
-━━ 🏡 WEEKEND PLANNER ━━━━━━━━━━━━━━━━━━━
-Saturday [date]:  [scheduled events or "Open"]
-Sunday [date]:    [scheduled events or "Open"]
-
-Admin tasks for the weekend:
-  • [open item from open_items.md suitable for Sat/Sun — up to 3]
-
-Prep for next week:
-  • [Monday event needing prep, e.g., "Medical appt — confirm insurance card"]
-  • [Any deadline due Mon/Tue requiring weekend action]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-Show if ≥2 open items could reasonably be handled on the weekend (deduce from priority and domain). Omit if both days are fully scheduled or no weekend-suitable items exist.
-
+When synthesizing a briefing (Step 11), read `config/briefing-formats.md` for all output format
+templates: standard, flash, digest, deep, weekly summary, monthly retrospective, week ahead,
+and weekend planner. The sprint engine rules are also in that file.
 ---
 
 ## §9 Action Proposal Format
@@ -1663,7 +1054,7 @@ When recommending a write action (send email, add calendar event, send message, 
 ```
 ━━ ACTION PROPOSAL ━━━━━━━━━━━━━━━━━━━━━━━
 Type:     [Send Email / Add Calendar Event / WhatsApp / Other]
-To:       [Recipient — first name only if in contacts.md]
+To:       [Recipient — first name only if in state/contacts.md]
 Subject:  [If email]
 Draft:    [Full draft text — concise]
 Reason:   [Why this action is recommended — 1 sentence]
@@ -1682,109 +1073,24 @@ Approve? [yes / no / edit]
 Rules:
 - Never execute without explicit "yes" or equivalent approval
 - "edit" → user provides changes → re-present for approval
-- "no" → log declined action to audit.md, do not retry in same session
+- "no" → log declined action to state/audit.md, do not retry in same session
 - Batch similar actions (e.g., 3 RSVP emails) into a single multi-item proposal
 - Never send emails containing PII to external recipients without user review
 - 🔴 High friction actions require explicit approval even if previously approved for similar items
+
 
 ---
 
 ## §10 File Inventory & Versioning
 
-### State files (under `state/`)
-| File | Sensitivity | Encrypted | Domain |
-|---|---|---|---|
-| `immigration.md` | Critical | ✅ | Immigration |
-| `finance.md` | High | ✅ | Finance |
-| `health.md` | High | ✅ | Health |
-| `insurance.md` | High | ✅ | Insurance |
-| `estate.md` | High | ✅ | Estate |
-| `audit.md` | High | ✅ | Audit log |
-| `vehicle.md` | High | ✅ | Vehicle |
-| `kids.md` | Medium | ❌ | Kids |
-| `calendar.md` | Medium | ❌ | Calendar |
-| `home.md` | Medium | ❌ | Home |
-| `travel.md` | Medium | ❌ | Travel |
-| `shopping.md` | Low | ❌ | Shopping |
-| `goals.md` | Medium | ❌ | Goals |
-| `comms.md` | Medium | ❌ | Communications |
-| `social.md` | Medium | ❌ | Relationships (v2.0 — full graph) |
-| `decisions.md` | Medium | ❌ | Decision log (loggable DEC-NNN decisions) |
-| `scenarios.md` | Medium | ❌ | Scenario engine (SCN-NNN what-if analyses) |
-| `memory.md` | Medium | ❌ | Session memory + corrections + patterns |
-| `open_items.md` | Medium | ❌ | Open action items (OI-NNN) |
-| `employment.md` | Medium | ❌ | Employment / visa sponsorship |
-| `learning.md` | Low | ❌ | Learning goals and resources |
-| `boundary.md` | Low | ❌ | System boundary constraints |
-| `health-check.md` | Low | ❌ | System health + accuracy pulse |
-| `health-metrics.md` | Medium | ❌ | Health metrics log |
-
-### Config files (under `config/`)
-| File | Purpose |
-|---|---|
-| `Artha.md` | This file — full instruction set |
-| `settings.md` | Feature flags, email config, budget, age public key |
-| `contacts.md` | Family contacts + key individuals (ENCRYPTED) |
-| `occasions.md` | Annual dates, birthdays, anniversaries, deadlines |
-| `registry.md` | Component manifest, versions, last-verified dates |
-
-### Prompt files (under `prompts/`)
-`immigration.md`, `finance.md`, `kids.md`, `comms.md`, `travel.md`, `health.md`, `home.md`, `shopping.md`, `goals.md`, `vehicle.md`, `estate.md`, `insurance.md`, `calendar.md`, `social.md`, `digital.md`, `boundary.md`, `learning.md`
-
-### Scripts (under `scripts/`)
-| Script | Purpose | T- |
-|---|---|---|
-| `vault.py` | Encrypt/decrypt sensitive state (cross-platform) | T-1A.1.3 |
-| `vault.sh` | Legacy Mac-only vault (kept for backward compatibility) | T-1A.1.3 |
-| `vault_hook.py` | Claude Code hook wrapper (always exits 0) | T-1A.3.4 |
-| `pii_guard.sh` | PII scan/filter (legacy bash+perl, macOS only) | T-1A.1.5 |
-| `pii_guard.py` | PII scan/filter (pure Python, cross-platform) | T-1A.1.5 |
-| `safe_cli.sh` | Outbound CLI PII wrapper (legacy bash, macOS only) | T-1A.1.6 |
-| `safe_cli.py` | Outbound CLI PII wrapper (pure Python, cross-platform) | T-1A.1.6 |
-
-### Versioning
-- State files carry YAML frontmatter: `schema_version:`, `last_updated:`, `updated_by:`
-- When updating a state file, increment `last_updated` timestamp; `updated_by: artha-catchup` or `artha-interactive`
-- If Artha.md schema_version changes, add migration notes to `audit.md`
-
-### `state/goals.md` Sprint schema (v2.1)
-Active sprints are tracked in a `sprints:` list within `goals.md`:
-```yaml
-sprints:
-  - id: SPR-001
-    name: "[sprint name]"
-    linked_goal: "[goal name from goals list]"
-    target: "[specific, measurable outcome]"
-    sprint_start: YYYY-MM-DD
-    sprint_end: YYYY-MM-DD       # sprint_start + duration (default 30 days)
-    duration_days: 30
-    status: active               # active | paused | complete | cancelled
-    progress_pct: 0              # updated each catch-up
-    calibrated_at_14d: false     # flip to true after 2-week calibration check
-    outcome: ""                  # filled on close with brief result description
-```
-
-### `state/decisions.md` Deadline schema (v2.1)
-Decisions now support an optional `deadline:` field:
-```yaml
-- id: DEC-001
-  date: YYYY-MM-DD
-  summary: "[concise decision description]"
-  context: "[background — 2–3 sentences]"
-  domains_affected: [domain1, domain2]
-  alternatives_considered: "[options that were weighed]"
-  deadline: YYYY-MM-DD       # OPTIONAL: when decision must be made by
-  review_trigger: "[condition that should prompt re-evaluation]"
-  status: active             # active | resolved | expired
-```
-Decisions with `deadline` are monitored each catch-up (Step 8i). Expired decisions surface as 🔴 Critical to force closure.
-
+Full component manifest, file inventory, schemas, and version tracking are in `config/registry.md`.
+Read it when doing system health checks, validating file existence, or checking state file schemas.
 ---
 
 ## §11 Operating Rules
 
 1. **Read before write**: Always read a state file before updating it (to check for duplicates and preserve existing data)
-2. **Atomic writes**: Write complete updated state files, not partial appends (except audit.md which is append-only)
+2. **Atomic writes**: Write complete updated state files, not partial appends (except state/audit.md which is append-only)
 3. **Idempotent catch-up**: Re-running catch-up should not duplicate entries — apply dedup rules (§3)
 4. **Context window management**: If processing >100 emails, summarize batches of 20; do not attempt to hold all email content in context simultaneously
 5. **Fail gracefully**: If an MCP tool fails, note it in the briefing and continue with available data
@@ -1792,192 +1098,27 @@ Decisions with `deadline` are monitored each catch-up (Step 8i). Expired decisio
 7. **Cost awareness**: Avoid redundant LLM calls. Use Gemini CLI for web lookups (free quota). Cache web research results in `summaries/` for 24 hours
 8. **Session discipline**: At the end of every session (user says "done", "bye", "exit", or stops responding for context-window reasons), run `python scripts/vault.py encrypt` before ending. The LaunchAgent watchdog (macOS) also handles crash recovery.
 
----
-
-## §12 Goal Sprint Engine *(v2.1)*
-
-A **sprint** is a focused 14–90 day push toward a specific, measurable sub-goal. Sprints provide accountability cadence and auto-calibration. They are **not** the goal itself — they are a commitment window.
-
-### Creating a sprint
-Via `/goals sprint new` or any conversation where user says "I want to focus on [X] for the next [N] weeks":
-1. Artha asks: sprint name, linked goal (from goals.md), target outcome, duration (default 30d)
-2. Artha creates the SPR-NNN record in goals.md (schema in §10)
-3. Replies: "Sprint '[name]' started. I'll check in at the 2-week mark and at completion."
-
-### Sprint lifecycle
-```
-Day 1:    sprint_start → status: active, progress_pct: 0
-Day 14:   calibration check → Artha asks if pace correct; user can adjust target or extend
-Day N:    each catch-up: Artha infers progress from domain state changes + goal metrics
-End date: status → complete; Artha asks "How did it go? [succeeded / partially / missed]"
-          → outcome recorded; lesson logged to memory.md → Corrections/Patterns
-```
-
-### Auto-detection (after 30+ catch-ups)
-If Artha detects the user has been consistently working a specific area for ≥14 days (domain activity pattern), suggest:
-`"I notice you've been consistently working on [area] — want me to create a sprint to track this progress?"`
-If approved: create sprint with auto-detected start date and inferred target.
-
-### Sprint display rules
-- Sprint bar appears in `/goals` output (§5) and in standard briefing Goal Pulse section (§8.1)
-- Sprint bar format: `[SPRINT] [name]  ██████░░░░  60%  Day 18/30`
-- At Day 14: append `⚑ Calibration pending` to the bar
-- Paused sprints: bar grayed with `[PAUSED]` prefix
-- Completed sprints: not shown in active display; archived in goals.md with `status: complete`
 
 ---
 
-## §13 Observability & Retrospective *(v2.1)*
+## §12 Goal Sprint Engine
 
-### Post-session calibration (Step 19 details)
-The calibration system learns over time:
-- Questions get more targeted as Artha builds domain accuracy history
-- Skip rate tracked per user: if consistently skipped, frequency auto-reduces
-- Correction patterns logged to memory.md feed back into domain extraction logic
+Sprint engine details are in `config/briefing-formats.md`. Sprint schema is in `config/registry.md`.
 
-### Monthly retrospective
-Generated on the 1st of each month if last retro was >28 days ago (Step 3 trigger).
-Saved to `summaries/YYYY-MM-retro.md`. The format is §8.10.
-A brief 3-line summary is embedded in the monthly 1st catch-up briefing footer:
-`📊 Monthly retro saved: [N] catch-ups · [acceptance_rate]% action rate · [signal:noise]% signal`
+---
 
-### `/diff` implementation notes
-The `/diff` command uses git log on the `state/` directory. To enable:
-```bash
-git init        # if not already a git repo
-git add state/
-git commit -m "Artha state baseline [date]"
-```
-Artha automatically commits state/ after each `vault.py encrypt` cycle (Step 18) if git is configured:
-```bash
-git add state/*.md state/*.md.age && \
-git commit -m "Artha catch-up [ISO datetime]" --quiet || true
-```
-Non-blocking: if git fails, continue without committing. Log git commit status to health-check.md.
+## §13 Observability & Retrospective
+
+Read `config/observability.md` for post-session calibration, monthly retrospective, and `/diff` implementation details.
 
 ---
 
 ## §14 Phase 2B Intelligence Features
 
-### Insight Engine (F15.11 — T-2.3.1)
-**Trigger:** Weekly summary (Monday catch-up) OR `/catch-up deep`.
-Generate 3–5 **non-obvious cross-domain insights** — things that would not be surfaced by any single domain prompt:
-
-Rules:
-- Must involve ≥2 domains
-- Must be forward-looking (what should the user do/know, not what happened)
-- Must be specific: name the domains, the data points, and the implication
-- Must NOT repeat insights surfaced in the last 14 days (check memory.md)
-
-Examples of the *right* level of insight:
-- "[Child]'s SAT test is in 6 weeks and your travel calendar has 3 trips in that window. Consider studying schedule."
-- "Your emergency fund is at 5.2 months, just below the 6-month target. EAD expires in 120 days. These two should not coincide."
-- "You've had 4 after-hours work signals this week while your immigration case is in a critical filing period — boundary risk."
-
-Embed in weekly summary or deep briefing under:
-```
-━━ 🧠 INSIGHTS ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[1] [Domain1 × Domain2]: [Insight — 2 sentences max]
-[2] [Domain3 × Domain4 × Domain5]: [Cross-domain observation]
-[...up to 5 max]
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-Log insights generated to `state/memory.md → insights_generated` (dedup check on next generation).
-
-### Proactive Check-In (Mode 6 — T-2.3.2)
-**Trigger conditions** (check at end of every catch-up):
-1. ≥2 goals are more than 20% behind target pace
-2. Work-life boundary metric is 🔴 for 2+ consecutive weeks
-3. No exercise/health activity detected in state for ≥5 days
-4. Finance monthly spend is >20% over budget
-5. Immigration deadline within 60 days and no calendar block detected
-
-When triggered, append to briefing (AFTER the main body, before calibration):
-```
-━━ 🤝 CHECK-IN ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[1] [Friendly, direct question OR observation — 1 sentence]
-[2] [Second item only if clearly different domain]
-[Max 3 items]
-"Type 'defer' to address these later, or respond directly."
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-```
-If user types "defer": suppress all check-in items for 14 days. Log dismissal to memory.md.
-If user responds: acknowledge and update relevant state. If user ignores: do not re-surface for 7 days.
-Max 3 check-in items per briefing. Do NOT trigger in flash mode.
-
-### Goal Engine Expansion (F13.5–13.12 — T-2.3.3)
-Enhance goal tracking with these capabilities:
-
-**Goal Cascade View (F13.5):**
-Each goal can now have sub-goals. Display cascade in `/goals`:
-```
-▶ Goal: [name] [progress bar]
-  ↳ Sub: [sub-goal 1] [mini bar]
-  ↳ Sub: [sub-goal 2] [mini bar]
-```
-
-**Goal-Linked Alerts (F13.6):**
-When a domain event affects a goal (e.g., unexpected expense → savings goal), surface the link:
-"This expense affects your [goal name] goal — it now projects [N]% completion by target date."
-
-**Trajectory Forecasting (F13.10):**
-For goals with ≥4 progress data points, project completion date:
-```
-Current pace: [%/week] → projected: [date] ([N days] vs target [date])
-Verdict: [on track|behind|ahead] by [N days|N%]
-```
-Surface in `/goals` and weekly summary.
-
-**Dynamic Replanning (F13.12):**
-If trajectory forecast shows missing target by >20%: suggest replan once:
-"At current pace you'll reach [goal] on [date], [N] days after target. Options: (a) accelerate — [specific action], (b) extend target to [new date], (c) adjust target."
-
-### Spouse's Filtered Briefing (T-2.4.1)
-**Activation:** When `config/artha_config.yaml` has `spouse_briefing.enabled: true` with an `email:` address configured.
-
-**Domains shared with spouse:** Finance (summary only, no account details), Immigration (milestone-level only, no case specifics), Kids (full detail), Home (full), Travel (full), Health (appointment reminders only), Calendar (full).
-
-**Domains excluded:** Finance details, estate, insurance specifics, employment details.
-
-**Format:** Simplified §8.1 with only shared domains. Subject line: `Artha Family · [Weekday], [Date]`.
-
-**Sensitivity filter:** Apply extra layer — immigration section shows `"1 immigration item — review with [primary user]"` instead of case details. Finance section shows `"Finance update — review with [primary user]"`.
-
-**Trigger:** After Step 14 sends the main briefing, if spouse briefing is enabled:
-```bash
-python scripts/gmail_send.py \
-  --to "$SPOUSE_EMAIL" \
-  --subject "Artha Family · $DAY_OF_WEEK, $DATE" \
-  --body "$SPOUSE_BRIEFING_TEXT" \
-  --archive
-```
-Log as separate entry in `state/audit.md`: `SPOUSE_BRIEFING_SENT | [timestamp]`
-
-### Autonomy Elevation Tracking (T-3.3.1)
-Track elevation criteria in `state/health-check.md → autonomy`:
-```yaml
-autonomy:
-  current_level: 1          # Level 1 = supervised, Level 2 = pre-approved actions enabled
-  level_1_start_date: YYYY-MM-DD
-  elevation_criteria:
-    catch_ups_completed: 0   # target: ≥ 60
-    false_positive_rate_pct: 0  # target: < 5% (immigration + finance domains)
-    action_acceptance_rate_pct: 0  # target: ≥ 70% over last 30 sessions
-    corrections_per_session_avg: 0  # target: < 0.5 over last 20 sessions
-    days_at_level_1: 0       # target: ≥ 60 days
-  elevation_eligible: false  # set to true when all criteria met
-  elevation_note: ""         # explanation when eligible
-```
-Check elevation criteria at each catch-up (Step 16). When all criteria met:
-- Set `elevation_eligible: true`
-- Surface in briefing footer: "🎓 Autonomy Level 2 eligible — use `/autonomy review` to evaluate"
-- Do NOT auto-elevate; user must explicitly approve via `/autonomy elevate`
-
-**`/autonomy` command:**
-- `/autonomy` → show current level + progress toward next level
-- `/autonomy review` → show full criteria status with current vs. target values
-- `/autonomy elevate` → initiate Level 2 activation (requires explicit confirmation)
+> Phase 2B features are specified but NOT implemented. Full specifications
+> moved to `specs/artha-prd.md` §14.B. See `config/implementation_status.yaml`
+> for current feature status. Do NOT attempt to execute Phase 2B features.
 
 ---
 
-*Artha.md v4.0 — auto-loaded by CLAUDE.md — do not delete or rename*
+*Artha.md v5.1 — auto-loaded by CLAUDE.md — do not delete or rename*

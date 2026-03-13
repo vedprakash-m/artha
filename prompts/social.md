@@ -28,13 +28,13 @@ are first-class events — no less important than Western holidays.
 - Subject: "birthday", "anniversary", "wedding", "baby shower", "graduation"
 - Social media notification emails (LinkedIn anniversary, etc.)
 - Emails from/about family India contacts
-- Subject mentioning cultural occasions: "Diwali", "Holi", "Navratri", "Eid"
+- Subject mentioning cultural occasions (see user_profile.yaml → family.cultural_occasions)
 
 ---
 
 ## Birthday & Anniversary Engine
 
-**On each run**, check `config/contacts.md` and `config/occasions.md` for:
+**On each run**, check `state/contacts.md` and `state/occasions.md` for:
 - Birthdays within the next 30 days → 🟡 alert (7 days = 🟠)
 - Wedding anniversaries within 30 days
 - Children's birthdays within 30 days
@@ -48,7 +48,7 @@ are first-class events — no less important than Western holidays.
 
 ## Cultural Calendar
 
-Check `config/occasions.md` for upcoming cultural occasions:
+Check `state/occasions.md` for upcoming cultural occasions:
 - 30 days out: mention in weekly summary planning section
 - 14 days out: propose creating a visual greeting card batch
 - 7 days out: propose sending WhatsApp/email greetings to relevant contact group

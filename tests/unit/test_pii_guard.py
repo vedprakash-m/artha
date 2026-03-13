@@ -9,6 +9,8 @@ PII_GUARD_SH = PROJECT_ROOT / "scripts" / "pii_guard.sh"
 
 def run_pii_guard(cmd, input_text):
     """Helper to run pii_guard.sh and return (stdout, stderr, returncode)."""
+    if not PII_GUARD_SH.exists():
+        pytest.skip("pii_guard.sh not present (archived) — use Python API tests")
     # Check if bash is available
     import shutil
     bash_path = shutil.which("bash")
@@ -60,7 +62,11 @@ def test_pii_guard_filter_negative(description, input_text):
     stdout, stderr, rc = run_pii_guard("filter", input_text)
     assert rc == 0, f"Expected zero exit code for {description}"
     assert stdout == input_text
-    assert stderr == ""
+    # Accept the deprecation warning emitted to stderr by pii_guard.sh, but
+    # reject any genuine PII detection output (PII_FOUND / PII_FILTER lines).
+    pii_lines = [l for l in stderr.splitlines()
+                 if "PII_FOUND" in l or "PII_FILTER" in l]
+    assert pii_lines == [], f"Unexpected PII detection in stderr: {pii_lines}"
 
 def test_pii_guard_scan_mode():
     """Verify that scan mode detects PII without modifying output."""
@@ -180,4 +186,4 @@ def test_py_builtin_test_suite():
         cwd=PROJECT_ROOT,
     )
     assert result.returncode == 0
-    assert "Results: 19 passed, 0 failed" in result.stdout
+    assert "Results: 25 passed, 0 failed" in result.stdout

@@ -53,8 +53,8 @@ def test_vault_decrypt_flow(mock_vault_env, capsys):
     age_file = mock_vault_env / "state" / "immigration.md.age"
     age_file.write_text("encrypted-data")
     
-    # Create config age file
-    contacts_age = mock_vault_env / "config" / "contacts.md.age"
+    # Create contacts age file (contacts lives in state/ alongside other sensitive files)
+    contacts_age = mock_vault_env / "state" / "contacts.md.age"
     contacts_age.write_text("encrypted-contacts")
     
     def side_effect_decrypt(key, infile, outfile):
@@ -70,7 +70,7 @@ def test_vault_decrypt_flow(mock_vault_env, capsys):
         # Verify lock file created
         assert (mock_vault_env / ".artha-decrypted").exists()
         assert (mock_vault_env / "state" / "immigration.md").exists()
-        assert (mock_vault_env / "config" / "contacts.md").exists()
+        assert (mock_vault_env / "state" / "contacts.md").exists()
         assert mock_decrypt.called
         captured = capsys.readouterr()
         assert "Decrypt complete" in captured.out
@@ -79,7 +79,7 @@ def test_vault_encrypt_flow(mock_vault_env, capsys):
     """Verify the encryption flow (mocking age calls)."""
     # Create mock .md files and a lock file
     (mock_vault_env / "state" / "immigration.md").write_text("plain-data")
-    (mock_vault_env / "config" / "contacts.md").write_text("plain-contacts")
+    (mock_vault_env / "state" / "contacts.md").write_text("plain-contacts")
     (mock_vault_env / ".artha-decrypted").touch()
     
     def side_effect_encrypt(pubkey, infile, outfile):
@@ -96,7 +96,7 @@ def test_vault_encrypt_flow(mock_vault_env, capsys):
         assert not (mock_vault_env / ".artha-decrypted").exists()
         assert not (mock_vault_env / "state" / "immigration.md").exists()
         assert (mock_vault_env / "state" / "immigration.md.age").exists()
-        assert (mock_vault_env / "config" / "contacts.md.age").exists()
+        assert (mock_vault_env / "state" / "contacts.md.age").exists()
         assert mock_encrypt.called
         captured = capsys.readouterr()
         assert "Encrypt complete" in captured.out

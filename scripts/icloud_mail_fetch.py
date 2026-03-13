@@ -51,8 +51,8 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone, timedelta
-from html.parser import HTMLParser
 from typing import Iterator, Optional
+from lib.html_processing import strip_html, clean_email_body
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -105,48 +105,6 @@ _FOOTER_MARKERS = [
 _MAX_BODY_CHARS = 8_000
 
 
-# ---------------------------------------------------------------------------
-# HTML → plain text stripper (mirrors gmail_fetch.py / msgraph_fetch.py)
-# ---------------------------------------------------------------------------
-
-class _HTMLStripper(HTMLParser):
-    """Lightweight HTML → plain text converter."""
-
-    _BLOCK_TAGS = {"p", "div", "br", "li", "tr", "blockquote", "h1", "h2",
-                   "h3", "h4", "h5", "h6"}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag in self._BLOCK_TAGS:
-            self._parts.append("\n")
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._BLOCK_TAGS:
-            self._parts.append("\n")
-
-    def handle_data(self, data: str) -> None:
-        self._parts.append(data)
-
-    def handle_entityref(self, name: str) -> None:
-        self._parts.append(html.unescape(f"&{name};"))
-
-    def handle_charref(self, name: str) -> None:
-        self._parts.append(html.unescape(f"&#{name};"))
-
-    def get_text(self) -> str:
-        text = "".join(self._parts)
-        # Collapse excessive whitespace / blank lines
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-
-def _strip_html(raw: str) -> str:
-    stripper = _HTMLStripper()
-    stripper.feed(raw)
-    return stripper.get_text()
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +216,7 @@ def _get_body(msg: email_lib.message.Message) -> str:
             else:
                 plain_body = text
 
-    body = plain_body or (_strip_html(html_body) if html_body else "")
+    body = plain_body or (strip_html(html_body) if html_body else "")
     return body.strip()
 
 

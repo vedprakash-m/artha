@@ -266,10 +266,10 @@ def check_script_health(
 
 
 def check_pii_guard() -> CheckResult:
-    """Verify pii_guard.py (primary) or pii_guard.sh (legacy) test suite passes.
+    """Verify pii_guard.py test suite passes.
 
-    pii_guard.py is the preferred cross-platform implementation. The legacy
-    bash script is accepted as a fallback for existing installs.
+    pii_guard.py is the cross-platform implementation. The legacy bash script
+    has been archived to .archive/pii_guard.sh.
     """
     import shutil
 
@@ -602,6 +602,57 @@ def check_workiq() -> CheckResult:
 # Main preflight runner
 # ---------------------------------------------------------------------------
 
+# Minimal set of importable module names that must exist in the venv.
+# Keys are the import name; values are the install package name.
+_REQUIRED_DEPS: dict[str, str] = {
+    "yaml":       "pyyaml",
+    "keyring":    "keyring",
+    "bs4":        "beautifulsoup4",
+    "requests":   "requests",
+    "google":     "google-auth",
+}
+
+
+def check_dep_freshness() -> CheckResult:
+    """P1: Verify key project dependencies are importable in the current venv.
+
+    A stale venv (missing packages after a git pull that added new deps) is one
+    of the most common causes of multi-script cascade failures at preflight.
+    This check surfaces missing imports early with a clear fix hint.
+    """
+    import importlib.util
+
+    req_file = os.path.join(ARTHA_DIR, "scripts", "requirements.txt")
+    missing: list[str] = []
+    install_names: list[str] = []
+
+    for mod, pkg in _REQUIRED_DEPS.items():
+        if importlib.util.find_spec(mod) is None:
+            missing.append(mod)
+            install_names.append(pkg)
+
+    if missing:
+        return CheckResult(
+            "venv dependencies", "P1", False,
+            f"Missing packages: {missing} — venv may be stale after a git pull",
+            fix_hint=(
+                f"Run: pip install -r {req_file}"
+                if os.path.exists(req_file)
+                else f"pip install {' '.join(install_names)}"
+            ),
+        )
+
+    # Also check that requirements.txt exists (sanity guard)
+    if not os.path.exists(req_file):
+        return CheckResult(
+            "venv dependencies", "P1", False,
+            f"requirements.txt missing: {req_file}",
+            fix_hint="Restore from source control",
+        )
+
+    return CheckResult("venv dependencies", "P1", True, f"All {len(_REQUIRED_DEPS)} core deps found ✓")
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -635,6 +686,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — Dependency freshness ─────────────────────────────────────────
+    checks.append(check_dep_freshness())
 
     # ── P1 — Skill dependencies ───────────────────────────────────────────
     try:
@@ -792,6 +846,16 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    # Cold-start detection: exit 3 if user_profile.yaml is missing (first run)
+    profile_path = pathlib.Path(__file__).resolve().parent.parent / "config" / "user_profile.yaml"
+    if not profile_path.exists():
+        if args.json:
+            print(json.dumps({"pre_flight_ok": False, "cold_start": True, "checks": []}))
+        else:
+            print("⛔ Cold start detected — config/user_profile.yaml not found.")
+            print("   Run /bootstrap or say 'catch me up' to start guided setup.")
+        sys.exit(3)
 
     checks  = run_preflight(auto_fix=args.fix, quiet=args.quiet)
     all_ok  = all(c.passed for c in checks if c.severity == "P0")

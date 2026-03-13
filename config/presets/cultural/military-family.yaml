@@ -1,0 +1,33 @@
+---
+name: military-family
+description: |
+  Military family managing deployments, relocations, and VA benefits. Family
+  resilience and transition planning are key themes. PCS moves create recurring
+  home/insurance/school disruptions. TRICARE and VA healthcare tracking is critical.
+domain_priorities:
+  health: P0
+  finance: P0
+  kids: P1
+  home: P1
+occasions:
+  - name: Veterans Day
+    type: observance
+    calendar: fixed
+    date: "11-11"
+    greeting: false
+  - name: Memorial Day
+    type: observance
+    calendar: fixed
+    date: "last Monday of May"
+    greeting: false
+  - name: Armed Forces Day
+    type: observance
+    calendar: fixed
+    date: "third Saturday of May"
+    greeting: false
+traits:
+  deployment_awareness: true
+  relocation_frequency: high
+  va_benefits_tracking: true
+  tricare_healthcare: true
+  family_resilience: prioritized

@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-pre-commit — Artha PII guard pre-commit hook
-============================================
-Scans staged files for PII before allowing a commit.
+pre-commit — Artha PII & secrets guard
+=======================================
+Three-layer pre-commit gate:
+  Layer 1 — Forbidden file patterns (files that must never be committed)
+  Layer 2 — Secret/credential detection in staged content
+  Layer 3 — PII scanning via pii_guard.py
 
 Install:
   git config core.hooksPath .githooks
 
-Or copy to .git/hooks/pre-commit (not recommended — .githooks/ is version-controlled).
-
-Ref: standardization.md §8.2, T-4.x
+Ref: docs/security.md §1, hardening.md §8.2
 """
 
+import fnmatch
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,36 +23,149 @@ from pathlib import Path
 ARTHA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PII_GUARD = ARTHA_DIR / "scripts" / "pii_guard.py"
 
+# ─── Layer 1: Forbidden file patterns ────────────────────────────────────────
+# These files must NEVER be committed, even if .gitignore is bypassed.
+FORBIDDEN_PATTERNS = [
+    "config/user_profile.yaml",
+    "config/artha_config.yaml",
+    "config/Artha.identity.md",
+    "config/routing.yaml",
+    "config/contacts.md",
+    "config/contacts.md.age",
+    ".artha-decrypted",
+    ".tokens/*",
+    "*.token.json",
+    "*.jsonl",
+]
 
-def get_staged_files() -> list[Path]:
-    """Return list of staged file paths (added/modified, not deleted)."""
+FORBIDDEN_DIR_PREFIXES = [
+    "briefings/",
+    "summaries/",
+    "tmp/",
+]
+
+# State files: block everything in state/ except templates/ and .gitkeep
+STATE_BLOCK_RE = re.compile(r"^state/(?!templates/|\.gitkeep$)")
+
+# ─── Layer 2: Secret patterns ────────────────────────────────────────────────
+SECRET_PATTERNS = [
+    (re.compile(r"AGE-SECRET-KEY-[A-Z0-9]+"), "age private key"),
+    (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key"),
+    (re.compile(r"(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}"), "GitHub token"),
+    (re.compile(r'"client_secret"\s*:\s*"[A-Za-z0-9_\-]{20,}"'), "OAuth client secret"),
+    (re.compile(r"-----BEGIN\s+(RSA|EC|DSA|OPENSSH)?\s*PRIVATE KEY-----"), "private key (PEM)"),
+    (re.compile(r"sk-[A-Za-z0-9]{32,}"), "OpenAI API key"),
+    (re.compile(r"AIza[0-9A-Za-z_\-]{35}"), "Google API key"),
+]
+
+# ─── Layer 2b: PII patterns (fast regex, pre-pii_guard.py) ──────────────────
+PII_PATTERNS = [
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "SSN"),
+    (re.compile(r"\b9\d{2}-[789]\d-\d{4}\b"), "ITIN"),
+    (re.compile(r"\b4\d{3}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "Visa card"),
+    (re.compile(r"\b5[1-5]\d{2}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "Mastercard"),
+    (re.compile(r"\b3[47]\d{2}[\s\-]?\d{6}[\s\-]?\d{5}\b"), "Amex"),
+]
+
+# Allowlist: patterns that look like PII but aren't
+ALLOWLIST_PATTERNS = [
+    re.compile(r"\d{3}-\d{7}-\d{7}"),    # Amazon order number
+    re.compile(r"\*{4}\d{4}"),            # Masked card (already redacted)
+    re.compile(r"[A-Z]{3}\d{10}"),        # USCIS receipt numbers
+]
+
+SKIP_SUFFIXES = {
+    ".age", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".pdf",
+    ".zip", ".tar", ".gz", ".db", ".sqlite", ".bin", ".exe",
+    ".ico", ".woff", ".woff2", ".ttf", ".eot",
+}
+
+# Files that contain PII patterns by design (regex definitions, test fixtures).
+# Layer 1 (forbidden files) still applies; only Layers 2-3 are skipped.
+PII_SCAN_EXEMPT = {
+    "scripts/pii_guard.py",
+    "tests/unit/test_pii_guard.py",
+    "tests/pii_test_data.txt",
+    ".githooks/pre-commit",
+}
+
+
+def get_staged_files() -> list[str]:
+    """Return list of staged relative file paths (added/modified, not deleted)."""
     result = subprocess.run(
         ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
         capture_output=True, text=True, cwd=str(ARTHA_DIR),
     )
     if result.returncode != 0:
         return []
-    return [ARTHA_DIR / p.strip() for p in result.stdout.splitlines() if p.strip()]
+    return [p.strip() for p in result.stdout.splitlines() if p.strip()]
 
 
-def scan_file(path: Path) -> tuple[bool, str]:
-    """
-    Scan a file for PII using pii_guard.py.
-    Returns (pii_found, message).
-    """
-    if not path.exists():
-        return False, ""
+def get_staged_content(rel_path: str) -> str | None:
+    """Read staged content (from index, not working tree)."""
+    result = subprocess.run(
+        ["git", "show", f":{rel_path}"],
+        capture_output=True, text=True, cwd=str(ARTHA_DIR),
+        encoding="utf-8", errors="replace",
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
 
-    # Skip binary files (images, compiled files, age-encrypted blobs, etc.)
-    skip_suffixes = {".age", ".pyc", ".png", ".jpg", ".jpeg", ".gif", ".pdf",
-                     ".zip", ".tar", ".gz", ".db", ".sqlite", ".bin", ".exe"}
-    if path.suffix.lower() in skip_suffixes:
-        return False, ""
 
-    try:
-        content = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False, ""
+def check_forbidden(rel_path: str) -> str | None:
+    """Layer 1: Check if file matches a forbidden pattern."""
+    # Exact and glob matches
+    for pattern in FORBIDDEN_PATTERNS:
+        if fnmatch.fnmatch(rel_path, pattern):
+            return f"forbidden file pattern: {pattern}"
+
+    # Directory prefix matches
+    for prefix in FORBIDDEN_DIR_PREFIXES:
+        if rel_path.startswith(prefix):
+            return f"forbidden directory: {prefix}"
+
+    # State files (except templates)
+    if STATE_BLOCK_RE.match(rel_path):
+        return "state file (user data)"
+
+    # Any .age file regardless of location
+    if rel_path.endswith(".age"):
+        return "encrypted .age file"
+
+    return None
+
+
+def is_allowlisted(text: str, match_start: int, match_end: int) -> bool:
+    """Check if a PII match is actually an allowlisted pattern."""
+    # Get a window around the match for context checking
+    window_start = max(0, match_start - 20)
+    window_end = min(len(text), match_end + 20)
+    window = text[window_start:window_end]
+    return any(p.search(window) for p in ALLOWLIST_PATTERNS)
+
+
+def check_secrets(content: str, rel_path: str) -> list[str]:
+    """Layer 2: Scan content for secrets and PII patterns."""
+    findings: list[str] = []
+
+    for pattern, label in SECRET_PATTERNS:
+        if pattern.search(content):
+            findings.append(f"secret ({label})")
+
+    for pattern, label in PII_PATTERNS:
+        for m in pattern.finditer(content):
+            if not is_allowlisted(content, m.start(), m.end()):
+                findings.append(f"PII ({label})")
+                break  # One finding per type is enough
+
+    return findings
+
+
+def check_pii_guard(content: str) -> str | None:
+    """Layer 3: Run pii_guard.py scan on content."""
+    if not PII_GUARD.exists():
+        return None
 
     result = subprocess.run(
         [sys.executable, str(PII_GUARD), "scan"],
@@ -57,43 +173,71 @@ def scan_file(path: Path) -> tuple[bool, str]:
         encoding="utf-8", errors="replace",
     )
 
-    pii_found = result.returncode != 0
-    pii_types = ""
-    for line in (result.stderr or "").splitlines():
-        if line.startswith("PII_FOUND:"):
-            pii_types = line[len("PII_FOUND:"):].strip()
+    if result.returncode != 0:
+        for line in (result.stderr or "").splitlines():
+            if line.startswith("PII_FOUND:"):
+                return line[len("PII_FOUND:"):].strip()
+        return "PII detected"
 
-    if pii_found:
-        return True, pii_types or "unknown"
-    return False, ""
+    return None
 
 
 def main() -> int:
-    if not PII_GUARD.exists():
-        print("⚠  pre-commit: pii_guard.py not found — PII check skipped")
-        return 0  # Don't block commit if guard is missing
-
     staged = get_staged_files()
     if not staged:
         return 0
 
-    violations: list[tuple[Path, str]] = []
-    for path in staged:
-        found, pii_types = scan_file(path)
-        if found:
-            violations.append((path, pii_types))
+    blocks: list[tuple[str, str]] = []  # (file, reason)
+    warnings: list[tuple[str, str]] = []
 
-    if violations:
-        print("⛔  COMMIT BLOCKED — PII detected in staged files:\n")
-        for path, pii_types in violations:
-            rel = path.relative_to(ARTHA_DIR)
-            print(f"   {rel}  [{pii_types}]")
+    for rel_path in staged:
+        # --- Layer 1: Forbidden files ---
+        reason = check_forbidden(rel_path)
+        if reason:
+            blocks.append((rel_path, reason))
+            continue  # No need to scan content of a forbidden file
+
+        # Skip binary files
+        if Path(rel_path).suffix.lower() in SKIP_SUFFIXES:
+            continue
+
+        # Skip files that contain PII patterns by design
+        if rel_path in PII_SCAN_EXEMPT:
+            continue
+
+        # Read staged content
+        content = get_staged_content(rel_path)
+        if not content:
+            continue
+
+        # --- Layer 2: Secrets and fast PII regex ---
+        secret_findings = check_secrets(content, rel_path)
+        for finding in secret_findings:
+            blocks.append((rel_path, finding))
+
+        # --- Layer 3: pii_guard.py deep scan (markdown/yaml only) ---
+        if rel_path.endswith((".md", ".yaml", ".yml", ".txt")):
+            pii_result = check_pii_guard(content)
+            if pii_result:
+                # Avoid duplicating what Layer 2 already caught
+                if not secret_findings:
+                    blocks.append((rel_path, f"pii_guard: {pii_result}"))
+
+    # ─── Report ──────────────────────────────────────────────────────────────
+    if blocks:
+        print("⛔  COMMIT BLOCKED — PII or secrets detected:\n")
+        seen = set()
+        for path, reason in blocks:
+            key = (path, reason)
+            if key not in seen:
+                seen.add(key)
+                print(f"   {path}  [{reason}]")
         print()
-        print("   Review the files above and remove or redact PII before committing.")
-        print("   To bypass (dangerous — for emergency use only):")
-        print("     git commit --no-verify")
+        print("   Fix: remove sensitive data, then re-stage the files.")
+        print("   Bypass (emergency only): git commit --no-verify")
         return 1
 
+    print("✓  Pre-commit: all checks passed.")
     return 0
 
 

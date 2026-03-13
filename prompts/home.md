@@ -109,7 +109,7 @@ Alert: HOA dues overdue or special assessment notice received.
 ```yaml
 property_tax:
   annual_amount: XXXX
-  county: "[King County]"
+  county: "[user's county — see §1]"
   first_half_due: YYYY-04-30
   second_half_due: YYYY-10-31
   first_half_paid: false

@@ -49,6 +49,7 @@ import time
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Optional
+from lib.retry import with_retry
 
 
 # ---------------------------------------------------------------------------
@@ -64,18 +65,7 @@ _PAGE_LIST_SIZE  = 100    # pages per Graph API page (LIST endpoint max)
 # Notebooks skipped by default (typically empty "Personal Notebook" OneNote creates)
 _SKIP_NOTEBOOKS_DEFAULT = {"personal notebook"}
 
-# ---------------------------------------------------------------------------
-# Retry / rate-limit guard (mirrors msgraph_fetch.py pattern)
-# ---------------------------------------------------------------------------
 
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-_MAX_RETRIES   = 4
-_BASE_DELAY    = 1.5
-_BACKOFF_MULT  = 2.0
-_MAX_DELAY     = 60.0
-
-
-def _with_retry(fn, *, retries: int = _MAX_RETRIES, context: str = ""):
     """Execute fn() with exponential back-off on MS Graph 429 / 5xx responses."""
     delay    = _BASE_DELAY
     last_exc: Optional[Exception] = None
@@ -204,12 +194,12 @@ def _graph_get_paginated(access_token: str, path: str, params: Optional[dict] = 
 
     while True:
         if current_url:
-            data = _with_retry(
+            data = with_retry(
                 lambda u=current_url: _graph_get_full_url(access_token, u),
                 context=current_url[:60]
             )
         else:
-            data = _with_retry(
+            data = with_retry(
                 lambda p=path, pm=current_params: _graph_get(access_token, p, pm),
                 context=path
             )
@@ -370,7 +360,7 @@ def list_notebooks(access_token: str, include_personal: bool = False) -> list[di
     Returns list of {id, displayName, lastModifiedDateTime} for all notebooks.
     Skips 'Personal Notebook' unless include_personal=True.
     """
-    data = _with_retry(
+    data = with_retry(
         lambda: _graph_get(
             access_token,
             "/me/onenote/notebooks",
@@ -392,7 +382,7 @@ def list_notebooks(access_token: str, include_personal: bool = False) -> list[di
 
 def list_sections(access_token: str, notebook_id: str) -> list[dict]:
     """Returns all sections in a notebook: {id, displayName, lastModifiedDateTime}."""
-    data = _with_retry(
+    data = with_retry(
         lambda: _graph_get(
             access_token,
             f"/me/onenote/notebooks/{notebook_id}/sections",
@@ -430,7 +420,7 @@ def list_pages(
 
 def fetch_page_content(access_token: str, page_id: str) -> str:
     """Fetch the raw HTML content of a single page. May raise on scope error."""
-    return _with_retry(
+    return with_retry(
         lambda: _graph_get_content(access_token, f"/me/onenote/pages/{page_id}/content"),
         context=f"page-content:{page_id[:12]}"
     )
@@ -478,7 +468,7 @@ def run_health_check(access_token: str) -> bool:
 
     # 2. Identity check
     try:
-        me = _with_retry(
+        me = with_retry(
             lambda: _graph_get(access_token, "/me", {"$select": "displayName,userPrincipalName"}),
             context="identity"
         )
@@ -491,7 +481,7 @@ def run_health_check(access_token: str) -> bool:
 
     # 3. Notes.Read scope check — try listing notebooks
     try:
-        data = _with_retry(
+        data = with_retry(
             lambda: _graph_get(
                 access_token,
                 "/me/onenote/notebooks",
@@ -558,7 +548,7 @@ def fetch_onenote(
     if verbose:
         print("[msgraph_onenote] Enumerating notebooks...", file=sys.stderr)
 
-    notebooks = _with_retry(
+    notebooks = with_retry(
         lambda: list_notebooks(access_token, include_personal=include_personal),
         context="list-notebooks"
     )
@@ -592,7 +582,7 @@ def fetch_onenote(
 
         # --- List sections ---
         try:
-            sections = _with_retry(
+            sections = with_retry(
                 lambda i=nb_id: list_sections(access_token, i),
                 context=f"sections:{nb_name}"
             )
@@ -615,7 +605,7 @@ def fetch_onenote(
 
             # --- List pages in section ---
             try:
-                pages = _with_retry(
+                pages = with_retry(
                     lambda i=sec_id: list_pages(access_token, i, modified_since),
                     context=f"pages:{nb_name}/{sec_name}"
                 )
@@ -640,7 +630,7 @@ def fetch_onenote(
 
                 # --- Fetch page content ---
                 try:
-                    html_content = _with_retry(
+                    html_content = with_retry(
                         lambda i=page_id: fetch_page_content(access_token, i),
                         context=f"content:{page_title[:30]}"
                     )

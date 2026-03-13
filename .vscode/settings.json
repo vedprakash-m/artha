@@ -1,9 +1,0 @@
-{
-    "chat.tools.terminal.autoApprove": {
-        "/^python3 scripts/msgraph_calendar_fetch\\.py --health 2>&1$/": {
-            "approve": true,
-            "matchCommandLine": true
-        }
-    },
-    "vscode-nmake-tools.workspaceBuildDirectories": []
-}

@@ -51,6 +51,7 @@ if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
     else:
         _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
 
+import json
 import os
 import re
 import shutil
@@ -88,9 +89,12 @@ SENSITIVE_FILES = [
     "audit",
     "vehicle",
     "skills_cache",
+    "occasions",
+    "contacts",
 ]
 
-STALE_THRESHOLD = 1800  # 30 minutes in seconds
+STALE_THRESHOLD = 300   # 5 minutes — if PID no longer running; fallback for legacy empty lock files
+LOCK_TTL        = 1800  # 30 minutes — hard TTL regardless of PID status
 
 KC_SERVICE = "age-key"
 KC_ACCOUNT = "artha"
@@ -189,31 +193,129 @@ def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
 # Lock file management
 # ---------------------------------------------------------------------------
 
+def _read_lock_data() -> dict:
+    """Read JSON lock data from LOCK_FILE.  Returns {} on read/parse errors
+    (handles legacy empty lock files created by vault.sh and older vault.py)."""
+    try:
+        content = LOCK_FILE.read_text(encoding="utf-8").strip()
+        if content:
+            return json.loads(content)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _pid_running(pid: int) -> bool:
+    """Return True if a process with *pid* is currently running on this machine.
+    Uses POSIX os.kill(pid, 0) on Unix; falls back to subprocess on Windows."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            # Windows: use tasklist to check if PID exists
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True,
+            )
+            return str(pid) in result.stdout
+        else:
+            # POSIX: signal 0 tests existence without sending a real signal
+            os.kill(pid, 0)
+            return True
+    except (OSError, ProcessLookupError, PermissionError):
+        # ProcessLookupError: process does not exist
+        # PermissionError: process exists but not owned by us — still running
+        return not isinstance(sys.exc_info()[1], (ProcessLookupError,))
+
+
 def check_lock_state() -> int:
     """Check for active or stale session lock file.
-    Returns: 0 = no lock, 1 = stale (auto-cleared), 2 = active (halt)
+
+    Returns:
+        0 — no lock (proceed normally)
+        1 — stale lock (auto-cleared; proceed with warning)
+        2 — active lock (halt — another session is running)
+
+    Staleness criteria (OR):
+        a) Lock is older than LOCK_TTL (30 min) regardless of PID status.
+        b) Lock is older than STALE_THRESHOLD (5 min) AND the locking PID
+           is no longer running.
     """
     if not LOCK_FILE.exists():
         return 0
 
+    lock_data  = _read_lock_data()
     lock_mtime = os.path.getmtime(LOCK_FILE)
-    now = time.time()
-    lock_age_sec = int(now - lock_mtime)
-    lock_age_min = lock_age_sec // 60
+    now        = time.time()
+    lock_age   = int(now - lock_mtime)
+    lock_age_m = lock_age // 60
+    pid        = lock_data.get("pid", 0)
 
-    if lock_age_sec > STALE_THRESHOLD:
-        print(f"  ⚠ Stale lock file detected (age: {lock_age_min}m — threshold: 30m).")
+    # Hard TTL: 30 min — stale regardless of PID
+    hard_stale = lock_age > LOCK_TTL
+    # Soft TTL: 5 min — stale IF the locking PID is no longer alive
+    soft_stale = lock_age > STALE_THRESHOLD and pid > 0 and not _pid_running(pid)
+    # Legacy empty lock (no JSON): treat as stale after STALE_THRESHOLD
+    legacy_stale = lock_age > STALE_THRESHOLD and pid == 0
+
+    if hard_stale or soft_stale or legacy_stale:
+        reason = "hard TTL" if hard_stale else ("PID not running" if soft_stale else "legacy lock")
+        print(f"  ⚠ Stale lock file detected (age: {lock_age_m}m, reason: {reason}).")
         print("  Previous session exited uncleanly. Auto-clearing lock and proceeding.")
+        if pid:
+            print(f"  (locking PID was {pid})")
         LOCK_FILE.unlink(missing_ok=True)
-        log(f"STALE_LOCK_CLEARED | age: {lock_age_min}m | action: auto-cleared")
+        log(f"STALE_LOCK_CLEARED | age: {lock_age_m}m | reason: {reason} | pid: {pid} | action: auto-cleared")
         return 1
+
+    # Active lock
+    pid_str = f", locking PID: {pid}" if pid else ""
+    print(f"⛔ vault.py: Active session lock detected (age: {lock_age_m}m{pid_str}).")
+    print("  Another catch-up session may be in progress.")
+    print("  Halt: running a duplicate session could corrupt state.")
+    if pid and _pid_running(pid):
+        print(f"  Process {pid} is still running.")
+    elif pid:
+        print(f"  Process {pid} is no longer running — lock may be stale.")
+        print(f"  To force-clear: python scripts/vault.py release-lock")
     else:
-        print(f"⛔ vault.py: Active session lock detected (age: {lock_age_min}m).")
-        print("  Another catch-up session may be in progress.")
-        print("  Halt: duplicate catch-up would corrupt state.")
-        print(f"  To force-clear: delete {LOCK_FILE}")
-        log(f"DECRYPT_BLOCKED | reason: active_lock | age: {lock_age_min}m")
-        return 2
+        print(f"  To force-clear: python scripts/vault.py release-lock")
+    log(f"DECRYPT_BLOCKED | reason: active_lock | age: {lock_age_m}m | pid: {pid}")
+    return 2
+
+
+def do_release_lock(force: bool = True) -> None:
+    """Force-clear a stale session lock file (manual recovery command).
+
+    Used when a previous catch-up session crashed while holding the lock,
+    leaving a lock file whose owning PID is no longer running.
+
+    Writes an audit log entry and exits 0 on success, 1 if no lock exists.
+    """
+    if not LOCK_FILE.exists():
+        print("vault.py release-lock: No lock file present — nothing to clear.")
+        sys.exit(0)
+
+    lock_data  = _read_lock_data()
+    lock_mtime = os.path.getmtime(LOCK_FILE)
+    lock_age_m = int((time.time() - lock_mtime) / 60)
+    pid        = lock_data.get("pid", 0)
+    ts         = lock_data.get("timestamp", "unknown")
+
+    if pid and _pid_running(pid):
+        print(f"WARNING: Process {pid} (started {ts}) is still running.")
+        print("  Releasing the lock while a live session is active could corrupt state.")
+        print("  Only proceed if you are certain that session is defunct.")
+        if not force:
+            print("  Re-run with release-lock to confirm force-release.")
+            sys.exit(1)
+
+    print(f"Releasing vault lock (age: {lock_age_m}m, pid: {pid}, ts: {ts}) ...")
+    LOCK_FILE.unlink(missing_ok=True)
+    log(f"LOCK_RELEASED | manual | age: {lock_age_m}m | pid: {pid} | ts: {ts}")
+    print("vault.py release-lock: Lock cleared. State files remain in current form.")
+    print("  If catch-up data was being written, verify state files before proceeding.")
+    sys.exit(0)
 
 
 def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
@@ -310,42 +412,18 @@ def do_decrypt() -> None:
         elif plain_file.exists():
             print(f"  {domain}.md already exists as plaintext (no .age file). Leaving as-is.")
 
-    # contacts.md lives in config/
-    contacts_age = CONFIG_DIR / "contacts.md.age"
-    contacts_plain = CONFIG_DIR / "contacts.md"
-    if contacts_age.exists():
-        if contacts_plain.exists():
-            shutil.copy2(str(contacts_plain), str(contacts_plain) + ".bak")
-            log("INTEGRITY_BACKUP | file: contacts.md | layer: 1_pre_decrypt")
-
-        print("  Decrypting contacts.md.age ...")
-        if age_decrypt(privkey, contacts_age, contacts_plain):
-            if (not contacts_plain.exists() or contacts_plain.stat().st_size == 0
-                    or not contacts_plain.read_text().startswith("---")):
-                print("  ERROR: Decrypted contacts.md is empty or invalid — restoring backup",
-                      file=sys.stderr)
-                bak = Path(str(contacts_plain) + ".bak")
-                if bak.exists():
-                    shutil.move(str(bak), str(contacts_plain))
-                    log("INTEGRITY_RESTORE | file: contacts.md | reason: invalid_content | layer: 1")
-                errors += 1
-            else:
-                log("DECRYPT_OK | file: contacts.md")
-        else:
-            print("  ERROR: Failed to decrypt contacts.md.age", file=sys.stderr)
-            bak = Path(str(contacts_plain) + ".bak")
-            if bak.exists():
-                shutil.move(str(bak), str(contacts_plain))
-                log("INTEGRITY_RESTORE | file: contacts.md | reason: decrypt_failed | layer: 1")
-            errors += 1
-
     if errors > 0:
         die(f"{errors} file(s) failed to decrypt. Aborting catch-up.")
 
-    # Create lock file
-    LOCK_FILE.touch()
+    # Create lock file with PID + timestamp + operation metadata
+    lock_data = {
+        "pid":       os.getpid(),
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "operation": "decrypt",
+    }
+    LOCK_FILE.write_text(json.dumps(lock_data) + "\n", encoding="utf-8")
     print("vault.py: Decrypt complete. Lock file created.")
-    log("SESSION_START | lock_file: created")
+    log(f"SESSION_START | lock_file: created | pid: {lock_data['pid']}")
 
 
 # ---------------------------------------------------------------------------
@@ -389,23 +467,6 @@ def do_encrypt() -> None:
                 print(f"  ERROR: Failed to encrypt {domain}.md", file=sys.stderr)
                 errors += 1
 
-    # contacts.md in config/
-    contacts_plain = CONFIG_DIR / "contacts.md"
-    contacts_age = CONFIG_DIR / "contacts.md.age"
-    if contacts_plain.exists():
-        print("  Encrypting contacts.md ...")
-        tmp_file = Path(str(contacts_age) + ".tmp")
-        if age_encrypt(pubkey, contacts_plain, tmp_file):
-            shutil.move(str(tmp_file), str(contacts_age))
-            contacts_plain.unlink()
-            Path(str(contacts_plain) + ".bak").unlink(missing_ok=True)
-            encrypted_count += 1
-            log("ENCRYPT_OK | file: contacts.md")
-        else:
-            tmp_file.unlink(missing_ok=True)
-            print("  ERROR: Failed to encrypt contacts.md", file=sys.stderr)
-            errors += 1
-
     if errors > 0:
         die(f"{errors} file(s) failed to encrypt. CRITICAL: plaintext may remain on disk.")
 
@@ -445,15 +506,6 @@ def do_status() -> None:
             print(f"  [ENCRYPTED] {domain}.md.age ✓")
         else:
             print(f"  [MISSING]   {domain} — no .md or .age found")
-
-    contacts_plain = CONFIG_DIR / "contacts.md"
-    contacts_age = CONFIG_DIR / "contacts.md.age"
-    if contacts_plain.exists():
-        print("  [PLAINTEXT] contacts.md  ⚠ NOT encrypted")
-    elif contacts_age.exists():
-        print("  [ENCRYPTED] contacts.md.age ✓")
-    else:
-        print("  [MISSING]   contacts — no .md or .age found")
 
     print()
     if check_age_installed():
@@ -533,8 +585,6 @@ def do_health() -> None:
 
     # 6. Orphaned .bak files
     bak_count = sum(1 for d in SENSITIVE_FILES if (STATE_DIR / f"{d}.md.bak").exists())
-    if (CONFIG_DIR / "contacts.md.bak").exists():
-        bak_count += 1
     if bak_count > 0:
         print(f"  Backup files: ⚠ {bak_count} orphaned .bak file(s) — stale plaintext")
         ok = False
@@ -555,12 +605,13 @@ def do_health() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
         print()
-        print("  decrypt  — unlock sensitive state files for a catch-up session")
-        print("  encrypt  — lock sensitive state files after catch-up")
-        print("  status   — show current encryption state (read-only)")
-        print("  health   — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
+        print("  decrypt       — unlock sensitive state files for a catch-up session")
+        print("  encrypt       — lock sensitive state files after catch-up")
+        print("  status        — show current encryption state (read-only)")
+        print("  health        — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
+        print("  release-lock  — force-clear a stale session lock (manual recovery)")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -572,9 +623,11 @@ def main() -> None:
         do_status()
     elif cmd == "health":
         do_health()
+    elif cmd in ("release-lock", "release_lock", "--release-lock"):
+        do_release_lock()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: vault.py {decrypt|encrypt|status|health}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
         sys.exit(1)
 
 

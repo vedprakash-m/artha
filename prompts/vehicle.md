@@ -12,7 +12,7 @@ Track vehicle registrations, insurance, maintenance schedules, recalls, and serv
 
 ## Sender Signatures
 - `*@geico.com`, `*@pemco.com`, `*@progressive.com`, `*@statefarm.com`
-- `*@dol.wa.gov` (WA DOL registration)
+- `*@dol.[state].gov` (state DMV/DOL registration — see §1 location.state)
 - Dealership, auto service center emails
 - Subject: registration renewal, vehicle registration, tabs
 - Subject: oil change, service reminder, maintenance due

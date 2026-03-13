@@ -12,13 +12,13 @@ last_updated: 2026-03-07
 
 ## Purpose
 
-Track Ved's personal learning activities — courses, books, newsletters, podcasts,
+Track the primary user's personal learning activities — courses, books, newsletters, podcasts,
 and Obsidian vault signal (if accessible). Connect learning activity to goal
 metrics. Surface when the monthly learning goal is at risk. Prevent newsletter
 content from becoming noise.
 
 This domain does NOT track the children's school learning — that belongs in
-`kids.md`. This domain is Ved's personal growth only.
+`kids.md`. This domain is the primary user's personal growth only.
 
 ---
 
