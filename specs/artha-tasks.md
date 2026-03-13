@@ -437,7 +437,7 @@ Directory Structure ────────────────────
 #### T-1A.3.2 — Configure Gmail API integration (Python, not MCP)
 
 - [x] **Priority**: P0
-- **Status Note**: COMPLETE 2026-03-08 — OAuth flow complete for mi.vedprakash@gmail.com (37,924 messages). Token stored in Keychain. Scripts: google_auth.py, gmail_fetch.py, gmail_send.py. Venv at ~/OneDrive/Artha/.venv with google-api-python-client.
+- **Status Note**: COMPLETE 2026-03-08 — OAuth flow complete for configured-gmail@example.com (37,924 messages). Token stored in Keychain. Scripts: google_auth.py, gmail_fetch.py, gmail_send.py. Venv at ~/OneDrive/Artha/.venv with google-api-python-client.
 - **Description**: Install and configure Gmail access using official Google API Python client. This is the single most critical integration — ~80% of Artha's data comes through Gmail. **Budget 3–5 hours** for OAuth validation and MCP troubleshooting (community-maintained MCP connectors may have version-specific issues).
 - **Dependencies**: T-1A.3.1
 - **Steps**:
@@ -470,7 +470,7 @@ Directory Structure ────────────────────
 #### T-1A.3.3 — Configure Calendar API integration (Python, not MCP)
 
 - [x] **Priority**: P0
-- **Status Note**: COMPLETE 2026-03-08 — OAuth flow complete. 3 calendars visible: mi.vedprakash@gmail.com, Family, Holidays in United States. Token stored in Keychain. Script: gcal_fetch.py.
+- **Status Note**: COMPLETE 2026-03-08 — OAuth flow complete. 3 calendars visible: configured-gmail@example.com, Family, Holidays in United States. Token stored in Keychain. Script: gcal_fetch.py.
 - **Description**: Install and configure Google Calendar access using official Google API Python client.
 - **Dependencies**: T-1A.3.1
 - **Steps**:
@@ -992,7 +992,7 @@ Directory Structure ────────────────────
 #### T-1A.7.4 — Configure email delivery for briefings
 
 - [x] **Priority**: P0
-- **Status Note**: COMPLETE 2026-03-08 — gmail_send.py tested successfully. Test email sent and delivered to mi.vedprakash@gmail.com (message_id: 19cccb36717007b3). Markdown→HTML conversion active, dual MIME working.
+- **Status Note**: COMPLETE 2026-03-08 — gmail_send.py tested successfully. Test email sent and delivered to configured-gmail@example.com (message_id: 19cccb36717007b3). Markdown→HTML conversion active, dual MIME working.
 - **Description**: Set up the mechanism for emailing catch-up briefings to the configured address. Resolve TD-2 (email sending mechanism).
 - **Dependencies**: T-1A.3.2 (Gmail MCP)
 - **Options** (per TS §3.4):
@@ -1118,7 +1118,7 @@ Directory Structure ────────────────────
 #### T-1A.10.1 — First end-to-end catch-up run
 
 - [x] **Priority**: P0
-- **Status Note**: COMPLETE 2026-03-08 — First catch-up ran successfully. 50 emails scanned (14-day window), 8 actionable items identified, signal:noise 8:42. Briefing displayed in terminal and emailed to mi.vedprakash@gmail.com.
+- **Status Note**: COMPLETE 2026-03-08 — First catch-up ran successfully. 50 emails scanned (14-day window), 8 actionable items identified, signal:noise 8:42. Briefing displayed in terminal and emailed to configured-gmail@example.com.
   - Kids domain: fully populated (Parth SAT 3/13, TSA forms, AP Lang alert; Trisha IMS Concert 3/10, missing assignment)
   - Security: Google new sign-in alert from Windows device on 3/6 — needs manual verification
   - Comms: Aavya birthday party RSVP needed; Samskrit Family Camp
@@ -1716,7 +1716,7 @@ Directory Structure ────────────────────
 
 - [x] **Priority**: P0
 - **Description**: Build `scripts/msgraph_fetch.py` — reads Outlook/Hotmail inbox via MS Graph `Mail.Read` scope using the existing `~/.artha-tokens/msgraph-token.json`. Output format matches `gmail_fetch.py` JSONL schema with an added `"source": "outlook"` field, making it a drop-in parallel data source for the catch-up pipeline. Runs in parallel with `gmail_fetch.py` at Step 3. Replaces the forwarding approach entirely.
-- **Dependencies**: T-1B.6.1 (✅ MS Graph OAuth live as `vedprakash.m@outlook.com`)
+- **Dependencies**: T-1B.6.1 (✅ MS Graph OAuth live as `configured-outlook@example.com`)
 - **Steps**:
   1. Create `scripts/msgraph_fetch.py` mirroring `gmail_fetch.py` interface:
      - `--since YYYY-MM-DDTHH:MM:SS` — fetch after timestamp (idempotency)
@@ -1758,7 +1758,7 @@ Directory Structure ────────────────────
   1. Log into Yahoo Mail, review last 30 days of email
   2. Categorize: spam, dormant newsletter, active bank/service notifications, actionable items
   3. Decision threshold: if ≥3 actionable emails in 30 days → configure forwarding
-  4. If forwarding: Yahoo Settings → More Settings → Mailboxes → forward to mi.vedprakash@gmail.com
+  4. If forwarding: Yahoo Settings → More Settings → Mailboxes → forward to configured-gmail@example.com
   5. In Gmail: create filter for Yahoo-forwarded senders → apply label `from-yahoo`
   6. If not forwarding: document in `health-check.md` as `yahoo: excluded (dormant)` with date reviewed
 - **Acceptance Criteria**:
@@ -1802,11 +1802,11 @@ Directory Structure ────────────────────
   email_coverage:
     gmail_primary:
       status: connected
-      account: mi.vedprakash@gmail.com
+      account: configured-gmail@example.com
       domains: all
     outlook:
       status: direct_api        # MS Graph Mail.Read — no forwarding needed
-      account: vedprakash.m@outlook.com
+      account: configured-outlook@example.com
       script: msgraph_fetch.py  # T-1B.1.1
       domains: immigration, finance, comms
     apple:
@@ -2067,7 +2067,7 @@ Directory Structure ────────────────────
 #### T-1B.6.1 — Set up Microsoft Graph API OAuth for To Do + Outlook
 
 - [x] **Priority**: P1
-- **Status**: ✅ LIVE 2026-03-08 — Azure app registered ("Artha Personal Assistant", personal accounts only, redirect http://localhost:8400). OAuth flow complete: authenticated as vedprakash.m@outlook.com. Token at `~/.artha-tokens/msgraph-token.json`. Fixed 3 bugs during setup: `offline_access` reserved scope conflict, `redirect_uri`/`port` MSAL parameter conflict, `datetime` NameError in preflight.py. Preflight now passes 13/13 checks, 0 warnings.
+- **Status**: ✅ LIVE 2026-03-08 — Azure app registered ("Artha Personal Assistant", personal accounts only, redirect http://localhost:8400). OAuth flow complete: authenticated as configured-outlook@example.com. Token at `~/.artha-tokens/msgraph-token.json`. Fixed 3 bugs during setup: `offline_access` reserved scope conflict, `redirect_uri`/`port` MSAL parameter conflict, `datetime` NameError in preflight.py. Preflight now passes 13/13 checks, 0 warnings.
 - **Description**: Register an Azure AD app and complete OAuth 2.0 PKCE flow to obtain a long-lived Graph API token. This single token covers both `Tasks.ReadWrite` (Microsoft To Do) and `Mail.Read` (Outlook), eliminating a separate Outlook OAuth flow. Token stored at `~/.artha-tokens/msgraph-token.json` following the same pattern as Google OAuth.
 - **Dependencies**: T-1A.11.1, T-1A.11.4 (OAuth auto-refresh validation)
 - **Steps**:

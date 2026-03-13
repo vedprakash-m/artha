@@ -1,7 +1,7 @@
 # Artha — Personal Intelligence OS
 ## Product Requirements Document · v4.1
 
-**Author:** Vedprakash Mishra
+**Author:** [Author]
 **Date:** March 10, 2026
 **Status:** Active Development — Pull Model Architecture + OneDrive Sync Layer + PII Guardrails + Governance Framework + Multi-LLM & Action Framework + Operational Robustness + Task Integration + Phase 2A Intelligence + Supercharge Package + v4.0 Intelligence Amplification + **v4.1 WorkIQ Work Calendar Integration**
 **Classification:** Personal & Confidential
@@ -337,8 +337,8 @@ Hey — quick check-in on your week:
 **The problem:** 112 unread emails in Outlook alone. Gmail has 38,671 messages. ParentSquare generates 90–100/month across 3 streams. Learning newsletters arrive daily. The urgent and trivial arrive in the same place with the same visual weight.
 
 **Data sources:**
-- Gmail (mi.vedprakash@gmail.com)
-- Outlook.com (vedprakash.m@outlook.com)
+- Gmail (configured in user_profile.yaml)
+- Outlook.com (configured in user_profile.yaml)
 - ParentSquare (via email digest)
 
 **Core features:**
@@ -360,11 +360,11 @@ Hey — quick check-in on your week:
 **Priority:** P0
 **Summary:** Track every immigration deadline, document expiry, and case milestone for all four family members — proactively.
 
-**The problem:** The family is in a complex, multi-year immigration process. Vedprakash holds an H-1B (transferred to Microsoft, June 2024, case #032100006948). Archana and the children hold H-4 visas (approved July 2024). Archana holds an H-4 EAD. I-140 is approved. PERM/GC process is active via Fragomen. Missing a single deadline in this chain can have consequences measured in months or years.
+**The problem:** The family is in a complex, multi-year immigration process. The primary user holds an employment-based visa (H-1B or equivalent). Dependents hold derivative visas. An I-140 may be approved and a PERM/GC process active via an immigration attorney. Missing a single deadline in this chain can have consequences measured in months or years.
 
 **Data sources:**
-- Outlook.com (Microsoft Immigration team emails — usimmig@microsoft.com)
-- Gmail (Fragomen correspondence)
+- Outlook.com (employer immigration team emails)
+- Gmail (immigration attorney correspondence)
 - OneDrive (immigration documents folder)
 - Manual input (document expiry dates, attorney updates)
 
@@ -583,8 +583,8 @@ Hey — quick check-in on your week:
 **The problem:** Important dates — Parth's SAT 3/13, H-4 expiry windows, school events, annual appointments — live in separate systems. The Google Calendar is primarily used for birthday tracking. Outlook Calendar tracks work. Neither is connected to Artha's broader knowledge.
 
 **Data sources:**
-- Google Calendar (mi.vedprakash@gmail.com)
-- Outlook Calendar (vedprakash.m@outlook.com — work-life boundary signal only)
+- Google Calendar (configured in user_profile.yaml)
+- Outlook Calendar (configured in user_profile.yaml — work-life boundary signal only)
 - **Microsoft Work Calendar via WorkIQ MCP** *(v4.1)* — corporate Teams meetings, 1:1s, standups, org events. Available on Windows work laptop only (M365 Copilot license). Graceful degradation on Mac.
 - Artha's internal calendar (built from all FR data sources)
 
@@ -657,7 +657,7 @@ Hey — quick check-in on your week:
 ### FR-11 · Relationship Intelligence & Social Fabric
 
 **Priority:** P1 *(elevated from P2 in v3.8 — relationships are a core life domain, not a nice-to-have)*
-**Summary:** Build and maintain a relationship graph that tracks communication patterns, reciprocity, cultural protocols, life events, and group dynamics across the Mishra family's social network. Surfaces reconnect intelligence, occasion awareness, and relationship health signals in briefings.
+**Summary:** Build and maintain a relationship graph that tracks communication patterns, reciprocity, cultural protocols, life events, and group dynamics across the family's social network. Surfaces reconnect intelligence, occasion awareness, and relationship health signals in briefings.
 
 **The problem:** Relationships decay silently. There is no system that tracks who you last contacted, whether reciprocity is balanced, which cultural protocols apply to which relationships, or which life events (births, graduations, bereavements) need acknowledgment. The result: missed birthdays, lapsed friendships, unbalanced social investments, and cultural protocol violations — all preventable with structured awareness.
 
@@ -1558,8 +1558,8 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 
 | Account | Integration Method | Status | Primary Domains | Gmail Label |
 |---|---|---|---|---|
-| Gmail (mi.vedprakash@gmail.com) | Direct — Gmail MCP (OAuth) | ✅ Active | All | — |
-| Outlook.com (vedprakash.m@outlook.com) | Auto-forward → Gmail (T-1B.1.1) | Phase 1B | Immigration, Finance, Comms | `from-outlook` |
+| Gmail (configured in user_profile.yaml) | Direct — Gmail MCP (OAuth) | ✅ Active | All | — |
+| Outlook.com (configured in user_profile.yaml) | Auto-forward → Gmail (T-1B.1.1) | Phase 1B | Immigration, Finance, Comms | `from-outlook` |
 | Apple iCloud (icloud.com) | Auto-forward → Gmail (T-1B.1.2) | Phase 1B | Finance, Digital Life | `from-apple` |
 | Yahoo | Auto-forward → Gmail (T-1B.1.3, if active) | Phase 1B — evaluate | Finance, Comms | `from-yahoo` |
 | Proton Mail | Proton Bridge → IMAP → Gmail (T-1B.1.4) OR excluded | Phase 2 / excluded | Personal (boundary) | `from-proton` |
@@ -1640,7 +1640,7 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 **Phase 2 data upgrade path:** Financial institutions (Chase, Fidelity, Vanguard, Wells Fargo) will upgrade from email parsing to Plaid API integration (read-only) in Phase 2. This provides real-time balance and transaction data, enabling the "net worth on demand" target.
 
 **Not in scope (by design):**
-- Microsoft work email (vedprakash.m@microsoft.com) — Vega's domain
+- Work email (configured in user_profile.yaml) — work domain, not in scope
 - Teams, ADO, SharePoint, GitHub — Vega's domain
 - WhatsApp inbound messages — no API access; outbound messaging only via URL scheme (human-gated, tech spec §7.4.4)
 - iMessage — privacy boundary; no API access

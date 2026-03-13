@@ -39,7 +39,7 @@ Track vehicle registrations, insurance, maintenance schedules, recalls, and serv
 
 ## Recall Monitoring (monthly)
 ```
-bash scripts/safe_cli.sh gemini "Check NHTSA recall database for VIN [last5-only] — any open safety recalls?"
+python scripts/safe_cli.py gemini "Check NHTSA recall database for VIN [last5-only] — any open safety recalls?"
 ```
 Note: Use only last 5 of VIN in query for privacy.
 

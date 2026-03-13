@@ -8,7 +8,7 @@ last_updated: 2026-03-07T22:52:33
 # Immigration Domain Prompt
 
 ## Purpose
-Track all immigration-related matters for the Mishra family: visa status, USCIS cases,
+Track all immigration-related matters for the family (defined in §1): visa status, USCIS cases,
 deadline monitoring, EAD/AP renewals, and Visa Bulletin priority date tracking.
 This is the **highest-stakes domain** — missed deadlines can have multi-year consequences.
 
@@ -72,7 +72,7 @@ The following patterns appear in immigration documents and are NOT PII — do no
 ## Visa Bulletin Monitoring (monthly)
 Each catch-up, call:
 ```
-bash scripts/safe_cli.sh gemini "What is the current USCIS Visa Bulletin EB-2 India priority date cutoff? Also provide EB-3 India. State the bulletin month."
+python scripts/safe_cli.py gemini "What is the current USCIS Visa Bulletin EB-2 India priority date cutoff? Also provide EB-3 India. State the bulletin month."
 ```
 Update `state/immigration.md` Visa Bulletin section with result.
 Calculate gap between family priority date and current cutoff. If gap < 12 months, alert 🟠. If gap < 3 months, alert 🔴.
@@ -86,8 +86,8 @@ Calculate gap between family priority date and current cutoff. If gap < 12 month
 ```
 
 ## Important Context
-- Family is Indian national on employment-based immigration path
-- EB-2/EB-3 Indian national backlogs are measured in years
+- Family is on employment-based immigration path (category and origin country defined in §1)
+- Employment-based backlogs for some national-origin categories are measured in years
 - Travel outside US may require advance parole if I-485 pending
 - EAD and AP must be physically received BEFORE travel or employment change
 - Receipt notices confirm USCIS received filing — not approval
@@ -134,7 +134,7 @@ leading_indicators:
     target: "EAD valid continuously; no gap in work authorization"
     alert_yellow: "EAD gap risk: processing time estimate + filed date may exceed current EAD expiry"
     alert_red: "Projected gap in work authorization > 0 days"
-    briefing_trigger: "yellow or red; critical for Archana's employment continuity"
+    briefing_trigger: "yellow or red; critical for spouse's employment continuity"
 
   i485_readiness:
     description: "Whether family is ready to file I-485 when priority date becomes current"

@@ -1,0 +1,193 @@
+# config/user_profile.example.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Artha User Profile — EXAMPLE (fictional "Patel family")
+#
+# Copy this file to config/user_profile.yaml and fill in your own details.
+# The /bootstrap command will do this conversationally for you.
+#
+# This file is the sole source of truth for your identity and integration config.
+# It is NEVER committed to git (see .gitignore).
+# ─────────────────────────────────────────────────────────────────────────────
+
+schema_version: "1.0"
+
+# ─── Family ───────────────────────────────────────────────────────────────────
+family:
+  name: "Patel"                       # Family surname (used in prompts + briefings)
+  cultural_context: >                 # Optional — enriches prompt quality significantly.
+    Indian-American family — academic performance is high priority;
+    immigration status is highest stakes; strong extended-family ties in India.
+    Leave blank if not applicable.
+
+  primary_user:
+    name: "Raj"
+    nickname: "Raj"                   # Nickname used in briefings
+    role: primary
+    emails:
+      gmail: "raj.patel.example@gmail.com"
+      outlook: "rpatel@outlook.com"   # Optional — set "" if not used
+      icloud: "rpatel@me.com"         # Optional — set "" if not used
+    phone: "+1 (555) 123-4567"        # Optional — used only in contacts context
+
+  spouse:
+    enabled: true                     # Set false for single-user household
+    name: "Priya"
+    role: spouse
+    filtered_briefing: true           # Generate a privacy-filtered briefing for spouse
+
+  children:                           # Empty list [] if no children
+    - name: "Arjun"
+      age: 16
+      grade: "11th"
+      school:
+        name: "Lincoln High School"
+        district: "Portland Public Schools"
+        canvas_url: "https://portland.instructure.com"   # Canvas LMS URL, or "" if N/A
+        canvas_keychain_key: "artha-canvas-token-arjun"  # Keychain service name for Canvas token
+      milestones:
+        college_prep: true            # Enable SAT/ACT tracking, college countdown
+        class_of: 2027
+        new_driver: true              # Enable auto insurance new-driver alerts
+    - name: "Ananya"
+      age: 12
+      grade: "7th"
+      school:
+        name: "Jefferson Middle School"
+        district: "Portland Public Schools"
+        canvas_url: ""                # No Canvas for this school
+        canvas_keychain_key: ""
+      milestones:
+        college_prep: false
+        class_of: 2031
+        new_driver: false
+
+# ─── Location ─────────────────────────────────────────────────────────────────
+location:
+  city: "Redmond"
+  state: "WA"
+  county: "King"
+  country: "US"
+  lat: 47.6740                         # For NOAA weather skill
+  lon: -122.1215
+  timezone: "America/Los_Angeles"
+  property_tax_provider: "king_county" # Used by property_tax skill. See scripts/skills/property_tax.py
+  property_parcel_id: ""               # King County parcel number (optional)
+
+# ─── Domains ──────────────────────────────────────────────────────────────────
+# Set enabled: true for domains you want Artha to actively monitor.
+# Domains you leave disabled are simply ignored during catch-up.
+domains:
+  immigration:
+    enabled: true
+    context: >
+      H-1B holder, EB-2 India priority date 2013-09-01.
+      Spouse on H-4 with EAD. I-485 pending.
+      # Keep context minimal here — full case details live in state/immigration.md
+  finance:
+    enabled: true
+    institutions:                      # Add sender domains for your financial institutions
+      - "chase.com"
+      - "fidelity.com"
+      - "vanguard.com"
+      - "wellsfargo.com"
+    alert_thresholds:
+      bill_due_days: 7                 # Alert N days before bill due
+      low_balance_usd: 1000
+  kids:
+    enabled: true                      # Auto-set based on children list above
+  health:
+    enabled: true
+  travel:
+    enabled: true
+  home:
+    enabled: true
+  shopping:
+    enabled: true
+  goals:
+    enabled: true
+  vehicle:
+    enabled: true
+    vin: ""                            # Optional VIN for NHTSA recall skill
+    vehicles:                          # Optional — used by nhtsa_recalls skill if VIN unknown
+      - make: "Toyota"
+        model: "Camry"
+        year: "2023"
+        vin: ""
+  estate:
+    enabled: false
+  insurance:
+    enabled: true
+  calendar:
+    enabled: true
+  comms:
+    enabled: true
+  social:
+    enabled: true
+  digital:
+    enabled: true
+  boundary:
+    enabled: false                     # Work-life boundary tracking
+  learning:
+    enabled: false                     # Personal learning tracking
+  employment:
+    enabled: false
+    employer: ""
+    workiq_enabled: false              # WorkIQ corporate calendar (Windows only)
+
+# ─── System ───────────────────────────────────────────────────────────────────
+system:
+  artha_dir: "~/OneDrive/Artha"        # Root directory — auto-detected if blank
+  sync_provider: "onedrive"            # onedrive | icloud | dropbox | none
+  venv_path: "~/.artha-venvs/.venv"    # Python venv path (macOS/Linux)
+  venv_path_win: "~/.artha-venvs/.venv-win"  # Python venv path (Windows)
+  python_cmd: "python3"                # Python executable name
+  briefing_timezone: "America/Los_Angeles"
+  cost_budget_monthly_usd: 25
+
+# ─── Integrations ─────────────────────────────────────────────────────────────
+integrations:
+  gmail:
+    enabled: true
+    account: "raj.patel.example@gmail.com"   # Populated during setup
+  google_calendar:
+    enabled: true
+    calendar_ids:
+      primary: "primary"
+      additional:
+        - ""                           # e.g., "family1234@group.calendar.google.com"
+      holidays: "en.usa#holiday@group.v.calendar.google.com"
+  microsoft_graph:
+    enabled: false
+    account: ""                        # e.g., "rpatel@outlook.com"
+    todo_sync: false
+  icloud:
+    enabled: false
+    account: ""                        # Apple ID email
+  canvas_lms:
+    enabled: true                      # Auto-set true if any child has canvas_url
+  workiq:
+    enabled: false
+    platform: "windows"                # windows-only feature
+
+# ─── Briefing ─────────────────────────────────────────────────────────────────
+briefing:
+  email: "raj.patel.example@gmail.com"   # Where to send briefings
+  timezone: "America/Los_Angeles"
+  default_format: "standard"
+  spouse_filtered: true                  # Generate spouse-filtered copy
+  email_enabled: false                   # Set true to send briefings via email
+  archive_enabled: true                  # Save to briefings/ directory
+  weekend_planner: true
+  monthly_retrospective: true
+
+# ─── Budget ───────────────────────────────────────────────────────────────────
+budget:
+  monthly_api_budget_usd: 25
+  alert_at_percent: 80
+  currency: "USD"
+
+# ─── Encryption ───────────────────────────────────────────────────────────────
+encryption:
+  # After running: age-keygen — paste the PUBLIC key here.
+  # Store PRIVATE key in OS keychain (macOS Keychain / Windows Credential Manager).
+  age_recipient: ""    # e.g., "age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

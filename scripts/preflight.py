@@ -39,33 +39,8 @@ Ref: TS §3.8, TS §7.1 Step 0, T-1A.11.3, PRD §9.4 Step 0
 from __future__ import annotations
 
 import sys
-import os as _os
-
-# Auto-bootstrap venv (cross-platform: ~/.artha-venvs/.venv-win on Windows, .venv on Mac)
-_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _os.name == "nt":
-    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
-    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
-else:
-    # Check project-relative .venv first (symlink on Mac → ~/.artha-venvs/.venv; real dir pre-move)
-    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
-    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
-    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
-    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
-    # Auto-create venv from requirements.txt if not found (e.g. first run in Cowork VM)
-    if not _os.path.exists(_VENV_PY):
-        import subprocess as _sp
-        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
-        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
-        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
-                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
-        _VENV_PY = _local_venv + "/bin/python"
-        _VENV_PREFIX = _os.path.realpath(_local_venv)
-if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
-    if _os.name == "nt":
-        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
-    else:
-        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+# Ensure we run inside the Artha venv. Ref: standardization.md §7.3
+from _bootstrap import reexec_in_venv; reexec_in_venv(mode="preflight")
 
 import argparse
 import json
@@ -291,25 +266,47 @@ def check_script_health(
 
 
 def check_pii_guard() -> CheckResult:
-    """Verify pii_guard.sh is executable and its test suite passes.
-    On Windows without bash, this check is downgraded to P1 (warning only).
-    """
-    pii_script = os.path.join(SCRIPTS_DIR, "pii_guard.sh")
+    """Verify pii_guard.py (primary) or pii_guard.sh (legacy) test suite passes.
 
-    if not os.path.exists(pii_script):
+    pii_guard.py is the preferred cross-platform implementation. The legacy
+    bash script is accepted as a fallback for existing installs.
+    """
+    import shutil
+
+    # ── Primary: Python implementation (cross-platform) ──────────────────
+    py_script = os.path.join(SCRIPTS_DIR, "pii_guard.py")
+    if os.path.exists(py_script):
+        result = subprocess.run(
+            [sys.executable, py_script, "test"],
+            capture_output=True, text=True, cwd=ARTHA_DIR, timeout=15,
+            env=_SUBPROCESS_ENV, encoding="utf-8", errors="replace",
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip().splitlines()
+            summary = next((l for l in output if "pass" in l.lower()), "tests passed")
+            return CheckResult("pii_guard.py test", "P0", True, f"{summary} ✓")
+        error = (result.stdout + result.stderr).strip().splitlines()
+        brief = error[-1] if error else "test failed"
         return CheckResult(
-            "pii_guard.sh test", "P0", False,
-            "pii_guard.sh not found — catch-up cannot run without PII protection",
-            fix_hint=f"Restore pii_guard.sh to {SCRIPTS_DIR}",
+            "pii_guard.py test", "P0", False,
+            f"PII guard test failed: {brief}",
+            fix_hint="Catch-up MUST NOT run without a working PII filter. Fix pii_guard.py.",
         )
 
-    # Check if bash is available (not present on vanilla Windows)
-    import shutil
+    # ── Fallback: legacy bash script ──────────────────────────────────────
+    pii_script = os.path.join(SCRIPTS_DIR, "pii_guard.sh")
+    if not os.path.exists(pii_script):
+        return CheckResult(
+            "pii_guard test", "P0", False,
+            "Neither pii_guard.py nor pii_guard.sh found — catch-up cannot run without PII protection",
+            fix_hint=f"Restore pii_guard.py to {SCRIPTS_DIR}",
+        )
+
     bash_path = shutil.which("bash")
     if not bash_path:
         return CheckResult(
             "pii_guard.sh test", "P1", True,
-            "bash not found — PII guard skipped on Windows (install Git Bash for full support) ✓",
+            "bash not found — PII guard skipped on Windows (install Git Bash or use pii_guard.py) ✓",
         )
 
     if os.name != "nt" and not os.access(pii_script, os.X_OK):
@@ -323,16 +320,15 @@ def check_pii_guard() -> CheckResult:
     if result.returncode == 0:
         output = result.stdout.strip().splitlines()
         summary = next((l for l in output if "pass" in l.lower()), "tests passed")
-        return CheckResult("pii_guard.sh test", "P0", True, f"{summary} ✓")
+        return CheckResult("pii_guard.sh test (legacy)", "P0", True, f"{summary} ✓")
 
     error = (result.stdout + result.stderr).strip().splitlines()
     brief = error[-1] if error else "test failed"
-    # On Windows, downgrade PII guard failures to P1 (bash/perl may not work fully)
     severity = "P1" if os.name == "nt" else "P0"
     return CheckResult(
         "pii_guard.sh test", severity, severity == "P1",
         f"PII guard test failed: {brief}" + (" (downgraded to warning on Windows)" if os.name == "nt" else ""),
-        fix_hint="Catch-up MUST NOT run without a working PII filter. Fix pii_guard.sh." if severity == "P0" else "",
+        fix_hint="Catch-up MUST NOT run without a working PII filter." if severity == "P0" else "",
     )
 
 
@@ -692,10 +688,27 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                 fix_hint="Check network or re-run: python scripts/setup_icloud_auth.py --health",
             ))
 
-    # Canvas LMS (P2 — informational only; skip silently if not configured)
-    canvas_token_mac = Path.home() / ".artha-tokens" / "canvas-token-parth.json"
-    canvas_token_trisha = Path.home() / ".artha-tokens" / "canvas-token-trisha.json"
-    if canvas_token_mac.exists() or canvas_token_trisha.exists():
+    # Canvas LMS (P1 — informational only; skip silently if not configured)
+    # Detect configured children by reading user_profile.yaml via profile_loader.
+    _canvas_configured = False
+    try:
+        import sys as _sys
+        if SCRIPTS_DIR not in _sys.path:
+            _sys.path.insert(0, SCRIPTS_DIR)
+        from profile_loader import children as _children, has_profile as _has_profile
+        if _has_profile():
+            for _child in _children():
+                _school = _child.get("school", {}) or {}
+                if _school.get("canvas_url") and _school.get("canvas_keychain_key"):
+                    _canvas_configured = True
+                    break
+    except Exception:
+        # Fallback: check legacy hardcoded token paths for backward compatibility
+        _legacy_names = ["parth", "trisha"]
+        _token_dir = Path.home() / ".artha-tokens"
+        if any((_token_dir / f"canvas-token-{n}.json").exists() for n in _legacy_names):
+            _canvas_configured = True
+    if _canvas_configured:
         checks.append(check_script_health(
             "canvas_fetch.py", ["--health"], severity="P1"
         ))

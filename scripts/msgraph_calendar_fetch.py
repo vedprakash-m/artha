@@ -42,36 +42,8 @@ Ref: TS §3.8, T-1B.1.6
 from __future__ import annotations
 
 import sys
-import os as _os
-
-# ---------------------------------------------------------------------------
-# Auto-bootstrap: relaunch inside the Artha venv if not already there
-# Cross-platform: ~/.artha-venvs/.venv-win on Windows, .venv on Mac
-# ---------------------------------------------------------------------------
-_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _os.name == "nt":
-    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
-    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
-else:
-    # Check project-relative .venv first (symlink on Mac → ~/.artha-venvs/.venv; real dir pre-move)
-    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
-    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
-    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
-    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
-    # Auto-create venv from requirements.txt if not found (e.g. first run in Cowork VM)
-    if not _os.path.exists(_VENV_PY):
-        import subprocess as _sp
-        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
-        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
-        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
-                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
-        _VENV_PY = _local_venv + "/bin/python"
-        _VENV_PREFIX = _os.path.realpath(_local_venv)
-if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
-    if _os.name == "nt":
-        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
-    else:
-        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+# Ensure we run inside the Artha venv. Ref: standardization.md §7.3
+from _bootstrap import reexec_in_venv; reexec_in_venv()
 
 import argparse
 import json

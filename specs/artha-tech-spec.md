@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 
 > **Version**: 2.2.0 | **Status**: Active Development | **Date**: March 12, 2026
-> **Author**: Vedprakash Mishra | **Classification**: Personal & Confidential
+> **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v4.1
 >
 > **v2.2 Changes — WorkIQ Work Calendar Integration (PRD v4.1):** §3.10 NEW: WorkIQ Calendar MCP configuration — `@microsoft/workiq` (Microsoft-published npm), pinned version, pipe-delimited structured query format, combined detection+auth with 24h cache. §4.13 NEW: Work Calendar State schema (`state/work-calendar.md`) — count+duration metadata, 13-week rolling density window, conflict history. §7.1: Step 0 updated with WorkIQ combined preflight check (P1, non-blocking); Step 4.3 NEW parallel WorkIQ calendar fetch with explicit date-range query and context pressure integration (7-day at green, 2-day at red); Step 6 enhanced with Rules 7a (cross-domain conflict, Impact=3), 7b (internal work conflict, Impact=1), 8 (duration-based load analysis); Step 7 updated with merged calendar briefing + Teams Join action; Step 8h adds work-calendar.md update; Step 9 adds explicit `rm tmp/work_calendar.json` cleanup. §8.1: WorkIQ M365 credential added. §8.2.6 NEW: Work Calendar domain redaction rules (partial keyword replacement). Cross-references PRD v4.1, UX spec v1.5.
@@ -12,7 +12,7 @@
 >
 > **v1.9 Changes — Phase 2A Intelligence Workstreams:** Ten workstreams from expert review synthesis (PRD v3.8). §4.9–4.11: Added `state/social.md` expanded schema (relationship graph model with tiers, protocols, contact patterns), `state/decisions.md` schema (cross-domain decision tracking), `state/scenarios.md` schema (what-if analysis). §4.1: Added `last_activity` timestamp to common state file format (tiered context — Workstream F). §4.5: Enhanced `health-check.md` with accuracy pulse fields (proposed/accepted/declined/deferred action counts, tier loading stats, email pre-processing stats). §5.1: Added digest mode briefing variant for >48hr gaps, relationship intelligence section in BY DOMAIN area, leading indicators in Goal Pulse. §5.2: Added Accuracy Pulse section and leading indicator divergence alerts to weekly summary. §6.1: Added `leading_indicators` extraction block to domain prompt template. §7.1: Enhanced step 5 (email pre-processing — marketing suppression, 1500-token cap, batch summarization), added step 5b (tiered context loading), updated step 2 with digest mode check (step 2b), enhanced step 8 (ONE THING URGENCY×IMPACT×AGENCY scoring). §7.4.1: Added `friction: low|standard|high` field to action proposal schema. §8.8 NEW: Privacy Surface Acknowledgment technical spec. Cross-references PRD v3.8, UX spec v1.2.
 >
-> **v1.8 Changes — Microsoft Graph Direct Integration (Email + Calendar):** Replaced hub-and-spoke forwarding model with direct MS Graph API reads for Outlook email and Outlook Calendar. §3.1: Updated Gmail MCP purpose (Outlook fetch is now §3.8, not forwarding). §3.5: Marked Outlook MCP row as superseded by MS Graph. §3.8 NEW: Full MS Graph integration spec — OAuth (live: vedprakash.m@outlook.com), `msgraph_fetch.py` (T-1B.1.1), `msgraph_calendar_fetch.py` (T-1B.1.6), token auto-refresh, catch-up Step 3 parallel fetch pattern, health check. §11.3: Replaced Outlook Forwarding Setup with Microsoft Graph Direct Fetch reference. Apple Mail remains forwarding-based (no API). artha-tasks.md: T-1B.1.1 rewritten as `msgraph_fetch.py` build task; T-1B.1.6 added for calendar; Phase 1B objective updated; Group 1 renamed.
+> **v1.8 Changes — Microsoft Graph Direct Integration (Email + Calendar):** Replaced hub-and-spoke forwarding model with direct MS Graph API reads for Outlook email and Outlook Calendar. §3.1: Updated Gmail MCP purpose (Outlook fetch is now §3.8, not forwarding). §3.5: Marked Outlook MCP row as superseded by MS Graph. §3.8 NEW: Full MS Graph integration spec — OAuth (live: configured in user_profile.yaml), `msgraph_fetch.py` (T-1B.1.1), `msgraph_calendar_fetch.py` (T-1B.1.6), token auto-refresh, catch-up Step 3 parallel fetch pattern, health check. §11.3: Replaced Outlook Forwarding Setup with Microsoft Graph Direct Fetch reference. Apple Mail remains forwarding-based (no API). artha-tasks.md: T-1B.1.1 rewritten as `msgraph_fetch.py` build task; T-1B.1.6 added for calendar; Phase 1B objective updated; Group 1 renamed.
 >
 > **v1.7 Changes — Operational Robustness + Task Integration + Email Coverage:** Added from operational experience after first two live catch-ups. §7.1: Added Step 0 pre-flight go/no-go gate before decrypt — checks OAuth token presence, script health (--health flags), lock file state, vault readiness; halts with named error on any failure; prevents silent-omission briefings (T-1A.11.3). §7.1 Step 8b: added open_items.md update — per-item deduplication, overdue re-surfacing, `todo_id` field for To Do sync. §7.2: Added 6 new failure modes — stale lock (auto-cleared >30 min), OAuth refresh failure (surfaces auth error not silent 0), API quota exceeded (hard halt), To Do sync failure (non-blocking warning). §4.7: Added `open_items.md` state file schema. §1.3: Added `open_items.md`, `todo_sync.py` to Component Summary. §11.4: Added Microsoft Graph API / Microsoft To Do integration spec. §11 email coverage: formalised hub-and-spoke model across Gmail (primary), Outlook (forward), Apple (forward), Yahoo (evaluate), Proton (excluded/Bridge Phase 2); documented Gmail label strategy for source attribution. Added §3.8 Microsoft Graph API OAuth spec (single token for To Do + Outlook). Operational reliability additions: OAuth token auto-refresh test protocol, stale lock detection logic in vault.sh, exponential backoff on 429/503 in gmail_fetch.py and gcal_fetch.py, --dry-run mode in gmail_send.py. Cross-references PRD v3.7.
 >
@@ -155,9 +155,9 @@ Do not proceed without reading Artha.md first.
 # Artha — Personal Intelligence System
 
 ## Identity
-You are Artha, a personal intelligence system for the Mishra family.
-You serve Vedprakash ("Ved"), Archana, Parth (17), and Trisha (12).
-You run as a Claude Code session on Ved's Mac. You are not a chatbot —
+You are Artha, a personal intelligence system for the family (defined in user_profile.yaml).
+You serve the primary user and their household.
+You run as an AI CLI session on the primary user's computer. You are not a chatbot —
 you are an operating system for personal life management.
 
 ## Core Behavior
@@ -233,7 +233,7 @@ The routing table maps email senders and subject patterns to domain prompts. Cla
 | From: `*@parentsquare.com` | `kids.md` | Standard |
 | From: `*@instructure.com` / Canvas | `kids.md` | 🟠 if grade alert |
 | From: `*@pse.com` | `home.md` | Standard |
-| From: `*@sammamish*` | `home.md` | Standard |
+| From: `*@your-city*` | `home.md` | Standard |
 | From: `*@chase.com` | `finance.md` | Standard |
 | From: `*@fidelity.com` | `finance.md` | Standard |
 | From: `*@wellsfargo.com` | `finance.md` | Standard |
@@ -262,7 +262,7 @@ The routing table maps email senders and subject patterns to domain prompts. Cla
 
 ### 3.1 Gmail MCP
 
-**Purpose:** Read personal Gmail (`mi.vedprakash@gmail.com`). Outlook/Hotmail email is fetched directly via MS Graph API — see §3.8. No forwarding required.
+**Purpose:** Read personal Gmail (configured in user_profile.yaml). Outlook/Hotmail email is fetched directly via MS Graph API — see §3.8. No forwarding required.
 
 **Setup:**
 1. Create Google Cloud project
@@ -633,10 +633,10 @@ Gemini CLI provides access to Imagen for generating images. Artha uses this for:
 **Generation workflow:**
 ```bash
 # Generate a festival greeting image
-gemini "Generate a beautiful Diwali greeting card image with diyas, rangoli, and the message 'Happy Diwali from the Mishra family'. Style: warm, traditional, festive." --output ~/OneDrive/Artha/visuals/diwali-2026.png
+gemini "Generate a beautiful Diwali greeting card image with diyas, rangoli, and the message 'Happy Diwali from our family'. Style: warm, traditional, festive." --output ~/OneDrive/Artha/visuals/diwali-2026.png
 
 # Generate a birthday card
-gemini "Generate a birthday card for a 17-year-old boy who loves technology and basketball. Include 'Happy Birthday Parth!' text." --output ~/OneDrive/Artha/visuals/parth-birthday-2026.png
+gemini "Generate a birthday card for a teenager who loves technology and basketball. Include 'Happy Birthday!' text." --output ~/OneDrive/Artha/visuals/birthday-2026.png
 ```
 
 **Output storage:** Generated visuals are saved to `~/OneDrive/Artha/visuals/` — synced via OneDrive for cross-device access.
@@ -688,7 +688,7 @@ When delegating to Gemini or Copilot, strict PII rules apply:
 **OAuth — Status: ✅ Live (2026-03-08)**
 - Registered app: "Artha Personal Assistant" (Azure portal, personal accounts only, `http://localhost:8400` redirect)
 - Client ID: macOS Keychain (`artha/msgraph-client-id`)
-- Token: `~/.artha-tokens/msgraph-token.json` (authenticated as `vedprakash.m@outlook.com`)
+- Token: `~/.artha-tokens/msgraph-token.json` (authenticated as configured in user_profile.yaml)
 - Auth script: `scripts/setup_msgraph_oauth.py` (`--health`, `--reauth` flags)
 - Auto-refresh: `ensure_valid_token()` in `setup_msgraph_oauth.py`
 
@@ -1382,7 +1382,7 @@ version: 1
 ## Relationship Graph
 
 ### Close Family
-- name: "Rahul Mishra"
+- name: "[Contact Name]"
   tier: close_family
   relationship: "brother"
   last_contact: 2026-02-28
@@ -1943,8 +1943,8 @@ Before creating a new entry in the state file:
 # Priority: P0
 
 ## Purpose
-Track immigration status, deadlines, and case progress for all four Mishra
-family members (Vedprakash, Archana, Parth, Trisha).
+Track immigration status, deadlines, and case progress for all family
+members (configured in user_profile.yaml).
 
 ## Extraction Rules
 When processing immigration-related emails, extract:
@@ -2022,7 +2022,7 @@ When processing a Visa Bulletin email:
 
 ## Purpose
 Track bills, spending, account balances, and financial health for the
-Mishra household.
+household.
 
 ## Extraction Rules
 When processing finance-related emails, extract:
@@ -2060,7 +2060,7 @@ When updating ~/OneDrive/Artha/state/finance.md:
 
 ## Known Senders
 - *@chase.com, *@fidelity.com, *@wellsfargo.com, *@vanguard.com
-- *@pse.com, *@sammamish*
+- *@pse.com, *@your-city*
 - *@equifax.com → 🟠 (credit monitoring)
 - Subject: "statement", "bill", "payment due", "payment received"
 
@@ -2328,7 +2328,7 @@ User: "catch me up" (or /catch-up)
 │    - URGENCY: time pressure (0–5)       │
 │    - IMPACT: consequence of inaction    │
 │      (0–5)                              │
-│    - AGENCY: can Mishra family act on   │
+│    - AGENCY: can the family act on     │
 │      it today? (0–5)                    │
 │    Show reasoning chain in briefing:    │
 │    "Chosen because: URGENCY 5 (due      │
@@ -2688,7 +2688,7 @@ Every action follows a consistent lifecycle:
 - action_type: compose_send_email
 - channel: gmail
 - recipient: family_india group (12 addresses)
-- subject: "Happy Diwali from the Mishra family 🪔"
+- subject: "Happy Diwali from our family 🪔"
 - attachment: visuals/diwali-2026.png
 - status: approved_and_sent
 - proposed_by: catch-up workflow (social domain)
@@ -3473,7 +3473,7 @@ skills:
 
 **4. Skill-Specific Parsers**
 - **Visa Bulletin:** Parses `travel.state.gov` Table A & B. Determines authorized chart from USCIS "Adjustment of Status Filing Charts" page. Regex validation: `(\d{2}[A-Z]{3}\d{2}|C|U)`.
-- **NOAA Weather:** Two-step call (`/points/{lat},{lon}` → extract forecast URL). Coordinates for Sammamish: `47.6162, -122.0355`. Requires `owner_email` from `config/artha_config.yaml` in User-Agent.
+- **NOAA Weather:** Two-step call (`/points/{lat},{lon}` → extract forecast URL). Coordinates read from `user_profile.yaml` (location.lat, location.lon). Requires `owner_email` from `config/artha_config.yaml` in User-Agent.
 - **NHTSA Recalls:** Prefers `/recalls/recallsByVIN/{vin}` with make/model fallback.
 
 **5. Centralized Cache (`state/skills_cache.json`)**
@@ -3690,9 +3690,9 @@ sync:
 ---
 
 ## Email Accounts
-- ved@gmail.com / mi.vedprakash@gmail.com (primary — Gmail API)
-- vedprakash.m@outlook.com (direct — MS Graph API, no forwarding needed)
-- icloud.com (forwarding to Gmail — T-1B.1.2, Apple has no public API)
+- Primary Gmail (configured in user_profile.yaml — Gmail API)
+- Outlook email (configured in user_profile.yaml — MS Graph API, no forwarding needed)
+- iCloud (forwarding to Gmail — T-1B.1.2, Apple has no public API)
 EOF
 
 # Install age encryption

@@ -9,7 +9,7 @@ last_updated: 2026-03-07T22:52:33
 
 ## Purpose
 Track all travel bookings, itineraries, loyalty programs, and travel document status
-for the Mishra family. Flag immigration implications for international travel.
+for the family. Flag immigration implications for international travel.
 
 ## Sender Signatures (route here)
 - `*@alaskaair.com`, `*@delta.com`, `*@united.com`, `*@southwest.com`, `*@aa.com`

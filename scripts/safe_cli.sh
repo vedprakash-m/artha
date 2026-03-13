@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED: This script is superseded by scripts/safe_cli.py.
+# It will be removed in Artha v5.1. Ref: standardization.md §7.6.4
+>&2 echo "WARNING: safe_cli.sh is deprecated. Use: python scripts/safe_cli.py"
+
 # safe_cli.sh — Artha outbound PII wrapper for external CLI calls
 #
 # Usage:
@@ -85,7 +89,7 @@ PII_SCAN_OUTPUT=$(echo "${QUERY}" | "${PII_GUARD}" scan 2>&1) || PII_SCAN_EXIT=$
 
 if (( PII_SCAN_EXIT != 0 )); then
     # PII detected — extract the type(s) from output
-    PII_TYPES=$(echo "${PII_SCAN_OUTPUT}" | grep -o 'PII DETECTED:.*' | head -1 || echo "unknown")
+    PII_TYPES=$(echo "${PII_SCAN_OUTPUT}" | grep -o 'PII_FOUND:.*' | head -1 || echo "unknown")
 
     log_to_audit "[$(date -Iseconds)] OUTBOUND_PII_BLOCK | cli: ${CLI} | pii_types: ${PII_TYPES} | reason: PII detected in outbound query"
     echo "" >&2
