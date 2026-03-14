@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  artha-listener.xml — Windows Task Scheduler task definition
+  for the Artha Channel Listener daemon (Layer 2).
+
+  Import via Task Scheduler GUI:
+    Task Scheduler → Action → Import Task → select this file
+  Or via command line (replace placeholders first):
+    schtasks /create /xml artha-listener.xml /tn "ArthaChanListener"
+
+  Note: {{PYTHON_EXE}} and {{ARTHA_ROOT}} are replaced by setup_channel.py
+  when running: python scripts/setup_channel.py --install-service
+-->
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger><Enabled>true</Enabled></LogonTrigger>
+  </Triggers>
+  <Settings>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+  </Settings>
+  <Actions>
+    <Exec>
+      <Command>{{PYTHON_EXE}}</Command>
+      <Arguments>scripts/channel_listener.py --channel telegram</Arguments>
+      <WorkingDirectory>{{ARTHA_ROOT}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

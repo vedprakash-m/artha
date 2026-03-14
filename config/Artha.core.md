@@ -871,6 +871,24 @@ After calibration check, if `state/goals.md` has active goals and `state/memory.
 
 **Dismissal:** User can dismiss any coaching element. If dismissed, do not resurface the same goal nudge for 7 days.
 
+### Step 20 — Channel Push (post-catch-up delivery)
+
+Check whether `config/channels.yaml` exists **and** `defaults.push_enabled` is `true`. If yes:
+
+```bash
+python scripts/channel_push.py
+```
+
+- Sends a flash briefing summary to each enabled channel recipient.
+- Per-recipient `access_scope` (`full` / `family` / `standard`) filtering applied before send.
+- `pii_guard.filter_text()` runs on **every** outbound message — no exceptions.
+- 12-hour dedup check prevents duplicate pushes on multi-machine OneDrive setups.
+- Failures are **non-blocking** — log warning, continue to catch-up completion.
+- Audit: `CHANNEL_PUSH` events logged to `state/audit.md`.
+- If `channels.yaml` is missing or `push_enabled: false`, silently skipped in < 10ms.
+
+---
+
 **Catch-up complete.** Display summary line: `Artha catch-up complete. [N] emails → [N] actionable items. Next recommended catch-up: [time].`
 
 ---

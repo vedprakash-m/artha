@@ -10,6 +10,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ## [Unreleased]
 
 ### Added
+- **ACB v2.1 — Conversational Bridge overhaul:**
+  - Multi-LLM Q&A via Telegram: free-form questions routed through
+    Claude → Gemini → Copilot failover chain with workspace context
+  - Ensemble mode (`aa` prefix): all CLIs called in parallel, consolidated
+    via Claude Haiku
+  - HCI command redesign: 45+ aliases, single-letter shortcuts
+    (`s/a/t/q/d/g/?`), slash optional, hyphens optional
+  - Write commands: `items add` (with priority/domain/deadline parsing),
+    `done OI-NNN` (marks items resolved with audit logging)
+  - `/goals` command (aliases: `g`, `goal`, `goals`)
+  - `/diff` command: state file changes since last catch-up (supports
+    `diff 7d`, `diff 24h`)
+  - Domain listing: `d` without args shows categorised domain list
+    (direct-read vs. encrypted/AI-routed)
+  - Encrypted domain routing: `d finance` routes through LLM with vault
+    decrypt/relock cycle
+  - Thinking ack: "💭 Thinking…" sent immediately for long-running commands,
+    auto-deleted after response arrives
+  - `send_message_get_id()` and `delete_message()` methods in Telegram adapter
+  - Structured LLM output: numbered lists, Unicode bullets, one-line direct
+    answers, no Markdown
+  - CLI workspace context: all LLM CLIs invoked from Artha workspace dir
+    (access to CLAUDE.md, skills, vault)
+  - Vault auto-relock: `_vault_relock_if_needed()` in finally block after
+    every CLI call
+  - Content quality pipeline: `_extract_section_summaries()`,
+    `_filter_noise_bullets()`, `_clean_for_telegram()`
+  - CLI priority order benchmarked: Claude (~16.5s) → Gemini (~26.1s) →
+    Copilot (~39.1s) with model args
 - `scripts/demo_catchup.py` — Tier 1 demo mode using fictional Patel family
   fixtures; no accounts required ([standardization.md §8])
 - `scripts/local_mail_bridge.py` — zero-auth local mail reader for Apple Mail

@@ -14,6 +14,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v5.1 | 2026-03 | ACB v2.1: Multi-LLM Q&A via Telegram, ensemble mode, HCI command redesign, write commands |
+| v5.0 | 2026-03 | Channel Bridge (ACB v2.0): Telegram push + interactive listener |
 | v4.4 | 2026-03 | Three-module arch: `foundation.py` + `backup.py` standalone CLI; key export/import; `--data-only` restore |
 | v4.3 | 2026-03 | ZIP-per-snapshot backup architecture — `backups/` root dir, self-contained ZIPs, `install` command |
 | v4.2 | 2026-03 | Comprehensive Backup Registry — all 31 state + 4 config files, full fresh-install restore |
@@ -145,9 +147,9 @@ Bills, subscriptions, investments, loans, and credit monitoring are spread acros
 
 ---
 
-## 5. The Six Interaction Modes
+## 5. The Seven Interaction Modes
 
-Artha operates in six modes simultaneously. They are not separate features — they are six windows into the same intelligence layer.
+Artha operates in seven modes simultaneously. They are not separate features — they are seven windows into the same intelligence layer.
 
 ---
 
@@ -236,6 +238,28 @@ At its core: you define goals. Artha attaches metrics to them. Artha tracks prog
 **Format:** Short conversational micro-interaction (2–3 targeted questions)
 **Duration:** Designed to take <2 minutes to respond
 
+*(Check-in details unchanged — see below)*
+
+---
+
+### Mode 7 — Mobile Conversational Bridge *(v5.1)*
+
+**Trigger:** Telegram message to Artha bot — any time, from any device (phone, tablet, desktop).
+**Format:** Plain text with Unicode formatting (no Markdown — bullets, numbered lists, emojis).
+**Duration:** Read commands <5s; LLM Q&A 15–40s (with "💭 Thinking…" ack); write commands <2s.
+
+This is Artha's **always-on mobile interface** — a persistent Telegram listener that bridges the gap between scheduled catch-ups. Unlike Mode 2 (on-demand chat via Claude Code terminal), Mode 7 requires no terminal, no SSH, and no Mac access. The user sends messages from their phone and gets structured responses.
+
+**Three interaction tiers:**
+
+1. **Read commands** — instant state-file lookups: `s` (status), `a` (alerts), `t` (tasks), `q` (quick tasks), `d` (domain list), `d kids` (domain deep-dive), `g` (goals), `diff` (state changes), `dash` (dashboard).
+2. **LLM-powered Q&A** — free-form questions routed through a multi-LLM failover chain (Claude → Gemini → Copilot). Context assembled from domain prompts + state files + open items. Encrypted domains (finance, health, immigration, estate, insurance, vehicle) are automatically decrypted and re-locked after each query. Ensemble mode via `aa` prefix sends query to all CLIs in parallel, consolidated by Haiku.
+3. **Write commands** — `items add <description> [P0/P1/P2] [domain] [deadline]` creates open items; `done OI-NNN` marks them resolved. Full audit logging.
+
+**HCI design:** 45+ command aliases with single-letter shortcuts (`s`, `a`, `t`, `q`, `d`, `g`, `?`). Slash optional. Hyphens optional. Spaces OK. "catchup", "catch-up", "catch up", "briefing" all resolve identically. Designed for one-thumb phone operation with minimal cognitive load.
+
+**Security:** Sender whitelist, PII redaction on every outbound byte, vault auto-relock after LLM calls, rate limiting, no PIN-bypass for encrypted data (LLM reads vault in-process and re-encrypts).
+
 Check-ins are interactive micro-conversations surfaced during catch-up sessions when data shows drift from goals or emerging patterns. Because Artha runs interactively (not as a background process), the check-in IS part of the conversation — no separate trigger needed.
 
 **Example check-in:**
@@ -290,7 +314,7 @@ Hey — quick check-in on your week:
 | F1.4 | **Newsletter Digest** — Consolidate learning newsletters (ByteByteGo, System Design, Big Technology, TED Recommends) into a weekly reading digest. Suppress individual deliveries. | P1 |
 | F1.5 | **Subscription Radar** — Detect renewal notices, price change notifications, and new subscription activations from email. Flag for review. | P1 |
 | F1.6 | **USPS Informed Delivery Integration** — Parse daily mail scans. Flag important physical mail (legal documents, checks, government notices). | P2 |
-| F1.7 | **WhatsApp Business Bridge** *(v4.0)* — Integration with WhatsApp Business API or web bridge to pull message context into Artha's relationship intelligence. Enables: awareness of WhatsApp group activity (temple community, school parent groups, family groups), detection of messages requiring response, and threading WhatsApp context into the reconnect radar (F11.3). Privacy: message content is processed and discarded; only metadata (sender, timestamp, group, has_response) is stored in state. Respects existing human-gated outbound pattern (URL scheme). | P2 |
+| F1.7 | **Channel Bridge (ACB v2.1)** *(v5.1)* — Platform-agnostic channel bridge with three layers. **Layer 1 (Push):** automated flash briefing push to Telegram after each catch-up. **Layer 2 (Interactive Commands):** 45+ command aliases with single-letter shortcuts (`s/a/t/q/d/g/?`), slash-optional, flexible normaliser. Read commands for all 18 domains (encrypted domains route through LLM). Write commands: `items add`, `done OI-NNN`. New commands: `/goals`, `/diff` (state changes since last catch-up). **Layer 3 (Multi-LLM Q&A):** free-form questions routed through Claude → Gemini → Copilot failover chain with workspace context (prompts + state + vault). Ensemble mode (`aa` prefix) sends to all CLIs in parallel, consolidated via Haiku. CLIs run from Artha workspace directory with auto vault relock. Structured output: numbered lists, Unicode bullets, one-line direct answers. Thinking ack ("💭 Thinking…") shown during LLM calls, auto-deleted on response. PII redaction on every outbound byte. Sender whitelist. Auto-start via Windows Startup. Message splitting for Telegram 4096-char limit. | P0 |
 
 ---
 

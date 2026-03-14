@@ -61,3 +61,30 @@ Dimensions analyzed:
 
 ---
 
+### Channel Bridge audit events (v5.0)
+
+All channel push / listener events are appended to `state/audit.md` in standard format:
+`[ISO-8601] EVENT_TYPE | key: value | key: value`
+
+| Event | Emitted by | Key fields |
+|-------|-----------|------------|
+| `CHANNEL_PUSH` | `channel_push.py` | `channel`, `recipient`, `chars`, `scope`, `pii_filtered` |
+| `CHANNEL_PUSH_SKIPPED` | `channel_push.py` | `channel`, `marker_host`, `marker_time` |
+| `CHANNEL_PUSH_FAIL` | `channel_push.py` | `channel`, `error_type`, `message` |
+| `CHANNEL_PUSH_PENDING` | `channel_push.py` | `channel`, `recipient`, `pending_file` |
+| `CHANNEL_PENDING_EXPIRED` | `channel_push.py` | `channel`, `file`, `age_hours` |
+| `CHANNEL_LISTENER_START` | `channel_listener.py` | `host`, `channels` |
+| `CHANNEL_LISTENER_SKIP` | `channel_listener.py` | `host`, `designated_host` |
+| `CHANNEL_IN` | `channel_listener.py` | `channel`, `sender` (name alias), `command` |
+| `CHANNEL_OUT` | `channel_listener.py` | `channel`, `recipient`, `chars`, `pii_filtered` |
+| `CHANNEL_REJECT` | `channel_listener.py` | `channel`, `sender` (raw ID), `reason` |
+| `CHANNEL_RATE_LIMIT` | `channel_listener.py` | `channel`, `sender`, `cooldown_sec` |
+| `CHANNEL_SESSION` | `channel_listener.py` | `channel`, `recipient`, `action` (unlock / expire) |
+| `CHANNEL_ERROR` | either | `channel`, `error_type`, `message` |
+| `CHANNEL_HEALTH` | `setup_channel.py` / preflight | `channel`, `healthy`, `latency_ms` |
+
+**Privacy note:** The audit log records command names and alias names (from `recipients` config),
+never raw message content, chat IDs, or bot tokens.
+
+---
+

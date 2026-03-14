@@ -118,11 +118,12 @@ actions:
     audit: false
 
   # ── Community extension example ────────────────────────────────────────────
-  # Uncomment and configure to enable Telegram notifications.
+  # Channel Push is now handled by scripts/channel_push.py (Step 20 of catch-up).
+  # Configure via config/channels.yaml — see config/channels.example.yaml.
   # send_telegram:
   #   type: api_call
   #   enabled: false
-  #   handler: "scripts/actions/telegram_send.py"
+  #   handler: "scripts/channels/telegram.py"
   #   requires_approval: true
   #   friction: low
   #   description: >
