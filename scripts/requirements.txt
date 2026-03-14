@@ -19,9 +19,6 @@ PyYAML==6.0.2
 # macOS → Keychain, Windows → Credential Manager, Linux → SecretService
 keyring==25.6.0
 
-# Schema validation (profile_loader.py + preflight)
-jsonschema>=4.20.0
-
 # Apple iCloud CalDAV (icloud_calendar_fetch.py)
 # iCloud Mail uses stdlib imaplib — no package needed
 caldav==1.4.0

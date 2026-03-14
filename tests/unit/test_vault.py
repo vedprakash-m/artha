@@ -43,7 +43,6 @@ def mock_vault_env(temp_artha_dir, monkeypatch):
     monkeypatch.setitem(foundation._config, "BACKUP_MANIFEST", backup_dir / "manifest.json")
 
     config_dir.mkdir(parents=True, exist_ok=True)
-    (config_dir / "settings.md").write_text("age_recipient: age1mockpublickey\n")
 
     return temp_artha_dir
 
@@ -62,6 +61,7 @@ def test_vault_health_ok(mock_vault_env, capsys):
     """Verify health check passes when everything is set up."""
     with patch("scripts.vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.get_public_key", return_value="age1mockpublickey"), \
          patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="age v1.1.1", returncode=0)
         
