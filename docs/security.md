@@ -23,7 +23,7 @@ All text destined for state files passes through `pii_guard.py` before writing.
 The guard applies Perl-compatible regex patterns to detect:
 - Email addresses, phone numbers, SSNs, passport numbers
 - IP addresses, home addresses, calendar IDs
-- Custom patterns from `config/settings.md`
+- Custom patterns from `config/user_profile.yaml`
 
 ```bash
 # Check a file for PII before writing

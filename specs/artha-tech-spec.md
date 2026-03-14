@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v2.9 | 2026-03 | Distribution audit: 15-issue hardening — git history PII purge, connector defaults (Gmail+GCal only), jsonschema dedup, Python >=3.11 enforced, token path corrected (.tokens/ not ~/.artha-tokens/), settings.md legacy code removed, pre-commit hook activation documented, registry.md sanitized |
 | v2.8 | 2026-03 | Phase 1b: domain registry, household types, renter mode, pets, passport/subscription skills, RSS connector, offline/degraded mode, performance telemetry, 4 view scripts (status/goals/items/scorecard), migrate_state.py DSL |
 | v2.7 | 2026-03 | ACB v2.1: Multi-LLM Q&A, ensemble mode, HCI command redesign, write commands, /diff, /goals |
 | v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
@@ -131,7 +132,7 @@ Artha is a **pull-based personal intelligence system** built on four principles:
 | Encrypted state | `~/OneDrive/Artha/state/*.md.age` | `age`-encrypted state for high/critical sensitivity domains |
 | Briefing archive | `~/OneDrive/Artha/briefings/*.md` | Historical catch-up briefings (ISO-dated, sensitivity-filtered) |
 | Summary archive | `~/OneDrive/Artha/summaries/*.md` | Historical weekly summaries |
-| Config | `~/OneDrive/Artha/config/settings.md` | Alert thresholds, email targets, sync path, account lists, To Do list IDs |
+| Config | `config/user_profile.yaml` | Personal configuration — identity, family, integrations, encryption, system settings. Single source of truth. |
 | View scripts | `~/OneDrive/Artha/scripts/*_view.py` | Script-backed deterministic renderers: `dashboard_view.py`, `domain_view.py`, `status_view.py`, `goals_view.py`, `items_view.py`, `scorecard_view.py`, `diff_view.py` |
 | Migration scripts | `~/OneDrive/Artha/scripts/migrate_state.py` | YAML front-matter schema migration DSL for state files |
 | Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Helper scripts: vault.py, backup.py, pipeline.py, etc. |
@@ -698,7 +699,7 @@ When delegating to Gemini or Copilot, strict PII rules apply:
 **OAuth — Status: ✅ Live (2026-03-08)**
 - Registered app: "Artha Personal Assistant" (Azure portal, personal accounts only, `http://localhost:8400` redirect)
 - Client ID: macOS Keychain (`artha/msgraph-client-id`)
-- Token: `~/.artha-tokens/msgraph-token.json` (authenticated as configured in user_profile.yaml)
+- Token: `.tokens/msgraph-token.json` (authenticated as configured in user_profile.yaml)
 - Auth script: `scripts/setup_msgraph_oauth.py` (`--health`, `--reauth` flags)
 - Auto-refresh: `ensure_valid_token()` in `setup_msgraph_oauth.py`
 
