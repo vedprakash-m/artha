@@ -213,9 +213,9 @@ scripts/
   preflight.py            ← Pre-catch-up health gate
   pii_guard.py            ← PII pre-screening for outbound AI queries
   safe_cli.py             ← PII-safe AI CLI wrapper
-  foundation.py           ← Shared constants, crypto primitives, _config dict
-  vault.py                ← Session lifecycle: age encrypt/decrypt/lock/status
-  backup.py               ← GFS archive engine: snapshot/restore/validate/CLI
+  foundation.py           ← Shared constants, crypto primitives, _config dict (leaf — no internal deps)
+  vault.py                ← Session lifecycle: age encrypt/decrypt/lock/status (imports foundation + backup lazily)
+  backup.py               ← GFS archive engine: standalone CLI (snapshot/restore/validate/install/export-key/import-key)
   profile_loader.py       ← Profile access API (all scripts use this)
   skill_runner.py         ← Autonomous background skill scheduler
   todo_sync.py            ← Microsoft To Do synchronization
@@ -271,7 +271,7 @@ Artha is **privacy-first, local-first**. Your personal data never leaves your ma
 | **Pre-commit Hook** | Blocks PII, secrets, and forbidden files from reaching git |
 | **Net-Negative Write Guard** | Prevents accidental data loss when updating state files |
 | **Atomic `.bak` Guard** | Pre-decrypt `.bak` snapshot created atomically before every decrypt; auto-restored if write fails |
-| **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `state/backups/` (daily/weekly/monthly/yearly tiers) covering all 31 state files + 4 config files |
+| **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `backups/` (daily/weekly/monthly/yearly tiers) covering all 31 state files + 4 config files — one self-contained ZIP per tier-day |
 | **Restore Validation** | `validate-backup` decrypts a backup to a temp dir and runs 5 integrity checks: SHA-256, decrypt success, non-empty, YAML frontmatter, word count ≥ 30 |
 | **Audit Logging** | Every vault operation logged to `state/audit.md` |
 | **CI PII Scanning** | GitHub Actions scans every push for PII leaks |
@@ -315,7 +315,7 @@ Tier promotion priority: `yearly > monthly > weekly > daily` — a Sunday that f
 
 ### Storage Layout
 
-Each GFS backup is a **single ZIP file** containing all 35 registered files for that day. The ZIP is self-contained — it includes its own internal `manifest.json` so it can be validated or restored without needing the outer catalog.
+Each GFS backup is a **single ZIP file** containing all 34 registered files for that day. The ZIP is self-contained — it includes its own internal `manifest.json` so it can be validated or restored without needing the outer catalog.
 
 ```
 backups/                      ← at project root (gitignored, syncs via OneDrive)
@@ -343,6 +343,9 @@ config/user_profile.yaml.age  ← config: encrypted on-the-fly
 ### CLI Commands
 
 ```bash
+# Create a backup snapshot now (also runs automatically on every vault.py encrypt)
+python scripts/backup.py snapshot
+
 # Show ZIP catalog, tier counts, and last validation date
 python scripts/backup.py status
 
@@ -371,10 +374,15 @@ python scripts/backup.py restore --data-only
 python scripts/backup.py install /path/to/2026-03-14.zip
 python scripts/backup.py install /path/to/2026-03-14.zip --dry-run
 python scripts/backup.py install /path/to/2026-03-14.zip --data-only
+
+# Check age binary, keychain key, and backup dir are ready
+python scripts/backup.py preflight
 ```
 
 > **Note:** `vault.py` forwards backup commands for backward compatibility:
 > `python scripts/vault.py backup-status` → runs `backup.py status`, etc.
+>
+> **Auto-validation:** `backup.py snapshot` automatically triggers `backup.py validate` if no validation has run in the past 7 days. This is non-fatal — a failed auto-validation is logged but does not abort the snapshot.
 
 ### Fresh-Install Rebuild (Cold-Start)
 
@@ -425,7 +433,7 @@ Any failure is logged to `state/audit.md` with `BACKUP_VALIDATE_FAIL`.
 - No validation has ever been run (`⚠ never validated`)
 - Last validation was more than 35 days ago (`⚠ validation overdue`)
 
-> **Recommended**: run `vault.py validate-backup` monthly, or after any significant state update.
+> **Recommended**: run `backup.py validate` monthly, or after any significant state update. Auto-validation inside `backup.py snapshot` covers weekly checks automatically.
 
 ---
 
