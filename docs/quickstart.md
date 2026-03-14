@@ -22,9 +22,10 @@ git clone https://github.com/vedprakash-m/artha.git
 cd artha
 
 # Create a Python virtual environment
+# (outside the project so cloud sync tools like OneDrive/iCloud don't upload it)
 python3 -m venv ~/.artha-venvs/.venv
 source ~/.artha-venvs/.venv/bin/activate   # macOS/Linux
-# Windows: ~/.artha-venvs/.venv/Scripts/Activate.ps1
+# Windows (PowerShell): & $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
 
 # Install dependencies
 pip install -r scripts/requirements.txt
@@ -78,19 +79,22 @@ python scripts/generate_identity.py
 age-keygen -o ~/age-key.txt
 # Output shows: Public key: age1xxxxxxxxxxxxxxxxxxxxxxx
 
-# Store the PRIVATE key in your OS keychain
-python3 -c "
-import os, keyring
-key_path = os.path.expanduser('~/age-key.txt')
-keyring.set_password('age-key', 'artha', open(key_path).read().strip())
-print('Key stored in keychain successfully.')
-"
+# Store the PRIVATE key in your OS credential store (one command)
+python scripts/vault.py store-key ~/age-key.txt
+# Windows (PowerShell): python scripts/vault.py store-key $HOME\age-key.txt
+
+# Alternatively, store it manually:
+#   python3 -c "import os, keyring; keyring.set_password('age-key', 'artha', open(os.path.expanduser('~/age-key.txt')).read().strip()); print('Done.')"
+# Linux note: if keyring raises "No recommended backend was available", install
+# one of: python3-secretstorage (GNOME/KDE) or python3-keyrings.alt (plaintext fallback)
+#   pip install secretstorage   # or: pip install keyrings.alt
 
 # Copy the PUBLIC key (printed by age-keygen above) into your profile:
 #   encryption.age_recipient in config/user_profile.yaml
 
-# Then delete the key file — the private key is safely in your keychain
-rm ~/age-key.txt
+# Then delete the key file — the private key is safely in your credential store
+rm ~/age-key.txt              # macOS/Linux
+# Windows (PowerShell): Remove-Item $HOME\age-key.txt
 ```
 
 ---
@@ -99,13 +103,19 @@ rm ~/age-key.txt
 
 ### Google (Gmail + Calendar) — recommended for most users
 
+Before running the setup script you need a Google Cloud OAuth client (~15 min, one-time):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/) → create a project (e.g., "Artha Personal")
+2. **APIs & Services → Library** — enable **Gmail API** and **Google Calendar API**
+3. **APIs & Services → OAuth consent screen** → External → fill App name ("Artha") and your email → under **Test users**, add your own Gmail address
+4. **APIs & Services → Credentials → + Create Credentials → OAuth 2.0 Client ID** → Desktop app → note `client_id` and `client_secret`
+5. Run the setup script and paste them when prompted:
+
 ```bash
 python scripts/setup_google_oauth.py
 ```
 
-Follow the prompts: paste your OAuth client credentials from
-[Google Cloud Console](https://console.cloud.google.com/) → Credentials →
-Create OAuth 2.0 Client ID (Desktop app), then complete the browser consent flow.
+> **"This app isn't verified" warning:** During the Google login flow, Chrome/Firefox will show a red warning screen. Click **Advanced → Go to Artha (unsafe)** to proceed — this is expected for personal OAuth apps that haven't been submitted to Google for review.
 
 ### Outlook / Microsoft 365
 
