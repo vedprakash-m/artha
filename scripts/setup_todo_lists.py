@@ -25,7 +25,6 @@ from _bootstrap import reexec_in_venv; reexec_in_venv()
 import argparse
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.request

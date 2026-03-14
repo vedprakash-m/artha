@@ -244,7 +244,7 @@ def _test_channel(channel_name: str, config: dict[str, Any]) -> None:
     """Send a test message to verify the adapter works."""
     sys.path.insert(0, str(_ARTHA_DIR / "scripts"))
     try:
-        from scripts.channels.registry import create_adapter_from_config
+        from channels.registry import create_adapter_from_config
         ch_cfg = config.get("channels", {}).get(channel_name, {})
         adapter = create_adapter_from_config(channel_name, ch_cfg)
 
@@ -263,7 +263,7 @@ def _test_channel(channel_name: str, config: dict[str, Any]) -> None:
             _print_warn("No primary recipient configured — skipping test message")
             return
 
-        from scripts.channels.base import ChannelMessage
+        from channels.base import ChannelMessage
         msg = ChannelMessage(
             text=(
                 "✅ *Artha Channel Bridge test*\n"
@@ -433,7 +433,7 @@ def run_health_check() -> int:
         try:
             import time as _time
             sys.path.insert(0, str(_ARTHA_DIR / "scripts"))
-            from scripts.channels.registry import create_adapter_from_config
+            from channels.registry import create_adapter_from_config
             adapter = create_adapter_from_config(ch_name, ch_cfg)
             _t0 = _time.perf_counter()
             ok = adapter.health_check()

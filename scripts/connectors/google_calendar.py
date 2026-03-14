@@ -151,20 +151,8 @@ def health_check(auth_context: Dict[str, Any]) -> bool:
     """Verify Google Calendar OAuth credentials are available and valid."""
     try:
         from google_auth import check_stored_credentials  # type: ignore[import]
-        ok, _ = check_stored_credentials()
-        return ok
-    except Exception as exc:
-        print(f"[google_calendar] health_check failed: {exc}", file=sys.stderr)
-        return False
-
-def health_check(auth_context: Dict[str, Any]) -> bool:  # noqa: ARG001
-    """Verify Google Calendar OAuth credentials are available and valid."""
-    try:
-        from gcal_fetch import run_health_check  # type: ignore[import]
-        run_health_check()
-        return True
-    except SystemExit as exc:
-        return exc.code == 0
+        status = check_stored_credentials()
+        return status.get("client_id_stored", False) and status.get("gcal_token_stored", False)
     except Exception as exc:
         print(f"[google_calendar] health_check failed: {exc}", file=sys.stderr)
         return False

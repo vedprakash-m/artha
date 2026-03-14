@@ -59,3 +59,18 @@ Documentation = "https://github.com/vedprakash-m/artha/tree/main/docs"
 [tool.setuptools]
 py-modules = ["artha"]
 packages = ["scripts", "scripts.lib", "scripts.skills", "scripts.connectors", "scripts.actions", "scripts.channels"]
+
+# ---------------------------------------------------------------------------
+# Ruff — lightweight linter catching bugs that py_compile misses
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["scripts", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "F811",   # redefinition of unused name (caught Bug 2: duplicate health_check)
+]
+# Future: add "F401" (unused import) and "F841" (unused variable) once
+# pre-existing violations are cleaned up.

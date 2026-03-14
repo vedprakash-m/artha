@@ -32,8 +32,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import scripts.channel_listener as cl
-from scripts.channels.base import InboundMessage
+import channel_listener as cl
+from channels.base import InboundMessage
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ class TestProcessMessage:
         """Known sender /help: adapter.send_message is called once."""
         monkeypatch.setattr(cl, "_AUDIT_LOG", tmp_path / "audit.md")
         # Patch pii_guard
-        with patch("scripts.channel_listener.sys") as mock_sys:
+        with patch("channel_listener.sys") as mock_sys:
             # Don't interfere with actual sys.path
             pass
 

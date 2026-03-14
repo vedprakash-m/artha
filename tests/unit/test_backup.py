@@ -37,9 +37,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import scripts.backup as backup
-import scripts.foundation as foundation
-import scripts.vault as vault
+import backup as backup
+import foundation as foundation
+import vault as vault
 
 
 # ---------------------------------------------------------------------------
@@ -413,9 +413,9 @@ class TestValidateBackup:
             outfile.write_text("---\nschema_version: '1.0'\n---\n# Immigration\n" + "word " * 50)
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", side_effect=good_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", side_effect=good_decrypt):
             backup.do_validate_backup()
 
         out = capsys.readouterr().out
@@ -428,8 +428,8 @@ class TestValidateBackup:
         zip_path = self._seed_zip(backup_dir)
         zip_path.write_bytes(b"corrupted zip contents!!")
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -458,8 +458,8 @@ class TestValidateBackup:
         }
         backup._save_manifest(m)
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -469,9 +469,9 @@ class TestValidateBackup:
         backup_dir = foundation._config["BACKUP_DIR"]
         self._seed_zip(backup_dir)
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", return_value=False), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", return_value=False), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -485,9 +485,9 @@ class TestValidateBackup:
             outfile.write_text("")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", side_effect=empty_decrypt), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", side_effect=empty_decrypt), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -501,9 +501,9 @@ class TestValidateBackup:
             outfile.write_text("NO FRONTMATTER HERE\n" + "word " * 50)
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", side_effect=no_yaml_decrypt), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", side_effect=no_yaml_decrypt), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -517,9 +517,9 @@ class TestValidateBackup:
             outfile.write_text("---\ndata: ok\n---\nfew words only")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", side_effect=short_decrypt), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", side_effect=short_decrypt), \
              pytest.raises(SystemExit):
             backup.do_validate_backup()
 
@@ -543,17 +543,17 @@ class TestValidateBackup:
             outfile.write_text("---\nschema_version: '1.0'\n---\n# Content\n" + "word " * 50)
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"), \
-             patch("scripts.backup.age_decrypt", side_effect=track_decrypt) as mock_d:
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"), \
+             patch("backup.age_decrypt", side_effect=track_decrypt) as mock_d:
             backup.do_validate_backup(domain="immigration")
             assert mock_d.call_count == 1
 
     def test_validate_no_backups_exits_gracefully(self, mock_backup_env, capsys):
         # Remove the pre-seeded manifest snapshots
         backup._save_manifest({"last_validate": None, "snapshots": {}})
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-key"):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-key"):
             backup.do_validate_backup()  # should not raise
 
         assert "No backups" in capsys.readouterr().out
@@ -732,8 +732,8 @@ class TestBackupSnapshotComprehensive:
             dst.write_bytes(b"encrypted-goals")
             return True
 
-        with patch("scripts.backup.get_public_key", return_value="age1mock"), \
-             patch("scripts.backup.age_encrypt", side_effect=fake_encrypt):
+        with patch("backup.get_public_key", return_value="age1mock"), \
+             patch("backup.age_encrypt", side_effect=fake_encrypt):
             count = backup.backup_snapshot(registry, today=today)
 
         assert count == 1
@@ -761,8 +761,8 @@ class TestBackupSnapshotComprehensive:
             dst.write_bytes(b"encrypted-config")
             return True
 
-        with patch("scripts.backup.get_public_key", return_value="age1mock"), \
-             patch("scripts.backup.age_encrypt", side_effect=fake_encrypt):
+        with patch("backup.get_public_key", return_value="age1mock"), \
+             patch("backup.age_encrypt", side_effect=fake_encrypt):
             count = backup.backup_snapshot(registry, today=today)
 
         assert count == 1
@@ -782,7 +782,7 @@ class TestBackupSnapshotComprehensive:
              "source_path": state_dir / "goals.md",
              "restore_path": "state/goals.md"},
         ]
-        with patch("scripts.backup.get_public_key", side_effect=SystemExit(1)):
+        with patch("backup.get_public_key", side_effect=SystemExit(1)):
             count = backup.backup_snapshot(registry, today=date(2026, 3, 9))
         assert count == 0
 
@@ -809,8 +809,8 @@ class TestBackupSnapshotComprehensive:
             dst.write_bytes(b"encrypted")
             return True
 
-        with patch("scripts.backup.get_public_key", return_value="age1mock"), \
-             patch("scripts.backup.age_encrypt", side_effect=fake_encrypt):
+        with patch("backup.get_public_key", return_value="age1mock"), \
+             patch("backup.age_encrypt", side_effect=fake_encrypt):
             count = backup.backup_snapshot(registry, today=date(2026, 3, 9))
 
         assert count == 3
@@ -867,9 +867,9 @@ class TestRestore:
     def test_restore_dry_run_lists_files_without_writing(self, mock_backup_env, capsys):
         backup_dir = foundation._config["BACKUP_DIR"]
         self._seed_zip(backup_dir)
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", return_value=True):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", return_value=True):
             backup.do_restore(date_str="2026-03-14", dry_run=True)
 
         out = capsys.readouterr().out
@@ -880,9 +880,9 @@ class TestRestore:
     def test_restore_state_encrypted_copies_age_file(self, mock_backup_env):
         backup_dir = foundation._config["BACKUP_DIR"]
         self._seed_zip(backup_dir)
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
             backup.do_restore(date_str="2026-03-14")
 
         restored = foundation._config["STATE_DIR"] / "immigration.md.age"
@@ -897,9 +897,9 @@ class TestRestore:
             dst.write_text("---\n# Goals\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_restore(date_str="2026-03-14")
 
         restored = foundation._config["STATE_DIR"] / "goals.md"
@@ -914,9 +914,9 @@ class TestRestore:
             dst.write_text("age_recipient: age1xxx\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_restore(date_str="2026-03-14")
 
         restored = foundation._config["CONFIG_DIR"] / "user_profile.yaml"
@@ -946,8 +946,8 @@ class TestRestore:
         }
         backup._save_manifest(m)
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
              pytest.raises(SystemExit):
             backup.do_restore(date_str="2026-03-14")
 
@@ -955,8 +955,8 @@ class TestRestore:
 
     def test_restore_no_backups_exits_gracefully(self, mock_backup_env, capsys):
         backup._save_manifest({"last_validate": None, "snapshots": {}})
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"):
             backup.do_restore(date_str="2026-03-14")
 
         assert "No backups" in capsys.readouterr().out
@@ -980,9 +980,9 @@ class TestInstall:
 
     def test_install_dry_run_previews_without_writing(self, mock_backup_env, tmp_path, capsys):
         zip_path = self._make_zip(tmp_path)
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", return_value=True):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", return_value=True):
             backup.do_install(str(zip_path), dry_run=True)
 
         out = capsys.readouterr().out
@@ -991,9 +991,9 @@ class TestInstall:
 
     def test_install_state_encrypted_copied_directly(self, mock_backup_env, tmp_path):
         zip_path = self._make_zip(tmp_path)
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
             backup.do_install(str(zip_path))
 
         restored = foundation._config["STATE_DIR"] / "immigration.md.age"
@@ -1007,9 +1007,9 @@ class TestInstall:
             dst.write_text("---\n# Goals\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_install(str(zip_path))
 
         restored = foundation._config["STATE_DIR"] / "goals.md"
@@ -1022,17 +1022,17 @@ class TestInstall:
             dst.write_text("todo_lists:\n  general: id123\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_install(str(zip_path))
 
         restored = foundation._config["CONFIG_DIR"] / "artha_config.yaml"
         assert "id123" in restored.read_text()
 
     def test_install_missing_zip_exits(self, mock_backup_env):
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
              pytest.raises(SystemExit):
             backup.do_install("/nonexistent/path/2026-03-14.zip")
 
@@ -1070,9 +1070,9 @@ class TestDataOnlyRestore:
             dst.write_text("---\n# Goals\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_restore(date_str="2026-03-14", data_only=True)
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
@@ -1088,9 +1088,9 @@ class TestDataOnlyRestore:
             dst.write_text("---\n# Content\nsome: value\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_restore(date_str="2026-03-14")
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
@@ -1101,9 +1101,9 @@ class TestDataOnlyRestore:
         zip_path = self._make_full_zip(backup_dir)
         self._register_zip(zip_path)
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", return_value=True):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", return_value=True):
             backup.do_restore(date_str="2026-03-14", dry_run=True, data_only=True)
 
         out = capsys.readouterr().out
@@ -1118,9 +1118,9 @@ class TestDataOnlyRestore:
             dst.write_text("---\n# Goals\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_install(str(zip_path), data_only=True)
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
@@ -1135,9 +1135,9 @@ class TestDataOnlyRestore:
             dst.write_text("key: value\n")
             return True
 
-        with patch("scripts.backup.check_age_installed", return_value=True), \
-             patch("scripts.backup.get_private_key", return_value="mock-priv"), \
-             patch("scripts.backup.age_decrypt", side_effect=fake_decrypt):
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", side_effect=fake_decrypt):
             backup.do_install(str(zip_path))
 
         assert (foundation._config["CONFIG_DIR"] / "routing.yaml").exists()
@@ -1151,9 +1151,9 @@ def test_no_circular_import():
     """All three modules can be imported in any order without ImportError."""
     import importlib
     # reload in both orders to verify no circular dependency
-    importlib.reload(importlib.import_module("scripts.foundation"))
-    importlib.reload(importlib.import_module("scripts.vault"))
-    importlib.reload(importlib.import_module("scripts.backup"))
+    importlib.reload(importlib.import_module("foundation"))
+    importlib.reload(importlib.import_module("vault"))
+    importlib.reload(importlib.import_module("backup"))
 
 
 def test_config_propagates_to_all_modules(mock_backup_env):
