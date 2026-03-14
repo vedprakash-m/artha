@@ -304,36 +304,50 @@ Users without certain domains (e.g. no immigration) simply remove those entries 
 
 | Tier | When | Retention |
 |---|---|---|
-| **daily** | Mon–Sat | Last 7 snapshots per domain |
-| **weekly** | Every Sunday | Last 4 snapshots per domain |
-| **monthly** | Last day of each month | Last 12 snapshots per domain |
+| **daily** | Mon–Sat | Last 7 snapshots |
+| **weekly** | Every Sunday | Last 4 snapshots |
+| **monthly** | Last day of each month | Last 12 snapshots |
 | **yearly** | Dec 31 | Unlimited (never pruned) |
 
 Tier promotion priority: `yearly > monthly > weekly > daily` — a Sunday that falls on Dec 31 is always stored as a yearly snapshot.
 
 ### Storage Layout
 
+Each GFS backup is a **single ZIP file** containing all 35 registered files for that day. The ZIP is self-contained — it includes its own internal `manifest.json` so it can be validated or restored without needing the outer catalog.
+
 ```
-state/backups/
-  daily/          ← rolling 7-day snapshots
-  weekly/         ← rolling 4-week snapshots
-  monthly/        ← rolling 12-month snapshots
-  yearly/         ← permanent Dec-31 archives
-  manifest.json   ← SHA-256 checksums, sizes, tiers, timestamps
+backups/                      ← at project root (gitignored, syncs via OneDrive)
+  daily/
+    2026-03-14.zip            ← one ZIP per day, ALL registered files inside
+    2026-03-13.zip
+  weekly/
+    2026-03-08.zip
+  monthly/
+    2026-02-28.zip
+  yearly/
+    2025-12-31.zip
+  manifest.json               ← outer catalog: ZIP keys → sha256, tier, date, file_count
 ```
 
-All backup files are `.age`-encrypted. `manifest.json` records the SHA-256 of each file at write time to detect silent bit-rot. The manifest itself is written atomically via a `.tmp` sibling + `os.replace()`.
+**Inside each ZIP:**
+```
+manifest.json                 ← internal: sha256 + restore_path per file
+state/immigration.md.age      ← encrypted state: copied as-is
+state/goals.md.age            ← plain state: encrypted on-the-fly
+config/user_profile.yaml.age  ← config: encrypted on-the-fly
+...                           ← all 35 files
+```
 
 ### CLI Commands
 
 ```bash
-# Show backup catalog, tier counts, and last validation date
+# Show ZIP catalog, tier counts, and last validation date
 python scripts/vault.py backup-status
 
-# Validate the newest backup for every domain (decrypt + 5 integrity checks)
+# Validate the newest backup ZIP (decrypt all files + 5 integrity checks each)
 python scripts/vault.py validate-backup
 
-# Validate a single domain
+# Validate a single domain within the newest ZIP
 python scripts/vault.py validate-backup --domain finance
 
 # Validate a specific snapshot date
@@ -342,35 +356,39 @@ python scripts/vault.py validate-backup --date 2026-02-28
 # Preview a full restore without writing anything
 python scripts/vault.py restore --dry-run
 
-# Restore all files from a specific snapshot (fresh-install rebuild)
+# Restore all files from a specific snapshot (catalog-based)
 python scripts/vault.py restore --date 2026-03-14
 
 # Restore a single domain only
 python scripts/vault.py restore --domain finance
+
+# Cold-start install on a new machine from an explicit ZIP path
+python scripts/vault.py install /path/to/2026-03-14.zip
+python scripts/vault.py install /path/to/2026-03-14.zip --dry-run
 ```
 
 ### Fresh-Install Rebuild
 
-A backup snapshot contains everything needed to rebuild Artha from scratch on a new machine:
+A backup ZIP is fully self-sufficient for rebuilding Artha from scratch:
 
 1. Install Artha and `age` on the new machine
-2. Copy `state/backups/` (synced via OneDrive) to the new machine
+2. Copy or transfer the ZIP file (e.g. from OneDrive or a USB drive)
 3. Restore your age private key to the macOS Keychain / Windows Credential Manager
-4. Run `vault.py restore --dry-run` to preview, then `vault.py restore` to restore all files
+4. Run `vault.py install /path/to/YYYY-MM-DD.zip --dry-run` to preview, then without `--dry-run` to restore
 
-All config files (`user_profile.yaml`, `routing.yaml`, etc.) and all state files are restored to their original locations in a single command.
+All config files and state files are restored to their original locations in a single command. No catalog access needed.
 
 ### Restore Validation Checks
 
-When `validate-backup` runs, each backup is verified in order:
+When `validate-backup` runs, each file inside the ZIP is verified in order:
 
-1. **SHA-256 integrity** — matches checksum stored in `manifest.json`
+1. **SHA-256 integrity** — matches checksum in the internal ZIP manifest
 2. **`age` decrypt succeeds** — key is accessible and ciphertext is intact
 3. **Non-empty output** — decrypted content is not blank
-4. **YAML frontmatter** — file begins with `---` (valid state file structure)
-5. **Word count ≥ 30** — file contains meaningful content, not a stub
+4. **YAML frontmatter** — file begins with `---` (valid state file structure; config files exempt)
+5. **Word count ≥ 30** — file contains meaningful content, not a stub (state files only)
 
-Any failure is logged to `state/audit.md` with `INTEGRITY_RESTORE_FAILED`.
+Any failure is logged to `state/audit.md` with `BACKUP_VALIDATE_FAIL`.
 
 ### Health Monitoring
 
