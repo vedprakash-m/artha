@@ -773,3 +773,375 @@ class TestBackupStatus:
         vault.do_backup_status()
         out = capsys.readouterr().out
         assert "overdue" in out.lower() or "⚠" in out
+
+
+# ---------------------------------------------------------------------------
+# Backup Registry
+# ---------------------------------------------------------------------------
+
+class TestBackupRegistry:
+    """_load_backup_registry reads user_profile.yaml and returns correct entries."""
+
+    def _write_profile(self, mock_vault_env, state_files, config_files=None):
+        profile = {
+            "backup": {
+                "state_files": state_files,
+                "config_files": config_files or [],
+            }
+        }
+        import yaml as _yaml
+        profile_path = mock_vault_env / "config" / "user_profile.yaml"
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(_yaml.dump(profile), encoding="utf-8")
+
+    def test_loads_sensitive_state_entries(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [
+            {"name": "finance", "sensitive": True},
+            {"name": "health", "sensitive": True},
+        ])
+        entries = vault._load_backup_registry()
+        names = {e["name"] for e in entries}
+        assert "finance" in names
+        assert "health" in names
+        for e in entries:
+            assert e["source_type"] == "state_encrypted"
+            assert str(e["source_path"]).endswith(".md.age")
+            assert e["restore_path"].endswith(".md.age")
+
+    def test_loads_plain_state_entries(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [
+            {"name": "goals", "sensitive": False},
+            {"name": "home", "sensitive": False},
+        ])
+        entries = vault._load_backup_registry()
+        for e in entries:
+            assert e["source_type"] == "state_plain"
+            assert str(e["source_path"]).endswith(".md")
+            assert e["restore_path"] == f"state/{e['name']}.md"
+
+    def test_loads_config_entries(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [], ["config/user_profile.yaml", "config/routing.yaml"])
+        entries = vault._load_backup_registry()
+        names = {e["name"] for e in entries}
+        assert "cfg__config__user_profile_yaml" in names
+        assert "cfg__config__routing_yaml" in names
+        for e in entries:
+            assert e["source_type"] == "config"
+            assert e["restore_path"].startswith("config/")
+
+    def test_fallback_when_no_profile(self, mock_vault_env):
+        # No user_profile.yaml → falls back to SENSITIVE_FILES
+        entries = vault._load_backup_registry()
+        entry_names = {e["name"] for e in entries}
+        for name in vault.SENSITIVE_FILES:
+            assert name in entry_names
+        for e in entries:
+            assert e["source_type"] == "state_encrypted"
+
+    def test_fallback_when_no_backup_section(self, mock_vault_env):
+        import yaml as _yaml
+        profile_path = mock_vault_env / "config" / "user_profile.yaml"
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(_yaml.dump({"family": {"name": "Test"}}), encoding="utf-8")
+        entries = vault._load_backup_registry()
+        # Falls back to SENSITIVE_FILES
+        entry_names = {e["name"] for e in entries}
+        for name in vault.SENSITIVE_FILES:
+            assert name in entry_names
+
+    def test_all_31_state_files_present_in_full_registry(self, mock_vault_env):
+        """A full registry with 31 state + 4 config entries is loaded correctly."""
+        state_files = (
+            [{"name": n, "sensitive": True}
+             for n in ["immigration","finance","insurance","estate","health",
+                       "vehicle","contacts","occasions","audit"]] +
+            [{"name": n, "sensitive": False}
+             for n in ["boundary","calendar","comms","dashboard","decisions",
+                       "digital","employment","goals","health-check",
+                       "health-metrics","home","kids","learning","memory",
+                       "onenote_progress","open_items","scenarios","shopping",
+                       "social","travel","work-calendar","plaid-privacy-research"]]
+        )
+        config_files = [
+            "config/user_profile.yaml", "config/routing.yaml",
+            "config/connectors.yaml",   "config/artha_config.yaml",
+        ]
+        self._write_profile(mock_vault_env, state_files, config_files)
+        entries = vault._load_backup_registry()
+        assert len(entries) == len(state_files) + len(config_files)
+        sensitive_count = sum(1 for e in entries if e["source_type"] == "state_encrypted")
+        plain_count     = sum(1 for e in entries if e["source_type"] == "state_plain")
+        config_count    = sum(1 for e in entries if e["source_type"] == "config")
+        assert sensitive_count == 9
+        assert plain_count     == 22
+        assert config_count    == 4
+
+
+# ---------------------------------------------------------------------------
+# Snapshot: plain state + config file handling
+# ---------------------------------------------------------------------------
+
+class TestBackupSnapshotComprehensive:
+    """_backup_snapshot encrypts plain/config files on-the-fly."""
+
+    def _write_profile(self, mock_vault_env, state_files, config_files=None):
+        import yaml as _yaml
+        profile = {"backup": {"state_files": state_files, "config_files": config_files or []}}
+        p = mock_vault_env / "config" / "user_profile.yaml"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(_yaml.dump(profile), encoding="utf-8")
+
+    def test_plain_state_file_is_encrypted_into_backup(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [{"name": "goals", "sensitive": False}])
+        (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\nword " * 40)
+        today = date(2026, 3, 9)
+
+        with patch("scripts.vault.get_public_key", return_value="age1mock"), \
+             patch("scripts.vault.age_encrypt", return_value=True) as mock_enc:
+            # age_encrypt writes nothing to dest_tmp in mock, so seed it
+            def fake_encrypt(pk, src, dst):
+                dst.write_bytes(b"encrypted-goals")
+                return True
+            mock_enc.side_effect = fake_encrypt
+            count = vault._backup_snapshot(today=today)
+
+        assert count == 1
+        dest = vault.BACKUP_DIR / "daily" / "goals-2026-03-09.md.age"
+        assert dest.exists()
+        m = vault._load_manifest()
+        key = "daily/goals-2026-03-09.md.age"
+        assert key in m["files"]
+        assert m["files"][key]["source_type"] == "state_plain"
+        assert m["files"][key]["restore_path"] == "state/goals.md"
+
+    def test_config_file_is_encrypted_into_backup(self, mock_vault_env):
+        # Use artha_config.yaml as the config file being backed up so we don't
+        # overwrite user_profile.yaml (which holds the backup registry).
+        self._write_profile(mock_vault_env, [], ["config/artha_config.yaml"])
+        (mock_vault_env / "config" / "artha_config.yaml").write_text("todo_lists:\n  general: abc123\n")
+        today = date(2026, 3, 9)
+
+        def fake_encrypt(pk, src, dst):
+            dst.write_bytes(b"encrypted-config")
+            return True
+
+        with patch("scripts.vault.get_public_key", return_value="age1mock"), \
+             patch("scripts.vault.age_encrypt", side_effect=fake_encrypt):
+            count = vault._backup_snapshot(today=today)
+
+        assert count == 1
+        slug = "cfg__config__artha_config_yaml"
+        dest = vault.BACKUP_DIR / "daily" / f"{slug}-2026-03-09.cfg.age"
+        assert dest.exists()
+        m = vault._load_manifest()
+        key = f"daily/{slug}-2026-03-09.cfg.age"
+        assert key in m["files"]
+        assert m["files"][key]["source_type"] == "config"
+        assert m["files"][key]["restore_path"] == "config/artha_config.yaml"
+
+    def test_plain_file_skipped_when_no_pubkey(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [{"name": "goals", "sensitive": False}])
+        (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\n")
+        today = date(2026, 3, 9)
+
+        with patch("scripts.vault.get_public_key", side_effect=SystemExit(1)):
+            count = vault._backup_snapshot(today=today)
+
+        assert count == 0
+
+    def test_mixed_registry_backs_up_all_types(self, mock_vault_env):
+        """Encrypted state, plain state, and config all backed up in one snapshot."""
+        # Use artha_config.yaml (not user_profile.yaml) as the config backup target
+        # to avoid overwriting the profile that holds the backup registry.
+        self._write_profile(
+            mock_vault_env,
+            [{"name": "finance", "sensitive": True}, {"name": "goals", "sensitive": False}],
+            ["config/artha_config.yaml"],
+        )
+        (mock_vault_env / "state" / "finance.md.age").write_bytes(b"x" * 300)
+        (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\n")
+        (mock_vault_env / "config" / "artha_config.yaml").write_text("todo_lists:\n  general: abc\n")
+        today = date(2026, 3, 9)
+
+        def fake_encrypt(pk, src, dst):
+            dst.write_bytes(b"encrypted")
+            return True
+
+        with patch("scripts.vault.get_public_key", return_value="age1mock"), \
+             patch("scripts.vault.age_encrypt", side_effect=fake_encrypt):
+            count = vault._backup_snapshot(today=today)
+
+        assert count == 3
+        assert (vault.BACKUP_DIR / "daily" / "finance-2026-03-09.md.age").exists()
+        assert (vault.BACKUP_DIR / "daily" / "goals-2026-03-09.md.age").exists()
+        assert (vault.BACKUP_DIR / "daily" / "cfg__config__artha_config_yaml-2026-03-09.cfg.age").exists()
+
+    def test_manifest_entry_has_restore_path_and_source_type(self, mock_vault_env):
+        self._write_profile(mock_vault_env, [{"name": "immigration", "sensitive": True}])
+        (mock_vault_env / "state" / "immigration.md.age").write_bytes(b"x" * 200)
+        vault._backup_snapshot(today=date(2026, 3, 9))
+        m = vault._load_manifest()
+        key = "daily/immigration-2026-03-09.md.age"
+        assert m["files"][key]["source_type"]  == "state_encrypted"
+        assert m["files"][key]["restore_path"] == "state/immigration.md.age"
+
+
+# ---------------------------------------------------------------------------
+# GFS restore — do_restore
+# ---------------------------------------------------------------------------
+
+class TestRestore:
+    """do_restore reconstructs files from a GFS snapshot."""
+
+    def _seed_backup(self, backup_dir, key, content, restore_path, source_type):
+        """Create a backup file and manifest entry."""
+        dest = backup_dir / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(content)
+        m = vault._load_manifest()
+        m["files"][key] = {
+            "sha256":       vault._file_sha256(dest),
+            "size":         len(content),
+            "domain":       Path(key).stem.split("-")[0],
+            "tier":         key.split("/")[0],
+            "date":         "2026-03-14",
+            "created":      "2026-03-14T00:00:00+00:00",
+            "source_type":  source_type,
+            "restore_path": restore_path,
+        }
+        vault._save_manifest(m)
+
+    def test_restore_dry_run_lists_files_without_writing(self, mock_vault_env, capsys):
+        self._seed_backup(
+            vault.BACKUP_DIR,
+            "daily/immigration-2026-03-14.md.age",
+            b"encrypted-imm",
+            "state/immigration.md.age",
+            "state_encrypted",
+        )
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"):
+            vault.do_restore(date_str="2026-03-14", dry_run=True)
+
+        out = capsys.readouterr().out
+        assert "DRY RUN" in out
+        assert "state/immigration.md.age" in out
+        assert not (mock_vault_env / "state" / "immigration.md.age").exists()
+
+    def test_restore_state_encrypted_copies_age_file(self, mock_vault_env):
+        self._seed_backup(
+            vault.BACKUP_DIR,
+            "daily/immigration-2026-03-14.md.age",
+            b"encrypted-imm",
+            "state/immigration.md.age",
+            "state_encrypted",
+        )
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"):
+            vault.do_restore(date_str="2026-03-14")
+
+        restored = mock_vault_env / "state" / "immigration.md.age"
+        assert restored.exists()
+        assert restored.read_bytes() == b"encrypted-imm"
+
+    def test_restore_state_plain_decrypts_file(self, mock_vault_env):
+        self._seed_backup(
+            vault.BACKUP_DIR,
+            "daily/goals-2026-03-14.md.age",
+            b"encrypted-goals",
+            "state/goals.md",
+            "state_plain",
+        )
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("---\n# Goals\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_restore(date_str="2026-03-14")
+
+        restored = mock_vault_env / "state" / "goals.md"
+        assert restored.exists()
+        assert restored.read_text() == "---\n# Goals\n"
+
+    def test_restore_config_decrypts_to_config_dir(self, mock_vault_env):
+        slug = "cfg__config__user_profile_yaml"
+        self._seed_backup(
+            vault.BACKUP_DIR,
+            f"daily/{slug}-2026-03-14.cfg.age",
+            b"encrypted-config",
+            "config/user_profile.yaml",
+            "config",
+        )
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("age_recipient: age1xxx\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_restore(date_str="2026-03-14")
+
+        restored = mock_vault_env / "config" / "user_profile.yaml"
+        assert restored.exists()
+        assert "age1xxx" in restored.read_text()
+
+    def test_restore_fails_on_checksum_mismatch(self, mock_vault_env, capsys):
+        key = "daily/immigration-2026-03-14.md.age"
+        dest = vault.BACKUP_DIR / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"tampered")
+        m = vault._load_manifest()
+        m["files"][key] = {
+            "sha256":       "000000000000000000000000000000000000000000000000000000000000ffff",
+            "size":         7,
+            "domain":       "immigration",
+            "tier":         "daily",
+            "date":         "2026-03-14",
+            "created":      "2026-03-14T00:00:00+00:00",
+            "source_type":  "state_encrypted",
+            "restore_path": "state/immigration.md.age",
+        }
+        vault._save_manifest(m)
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             pytest.raises(SystemExit):
+            vault.do_restore(date_str="2026-03-14")
+
+        out = capsys.readouterr().out
+        assert "CHECKSUM" in out
+
+    def test_restore_missing_backup_file_reports_error(self, mock_vault_env, capsys):
+        m = vault._load_manifest()
+        m["files"]["daily/ghost-2026-03-14.md.age"] = {
+            "sha256":       "a" * 64,
+            "size":         100,
+            "domain":       "ghost",
+            "tier":         "daily",
+            "date":         "2026-03-14",
+            "created":      "2026-03-14T00:00:00+00:00",
+            "source_type":  "state_encrypted",
+            "restore_path": "state/ghost.md.age",
+        }
+        vault._save_manifest(m)
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             pytest.raises(SystemExit):
+            vault.do_restore(date_str="2026-03-14")
+
+        out = capsys.readouterr().out
+        assert "MISSING" in out
+
+    def test_restore_no_backups_exits_gracefully(self, mock_vault_env, capsys):
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"):
+            vault.do_restore(date_str="2026-03-14")
+
+        out = capsys.readouterr().out
+        assert "No backups" in out
+
