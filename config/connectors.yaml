@@ -48,7 +48,7 @@ connectors:
   outlook_email:
     type: email
     provider: microsoft
-    enabled: true
+    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
     description: "Outlook / Microsoft 365 email"
     auth:
       method: oauth2
@@ -77,7 +77,7 @@ connectors:
   icloud_email:
     type: email
     provider: imap
-    enabled: true
+    enabled: false   # Enable after: python scripts/setup_icloud_auth.py
     description: "iCloud / Apple Mail (IMAP)"
     auth:
       method: app_password
@@ -132,7 +132,7 @@ connectors:
   outlook_calendar:
     type: calendar
     provider: microsoft
-    enabled: true
+    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
     description: "Outlook Calendar / Microsoft 365"
     auth:
       method: oauth2
@@ -155,7 +155,7 @@ connectors:
   icloud_calendar:
     type: calendar
     provider: caldav
-    enabled: true
+    enabled: false   # Enable after: python scripts/setup_icloud_auth.py
     description: "iCloud Calendar (CalDAV)"
     auth:
       method: app_password
@@ -179,7 +179,7 @@ connectors:
   canvas_lms:
     type: lms
     provider: canvas
-    enabled: true
+    enabled: false   # Enable if your child's school uses Canvas LMS
     description: "Canvas LMS — school assignments and grades"
     auth:
       method: api_key
@@ -201,7 +201,7 @@ connectors:
   onenote:
     type: notes
     provider: onenote
-    enabled: true
+    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
     description: "Microsoft OneNote — work notes and notebooks"
     auth:
       method: oauth2
