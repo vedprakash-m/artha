@@ -132,6 +132,18 @@ domains:
     enabled: false
     employer: ""
     workiq_enabled: false              # WorkIQ corporate calendar (Windows only)
+  decisions:
+    enabled: false                     # Active decision log and scenario analysis
+  pets:
+    enabled: false                     # Pet health, vaccinations, vet appointments
+  caregiving:
+    enabled: false                     # Elder care coordination and communications
+  business:
+    enabled: false                     # Side project or small business tracking
+  wellness:
+    enabled: false                     # Fitness, nutrition, and wellness goals
+  community:
+    enabled: false                     # Volunteering, donations, community orgs
 
 # ─── System ───────────────────────────────────────────────────────────────────
 system:

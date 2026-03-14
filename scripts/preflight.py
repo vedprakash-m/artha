@@ -359,8 +359,9 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     templates_dir = os.path.join(STATE_DIR, "templates")
     if not os.path.isdir(templates_dir):
         return CheckResult(
-            "state templates", "P1", True,
-            "No templates directory — skipping state population",
+            "state templates", "P1", False,
+            "state/templates/ not found — state files cannot be auto-populated",
+            fix_hint="Run: python scripts/preflight.py --fix  (or use /bootstrap in your AI CLI)",
         )
     templates = [f for f in os.listdir(templates_dir) if f.endswith(".md") and f != "README.md"]
     missing = []
