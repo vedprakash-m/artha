@@ -311,6 +311,42 @@ def do_release_lock(force: bool = True) -> None:
     sys.exit(0)
 
 
+def _restore_bak(plain_file: Path, domain: str, reason: str) -> bool:
+    """Restore .bak to plain_file if valid.  Returns True if restore succeeded.
+
+    Guards against restoring a corrupt or partial backup by checking:
+      - the .bak file exists
+      - the .bak is non-empty
+      - the .bak begins with YAML frontmatter ('---')
+    If any check fails the failure is audit-logged and the function returns False
+    so the caller can still count the error correctly.
+    """
+    bak = Path(str(plain_file) + ".bak")
+    if not bak.exists():
+        log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: no_backup")
+        print(f"  WARNING: No backup available for {domain}.md — original .age file is intact",
+              file=sys.stderr)
+        return False
+    if bak.stat().st_size == 0:
+        log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: backup_empty")
+        print(f"  WARNING: Backup for {domain}.md is empty — skipping restore", file=sys.stderr)
+        return False
+    try:
+        with open(bak, encoding="utf-8", errors="replace") as f:
+            first_line = f.readline()
+        if not first_line.startswith("---"):
+            log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: backup_invalid_yaml")
+            print(f"  WARNING: Backup for {domain}.md has invalid YAML — skipping restore", file=sys.stderr)
+            return False
+    except OSError as exc:
+        log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: unreadable ({exc})")
+        print(f"  WARNING: Cannot read backup for {domain}.md: {exc}", file=sys.stderr)
+        return False
+    shutil.move(str(bak), str(plain_file))
+    log(f"INTEGRITY_RESTORE | file: {domain}.md | reason: {reason} | layer: 1")
+    return True
+
+
 def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
     """
     Net-Negative Write Guard (TS §8.5.1):
@@ -359,9 +395,12 @@ def do_decrypt() -> None:
         plain_file = STATE_DIR / f"{domain}.md"
 
         if age_file.exists():
-            # Layer 1: Pre-decrypt backup
+            # Layer 1: Pre-decrypt backup (atomic: copy to .bak.tmp then rename)
             if plain_file.exists():
-                shutil.copy2(str(plain_file), str(plain_file) + ".bak")
+                bak_tmp = Path(str(plain_file) + ".bak.tmp")
+                bak = Path(str(plain_file) + ".bak")
+                shutil.copy2(str(plain_file), str(bak_tmp))
+                os.replace(str(bak_tmp), str(bak))
                 log(f"INTEGRITY_BACKUP | file: {domain}.md | layer: 1_pre_decrypt")
 
             print(f"  Decrypting {domain}.md.age ...")
@@ -372,10 +411,7 @@ def do_decrypt() -> None:
                 if not tmp_plain.exists() or tmp_plain.stat().st_size == 0:
                     print(f"  ERROR: Decrypted {domain}.md is empty — restoring backup", file=sys.stderr)
                     tmp_plain.unlink(missing_ok=True)
-                    bak = Path(str(plain_file) + ".bak")
-                    if bak.exists():
-                        shutil.move(str(bak), str(plain_file))
-                        log(f"INTEGRITY_RESTORE | file: {domain}.md | reason: empty_decrypt | layer: 1")
+                    _restore_bak(plain_file, domain, "empty_decrypt")
                     errors += 1
                     continue
 
@@ -386,10 +422,7 @@ def do_decrypt() -> None:
                     print(f"  ERROR: Decrypted {domain}.md missing YAML frontmatter — restoring backup",
                           file=sys.stderr)
                     tmp_plain.unlink(missing_ok=True)
-                    bak = Path(str(plain_file) + ".bak")
-                    if bak.exists():
-                        shutil.move(str(bak), str(plain_file))
-                        log(f"INTEGRITY_RESTORE | file: {domain}.md | reason: invalid_yaml | layer: 1")
+                    _restore_bak(plain_file, domain, "invalid_yaml")
                     errors += 1
                     continue
 
@@ -405,10 +438,7 @@ def do_decrypt() -> None:
             else:
                 tmp_plain.unlink(missing_ok=True)
                 print(f"  ERROR: Failed to decrypt {domain}.md.age", file=sys.stderr)
-                bak = Path(str(plain_file) + ".bak")
-                if bak.exists():
-                    shutil.move(str(bak), str(plain_file))
-                    log(f"INTEGRITY_RESTORE | file: {domain}.md | reason: decrypt_failed | layer: 1")
+                _restore_bak(plain_file, domain, "decrypt_failed")
                 errors += 1
         elif plain_file.exists():
             print(f"  {domain}.md already exists as plaintext (no .age file). Leaving as-is.")
