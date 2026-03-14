@@ -112,18 +112,20 @@ This assembles `config/Artha.md` from your personal identity + the core system l
 age-keygen -o ~/age-key.txt
 # Output shows: Public key: age1xxxxxxxxxxxxxxxxxxxxxxx
 
-# Store the PRIVATE key in your OS keychain
-python3 -c "
-import os, keyring
-key_path = os.path.expanduser('~/age-key.txt')
-keyring.set_password('age-key', 'artha', open(key_path).read().strip())
-print('Key stored in keychain successfully.')
-"
+# Store the PRIVATE key in your OS credential store (one command)
+python scripts/vault.py store-key ~/age-key.txt
+
+# Alternatively, store it manually:
+#   python3 -c "import os, keyring; keyring.set_password('age-key', 'artha', open(os.path.expanduser('~/age-key.txt')).read().strip()); print('Done.')"
+
+# Linux note: if keyring raises "No recommended backend was available", install
+# one of: python3-secretstorage (GNOME/KDE) or python3-keyrings.alt (plaintext fallback)
+#   pip install secretstorage   # or: pip install keyrings.alt
 
 # Copy the PUBLIC key (printed by age-keygen above) into your profile:
 #   encryption.age_recipient in config/user_profile.yaml
 
-# Then delete the key file — the private key is safely in your keychain
+# Then delete the key file — the private key is safely in your credential store
 rm ~/age-key.txt
 ```
 
@@ -153,6 +155,11 @@ python scripts/preflight.py --fix
 ```
 
 This verifies all connections, creates missing state files from templates, and reports any issues.
+
+> **Fresh install — expected failures:** On a first run, preflight will show `NO-GO` because
+> the Google OAuth tokens don't exist yet (Step 5) and the vault key isn't loaded (Step 4).
+> Complete Steps 4 and 5 first, then re-run. The only check that must pass before any
+> catch-up is `vault.py health` — connector errors are warnings until you've authenticated.
 
 ### Step 7 — Run Your First Catch-Up
 

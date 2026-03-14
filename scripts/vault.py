@@ -192,6 +192,38 @@ def do_release_lock(force: bool = True) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Store private key in OS credential store
+# ---------------------------------------------------------------------------
+
+def do_store_key(keyfile: str) -> None:
+    """Read an age private key from a file and store it in the OS credential store.
+
+    Simplifies Step 4 of the quickstart:
+      python scripts/vault.py store-key ~/age-key.txt
+    """
+    path = Path(os.path.expanduser(keyfile))
+    if not path.exists():
+        print(f"Error: key file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        key = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        print(f"Error reading key file: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if not key:
+        print("Error: key file is empty.", file=sys.stderr)
+        sys.exit(1)
+    try:
+        keyring.set_password(KC_SERVICE, KC_ACCOUNT, key)
+    except Exception as exc:
+        print(f"Error storing key in credential store: {exc}", file=sys.stderr)
+        sys.exit(1)
+    log(f"STORE_KEY | keyfile: {path.name}")
+    print(f"Key stored in credential store ({KC_SERVICE}/{KC_ACCOUNT}) ✓")
+    print("You may now delete the key file:  rm " + str(path))
+
+
+# ---------------------------------------------------------------------------
 # Session-level backup helper — restore from GFS when live .age is corrupt
 # ---------------------------------------------------------------------------
 
@@ -608,13 +640,14 @@ def do_health() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock|auto-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|store-key|release-lock|auto-lock}")
         print("       backup commands → python scripts/backup.py {snapshot|status|validate|restore|install|…}")
         print()
         print("  decrypt      — unlock sensitive state files for a catch-up session")
         print("  encrypt      — lock sensitive state files after catch-up + GFS backup")
         print("  status       — show current encryption state (read-only)")
         print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
+        print("  store-key    — store age private key from a file into the OS credential store")
         print("  release-lock — force-clear a stale session lock (manual recovery)")
         print("  auto-lock    — encrypt if lock TTL exceeded (called by watchdog/cron)")
         sys.exit(1)
@@ -628,6 +661,11 @@ def main() -> None:
         do_status()
     elif cmd == "health":
         do_health()
+    elif cmd in ("store-key", "store_key"):
+        if len(sys.argv) < 3:
+            print("Usage: vault.py store-key <keyfile>", file=sys.stderr)
+            sys.exit(1)
+        do_store_key(sys.argv[2])
     elif cmd in ("backup-status", "backup_status"):
         from scripts.backup import do_backup_status as _bkp_status
         _bkp_status()

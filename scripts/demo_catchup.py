@@ -154,14 +154,14 @@ def _check_no_real_pii(emails: list[dict]) -> None:
     import re
 
     real_pii_patterns = [
-        r"Mishra",
-        r"vedprakash",
-        r"vemishra",
-        r"Issaquah",
-        r"Sammamish",
-        r"Redmond",
-        r"47\.6162",
-        r"\-122\.0355",
+        r"Patel",
+        r"rajpatel",
+        r"rpatel",
+        r"Springfield",
+        r"Shelbyville",
+        r"Anytown",
+        r"40\.7128",
+        r"\-74\.0060",
         r"family\d{10,}@group\.calendar",
     ]
     issues = []
