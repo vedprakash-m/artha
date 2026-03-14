@@ -451,7 +451,7 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 | Source | Access Method | Credentials | Stack | Purpose |
 |---|---|---|---|---|
 | USCIS Status | Public Lookup | None | `requests` | Zero-latency immigration updates (Phase 1) |
-| King County Tax | Public Lookup | None | `requests` | Property tax deadlines (Phase 1) |
+| County Tax | Public Lookup | None | `requests` | Property tax deadlines (Phase 1) |
 | Canvas LMS | REST API | Developer Token | `requests` | School grades/assignments (Phase 2 Blocked) |
 | OFX / FDX | Banking API | FI Credentials | `ofxtools` | Direct bank balance pull (Phase 2) |
 | Microsoft Graph | REST API | OAuth2 | `msal` | Outlook Email + MS To Do sync |
@@ -625,7 +625,7 @@ Replaces vague "Claude web fetch" entries in data sources with explicit Gemini C
 | USCIS Visa Bulletin | "Claude web fetch" | `gemini "USCIS Visa Bulletin EB-2 India current month"` | Monthly |
 | Zillow/Redfin home value | "Claude web search" | `gemini "Zillow estimate for [address] [city] WA"` | Quarterly |
 | NHTSA recall check | "Claude web fetch" | `gemini "NHTSA recall lookup VIN [last5]"` | Monthly per VIN |
-| King County Assessor | "Claude web fetch" | `gemini "King County property tax assessment [parcel]"` | Annually |
+| County Tax Assessor | "Claude web fetch" | `gemini "county property tax assessment [parcel]"` | Annually |
 | Price comparisons | N/A (not supported) | `gemini "Compare prices for [item] across major retailers"` | On-demand |
 | News/regulatory changes | N/A (not supported) | `gemini "Latest H-1B/EB-2 immigration policy changes 2026"` | Monthly |
 
@@ -1085,7 +1085,7 @@ Metadata-only — no meeting titles, attendees, or bodies. Sections: Last Fetch 
 - Wells Fargo: Mortgage payment processed
 
 ### Home
-- Republic Services: Schedule change for next week (holiday)
+- City Waste Services: Schedule change for next week (holiday)
 
 ## 🤝 Relationship Pulse *(v1.9)*
 - Reconnect needed: Suresh Uncle (45 days, threshold 30)
@@ -3153,6 +3153,15 @@ The PII Guard test suite includes:
 
 ---
 
-*Artha Tech Spec v2.1 — End of Document*
+*Artha Tech Spec v2.9 — End of Document*
+
+---
+
+## 18. Revision History
+
+| Version | Changes |
+|---------|---------|
+| v2.9 | Clone-audit hardening (#1–#30): PII scrub in all spec/doc files; vault store-key command; state/templates/ directory with 18 starter files; user_profile.example.yaml extended to 24 domains; preflight P1 enforcement; plist placeholder; PII guard; requirements.txt reorganised; CHANGELOG.md; 429-test suite with xfail markers |
+| v2.1 | Initial public release — `/diff`, Weekend Planner, Canvas LMS API Fetch, Apple Health XML Import |
 
 *"The entire application is a well-written instruction file. The data layer lives where the user lives — always fresh, always accessible, always encrypted where it matters. Nothing sensitive leaves the device. Three LLMs work together — the right model for the right task at the right cost. Now it learns your patterns, guards your data, and shows you what matters before you ask."*
