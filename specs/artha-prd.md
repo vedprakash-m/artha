@@ -83,13 +83,13 @@ Your personal life is fragmented across more than 15 services, 2 email accounts,
 **The three dominant pain patterns, discovered from data:**
 
 ### Pattern 1 — High-Volume Noise
-ParentSquare generates 90–100 emails per month across three simultaneous streams: Lincoln High School (Arjun), Jefferson Middle School (Ananya), and Lake Washington School District. Mixed in are teacher emails, attendance alerts, missing assignment notices, and grade reports. There is no consolidation, no triage, no filter between "Arjun was marked absent" (urgent) and "Spirit Week reminder" (not urgent).
+ParentSquare generates 90–100 emails per month across three simultaneous streams: Springfield Central High School (Arjun), Lincoln Middle School (Ananya), and Springfield School District. Mixed in are teacher emails, attendance alerts, missing assignment notices, and grade reports. There is no consolidation, no triage, no filter between "Arjun was marked absent" (urgent) and "Spirit Week reminder" (not urgent).
 
 ### Pattern 2 — High-Stakes Silence
 Life-critical deadlines — document expiry windows, legal filing timelines, insurance renewal dates, and case milestone dates — are tracked nowhere. They live in email threads, PDFs, and attorney correspondence — none of which proactively alerts you when a 90-day action window opens. The cost of missing one of these is measured in months or years.
 
 ### Pattern 3 — Fragmented Finance
-Bills, subscriptions, investments, loans, and credit monitoring are spread across 8+ institutions: Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, and HDFC NRI. Assembling a complete financial picture requires logging into all of them. No single signal tells you whether you are on track toward your goals.
+Bills, subscriptions, investments, loans, and credit monitoring are spread across 8+ institutions: Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, and International Bank (NRI). Assembling a complete financial picture requires logging into all of them. No single signal tells you whether you are on track toward your goals.
 
 **What this costs today:**
 - Time spent triaging 112+ unread emails that span urgent and trivial in the same inbox
@@ -130,11 +130,11 @@ Bills, subscriptions, investments, loans, and credit monitoring are spread acros
 |---|---|---|---|
 | Communications | All family | Gmail, Outlook, ParentSquare | 🔴 High |
 | Immigration | Raj, Priya, Arjun, Ananya | [immigration attorney], USCIS, Employer Immigration team | 🔴 High |
-| Finance | Raj, Priya | Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, HDFC NRI | 🔴 High |
-| Kids & School | Arjun (11th, Lincoln High), Ananya (7th, Jefferson MS) | PPS, ParentSquare, Canvas | 🔴 High |
+| Finance | Raj, Priya | Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, International Bank (NRI) | 🔴 High |
+| Kids & School | Arjun (11th, Springfield Central High), Ananya (7th, Lincoln Middle) | PPS, ParentSquare, Canvas | 🔴 High |
 | Travel | All family | Alaska Airlines, Marriott Bonvoy, Avis, Expedia | 🟡 Medium |
 | Health | All family | Regence/BCBS, HSA, Providence | 🟡 Medium |
-| Home | Raj, Priya | Wells Fargo (mortgage), PSE Energy, Redmond Plateau Water, King County, Home Assistant, ISP, Republic Services | 🟡 Medium |
+| Home | Raj, Priya | Wells Fargo (mortgage), Metro Electric, City Water Utility, Sangamon County, Home Assistant, ISP, City Waste Services | 🟡 Medium |
 | Calendar | All family | Google Calendar, Outlook Calendar | 🟡 Medium |
 | Shopping | All family | Amazon, Costco, local | 🟢 Low |
 | Learning | Raj | ByteByteGo, Kaggle, Obsidian, UW (alumni) | 🟡 Medium |
@@ -143,7 +143,7 @@ Bills, subscriptions, investments, loans, and credit monitoring are spread acros
 | Insurance | Raj, Priya | Auto insurer, homeowners insurer, umbrella, Work benefits (life/disability) | 🟡 Medium |
 | Vehicles | Raj, Priya | WA DOL, service providers, NHTSA recalls | 🟡 Medium |
 | Estate Planning | Raj, Priya | Estate attorney, financial account beneficiaries, guardianship docs | 🔴 High |
-| Emergency Prep | All family | FEMA, King County Emergency Management, Cascadia Subduction Zone readiness | 🟡 Medium |
+| Emergency Prep | All family | FEMA, County Emergency Management, New Madrid Seismic Zone readiness | 🟡 Medium |
 | Goals | All family | (Artha-native — no existing tool) | 🔴 High |
 
 ---
@@ -380,21 +380,21 @@ Hey — quick check-in on your week:
 | E*Trade | Brokerage | ETrade alerts |
 | Wells Fargo | Mortgage + FICO monitoring | alerts@wellsfargo.com |
 | Discover | Credit card | Discover alerts |
-| HDFC NRI | NRI banking (India) | HDFC alerts |
+| International Bank (NRI) | NRI banking (India) | HDFC alerts |
 | HSA | Health Savings Account | HSA provider alerts |
 
 **Core features:**
 
 | Feature ID | Feature | Priority |
 |---|---|---|
-| F3.1 | **Bill Calendar** — Parse all bill notification emails (PSE Energy, Redmond Water, King County, all credit cards, mortgage) into a unified bill calendar. Alert 5 days before due date. Current: PSE $300.63 due 3/26. | P0 |
+| F3.1 | **Bill Calendar** — Parse all bill notification emails (Metro Electric, City Water, Sangamon County, all credit cards, mortgage) into a unified bill calendar. Alert 5 days before due date. Current: Metro Electric $300.63 due 3/26. | P0 |
 | F3.2 | **Net Worth Snapshot** — Aggregate estimated net worth across all accounts on demand and in weekly summary. Manual update with auto-prompt from account statements. | P0 |
 | F3.3 | **Unusual Spend Alert** — Flag transactions that deviate significantly from category baselines (e.g., Amazon spend 2x monthly average). | P0 |
 | F3.4 | **Subscription Ledger** — Maintain a living list of all active subscriptions with amount, renewal date, and category. Detect new subscriptions from email. | P1 |
 | F3.5 | **Credit Health Monitor** — Parse Wells Fargo FICO alerts (monthly). Track score trend. Alert on significant drops. | P1 |
 | F3.6 | **Tax Document Tracker** — During Jan–April, track which tax documents have arrived per institution (1099, W-2, mortgage interest, etc.). Alert when all expected docs are received. | P1 |
-| F3.7 | **Mortgage Tracker** — Track Wells Fargo mortgage balance, monthly payment, and payoff timeline. Annual check-in with banker (BRAND, DEANNA) trigger. | P1 |
-| F3.8 | **HDFC NRI Monitor** — Track HDFC NRI account for balance alerts and transaction notifications. Currency conversion aware (USD/INR). | P2 |
+| F3.7 | **Mortgage Tracker** — Track Wells Fargo mortgage balance, monthly payment, and payoff timeline. Annual check-in with banker ([your banker name]) trigger. | P1 |
+| F3.8 | **International Bank (NRI) Monitor** — Track International Bank (NRI) account for balance alerts and transaction notifications. Currency conversion aware (USD/INR). | P2 |
 | F3.9 | **Predictive Spend Forecasting** — Project monthly and annual spending by category based on historical patterns. Alert when current trajectory will exceed budget. Account for seasonal spikes (holiday spending, back-to-school, tax season). Example: “Amazon spend is 40% above YoY average through February. At this rate, annual discretionary budget will be exceeded by August.” | P1 |
 | F3.10 | **Tax Preparation Manager** — Beyond document tracking (F3.6): maintain CPA/tax preparer contact and engagement schedule, track estimated quarterly tax payments (federal + WA has no state income tax — but track if applicable for other states), surface tax optimization prompts (“Max out 401k by year-end: $X remaining of $23,500 limit”, “HSA contribution gap: $Y remaining”, “529 contribution for WA state benefit”), and track filing status and refund/payment outcome. | P1 |
 | F3.11 | **Insurance Premium Aggregator** — Pull total annual insurance cost from FR-16 into the financial picture. Surface in net worth and monthly expense views. “Total annual insurance spend: $X (auto: $A, home: $B, umbrella: $C). Up 8% from last year.” | P1 |
@@ -408,20 +408,20 @@ Hey — quick check-in on your week:
 **Priority:** P0
 **Summary:** Real-time awareness of both children's academic standing, attendance, upcoming tests and deadlines, and extracurricular activities — consolidated and actionable.
 
-**The problem:** Arjun (11th grade, Lincoln High) and Ananya (7th grade, Jefferson MS) generate a high volume of school communications with no triage. Missing assignments, attendance issues, and test registrations (SAT) get buried in the same stream as routine newsletters.
+**The problem:** Arjun (11th grade, Springfield Central High) and Ananya (7th grade, Lincoln Middle) generate a high volume of school communications with no triage. Missing assignments, attendance issues, and test registrations (SAT) get buried in the same stream as routine newsletters.
 
 **Data sources:**
 - Outlook.com (ParentSquare emails — all three streams)
 - Gmail (Canvas, PPS, teacher emails)
 - Manual input (extracurricular schedules)
 
-**Arjun profile (Lincoln High, 11th grade):**
+**Arjun profile (Springfield Central High, 11th grade):**
 - SAT scheduled: March 13, 2026
 - Extracurriculars: Tesla Economics Club (National Personal Finance Challenge)
 - Courses: AP-level curriculum, Economics (teacher: Zebrack-Smith among others)
 - Known alerts received: Low assignment score, missing assignment
 
-**Ananya profile (Jefferson MS, 7th grade):**
+**Ananya profile (Lincoln Middle, 7th grade):**
 - Courses: Science (teacher: Niles), AP Language & Composition (advanced)
 - Currently reading: *Just Mercy* (AP Language seminar, chapters 4–9)
 
@@ -506,35 +506,35 @@ Hey — quick check-in on your week:
 **Priority:** P1
 **Summary:** Track utilities, mortgage, maintenance schedules, home value signals, and smart home integration.
 
-**The problem:** The Redmond home generates bills across multiple utilities with no consolidated view. Maintenance tasks are tracked nowhere. The mortgage balance is unknown without logging into Wells Fargo.
+**The problem:** The Springfield home generates bills across multiple utilities with no consolidated view. Maintenance tasks are tracked nowhere. The mortgage balance is unknown without logging into Wells Fargo.
 
 **Property profile:**
-- Address: Redmond, WA 98074
-- Mortgage: Wells Fargo (banker: DEANNA — annual check-in)
-- Utilities: PSE Energy (Account: XXXX-EXAMPLE), Redmond Plateau Water, King County
+- Address: Springfield, IL 62704
+- Mortgage: Wells Fargo (banker: [your banker name] — annual check-in)
+- Utilities: Metro Electric (Account: XXXX-EXAMPLE), City Water Utility, Sangamon County
 - Smart home: Home Assistant (local API)
 - Internet: TBD (Comcast/Xfinity, Ziply Fiber, or other)
 - Mobile: TBD (carrier, family plan)
-- Waste: TBD (Republic Services or Redmond contracted provider)
-- Property tax: King County (semi-annual: April 30, October 31)
+- Waste: TBD (City Waste Services or Springfield contracted provider)
+- Property tax: Sangamon County (semi-annual: April 30, October 31)
 
 **Core features:**
 
 | Feature ID | Feature | Priority |
 |---|---|---|
-| F7.1 | **Utility Bill Calendar** — All utility bills (PSE, Water, King County) parsed from email. Consolidated view, 5-day due date alerts. PSE enrolled in autopay — confirm each month. | P0 |
+| F7.1 | **Utility Bill Calendar** — All utility bills (Metro Electric, Water, Sangamon County) parsed from email. Consolidated view, 5-day due date alerts. Metro Electric enrolled in autopay — confirm each month. | P0 |
 | F7.2 | **Mortgage Tracker** — Outstanding balance, monthly payment, interest rate, payoff date. Annual refinance check trigger. FICO trend connected. | P1 |
 | F7.3 | **Home Maintenance Scheduler** — Annual and seasonal maintenance calendar: HVAC filter (quarterly), gutter cleaning (fall), furnace service (fall), exterior painting (estimate cycle), smoke detectors (annual test). | P1 |
 | F7.4 | **Home Assistant Integration** — Read device status, energy usage, and automation logs from Home Assistant local API. Surface anomalies (device offline, unusual energy consumption) in daily briefing. | P1 |
-| F7.5 | **Energy Usage Tracker** — Track PSE bills month-over-month. Alert on unusual spikes. Compare against Redmond seasonal averages. | P2 |
-| F7.6 | **Home Value Signal** — Periodic Zillow/Redfin estimate for 98074 comparable sales. Not investment advice — context for net worth calculation in FR-3. | P2 |
+| F7.5 | **Energy Usage Tracker** — Track Metro Electric bills month-over-month. Alert on unusual spikes. Compare against local seasonal averages. | P2 |
+| F7.6 | **Home Value Signal** — Periodic Zillow/Redfin estimate for 62704 comparable sales. Not investment advice — context for net worth calculation in FR-3. | P2 |
 | F7.7 | **Service Provider Rolodex** — Maintain a curated list of trusted service providers (plumber, electrician, HVAC, landscaper) with last-used dates and notes. | P2 |
 | F7.8 | **Telecom & Internet Tracker** — Track ISP (Comcast/Xfinity, Ziply Fiber, or other), mobile phone plan (carrier, plan, monthly cost for family), and home phone/VoIP if applicable. Parse bill emails for monthly cost. Alert on price increases or contract renewal dates. Surface in subscription ledger (FR-3 F3.4). | P1 |
-| F7.9 | **Waste & Recycling Services** — Track trash, recycling, and yard waste service (Republic Services or Redmond's contracted provider). Payment schedule, pickup schedule, and any service changes. Holiday schedule adjustments (pickup delayed by 1 day). | P2 |
-| F7.10 | **HOA / Community Dues** — If applicable to 98074 property: track HOA dues, payment schedule, assessment notices, and community meeting dates. Parse HOA correspondence from email. | P2 |
+| F7.9 | **Waste & Recycling Services** — Track trash, recycling, and yard waste service (City Waste Services or the city's contracted provider). Payment schedule, pickup schedule, and any service changes. Holiday schedule adjustments (pickup delayed by 1 day). | P2 |
+| F7.10 | **HOA / Community Dues** — If applicable to 62704 property: track HOA dues, payment schedule, assessment notices, and community meeting dates. Parse HOA correspondence from email. | P2 |
 | F7.11 | **Lawn & Landscaping Schedule** — Seasonal yard maintenance calendar specific to Pacific Northwest: spring fertilization, summer watering schedule, fall leaf cleanup and aeration, winter moss treatment. Track landscaping service visits and costs if using a service. | P2 |
-| F7.12 | **Property Tax Tracker** — King County property tax is paid semi-annually (April 30 and October 31). Track assessed value, tax amount, payment due dates, and payment confirmation. Alert 30 days before due date. Compare assessed value to market estimate (FR-7 F7.6). "King County property tax: $X due April 30. Assessed value: $Y vs. Zillow estimate: $Z." | P1 |
-| F7.13 | **Emergency Preparedness** — Redmond is in a seismic zone (Cascadia Subduction Zone). Track: earthquake emergency kit contents and expiry dates (water, food, batteries, medications), family emergency plan (meeting point, out-of-area contact), FEMA/King County emergency alerts integration, annual family emergency drill reminder. Checklist with annual review prompt. | P1 |
+| F7.12 | **Property Tax Tracker** — Sangamon County property tax is paid semi-annually (April 30 and October 31). Track assessed value, tax amount, payment due dates, and payment confirmation. Alert 30 days before due date. Compare assessed value to market estimate (FR-7 F7.6). "Sangamon County property tax: $X due April 30. Assessed value: $Y vs. Zillow estimate: $Z." | P1 |
+| F7.13 | **Emergency Preparedness** — Springfield is in a seismic zone (New Madrid Seismic Zone). Track: earthquake emergency kit contents and expiry dates (water, food, batteries, medications), family emergency plan (meeting point, out-of-area contact), FEMA/County emergency alerts integration, annual family emergency drill reminder. Checklist with annual review prompt. | P1 |
 
 ---
 
@@ -644,7 +644,7 @@ Hey — quick check-in on your week:
 | F11.7 | **Reciprocity Ledger** — Track directional communication and gesture balance per relationship. "You've sent 5 messages to Rahul since his last reply" is a signal. "Meera has invited your family to 3 events; you've reciprocated once" is actionable. Not a score — a gentle awareness surface. | P2 |
 | F11.8 | **Cultural Protocol Intelligence** — For relationships with cultural context (Indian family, temple community), track protocol obligations: Rakhi (sister → brother), Diwali greetings order (elders first), festival-specific gift norms, bereavement protocols (13-day period awareness). Sourced from `contacts.md` cultural metadata. | P1 |
 | F11.9 | **Life Event Awareness** — When Artha detects a life event in a contact's sphere (graduation, new job, bereavement, birth, wedding — via email parsing or manual input), surface a prompt: "Priya had a baby last week (detected from email). Send congratulations?" Track acknowledged events to prevent re-prompting. | P1 |
-| F11.10 | **Group Dynamics Tracking** — Track relationship groups (Work colleagues, Neighborhood community, Arjun's friends' parents, Redmond neighbors) with group-level health metrics: last group interaction, upcoming group occasions, group communication balance. Enables: "You haven't attended a neighborhood community event in 3 months." | P2 |
+| F11.10 | **Group Dynamics Tracking** — Track relationship groups (Work colleagues, Neighborhood community, Arjun's friends' parents, local neighbors) with group-level health metrics: last group interaction, upcoming group occasions, group communication balance. Enables: "You haven't attended a neighborhood community event in 3 months." | P2 |
 | F11.11 | **Time Zone Scheduling** *(v4.0)* — Timezone-aware scheduling intelligence for family communications. Automatically calculates optimal call windows considering Pacific Time ↔ IST conversion (IST = PT + 13.5 hours), Indian family members' typical availability (morning 8–10 AM IST → 6:30–8:30 PM PT previous day), Public holidays and festival dates, and the user's own calendar availability. Surfaces in briefing when a reconnect is overdue: "Mom hasn't been called in 18 days. Best window: tonight 7:30 PM PT (tomorrow 9 AM IST, no Indian holidays)." Also flags when Indian festivals approach: "Holi is in 5 days — schedule family video call? Best window: Saturday 8 PM PT (Sunday 9:30 AM IST)." | P1 |
 
 ---
@@ -742,7 +742,7 @@ Hey — quick check-in on your week:
 | F15.6 | **Human Gate Layer** — All write operations (sending an email, paying a bill, adding a calendar event) require explicit user approval within the Claude Code conversation. Claude proposes the action with full details; user confirms or modifies before execution. Approval history is logged in `~/OneDrive/Artha/state/audit.md`. At Trust Level 2, pre-approved action categories can execute with post-hoc notification. | P0 |
 | F15.7 | **Audit Log** — Every action Artha takes or recommends is logged with timestamp, data source, and outcome. Artha's track record is the basis for autonomy elevation. | P1 |
 | F15.8 | **Configuration Interface** — Set alert thresholds, delivery channels, work hours, goal parameters, and data source connections. | P1 |
-| F15.9 | **Semantic Reasoning Layer** — All alerts, briefings, and recommendations pass through a Claude-powered reasoning step that considers full context before surfacing. This is the difference between a notification system and an intelligence system. Instead of static severity levels, the LLM dynamically assesses priority based on cross-domain context. Example: a low assignment score is informational if the larger pattern shows stable GPA; it becomes meaningful if it follows three recent weak signals. A PSE bill alert on the day you’re flying to India with passport concerns is lower priority than on a normal Tuesday. | P0 |
+| F15.9 | **Semantic Reasoning Layer** — All alerts, briefings, and recommendations pass through a Claude-powered reasoning step that considers full context before surfacing. This is the difference between a notification system and an intelligence system. Instead of static severity levels, the LLM dynamically assesses priority based on cross-domain context. Example: a low assignment score is informational if the larger pattern shows stable GPA; it becomes meaningful if it follows three recent weak signals. A Metro Electric bill alert on the day you’re flying to India with passport concerns is lower priority than on a normal Tuesday. | P0 |
 | F15.10 | **Conversation Memory** — Artha maintains a structured memory of all interactions, preferences, corrections, and decisions. Remembers: questions asked and their resolutions, preferences expressed (“stop alerting me about Spirit Week”), decisions made and rationale (“we decided to refinance if rates drop below X%”), corrections to understanding (“Arjun’s club meeting is biweekly, not weekly”). Feeds into future briefings, alerts, and recommendations. | P1 |
 | F15.11 | **Insight Engine** — Runs weekly (or on significant data changes) using Claude’s extended thinking to reason across all domain data and surface 3–5 non-obvious observations. This powers the “ONE THING” in the morning briefing and the “Artha Observations” in the weekly summary. Examples: “Your H-4 EAD renewal is 5 months out. Based on [immigration attorney]’s average processing time from your last two renewals, initiate attorney contact within 3 weeks.” “Arjun’s grade trajectory in AP Language has declined for 3 consecutive grading periods — the seminar format may need different study strategies.” | P1 |
 | F15.12 | **Model Tiering Strategy** — Claude Code handles model selection internally. Artha.md specifies intent: use extended thinking for weekly summaries and cross-domain insight generation, standard processing for email parsing and state updates. Prompt caching (system prompts cached across the session) reduces costs. Target: <$50/month at daily catch-up cadence with ~100 emails/day across all accounts. | P1 |
@@ -767,7 +767,7 @@ Hey — quick check-in on your week:
 | F15.34 | **Pattern of Life Detection** *(v3.9)* — After 30 days of catch-up data, Artha builds behavioral baselines: (1) **Spend patterns:** Average daily/weekly/monthly by category, with day-of-week and seasonal components. Enables: "Your Amazon spending is 2.3x your 30-day average this week." (2) **Communication rhythms:** Response times, initiation patterns, contact frequency by tier. Enables: "You typically respond to [immigration attorney] emails within 2 hours — this one has been pending 3 days." (3) **Calendar density:** Normal vs. overloaded weeks, preferred meeting-free blocks. (4) **Goal behavior:** Time-of-week when goal activities typically happen. Patterns are stored in `state/memory.md` under `## Behavioral Baselines` and used by the coaching engine, compound signal detection, and briefing ONE THING selection. | P1 |
 | F15.35 | **Signal:Noise Ratio Tracking** *(v3.9)* — For every catch-up, track: emails processed, items surfaced in briefing, items acted upon by user, items dismissed. Calculate per-domain signal:noise ratio (items acted upon / items surfaced). Store in `health-check.md` under `signal_noise:`. When a domain's ratio drops below 40% over a rolling 14-day window: (1) Log the decline, (2) Suggest suppression rule adjustments, (3) Consider auto-demoting that domain's briefing contribution to summary-only. Prevents briefing fatigue where too many low-value items erode trust in high-value ones. Surfaced in `/status` output and Accuracy Pulse. | P1 |
 | F15.36 | **Stale State Detection** *(v3.9)* — Automated monitoring of state file freshness relative to expected data flow. For each domain, maintain an `expected_cadence` (e.g., immigration: monthly, finance: weekly, kids: daily during school). When a state file hasn't been updated for 2x its expected cadence and there IS email/calendar data that should have routed there, flag: "⚠️ finance.md hasn't been updated in 21 days but 8 Chase/Fidelity emails were received. Possible routing failure." Auto-heal attempt: re-process the unrouted emails through the domain prompt. Prevents silent domain death where a routing change or email filter causes a domain to stop receiving updates without anyone noticing. | P1 |
-| F15.37 | **Consequence Forecasting** *(v3.9)* — For each alert surfaced in the briefing, add a "consequence of inaction" projection at 7, 30, and 90 days. Example: "PSE bill $300.63 due in 3 days → if ignored: late fee $25 (7d), service disruption warning (30d), credit impact (90d)." "H-1B expires in 180 days → if ignored: 90-day filing window missed (90d), status lapse risk." Not every alert needs all three horizons — only critical and urgent alerts get the full projection. Consequence data sourced from domain prompt knowledge (known fee structures, regulatory timelines). Drives the ONE THING scoring: items with severe 90-day consequences score higher. | P1 |
+| F15.37 | **Consequence Forecasting** *(v3.9)* — For each alert surfaced in the briefing, add a "consequence of inaction" projection at 7, 30, and 90 days. Example: "Metro Electric bill $300.63 due in 3 days → if ignored: late fee $25 (7d), service disruption warning (30d), credit impact (90d)." "H-1B expires in 180 days → if ignored: 90-day filing window missed (90d), status lapse risk." Not every alert needs all three horizons — only critical and urgent alerts get the full projection. Consequence data sourced from domain prompt knowledge (known fee structures, regulatory timelines). Drives the ONE THING scoring: items with severe 90-day consequences score higher. | P1 |
 | F15.38 | **Pre-Decision Intelligence Packets** *(v3.9)* — When Artha detects an upcoming decision point (via email analysis, calendar events, goal milestones, or user query), auto-generate a structured research packet. Triggers: mortgage renewal approaching, insurance renewal, college application timeline, large purchase consideration, job change signals. Packet contents: (1) Current state summary from relevant state files, (2) Options with pros/cons (from Gemini web research at $0), (3) Financial impact projection, (4) Timeline and deadlines, (5) Questions to ask (doctor/lawyer/advisor). Packets saved to `summaries/decision-[topic]-[date].md` and referenced in briefings. Prevents reactive decision-making by preparing you before the deadline pressure hits. | P1 |
 | F15.39 | **Session Quick-Start** *(v3.9)* — When a new Claude Code session starts, detect the likely session type from the user's first message and optimize context loading accordingly. Three modes: (1) **Catch-up** ("catch me up", "briefing", "SITREP") — full catch-up workflow. (2) **Query** ("how much do I owe on mortgage?", "when is Arjun's SAT?") — load only the relevant domain state file + dashboard.md, skip email fetch. (3) **Action** ("send birthday wish to Rahul", "add event to calendar") — load contacts.md + occasions.md + relevant domain, skip full catch-up. Quick-start reduces time-to-first-response for non-catch-up sessions from ~60s to <10s by avoiding unnecessary context loading. Auto-detected from first message; overridable with explicit slash commands. | P1 |
 | F15.40 | **Briefing Compression Levels** *(v3.9)* — Three briefing modes beyond standard and digest: (1) **Full** — current standard briefing with all sections. Default for first catch-up of the day. (2) **Standard** — current default. (3) **Flash** — ultra-compressed 30-second briefing: only 🔴 Critical and 🟠 Urgent items + ONE THING. No domain sections. For second/third catch-ups in a day or when user says "quick update." Auto-selection: first catch-up = Full, subsequent same-day = Flash, >48hr gap = Digest. User override: "give me the full briefing" / "flash briefing" / "just the critical stuff." | P1 |
@@ -775,12 +775,12 @@ Hey — quick check-in on your week:
 | F15.42 | **OAuth Token Resilience Framework** *(v3.9)* — Proactive token health monitoring and recovery. Three capabilities: (1) **Pre-expiry refresh:** Check token expiry on every catch-up pre-flight (step 0). If any token expires within 7 days, attempt automatic refresh. Log result. (2) **Graceful degradation path:** If a token fails, the catch-up continues with available sources and clearly labels what's missing in the briefing. Never hard-fail on a single token. (3) **Guided re-auth flow:** When re-authentication is needed, provide step-by-step terminal commands with context: "Gmail token expired. Run: `python3 scripts/setup_google_oauth.py` — this will open a browser for OAuth consent. Takes ~2 minutes." Track token health history in health-check.md to detect patterns (e.g., tokens that expire every 7 days vs. 90 days). | P1 |
 | F15.43 | **Email Volume Scaling** *(v3.9)* — Progressive strategies for handling email volume increases without catch-up degradation. Tier 1 (≤100 emails): Current individual processing. Tier 2 (100–300 emails): Batch-summarize by sender domain in groups of 20, expand only flagged items. Tier 3 (300–500 emails): Pre-classify by importance (sender reputation + subject keywords), process top 30% individually, batch-summarize bottom 70%. Tier 4 (>500 emails): Digest-only mode — one paragraph per domain, no individual email processing, flag count of unprocessed. Volume tier detected automatically during email fetch (step 4). Each tier's thresholds are configurable in settings.md. Prevents catch-up failures when returning from vacation or after extended gaps. | P1 |
 | F15.44 | **Life Scorecard** *(v3.9)* — Quarterly and annual comprehensive life assessment aggregating data across all domains. Generated at end of each quarter (March, June, September, December) and annually. Sections: (1) **Goal Performance** — each active goal with trend line, (2) **Domain Health Matrix** — 18 domains rated 🟢🟡🔴 with key metric, (3) **Family Well-being** — per-member status summary, (4) **Financial Position** — net worth trajectory, savings rate, debt trajectory, (5) **Time Allocation** — where time went (work vs. family vs. personal vs. learning), (6) **Relationship Health** — contact frequency trends, reconnects overdue, (7) **Risk Dashboard** — immigration timeline, insurance adequacy, estate readiness, (8) **Year-over-Year Comparison** (annual only). Saved to `summaries/scorecard-YYYY-QN.md`. Designed as the "annual physical for your life." | P1 |
-| F15.46 | **Post-Briefing Calibration Questions** *(v4.0)* — After each briefing, Artha asks 1–2 targeted calibration questions to improve accuracy and learn preferences. Questions are specific, not generic: "I surfaced 3 ParentSquare items today. Were any of them actually useful, or should I suppress that sender?" "I rated the PSE bill as 🟠 Urgent. Was that the right severity, or is it on autopay and should be 🔵 Info?" "I didn't surface anything from your learning domain this week. Is that because nothing happened, or because I'm missing data?" Questions selected based on: domains with lowest signal:noise ratio, new senders being classified for the first time, alerts that were dismissed in prior sessions, and domains where the user has made corrections. Answers feed directly into `memory.md` corrections and routing rules. Limited to 2 questions per session to avoid fatigue. | P1 |
+| F15.46 | **Post-Briefing Calibration Questions** *(v4.0)* — After each briefing, Artha asks 1–2 targeted calibration questions to improve accuracy and learn preferences. Questions are specific, not generic: "I surfaced 3 ParentSquare items today. Were any of them actually useful, or should I suppress that sender?" "I rated the Metro Electric bill as 🟠 Urgent. Was that the right severity, or is it on autopay and should be 🔵 Info?" "I didn't surface anything from your learning domain this week. Is that because nothing happened, or because I'm missing data?" Questions selected based on: domains with lowest signal:noise ratio, new senders being classified for the first time, alerts that were dismissed in prior sessions, and domains where the user has made corrections. Answers feed directly into `memory.md` corrections and routing rules. Limited to 2 questions per session to avoid fatigue. | P1 |
 | F15.47 | **PII Detection Footer** *(v4.0)* — Every briefing includes a footer section showing PII guard statistics for the current catch-up run. Displays: total items scanned, PII patterns detected (by type: SSN, CC, account numbers, passport, etc.), items filtered, zero leaks confirmed. Provides transparency into the pre-flight PII defense layer (Layer 1). Example: "🛡️ PII Guard: 47 emails scanned · 3 detections (2 CC, 1 routing#) · 0 leaks · Layer 2 LLM redaction: clean." If any PII detection occurs, the specific state file and domain are noted (without revealing the PII itself). Builds user trust in the privacy model. | P1 |
 | F15.48 | **Effort Estimates & Power Half Hour** *(v4.0)* — Every open item in `open_items.md` gets an estimated effort level: ⚡ Quick (≤5 min), 🔨 Medium (5–30 min), 🏗️ Deep (30+ min). Effort estimated by Artha based on task type and historical completion patterns. Powers the **"Power Half Hour"** concept: when Artha detects a 30-minute calendar gap (or user asks "what can I knock out?"), it assembles a batch of ⚡ Quick items that can be completed in that window. Example: "You have 30 minutes before your 3 PM. Power Half Hour: (1) ⚡ Reply to school fundraiser email [2 min], (2) ⚡ Confirm Arjun's dentist appointment [3 min], (3) ⚡ Review Costco membership renewal notice [5 min], (4) 🔨 Update HSA contribution election [15 min]. Total: ~25 min." Effort data also feeds into calendar-aware task scheduling (F8.6). | P1 |
 | F15.49 | **Quarterly Privacy Audit Report** *(v4.0)* — Automated quarterly self-assessment of Artha's privacy posture. Report covers: (1) **Data inventory** — what state files exist, what data types they contain, encryption status, (2) **Access audit** — which OAuth tokens are active, when last refreshed, what scopes granted, (3) **PII filter effectiveness** — rolling stats from F15.47, detection accuracy, false positive rate, (4) **Data minimization check** — any state files storing more raw data than necessary? Any email bodies persisted when they should be extract-and-discard?, (5) **Encryption audit** — all high/critical state files encrypted? Keys in Keychain? No plaintext PII anywhere?, (6) **Third-party surface** — what data flows to Claude API, Gemini CLI, Copilot CLI? What mitigations are active? Saved to `summaries/privacy-audit-YYYY-QN.md`. Surfaced in quarterly life scorecard. | P1 |
 | F15.50 | **Monthly Retrospective** *(v4.0)* — Auto-generated monthly summary synthesizing what happened across all domains. Generated during the first catch-up after the 1st of each month. Format: (1) **Month in Review** — 5 most significant events/decisions per domain, (2) **Goals Progress** — each goal's monthly trajectory with delta from prior month, (3) **Financial Summary** — income, expenses, net worth change, budget adherence, (4) **Family Highlights** — per-member notable events, (5) **Artha Performance** — accuracy pulse monthly roll-up, signal:noise trends, domains that improved/degraded, (6) **Next Month Preview** — known deadlines, renewals, and preparation items. Saved to `summaries/retro-YYYY-MM.md`. Shorter and more actionable than the quarterly scorecard; complements the weekly summary by providing a longer-horizon view. | P1 |
-| F15.51 | **State Diff Command** *(v4.0)* — `/diff` slash command that shows what changed in state files since the last catch-up. For each modified state file, displays: fields added, fields changed (with before/after), fields removed, and new alerts generated. Enables the user to see exactly what Artha learned during the most recent catch-up without reading full state files. Example output: "Since last catch-up (2h ago): immigration.md: no changes · finance.md: PSE bill added ($300.63 due 3/26) · kids.md: Arjun missing assignment flagged (AP Language) · goals.md: exercise goal moved from 🟢 to 🟡 (missed 2 sessions)." Diff data computed by comparing state files before and after catch-up processing. | P1 |
+| F15.51 | **State Diff Command** *(v4.0)* — `/diff` slash command that shows what changed in state files since the last catch-up. For each modified state file, displays: fields added, fields changed (with before/after), fields removed, and new alerts generated. Enables the user to see exactly what Artha learned during the most recent catch-up without reading full state files. Example output: "Since last catch-up (2h ago): immigration.md: no changes · finance.md: Metro Electric bill added ($300.63 due 3/26) · kids.md: Arjun missing assignment flagged (AP Language) · goals.md: exercise goal moved from 🟢 to 🟡 (missed 2 sessions)." Diff data computed by comparing state files before and after catch-up processing. | P1 |
 | F15.52 | **Ask Priya Delegation** *(v4.0)* — When Artha encounters a question or decision that requires Priya's input (shared domain: finance, kids, home, health, social, travel), route the question to Priya with full context via email or WhatsApp. Format: "Hey Priya — Artha has a question for you: [context summary]. [Specific question]. Reply to this message and Artha will incorporate your answer." Triggers: during catch-up when a shared-domain decision needs both spouses' input, during goal reviews for family goals, when a calendar conflict affects both parents. User must approve each delegation (human gate). Response processing: Priya's reply is parsed and incorporated into the relevant state file on the next catch-up. | P1 |
 | F15.53 | **If You Have 5 Minutes** *(v4.0)* — Opportunistic micro-task suggestions surfaced when the user has a brief window. Triggered by: (1) User explicitly asks "what can I do in 5 minutes?", (2) Calendar shows a short gap between events, (3) End of a catch-up session with remaining time. Suggestions drawn from: ⚡ Quick open items (F15.48), overdue reconnects that need just a text/WhatsApp (F11.3), quick approvals pending in audit queue, brief calibration questions. Presented as a prioritized list: "5-minute wins: (1) Text happy birthday to Rahul (overdue 2 days), (2) Approve Costco membership auto-renewal, (3) Quick reply to school fundraiser ask. Time: ~4 min total." Different from Power Half Hour (F15.48) which batches for 30 min; this is micro-optimized for 5-minute opportunistic windows. | P1 |
 | F15.54 | **Teach Me Mode** *(v4.0)* — When user says "teach me about [domain]" or "explain my [domain] situation", Artha synthesizes an explainer from state data, domain prompts, and prior decisions. Not a generic explanation — personalized to the user's actual data. Examples: "Teach me about my immigration situation" → timeline visualization of the GC process, where the family stands, what's next, what the risks are, explained in plain language. "Teach me about my insurance coverage" → what each policy covers, known gaps, how they interrelate. "Explain my mortgage" → current balance, payment structure, interest vs. principal, payoff timeline, refinance math. Designed for moments when Raj or Priya need to understand a complex domain they don't interact with daily. Uses extended thinking for synthesis. | P1 |
@@ -956,7 +956,7 @@ For each goal, Artha identifies the data source that can prove progress without 
 | Immigration milestone | Case status emails from [immigration attorney]/USCIS | FR-2 Immigration |
 | Reading goal | Manual check-in (with Obsidian book note detection) | FR-10 Learning |
 | Work-life balance | Work email timestamp analysis | FR-14 Boundary |
-| PSE energy bill < $X | PSE bill emails | FR-7 Home |
+| Metro Electric energy bill < $X | Metro Electric bill emails | FR-7 Home |
 
 ### 8.4 — The Weekly Goal Scorecard
 
@@ -1352,7 +1352,7 @@ Artha **reads everything, writes nothing**. It observes all connected data sourc
 Artha **proposes specific actions with one-tap approval**. When it detects something that needs action, it drafts the action and presents it for your approval. One tap to execute, one tap to dismiss.
 
 Examples at Level 1:
-- "PSE bill of $300.63 due in 3 days. [Pay now] [Dismiss]"
+- "Metro Electric bill of $300.63 due in 3 days. [Pay now] [Dismiss]"
 - "Arjun has 2 missing assignments. [Open Parent Portal] [Dismiss]"
 - "H-4 EAD window opens in 90 days. [Draft attorney email] [Dismiss]"
 - "Today is Rahul's birthday. [Send WhatsApp greeting] [Send email greeting] [Dismiss]"
@@ -1449,8 +1449,8 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 | Chase | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Balance, transaction alerts | Via email batch |
 | Wells Fargo | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Mortgage, FICO score | Via email batch |
 | Vanguard | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Statement alerts, balances | Via email batch |
-| PSE Energy | Email parsing (LLM-based) | Bill amount, due date | Via email batch |
-| Redmond Water | Email parsing (LLM-based) | Bill amount, due date | Via email batch |
+| Metro Electric | Email parsing (LLM-based) | Bill amount, due date | Via email batch |
+| City Water | Email parsing (LLM-based) | Bill amount, due date | Via email batch |
 | USCIS / [immigration attorney] | Email parsing (LLM-based) + **USCIS Status Skill** | Case status updates | Via email batch + **direct HTTP lookup** |
 | ParentSquare | Email parsing (LLM-based) | School notifications | Via email batch |
 | Canvas (Instructure) | Email parsing (LLM-based) → **Phase 2 (Blocked)**: Canvas REST API | Grade, attendance, assignment details | Via email batch → **API pull** |
@@ -1465,8 +1465,8 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 | WA DOL (Vehicle Registration) | Email parsing (LLM-based) | Registration renewal notices | Via email batch |
 | NHTSA Recall Database | Gemini CLI web search (monthly per VIN) | Active vehicle recalls | On catch-up (monthly check) |
 | ISP / Telecom Provider | Email parsing (LLM-based) | Bill amount, service changes | Via email batch |
-| Republic Services (Waste) | Email parsing (LLM-based) | Pickup schedule, billing | Via email batch |
-| King County Assessor | **King County Tax Skill** | Property tax assessment, due dates | **Direct HTTP lookup (Phase 1)** |
+| City Waste Services (Waste) | Email parsing (LLM-based) | Pickup schedule, billing | Via email batch |
+| Sangamon County Assessor | **County Tax Skill** | Property tax assessment, due dates | **Direct HTTP lookup (Phase 1)** |
 | Employer Benefits Portal | Manual input (annual open enrollment) | Benefits elections, coverage details | Manual |
 | Apple Health (HealthKit) | HealthKit XML export (manual or Shortcuts-automated) | Steps, sleep, heart rate, workouts, weight | Import on catch-up (weekly cadence) |
 
@@ -1475,7 +1475,7 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** — small, lightweight lookups that query institutional portals or official APIs directly.
 
 **1. Compliance & Stability Philosophy**
-- **Public Data Only:** Scrapers are permitted ONLY for public, non-authenticated portals (e.g., USCIS, King County Tax, NOAA).
+- **Public Data Only:** Scrapers are permitted ONLY for public, non-authenticated portals (e.g., USCIS, Sangamon County Tax, NOAA).
 - **Authorized APIs Only:** Authenticated access is restricted to documented, provider-supported APIs (e.g., Canvas LMS, OFX, MS Graph, AirNow).
 - **No Reverse Engineering:** Unofficial clients or unauthorized scraping of private portals is strictly forbidden to prevent account bans or legal risk.
 
@@ -1493,7 +1493,7 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 **4. Roadmap**
 - **Phase 1.1 (Infra):** Centralized state, dynamic loader, and cadence control.
 - **Phase 1.2 (Immigration):** USCIS Visa Bulletin parser (EB-2 India, Table A & B, Authorized Chart).
-- **Phase 1.3 (Safety/Property):** NHTSA Recall checks (Kia/Mazda) and King County Assessed Value extension.
+- **Phase 1.3 (Safety/Property):** NHTSA Recall checks (Kia/Mazda) and Sangamon County Assessed Value extension.
 - **Phase 1.4 (Concierge):** NOAA Weather unblocking outdoor Open Items.
 - **Phase 2.0 (Credentialed):** OFX Bank direct download (Chase) and AirNow AQI (EPA).
 

@@ -56,7 +56,7 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 |---|---|---|
 | **Python 3.11+** | Runs all Artha scripts | [python.org](https://www.python.org/downloads/) |
 | **Git** | Clone the repo | [git-scm.com](https://git-scm.com/) |
-| **`age`** | Encrypts sensitive state files | [github.com/FiloSottile/age](https://github.com/FiloSottile/age#installation) |
+| **`age`** | Encrypts sensitive state files | `brew install age` (macOS) · `sudo apt install age` (Ubuntu/Debian) · `winget install FiloSottile.age` (Windows) |
 | **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [GitHub Copilot](https://github.com/github/gh-copilot) · [Claude](https://www.anthropic.com/claude) |
 
 ### Step 1 — Clone & Install
@@ -131,11 +131,15 @@ rm ~/age-key.txt
 
 ### Step 5 — Connect Your Data Sources
 
-> **Before running the Google setup script**, you need a Google Cloud OAuth client:
-> 1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project
-> 2. Enable the **Gmail API** and **Google Calendar API**
-> 3. Under **Credentials**, create an **OAuth 2.0 Client ID** (type: Desktop app)
-> 4. Download the JSON — the setup script will prompt you to paste the `client_id` and `client_secret`
+#### Google (Gmail + Calendar) — recommended
+
+Before running the setup script you need a Google Cloud OAuth client (~15 min, one-time):
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com/) → create a project (e.g., "Artha Personal")
+2. **APIs & Services → Library** — enable **Gmail API** and **Google Calendar API**
+3. **APIs & Services → OAuth consent screen** → External → fill App name ("Artha") and your email → under **Test users**, add your own Gmail address
+4. **APIs & Services → Credentials → + Create Credentials → OAuth 2.0 Client ID** → Desktop app → note `client_id` and `client_secret`
+5. Run the setup script and paste them when prompted:
 
 ```bash
 # Gmail + Google Calendar (recommended)
@@ -148,7 +152,11 @@ python scripts/setup_msgraph_oauth.py
 python scripts/setup_todo_lists.py
 ```
 
-### Step 6 — Run Preflight Check
+> **"This app isn't verified" warning:** During the Google login flow, Chrome/Firefox will
+> show a red warning screen. Click **Advanced → Go to Artha (unsafe)** to proceed — this is
+> expected for personal OAuth apps that haven't been submitted to Google for review.
+
+> **No cloud accounts yet?** You can explore Artha's output format first with: `python scripts/demo_catchup.py`
 
 ```bash
 python scripts/preflight.py --fix
@@ -194,7 +202,7 @@ Artha uses a **zero-server, pull-based** architecture where your AI CLI (Gemini,
 └────────────────────────────────────────────────────────────────┘
          │                    │                    │
     Connectors            Skills              State Files
-    (email, cal,       (tax, weather,       (18 domains,
+    (email, cal,       (tax, weather,       (24 domains,
      OneNote, LMS)      recalls, visa)       .age encrypted)
 ```
 
@@ -561,7 +569,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full development setup and guidelines
 | Guide | Description |
 |---|---|
 | [Quick Start](docs/quickstart.md) | Zero to first briefing in 15 minutes |
-| [Domains](docs/domains.md) | 18 life domains explained |
+| [Domains](docs/domains.md) | 24 life domains explained |
 | [Connectors](docs/connectors.md) | Email, calendar, LMS data sources |
 | [Skills](docs/skills.md) | Autonomous background data pulls |
 | [Actions](docs/actions.md) | Action types and approval flows |
