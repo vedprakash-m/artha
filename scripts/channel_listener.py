@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import collections
+import dataclasses
 import json
 import logging
 import os
@@ -2247,8 +2248,7 @@ async def process_message(
     # 5. Command normalisation — accept flexible input
     norm_cmd, norm_args = _normalise_command(msg.raw_text)
     if norm_cmd:
-        object.__setattr__(msg, "command", norm_cmd)
-        object.__setattr__(msg, "args", norm_args)
+        msg = dataclasses.replace(msg, command=norm_cmd, args=norm_args)
     is_slash_command = msg.command.startswith("/")
 
     # Send ack for long-running commands (track message_id for later deletion)
