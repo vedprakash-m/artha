@@ -43,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from datetime import date as _date_type, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -89,7 +90,7 @@ KC_SERVICE = "age-key"
 KC_ACCOUNT = "artha"
 
 # GFS Backup — directory layout and retention policy (§8.5.2)
-BACKUP_DIR      = STATE_DIR / "backups"
+BACKUP_DIR      = ARTHA_DIR / "backups"      # root-level backups/ — syncs via OneDrive
 BACKUP_MANIFEST = BACKUP_DIR / "manifest.json"
 GFS_RETENTION: dict = {"daily": 7, "weekly": 4, "monthly": 12, "yearly": None}
 
@@ -405,13 +406,13 @@ def _file_sha256(path: Path) -> str:
 
 
 def _load_manifest() -> dict:
-    """Load state/backups/manifest.json; return empty structure on missing or corrupt file."""
+    """Load backups/manifest.json; return empty structure on missing or corrupt file."""
     if BACKUP_MANIFEST.exists():
         try:
             return json.loads(BACKUP_MANIFEST.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             pass
-    return {"files": {}, "last_validate": None}
+    return {"last_validate": None, "snapshots": {}}
 
 
 def _save_manifest(manifest: dict) -> None:
@@ -444,41 +445,52 @@ def _get_backup_tier(d: "_date_type") -> str:
     return "daily"
 
 
-def _prune_backups(domain: str, tier: str, keep_n: int) -> None:
-    """Remove oldest backup files for domain/tier beyond keep_n retention limit."""
+def _prune_backups(tier: str, keep_n: int) -> None:
+    """Remove oldest ZIP snapshots in tier_dir beyond keep_n retention limit."""
     tier_dir = BACKUP_DIR / tier
     if not tier_dir.exists():
         return
-    # Glob produces YYYY-MM-DD sorted alphabetically = chronologically
-    files = sorted(tier_dir.glob(f"{domain}-*.md.age"))
-    if len(files) <= keep_n:
+    zips = sorted(tier_dir.glob("*.zip"), key=lambda p: p.stem)  # stem = YYYY-MM-DD
+    if len(zips) <= keep_n:
         return
     manifest = _load_manifest()
-    for old_file in files[: len(files) - keep_n]:
-        key = f"{tier}/{old_file.name}"
+    for old_zip in zips[: len(zips) - keep_n]:
+        key = f"{tier}/{old_zip.name}"
         try:
-            old_file.unlink()
-            manifest["files"].pop(key, None)
-            log(f"BACKUP_PRUNED | file: {old_file.name} | tier: {tier} | retention: {keep_n}")
+            old_zip.unlink()
+            manifest["snapshots"].pop(key, None)
+            log(f"BACKUP_PRUNED | zip: {old_zip.name} | tier: {tier} | retention: {keep_n}")
         except OSError as exc:
-            log(f"BACKUP_PRUNE_FAILED | file: {old_file.name} | error: {exc}")
+            log(f"BACKUP_PRUNE_FAILED | zip: {old_zip.name} | error: {exc}")
     _save_manifest(manifest)
 
 
+def _zip_archive_path(entry: dict) -> str:
+    """Return the path of this entry's file inside the backup ZIP archive.
+
+    state_encrypted: restore_path is already '.age' — use as-is.
+    state_plain / config: restore_path ends in '.md' or has no '.age' suffix —
+        append '.age' because we encrypt on-the-fly before storing.
+    """
+    if entry["source_type"] == "state_encrypted":
+        return entry["restore_path"]          # e.g. 'state/finance.md.age'
+    return entry["restore_path"] + ".age"     # e.g. 'state/goals.md.age'
+
+
 def _backup_snapshot(today: "_date_type | None" = None) -> int:
-    """Snapshot ALL registered files into the GFS hierarchy.
+    """Create one ZIP snapshot containing ALL registered files for today's GFS tier.
 
     Called automatically at the end of a successful vault.py encrypt cycle.
-    Registry is loaded from config/user_profile.yaml → backup section.
 
-    Handling by source_type:
-      state_encrypted — .age file already on disk; copied directly (read-only).
-      state_plain     — plain .md file; encrypted on-the-fly using the age
-                        public key before being stored (backup is always .age).
-      config          — config file; encrypted on-the-fly before storing.
+    ZIP layout (root-level backups/ directory):
+      backups/{tier}/YYYY-MM-DD.zip
+        manifest.json           ← internal metadata + SHA-256 per archived file
+        state/finance.md.age    ← state_encrypted: copied directly
+        state/goals.md.age      ← state_plain: encrypted on-the-fly
+        config/user_profile.yaml.age  ← config: encrypted on-the-fly
 
-    Each file is written atomically via a .tmp sibling + os.replace().
-    Returns the number of files successfully backed up.
+    The ZIP is written atomically via .tmp then os.replace().
+    Returns the number of files packed into the ZIP (0 on failure).
     """
     if today is None:
         today = datetime.now(timezone.utc).date()
@@ -492,10 +504,7 @@ def _backup_snapshot(today: "_date_type | None" = None) -> int:
         return 0
 
     registry = _load_backup_registry()
-    manifest = _load_manifest()
 
-    # Obtain public key once — required only for plain/config files that must
-    # be encrypted on-the-fly.  Skip those entries gracefully if key unavailable.
     need_encrypt = any(e["source_type"] != "state_encrypted" for e in registry)
     pubkey: "str | None" = None
     if need_encrypt:
@@ -504,212 +513,382 @@ def _backup_snapshot(today: "_date_type | None" = None) -> int:
         except SystemExit:
             log("BACKUP_PUBKEY_MISSING | plain/config files will be skipped this run")
 
+    zip_name = f"{date_str}.zip"
+    dest     = tier_dir / zip_name
+    dest_tmp = Path(str(dest) + ".tmp")
+
+    internal_files: dict = {}
     backed_up = 0
 
-    for entry in registry:
-        name         = entry["name"]
-        source_type  = entry["source_type"]
-        source_path  = entry["source_path"]
-        restore_path = entry["restore_path"]
+    with tempfile.TemporaryDirectory(prefix="artha_backup_") as staging:
+        staging_path = Path(staging)
 
-        if not source_path.exists():
-            continue
+        for entry in registry:
+            name         = entry["name"]
+            source_type  = entry["source_type"]
+            source_path  = entry["source_path"]
+            restore_path = entry["restore_path"]
+            arc_path     = _zip_archive_path(entry)
 
-        # Destination filename: config files use .cfg.age extension, state files .md.age
-        if source_type == "config":
-            dest_filename = f"{name}-{date_str}.cfg.age"
-        else:
-            dest_filename = f"{name}-{date_str}.md.age"
-        dest     = tier_dir / dest_filename
-        dest_tmp = Path(str(dest) + ".tmp")
-        key      = f"{tier}/{dest_filename}"
+            if not source_path.exists():
+                continue
 
-        try:
-            if source_type == "state_encrypted":
-                shutil.copy2(str(source_path), str(dest_tmp))
-                os.replace(str(dest_tmp), str(dest))
-            else:
-                # Encrypt plain file on-the-fly
-                if not pubkey:
-                    log(f"BACKUP_SKIP | file: {source_path.name} | reason: no_pubkey")
-                    continue
-                if not age_encrypt(pubkey, source_path, dest_tmp):
-                    dest_tmp.unlink(missing_ok=True)
-                    log(f"BACKUP_ENCRYPT_FAILED | file: {source_path.name} | tier: {tier}")
-                    continue
-                if dest_tmp.exists():
-                    os.replace(str(dest_tmp), str(dest))
+            staged = staging_path / arc_path
+            staged.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                if source_type == "state_encrypted":
+                    shutil.copy2(str(source_path), str(staged))
                 else:
-                    log(f"BACKUP_ENCRYPT_FAILED | file: {source_path.name} | reason: no_output")
-                    continue
+                    if not pubkey:
+                        log(f"BACKUP_SKIP | name: {name} | reason: no_pubkey")
+                        continue
+                    if not age_encrypt(pubkey, source_path, staged):
+                        staged.unlink(missing_ok=True)
+                        log(f"BACKUP_ENCRYPT_FAILED | name: {name}")
+                        continue
+                    if not staged.exists():
+                        log(f"BACKUP_ENCRYPT_FAILED | name: {name} | reason: no_output")
+                        continue
+            except OSError as exc:
+                staged.unlink(missing_ok=True)
+                log(f"BACKUP_STAGE_FAILED | name: {name} | error: {exc}")
+                continue
+
+            sha256 = _file_sha256(staged)
+            internal_files[arc_path] = {
+                "name":         name,
+                "restore_path": restore_path,
+                "sha256":       sha256,
+                "size":         staged.stat().st_size,
+                "source_type":  source_type,
+            }
+            backed_up += 1
+            log(f"BACKUP_OK | name: {name} | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
+
+        if backed_up == 0:
+            return 0
+
+        # Write internal manifest.json into staging dir
+        internal_manifest = {
+            "artha_backup_version": "2",
+            "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "date":    date_str,
+            "tier":    tier,
+            "files":   internal_files,
+        }
+        (staging_path / "manifest.json").write_text(
+            json.dumps(internal_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        # Pack staging dir into ZIP atomically
+        try:
+            with zipfile.ZipFile(str(dest_tmp), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for abs_p in sorted(staging_path.rglob("*")):
+                    if abs_p.is_file():
+                        zf.write(str(abs_p), str(abs_p.relative_to(staging_path)))
+            os.replace(str(dest_tmp), str(dest))
         except OSError as exc:
             dest_tmp.unlink(missing_ok=True)
-            log(f"BACKUP_COPY_FAILED | file: {source_path.name} | tier: {tier} | error: {exc}")
-            continue
+            log(f"BACKUP_ZIP_FAILED | tier: {tier} | date: {date_str} | error: {exc}")
+            return 0
 
-        sha256 = _file_sha256(dest)
-        manifest["files"][key] = {
-            "created":      datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "date":         date_str,
-            "domain":       name,
-            "restore_path": restore_path,
-            "sha256":       sha256,
-            "size":         dest.stat().st_size,
-            "source_type":  source_type,
-            "tier":         tier,
-        }
-        backed_up += 1
-        log(f"BACKUP_OK | file: {source_path.name} | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
+    # Update outer manifest catalog
+    zip_sha256 = _file_sha256(dest)
+    outer = _load_manifest()
+    outer.setdefault("snapshots", {})
+    outer["snapshots"][f"{tier}/{zip_name}"] = {
+        "created":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "date":       date_str,
+        "file_count": backed_up,
+        "sha256":     zip_sha256,
+        "size":       dest.stat().st_size,
+        "tier":       tier,
+    }
+    _save_manifest(outer)
 
-    _save_manifest(manifest)
+    # Prune old ZIPs per tier
+    for t, keep_n in GFS_RETENTION.items():
+        if keep_n is not None:
+            _prune_backups(t, keep_n)
 
-    # Prune old backups — iterate every unique name across all tiers
-    all_names = {e["name"] for e in registry}
-    for name in all_names:
-        for t, keep_n in GFS_RETENTION.items():
-            if keep_n is not None:
-                _prune_backups(name, t, keep_n)
-
-    if backed_up:
-        print(f"  GFS backup: {backed_up} file(s) → {tier}/ ({date_str})")
+    print(f"  GFS backup: {backed_up} file(s) → {tier}/{zip_name}")
     return backed_up
 
 
-def _select_backup_files(domain: "str | None", date_str: "str | None", manifest: dict) -> dict:
-    """Return the subset of manifest entries to validate.
+def _select_backup_zip(date_str: "str | None", manifest: dict) -> "str | None":
+    """Return the outer-manifest key (e.g. 'daily/2026-03-14.zip') to use.
 
-    Rules (first match wins):
-      date_str supplied  → all domains for that date
-      domain supplied    → newest entry for that domain
-      neither            → newest entry per domain (default for full validation)
+    date_str given → find first matching ZIP across any tier.
+    Otherwise      → newest ZIP by date field.
     """
-    all_files = manifest.get("files", {})
+    snapshots = manifest.get("snapshots", {})
+    if not snapshots:
+        return None
     if date_str:
-        return {k: v for k, v in all_files.items() if v.get("date") == date_str}
-    if domain:
-        subset = {k: v for k, v in all_files.items() if v.get("domain") == domain}
-        if not subset:
-            return {}
-        newest_key = max(subset, key=lambda k: subset[k].get("date", ""))
-        return {newest_key: subset[newest_key]}
-    # Default: newest per domain
-    newest: dict = {}
-    for key, meta in all_files.items():
-        d = meta.get("domain", "")
-        if d not in newest or meta.get("date", "") > newest[d][1].get("date", ""):
-            newest[d] = (key, meta)
-    return {k: v for k, v in newest.values()}
+        matches = [k for k, v in snapshots.items() if v.get("date") == date_str]
+        return matches[0] if matches else None
+    return max(snapshots, key=lambda k: snapshots[k].get("date", ""))
+
+
+def _restore_from_zip(zip_path: Path, domain: "str | None", dry_run: bool) -> None:
+    """Core restore logic shared by do_restore() and do_install().
+
+    For each file in the ZIP's internal manifest:
+      state_encrypted → write .age file directly to restore_path
+      state_plain     → age_decrypt to restore_path (plain .md)
+      config          → age_decrypt to restore_path (original config file)
+
+    SHA-256 verified before writing. Existing files overwritten.
+    """
+    if not check_age_installed():
+        die("'age' not installed.")
+    privkey = get_private_key()
+
+    if not zip_path.exists():
+        die(f"Backup ZIP not found: {zip_path}")
+
+    try:
+        zf_handle = zipfile.ZipFile(str(zip_path), "r")
+    except zipfile.BadZipFile as exc:
+        die(f"Corrupt ZIP file {zip_path.name}: {exc}")
+
+    with zf_handle as zf:
+        try:
+            with zf.open("manifest.json") as mf:
+                internal = json.load(mf)
+        except Exception as exc:
+            die(f"Cannot read internal manifest in {zip_path.name}: {exc}")
+
+        files = internal.get("files", {})
+        if domain:
+            files = {k: v for k, v in files.items() if v.get("name") == domain}
+            if not files:
+                print(f"No files for domain {domain!r} in {zip_path.name}.")
+                sys.exit(1)
+
+        snap_date = internal.get("date", "unknown")
+        snap_tier = internal.get("tier", "unknown")
+        if dry_run:
+            print(f"DRY RUN — snapshot {snap_tier}/{snap_date} ({zip_path.name}) — no files will be written\n")
+
+        errors   = 0
+        restored = 0
+
+        with tempfile.TemporaryDirectory(prefix="artha_restore_") as tmpdir:
+            tmppath = Path(tmpdir)
+
+            for arc_path, meta in sorted(files.items()):
+                restore_path = meta.get("restore_path", "")
+                source_type  = meta.get("source_type", "state_encrypted")
+                dest         = ARTHA_DIR / restore_path
+
+                # Read from ZIP and verify SHA-256
+                try:
+                    zip_data = zf.read(arc_path)
+                except KeyError:
+                    print(f"  ✗ MISSING in ZIP:  {arc_path}")
+                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: missing_in_zip")
+                    errors += 1
+                    continue
+
+                actual_sha256   = hashlib.sha256(zip_data).hexdigest()
+                expected_sha256 = meta.get("sha256", "")
+                if expected_sha256 and actual_sha256 != expected_sha256:
+                    print(f"  ✗ CHECKSUM FAIL:   {arc_path}")
+                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: checksum_mismatch")
+                    errors += 1
+                    continue
+
+                if dry_run:
+                    action = "copy" if source_type == "state_encrypted" else "decrypt"
+                    print(f"  would {action}: {arc_path!s:<55} → {restore_path}")
+                    continue
+
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest_tmp = Path(str(dest) + ".tmp")
+
+                try:
+                    if source_type == "state_encrypted":
+                        dest_tmp.write_bytes(zip_data)
+                        os.replace(str(dest_tmp), str(dest))
+                    else:
+                        extracted = tmppath / Path(arc_path).name
+                        extracted.write_bytes(zip_data)
+                        if not age_decrypt(privkey, extracted, dest_tmp):
+                            dest_tmp.unlink(missing_ok=True)
+                            print(f"  ✗ DECRYPT FAILED:  {arc_path}")
+                            log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: decrypt_failed")
+                            errors += 1
+                            continue
+                        os.replace(str(dest_tmp), str(dest))
+                except OSError as exc:
+                    dest_tmp.unlink(missing_ok=True)
+                    print(f"  ✗ WRITE FAILED:    {arc_path}: {exc}")
+                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: write_error")
+                    errors += 1
+                    continue
+
+                print(f"  ✓ {restore_path}")
+                log(f"RESTORE_OK | zip: {zip_path.name} | file: {arc_path} | dest: {restore_path} | type: {source_type}")
+                restored += 1
+
+    print()
+    if not dry_run:
+        if errors == 0:
+            print(f"Restore complete: {restored} file(s) restored from {zip_path.name}.")
+        else:
+            print(f"Restore: {restored} restored, {errors} failed.")
+            sys.exit(1)
 
 
 def do_validate_backup(
     domain: "str | None" = None,
     date_str: "str | None" = None,
 ) -> None:
-    """Decrypt backup file(s) to a temp directory and validate content.
+    """Validate backup ZIP — never touches live state.
 
-    Never touches live state.  Checks (in order):
-      1. SHA-256 matches manifest entry           (bit-rot detection)
+    Opens the newest ZIP (or the one matching --date). For each file:
+      1. SHA-256 inside ZIP matches internal manifest (bit-rot detection)
       2. age_decrypt succeeds
-      3. Output is non-empty
-      4. First non-blank line starts with '---'   (YAML frontmatter)
-      5. Word count >= 30                         (non-trivial content)
+      3. Decrypted output non-empty
+      4. YAML frontmatter (for state files)
+      5. Word count >= 30 (for state files)
 
     Updates manifest.last_validate on full success.
-    Exits 1 if any file fails validation.
     """
     if not check_age_installed():
-        die("'age' not installed. Install:\n"
-            "  macOS: brew install age\n"
-            "  Windows: winget install FiloSottile.age")
+        die("'age' not installed.")
     privkey  = get_private_key()
     manifest = _load_manifest()
 
-    if not manifest.get("files"):
+    if not manifest.get("snapshots"):
         print("No backups found. Run vault.py encrypt first to create initial backups.")
         return
 
-    to_validate = _select_backup_files(domain, date_str, manifest)
-    if not to_validate:
-        print(f"No matching backup files found (domain={domain!r}, date={date_str!r}).")
+    zip_key = _select_backup_zip(date_str, manifest)
+    if not zip_key:
+        print(f"No matching backup snapshot found (date={date_str!r}).")
+        sys.exit(1)
+
+    zip_path = BACKUP_DIR / zip_key
+
+    # Verify outer ZIP checksum first
+    expected_zip_sha256 = manifest["snapshots"][zip_key].get("sha256", "")
+    if expected_zip_sha256 and _file_sha256(zip_path) != expected_zip_sha256:
+        print(f"  ✗ ZIP CHECKSUM FAIL: {zip_key}")
+        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | reason: zip_checksum_mismatch")
         sys.exit(1)
 
     errors    = 0
     validated = 0
 
-    with tempfile.TemporaryDirectory(prefix="artha_validate_") as tmpdir:
-        tmppath = Path(tmpdir)
-        for key, meta in sorted(to_validate.items()):
-            backup_file = BACKUP_DIR / key
+    try:
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            try:
+                with zf.open("manifest.json") as mf:
+                    internal = json.load(mf)
+            except Exception as exc:
+                print(f"  ✗ MANIFEST READ FAIL: {zip_key}: {exc}")
+                sys.exit(1)
 
-            # File must exist on disk
-            if not backup_file.exists():
-                print(f"  ✗ MISSING:         {key}")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: file_missing")
-                errors += 1
-                continue
+            files_to_check = internal.get("files", {})
+            if domain:
+                files_to_check = {k: v for k, v in files_to_check.items()
+                                  if v.get("name") == domain}
+                if not files_to_check:
+                    print(f"No files for domain {domain!r} in {zip_key}.")
+                    sys.exit(1)
 
-            # 1. SHA-256 checksum
-            actual_sha256   = _file_sha256(backup_file)
-            expected_sha256 = meta.get("sha256", "")
-            if expected_sha256 and actual_sha256 != expected_sha256:
-                print(f"  ✗ CHECKSUM FAIL:   {key}")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: checksum_mismatch"
-                    f" | expected: {expected_sha256[:16]} | actual: {actual_sha256[:16]}")
-                errors += 1
-                continue
+            with tempfile.TemporaryDirectory(prefix="artha_validate_") as tmpdir:
+                tmppath = Path(tmpdir)
 
-            # 2. Decrypt to temp dir
-            tmp_plain = tmppath / f"{meta['domain']}-{meta['date']}.md"
-            if not age_decrypt(privkey, backup_file, tmp_plain):
-                print(f"  ✗ DECRYPT FAIL:    {key}")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: decrypt_failed")
-                errors += 1
-                continue
+                for arc_path, meta in sorted(files_to_check.items()):
+                    source_type = meta.get("source_type", "state_encrypted")
 
-            # 3. Non-empty
-            if not tmp_plain.exists() or tmp_plain.stat().st_size == 0:
-                print(f"  ✗ EMPTY:           {key}")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: empty_content")
-                errors += 1
-                continue
+                    # Read from ZIP
+                    try:
+                        zip_data = zf.read(arc_path)
+                    except KeyError:
+                        print(f"  ✗ MISSING in ZIP:  {arc_path}")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: missing_in_zip")
+                        errors += 1
+                        continue
 
-            content = tmp_plain.read_text(encoding="utf-8", errors="replace")
+                    # 1. SHA-256
+                    actual_sha256   = hashlib.sha256(zip_data).hexdigest()
+                    expected_sha256 = meta.get("sha256", "")
+                    if expected_sha256 and actual_sha256 != expected_sha256:
+                        print(f"  ✗ CHECKSUM FAIL:   {arc_path}")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: checksum_mismatch")
+                        errors += 1
+                        continue
 
-            # 4. YAML frontmatter
-            if not content.lstrip().startswith("---"):
-                print(f"  ✗ NO YAML:         {key}")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: missing_yaml_frontmatter")
-                errors += 1
-                continue
+                    # 2. Decrypt
+                    extracted  = tmppath / (Path(arc_path).name + ".enc")
+                    decrypted  = tmppath / (Path(arc_path).stem + ".dec")
+                    extracted.write_bytes(zip_data)
+                    if not age_decrypt(privkey, extracted, decrypted):
+                        print(f"  ✗ DECRYPT FAIL:    {arc_path}")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: decrypt_failed")
+                        errors += 1
+                        continue
 
-            # 5. Sanity: at least 30 words
-            word_count = len(content.split())
-            if word_count < 30:
-                print(f"  ✗ TOO SHORT:       {key} ({word_count} words)")
-                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: content_too_short | words: {word_count}")
-                errors += 1
-                continue
+                    # 3. Non-empty
+                    if not decrypted.exists() or decrypted.stat().st_size == 0:
+                        print(f"  ✗ EMPTY:           {arc_path}")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: empty_content")
+                        errors += 1
+                        continue
 
-            print(f"  ✓ {key:<55} tier={meta['tier']:<7} date={meta['date']}"
-                  f" words={word_count} sha256={actual_sha256[:12]}...")
-            log(f"BACKUP_VALIDATE_OK | key: {key} | tier: {meta['tier']} | date: {meta['date']}"
-                f" | words: {word_count} | sha256: {actual_sha256[:16]}")
-            validated += 1
+                    content    = decrypted.read_text(encoding="utf-8", errors="replace")
+                    word_count = len(content.split())
 
+                    # Config files don't need YAML/word-count checks
+                    if source_type == "config":
+                        print(f"  ✓ {arc_path:<55} type=config words={word_count} sha256={actual_sha256[:14]}...")
+                        log(f"BACKUP_VALIDATE_OK | zip: {zip_key} | file: {arc_path} | type: config | words: {word_count}")
+                        validated += 1
+                        continue
+
+                    # 4. YAML frontmatter
+                    if not content.lstrip().startswith("---"):
+                        print(f"  ✗ NO YAML:         {arc_path}")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: missing_yaml_frontmatter")
+                        errors += 1
+                        continue
+
+                    # 5. Word count >= 30
+                    if word_count < 30:
+                        print(f"  ✗ TOO SHORT:       {arc_path} ({word_count} words)")
+                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: content_too_short | words: {word_count}")
+                        errors += 1
+                        continue
+
+                    print(f"  ✓ {arc_path:<55} type={source_type:<17} words={word_count} sha256={actual_sha256[:14]}...")
+                    log(f"BACKUP_VALIDATE_OK | zip: {zip_key} | file: {arc_path} | type: {source_type} | words: {word_count} | sha256: {actual_sha256[:16]}")
+                    validated += 1
+
+    except zipfile.BadZipFile as exc:
+        print(f"  ✗ CORRUPT ZIP: {zip_key}: {exc}")
+        sys.exit(1)
+
+    print()
     if errors == 0 and validated > 0:
         manifest["last_validate"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _save_manifest(manifest)
-        print(f"\nBackup validation: ✓ {validated} file(s) valid")
+        print(f"Backup validation: ✓ {validated} file(s) valid  [{zip_key}]")
     else:
-        print(f"\nBackup validation: ✗ {errors} failure(s), {validated} passed")
+        print(f"Backup validation: ✗ {errors} failure(s), {validated} passed  [{zip_key}]")
         if errors > 0:
             sys.exit(1)
 
 
 def do_backup_status() -> None:
-    """Show GFS backup catalog, tier counts, and last validation date."""
+    """Show GFS backup catalog: ZIP names, tier counts, and last validation date."""
     manifest      = _load_manifest()
-    files         = manifest.get("files", {})
+    snapshots     = manifest.get("snapshots", {})
     last_validate = manifest.get("last_validate")
 
     print("━" * 60)
@@ -731,28 +910,27 @@ def do_backup_status() -> None:
         print("  Last validation : ⚠ NEVER — run: vault.py validate-backup")
 
     print()
-    if not files:
+    if not snapshots:
         print("  No backups found. Run vault.py encrypt to create the first backup.")
     else:
         for tier in ("yearly", "monthly", "weekly", "daily"):
-            tier_files = {k: v for k, v in files.items() if v.get("tier") == tier}
-            if not tier_files:
+            tier_snaps = {k: v for k, v in snapshots.items() if v.get("tier") == tier}
+            if not tier_snaps:
                 continue
-            dates  = sorted({v.get("date", "") for v in tier_files.values()}, reverse=True)
             keep_n = GFS_RETENTION.get(tier)
             label  = str(keep_n) if keep_n else "∞"
-            print(f"  {tier.upper():<8}  {len(dates)} snapshot(s), keep={label}")
-            for d in dates[:3]:
-                doms   = sorted(v["domain"] for k, v in tier_files.items() if v.get("date") == d)
-                suffix = f" +{len(doms) - 4} more" if len(doms) > 4 else ""
-                print(f"            {d}  {len(doms)} file(s) ({', '.join(doms[:4])}{suffix})")
-            if len(dates) > 3:
-                print(f"            … and {len(dates) - 3} older snapshot(s)")
+            print(f"  {tier.upper():<8}  {len(tier_snaps)} snapshot(s), keep={label}")
+            for key in sorted(tier_snaps, key=lambda k: tier_snaps[k].get("date", ""), reverse=True)[:3]:
+                meta = tier_snaps[key]
+                size_kb = meta.get("size", 0) / 1024
+                print(f"            {meta['date']}  {Path(key).name:<30} {meta.get('file_count', '?')} files  {size_kb:.1f} KB")
+            if len(tier_snaps) > 3:
+                print(f"            … and {len(tier_snaps) - 3} older snapshot(s)")
     print("━" * 60)
 
 
 # ---------------------------------------------------------------------------
-# GFS restore — rebuild a fresh install from a backup snapshot
+# GFS restore — catalog-based and ZIP file based
 # ---------------------------------------------------------------------------
 
 def do_restore(
@@ -760,99 +938,39 @@ def do_restore(
     domain:   "str | None" = None,
     dry_run:  bool = False,
 ) -> None:
-    """Restore files from a GFS backup snapshot to their original locations.
+    """Restore from the GFS backup catalog — finds the right ZIP automatically.
 
-    Intended use: rebuild a fresh Artha install from backup alone.
-      vault.py restore --date YYYY-MM-DD [--dry-run]
-
-    Handling by source_type:
-      state_encrypted — .age backup copied directly back to state/
-      state_plain     — backup decrypted and written as .md to state/
-      config          — backup decrypted and written back to config/
-
-    SHA-256 is verified before each restore.  Existing files are overwritten.
-    Use --dry-run to preview without writing anything.
+    vault.py restore [--date YYYY-MM-DD] [--domain DOMAIN] [--dry-run]
     """
     if not check_age_installed():
         die("'age' not installed.")
-    privkey  = get_private_key()
     manifest = _load_manifest()
 
-    if not manifest.get("files"):
+    if not manifest.get("snapshots"):
         print("No backups found. Run vault.py encrypt first to create initial backups.")
         return
 
-    to_restore = _select_backup_files(domain, date_str, manifest)
-    if not to_restore:
-        print(f"No matching backup files found (domain={domain!r}, date={date_str!r}).")
+    zip_key = _select_backup_zip(date_str, manifest)
+    if not zip_key:
+        print(f"No matching backup snapshot (date={date_str!r}).")
         sys.exit(1)
 
-    if dry_run:
-        print("DRY RUN — no files will be written\n")
+    zip_path = BACKUP_DIR / zip_key
+    print(f"Restoring from {zip_key} ...")
+    _restore_from_zip(zip_path, domain, dry_run)
 
-    errors   = 0
-    restored = 0
 
-    for key, meta in sorted(to_restore.items()):
-        backup_file  = BACKUP_DIR / key
-        restore_rel  = meta.get("restore_path", "")
-        source_type  = meta.get("source_type", "state_encrypted")
+def do_install(zip_path_str: str, dry_run: bool = False) -> None:
+    """Restore from an explicit backup ZIP file — for cold-start on a new machine.
 
-        if not backup_file.exists():
-            print(f"  ✗ MISSING backup:  {key}")
-            log(f"RESTORE_FAIL | key: {key} | reason: backup_missing")
-            errors += 1
-            continue
+    vault.py install <path/to/YYYY-MM-DD.zip> [--dry-run]
 
-        # Verify checksum before touching the filesystem
-        actual_sha256   = _file_sha256(backup_file)
-        expected_sha256 = meta.get("sha256", "")
-        if expected_sha256 and actual_sha256 != expected_sha256:
-            print(f"  ✗ CHECKSUM FAIL:   {key}")
-            log(f"RESTORE_FAIL | key: {key} | reason: checksum_mismatch")
-            errors += 1
-            continue
-
-        dest = ARTHA_DIR / restore_rel
-
-        if dry_run:
-            action = "copy" if source_type == "state_encrypted" else "decrypt"
-            print(f"  would {action}: {key!s:<55} → {restore_rel}")
-            continue
-
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest_tmp = Path(str(dest) + ".tmp")
-
-        try:
-            if source_type == "state_encrypted":
-                shutil.copy2(str(backup_file), str(dest_tmp))
-                os.replace(str(dest_tmp), str(dest))
-            else:
-                if not age_decrypt(privkey, backup_file, dest_tmp):
-                    dest_tmp.unlink(missing_ok=True)
-                    print(f"  ✗ DECRYPT FAILED:  {key}")
-                    log(f"RESTORE_FAIL | key: {key} | reason: decrypt_failed")
-                    errors += 1
-                    continue
-                os.replace(str(dest_tmp), str(dest))
-        except OSError as exc:
-            dest_tmp.unlink(missing_ok=True)
-            print(f"  ✗ WRITE FAILED:    {key}: {exc}")
-            log(f"RESTORE_FAIL | key: {key} | reason: write_error | detail: {exc}")
-            errors += 1
-            continue
-
-        print(f"  ✓ {restore_rel}")
-        log(f"RESTORE_OK | key: {key} | dest: {restore_rel} | source_type: {source_type}")
-        restored += 1
-
-    print()
-    if errors == 0:
-        if not dry_run:
-            print(f"Restore complete: {restored} file(s) restored.")
-    else:
-        print(f"Restore: {restored} restored, {errors} failed.")
-        sys.exit(1)
+    The ZIP is self-contained: it carries its own internal manifest with SHA-256
+    checksums and restore paths for every file.  No catalog access needed.
+    """
+    zip_path = Path(zip_path_str).expanduser().resolve()
+    print(f"Installing from backup: {zip_path.name} ...")
+    _restore_from_zip(zip_path, domain=None, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -1176,7 +1294,7 @@ def do_health() -> None:
     # 7. GFS backup catalog
     manifest      = _load_manifest()
     last_validate = manifest.get("last_validate")
-    backup_count  = len({v.get("date") for v in manifest.get("files", {}).values()})
+    backup_count  = len(manifest.get("snapshots", {}))
     if backup_count == 0:
         print("  GFS backups:  ⚠ none — run vault.py encrypt to create first backup")
     else:
@@ -1266,11 +1384,25 @@ def main() -> None:
             else:
                 i += 1
         do_restore(date_str=date_str, domain=domain, dry_run=dry_run)
+    elif cmd == "install":
+        args    = sys.argv[2:]
+        dry_run = False
+        zip_arg = None
+        i = 0
+        while i < len(args):
+            if args[i] == "--dry-run":
+                dry_run = True; i += 1
+            else:
+                zip_arg = args[i]; i += 1
+        if not zip_arg:
+            print("Usage: vault.py install <zipfile> [--dry-run]")
+            sys.exit(1)
+        do_install(zip_arg, dry_run=dry_run)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|restore|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|restore|install|release-lock}")
         sys.exit(1)
 
 
