@@ -146,6 +146,7 @@ class TestReexecAlreadyInVenv:
 class TestReexecMissingVenv:
     def test_exits_when_venv_missing(self, tmp_path, monkeypatch):
         """Standard mode without a venv should sys.exit(1)."""
+        monkeypatch.delenv("ARTHA_NO_REEXEC", raising=False)
         monkeypatch.setattr(bs, "_in_venv", lambda: False)
         # Point venv python to a nonexistent path
         monkeypatch.setattr(bs, "_VENV_POSIX", tmp_path / "nonexistent_venv")

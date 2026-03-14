@@ -156,6 +156,11 @@ def reexec_in_venv(mode: str = "standard") -> None:
         os.environ.setdefault("ARTHA_DIR", str(ARTHA_DIR))
         return
 
+    # CI / container environments: skip venv re-exec when deps are already installed
+    if os.environ.get("ARTHA_NO_REEXEC"):
+        os.environ.setdefault("ARTHA_DIR", str(ARTHA_DIR))
+        return
+
     if _in_venv():
         # Already in a venv — verify critical dependencies are installed.
         # This guards against stale venvs after a `git pull` that added new deps.
