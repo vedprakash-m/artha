@@ -26,3 +26,17 @@ skills:
     enabled: true
     priority: P1
     cadence: weekly
+  passport_expiry:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: true
+    safety_critical: false
+    description: "Check passport expiry dates from decrypted immigration state. Alerts at 180/90/60 days."
+  subscription_monitor:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: false
+    safety_critical: false
+    description: "Detect subscription price increases and trial-to-paid conversions from state/digital.md."

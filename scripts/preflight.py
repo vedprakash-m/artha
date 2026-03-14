@@ -769,12 +769,18 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
     checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json"))
     checks.append(check_pii_guard())
-    # Gmail API live connection (skip if --quiet to reduce latency)
+    # Global API live connection via unified pipeline.py (skip if --quiet to reduce latency)
     if not quiet:
         try:
-            checks.append(check_script_health("gmail_fetch.py", ["--health"]))
-            checks.append(check_script_health("gcal_fetch.py",  ["--health"]))
-            checks.append(check_script_health("gmail_send.py",  ["--health"]))
+            checks.append(check_script_health(
+                "pipeline.py", ["--health", "--source", "gmail"], severity="P0"
+            ))
+            checks.append(check_script_health(
+                "pipeline.py", ["--health", "--source", "google_calendar"], severity="P0"
+            ))
+            checks.append(check_script_health(
+                "gmail_send.py", ["--health"], severity="P0"
+            ))
         except subprocess.TimeoutExpired:
             checks.append(CheckResult(
                 "API connectivity", "P0", False,
@@ -808,54 +814,44 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
         checks.append(CheckResult("BeautifulSoup", "P1", True, "beautifulsoup4 found"))
     except ImportError:
         checks.append(CheckResult(
-            "BeautifulSoup", "P1", False, 
+            "BeautifulSoup", "P1", False,
             "beautifulsoup4 not installed — Data Skills will be disabled",
             fix_hint="pip install beautifulsoup4"
         ))
 
-    # MS Graph live connectivity (P1 — email/calendar fetch can still partially succeed
-    # if only one script fails; non-blocking matches the spirit of direct fetch being
-    # a supplement to Gmail rather than a hard dependency)
+    # MS Graph live connectivity via unified pipeline.py (P1)
     if not quiet:
         try:
             checks.append(check_script_health(
-                "msgraph_fetch.py", ["--health"], severity="P1"
+                "pipeline.py", ["--health", "--source", "outlook_email"], severity="P1"
             ))
             checks.append(check_script_health(
-                "msgraph_calendar_fetch.py", ["--health"], severity="P1"
+                "pipeline.py", ["--health", "--source", "outlook_calendar"], severity="P1"
             ))
         except subprocess.TimeoutExpired:
             checks.append(CheckResult(
                 "MS Graph connectivity", "P1", False,
-                "MS Graph health check timed out (>45s) — Outlook data may be unavailable",
-                fix_hint="Check network or re-run: python scripts/msgraph_fetch.py --health",
+                "MS Graph health check timed out — Outlook data may be unavailable",
+                fix_hint="Check network or re-run: python scripts/pipeline.py --health -s outlook_email",
             ))
 
-    # iCloud live connectivity (P1 — IMAP + CalDAV; optional Apple source)
-    # Only run if iCloud credentials have been set up (Keychain entry present).
+    # iCloud live connectivity via unified pipeline.py (P1)
     if not quiet:
         try:
-            icloud_auth_check = check_script_health(
-                "setup_icloud_auth.py", ["--health"], severity="P1"
-            )
-            checks.append(icloud_auth_check)
-            # Only test individual fetch scripts if auth is OK
-            if icloud_auth_check.passed:
-                checks.append(check_script_health(
-                    "icloud_mail_fetch.py", ["--health"], severity="P1"
-                ))
-                checks.append(check_script_health(
-                    "icloud_calendar_fetch.py", ["--health"], severity="P1"
-                ))
+            checks.append(check_script_health(
+                "pipeline.py", ["--health", "--source", "icloud_email"], severity="P1"
+            ))
+            checks.append(check_script_health(
+                "pipeline.py", ["--health", "--source", "icloud_calendar"], severity="P1"
+            ))
         except subprocess.TimeoutExpired:
             checks.append(CheckResult(
                 "iCloud connectivity", "P1", False,
-                "iCloud health check timed out (>45s) — iCloud data may be unavailable",
-                fix_hint="Check network or re-run: python scripts/setup_icloud_auth.py --health",
+                "iCloud health check timed out — iCloud data may be unavailable",
+                fix_hint="Check network or re-run: python scripts/pipeline.py --health -s icloud_email",
             ))
 
-    # Canvas LMS (P1 — informational only; skip silently if not configured)
-    # Detect configured children by reading user_profile.yaml via profile_loader.
+    # Canvas LMS via pipeline.py (P1 — only if configured)
     _canvas_configured = False
     try:
         import sys as _sys
@@ -869,14 +865,10 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                     _canvas_configured = True
                     break
     except Exception:
-        # Fallback: check legacy hardcoded token paths for backward compatibility
-        _legacy_names = ["parth", "trisha"]
-        _token_dir = Path.home() / ".artha-tokens"
-        if any((_token_dir / f"canvas-token-{n}.json").exists() for n in _legacy_names):
-            _canvas_configured = True
-    if _canvas_configured:
+        pass  # Non-critical — Canvas is an optional connector
+    if _canvas_configured and not quiet:
         checks.append(check_script_health(
-            "canvas_fetch.py", ["--health"], severity="P1"
+            "pipeline.py", ["--health", "--source", "canvas_lms"], severity="P1"
         ))
 
     return checks

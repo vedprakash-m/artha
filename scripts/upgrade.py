@@ -231,6 +231,20 @@ def upgrade(*, check_only: bool = False, force: bool = False, verbose: bool = Fa
 
     _write_stored_version(current_ver)
 
+    # Run state schema migrations if any are pending
+    try:
+        from scripts.migrate_state import apply_migrations, check_needs_migration  # noqa: PLC0415
+        if check_needs_migration():
+            print("[upgrade] State schema migration needed — applying ...")
+            mig_results = apply_migrations(verbose=False)
+            migrated = sum(1 for log in mig_results.values() if "no changes" not in "\n".join(log))
+            if migrated:
+                print(f"[upgrade] ✓ Migrated {migrated} state file(s) to latest schema.")
+    except ImportError:
+        pass  # migrate_state not yet available (first run)
+    except Exception as exc:
+        print(f"[upgrade] WARNING: State migration skipped: {exc}", file=sys.stderr)
+
     if any_error:
         return 2
 

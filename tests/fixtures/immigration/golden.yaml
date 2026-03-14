@@ -1,0 +1,24 @@
+---
+domain: immigration
+schema_version: "1.0"
+extraction_signals:
+  - signal: uscis_receipt_number
+    value: "MSC2690000001"
+    source_id: imm_001
+    required: true
+  - signal: form_type
+    value: "I-485"
+    source_id: imm_002
+    required: true
+  - signal: h1b_approved
+    keywords: ["H-1B", "approved"]
+    source_id: imm_004
+    required: true
+  - signal: h1b_expiry
+    keywords: ["October 1, 2028"]
+    source_id: imm_004
+    required: true
+
+routing_domain: immigration
+alert_level_expected: green  # Active cases, no urgent deadlines
+

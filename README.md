@@ -17,15 +17,34 @@ Artha is an open-source **Personal Intelligence OS** — a structured system tha
 
 Instead of starting every AI conversation from scratch, Artha:
 
-- **Maintains structured state** across 18 life domains in plain Markdown files
+- **Maintains structured state** across 24 life domains in plain Markdown files
 - **Runs a daily catch-up** that processes your email, calendar, and data sources into an actionable briefing
-- **Unified data pipeline** — pluggable connectors (Gmail, Outlook, Google Calendar, iCloud, CalDAV, Canvas LMS, OneNote) pull data through a single `pipeline.py` orchestrator
+- **Unified data pipeline** — pluggable connectors (Gmail, Outlook, Google Calendar, iCloud, CalDAV, Canvas LMS, OneNote, RSS) pull data through a single `pipeline.py` orchestrator
 - **Guards your privacy** — three-layer PII defense screens all outbound AI queries before they leave your machine
 - **Encrypts sensitive state** (health, finance, immigration) with `age` encryption at rest
-- **Runs autonomous skills** (property tax, weather, vehicle recalls, visa bulletin, immigration status) on a schedule
+- **Runs autonomous skills** (property tax, weather, vehicle recalls, visa bulletin, passport expiry, subscription monitor) on a schedule
 - **Tracks open action items** and syncs them to Microsoft To Do
+- **Household-aware** — adapts briefings and active domains to your household type (single, couple, family, roommates) and tenure (owner vs. renter)
 - **Telegram conversational bridge** — always-on mobile interface with 45+ command aliases, multi-LLM Q&A (Claude → Gemini → Copilot failover), ensemble mode, and write commands — all from your phone
 - **Works cross-platform** — macOS, Windows, Linux — with a pure-Python implementation
+
+---
+
+## Supported Environments
+
+Artha runs inside an AI CLI — the CLI is the runtime. These are the officially supported environments:
+
+| Environment | Status | Connectors | Vault | Notes |
+|---|---|---|---|---|
+| **Claude Code** (local terminal) | ✅ Full support | All | System keyring | macOS, Windows, Linux |
+| **Claude Cowork** (sandbox VM) | ✅ Supported | Gmail + Google Calendar only | `ARTHA_AGE_KEY` env var | MS Graph + iCloud blocked by VM proxy |
+| **Gemini CLI** (local terminal) | ✅ Full support | All | System keyring | macOS, Windows, Linux |
+| **GitHub Copilot** (VS Code) | ✅ Full support | All | System keyring | macOS, Windows, Linux |
+| **Telegram bridge** (background service) | ✅ Full support | All | System keyring | Always-on mobile interface |
+
+**Not supported:** Docker containers, bare SSH sessions without an AI CLI.
+
+> Cowork VM limitations are handled gracefully — blocked connectors are noted in the briefing footer with a prompt to re-run from a local terminal for full data. See [docs/supported-clis.md](docs/supported-clis.md) for detailed setup instructions per environment.
 
 ---
 
@@ -178,11 +197,13 @@ All personal configuration lives in one file: `config/user_profile.yaml`
 | What | Where |
 |---|---|
 | Identity, family, location | `user_profile.yaml` |
+| Household type + tenure | `user_profile.yaml → household` |
 | Integrations (Gmail, Outlook, iCloud) | `user_profile.yaml → integrations` |
 | Feature flags / capabilities | `user_profile.yaml → capabilities` |
 | Encryption key | `user_profile.yaml → encryption` |
 | API budget | `user_profile.yaml → budget` |
 | To Do list IDs | `user_profile.yaml → integrations.microsoft_graph.todo_lists` |
+| Domain manifest (24 domains, lazy-load flags) | `config/domain_registry.yaml` |
 | Connector routing | `config/connectors.yaml` + `config/routing.yaml` |
 | Skill scheduling | `config/skills.yaml` |
 
@@ -232,7 +253,8 @@ config/
   Artha.identity.md       ← Personal identity block (auto-generated, gitignored)
   user_profile.yaml       ← Your personal config (gitignored)
   user_profile.example.yaml ← Template for new users
-  user_profile.schema.json  ← JSON Schema for profile validation
+  user_profile.schema.json  ← JSON Schema for profile validation (includes household type enum)
+  domain_registry.yaml    ← Authoritative manifest for all 24 domains (lazy-load flags, household filters)
   connectors.yaml         ← Connector configuration
   skills.yaml             ← Skill scheduler configuration
   actions.yaml            ← Action type definitions
@@ -250,9 +272,18 @@ scripts/
   foundation.py           ← Shared constants, crypto primitives, _config dict (leaf — no internal deps)
   vault.py                ← Session lifecycle: age encrypt/decrypt/lock/status (imports foundation + backup lazily)
   backup.py               ← GFS archive engine: standalone CLI (snapshot/restore/validate/install/export-key/import-key)
-  profile_loader.py       ← Profile access API (all scripts use this)
+  profile_loader.py       ← Profile access API + domain registry + household type functions
   skill_runner.py         ← Autonomous background skill scheduler
   todo_sync.py            ← Microsoft To Do synchronization
+  migrate_state.py        ← YAML front-matter migration DSL (AddField/RenameField/DeprecateField)
+  vault_guard.py          ← Vault state pre-read validator (blocks reads of locked sensitive files)
+  dashboard_view.py       ← /dashboard script-backed renderer (--format flash|standard|digest)
+  domain_view.py          ← /domain script-backed renderer
+  status_view.py          ← /status script-backed renderer (health-check stats, run history)
+  goals_view.py           ← /goals script-backed renderer (scorecard table, progress bars)
+  items_view.py           ← /items script-backed renderer (priority groups, --quick filter)
+  scorecard_view.py       ← /scorecard script-backed renderer (5-dimension weekly scorecard)
+  diff_view.py            ← /diff script-backed renderer
 
   connectors/             ← Pluggable data source handlers
     google_email.py       ← Gmail via Google API
@@ -263,6 +294,7 @@ scripts/
     caldav_calendar.py    ← CalDAV calendar
     canvas_lms.py         ← Canvas LMS for school grades
     onenote.py            ← OneNote via Microsoft Graph
+    rss_feed.py           ← RSS 2.0 / Atom 1.0 feed connector (stdlib only)
 
   skills/                 ← Autonomous data-pull skills
     uscis_status.py       ← USCIS case status tracking
@@ -270,6 +302,8 @@ scripts/
     property_tax.py       ← Property tax deadline reminders
     noaa_weather.py       ← Weather for outdoor planning
     nhtsa_recalls.py      ← Vehicle recall monitoring
+    passport_expiry.py    ← Passport expiry alerts (180/90/60 days; requires vault)
+    subscription_monitor.py ← Subscription price change + trial-to-paid detection
 
   actions/                ← Action execution handlers (extensible)
   channels/               ← Output channel adapters (Telegram, etc.)
@@ -287,8 +321,8 @@ state/
   *.md                    ← Your live domain state (gitignored)
   *.md.age                ← Encrypted sensitive state (gitignored)
 
-prompts/                  ← Domain-specific reasoning prompts (18 domains)
-tests/                    ← pytest test suite (241+ test cases)
+prompts/                  ← Domain-specific reasoning prompts (24 domains; includes pets, renter overlay)
+tests/                    ← pytest test suite (426+ test cases)
 specs/                    ← Product, technical, and UX specifications
 docs/                     ← User-facing documentation
 briefings/                ← Generated daily briefings (gitignored)

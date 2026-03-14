@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v4.4
+## Product Requirements Document · v5.2
 
 **Author:** [Author]
 **Date:** March 14, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v5.2 | 2026-03 | Phase 1b capabilities: domain registry, household types, renter mode, pet reminders, passport skill, subscription monitor, RSS connector, offline/degraded mode, performance telemetry, view scripts (F15.60–F15.71) |
 | v5.1 | 2026-03 | ACB v2.1: Multi-LLM Q&A via Telegram, ensemble mode, HCI command redesign, write commands |
 | v5.0 | 2026-03 | Channel Bridge (ACB v2.0): Telegram push + interactive listener |
 | v4.4 | 2026-03 | Three-module arch: `foundation.py` + `backup.py` standalone CLI; key export/import; `--data-only` restore |
@@ -788,6 +789,18 @@ Hey — quick check-in on your week:
 | F15.57 | **Comprehensive Backup Registry** *(v4.2 — P0)* — Extends GFS backup from encrypted state only to **all 31 state files + 4 config files**, enabling a full fresh-install restore from backup alone. **Registry:** declared in `config/user_profile.yaml → backup` section — authoritative, user-editable (users without certain domains simply remove entries). **Three source types:** (1) `state_encrypted` — `.age` files copied directly; (2) `state_plain` — plain `.md` files encrypted on-the-fly by `age_encrypt` before storing; (3) `config` — config files encrypted on-the-fly. **Config files protected by default:** `user_profile.yaml`, `routing.yaml`, `connectors.yaml`, `artha_config.yaml`. **Fresh-install restore:** `backup.py restore --date YYYY-MM-DD [--dry-run]` (or `vault.py restore` — forwards to `backup.py` for backward compatibility) — decrypts and writes all backup files back to their original locations; SHA-256 verified before each write; `--dry-run` previews without writing. **New manifest fields:** `source_type` and `restore_path` per entry. | P0 |
 | F15.58 | **ZIP-per-snapshot Backup Architecture** *(v4.3 — P0)* — Upgrades GFS storage from individual `.age` files to a single **ZIP archive per tier-day** containing all registered files. **Location:** `backups/` at project root (moved from `state/backups/`). **Format:** `backups/{tier}/YYYY-MM-DD.zip` — self-contained with an internal `manifest.json` (SHA-256, source_type, restore_path per file). **Portability:** a single ZIP is the complete snapshot for that date — easy to transfer between machines. **Two-tier manifests:** outer `backups/manifest.json` catalogs ZIPs; internal `manifest.json` inside each ZIP enables restore without catalog access. **New command:** `vault.py install <zipfile> [--dry-run]` — restores all files from an explicit ZIP path for cold-start on a new machine, reading the internal manifest directly. **Module separation (v4.4):** GFS engine extracted to `backup.py` (standalone CLI); shared primitives to `foundation.py`; `vault.py` retains session lifecycle only. See §8.5.2 for three-module architecture. | P0 |
 | F15.59 | **Key Export/Import for Cold-Start Recovery** *(v4.4 — P0)* — Enables disaster recovery on a new machine by providing a secure workflow to export and import the age private key. **Export:** `python scripts/backup.py export-key` — prints the raw AGE-SECRET-KEY-… to stdout for storage in a password manager or fire-safe printout. **Import:** `python scripts/backup.py import-key` — reads key from stdin (paste + Ctrl-D), stores it in the system keychain (macOS Keychain / Windows Credential Manager). **Cold-start workflow:** install age → run `backup.py import-key` → run `backup.py preflight` → run `backup.py install <zip>`. **`foundation.py`:** shared leaf module (`_config` dict, path constants, `log()`/`die()`, key management, crypto primitives) extracted from `vault.py` to enable single-point test patching via `monkeypatch.setitem(foundation._config, …)`. | P0 |
+| F15.60 | **Domain Registry + Lazy Loading** *(v5.2 — P0)* — `config/domain_registry.yaml` is the authoritative manifest for all 24 domains. Each entry declares sensitivity, `always_load` flag, phase, prompt/state file paths, `requires_vault`, `household_types` filter, routing keywords, and alert thresholds. **Lazy loading:** 6 always-load domains (finance, immigration, health, calendar, comms, goals) load every session; 18+ remaining domains load only if an email routes to them — reducing context by >30% on quiet days. `profile_loader.py` exposes `domain_registry()`, `available_domains(household_type)`, and `toggle_domain(name, enabled)`. | P0 |
+| F15.61 | **State Schema Migration System** *(v5.2 — P1)* — `scripts/migrate_state.py` provides a migration DSL for YAML front-matter in state files. Operations: `AddField`, `RenameField`, `DeprecateField`. Migration registry maps `(from_version, to_version)` tuples to operation lists. `apply_migrations()` is called automatically by `upgrade.py`. CLI supports `--dry-run`, `--check`, `--verbose`. | P1 |
+| F15.62 | **Household Type + Single-Person Mode** *(v5.2 — P1)* — `user_profile.schema.json` adds a `household` section: `type` enum (single/couple/family/multi_gen/roommates), `tenure` (owner/renter/other), `adults` count, `single_person_mode` boolean. When `type=single`, briefings suppress family/spouse/kids language. Each domain in the registry declares `household_types` to filter irrelevant domains. | P1 |
+| F15.63 | **Renter Mode** *(v5.2 — P1)* — When `household.tenure=renter`, the home domain `## Renter-Overlay` section in `prompts/home.md` activates. Suppresses: mortgage, property tax, HOA. Adds: rent tracking (alert ≤5 days), lease expiry alerts (120/90/60/30 days), renter's insurance, maintenance requests. Renter-specific YAML state schema and briefing format included. | P1 |
+| F15.64 | **`/domains` Command** *(v5.2 — P1)* — Lists all 24 domains with enabled/disabled status, sensitivity, and household filter. Sub-commands: `/domains enable <name>`, `/domains disable <name>` (no YAML editing required), `/domains info <name>`. Changes take effect on next catch-up. Backed by `profile_loader.available_domains()` and `toggle_domain()`. | P1 |
+| F15.65 | **Pet Reminders — Phase 1** *(v5.2 — P1)* — `prompts/pets.md` delivers date-driven pet care reminders from profile fields every catch-up: vaccination due, parasite prevention refill, annual wellness exam, license renewal. Alert tiers: 🔴 overdue / 🟠 within 7d / 🟡 within 30d. Multi-pet YAML state template at `state/templates/pets.md`. Full email-routing domain deferred to Phase 2. | P1 |
+| F15.66 | **Passport Expiry Skill** *(v5.2 — P1)* — `scripts/skills/passport_expiry.py` reads decrypted `state/immigration.md`, regex-parses passport expiry dates for all family members, and fires alerts at 180/90/60 days. `requires_vault: true`. Alert levels: ok / standard / urgent / critical. | P1 |
+| F15.67 | **Subscription Price Watcher** *(v5.2 — P1)* — `scripts/skills/subscription_monitor.py` reads `state/digital.md`, compares against a session cache, and alerts on price increases >1% and trial-to-paid conversions within 7 days. Extends F1.5 and F12.1 with proactive detection. | P1 |
+| F15.68 | **RSS Feed Connector** *(v5.2 — P2)* — `scripts/connectors/rss_feed.py` adds RSS 2.0 / Atom 1.0 support (stdlib only). Configured via `connectors.yaml::rss_feed.fetch.feeds`. Useful for regulatory feeds (USCIS, TSA). Disabled by default. | P2 |
+| F15.69 | **Offline/Degraded Mode** *(v5.2 — P1)* — `Artha.core.md` Step 4e classifies each session as `normal`, `degraded`, or `offline`. Dedicated briefing templates: §8.10 offline (state-only, date-driven skills still run), §8.11 degraded (data-gaps section + recovery suggestions). Session mode logged to `state/health-check.md`. | P1 |
+| F15.70 | **Performance Telemetry + Per-Domain Hit Rate** *(v5.2 — P1)* — `state/health-check.md` run entries extended with: `session_mode`, `domains_loaded`, `domains_skipped`, `domain_hits`, `connector_timing_ms`, `skill_timing_ms`, `domain_hit_rates`. Hit rate <60% after ≥10 catch-ups surfaces as ⚠ in `/health`. Addresses R16 (domain extraction quality degradation under context pressure). | P1 |
+| F15.71 | **Script-Backed View Commands** *(v5.2 — P1)* — Four new deterministic view scripts: `status_view.py` (health-check stats + run history), `goals_view.py` (scorecard table with progress bars), `items_view.py` (priority-grouped with `--quick` and `--domain` filters), `scorecard_view.py` (5-dimension weekly scorecard from health-check + goals + open-items). All accept `--format flash|standard|digest`. No vault required (plain state files only). | P1 |
 
 ---
 
@@ -1282,6 +1295,29 @@ Domain prompts ARE the adapter layer — each defines extraction schema for its 
 ### 9.8 — Tiered Context Architecture *(v3.8)*
 
 Four loading tiers based on domain activity: **Always** (health-check, open_items, memory, goals — ~8K fixed), **Active** (domains with new data — full load), **Reference** (cross-referenced but no new data — YAML frontmatter only, ~500 tokens), **Archive** (>30 days inactive — skip). On-demand queries bypass tiers. Expected savings: 30-40% token reduction on typical catch-ups (5-7 active domains of 18).
+
+### 9.9 — Supported Execution Environments
+
+Artha runs inside an AI CLI — the CLI **is** the runtime. The table below defines the officially supported environments and their capability tiers.
+
+| Environment | OS | Vault Encryption | Connectors | Watchdog | Status |
+|---|---|---|---|---|---|
+| **Claude Code (local terminal)** | macOS, Windows, Linux | ✅ Full (system keyring) | ✅ All | ✅ LaunchAgent / Task Scheduler | **Full support** |
+| **Claude Cowork (sandbox VM)** | Linux | ✅ Env-var fallback (`ARTHA_AGE_KEY`) | ⚠ Gmail + Google Calendar only (MS Graph, iCloud blocked by VM proxy) | ❌ Not needed (ephemeral VM) | **Supported — reduced connectors** |
+| **Gemini CLI (local terminal)** | macOS, Windows, Linux | ✅ Full (system keyring) | ✅ All | ✅ LaunchAgent / Task Scheduler | **Full support** |
+| **GitHub Copilot (VS Code)** | macOS, Windows, Linux | ✅ Full (system keyring) | ✅ All | ✅ LaunchAgent / Task Scheduler | **Full support** |
+| **Telegram channel bridge** | macOS, Windows, Linux | ✅ System keyring + env-var fallback | ✅ All (runs as background service) | N/A (daemon, not LLM session) | **Full support** |
+
+**Not supported:**
+
+| Environment | Reason |
+|---|---|
+| Docker container | No system keychain, no OneDrive sync, no AI CLI runtime inside container. Cowork VM covers the cloud sandbox use case. |
+| Bare SSH (no AI CLI) | Artha requires an AI CLI as its runtime — SSH alone provides no LLM reasoning layer. |
+
+**Cowork VM constraints** are documented in `config/Artha.core.md` (lines 28-33) and handled gracefully: blocked connectors are noted in the briefing footer with "run catch-up from local terminal for full data." The vault uses `ARTHA_AGE_KEY` environment variable as a credential fallback when system keyring is unavailable.
+
+> **Policy:** When adding or changing environment support, update this table, the README "Supported Environments" section, and `docs/supported-clis.md` in the same commit.
 
 ---
 
