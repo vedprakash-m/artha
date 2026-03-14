@@ -695,6 +695,70 @@ def check_dep_freshness() -> CheckResult:
     return CheckResult("venv dependencies", "P1", True, f"All {len(_REQUIRED_DEPS)} core deps found ✓")
 
 
+def check_channel_health() -> CheckResult:
+    """P1: Verify enabled channel adapters (Telegram, etc.) are reachable.
+
+    Non-blocking: gracefully skipped when config/channels.yaml does not exist
+    or no channels are enabled, so the catch-up is never blocked.
+    """
+    config_path = Path(os.path.join(ARTHA_DIR, "config", "channels.yaml"))
+    if not config_path.exists():
+        return CheckResult(
+            "channel health", "P1", True,
+            "channels.yaml not found — channel push disabled ✓",
+        )
+    try:
+        sys.path.insert(0, os.path.join(ARTHA_DIR, "scripts"))
+        from scripts.channels.registry import (
+            load_channels_config,
+            iter_enabled_channels,
+            create_adapter_from_config,
+        )
+    except ImportError:
+        return CheckResult(
+            "channel health", "P1", True,
+            "scripts.channels not importable — channel health skipped ✓",
+        )
+    try:
+        config = load_channels_config()
+    except Exception as exc:
+        return CheckResult(
+            "channel health", "P1", False,
+            f"channels.yaml parse error: {exc}",
+            fix_hint="Validate YAML syntax in config/channels.yaml",
+        )
+    enabled = list(iter_enabled_channels(config))
+    if not enabled:
+        return CheckResult("channel health", "P1", True, "No channels enabled – skipped ✓")
+    unhealthy: list[str] = []
+    for ch_name, ch_cfg in enabled:
+        try:
+            adapter = create_adapter_from_config(ch_name, ch_cfg)
+            if not adapter.health_check():
+                unhealthy.append(ch_name)
+                _healthy = False
+            else:
+                _healthy = True
+        except Exception:
+            unhealthy.append(ch_name)
+            _healthy = False
+        try:
+            from scripts.lib.common import update_channel_health_md
+            update_channel_health_md(ch_name, _healthy)
+        except Exception:
+            pass  # Non-critical
+    if unhealthy:
+        return CheckResult(
+            "channel health", "P1", False,
+            f"Unhealthy channels: {unhealthy} — channel push will be degraded",
+            fix_hint="python scripts/setup_channel.py --health",
+        )
+    return CheckResult(
+        "channel health", "P1", True,
+        f"All {len(enabled)} channel(s) healthy ✓",
+    )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -731,6 +795,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — Channel health (v5.0 — non-blocking) ─────────────────────────
+    checks.append(check_channel_health())
 
     # ── P1 — Dependency freshness ─────────────────────────────────────────
     checks.append(check_dep_freshness())

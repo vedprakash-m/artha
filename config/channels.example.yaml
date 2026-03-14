@@ -1,0 +1,162 @@
+# Artha Channel Bridge Registry
+# Copy to channels.yaml and configure your channels.
+# channels.yaml is GITIGNORED — it contains recipient IDs (PII).
+# This example file is safe to commit and distribute.
+#
+# Setup: python scripts/setup_channel.py --channel telegram
+# Docs:  docs/channels.md
+#
+# Security notes:
+#   - Bot tokens are NEVER stored here; use keyring (credential_key reference only)
+#   - Recipient IDs (chat_id, user IDs) ARE PII — do not share this file when configured
+#   - channels.yaml is gitignored by default; keep it that way
+#
+# Ref: specs/conversational-bridge.md §5
+schema_version: "1.0"
+
+# ── Global defaults ──────────────────────────────────────────────────────────
+defaults:
+  # Apply pii_guard.filter_text() to ALL outbound messages (full | partial | none)
+  # WARNING: "partial" and "none" are reserved for future use; only "full" is implemented.
+  redaction: full
+
+  # Briefing format for post-catch-up push (flash | digest)
+  push_format: flash
+
+  # Maximum characters per push message (platform-safe default: 500)
+  max_push_length: 500
+
+  # Master kill switch for post-catch-up push. Must be explicitly set to true.
+  # Set false to disable ALL push without removing channel config.
+  push_enabled: false
+
+  # Hostname of the machine that runs the interactive listener (Layer 2).
+  # Only the machine whose socket.gethostname() matches this value will start
+  # the listener. Empty string = any host (safe for single-machine setups only).
+  # Set via: python scripts/setup_channel.py --install-service
+  # Change via: python scripts/setup_channel.py --set-listener-host
+  listener_host: ""
+
+# ── Channel definitions ──────────────────────────────────────────────────────
+channels:
+  # ── Telegram ────────────────────────────────────────────────────────────
+  telegram:
+    enabled: false
+    adapter: "scripts/channels/telegram.py"
+
+    auth:
+      method: keyring
+      # Name of the keyring entry that stores the bot token.
+      # The token itself is NEVER stored in this file.
+      # To set the token: python scripts/setup_channel.py --channel telegram
+      credential_key: "artha-telegram-bot-token"
+      setup_script: "scripts/setup_channel.py --channel telegram"
+
+    # Recipients: each has a platform-specific ID and an access scope.
+    # Recipient IDs are PII — this is why channels.yaml is gitignored.
+    # access_scope controls what domains are included in push/response:
+    #   full     — all domains, all alerts (use only for the primary user)
+    #   family   — kids, calendar, home, shopping, goals, learning, social, vehicle, comms
+    #              (excludes: immigration, finance, estate, insurance, employment, digital, boundary)
+    #   standard — calendar and tasks only
+    recipients:
+      primary:
+        id: ""                  # Telegram chat_id (integer, set by setup wizard)
+        name: "Primary"         # Human-readable name for audit logs
+        access_scope: full      # full | family | standard
+        push: true              # Receives post-catch-up push (Layer 1)
+        interactive: true       # Can send commands to listener (Layer 2)
+      # Uncomment and configure to add a family member:
+      # spouse:
+      #   id: ""
+      #   name: "Spouse"
+      #   access_scope: family   # No immigration or finance details
+      #   push: true
+      #   interactive: true
+
+    features:
+      push: true          # Layer 1: post-catch-up push
+      interactive: true   # Layer 2: command listener
+      documents: true     # Allow send_document() (standard sensitivity only)
+      buttons: true       # Inline keyboard buttons in push messages
+
+    health_check: true    # Verify token on preflight and listener startup
+
+    retry:
+      max_retries: 3
+      base_delay: 2.0     # Seconds before first retry
+      max_delay: 30.0     # Cap per-attempt wait
+
+  # ── Discord ─────────────────────────────────────────────────────────────
+  discord:
+    enabled: false
+    adapter: "scripts/channels/discord.py"
+    auth:
+      method: keyring
+      credential_key: "artha-discord-bot-token"
+      setup_script: "scripts/setup_channel.py --channel discord"
+    recipients:
+      primary:
+        id: ""
+        name: "Primary"
+        access_scope: full
+        push: true
+        interactive: true
+    features:
+      push: true
+      interactive: true
+      documents: true
+      buttons: true
+    health_check: true
+    retry:
+      max_retries: 3
+      base_delay: 2.0
+      max_delay: 30.0
+
+  # ── Slack ───────────────────────────────────────────────────────────────
+  slack:
+    enabled: false
+    adapter: "scripts/channels/slack.py"
+    auth:
+      method: keyring
+      credential_key: "artha-slack-bot-token"
+      setup_script: "scripts/setup_channel.py --channel slack"
+    recipients:
+      primary:
+        id: ""
+        name: "Primary"
+        access_scope: full
+        push: true
+        interactive: false   # Slack interactive listener not yet implemented
+    features:
+      push: true
+      interactive: false
+      documents: false
+      buttons: false
+    health_check: true
+    retry:
+      max_retries: 3
+      base_delay: 2.0
+      max_delay: 30.0
+
+  # ── Template for community-contributed adapters ──────────────────────────
+  # my_channel:
+  #   enabled: false
+  #   adapter: "scripts/channels/my_channel.py"    # MUST be under scripts/channels/
+  #   auth:
+  #     method: keyring
+  #     credential_key: "artha-my-channel-token"
+  #     setup_script: "scripts/setup_channel.py --channel my_channel"
+  #   recipients:
+  #     primary:
+  #       id: ""
+  #       name: "Primary"
+  #       access_scope: full
+  #       push: true
+  #       interactive: false
+  #   features:
+  #     push: true
+  #     interactive: false
+  #     documents: false
+  #     buttons: false
+  #   health_check: true
