@@ -10,7 +10,35 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ## [Unreleased]
 
 ### Added
-- **ACB v2.1 — Conversational Bridge overhaul:**
+- **Novice UX deep audit round 2 — 15 issues resolved across 3 commits** (PRD v5.4, Tech Spec v3.1, F15.78–F15.87):
+  - Quick Start time estimate updated to `~30 minutes` with per-step breakdown
+  - Demo mode callout added immediately after `pip install` (before Step 2)
+  - `generate_identity._validate()` now rejects example placeholder values
+    (`"Alex Smith"`, `"alex.smith@gmail.com"`) with actionable error messages
+  - `user_profile.example.yaml` gains explicit `household:` section
+    (type, tenure, adults) matching domain registry filter contract
+  - `vault.py` now accepts `--help`/`-h`/`help` → prints usage, exits 0;
+    unknown command now writes to stderr
+  - Step 6 preflight note replaced with expected-results table (4 checks,
+    fresh-install state, when-it-resolves)
+  - "Which AI CLI?" callout updated with per-tool free/paid tier details
+  - Google "app isn't verified" callout expanded with full safety explanation
+  - `docs/security.md` §6 Mosaic PII Risk added (cultural_context + immigration
+    = demographic fingerprint; guidance for forkers)
+  - 17 new tests (2 placeholder guard, 5 vault help/usage, 10 across round-2
+    batches); total 435 passed
+
+### Changed
+- venv creation wrapped in OS `<details>` block: `python3` (macOS/Linux) and
+  `python` (Windows) — fixes hard failure on Windows PATH
+- `git config core.hooksPath .githooks` moved from main bash block to
+  "Contributors/forkers only" blockquote
+- Preflight `NO-GO` caveat callout moved to appear *before* the command
+- `_print_usage()` extracted in `vault.py` as shared helper; no-args exits 1,
+  help exits 0, unknown command to stderr
+
+---
+
   - Multi-LLM Q&A via Telegram: free-form questions routed through
     Claude → Gemini → Copilot failover chain with workspace context
   - Ensemble mode (`aa` prefix): all CLIs called in parallel, consolidated
