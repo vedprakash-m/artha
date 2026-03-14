@@ -150,7 +150,7 @@ python scripts/vault.py decrypt
 If `age` is not installed or key not in credential store, log a warning but continue — state files may be in plaintext during initial setup.
 
 ### Step 1b — Pull To Do completion status
-If `config/artha_config.yaml` exists with `todo_lists:` and `~/.artha-tokens/msgraph-token.json` is present:
+If `config/artha_config.yaml` exists with `todo_lists:` and `.tokens/msgraph-token.json` is present:
 ```bash
 python scripts/todo_sync.py --pull
 ```
@@ -255,7 +255,7 @@ if workiq_ready:
     # Query variant based on context pressure:
     #   green/yellow → 7-day: TODAY through TODAY+6
     #   red/critical → 2-day: TODAY through TODAY+1
-    # Read query_variant from config/settings.md → workiq.query_variant (default: auto)
+    # Read query_variant from user_profile.yaml → integrations.workiq.query_variant (default: auto)
 
     query = "List all my calendar events from {YYYY-MM-DD} through {YYYY-MM-DD+N}. " \
             "Format each event as one line: " \
@@ -269,7 +269,7 @@ if workiq_ready:
     # If 0 events from non-empty response → retry once with explicit format reminder
     # If still 0 → log "format_change_warning" to state/audit.md, skip WorkIQ this session
 
-    # Apply partial redaction from config/settings.md → workiq.redact_keywords:
+    # Apply partial redaction from user_profile.yaml → integrations.workiq.redact_keywords:
     # For each event title, replace matched keyword SUBSTRINGS with [REDACTED]
     # Preserve meeting type words (Review, Standup, Interview) for trigger classification
     # Example: "Project Cobalt Review" → "[REDACTED] Review"
@@ -706,7 +706,7 @@ density:
 **8q — Meeting-triggered Open Items (v2.2):**
 If WorkIQ data was fetched, scan for critical meeting types:
 ```
-oi_triggers = config/settings.md → workiq.oi_trigger_keywords
+oi_triggers = user_profile.yaml → integrations.workiq.oi_trigger_keywords
 # Default: ["Interview", "Performance Review", "Perf Review", "Calibration", "360 Review"]
 
 for each work_event:
@@ -798,7 +798,7 @@ The `--archive` flag saves the briefing to `briefings/YYYY-MM-DD.md` automatical
 Use the sensitivity-filtered format for sensitive domains (§8.5). The script handles markdown → HTML conversion automatically. Confirm with `status: sent` in the JSON output before logging success.
 
 ### Step 15 — Push new items to Microsoft To Do
-If MS Graph OAuth is configured (`~/.artha-tokens/msgraph-token.json` exists):
+If MS Graph OAuth is configured (`.tokens/msgraph-token.json` exists):
 ```bash
 python scripts/todo_sync.py
 ```
@@ -1120,7 +1120,7 @@ Route tasks to the appropriate LLM based on capability and cost.
 
 ## §7 Capabilities
 
-Capabilities are configured in `config/user_profile.yaml` under `integrations:` and associated domain sections. Legacy `config/settings.md` is documentation-only — `user_profile.yaml` is the sole machine-readable source of truth.
+Capabilities are configured in `config/user_profile.yaml` under `integrations:` and associated domain sections. `user_profile.yaml` is the sole machine-readable source of truth.
 
 At the start of each catch-up, verify enabled integrations via `preflight.py` and skip disabled features gracefully with a note in the briefing footer. If a capability is enabled in `user_profile.yaml` but its auth/token is missing, surface a warning — never fail silently.
 
