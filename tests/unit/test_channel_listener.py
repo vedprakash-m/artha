@@ -280,6 +280,13 @@ class TestStalenessAppended:
         """Every listener response must end with 'Last updated: ... ago'."""
         monkeypatch.setattr(cl, "_AUDIT_LOG", tmp_path / "audit.md")
         monkeypatch.setattr(cl, "_STATE_DIR", tmp_path)
+        # _READABLE_STATE_FILES is built at import time; patch it too so the
+        # tmp_path file is found in CI (where state/ doesn't exist).
+        monkeypatch.setattr(cl, "_READABLE_STATE_FILES", {
+            **cl._READABLE_STATE_FILES,
+            "health_check": tmp_path / "health-check.md",
+            "open_items": tmp_path / "open_items.md",
+        })
 
         # Create a minimal health-check.md so the /status handler can read it
         (tmp_path / "health-check.md").write_text("System OK\n", encoding="utf-8")
@@ -313,6 +320,11 @@ class TestPiiRedactionOutbound:
         """pii_guard.filter_text() must be invoked before every adapter.send_message()."""
         monkeypatch.setattr(cl, "_AUDIT_LOG", tmp_path / "audit.md")
         monkeypatch.setattr(cl, "_STATE_DIR", tmp_path)
+        monkeypatch.setattr(cl, "_READABLE_STATE_FILES", {
+            **cl._READABLE_STATE_FILES,
+            "health_check": tmp_path / "health-check.md",
+            "open_items": tmp_path / "open_items.md",
+        })
         (tmp_path / "health-check.md").write_text("OK\n", encoding="utf-8")
 
         pii_calls: list[str] = []
