@@ -22,6 +22,9 @@ source ~/.artha-venvs/.venv/bin/activate
 pip install -r scripts/requirements.txt
 pip install -e ".[dev]"
 
+# Enable the PII pre-commit hook (prevents accidental PII commits)
+git config core.hooksPath .githooks
+
 # Copy the example profile
 cp config/user_profile.example.yaml config/user_profile.yaml
 # Edit config/user_profile.yaml with your details, or run /bootstrap in your AI CLI

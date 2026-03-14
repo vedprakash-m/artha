@@ -60,11 +60,9 @@ ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "La
 
 | File | Purpose | Sensitivity | Encrypted |
 |------|---------|-------------|-----------|
-| `CLAUDE.md` | Auto-loaded by Claude Code — delegates to config/Artha.md | none | no |
-| `config/Artha.md` | Full operating instructions (466 lines, 11 sections) | internal | no |
-| `config/settings.md` | Capabilities, feature flags, budget, encryption | internal | no |
-| `config/contacts.md` | Family/professional contacts with phone numbers | high | yes (.age) |
-| `config/occasions.md` | Annual occasion calendar (MOVED to state/) | high | yes (.age) |
+| `config/CLAUDE.md` | Auto-loaded by Claude Code — delegates to config/Artha.md | none | no |
+| `config/Artha.md` | Full operating instructions (assembled from core + identity) | internal | no |
+| `config/user_profile.yaml` | Personal configuration — gitignored, never committed | high | no |
 | `config/registry.md` | This file — component manifest | internal | no |
 
 ---
@@ -163,28 +161,26 @@ sprints:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| `age` encryption | ✅ Installed (v1.3.1) | `brew install age` — done |
-| age keypair | ✅ Generated | Private key in Keychain; public key in settings.md |
-| Gmail API (Python) | ⏳ OAuth PENDING | Run `python3 scripts/setup_google_oauth.py` to configure |
-| Calendar API (Python) | ⏳ OAuth PENDING | Run `python3 scripts/setup_google_oauth.py` to configure |
-| `google-api-python-client` | ⏳ Install pending | Run `pip install -r scripts/requirements.txt` |
-| Gemini CLI | ✅ Installed (v0.32.1) | `/opt/homebrew/bin/gemini` — use `-p` flag |
-| Copilot CLI | ✅ Installed (v1.0.2) | `gh copilot suggest "<query>"` |
-| LaunchAgent | ✅ Loaded | `com.artha.vault-watchdog` running |
+| `age` encryption | Required | `brew install age` (macOS) · `winget install FiloSottile.age` (Windows) |
+| age keypair | Required | Private key in system keychain; public key in `user_profile.yaml → encryption.age_recipient` |
+| Gmail API (Python) | Optional | Run `python scripts/setup_google_oauth.py` |
+| Google Calendar API | Optional | Same OAuth flow as Gmail |
+| `google-api-python-client` | Optional | Run `pip install -r scripts/requirements.txt` |
+| AI CLI | Required | Gemini CLI, GitHub Copilot, or Claude Code (one of) |
+| LaunchAgent (macOS) | Optional | `com.artha.vault-watchdog` — auto-encrypt on session crash |
 
 ---
 
 ## Setup Checklist
 
-- [x] `brew install age`
-- [x] `age-keygen` → store private key in Keychain, public key in settings.md
-- [x] Run `vault.sh encrypt` on all sensitive state and config files
-- [x] Install LaunchAgent: `com.artha.vault-watchdog` loaded
-- [ ] Set up Google Cloud project, enable Gmail API + Calendar API
+- [ ] Install `age` encryption tool
+- [ ] Generate age keypair; store private key in keychain; set `encryption.age_recipient` in `user_profile.yaml`
+- [ ] Run `python scripts/vault.py encrypt` on sensitive state files
+- [ ] Enable PII pre-commit hook: `git config core.hooksPath .githooks`
+- [ ] Set up Google Cloud project, enable Gmail API + Google Calendar API
 - [ ] `pip install -r scripts/requirements.txt`
-- [ ] `python3 scripts/setup_google_oauth.py` (stores OAuth tokens in Keychain)
-- [ ] Set `briefing_email` in config/user_profile.yaml
-- [ ] Bootstrap state files with real family data
+- [ ] `python scripts/setup_google_oauth.py` (stores OAuth tokens in `.tokens/`)
+- [ ] Bootstrap state files with your data (`/bootstrap` in an AI session)
 - [ ] Run first `/catch-up` and validate briefing output
 
 ---
