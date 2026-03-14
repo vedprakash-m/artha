@@ -62,15 +62,15 @@ family:
 
 # ─── Location ─────────────────────────────────────────────────────────────────
 location:
-  city: "YourCity"
-  state: "WA"
-  county: "King"
+  city: "Springfield"                    # Replace with your city
+  state: "IL"                            # Replace with your state abbreviation
+  county: "Sangamon"                     # Replace with your county
   country: "US"
-  lat: 47.6740                         # For NOAA weather skill
-  lon: -122.1215
-  timezone: "America/Los_Angeles"
-  property_tax_provider: "king_county" # Used by property_tax skill. See scripts/skills/property_tax.py
-  property_parcel_id: ""               # King County parcel number (optional)
+  lat: 39.7817                           # Replace with your latitude (used by NOAA weather skill)
+  lon: -89.6501                          # Replace with your longitude
+  timezone: "America/Chicago"            # Replace with your timezone — see Continent/City format
+  property_tax_provider: ""              # See scripts/skills/property_tax.py for supported providers
+  property_parcel_id: ""                 # Your county parcel number (optional)
 
 # ─── Domains ──────────────────────────────────────────────────────────────────
 # Set enabled: true for domains you want Artha to actively monitor.
@@ -79,9 +79,10 @@ domains:
   immigration:
     enabled: true
     context: >
-      H-1B holder, EB-2 India priority date 2013-09-01.
+      Example: H-1B holder, EB-2 priority date YYYY-MM-DD.
       Spouse on H-4 with EAD. I-485 pending.
-      # Keep context minimal here — full case details live in state/immigration.md
+      Replace with your actual case details — keep this minimal.
+      Full case details live in state/immigration.md.
   finance:
     enabled: true
     institutions:                      # Add sender domains for your financial institutions
