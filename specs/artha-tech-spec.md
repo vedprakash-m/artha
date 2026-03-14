@@ -1,6 +1,6 @@
 # Artha — Technical Specification
 
-> **Version**: 2.3.0 | **Status**: Active Development | **Date**: March 13, 2026
+> **Version**: 2.6.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v4.1
 
@@ -12,6 +12,7 @@
 |---------|------|---------|
 | v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
 | v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
+| v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
 | v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
 | v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema |
 | v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff` |
@@ -1671,13 +1672,25 @@ For each modified state file:
 
 **Backup retention:** `.md.bak` files are kept until the next successful encrypt cycle. After `vault.sh encrypt` completes without error, `.bak` files are removed. If the backup is older than 7 days, log a warning.
 
-### 8.5.2 GFS Vault Backup *(v2.5 — P0)*
+### 8.5.2 GFS Vault Backup *(v2.6 — P0)*
 
 Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. All backup data is `.age`-encrypted and syncs to OneDrive automatically.
 
+**Three-module architecture (v2.6):**
+
+| Module | Role |
+|---|---|
+| `scripts/foundation.py` | Shared leaf: `_config` dict, path constants, `log()`/`die()`, key management, `age_encrypt`/`age_decrypt` |
+| `scripts/vault.py` | Session lifecycle: decrypt → catch-up → encrypt + GFS trigger |
+| `scripts/backup.py` | GFS archive engine: snapshot, restore, validate, CLI (`backup.py snapshot/status/validate/restore/install/export-key/import-key`) |
+
+**`_config` dict pattern:** All functions access paths via `_config["KEY"]` (e.g., `_config["STATE_DIR"]`), never via frozen module-level aliases. This makes test isolation a single `monkeypatch.setitem(foundation._config, "KEY", temp_path)` per test fixture.
+
+**Trigger:** `vault.py encrypt` — after each successful encrypt cycle, calls `backup_snapshot(registry)` via lazy import from `backup.py`. If count == 0, `_mark_backup_failure()` writes a sentinel to `health-check.md` (non-fatal). Auto-validation triggers inside `backup_snapshot()` if `last_validate` is absent or > 7 days old (wrapped in `try/except SystemExit` — non-fatal).
+
 **Backup scope — full state + config:**
 
-The backup registry is declared in `config/user_profile.yaml → backup` section and is the authoritative source of truth for what is protected. Three source types:
+The backup registry is declared in `config/user_profile.yaml → backup` section. See §8.5.2 v2.4 for the full registry. `load_backup_registry()` in `backup.py` reads this registry; falls back to `SENSITIVE_FILES` if absent.
 
 | source_type | Live location | Backup handling |
 |---|---|---|
@@ -1746,7 +1759,7 @@ Internal archive paths:
 **Restore validation (monthly, mandatory):**
 
 ```bash
-python scripts/vault.py validate-backup
+python scripts/backup.py validate
 ```
 
 Decrypts the most recent backup per domain to a temp directory (live state untouched). Checks in order:
@@ -1758,24 +1771,34 @@ Decrypts the most recent backup per domain to a temp directory (live state untou
 
 Result logged to `audit.md`. `vault.py health` warns if validation is overdue (> 35 days).
 
-**Fresh-install restore:**
-
-A backup ZIP is self-sufficient for rebuilding Artha from scratch on a new machine:
+**Fresh-install restore (cold-start):**
 
 ```bash
+# Import private key on new machine
+python scripts/backup.py import-key
+
 # Preview what would be restored
-python scripts/vault.py restore --date 2026-03-14 --dry-run
+python scripts/backup.py restore --date 2026-03-14 --dry-run
 
 # Restore all files from a specific snapshot in the local catalog
-python scripts/vault.py restore --date 2026-03-14
+python scripts/backup.py restore --date 2026-03-14
 
 # Restore a single domain only
-python scripts/vault.py restore --domain finance
+python scripts/backup.py restore --domain finance
 
 # Install from an explicit ZIP (cold-start on a new machine)
-python scripts/vault.py install /path/to/2026-03-14.zip
-python scripts/vault.py install /path/to/2026-03-14.zip --dry-run
+python scripts/backup.py install /path/to/2026-03-14.zip
+python scripts/backup.py install /path/to/2026-03-14.zip --data-only
 ```
+
+**Key management:**
+
+```bash
+python scripts/backup.py export-key  # print to stdout — store in password manager
+python scripts/backup.py import-key  # read from stdin — paste key, press Ctrl-D
+```
+
+`vault.py` forwards all backup commands for backward compatibility (e.g., `vault.py backup-status` → `backup.py status`).
 
 Restore semantics:
 - `state_encrypted`: backup `.age` file copied back to `state/`
