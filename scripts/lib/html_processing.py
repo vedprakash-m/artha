@@ -86,6 +86,51 @@ def strip_html(html_content: str) -> str:
 # Email footer stripping
 # ---------------------------------------------------------------------------
 
+# Max email body length (chars) — shared across connectors.
+MAX_BODY_CHARS: int = 8_000
+
+# Compiled regex markers for reply-chain / signature detection.
+# Used by connectors to truncate at reply boundaries before the main
+# footer-pattern scan.  Superset of Google, Outlook, and IMAP patterns.
+REPLY_CHAIN_MARKERS: list[re.Pattern] = [
+    re.compile(r"^[-_*]{3,}\s*$", re.MULTILINE),
+    re.compile(r"^On .+wrote:\s*$", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^From:\s+.+\nSent:\s+", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"^-----Original Message-----", re.MULTILINE | re.IGNORECASE),
+    re.compile(r"\nSent from my (iPhone|iPad|Android|Galaxy|Samsung)", re.IGNORECASE),
+    re.compile(r"\nGet Outlook for ", re.IGNORECASE),
+    re.compile(r"\nMicrosoft Teams meeting", re.IGNORECASE),
+    re.compile(r"\nTo unsubscribe .{0,80}\n", re.IGNORECASE),
+    re.compile(r"\nThis (email|message) (was sent|is intended|contains confidential)", re.IGNORECASE),
+]
+
+# Simple lowercase-substring markers for lighter IMAP-style footer detection.
+SIMPLE_FOOTER_MARKERS: list[str] = [
+    "get outlook for ios", "get outlook for android",
+    "sent from my iphone", "sent from my ipad", "sent from my mac",
+    "sent from iphone", "sent from ipad",
+    "unsubscribe", "you received this email because",
+    "to unsubscribe from this list", "privacy policy",
+    "view in browser",
+]
+
+
+def trim_body(text: str, *, max_chars: int = MAX_BODY_CHARS) -> str:
+    """Truncate *text* at reply-chain / footer markers, then hard-cap.
+
+    This is the canonical body-trimming function.  All email connectors
+    should delegate to this instead of defining local copies.
+    """
+    for pattern in REPLY_CHAIN_MARKERS:
+        m = pattern.search(text)
+        if m:
+            text = text[: m.start()].strip()
+            break
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n[... truncated ...]"
+    return text
+
+
 # Patterns that reliably indicate the start of boilerplate/footer content.
 # Ordered by specificity: more specific patterns first.
 _FOOTER_PATTERNS: list[re.Pattern] = [

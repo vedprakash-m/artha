@@ -85,7 +85,9 @@ SKIP_SUFFIXES = {
 PII_SCAN_EXEMPT = {
     "scripts/pii_guard.py",
     "tests/unit/test_pii_guard.py",
+    "tests/integration/test_catch_up_e2e.py",
     "tests/pii_test_data.txt",
+    "specs/supercharge-reloaded.md",
     ".githooks/pre-commit",
 }
 

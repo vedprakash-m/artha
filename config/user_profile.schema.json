@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ArthaOS/artha/config/user_profile.schema.json",
+  "title": "Artha User Profile",
+  "description": "Schema for config/user_profile.yaml — the sole source of truth for identity, integrations, and domain configuration.",
+  "type": "object",
+  "required": ["schema_version", "family", "location"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0",
+      "description": "Profile schema version."
+    },
+    "family": {
+      "type": "object",
+      "required": ["primary_user"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Family surname."
+        },
+        "cultural_context": {
+          "type": "string",
+          "description": "Optional cultural context for richer prompt quality."
+        },
+        "primary_user": {
+          "type": "object",
+          "required": ["name", "emails"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "nickname": { "type": "string" },
+            "role": { "type": "string", "const": "primary" },
+            "emails": {
+              "type": "object",
+              "minProperties": 1,
+              "properties": {
+                "gmail": { "type": "string", "format": "email" },
+                "outlook": { "type": "string" },
+                "icloud": { "type": "string" }
+              },
+              "additionalProperties": { "type": "string" }
+            },
+            "phone": { "type": "string" }
+          }
+        },
+        "spouse": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": { "type": "string" },
+            "role": { "type": "string" },
+            "filtered_briefing": { "type": "boolean" }
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "age": { "type": "integer", "minimum": 0 },
+              "grade": { "type": "string" },
+              "school": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "district": { "type": "string" },
+                  "email_domain": { "type": "string" },
+                  "canvas_url": { "type": "string" },
+                  "canvas_keychain_key": { "type": "string" }
+                }
+              },
+              "milestones": {
+                "type": "object",
+                "properties": {
+                  "college_prep": { "type": "boolean" },
+                  "class_of": { "type": "integer" },
+                  "new_driver": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": ["timezone"],
+      "properties": {
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "county": { "type": "string" },
+        "country": { "type": "string" },
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(America|Europe|Asia|Africa|Pacific|Atlantic|Australia|Indian|Arctic|Antarctica|UTC|GMT)/?"
+        },
+        "property_tax_provider": { "type": "string" },
+        "property_parcel_id": { "type": "string" }
+      }
+    },
+    "domains": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "description": { "type": "string" }
+        }
+      },
+      "properties": {
+        "immigration": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "context": { "type": "string" },
+            "path": { "type": "string" },
+            "origin_country": { "type": "string" }
+          }
+        },
+        "finance": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "institutions": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "alert_thresholds": {
+              "type": "object",
+              "properties": {
+                "bill_due_days": { "type": "integer", "minimum": 1 },
+                "low_balance_usd": { "type": "number", "minimum": 0 }
+              }
+            }
+          }
+        },
+        "vehicle": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "vin": { "type": "string" },
+            "vehicles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "make": { "type": "string" },
+                  "model": { "type": "string" },
+                  "year": { "type": "string" },
+                  "vin": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "employment": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "employer": { "type": "string" },
+            "workiq_enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "system": {
+      "type": "object",
+      "properties": {
+        "artha_dir": { "type": "string" },
+        "sync_provider": {
+          "type": "string",
+          "enum": ["onedrive", "icloud", "dropbox", "none"]
+        },
+        "venv_path": { "type": "string" },
+        "venv_path_win": { "type": "string" },
+        "python_cmd": { "type": "string" },
+        "briefing_timezone": { "type": "string" },
+        "cost_budget_monthly_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "properties": {
+        "gmail": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "account": { "type": "string" }
+          }
+        },
+        "google_calendar": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "calendar_ids": {
+              "type": "object",
+              "properties": {
+                "primary": { "type": "string" },
+                "additional": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "holidays": { "type": "string" }
+              }
+            }
+          }
+        },
+        "microsoft_graph": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "account": { "type": "string" },
+            "todo_sync": { "type": "boolean" },
+            "todo_lists": {
+              "type": "object",
+              "description": "Microsoft To Do list IDs by domain (from setup_todo_lists.py).",
+              "additionalProperties": { "type": "string" }
+            }
+          }
+        },
+        "icloud": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "account": { "type": "string" }
+          }
+        },
+        "canvas_lms": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "workiq": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "platform": { "type": "string" },
+            "version_pin": { "type": "string", "description": "WorkIQ version constraint, e.g. '0.x'." },
+            "query_variant": { "type": "string", "description": "WorkIQ query variant: auto | manual." },
+            "redact_keywords": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Keywords to redact from WorkIQ responses."
+            },
+            "redact_replacement": { "type": "string" },
+            "oi_trigger_keywords": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Calendar event titles that trigger open-item creation."
+            }
+          }
+        }
+      },
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "briefing": {
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "timezone": { "type": "string" },
+        "default_format": {
+          "type": "string",
+          "enum": ["flash", "standard", "deep"]
+        },
+        "spouse_filtered": { "type": "boolean" },
+        "email_enabled": { "type": "boolean" },
+        "archive_enabled": { "type": "boolean" },
+        "weekend_planner": { "type": "boolean" },
+        "monthly_retrospective": { "type": "boolean" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "monthly_api_budget_usd": { "type": "number", "minimum": 0 },
+        "alert_at_percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "currency": { "type": "string" }
+      }
+    },
+    "encryption": {
+      "type": "object",
+      "properties": {
+        "age_recipient": {
+          "type": "string",
+          "description": "age public key for encrypting sensitive state files."
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Feature flags controlling which Artha capabilities are active.",
+      "properties": {
+        "gmail_mcp": { "type": "boolean" },
+        "calendar_mcp": { "type": "boolean" },
+        "gemini_cli": { "type": "boolean" },
+        "copilot_cli": { "type": "boolean" },
+        "vault_encryption": { "type": "boolean" },
+        "email_briefings": { "type": "boolean" },
+        "weekly_summary": { "type": "boolean" },
+        "action_proposals": { "type": "boolean" },
+        "ensemble_reasoning": { "type": "boolean" },
+        "visual_generation": { "type": "boolean" },
+        "proactive_checkin": { "type": "boolean" },
+        "todo_sync": { "type": "boolean" },
+        "outlook_forwarding": { "type": "boolean" },
+        "apple_forwarding": { "type": "boolean" },
+        "icloud_direct_api": { "type": "boolean" },
+        "preflight_gate": { "type": "boolean" },
+        "open_items_tracking": { "type": "boolean" },
+        "workiq_calendar": { "type": "boolean" }
+      },
+      "additionalProperties": { "type": "boolean" }
+    }
+  },
+  "additionalProperties": false
+}

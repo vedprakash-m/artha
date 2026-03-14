@@ -304,7 +304,12 @@ def _assemble_artha_md(identity_block: str) -> None:
     #   generated identity (§1a personal context) + full core.md (§1b system + §2-§14)
     # We just prepend; the generated §1 replaces the personal lines we stripped from core.md.
 
-    assembled = identity_block + "\n\n---\n\n" + core_text
+    header = (
+        "<!-- AUTO-GENERATED — DO NOT EDIT.\n"
+        "     Modify config/Artha.core.md or config/user_profile.yaml instead,\n"
+        "     then run: python scripts/generate_identity.py -->\n\n"
+    )
+    assembled = header + identity_block + "\n\n---\n\n" + core_text
     _ASSEMBLED_PATH.write_text(assembled, encoding="utf-8")
     print(f"  Written: {_ASSEMBLED_PATH.relative_to(_ARTHA_DIR)}")
 
@@ -367,7 +372,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--with-routing",
         action="store_true",
-        help="Also generate config/routing.yaml from profile + routing.example.yaml",
+        default=True,
+        help="Also generate config/routing.yaml from profile + routing.example.yaml (default: on)",
+    )
+    parser.add_argument(
+        "--no-routing",
+        action="store_true",
+        help="Skip routing.yaml generation",
     )
     args = parser.parse_args(argv)
 
@@ -400,7 +411,7 @@ def main(argv: list[str] | None = None) -> int:
     _write_identity(identity_block)
     _assemble_artha_md(identity_block)
 
-    if args.with_routing:
+    if not args.no_routing:
         print("Generating routing.yaml...")
         _generate_routing_yaml(profile)
 

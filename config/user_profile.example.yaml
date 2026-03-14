@@ -1,6 +1,6 @@
 # config/user_profile.example.yaml
 # ─────────────────────────────────────────────────────────────────────────────
-# Artha User Profile — EXAMPLE (fictional "Patel family")
+# Artha User Profile — EXAMPLE (fictional placeholder family)
 #
 # Copy this file to config/user_profile.yaml and fill in your own details.
 # The /bootstrap command will do this conversationally for you.
@@ -13,47 +13,46 @@ schema_version: "1.0"
 
 # ─── Family ───────────────────────────────────────────────────────────────────
 family:
-  name: "Patel"                       # Family surname (used in prompts + briefings)
+  name: "Smith"                       # Family surname (used in prompts + briefings)
   cultural_context: >                 # Optional — enriches prompt quality significantly.
-    Indian-American family — academic performance is high priority;
-    immigration status is highest stakes; strong extended-family ties in India.
-    Leave blank if not applicable.
+    Leave blank or use a preset name from config/presets/cultural/.
+    Examples: south-asian-american, first-gen-immigrant, european-american.
 
   primary_user:
-    name: "Raj"
-    nickname: "Raj"                   # Nickname used in briefings
+    name: "Alex Smith"
+    nickname: "Alex"                   # Nickname used in briefings
     role: primary
     emails:
-      gmail: "raj.patel.example@gmail.com"
-      outlook: "rpatel@outlook.com"   # Optional — set "" if not used
-      icloud: "rpatel@me.com"         # Optional — set "" if not used
+      gmail: "alex.smith@gmail.com"
+      outlook: "asmith@outlook.com"    # Optional — set "" if not used
+      icloud: "asmith@me.com"          # Optional — set "" if not used
     phone: "+1 (555) 123-4567"        # Optional — used only in contacts context
 
   spouse:
     enabled: true                     # Set false for single-user household
-    name: "Priya"
+    name: "Sam"
     role: spouse
     filtered_briefing: true           # Generate a privacy-filtered briefing for spouse
 
   children:                           # Empty list [] if no children
-    - name: "Arjun"
+    - name: "Child1"
       age: 16
       grade: "11th"
       school:
-        name: "Lincoln High School"
-        district: "Portland Public Schools"
-        canvas_url: "https://portland.instructure.com"   # Canvas LMS URL, or "" if N/A
-        canvas_keychain_key: "artha-canvas-token-arjun"  # Keychain service name for Canvas token
+        name: "Example High School"
+        district: "Example School District"
+        canvas_url: "https://example.instructure.com"   # Canvas LMS URL, or "" if N/A
+        canvas_keychain_key: "artha-canvas-token-child1" # Keychain service name for Canvas token
       milestones:
         college_prep: true            # Enable SAT/ACT tracking, college countdown
         class_of: 2027
         new_driver: true              # Enable auto insurance new-driver alerts
-    - name: "Ananya"
+    - name: "Child2"
       age: 12
       grade: "7th"
       school:
-        name: "Jefferson Middle School"
-        district: "Portland Public Schools"
+        name: "Example Middle School"
+        district: "Example School District"
         canvas_url: ""                # No Canvas for this school
         canvas_keychain_key: ""
       milestones:
@@ -63,7 +62,7 @@ family:
 
 # ─── Location ─────────────────────────────────────────────────────────────────
 location:
-  city: "Redmond"
+  city: "YourCity"
   state: "WA"
   county: "King"
   country: "US"
@@ -148,7 +147,7 @@ system:
 integrations:
   gmail:
     enabled: true
-    account: "raj.patel.example@gmail.com"   # Populated during setup
+    account: "alex.smith@gmail.com"   # Populated during setup
   google_calendar:
     enabled: true
     calendar_ids:
@@ -158,8 +157,9 @@ integrations:
       holidays: "en.usa#holiday@group.v.calendar.google.com"
   microsoft_graph:
     enabled: false
-    account: ""                        # e.g., "rpatel@outlook.com"
+    account: ""                        # e.g., "asmith@outlook.com"
     todo_sync: false
+    todo_lists: {}                     # Populated by: python scripts/setup_todo_lists.py
   icloud:
     enabled: false
     account: ""                        # Apple ID email
@@ -168,10 +168,17 @@ integrations:
   workiq:
     enabled: false
     platform: "windows"                # windows-only feature
+    version_pin: "0.x"
+    query_variant: "auto"
+    redact_keywords: []
+    redact_replacement: "[REDACTED]"
+    oi_trigger_keywords:               # Calendar titles that auto-create open items
+      - "Interview"
+      - "Performance Review"
 
 # ─── Briefing ─────────────────────────────────────────────────────────────────
 briefing:
-  email: "raj.patel.example@gmail.com"   # Where to send briefings
+  email: "alex.smith@gmail.com"       # Where to send briefings
   timezone: "America/Los_Angeles"
   default_format: "standard"
   spouse_filtered: true                  # Generate spouse-filtered copy
@@ -191,3 +198,24 @@ encryption:
   # After running: age-keygen — paste the PUBLIC key here.
   # Store PRIVATE key in OS keychain (macOS Keychain / Windows Credential Manager).
   age_recipient: ""    # e.g., "age1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ─── Capabilities (Feature Flags) ────────────────────────────────────────────
+capabilities:
+  gmail_mcp: true
+  calendar_mcp: true
+  gemini_cli: false
+  copilot_cli: false
+  vault_encryption: true
+  email_briefings: true
+  weekly_summary: true
+  action_proposals: true
+  ensemble_reasoning: false
+  visual_generation: false
+  proactive_checkin: false
+  todo_sync: false
+  outlook_forwarding: false
+  apple_forwarding: false
+  icloud_direct_api: false
+  preflight_gate: true
+  open_items_tracking: true
+  workiq_calendar: false

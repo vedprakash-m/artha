@@ -6,11 +6,11 @@ Runs a simulated catch-up using bundled fictional fixture emails so new
 users can preview Artha's output format before connecting any real accounts.
 
 All data is fictional:
-  - Family: Raj & Priya Patel  (primary: raj.patel@example.com)
+  - Family: Alex & Sam Smith  (primary: alex.smith@example.com)
   - Immigration: H-1B extension pending; I-485 adjustment of status filed
   - Finance: mortgage, 401k, one credit card
   - Health: annual checkup scheduled; one prescription refill due
-  - Kids: Anika (age 8, grade 3 at Maple Elementary)
+  - Kids: Ella (age 8, grade 3 at Maple Elementary)
 
 Usage:
   python scripts/demo_catchup.py           — print sample briefing to stdout
@@ -32,7 +32,7 @@ from pathlib import Path
 _ARTHA_DIR = Path(__file__).resolve().parent.parent
 
 # ---------------------------------------------------------------------------
-# Fictional Patel family fixture emails
+# Fictional Smith family fixture emails
 # ---------------------------------------------------------------------------
 
 FIXTURE_EMAILS = [
@@ -42,7 +42,7 @@ FIXTURE_EMAILS = [
         "sender": "uscis-noreply@uscis.dhs.gov",
         "date": "2026-03-10T10:00:00Z",
         "body_text": (
-            "Dear Raj Patel, we have received your Form I-485, Application to Register "
+            "Dear Alex Smith, we have received your Form I-485, Application to Register "
             "Permanent Residence. Receipt number: IOE0987654321. Priority date: "
             "2021-01-15. You will receive a biometrics appointment notice within 60 days."
         ),
@@ -74,7 +74,7 @@ FIXTURE_EMAILS = [
     },
     {
         "id": "demo-004",
-        "subject": "Annual Wellness Checkup Reminder — Raj Patel",
+        "subject": "Annual Wellness Checkup Reminder — Alex Smith",
         "sender": "reminders@fictional-clinic.example.com",
         "date": "2026-03-12T08:00:00Z",
         "body_text": (
@@ -86,13 +86,13 @@ FIXTURE_EMAILS = [
     },
     {
         "id": "demo-005",
-        "subject": "Anika's Progress Report — Q3 2025-26",
+        "subject": "Ella's Progress Report — Q3 2025-26",
         "sender": "noreply@maple-elementary.example.edu",
         "date": "2026-03-09T15:00:00Z",
         "body_text": (
-            "Dear Raj and Priya Patel, Anika's Q3 progress report is now available. "
+            "Dear Alex and Sam Smith, Ella's Q3 progress report is now available. "
             "Overall grade: Exceeds Expectations. Reading: 4/4. Math: 3/4. "
-            "Teacher note: Anika shows strong initiative in group projects. "
+            "Teacher note: Ella shows strong initiative in group projects. "
             "Parent-teacher conference: 2026-03-20 at 4:30 PM."
         ),
         "source": "demo",
@@ -136,7 +136,7 @@ def render_briefing(emails: list[dict]) -> str:
         "  ACTION: Pick up prescription; complete pre-visit questionnaire",
         "",
         "## KIDS",
-        "  • Anika Q3 report: Exceeds Expectations (Reading 4/4, Math 3/4)",
+        "  • Ella Q3 report: Exceeds Expectations (Reading 4/4, Math 3/4)",
         "  • Parent-teacher conference 2026-03-20 @ 4:30 PM",
         "  ACTION: Confirm conference attendance",
         "",
@@ -186,7 +186,7 @@ def _check_no_real_pii(emails: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Artha demo catch-up using fictional Patel family fixtures."
+        description="Artha demo catch-up using fictional Smith family fixtures."
     )
     parser.add_argument(
         "--json", action="store_true",

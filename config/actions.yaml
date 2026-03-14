@@ -1,0 +1,136 @@
+# config/actions.yaml
+# Artha Declarative Action Registry
+#
+# Defines all write actions the Artha AI CLI may propose and execute.
+# The AI reads this file to know what actions are available, their
+# friction level, and whether human approval is required.
+#
+# SECURITY CONTRACT
+# -----------------
+# - requires_approval: true  → must receive explicit "yes" before execution
+# - pii_check: true          → safe_cli.py / pii_guard.py runs on all params
+#                              before the action fires
+# - enabled: false           → action is known but cannot be executed; AI
+#                              should inform the user it is unavailable
+#
+# Adding a custom action
+# ----------------------
+# 1. Add an entry below with a unique key.
+# 2. Create an optional handler script (scripts/actions/<your_handler>.py).
+# 3. Re-run `python scripts/generate_identity.py` to rebuild Artha.md.
+#
+# Ref: specs/supercharge.md §6, config/Artha.core.md §9
+
+version: "1.0"
+
+actions:
+
+  send_email:
+    type: email_send
+    enabled: true
+    handler: "scripts/gmail_send.py"
+    requires_approval: true           # human-gated — no email leaves without "yes"
+    friction: low
+    description: >
+      Send an email via the primary Gmail account.
+      Recipient, subject, and body are all required params.
+    params:
+      to: "{recipient}"
+      subject: "{subject}"
+      body: "{body}"
+      cc: "{cc | optional}"
+    pii_check: true                   # run safe_cli.py before send
+    audit: true                       # log to state/audit.md on execution
+
+  send_whatsapp:
+    type: url_open
+    enabled: true
+    handler: null                     # uses OS url_open, no script needed
+    requires_approval: true
+    friction: low
+    description: >
+      Open a pre-filled WhatsApp message in the default browser / iOS app.
+      Phone numbers are read from state/contacts.md (encrypted at rest).
+    url_template: "https://wa.me/{phone}?text={encoded_text}"
+    params:
+      phone: "{phone}"                # E.164 format without leading +
+      text: "{message_text}"
+    pii_check: false                  # phone numbers live in encrypted contacts
+    audit: true
+
+  add_calendar_event:
+    type: calendar_write
+    enabled: false                    # disabled — Google Calendar write scope not yet added
+    handler: null                     # not yet implemented; gcal_add_event.py pending
+    requires_approval: true
+    friction: medium
+    description: >
+      Create a new Google Calendar event.
+      Disabled until handler is implemented and write OAuth scope granted.
+    params:
+      summary: "{title}"
+      start: "{start_iso}"
+      end: "{end_iso}"
+      description: "{description | optional}"
+      calendar_id: "{calendar_id | default: primary}"
+    pii_check: true
+    audit: true
+
+  todo_sync:
+    type: api_call
+    enabled: true
+    handler: "scripts/todo_sync.py"
+    requires_approval: false          # automated — bidirectional sync, no approval
+    friction: low
+    description: >
+      Sync state/open_items.md with Microsoft To Do (bidirectional).
+      Runs automatically during catch-up Step 3. Can also be invoked manually.
+    params: {}                        # no user-supplied params; reads state files
+    pii_check: false
+    audit: false                      # todo_sync logs its own changes to open_items.md
+
+  run_pipeline:
+    type: api_call
+    enabled: true
+    handler: "scripts/pipeline.py"
+    requires_approval: false          # read-only data fetch
+    friction: low
+    description: >
+      Fetch fresh data from all enabled connectors (email, calendar, Canvas,
+      OneNote). Outputs JSONL to stdout. Used in catch-up Step 4.
+    params:
+      since: "{since_iso}"
+      source: "{source | optional}"
+    pii_check: false
+    audit: false
+
+  run_health_check:
+    type: api_call
+    enabled: true
+    handler: "scripts/pipeline.py"
+    requires_approval: false
+    friction: low
+    description: >
+      Run connector health checks and append results to state/health-check.md.
+    params:
+      source: "{source | optional}"
+    pii_check: false
+    audit: false
+
+  # ── Community extension example ────────────────────────────────────────────
+  # Uncomment and configure to enable Telegram notifications.
+  # send_telegram:
+  #   type: api_call
+  #   enabled: false
+  #   handler: "scripts/actions/telegram_send.py"
+  #   requires_approval: true
+  #   friction: low
+  #   description: >
+  #     Send a Telegram message via a configured bot.
+  #     Requires ARTHA_TELEGRAM_BOT_TOKEN in keyring and a chat_id.
+  #   params:
+  #     bot_token_key: "artha-telegram-bot-token"
+  #     chat_id: "{telegram_chat_id}"
+  #     text: "{message_text}"
+  #   pii_check: true
+  #   audit: true

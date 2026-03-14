@@ -163,6 +163,24 @@ def _load_todo_list_ids() -> dict[str, str]:
     return ids
 
 
+def _write_todo_lists_to_profile(list_ids: dict[str, str]) -> None:
+    """Write todo_lists into user_profile.yaml under integrations.microsoft_graph."""
+    profile_path = os.path.join(ARTHA_DIR, "config", "user_profile.yaml")
+    if not os.path.exists(profile_path):
+        return  # profile not set up yet — skip silently
+    try:
+        import yaml  # noqa: PLC0415
+    except ImportError:
+        return  # pyyaml not available — skip
+    with open(profile_path, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    integrations = data.setdefault("integrations", {})
+    ms_graph = integrations.setdefault("microsoft_graph", {})
+    ms_graph["todo_lists"] = dict(list_ids)
+    with open(profile_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -230,10 +248,14 @@ def main() -> None:
             except Exception as exc:
                 print(f"✗ Failed: {exc}", file=sys.stderr)
 
-    # Save to config file
+    # Save to config file (legacy)
     _write_todo_lists_section(list_ids)
     print(f"\n✓ Done: {created} created, {skipped} already existed")
     print(f"  List IDs saved to: {CONFIG_FILE}")
+
+    # Also write to user_profile.yaml (preferred location)
+    _write_todo_lists_to_profile(list_ids)
+    print(f"  List IDs also saved to: config/user_profile.yaml")
 
     # Print summary
     print("\nTo Do lists:")

@@ -55,3 +55,9 @@ class BaseSkill(ABC):
     def to_dict(self) -> Dict[str, Any]:
         """Return a dictionary representation of the skill results."""
         pass
+
+    @property
+    @abstractmethod
+    def compare_fields(self) -> list:
+        """Return list of field names used to detect changes between runs."""
+        pass

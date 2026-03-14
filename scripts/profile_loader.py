@@ -27,6 +27,29 @@ from typing import Any
 
 _ARTHA_DIR = Path(__file__).resolve().parent.parent
 _PROFILE_PATH = _ARTHA_DIR / "config" / "user_profile.yaml"
+_SCHEMA_PATH = _ARTHA_DIR / "config" / "user_profile.schema.json"
+
+
+def _validate_against_schema(data: dict) -> list[str]:
+    """Validate profile data against user_profile.schema.json.
+    Returns list of validation error messages (empty if valid).
+    """
+    if not _SCHEMA_PATH.exists():
+        return []  # schema not present — skip validation
+    try:
+        import json
+        import jsonschema  # noqa: PLC0415
+    except ImportError:
+        return []  # jsonschema not installed — skip silently
+    try:
+        with open(_SCHEMA_PATH, encoding="utf-8") as f:
+            schema = json.load(f)
+        jsonschema.validate(instance=data, schema=schema)
+        return []
+    except jsonschema.ValidationError as exc:
+        return [f"Profile validation error at {'.'.join(str(p) for p in exc.absolute_path)}: {exc.message}"]
+    except Exception as exc:
+        return [f"Schema validation failed: {exc}"]
 
 
 @lru_cache(maxsize=1)
@@ -98,6 +121,7 @@ def require_profile() -> dict:
     """Load profile or exit with a clear setup message if missing.
 
     Call this at the top of any script that strictly requires the profile.
+    Validates against JSON schema if available.
     """
     if not has_profile():
         print(
@@ -108,7 +132,13 @@ def require_profile() -> dict:
             file=sys.stderr,
         )
         sys.exit(1)
-    return load_profile()
+    data = load_profile()
+    errors = _validate_against_schema(data)
+    if errors:
+        print("WARNING: Profile validation issues:", file=sys.stderr)
+        for err in errors:
+            print(f"  - {err}", file=sys.stderr)
+    return data
 
 
 def artha_dir() -> Path:

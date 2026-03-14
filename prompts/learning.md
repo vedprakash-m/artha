@@ -30,7 +30,7 @@ This domain does NOT track the children's school learning — that belongs in
 - YouTube Learning notifications (if configured)
 - Podcast apps (if email digests exist)
 - Subject: "course", "certificate", "lesson", "chapter", "episode"
-- Internal Microsoft L&D or training announcements (learning-related only)
+- Employer-internal L&D or training announcements (learning-related only)
 
 ---
 

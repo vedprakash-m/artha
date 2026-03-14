@@ -19,6 +19,7 @@ Ref: remediation.md §6.4, standardization.md §7.5.1
 """
 from __future__ import annotations
 
+import random
 import time
 import sys
 from functools import wraps
@@ -115,12 +116,13 @@ def with_retry(
                     raise type(exc)(
                         f"{pfx}{ctx_str} failed after {attempt + 1} attempt(s): {exc}"
                     ) from exc
-                wait = min(delay, max_delay)
+                jitter = random.uniform(0, delay * 0.25)
+                wait = min(delay + jitter, max_delay)
                 print(
                     f"{pfx} ⚠ Rate-limited or server error"
                     f"{(' (' + ctx + ')') if ctx else ''}"
                     f" attempt {attempt + 1}/{max_retries + 1}."
-                    f" Retrying in {wait:.0f}s ...",
+                    f" Retrying in {wait:.1f}s ...",
                     file=sys.stderr,
                 )
                 time.sleep(wait)
