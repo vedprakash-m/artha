@@ -73,14 +73,28 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 # Clone the repository
 git clone https://github.com/vedprakash-m/artha.git
 cd artha
+```
 
-# (Recommended) Enable the PII safety hook — prevents accidental PII commits
-git config core.hooksPath .githooks
+> **Contributors/forkers only:** Enable the PII safety hook to prevent accidentally committing
+> personal data: `git config core.hooksPath .githooks`
+> Safe to skip if you're using Artha, not modifying its code.
 
-# Create a Python virtual environment
-# (outside the project so cloud sync tools like OneDrive/iCloud don't upload it)
+<details>
+<summary><b>Create the Python virtual environment — click to expand for your OS</b></summary>
+
+**macOS / Linux:**
+```bash
+# Outside the project so OneDrive/iCloud don't upload library files
 python3 -m venv ~/.artha-venvs/.venv
 ```
+
+**Windows (PowerShell):**
+```powershell
+# On Windows, Python installs as "python" not "python3"
+python -m venv $HOME\.artha-venvs\.venv
+```
+
+</details>
 
 > **What's a virtual environment?** It's an isolated Python sandbox so Artha's packages don't
 > conflict with other Python projects on your machine. We place it in `~/.artha-venvs/` (your
@@ -109,6 +123,9 @@ source ~/.artha-venvs/.venv/bin/activate
 # Install dependencies
 pip install -r scripts/requirements.txt
 ```
+
+> **Want to see Artha in action first?** Run `python scripts/demo_catchup.py` — uses fictional
+> data, no accounts or configuration needed. Continue to Step 2 when ready.
 
 ### Step 2 — Create Your Profile
 

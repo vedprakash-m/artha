@@ -60,6 +60,15 @@ family:
         class_of: 2031
         new_driver: false
 
+# ─── Household ────────────────────────────────────────────────────────────────
+# Describes who lives together. Controls briefing tone and domain relevance.
+# type:   single | couple | family | multi_gen | roommates
+# tenure: owner | renter | other
+household:
+  type: "family"                       # Change to "single" if living alone, "couple" if no children
+  tenure: "owner"                      # Change to "renter" if you rent
+  adults: 2
+
 # ─── Location ─────────────────────────────────────────────────────────────────
 location:
   city: "Springfield"                    # Replace with your city
