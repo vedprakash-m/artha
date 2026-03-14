@@ -415,3 +415,46 @@ def test_vault_has_no_backup_functions():
     ]
     for fn_name in backup_fns:
         assert not hasattr(vault, fn_name), f"vault should not have {fn_name}()"
+
+
+# ---------------------------------------------------------------------------
+# Help / usage output
+# ---------------------------------------------------------------------------
+
+class TestHelpAndUsage:
+    def test_help_flag_exits_zero(self, monkeypatch):
+        """--help exits with code 0 (not 1)."""
+        monkeypatch.setattr("sys.argv", ["vault.py", "--help"])
+        with pytest.raises(SystemExit) as exc:
+            vault.main()
+        assert exc.value.code == 0
+
+    def test_dash_h_exits_zero(self, monkeypatch):
+        """-h is an alias for --help."""
+        monkeypatch.setattr("sys.argv", ["vault.py", "-h"])
+        with pytest.raises(SystemExit) as exc:
+            vault.main()
+        assert exc.value.code == 0
+
+    def test_help_flag_prints_commands(self, monkeypatch, capsys):
+        """--help output includes the main command names."""
+        monkeypatch.setattr("sys.argv", ["vault.py", "--help"])
+        with pytest.raises(SystemExit):
+            vault.main()
+        out = capsys.readouterr().out
+        for cmd in ("decrypt", "encrypt", "status", "health", "store-key"):
+            assert cmd in out, f"Expected '{cmd}' in --help output"
+
+    def test_no_args_exits_nonzero(self, monkeypatch):
+        """Running with no arguments exits with code 1."""
+        monkeypatch.setattr("sys.argv", ["vault.py"])
+        with pytest.raises(SystemExit) as exc:
+            vault.main()
+        assert exc.value.code != 0
+
+    def test_unknown_command_exits_nonzero(self, monkeypatch):
+        """Unknown command exits with code 1."""
+        monkeypatch.setattr("sys.argv", ["vault.py", "frobnicate"])
+        with pytest.raises(SystemExit) as exc:
+            vault.main()
+        assert exc.value.code != 0

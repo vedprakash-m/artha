@@ -65,7 +65,12 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 | **System keyring** *(Linux only)* | Stores encryption keys and OAuth tokens | Pre-installed on GNOME/KDE desktops. Headless servers: `pip install keyrings.alt` — see [Troubleshooting](docs/troubleshooting.md#no-recommended-backend-was-available-linux) |
 | **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | **Recommended for beginners:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) (terminal, `npm install -g @anthropic-ai/claude-code`) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) (terminal, `npm install -g @google/gemini-cli`) · [GitHub Copilot](https://github.com/features/copilot) (VS Code extension) |
 
-> **Which AI CLI should I use?** If you're new, start with **Claude Code** or **Gemini CLI** — both are terminal-based and free to try. GitHub Copilot requires a VS Code setup and a paid Copilot subscription. See [docs/supported-clis.md](docs/supported-clis.md) for a detailed comparison.
+> **Which AI CLI should I use?**
+> - **Gemini CLI** — Free tier available (generous for personal/daily use). Requires a Google account. Terminal-based.
+> - **Claude Code** — Free tier available with rate limits; daily Artha catch-ups may need Claude Pro ($20/mo) for heavier email volumes.
+> - **GitHub Copilot** — Free tier available in VS Code with limits; full use requires Copilot Pro ($10/mo). Editor-based.
+>
+> All three work with Artha. See [docs/supported-clis.md](docs/supported-clis.md) for a detailed comparison.
 
 ### Step 1 — Clone & Install
 
@@ -207,8 +212,8 @@ Remove-Item $HOME\age-key.txt
 </details>
 
 > **Alternatively**, if you prefer not to use the keyring, you can export the key to an environment
-> variable instead: `export ARTHA_AGE_KEY=$(cat ~/age-key.txt)` (useful for headless Linux or
-> Claude Cowork). See `vault.py --help` for all key-management options.
+> variable instead: `export ARTHA_AGE_KEY=$(cat ~/age-key.txt)` (useful for headless Linux or CI).
+> Run `python scripts/vault.py` with no arguments to see all available commands.
 
 ### Step 5 — Connect Your Data Sources
 
@@ -236,18 +241,28 @@ python scripts/setup_todo_lists.py
 ```
 
 > **"This app isn't verified" warning:** During the Google login flow, Chrome/Firefox will
-> show a red warning screen. Click **Advanced → Go to Artha (unsafe)** to proceed — this is
-> expected for personal OAuth apps that haven't been submitted to Google for review.
+> show a red warning screen. **This is completely safe** — you created this OAuth app yourself
+> in Step 5, it only accesses your own Gmail/Calendar, and all data stays on your machine.
+> No data is sent to any third party. Google shows this warning for any personal OAuth app that
+> hasn't been submitted for Google's review process (which is only needed for public apps).
+>
+> To proceed: click **Advanced** (small text at bottom-left) → **Go to Artha (unsafe)**.
+> See [docs/google-oauth-setup.md](docs/google-oauth-setup.md) for a screenshot walkthrough.
 
 > **No cloud accounts yet?** You can explore Artha's output format first with: `python scripts/demo_catchup.py`
 
 ### Step 6 — Run Preflight Check
 
-> **Expected output on first run:** You will see `NO-GO` errors for Gmail and Calendar
-> because those tokens don't exist until Step 5 is complete. **This is normal.**
-> The only check that must pass right now is the vault key check from Step 4
-> (look for `vault.py health ✓` in the output). Gmail/Calendar errors become real
-> blockers only after you've completed Step 5.
+> **Expected output on first run:** Preflight will show a mix of `✓` passes and `⛔ NO-GO` failures — this is normal. Here's what to expect:
+>
+> | Check | Fresh-install result | When it resolves |
+> |-------|---------------------|------------------|
+> | vault.py health | ✓ Passes after Step 4 | Immediately after `store-key` |
+> | Gmail / Calendar OAuth token | ⛔ Fails if Step 5 skipped | After running `setup_google_oauth.py` |
+> | pipeline.py Gmail health | ⛔ Normal on first install | After first successful catch-up |
+> | gmail_send.py health | ⛔ Normal on first install | Only if you enable email briefings |
+>
+> The only check that **must** pass before your first catch-up is `vault.py health ✓`. All OAuth-related failures are expected until Step 5 is complete.
 
 ```bash
 python scripts/preflight.py --fix

@@ -149,7 +149,31 @@ mechanism used for `state/finance.md.age`, `state/health.md.age`, etc. See
 
 ---
 
-## §6 — Reporting Security Issues
+## §6 — Mosaic PII Risk
+
+Individual fields in `user_profile.yaml` may appear harmless in isolation but
+become identifying when combined. For example:
+
+- `cultural_context: south-asian-american`
+- `domains.immigration.enabled: true` with EB-2 priority date details
+- A public GitHub handle as the repo owner
+
+Together, these create a **demographic fingerprint** — a uniquely identifying
+combination even though each field alone is not classical PII. This is called
+the *mosaic effect*.
+
+**Practical guidance:**
+- `user_profile.yaml` is gitignored and never committed — the risk is low for
+  standard usage.
+- Users who **fork or publicly share their Artha configuration** should strip
+  or generalize `cultural_context` and `domains.immigration.context` fields
+  before sharing.
+- The example profile (`config/user_profile.example.yaml`) uses fictional
+  placeholder data for this reason.
+
+---
+
+## §7 — Reporting Security Issues
 
 Do not use GitHub Issues for security vulnerabilities. Instead, email the
 maintainer directly or open a GitHub Security Advisory (private disclosure).

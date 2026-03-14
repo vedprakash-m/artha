@@ -638,21 +638,27 @@ def do_health() -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def _print_usage(exit_code: int = 1) -> None:
+    print("Usage: vault.py {decrypt|encrypt|status|health|store-key|release-lock|auto-lock}")
+    print("       backup commands → python scripts/backup.py {snapshot|status|validate|restore|install|…}")
+    print()
+    print("  decrypt      — unlock sensitive state files for a catch-up session")
+    print("  encrypt      — lock sensitive state files after catch-up + GFS backup")
+    print("  status       — show current encryption state (read-only)")
+    print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
+    print("  store-key    — store age private key from a file into the OS credential store")
+    print("  release-lock — force-clear a stale session lock (manual recovery)")
+    print("  auto-lock    — encrypt if lock TTL exceeded (called by watchdog/cron)")
+    sys.exit(exit_code)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health|store-key|release-lock|auto-lock}")
-        print("       backup commands → python scripts/backup.py {snapshot|status|validate|restore|install|…}")
-        print()
-        print("  decrypt      — unlock sensitive state files for a catch-up session")
-        print("  encrypt      — lock sensitive state files after catch-up + GFS backup")
-        print("  status       — show current encryption state (read-only)")
-        print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
-        print("  store-key    — store age private key from a file into the OS credential store")
-        print("  release-lock — force-clear a stale session lock (manual recovery)")
-        print("  auto-lock    — encrypt if lock TTL exceeded (called by watchdog/cron)")
-        sys.exit(1)
+        _print_usage(exit_code=1)
 
     cmd = sys.argv[1].lower()
+    if cmd in ("--help", "-h", "help"):
+        _print_usage(exit_code=0)
     if cmd == "decrypt":
         do_decrypt()
     elif cmd == "encrypt":
@@ -726,9 +732,8 @@ def main() -> None:
     elif cmd in ("auto-lock", "auto_lock"):
         sys.exit(do_auto_lock())
     else:
-        print(f"Unknown command: {cmd}")
-        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
-        sys.exit(1)
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        _print_usage(exit_code=1)
 
 
 if __name__ == "__main__":
