@@ -1227,3 +1227,111 @@ class TestInstall:
              pytest.raises(SystemExit):
             vault.do_install("/nonexistent/path/2026-03-14.zip")
 
+
+# ---------------------------------------------------------------------------
+# --data-only mode: restore and install skip config files
+# ---------------------------------------------------------------------------
+
+class TestDataOnlyRestore:
+    """--data-only flag skips config source_type entries in both restore and install."""
+
+    def _make_full_zip(self, backup_dir):
+        """ZIP with all three source types."""
+        files_dict = {
+            "state/immigration.md.age": (b"enc-imm",   "state_encrypted", "state/immigration.md.age",  "immigration"),
+            "state/goals.md.age":       (b"enc-goals",  "state_plain",    "state/goals.md",             "goals"),
+            "config/routing.yaml.age":  (b"enc-cfg",    "config",         "config/routing.yaml",        "routing"),
+        }
+        return _create_test_zip(backup_dir, "daily", "2026-03-14", files_dict)
+
+    def _register_zip(self, zip_path, tier="daily", date_str="2026-03-14"):
+        sha256 = vault._file_sha256(zip_path)
+        m = vault._load_manifest()
+        m["snapshots"][f"{tier}/{date_str}.zip"] = {
+            "created": f"{date_str}T00:00:00+00:00", "date": date_str, "tier": tier,
+            "sha256": sha256, "size": zip_path.stat().st_size, "file_count": 3,
+        }
+        vault._save_manifest(m)
+
+    # --- do_restore --data-only ---
+
+    def test_restore_data_only_skips_config(self, mock_vault_env):
+        """--data-only: state files restored, config file NOT written."""
+        zip_path = self._make_full_zip(vault.BACKUP_DIR)
+        self._register_zip(zip_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("---\n# Goals\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_restore(date_str="2026-03-14", data_only=True)
+
+        assert (mock_vault_env / "state" / "immigration.md.age").exists()
+        assert (mock_vault_env / "state" / "goals.md").exists()
+        assert not (mock_vault_env / "config" / "routing.yaml").exists()
+
+    def test_restore_full_includes_config(self, mock_vault_env):
+        """Default (no --data-only): config file IS restored."""
+        zip_path = self._make_full_zip(vault.BACKUP_DIR)
+        self._register_zip(zip_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("---\n# Content\nsome: value\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_restore(date_str="2026-03-14")
+
+        assert (mock_vault_env / "state" / "immigration.md.age").exists()
+        assert (mock_vault_env / "config" / "routing.yaml").exists()
+
+    def test_restore_data_only_dry_run_shows_scope(self, mock_vault_env, capsys):
+        zip_path = self._make_full_zip(vault.BACKUP_DIR)
+        self._register_zip(zip_path)
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", return_value=True):
+            vault.do_restore(date_str="2026-03-14", dry_run=True, data_only=True)
+
+        out = capsys.readouterr().out
+        assert "state only" in out.lower()
+        assert "config skipped" in out.lower()
+
+    # --- do_install --data-only ---
+
+    def test_install_data_only_skips_config(self, mock_vault_env, tmp_path):
+        zip_path = self._make_full_zip(tmp_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("---\n# Goals\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_install(str(zip_path), data_only=True)
+
+        assert (mock_vault_env / "state" / "immigration.md.age").exists()
+        assert (mock_vault_env / "state" / "goals.md").exists()
+        assert not (mock_vault_env / "config" / "routing.yaml").exists()
+
+    def test_install_full_includes_config(self, mock_vault_env, tmp_path):
+        zip_path = self._make_full_zip(tmp_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("key: value\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_install(str(zip_path))
+
+        assert (mock_vault_env / "config" / "routing.yaml").exists()
+
