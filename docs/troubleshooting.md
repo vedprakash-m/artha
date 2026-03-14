@@ -79,11 +79,11 @@ relative import can't find `_bootstrap.py`.
 
 **Fix:** Always run scripts from the repo root:
 ```bash
-# ✅ Correct
-python scripts/gmail_fetch.py --health
+# ✅ Correct — run from repo root
+python scripts/pipeline.py --health --source gmail
 
 # ❌ Wrong (causes import errors)
-cd scripts && python gmail_fetch.py --health
+cd scripts && python pipeline.py --health
 ```
 
 ---
@@ -92,12 +92,13 @@ cd scripts && python gmail_fetch.py --health
 
 ### Vault decrypt fails ("wrong passphrase")
 
-**Cause:** The age encryption key in `~/.artha-tokens/` doesn't match the
-encrypted state files (e.g., after a key rotation).
+**Cause:** The age encryption key in your system keyring doesn't match the
+encrypted state files (e.g., after a key rotation or migrating to a new machine).
 
-**Fix:** You need the original key that was used to encrypt. If lost, the
-encrypted state files cannot be recovered — you'll need to re-populate from
-`/bootstrap`.
+**Fix:** You need the original private key that was used to encrypt. Retrieve it
+from your keychain backup (macOS Keychain Access → search "age-key"). If the
+key is lost, the encrypted state files cannot be recovered — you'll need to
+re-populate from `/bootstrap`.
 
 ### State file shows `updated_by: bootstrap`
 

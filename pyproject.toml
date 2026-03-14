@@ -8,7 +8,7 @@ version = "5.1.0"
 description = "Personal Intelligence OS — AI-powered life management"
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0.1",
     "keyring>=25.0.0",
