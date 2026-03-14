@@ -1,34 +1,44 @@
-# Artha Google API dependencies
-# Install: pip3 install -r scripts/requirements.txt
+# Artha runtime dependencies
+# ─────────────────────────────────────────────────────────────────────────────
+# Quick install (all connectors + skills):
+#   pip install -r scripts/requirements.txt
 #
-# All packages are official Google-published or widely-trusted stdlib wrappers.
-# No third-party MCP servers. No npm packages. Full source visibility.
+# Or install only what you need via pyproject.toml extras:
+#   pip install -e ".[google]"        # Gmail + Google Calendar only
+#   pip install -e ".[microsoft]"     # Outlook + Microsoft To Do only
+#   pip install -e ".[apple]"         # iCloud Mail + Calendar only
+#   pip install -e ".[skills]"        # Background skills (NHTSA, weather…)
+#   pip install -e ".[all]"           # All connectors and skills
+#   pip install -e ".[all,dev]"       # Everything + test tools
+#
+# All packages are official or widely-trusted; no third-party MCP servers.
 
+# ── Core (always required) ────────────────────────────────────────────────────
+PyYAML==6.0.2
+keyring==25.6.0
+jsonschema==4.23.0
+
+# ── Google connector ─────────────────────────────────────────────────────────
 google-api-python-client==2.166.0
 google-auth==2.38.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 
-# Microsoft Graph / Outlook (setup_msgraph_oauth.py, msgraph_fetch.py, etc.)
+# ── Microsoft connector ───────────────────────────────────────────────────────
 msal==1.32.0
 requests==2.32.3
-beautifulsoup4==4.12.3
-PyYAML==6.0.2
 
-# Cross-platform credential storage (replaces macOS-only `security` CLI)
-# macOS → Keychain, Windows → Credential Manager, Linux → SecretService
-keyring==25.6.0
-
-# Apple iCloud CalDAV (icloud_calendar_fetch.py)
-# iCloud Mail uses stdlib imaplib — no package needed
+# ── Apple / iCloud connector ──────────────────────────────────────────────────
 caldav==1.4.0
-vobject==0.9.8  # required by caldav.vobject_instance for VEVENT + VTODO parsing
+vobject==0.9.8
 
-# JSON Schema validation for user_profile.yaml
-jsonschema==4.23.0
+# ── Skills (background data pulls) ────────────────────────────────────────────
+beautifulsoup4==4.12.3
 
-# Async test runtime (required for @pytest.mark.anyio in test_channel_listener)
-anyio[trio]>=4.0.0
-
-# Optional: Channel Bridge adapters (install with: pip install artha[channels])
-# python-telegram-bot>=21.0  # Telegram adapter (artha[channels])
+# ── Dev / test tools (included here so CI works with requirements.txt) ────────
+# For production-only installs, use: pip install -e ".[all]" (skips these)
+anyio[trio]>=4.0.0   # required for @pytest.mark.anyio in async tests
+# pytest>=7.4.0       ← install separately or via: pip install -e ".[dev]"
+# pytest-mock>=3.11.0
+# pytest-snapshot>=0.9.0
+# datadiff>=2.2.0

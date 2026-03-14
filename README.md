@@ -70,9 +70,10 @@ cd artha
 git config core.hooksPath .githooks
 
 # Create a Python virtual environment
+# (outside the project so cloud sync tools like OneDrive/iCloud don't upload it)
 python3 -m venv ~/.artha-venvs/.venv
 source ~/.artha-venvs/.venv/bin/activate   # macOS/Linux
-# Windows: ~/.artha-venvs/.venv/Scripts/Activate.ps1
+# Windows (PowerShell): & $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
 
 # Install dependencies
 pip install -r scripts/requirements.txt
@@ -114,6 +115,7 @@ age-keygen -o ~/age-key.txt
 
 # Store the PRIVATE key in your OS credential store (one command)
 python scripts/vault.py store-key ~/age-key.txt
+# Windows (PowerShell): python scripts/vault.py store-key $HOME\age-key.txt
 
 # Alternatively, store it manually:
 #   python3 -c "import os, keyring; keyring.set_password('age-key', 'artha', open(os.path.expanduser('~/age-key.txt')).read().strip()); print('Done.')"
@@ -126,7 +128,8 @@ python scripts/vault.py store-key ~/age-key.txt
 #   encryption.age_recipient in config/user_profile.yaml
 
 # Then delete the key file — the private key is safely in your credential store
-rm ~/age-key.txt
+rm ~/age-key.txt              # macOS/Linux
+# Windows (PowerShell): Remove-Item $HOME\age-key.txt
 ```
 
 ### Step 5 — Connect Your Data Sources
@@ -178,6 +181,14 @@ catch me up
 ```
 
 Or load `config/Artha.md` directly into a session. Artha will fetch your email, calendar, and data sources, then generate a personalized briefing.
+
+### Not ready to connect accounts? Try Demo Mode first
+
+```bash
+python scripts/demo_catchup.py
+```
+
+This runs a complete sample briefing with fictional data — no accounts, no OAuth, no configuration required. A good way to see what Artha produces before committing to Steps 4–5.
 
 ### Migrating from Legacy Settings
 
