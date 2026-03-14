@@ -30,5 +30,8 @@ vobject==0.9.8  # required by caldav.vobject_instance for VEVENT + VTODO parsing
 # JSON Schema validation for user_profile.yaml
 jsonschema==4.23.0
 
+# Async test runtime (required for @pytest.mark.anyio in test_channel_listener)
+anyio[trio]>=4.0.0
+
 # Optional: Channel Bridge adapters (install with: pip install artha[channels])
 # python-telegram-bot>=21.0  # Telegram adapter (artha[channels])

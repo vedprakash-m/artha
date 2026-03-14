@@ -84,6 +84,11 @@ SKIP_SUFFIXES = {
 # Use for test fixtures that match broad patterns like *.jsonl.
 FORBIDDEN_EXEMPT = {
     "tests/fixtures/mock_emails.jsonl",
+    "tests/fixtures/finance/emails.jsonl",
+    "tests/fixtures/health/emails.jsonl",
+    "tests/fixtures/home/emails.jsonl",
+    "tests/fixtures/immigration/emails.jsonl",
+    "tests/fixtures/kids/emails.jsonl",
 }
 
 # Files that contain PII patterns by design (regex definitions, test fixtures).
