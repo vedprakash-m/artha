@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 1.5 | **Status**: Draft | **Date**: March 2026
+> **Version**: 1.6 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v4.1, Tech Spec v2.2
+> **Implements**: PRD v4.4, Tech Spec v2.6
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.6 | 2026-03 | Backup & Restore UX: `backup.py` CLI output format, session backup confirmation, cold-start workflow, key management UX, §14.5 |
 | v1.5 | 2026-03 | WorkIQ work calendar UX, merged calendar view, Teams join actions |
 | v1.4 | 2026-03 | Intelligence amplification UX (29 enhancements), `/diff`, weekend planner |
 | v1.3 | 2026-02 | Supercharge UX: flash briefing, coaching engine, bootstrap, dashboard |
@@ -32,6 +33,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 12. [Email Briefing — Cross-Device Design](#12-email-briefing--cross-device-design)
 13. [Family Access Model — Multi-User UX](#13-family-access-model--multi-user-ux)
 14. [Error & Recovery UX](#14-error--recovery-ux)
+    - [14.5 Backup & Restore UX](#145-backup--restore-ux)
 15. [Onboarding & First-Run Experience](#15-onboarding--first-run-experience)
 16. [Progressive Disclosure & Information Density](#16-progressive-disclosure--information-density)
 17. [Voice & Accessibility](#17-voice--accessibility)
@@ -162,6 +164,11 @@ User opens terminal → cd ~/OneDrive/Artha → claude
 │                                                                 │
 │ Closing message (if catch-up was run):                          │
 │ "Caught up. 47 emails → 6 items. Next recommended: tonight."   │
+│   GFS backup: 9 file(s) → daily/2026-03-14.zip                 │
+│                                                                 │
+│ Closing message (backup failed):                                │
+│ "Caught up. 47 emails → 6 items. Next recommended: tonight."   │
+│   ⚠ GFS backup FAILED — no files archived.                     │
 │                                                                 │
 │ Closing message (if quick check only):                          │
 │ "Got it. Last full catch-up: 6 hours ago."                     │
@@ -894,6 +901,10 @@ Every error follows: **[What happened] → [What it means] → [How to fix it]**
 | Skill failure (P1/P2) | ⚠ Warning | "Property tax date not refreshed. Using last known." |
 | WorkIQ failure | ⚠ Non-blocking | "Work calendar unavailable — personal events only." |
 | Corrupt decrypt | ⛔ HALT | "File failed validation. Restored from pre-decrypt backup." |
+| GFS backup failed (0 files) | ⚠ Warning | "GFS backup FAILED — no files archived." State files are intact; backup not created for this cycle. Fix: check age binary and keychain key with `backup.py preflight`. |
+| Backup validation overdue | ⚠ Proactive | "Last backup validation: N days ago. Run: `python scripts/backup.py validate`" — surfaced in `/health` output and weekly catch-up footer when >35 days. |
+| Age key not found in keychain | ⛔ HALT | "Cannot encrypt backup — age key missing from keychain." Fix: `python scripts/backup.py import-key`. Does not block vault encrypt (state files still encrypted); only backup blocked. |
+| Backup ZIP corrupt on install | ⛔ HALT | "ZIP failed integrity check. Cannot restore." Fix: try an earlier ZIP or retrieve from OneDrive cloud copy. |
 | Bootstrap template detected | ⚠ Info | "State file has placeholder data. Run /bootstrap to populate." |
 | OAuth expiry warning | ⚠ Proactive | "Token expires in ~3 days. No action needed now." |
 
@@ -908,6 +919,131 @@ Distinguishes **Status Confirmation** (informational) from **Status Change** (al
 ### 14.4 Weather Concierge UX
 
 Outdoor Open Items trigger NOAA skill → "go/no-go" recommendation. Shows forecast summary (temp, conditions, wind) with GO/NO-GO verdict. Surfaced as 🟠 URGENT when conditions are favorable for time-sensitive items.
+
+### 14.5 Backup & Restore UX
+
+#### 14.5.1 Post-Encrypt Backup Confirmation
+
+Every successful `vault.py encrypt` (catch-up close) appends a single-line backup status to the terminal immediately after encryption. This line is never suppressed — it is the user's signal that their data is durably archived:
+
+```
+  GFS backup: 9 file(s) → daily/2026-03-14.zip
+```
+
+If the backup attempt produces no files (empty snapshot):
+```
+  ⚠ GFS backup FAILED — no files archived.
+```
+
+Rules: one line only, indented 2 spaces (visually subordinate to the closing message), never interrupts the briefing body.
+
+#### 14.5.2 `backup.py status` Output Format
+
+Running `python scripts/backup.py status` produces a compact catalog box:
+
+```
+━━━ Artha Backup Status ━━━━━━━━━━━━━━━━━━━━━━━━━━
+  daily    7 ZIPs   latest: 2026-03-14   size: 2.3 MB
+  weekly   4 ZIPs   latest: 2026-03-09   size: 9.1 MB
+  monthly  3 ZIPs   latest: 2026-03-01   size: 26.4 MB
+  yearly   1 ZIP    latest: 2025-12-31   size: 87.2 MB
+  total: 15 ZIPs · 125.0 MB
+  last validated: 2026-03-10 (4 days ago) ✓
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Validation overdue warning (>35 days since last validate):
+```
+  last validated: 2026-01-28 (45 days ago) ⚠ OVERDUE
+  Run: python scripts/backup.py validate
+```
+
+#### 14.5.3 `backup.py validate` Output Format
+
+Validation shows per-file results, capped to avoid noise:
+
+```
+Validating daily/2026-03-14.zip (9 files)...
+  ✓ finance.md.age     1842 words  sha256: abc123
+  ✓ goals.md           312 words   sha256: def456
+  ✓ immigration.md.age 519 words   sha256: ghi789
+  ... (6 more — all OK)
+Validation complete: 9/9 passed. Logged to audit.md.
+```
+
+On failure:
+```
+  ✗ health.md.age   FAIL: checksum_mismatch (expected: aaa111, got: bbb222)
+Validation complete: 8/9 passed. 1 FAILED. Logged to audit.md.
+```
+
+#### 14.5.4 Key Management UX
+
+**Annual reminder (surfaced in `/health` output):**
+```
+  🔑 Key backup: last exported 2025-12-31 (74 days ago)
+     Run: python scripts/backup.py export-key | pbcopy
+     Store the key in your password manager or a fire-safe printout.
+```
+
+**Export flow** (`backup.py export-key`):
+- Prints `AGE-SECRET-KEY-…` to stdout only. No file written.
+- One-line prompt precedes key output: `# Age private key — store securely:`
+- User is responsible for routing (e.g., `| pbcopy` or `> key.txt`).
+
+**Import flow** (`backup.py import-key`):
+```
+Paste your age private key and press Ctrl-D:
+AGE-SECRET-KEY-…
+Key stored in macOS Keychain (service: artha-age-key). Verified.
+```
+
+Error if key already exists: `Key already in keychain. Use --force to overwrite.`
+
+#### 14.5.5 Cold-Start Workflow UX
+
+Step-by-step terminal output for fresh-machine restore:
+
+```
+Step 1 — Install age:
+  brew install age        # macOS
+  choco install age       # Windows
+
+Step 2 — Import your private key:
+  python scripts/backup.py import-key
+  (paste key from password manager, then Ctrl-D)
+
+Step 3 — Verify environment:
+  python scripts/backup.py preflight
+  ✓ age binary: /opt/homebrew/bin/age
+  ✓ age-keygen binary: /opt/homebrew/bin/age-keygen
+  ✓ keychain key: found (artha-age-key)
+  ✓ backup directory: backups/ (15 ZIPs)
+
+Step 4 — Restore from backup ZIP:
+  python scripts/backup.py install backups/daily/2026-03-14.zip --dry-run
+  (review output, then re-run without --dry-run)
+```
+
+`preflight` exits non-zero and prints a specific fix command on any check failure.
+
+#### 14.5.6 `vault.py health` Backup Section
+
+The `vault.py health` output (or `/health` command) includes a GFS section:
+
+```
+GFS Backup
+  ZIPs:       15 (daily: 7, weekly: 4, monthly: 3, yearly: 1)
+  Last backup: 2026-03-14 (today) ✓
+  Last validate: 2026-03-10 (4 days ago) ✓
+  Key: in keychain ✓
+```
+
+Degraded states surfaced in health output:
+- `Last backup: 2026-03-12 (2 days ago) ⚠` — suggests checking for session interruptions
+- `Last validate: NEVER ⚠` — prompts immediate `backup.py validate`
+- `Last validate: 45 days ago ⚠ OVERDUE` — same prompt
+- `Key: NOT FOUND ✗` — shows `backup.py import-key` fix command
 
 ---
 

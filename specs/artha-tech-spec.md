@@ -2,7 +2,7 @@
 
 > **Version**: 2.6.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v4.1
+> **Implements**: PRD v4.4
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -12,8 +12,8 @@
 |---------|------|---------|
 | v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
 | v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
-| v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
 | v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
+| v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
 | v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema |
 | v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff` |
 | v2.0 | 2026-02 | Supercharge: data integrity guard, bootstrap, coaching, dashboard |
@@ -1811,11 +1811,17 @@ SHA-256 verified before every write. Existing files overwritten. Use `--dry-run`
 
 | Command | Description |
 |---|---|
-| `vault.py encrypt` | Triggers GFS snapshot after all files encrypted |
-| `vault.py backup-status` | Show ZIP catalog, tier counts, last validation date |
-| `vault.py validate-backup [--domain X] [--date D]` | Open ZIP, decrypt & validate all files in-place |
-| `vault.py restore [--date D] [--domain X] [--dry-run]` | Restore from a ZIP found in the local catalog |
-| `vault.py install <zipfile> [--dry-run]` | Restore from an explicit ZIP path (cold-start) |
+| `vault.py encrypt` | Triggers GFS snapshot after all files encrypted (calls `backup.py` internally) |
+| `backup.py snapshot` | Run GFS snapshot manually without a full vault session |
+| `backup.py status` | Show ZIP catalog, tier counts, last validation date |
+| `backup.py validate [--domain X] [--date D]` | Open ZIP, decrypt & validate all files in-place |
+| `backup.py restore [--date D] [--domain X] [--dry-run] [--data-only]` | Restore from a ZIP found in the local catalog |
+| `backup.py install <zipfile> [--dry-run] [--data-only]` | Restore from an explicit ZIP path (cold-start on new machine) |
+| `backup.py export-key` | Print the age private key to stdout for secure storage |
+| `backup.py import-key` | Read age key from stdin, store in system keychain |
+| `backup.py preflight` | Verify age binary, keychain key, and backup directory are present |
+
+> **Backward compatibility:** `vault.py backup-status`, `vault.py validate-backup`, `vault.py restore`, and `vault.py install` are retained as forwarding aliases — they lazy-import and call the corresponding `backup.py` function. New workflows should use `backup.py` directly.
 
 **3-2-1 coverage:**
 
