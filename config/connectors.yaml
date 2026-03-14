@@ -1,0 +1,258 @@
+---
+# config/connectors.yaml — Artha Declarative Connector Registry
+# Version: 1.0 | Updated: 2026-03-13
+#
+# Each connector declares a data source, its auth method, and a handler module.
+# pipeline.py reads this file and calls each enabled connector's fetch() method.
+#
+# To add a new source: add a YAML block here + optionally write a handler in
+# scripts/connectors/. No Python changes required for standard IMAP/CalDAV sources.
+#
+# Security: handler paths are validated — must be under scripts/connectors/.
+# Auth credentials always go through system keyring (never plaintext in this file).
+
+schema_version: "1.0"
+
+connectors:
+
+  # ── Email ────────────────────────────────────────────────────────────────
+
+  gmail:
+    type: email
+    provider: google
+    enabled: true
+    description: "Gmail — primary personal email"
+    auth:
+      method: oauth2
+      token_file: ".tokens/gmail-token.json"
+      setup_script: "scripts/setup_google_oauth.py"
+      scopes:
+        - "https://www.googleapis.com/auth/gmail.readonly"
+    fetch:
+      handler: "scripts/connectors/google_email.py"
+      default_max_results: 200
+      default_lookback: "7d"
+    output:
+      format: jsonl
+      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
+      source_tag: ""
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source gmail"
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 30.0
+
+  outlook_email:
+    type: email
+    provider: microsoft
+    enabled: true
+    description: "Outlook / Microsoft 365 email"
+    auth:
+      method: oauth2
+      token_file: ".tokens/msgraph-token.json"
+      setup_script: "scripts/setup_msgraph_oauth.py"
+      scopes:
+        - "Mail.Read"
+        - "Mail.ReadBasic"
+    fetch:
+      handler: "scripts/connectors/msgraph_email.py"
+      default_max_results: 200
+      default_lookback: "7d"
+    output:
+      format: jsonl
+      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
+      source_tag: "outlook"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source outlook_email"
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 30.0
+
+  icloud_email:
+    type: email
+    provider: imap
+    enabled: true
+    description: "iCloud / Apple Mail (IMAP)"
+    auth:
+      method: app_password
+      credential_key: "artha-icloud-password"
+      server: "imap.mail.me.com"
+      port: 993
+      setup_script: "scripts/setup_icloud_auth.py"
+    fetch:
+      handler: "scripts/connectors/imap_email.py"
+      default_max_results: 200
+      default_lookback: "7d"
+    output:
+      format: jsonl
+      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
+      source_tag: "icloud"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source icloud_email"
+    retry:
+      max_retries: 2
+      base_delay: 2.0
+      max_delay: 30.0
+
+  # ── Calendar ──────────────────────────────────────────────────────────────
+
+  google_calendar:
+    type: calendar
+    provider: google
+    enabled: true
+    description: "Google Calendar — personal + family"
+    auth:
+      method: oauth2
+      token_file: ".tokens/gmail-token.json"
+      setup_script: "scripts/setup_google_oauth.py"
+      scopes:
+        - "https://www.googleapis.com/auth/calendar.readonly"
+    fetch:
+      handler: "scripts/connectors/google_calendar.py"
+      default_range_days: 7
+      # Calendar IDs are read from user_profile.yaml at runtime
+      calendars_from_profile: "integrations.google_calendar.calendar_ids"
+    output:
+      format: jsonl
+      fields: [id, calendar, summary, start, end, all_day, location, attendees]
+      source_tag: ""
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source google_calendar"
+
+  outlook_calendar:
+    type: calendar
+    provider: microsoft
+    enabled: true
+    description: "Outlook Calendar / Microsoft 365"
+    auth:
+      method: oauth2
+      token_file: ".tokens/msgraph-token.json"
+      setup_script: "scripts/setup_msgraph_oauth.py"
+      scopes:
+        - "Calendars.Read"
+    fetch:
+      handler: "scripts/connectors/msgraph_calendar.py"
+      default_range_days: 7
+    output:
+      format: jsonl
+      fields: [id, calendar, summary, start, end, all_day, location, attendees]
+      source_tag: "outlook"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source outlook_calendar"
+
+  icloud_calendar:
+    type: calendar
+    provider: caldav
+    enabled: true
+    description: "iCloud Calendar (CalDAV)"
+    auth:
+      method: app_password
+      credential_key: "artha-icloud-password"
+      server: "caldav.icloud.com"
+      setup_script: "scripts/setup_icloud_auth.py"
+    fetch:
+      handler: "scripts/connectors/caldav_calendar.py"
+      default_range_days: 7
+    output:
+      format: jsonl
+      fields: [id, calendar, summary, start, end, all_day, location, attendees]
+      source_tag: "icloud"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source icloud_calendar"
+
+  # ── Learning Management ───────────────────────────────────────────────────
+
+  canvas_lms:
+    type: lms
+    provider: canvas
+    enabled: true
+    description: "Canvas LMS — school assignments and grades"
+    auth:
+      method: api_key
+      # API token keys are stored per-child in keyring; configured in user_profile.yaml
+      credential_key_from_profile: "children[].school.canvas_keychain_key"
+      setup_script: "scripts/canvas_fetch.py --setup"
+    fetch:
+      handler: "scripts/connectors/canvas_lms.py"
+    output:
+      format: direct_state_write
+      target: "state/kids.md"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source canvas_lms"
+
+  # ── Notes ─────────────────────────────────────────────────────────────────
+
+  onenote:
+    type: notes
+    provider: onenote
+    enabled: true
+    description: "Microsoft OneNote — work notes and notebooks"
+    auth:
+      method: oauth2
+      token_file: ".tokens/msgraph-token.json"
+      setup_script: "scripts/setup_msgraph_oauth.py"
+      scopes:
+        - "Notes.Read"
+        - "Notes.ReadWrite"
+    fetch:
+      handler: "scripts/connectors/onenote.py"
+      include_personal: false
+    output:
+      format: direct_state_write
+      target: "state/onenote_progress.md"
+    health_check: true
+    mcp:
+      prefer_mcp: true
+      fallback: "scripts/pipeline.py --source onenote"
+
+  # ── Community Extension Examples (disabled by default) ───────────────────
+  #
+  # fastmail:
+  #   type: email
+  #   provider: imap
+  #   enabled: false
+  #   description: "Fastmail (IMAP)"
+  #   auth:
+  #     method: app_password
+  #     credential_key: "artha-fastmail-password"
+  #     server: "imap.fastmail.com"
+  #     port: 993
+  #   fetch:
+  #     handler: "scripts/connectors/imap_email.py"  # reuses iCloud IMAP handler
+  #     default_max_results: 200
+  #   output:
+  #     format: jsonl
+  #     source_tag: "fastmail"
+  #
+  # protonmail_bridge:
+  #   type: email
+  #   provider: imap
+  #   enabled: false
+  #   description: "ProtonMail (via Bridge at localhost:1143)"
+  #   auth:
+  #     method: app_password
+  #     credential_key: "artha-proton-bridge-password"
+  #     server: "127.0.0.1"
+  #     port: 1143
+  #   fetch:
+  #     handler: "scripts/connectors/imap_email.py"
+  #     default_max_results: 200
+  #   output:
+  #     format: jsonl
+  #     source_tag: "proton"

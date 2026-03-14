@@ -4,6 +4,15 @@ Each file in `prompts/` defines the extraction rules, alert thresholds, and
 state-write protocol for one Artha domain. The AI reads the relevant prompt
 file before processing emails or updating a state file.
 
+## Base + Overlay Architecture
+
+- **Base prompts** (this directory): Universal extraction logic, shipped with Artha
+- **Prompt overlays** (`config/prompt-overlays/`): User-specific additions (gitignored)
+- **Routing overlay** (`config/routing.yaml`): Sender-to-domain mapping from profile
+
+When processing a domain, load the base prompt first, then append the overlay
+if it exists. See `config/prompt-overlays/README.md` for details.
+
 ---
 
 ## File Naming Convention

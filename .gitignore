@@ -1,11 +1,11 @@
 # ─── User data (NEVER committed) ─────────────────────────────────────────────
 config/user_profile.yaml          # Personal profile — created by /bootstrap
 config/artha_config.yaml          # To Do list IDs — generated at setup
-config/contacts.md.age            # Encrypted contacts
-config/contacts.md                # Decrypted contacts (transient)
-config/occasions.md               # User's personal occasions
+config/settings.md                # Legacy config — consolidated into user_profile.yaml
 config/routing.yaml               # User-specific sender→domain routing
 config/Artha.identity.md          # Generated §1 Identity block — personal data
+config/prompt-overlays/*.md       # User-specific prompt extensions
+!config/prompt-overlays/README.md # Keep the README
 
 # ─── State files (all user-generated) ────────────────────────────────────────
 state/*.md
@@ -39,6 +39,19 @@ outlook_*.jsonl
 # ─── Python bytecode ─────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Test / lint caches ──────────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
 
 # ─── OneDrive artifacts ──────────────────────────────────────────────────────
 *conflicted*
@@ -51,9 +64,10 @@ __pycache__/
 .archive/
 .claude/
 tmp/
+visuals/
 
-# ─── Spec files (contain personal data in design examples) ───────────────────
-specs/
+# ─── Spec files (fictional example data — safe to commit) ────────────────────
+# specs/ — no longer excluded; PII scrub completed, names are fictional examples
 
 # ─── Assembled instruction file (contains personal identity) ─────────────────
 config/Artha.md

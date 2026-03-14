@@ -8,15 +8,15 @@ in `scripts/skills/`.
 
 | # | Domain | State File | Prompt File | Description |
 |---|--------|-----------|-------------|-------------|
-| 1 | **immigration** | `state/immigration.md` | `prompts/immigration.md` | Visa status, case numbers, deadlines, document expiry |
-| 2 | **finance** | `state/finance.md` | `prompts/finance.md` | Accounts, balances, taxes, insurance claim tracking |
-| 3 | **health** | `state/health.md` | `prompts/health.md` | Medical records, prescriptions, appointments, insurance |
-| 4 | **kids** | `state/kids.md` | `prompts/kids.md` | School calendar, assignments, activities, milestones |
-| 5 | **home** | `state/home.md` | `prompts/home.md` | Maintenance schedule, utilities, appliances, vendors |
-| 6 | **travel** | `state/travel.md` | `prompts/travel.md` | Upcoming trips, bookings, loyalty programs, passport/visa requirements |
-| 7 | **vehicle** | `state/vehicle.md` | `prompts/vehicle.md` | Registration, insurance, maintenance schedule, fuel records |
-| 8 | **insurance** | `state/insurance.md` | `prompts/insurance.md` | Policy numbers, coverage, premiums, claim history |
-| 9 | **estate** | `state/estate.md` | `prompts/estate.md` | Wills, beneficiaries, account inventory for estate planning |
+| 1 | **finance** | `state/finance.md` | `prompts/finance.md` | Accounts, balances, taxes, insurance claim tracking |
+| 2 | **health** | `state/health.md` | `prompts/health.md` | Medical records, prescriptions, appointments, insurance |
+| 3 | **kids** | `state/kids.md` | `prompts/kids.md` | School calendar, assignments, activities, milestones |
+| 4 | **home** | `state/home.md` | `prompts/home.md` | Maintenance schedule, utilities, appliances, vendors |
+| 5 | **travel** | `state/travel.md` | `prompts/travel.md` | Upcoming trips, bookings, loyalty programs, passport/visa requirements |
+| 6 | **vehicle** | `state/vehicle.md` | `prompts/vehicle.md` | Registration, insurance, maintenance schedule, fuel records |
+| 7 | **insurance** | `state/insurance.md` | `prompts/insurance.md` | Policy numbers, coverage, premiums, claim history |
+| 8 | **estate** | `state/estate.md` | `prompts/estate.md` | Wills, beneficiaries, account inventory for estate planning |
+| 9 | **immigration** | `state/immigration.md` | `prompts/immigration.md` | Visa status, case numbers, deadlines, document expiry |
 | 10 | **social** | `state/social.md` | `prompts/social.md` | Relationships, occasions, gift ideas, reconnect intelligence |
 | 11 | **learning** | `state/learning.md` | `prompts/learning.md` | Courses, reading list, certifications, skill goals |
 | 12 | **comms** | `state/comms.md` | `prompts/comms.md` | Communication patterns, pending replies, action items from email |
@@ -67,7 +67,7 @@ Files with `updated_by: bootstrap` are shown with a ⚠ indicator in the dashboa
 
 Domains are ranked by urgency × importance for the catch-up briefing:
 
-1. **P0 — Life-impacting deadlines**: immigration, estate, insurance
+1. **P0 — Life-impacting deadlines**: estate, insurance, immigration (if applicable)
 2. **P1 — Financial health**: finance, vehicle (registration/insurance)
 3. **P2 — Family logistics**: kids, health, home
 4. **P3 — Planning & enrichment**: travel, social, learning, goals

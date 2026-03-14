@@ -32,7 +32,8 @@
         <string>-c</string>
         <string>
             LOCK_FILE="${HOME}/OneDrive/Artha/.artha-decrypted"
-            VAULT="${HOME}/OneDrive/Artha/scripts/vault.sh"
+            VAULT_PY="${HOME}/OneDrive/Artha/scripts/vault.py"
+            PYTHON="${HOME}/.artha-venvs/.venv/bin/python"
             WATCHDOG_LOG="/tmp/artha-watchdog.log"
             TIMESTAMP=$(date -Iseconds)
 
@@ -43,11 +44,11 @@
                    ! pgrep -f "claude-code" > /dev/null 2>&1; then
                     # No active Claude session — encrypt stale plaintext
                     echo "[${TIMESTAMP}] WATCHDOG: Lock file found, no claude process. Auto-encrypting." >> "${WATCHDOG_LOG}"
-                    if [[ -x "${VAULT}" ]]; then
-                        "${VAULT}" encrypt >> "${WATCHDOG_LOG}" 2>&amp;1
+                    if [[ -x "${PYTHON}" ]] &amp;&amp; [[ -f "${VAULT_PY}" ]]; then
+                        "${PYTHON}" "${VAULT_PY}" encrypt >> "${WATCHDOG_LOG}" 2>&amp;1
                         echo "[${TIMESTAMP}] WATCHDOG: Auto-encrypt complete." >> "${WATCHDOG_LOG}"
                     else
-                        echo "[${TIMESTAMP}] WATCHDOG: ERROR — vault.sh not executable at ${VAULT}" >> "${WATCHDOG_LOG}"
+                        echo "[${TIMESTAMP}] WATCHDOG: ERROR — vault.py or python not found at ${VAULT_PY}" >> "${WATCHDOG_LOG}"
                     fi
                 else
                     echo "[${TIMESTAMP}] WATCHDOG: Lock file present + claude process active. No action." >> "${WATCHDOG_LOG}"

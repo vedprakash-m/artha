@@ -1,13 +1,13 @@
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "artha"
 version = "5.1.0"
 description = "Personal Intelligence OS — AI-powered life management"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0.1",
@@ -38,11 +38,16 @@ dev = [
     "pytest>=7.4.0",
     "pytest-mock>=3.11.0",
     "pytest-snapshot>=0.9.0",
+    "datadiff>=2.2.0",
 ]
 
+[project.scripts]
+artha = "artha:main"
+
 [project.urls]
-Repository = "https://github.com/user/artha"
-Documentation = "https://github.com/user/artha/tree/main/docs"
+Repository = "https://github.com/vedprakash-m/artha"
+Documentation = "https://github.com/vedprakash-m/artha/tree/main/docs"
 
 [tool.setuptools]
-packages = ["scripts", "scripts.lib", "scripts.skills"]
+py-modules = ["artha"]
+packages = ["scripts", "scripts.lib", "scripts.skills", "scripts.connectors", "scripts.actions"]

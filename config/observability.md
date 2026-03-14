@@ -26,5 +26,38 @@ git commit -m "Artha catch-up [ISO datetime]" --quiet || true
 ```
 Non-blocking: if git fails, continue without committing. Log git commit status to health-check.md.
 
+### Performance metrics (v4.1)
+
+The fetch and skill phases collect per-component wall-clock timings:
+
+| Metric file | Writer | Retention |
+|------------|--------|-----------|
+| `tmp/pipeline_metrics.json` | `scripts/pipeline.py` | Last 50 runs |
+| `tmp/skills_metrics.json` | `scripts/skill_runner.py` | Last 50 runs |
+| `tmp/catchup_metrics.json` | `scripts/lib/metrics.py` | Last 30 runs |
+
+**Pipeline parallelism:** `pipeline.py` launches all enabled connectors in a
+`ThreadPoolExecutor` (max 8 threads). Each connector runs in its own thread;
+JSONL output is buffered per-connector and flushed sequentially after all finish.
+
+### Eval runner
+
+`scripts/eval_runner.py` aggregates all metric files and health-check data into
+a single evaluation report:
+
+```bash
+python scripts/eval_runner.py                # Full report
+python scripts/eval_runner.py --perf         # Performance only
+python scripts/eval_runner.py --accuracy     # Accuracy & signal quality
+python scripts/eval_runner.py --freshness    # Domain staleness
+python scripts/eval_runner.py --json         # Machine-readable output
+python scripts/eval_runner.py --trend 14     # 14-day trend window
+```
+
+Dimensions analyzed:
+- **Performance** — avg/min/max/p95 per connector, per skill, per phase; trend detection (improving/degrading/stable)
+- **Accuracy** — action acceptance rate (7-day rolling), per-domain accuracy, signal:noise ratio
+- **Freshness** — stale domains (>7 days), OAuth token health, bootstrap coverage
+
 ---
 

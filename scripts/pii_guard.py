@@ -157,11 +157,15 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
         "[PII-FILTERED-DL]",
         "DL",
     ),
-    # Florida DL: 1 letter + exactly 12 digits — structurally unambiguous vs
-    # A-number (8-9 digits) and CA DL (1 letter + 7 digits).
-    # AAMVA AAMVA DL/ID Card Design Standard §7.4 (FL format).
+    # Florida DL: 1 letter + exactly 12 digits — context-gated to avoid
+    # false positives on order numbers, tracking IDs, etc.
+    # AAMVA DL/ID Card Design Standard §7.4 (FL format).
     (
-        re.compile(r"\b[A-Z]\d{12}\b"),
+        re.compile(
+            r"(?:driver.?s?\s*licen[sc]e|\bDL\b|\bFL\b|florida|state\s*id)"
+            r"[^\n]{0,50}\b([A-Z]\d{12})\b",
+            re.IGNORECASE,
+        ),
         "[PII-FILTERED-DL]",
         "DL",
     ),
@@ -179,6 +183,61 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
         ),
         r"\1:[PII-FILTERED-DL]",
         "DL",
+    ),
+    # ── Non-US PII patterns ────────────────────────────────────────────────
+    # India PAN (Permanent Account Number): 5 letters + 4 digits + 1 letter
+    (
+        re.compile(
+            r"\b(PAN|permanent\s*account)\s*[:#]?\s*([A-Z]{5}\d{4}[A-Z])\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-PAN]",
+        "PAN",
+    ),
+    # India Aadhaar: 12 digits, typically formatted as XXXX XXXX XXXX
+    (
+        re.compile(
+            r"\b(aadhaar|aadhar|uid)\s*[:#]?\s*(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-AADHAAR]",
+        "AADHAAR",
+    ),
+    # India Passport: single letter + 7 digits (context-gated)
+    (
+        re.compile(
+            r"\b(passport\s*(?:number|no|#)?)\s*[:#]?\s*([A-Z]\d{7})\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-PASSPORT]",
+        "PASSPORT",
+    ),
+    # UK National Insurance Number: 2 letters + 6 digits + 1 letter
+    (
+        re.compile(
+            r"\b(NI(?:NO)?|national\s*insurance)\s*[:#]?\s*([A-Z]{2}\d{6}[A-Z])\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-NINO]",
+        "NINO",
+    ),
+    # Canada SIN: 9 digits (formatted as XXX-XXX-XXX or XXXXXXXXX)
+    (
+        re.compile(
+            r"\b(SIN|social\s*insurance)\s*[:#]?\s*(\d{3}[\s-]?\d{3}[\s-]?\d{3})\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-SIN]",
+        "SIN",
+    ),
+    # Australia TFN: 8-9 digits (context-gated)
+    (
+        re.compile(
+            r"\b(TFN|tax\s*file\s*number)\s*[:#]?\s*(\d{8,9})\b",
+            re.IGNORECASE,
+        ),
+        r"\1:[PII-FILTERED-TFN]",
+        "TFN",
     ),
 ]
 
@@ -388,7 +447,7 @@ def do_test() -> None:
     check("US Passport",          "Passport number: A12345678 verified",   True,  "[PII-FILTERED-PASSPORT]")
     check("WA Driver License",    "License: WDLMISH123AB issued",          True,  "[PII-FILTERED-DL]")
     # AAMVA multi-state DL formats (B7/M8)
-    check("FL Driver License",    "ID: G123456789012 FL DL",               True,  "[PII-FILTERED-DL]")
+    check("FL Driver License",    "FL DL: G123456789012 on file",           True,  "[PII-FILTERED-DL]")
     check("CA DL in context",     "Driver's License: A1234567 CA",         True,  "[PII-FILTERED-DL]")
     check("TX DL in context",     "DL number: 12345678",                   True,  "[PII-FILTERED-DL]")
     check("NY DL in context",     "license number: ABC123456",             True,  "[PII-FILTERED-DL]")
@@ -409,6 +468,15 @@ def do_test() -> None:
     check("ITIN distinct from SSN",   "ITIN 912-78-1234 is not an SSN",        True, "[PII-FILTERED-ITIN]")
 
     print("")
+    print("── Section D: Non-US PII Patterns ─────────")
+    check("India PAN",             "PAN: ABCDE1234F on file",               True, "[PII-FILTERED-PAN]")
+    check("India Aadhaar",         "Aadhaar: 1234 5678 9012 verified",      True, "[PII-FILTERED-AADHAAR]")
+    check("India Passport",        "Passport number: J1234567 issued",      True, "[PII-FILTERED-PASSPORT]")
+    check("UK NI Number",          "NINO: AB123456C active",                True, "[PII-FILTERED-NINO]")
+    check("Canada SIN",            "SIN: 123-456-789 on record",            True, "[PII-FILTERED-SIN]")
+    check("Australia TFN",         "TFN: 123456789 registered",             True, "[PII-FILTERED-TFN]")
+
+    print("")
     print(f"Results: {passed} passed, {failed} failed")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
@@ -420,6 +488,12 @@ def do_test() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Ensure UTF-8 output on Windows (subprocess/pytest may default to cp1252)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if len(sys.argv) < 2:
         print(
             "Usage: pii_guard.py {scan|filter|test|version} [file]\n"

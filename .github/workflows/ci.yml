@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main", "develop"]
+
+jobs:
+  # ── Lint + Syntax ────────────────────────────────────────────────────────
+  lint:
+    name: Syntax check (py_compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check all Python files
+        run: |
+          find scripts/ -name "*.py" ! -path "*/__pycache__/*" ! -path "*/.archive/*" \
+            -exec python -m py_compile {} \;
+          python -m py_compile artha.py
+          echo "✓ Syntax OK"
+
+  # ── Test Suite ────────────────────────────────────────────────────────────
+  tests:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('scripts/requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+          pip install pytest pytest-mock
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+        env:
+          PYTHONPATH: scripts
+
+  # ── PII Scan on Specs ─────────────────────────────────────────────────────
+  pii-specs:
+    name: PII scan (spec files)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Scan spec files for PII
+        run: |
+          FAIL=0
+          for f in specs/*.md config/Artha.core.md config/connectors.yaml config/actions.yaml; do
+            if [ -f "$f" ]; then
+              if ! python scripts/pii_guard.py scan < "$f"; then
+                echo "::error file=$f::PII detected in $f"
+                FAIL=1
+              fi
+            fi
+          done
+          [ "$FAIL" -eq 0 ] && echo "✓ PII scan clean" || exit 1
+
+  # ── Connector handler imports ─────────────────────────────────────────────
+  connectors-syntax:
+    name: Connector handler syntax + import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal deps
+        run: pip install pyyaml
+      - name: Syntax check all connector handlers
+        run: |
+          for f in scripts/connectors/*.py; do
+            python -m py_compile "$f" && echo "OK $f"
+          done
+      - name: Validate connectors.yaml parses
+        run: |
+          python -c "
+          import yaml
+          with open('config/connectors.yaml') as f:
+              cfg = yaml.safe_load(f)
+          names = list(cfg.get('connectors', {}).keys())
+          print(f'connectors.yaml: {len(names)} connectors — {names}')
+          "
+      - name: Validate actions.yaml parses
+        run: |
+          python -c "
+          import yaml
+          with open('config/actions.yaml') as f:
+              cfg = yaml.safe_load(f)
+          actions = list(cfg.get('actions', {}).keys())
+          print(f'actions.yaml: {len(actions)} actions — {actions}')
+          "
+
+  # ── Schema Validation ─────────────────────────────────────────────────────
+  schema-validation:
+    name: Validate example profile against schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install pyyaml jsonschema
+      - name: Validate example profile
+        run: |
+          python -c "
+          import json, yaml, jsonschema
+          with open('config/user_profile.example.yaml') as f:
+              profile = yaml.safe_load(f)
+          with open('config/user_profile.schema.json') as f:
+              schema = json.load(f)
+          jsonschema.validate(instance=profile, schema=schema)
+          print('✓ user_profile.example.yaml validates against schema')
+          "
