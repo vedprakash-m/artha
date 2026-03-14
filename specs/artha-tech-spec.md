@@ -11,6 +11,7 @@
 | Version | Date | Summary |
 |---------|------|---------|
 | v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
+| v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
 | v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema |
 | v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff` |
 | v2.0 | 2026-02 | Supercharge: data integrity guard, bootstrap, coaching, dashboard |
@@ -1669,9 +1670,24 @@ For each modified state file:
 
 **Backup retention:** `.md.bak` files are kept until the next successful encrypt cycle. After `vault.sh encrypt` completes without error, `.bak` files are removed. If the backup is older than 7 days, log a warning.
 
-### 8.5.2 GFS Vault Backup *(v2.3 — P0)*
+### 8.5.2 GFS Vault Backup *(v2.4 — P0)*
 
-Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. GFS backups are encrypted `.age` files — no additional encryption is needed, and they sync to OneDrive automatically.
+Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. All backup files are `.age`-encrypted and sync to OneDrive automatically.
+
+**Backup scope — full state + config:**
+
+The backup registry is declared in `config/user_profile.yaml → backup` section and is the authoritative source of truth for what is protected. Three source types:
+
+| source_type | Live location | Backup handling |
+|---|---|---|
+| `state_encrypted` | `state/{name}.md.age` | Copied directly — already encrypted |
+| `state_plain` | `state/{name}.md` | Encrypted on-the-fly by `age_encrypt` before storing |
+| `config` | `config/{file}` | Encrypted on-the-fly by `age_encrypt` before storing |
+
+Default registry (user-editable — users without certain domains simply remove entries):
+- **9 encrypted state files**: immigration, finance, insurance, estate, health, vehicle, contacts, occasions, audit
+- **22 plain state files**: boundary, calendar, comms, dashboard, decisions, digital, employment, goals, health-check, health-metrics, home, kids, learning, memory, onenote_progress, open_items, scenarios, shopping, social, travel, work-calendar
+- **4 config files**: `config/user_profile.yaml`, `config/routing.yaml`, `config/connectors.yaml`, `config/artha_config.yaml`
 
 **Storage layout:**
 ```
@@ -1683,12 +1699,16 @@ state/backups/
   manifest.json ← SHA-256 checksums + metadata for every backup file
 ```
 
+File naming:
+- State files: `{tier}/{name}-{date}.md.age`
+- Config files: `{tier}/cfg__{slug}-{date}.cfg.age` (path slug with `/` → `__`, `.` → `_`)
+
 **Tier promotion (priority — highest wins):**
 
 | Date condition | Tier |
 |---|---|
 | December 31 | yearly |
-| Last day of any month (next calendar day is a different month) | monthly |
+| Last day of any month | monthly |
 | Sunday | weekly |
 | All other days | daily |
 
@@ -1701,11 +1721,9 @@ state/backups/
 | monthly | last 12 | 12 rolling months |
 | yearly | unlimited | Full history |
 
-**Trigger:** `vault.py encrypt` — a GFS snapshot is taken automatically after every successful encrypt cycle. The snapshot reads from the freshly-written `.age` files (plaintext has already been deleted). No scheduled job is required.
+**Trigger:** `vault.py encrypt` — GFS snapshot taken automatically after every successful encrypt cycle. Each file written atomically via `.tmp` sibling + `os.replace()`.
 
-**Atomicity:** Each backup file is written to a `.tmp` sibling and then `os.replace()`-ed into its final name, ensuring no partial file is ever visible as the backup destination.
-
-**Manifest:** `state/backups/manifest.json` records SHA-256 checksum, byte size, domain, tier, and ISO-8601 date for every backup file. The manifest itself is written atomically. `last_validate` field tracks the timestamp of the most recent restore validation.
+**Manifest:** `state/backups/manifest.json` records SHA-256, size, domain, tier, date, `source_type`, and `restore_path` for every backup file. Written atomically. `last_validate` tracks the most recent restore validation timestamp.
 
 **Restore validation (monthly, mandatory):**
 
@@ -1713,42 +1731,66 @@ state/backups/
 python scripts/vault.py validate-backup
 ```
 
-For each domain, decrypts the most recent backup to a temp directory (never touches live state) and checks:
-1. SHA-256 matches manifest entry (bit-rot detection)
+Decrypts the most recent backup per domain to a temp directory (live state untouched). Checks in order:
+1. SHA-256 matches manifest (bit-rot detection)
 2. `age_decrypt` succeeds
-3. Output is non-empty
-4. First line is `---` (YAML frontmatter)
-5. Word count ≥ 30 (sanity: non-trivial content)
+3. Output non-empty
+4. First line is `---` (YAML frontmatter) — for state files
+5. Word count ≥ 30 (non-trivial content)
 
-Result logged to `audit.md` as `BACKUP_VALIDATE_OK` or `BACKUP_VALIDATE_FAIL`. `manifest.json` `last_validate` field updated on full success. `vault.py health` warns if validation is overdue (> 35 days).
+Result logged to `audit.md`. `vault.py health` warns if validation is overdue (> 35 days).
+
+**Fresh-install restore:**
+
+A backup snapshot is self-sufficient for rebuilding Artha from scratch:
+
+```bash
+# Preview what would be restored
+python scripts/vault.py restore --date 2026-03-14 --dry-run
+
+# Restore all files from a specific snapshot
+python scripts/vault.py restore --date 2026-03-14
+
+# Restore a single domain only
+python scripts/vault.py restore --domain finance
+```
+
+Restore semantics:
+- `state_encrypted`: backup `.age` file copied back to `state/`
+- `state_plain`: backup decrypted, written as `.md` to `state/`
+- `config`: backup decrypted, written back to `config/`
+
+SHA-256 verified before every write. Existing files overwritten. Use `--dry-run` to preview.
 
 **CLI commands:**
 
 | Command | Description |
 |---|---|
-| `vault.py encrypt` | (existing) + triggers GFS snapshot after all files encrypted |
+| `vault.py encrypt` | Triggers GFS snapshot after all files encrypted |
 | `vault.py backup-status` | Show backup catalog, tier counts, last validation date |
-| `vault.py validate-backup` | Decrypt newest backup per domain, validate content, log result |
-| `vault.py validate-backup --domain immigration` | Validate a specific domain only |
-| `vault.py validate-backup --date 2026-03-01` | Validate a specific date's snapshot |
+| `vault.py validate-backup [--domain X] [--date D]` | Decrypt & validate backup files |
+| `vault.py restore [--date D] [--domain X] [--dry-run]` | Restore files from a GFS snapshot |
 
 **3-2-1 coverage:**
 
 | Copy | Location | Notes |
 |---|---|---|
-| 1 | `state/*.md.age` (live) | Always-current encrypted state |
-| 2 | `state/backups/**/*.md.age` | GFS rotation — up to 1 year of history |
-| 3 | Both #1 and #2 sync to OneDrive | Cloud copy of all encrypted files |
+| 1 | `state/*.md.age` + `state/*.md` (live) | Always-current encrypted and plain state |
+| 2 | `state/backups/**/*.age` | GFS rotation — up to 1 year of history, all files encrypted |
+| 3 | Both #1 and #2 sync to OneDrive | Cloud copy of all files |
 
-Encryption keys are **device-local only** (macOS Keychain / Windows Credential Manager). The OneDrive cloud copy requires the device-local private key to decrypt — cloud possession alone is insufficient.
+Encryption keys are device-local only (macOS Keychain / Windows Credential Manager). Cloud possession alone is insufficient to decrypt.
 
 **Audit trail entries:**
 ```
-[timestamp] BACKUP_OK         | file: finance.md.age | tier: daily | date: 2026-03-13 | sha256: abc123...
-[timestamp] BACKUP_PRUNED     | file: finance-2026-03-06.md.age | tier: daily | retention: 7
-[timestamp] BACKUP_VALIDATE_OK| key: daily/finance-2026-03-13.md.age | tier: daily | date: 2026-03-13 | words: 1842
-[timestamp] BACKUP_VALIDATE_FAIL | key: daily/finance-.... | reason: checksum_mismatch
-[timestamp] MANIFEST_SAVE_FAILED | error: ...
+[ts] BACKUP_OK              | file: finance.md.age   | tier: daily  | sha256: abc123...
+[ts] BACKUP_OK              | file: goals.md         | tier: daily  | sha256: def456...
+[ts] BACKUP_OK              | file: cfg__config__...  | tier: daily  | sha256: ghi789...
+[ts] BACKUP_PRUNED          | file: finance-2026-03-06.md.age | tier: daily
+[ts] BACKUP_VALIDATE_OK     | key: daily/finance-... | words: 1842
+[ts] BACKUP_VALIDATE_FAIL   | key: daily/finance-... | reason: checksum_mismatch
+[ts] RESTORE_OK             | key: daily/finance-... | dest: state/finance.md.age
+[ts] RESTORE_FAIL           | key: daily/finance-... | reason: checksum_mismatch
 ```
 
 ### 8.6 Pre-Flight PII Filter
