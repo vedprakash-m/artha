@@ -120,3 +120,20 @@ These files are gitignored and must **never** be committed:
 - `config/Artha.md` — assembled instruction file
 - `state/*.md` — domain state (plaintext)
 - `*-token.json`, `*-creds.json` — OAuth tokens
+
+## Git History & Privacy
+
+**All commits from this maintainer use the GitHub noreply address** — no personal email is embedded in new commits:
+
+```bash
+git config user.email "vedprakash-m@users.noreply.github.com"
+```
+
+**Known limitation in early history:** Early commits (before the noreply address was adopted) contain the maintainer's personal email addresses in commit metadata and in some spec/config file content. This is a known issue. The working files at HEAD are clean (verified by the `pii-check.yml` CI workflow on every push). A full history rewrite with `git filter-repo` would break all existing forks and is not planned.
+
+**For contributors:** Please configure your own noreply address before submitting PRs:
+
+```bash
+# Find your noreply address at: https://github.com/settings/emails
+git config user.email "YOUR_USERNAME@users.noreply.github.com"
+```

@@ -62,6 +62,26 @@ iCloud requires an **app-specific password**, not your Apple ID password.
 
 ## Venv / dependency errors
 
+### "No recommended backend was available" (Linux) {#no-recommended-backend-was-available-linux}
+
+**Cause:** Python's `keyring` library requires a secret-storage backend. Desktop Linux (GNOME, KDE, XFCE) includes one automatically. Headless servers, WSL1, Docker, and some minimal cloud VMs do not.
+
+**Fix:**
+```bash
+# Desktop Linux (GNOME/KDE) — D-Bus secret service:
+pip install secretstorage
+
+# Headless server / WSL / Docker — plaintext file fallback:
+pip install keyrings.alt
+```
+
+> **Warning:** `keyrings.alt` stores secrets in a plaintext file at `~/.local/share/python_keyring/`.
+> This is acceptable for single-user personal machines but unsuitable for shared servers.
+> For shared or cloud environments, use the `ARTHA_AGE_KEY` environment variable instead
+> of keyring storage: `export ARTHA_AGE_KEY=$(cat ~/age-key.txt)` then `python scripts/vault.py store-key --env`.
+
+---
+
 ### "No module named 'googleapiclient'"
 
 The virtual environment isn't activated or the packages aren't installed.

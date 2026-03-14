@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 2.8 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.2
+> **Implements**: PRD v5.3
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.0 | 2026-03 | Novice UX hardening (PRD F15.72–F15.77): Step 6 restored to README, age key deletion order fixed, `<details>` OS blocks, Node.js prereq, System keyring prereq, `check_keyring_backend()` P0 preflight gate, `open_items.md` template + `--fix` auto-create, `_rel()` path masker for all preflight console output, example profile PII neutralized (King County WA → Springfield IL), demo footer fixed, Google OAuth deep-link doc, catchup alias note |
 | v2.9 | 2026-03 | Distribution audit: 15-issue hardening — git history PII purge, connector defaults (Gmail+GCal only), jsonschema dedup, Python >=3.11 enforced, token path corrected (.tokens/ not ~/.artha-tokens/), settings.md legacy code removed, pre-commit hook activation documented, registry.md sanitized |
 | v2.8 | 2026-03 | Phase 1b: domain registry, household types, renter mode, pets, passport/subscription skills, RSS connector, offline/degraded mode, performance telemetry, 4 view scripts (status/goals/items/scorecard), migrate_state.py DSL |
 | v2.7 | 2026-03 | ACB v2.1: Multi-LLM Q&A, ensemble mode, HCI command redesign, write commands, /diff, /goals |

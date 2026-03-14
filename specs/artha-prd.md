@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v5.2
+## Product Requirements Document · v5.3
 
 **Author:** [Author]
 **Date:** March 14, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v5.3 | 2026-03 | Novice UX hardening (15-issue audit): Step 6 restored, age key deletion trap fixed, keyring check, open_items template, path PII masking, Node.js prereq, `<details>` OS blocks, AI CLI guidance, Linux age installs, Google OAuth deep links, catchup aliases, example profile PII neutralized (F15.72–F15.77) |
 | v5.2 | 2026-03 | Phase 1b capabilities: domain registry, household types, renter mode, pet reminders, passport skill, subscription monitor, RSS connector, offline/degraded mode, performance telemetry, view scripts (F15.60–F15.71) |
 | v5.1 | 2026-03 | ACB v2.1: Multi-LLM Q&A via Telegram, ensemble mode, HCI command redesign, write commands |
 | v5.0 | 2026-03 | Channel Bridge (ACB v2.0): Telegram push + interactive listener |
@@ -801,6 +802,12 @@ Hey — quick check-in on your week:
 | F15.69 | **Offline/Degraded Mode** *(v5.2 — P1)* — `Artha.core.md` Step 4e classifies each session as `normal`, `degraded`, or `offline`. Dedicated briefing templates: §8.10 offline (state-only, date-driven skills still run), §8.11 degraded (data-gaps section + recovery suggestions). Session mode logged to `state/health-check.md`. | P1 |
 | F15.70 | **Performance Telemetry + Per-Domain Hit Rate** *(v5.2 — P1)* — `state/health-check.md` run entries extended with: `session_mode`, `domains_loaded`, `domains_skipped`, `domain_hits`, `connector_timing_ms`, `skill_timing_ms`, `domain_hit_rates`. Hit rate <60% after ≥10 catch-ups surfaces as ⚠ in `/health`. Addresses R16 (domain extraction quality degradation under context pressure). | P1 |
 | F15.71 | **Script-Backed View Commands** *(v5.2 — P1)* — Four new deterministic view scripts: `status_view.py` (health-check stats + run history), `goals_view.py` (scorecard table with progress bars), `items_view.py` (priority-grouped with `--quick` and `--domain` filters), `scorecard_view.py` (5-dimension weekly scorecard from health-check + goals + open-items). All accept `--format flash|standard|digest`. No vault required (plain state files only). | P1 |
+| F15.72 | **Novice UX: Setup Flow Completeness** *(v5.3 — P0)* — README Quick Start restored to a complete, sequential 7-step flow: Step 6 (Run Preflight Check) was absent causing first catch-up failure. Step 4 reordered to prevent age key deletion before public key is pasted: `age-keygen` → ⚠ copy public key callout → paste into profile → store-key → `vault.py status` verification gate → `rm` key file only after confirmation. Node.js 18+ added as an explicit prerequisite (required by Claude Code and Gemini CLI). | P0 |
+| F15.73 | **Novice UX: Platform Parity** *(v5.3 — P1)* — Windows and Linux instructions promoted from inline bash comments to `<details>` collapsible blocks with proper syntax-highlighted, copy-pasteable code. Affects: venv activation (Step 1), key file deletion (Step 4), Linux age install commands (Fedora/Arch/Debian/binary fallback). System keyring row added to prerequisites table with headless-Linux `pip install keyrings.alt` guidance. | P1 |
+| F15.74 | **Novice UX: AI CLI Guidance** *(v5.3 — P1)* — AI CLI prerequisites row updated with `npm install -g` install commands for each CLI, a `Which AI CLI should I use?` callout recommending Claude Code or Gemini CLI for beginners, and a note that GitHub Copilot requires VS Code + a paid subscription. Command alias note added to Step 7 explaining `catch me up` / `/catch-up` / `catchup` are synonyms. | P1 |
+| F15.75 | **Novice UX: Google OAuth Deep Links** *(v5.3 — P1)* — Step 5 Google OAuth instructions replaced with four direct `console.cloud.google.com` deep-links (projectcreate, API library ×2, OAuth consent screen, credentials). New `docs/google-oauth-setup.md` provides a full 5-step illustrated walkthrough with troubleshooting for "This app isn’t verified". | P1 |
+| F15.76 | **Novice UX: open_items.md Bootstrap** *(v5.3 — P0)* — `state/templates/open_items.md` created (was the only always-load file without a template). `check_open_items()` in `preflight.py` updated to auto-create from template when `--fix` is passed, removing the broken `T-1A.11.1` spec reference. | P0 |
+| F15.77 | **Novice UX: Operational PII Hardening** *(v5.3 — P1)* — Three PII improvements: (1) `preflight.py` `_rel()` helper masks all absolute filesystem paths in console output (replaces OS username + home dir with `$ARTHA_DIR/` prefix). (2) `config/user_profile.example.yaml` location defaults changed from Bellevue/King County WA to Springfield/Sangamon IL with fictional coordinates; immigration context replaced with YYYY-MM-DD placeholder. (3) `demo_catchup.py` footer corrected from dead `python scripts/_bootstrap.py` to `Open your AI CLI and type /bootstrap`. Keyring backend check added as first P0 preflight gate on Linux. | P1 |
 
 ---
 
