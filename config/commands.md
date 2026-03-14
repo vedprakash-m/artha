@@ -13,7 +13,7 @@ Domain freshness: [table — domain + last update + staleness]
 MCP Tools:  Gmail [✅/❌]  Calendar [✅/❌]
 CLIs:       Gemini [✅/❌]   Copilot [✅/❌]
 Encryption: [locked/unlocked + file count]
-Monthly cost: $[X] / $50 budget ([%]%)
+Monthly cost: $[X] / $[BUDGET] budget ([%]%)
 ```
 Read from `health-check.md` and test MCP/CLI connectivity.
 
@@ -48,7 +48,7 @@ Deep-dive into a single domain. Read `state/<name>.md` and `prompts/<name>.md`. 
 Valid domain names: immigration, finance, kids, travel, health, home, shopping, goals, calendar, vehicle, estate, insurance, comms
 
 ### `/cost`
-Show current month API cost estimate vs. $50 monthly budget. Read from `health-check.md:cost_tracking`. Estimate tokens used × current Claude pricing.
+Show current month API cost estimate vs. configured monthly budget (from `user_profile.yaml → budget.monthly_api_budget_usd`). Read from `health-check.md:cost_tracking`. Estimate tokens used × current AI CLI pricing.
 
 ### `/health`
 System integrity check:
@@ -57,6 +57,14 @@ System integrity check:
 - Test: `vault.py status`, `python scripts/pii_guard.py test` (quiet), Gemini CLI ping, Copilot CLI ping
 - Report any drift, missing files, or version mismatches
 Display: `✅ N/N checks passed` or itemized failures.
+
+### `/eval`
+Run the catch-up evaluation report (`python scripts/eval_runner.py`). Displays performance
+trends, accuracy metrics, signal:noise ratio, and data freshness. Flags:
+- `/eval` — full report (performance + accuracy + freshness)
+- `/eval perf` — performance only (connector/skill/phase timing trends)
+- `/eval accuracy` — accuracy only (acceptance rate, signal:noise)
+- `/eval freshness` — domain staleness and OAuth health
 
 ### `/items`
 Display all open action items from `state/open_items.md`. Groups:

@@ -16,30 +16,41 @@ Run `/health` to validate each component is present and passes its self-check.
 
 | File | Purpose | Status | Last Verified |
 |------|---------|--------|---------------|
-| `scripts/vault.sh` | Encrypt/decrypt sensitive state files using `age` | ✅ Operational — age v1.3.1, Keychain-backed | 2026-03-07 |
-| `scripts/pii_guard.sh` | Layer 1 PII detection and redaction | ✅ Operational — 19/19 tests passing | 2026-03-07 |
-| `scripts/safe_cli.sh` | Outbound PII wrapper for Gemini/Copilot CLI | ✅ Created | 2026-03-07 |
-| `scripts/com.artha.vault-watchdog.plist` | LaunchAgent: auto-encrypt on session crash | ✅ Loaded (`com.artha.vault-watchdog`) | 2026-03-07 |
-| `scripts/requirements.txt` | Python package dependencies for Google API scripts | ✅ Created | 2026-03-08 |
-| `scripts/google_auth.py` | Shared Google OAuth helper — Keychain-backed, auto-refresh | ✅ Created | 2026-03-08 |
-| `scripts/gmail_fetch.py` | Fetch Gmail messages → JSONL output; HTML strip, thread truncate | ✅ Created | 2026-03-08 |
-| `scripts/gmail_send.py` | Send email via Gmail API; markdown→HTML, dual MIME | ✅ Created | 2026-03-08 |
-| `scripts/gcal_fetch.py` | Fetch Google Calendar events → JSONL output | ✅ Created | 2026-03-08 |
-| `scripts/setup_google_oauth.py` | One-time OAuth setup wizard — stores creds in Keychain | ✅ Created | 2026-03-08 |
+| `scripts/vault.py` | Cross-platform encrypt/decrypt sensitive state files using `age` + keyring | ✅ Operational | 2026-03-13 |
+| `scripts/pii_guard.py` | Layer 1 PII detection and redaction (pure Python, cross-platform) | ✅ Operational | 2026-03-13 |
+| `scripts/safe_cli.py` | Outbound PII wrapper for Gemini/Copilot CLI | ✅ Operational | 2026-03-13 |
+| `scripts/com.artha.vault-watchdog.plist` | LaunchAgent: auto-encrypt on session crash (macOS) | ✅ Loaded (`com.artha.vault-watchdog`) | 2026-03-07 |
+| `scripts/requirements.txt` | Python package dependencies (mirrors pyproject.toml optional-dependencies) | ✅ Created | 2026-03-13 |
+| `scripts/google_auth.py` | Shared Google OAuth helper — keyring-backed, auto-refresh | ✅ Operational | 2026-03-08 |
+| `scripts/pipeline.py` | Unified data pipeline — runs all connectors from `connectors.yaml` | ✅ Operational | 2026-03-13 |
+| `scripts/gmail_send.py` | Send email via Gmail API; markdown→HTML, dual MIME | ✅ Operational | 2026-03-08 |
+| `scripts/setup_google_oauth.py` | One-time OAuth setup wizard — stores creds in keyring | ✅ Operational | 2026-03-08 |
+| `scripts/setup_msgraph_oauth.py` | Microsoft Graph OAuth setup — PKCE flow | ✅ Operational | 2026-03-08 |
+| `scripts/setup_icloud_auth.py` | iCloud credentials setup (IMAP + CalDAV) | ✅ Operational | 2026-03-08 |
+| `scripts/preflight.py` | Pre-catch-up health gate — P0 blocks, P1 warns | ✅ Operational | 2026-03-13 |
+| `scripts/todo_sync.py` | Bidirectional sync: open_items.md ↔ Microsoft To Do | ✅ Operational | 2026-03-08 |
+| `scripts/skill_runner.py` | Data fidelity skill orchestrator (USCIS, weather, tax, recalls) | ✅ Operational | 2026-03-13 |
+| `scripts/mcp_server.py` | MCP server adapter for Artha tools | ✅ Operational | 2026-03-13 |
+| `scripts/generate_identity.py` | Assembles Artha.md from core + identity | ✅ Operational | 2026-03-13 |
+| `scripts/demo_catchup.py` | Demo briefing with fictional data for onboarding | ✅ Operational | 2026-03-13 |
+| `scripts/upgrade.py` | Non-destructive version upgrade detector | ✅ Operational | 2026-03-13 |
+| `scripts/migrate.py` | Best-effort migration from settings.md → user_profile.yaml | ✅ Operational | 2026-03-13 |
+| `scripts/profile_loader.py` | Cached singleton accessor for user_profile.yaml | ✅ Operational | 2026-03-13 |
 
 ### Script Health Checks
 ```bash
-# pii_guard.sh
-bash scripts/pii_guard.sh test 2>/dev/null | tail -1
+# pii_guard.py
+python scripts/pii_guard.py test 2>/dev/null | tail -1
 # Expected: "Results: 19 passed, 0 failed"
 
-# vault.sh (requires age installed)
-age --version && echo "age: OK" || echo "age: NOT INSTALLED"
+# vault.py
+python scripts/vault.py health
+# Expected: exit 0
 
-# safe_cli.sh
-bash -n scripts/safe_cli.sh && echo "safe_cli.sh: OK"
+# pipeline health check
+python scripts/pipeline.py --health
 
-# LaunchAgent
+# LaunchAgent (macOS only)
 ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "LaunchAgent: installed" || echo "LaunchAgent: NOT INSTALLED"
 ```
 

@@ -35,17 +35,20 @@ import json
 import os
 import re
 import sys
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Optional
 
+from lib.retry import with_retry
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-ARTHA_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from lib.common import ARTHA_DIR as _ARTHA_DIR_PATH
+
+ARTHA_DIR       = str(_ARTHA_DIR_PATH)
 OPEN_ITEMS_FILE = os.path.join(ARTHA_DIR, "state", "open_items.md")
 CONFIG_FILE    = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
 AUDIT_FILE     = os.path.join(ARTHA_DIR, "state", "audit.md")
@@ -59,15 +62,8 @@ _IMPORTANCE_MAP = {
     "P2": "low",
 }
 
-# Retry settings (same policy as gmail_fetch.py / gcal_fetch.py)
-_MAX_RETRIES  = 3
-_BASE_DELAY   = 1.0
-_BACKOFF_MULT = 2.0
-_MAX_DELAY    = 30.0
-_RETRYABLE    = {429, 500, 502, 503, 504}
-
 # ---------------------------------------------------------------------------
-# HTTP / retry helpers
+# HTTP helpers
 # ---------------------------------------------------------------------------
 
 def _graph_request(
@@ -86,34 +82,6 @@ def _graph_request(
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=15) as resp:
         return json.load(resp)
-
-
-def _with_retry(fn, *, context: str = "") -> dict:
-    """Call fn() with exponential backoff on 429/5xx."""
-    delay = _BASE_DELAY
-    last_exc: Optional[Exception] = None
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            return fn()
-        except urllib.error.HTTPError as exc:
-            code = exc.code
-            if code not in _RETRYABLE or attempt == _MAX_RETRIES:
-                raise RuntimeError(
-                    f"[todo_sync][{context}] HTTP {code} after {attempt+1} attempt(s)"
-                ) from exc
-        except Exception as exc:
-            exc_str = str(exc).lower()
-            if not any(w in exc_str for w in ("rate", "quota", "throttle")) or attempt == _MAX_RETRIES:
-                raise RuntimeError(
-                    f"[todo_sync][{context}] failed after {attempt+1} attempt(s): {exc}"
-                ) from exc
-        wait = min(delay, _MAX_DELAY)
-        print(f"[todo_sync] ⚠ Rate-limited ({context}). Retrying in {wait:.0f}s...",
-              file=sys.stderr)
-        time.sleep(wait)
-        delay    = min(delay * _BACKOFF_MULT, _MAX_DELAY)
-        last_exc = Exception(f"retry loop exhausted ({context})")
-    raise last_exc  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +175,17 @@ def _write_item_status(item_id: str, new_status: str, date_resolved: str) -> Non
 # ---------------------------------------------------------------------------
 
 def _load_list_ids() -> dict[str, str]:
-    """Load todo_lists: mapping from artha_config.yaml."""
+    """Load todo_lists: mapping from user_profile.yaml (preferred) or artha_config.yaml (legacy)."""
+    # Preferred: read from user_profile.yaml via profile_loader
+    try:
+        from scripts.profile_loader import get as _profile_get
+        todo_lists = _profile_get("integrations.microsoft_graph.todo_lists", {})
+        if isinstance(todo_lists, dict) and todo_lists:
+            return todo_lists
+    except Exception:
+        pass  # profile_loader may not be available — fall through
+
+    # Legacy fallback: parse artha_config.yaml
     if not os.path.exists(CONFIG_FILE):
         return {}
     with open(CONFIG_FILE) as f:
@@ -305,7 +283,7 @@ def push_items(access_token: str, dry_run: bool = False) -> dict:
                 pass  # Skip bad deadline
 
         try:
-            result = _with_retry(
+            result = with_retry(
                 lambda: _graph_request(
                     f"{GRAPH_TODO_BASE}/{list_id}/tasks",
                     method="POST",
@@ -313,6 +291,7 @@ def push_items(access_token: str, dry_run: bool = False) -> dict:
                     access_token=access_token,
                 ),
                 context=f"tasks.create({item_id})",
+                label="todo_sync",
             )
             todo_id = result.get("id", "")
             if todo_id:
@@ -365,12 +344,13 @@ def pull_completions(access_token: str, dry_run: bool = False) -> dict:
             continue
 
         try:
-            result = _with_retry(
+            result = with_retry(
                 lambda: _graph_request(
                     f"{GRAPH_TODO_BASE}/{list_id}/tasks/{todo_id}",
                     access_token=access_token,
                 ),
                 context=f"tasks.get({item_id})",
+                label="todo_sync",
             )
             status = result.get("status", "notStarted")
 

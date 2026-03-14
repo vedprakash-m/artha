@@ -60,6 +60,10 @@ If a user asks for an unimplemented feature, say:
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up`
 
+> **Composable modules:** For customization and phase-level documentation,
+> see `config/workflow/README.md`. The workflow is organized into 5 phases:
+> Preflight → Fetch → Process → Reason → Finalize.
+
 Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `state/audit.md` and continue — partial catch-up is better than no catch-up.
 
 ### Step 0 — Pre-flight Go/No-Go Gate
@@ -178,64 +182,33 @@ Read `state/decisions.md`. For each DEC-NNN with `deadline:` and `status: active
 ### Step 4 — Fetch (IN PARALLEL — all 6 sources simultaneously)
 Run all six commands simultaneously via Bash. Email sources are additive (union); calendar sources are merged with deduplication.
 
-**Gmail (primary email):**
-```bash
-python scripts/gmail_fetch.py \
-  --since "$LAST_CATCH_UP" \
-  --label INBOX \
-  --max-results 200
+**Tier 1 — MCP tools (preferred when artha-mcp-server is connected):**
+Call `artha_fetch_data` with `since: $LAST_CATCH_UP`. Returns structured records directly in-context — no JSONL parsing required.
 ```
-Output: JSONL — fields: id, thread_id, subject, from, to, date_iso, body, labels. Field `source` will be absent (Gmail is implicit default).
+artha_fetch_data(since="$LAST_CATCH_UP", max_results=200)
+```
+Also call `artha_run_skills` to run data fidelity skills in parallel with the fetch.
 
-**Outlook email (MS Graph — direct API):**
+**Tier 2 — Unified pipeline (when MCP unavailable, `config/connectors.yaml` exists):**
 ```bash
-python scripts/msgraph_fetch.py \
-  --since "$LAST_CATCH_UP" \
-  --folder inbox \
-  --max-results 200
+python scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose
 ```
-Output: JSONL — same schema as gmail_fetch.py with `"source": "outlook"` added. Covers the primary user's Outlook inbox (configured in `user_profile.yaml`). Catches legal, HR, and immigration-related email that arrives at Outlook.
+Output: JSONL stream to stdout. Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
 
-**Google Calendar:**
-```bash
-python scripts/gcal_fetch.py \
-  --from "$TODAY" \
-  --to "$TODAY_PLUS_7" \
-  --calendars "primary,<family_calendar_id>,en.usa#holiday@group.v.calendar.google.com"
-```
-**Important:** Always include all three Google calendars: `primary`, the family shared calendar, and US Holidays. **Read all calendar IDs from `config/user_profile.yaml` under `integrations.google_calendar.calendar_ids`** — do NOT silently drop the family calendar.
-Output: JSONL — fields: id, calendar, summary, start, end, all_day, location, attendees. Field `source` absent (Google Calendar is implicit).
+**Important — Google Calendar:** The pipeline reads calendar IDs from `config/user_profile.yaml` under `integrations.google_calendar.calendar_ids`. Ensure the family shared calendar and US Holidays calendar are configured — do NOT silently drop them.
 
-**Outlook Calendar (MS Graph — direct API):**
+**Single-source fetch (when debugging a specific connector):**
 ```bash
-python scripts/msgraph_calendar_fetch.py \
-  --from "$TODAY" \
-  --to "$TODAY_PLUS_7"
+python scripts/pipeline.py --source gmail --since "$LAST_CATCH_UP" --verbose
+python scripts/pipeline.py --source outlook_email --since "$LAST_CATCH_UP"
+python scripts/pipeline.py --source google_calendar
+python scripts/pipeline.py --source canvas_lms
 ```
-Output: JSONL — same schema as gcal_fetch.py with `"source": "outlook_calendar"` added. Covers Teams meeting invites, Outlook-only events, and any calendar entries that don't sync to Google.
 
-**iCloud Mail (IMAP — direct API):**
-```bash
-python scripts/icloud_mail_fetch.py \
-  --since "$LAST_CATCH_UP" \
-  --folder inbox \
-  --max-results 200
-```
-Output: JSONL — same schema as gmail_fetch.py with `"source": "icloud"` added. Covers the @icloud.com / @me.com inbox. Apple-specific communications (App Store receipts, Apple ID security notices, iCloud storage alerts, Apple Pay, Apple TV+ billing). Auth: app-specific password via credential store (`setup_icloud_auth.py`).
-
-**iCloud Calendar (CalDAV — direct API):**
-```bash
-python scripts/icloud_calendar_fetch.py \
-  --from "$TODAY" \
-  --to "$TODAY_PLUS_7"
-```
-Output: JSONL — same schema as gcal_fetch.py with `"source": "icloud_calendar"` added. Covers iCloud-only calendars (events created on iPhone/iPad not synced to Google/Outlook). Auth: app-specific password via credential store.
-
-**Canvas LMS (if configured):**
-```bash
-python scripts/canvas_fetch.py --student all
-```
-Output: Updates `state/kids.md` Canvas Academic Data section directly. Run only if Canvas tokens are configured for any child (check keychain keys defined in `user_profile.yaml` under each child's `school.canvas_keychain_key`). Non-blocking: skip silently if not configured. Runs once per day maximum (cache in health-check.md → canvas_last_fetch).
+**Output schemas:**
+- Email connectors: JSONL — fields: id, thread_id, subject, from, to, date_iso, body, labels, snippet. Field `source` set by connector (empty for gmail, "outlook" for outlook_email, "icloud" for icloud_email).
+- Calendar connectors: JSONL — fields: id, calendar, summary, start, end, all_day, location, attendees. Field `source` set by connector.
+- Canvas LMS: Updates `state/kids.md` Canvas Academic Data section directly. Non-blocking: skip silently if not configured. Runs once per day maximum (cache in health-check.md → canvas_last_fetch).
 
 **Skill Runner (Data Skills — v4.0):**
 ```bash
@@ -276,14 +249,14 @@ If WorkIQ fails at any point, log to state/audit.md and continue. Briefing foote
 
 **Calendar deduplication rule:** After merging all calendar feeds (Google, Outlook, iCloud, WorkIQ), if two events match on (summary ± minor variation) AND (start time ± 5 minutes), keep one record and set `"source": "both"`. For WorkIQ↔personal matches specifically, use field-merge dedup: keep personal event as primary, merge in work title + Teams link from work event, set `"merged": true`. Merged events are excluded from cross-domain conflict detection. Do NOT deduplicate email feeds — each email source is a distinct inbox.
 
-**Error handling:** If any individual script exits non-zero, log the error to `audit.md` and continue with the remaining feeds. Partial data from 5 of 6 sources is better than halting.
-- If `msgraph_fetch.py` or `msgraph_calendar_fetch.py` fails:
+**Error handling:** If any connector fails during `pipeline.py`, it logs the error to `audit.md` and continues with the remaining connectors. Partial data from available sources is better than halting.
+- If `outlook_email` or `outlook_calendar` connector fails:
   - Exit 1 (token/auth): note in briefing footer: "⚠️ Outlook data unavailable — rerun setup_msgraph_oauth.py on Mac"
   - HTTP 403 Forbidden on `graph.microsoft.com`: **this is a VM network/firewall constraint, not an auth failure.** Note in briefing footer: "⚠️ Outlook data unavailable — graph.microsoft.com is blocked in this environment (run catch-up from Mac terminal for full Outlook data)." Do NOT suggest running setup_msgraph_oauth.py — the token is valid.
-- If `icloud_mail_fetch.py` or `icloud_calendar_fetch.py` fails:
+- If `icloud_email` or `icloud_calendar` connector fails:
   - Exit 1 (auth/credentials missing): note in briefing footer: "⚠️ iCloud data unavailable — rerun setup_icloud_auth.py on Mac (writes .tokens/icloud-credentials.json)"
   - DNS resolution failure or connection refused on `imap.mail.me.com` / `caldav.icloud.com`: **this is a VM network constraint, not an auth failure.** The Cowork VM's sandbox blocks outbound connections to Apple servers. Note in briefing footer: "⚠️ iCloud data unavailable — imap.mail.me.com and caldav.icloud.com are blocked in this environment (run catch-up from Mac terminal for full iCloud data)." Do NOT suggest running setup_icloud_auth.py — credentials are valid.
-- If `gmail_fetch.py` or `gcal_fetch.py` fails (exit code 2 = quota), halt the catch-up entirely per TS §7.2.
+- If `gmail` or `google_calendar` connector fails (exit code 2 = quota), halt the catch-up entirely per TS §7.2.
 - If WorkIQ `ask_work_iq` fails:
   - Auth expired: briefing footer "⚠️ Work calendar unavailable — WorkIQ auth expired (npx workiq logout && retry on Windows)"
   - Parse failure (0 events from non-empty response): retry once with explicit format. If still fails: "⚠️ Work calendar unavailable — format change detected"
@@ -296,7 +269,7 @@ After all fetch scripts complete, load domain state files according to their act
 
 | Tier | Condition | Action |
 |------|-----------|--------|
-| `always` | Core system files | Always load: `health-check.md`, `memory.md`, `open_items.md`, `comms.md`, `calendar.md` |
+| `always` | Core system files | Always load: `state/health-check.md`, `state/memory.md`, `state/open_items.md`, `state/comms.md`, `state/calendar.md` |
 | `active` | `last_activity` within 30 days | Load fully — domain is receiving regular updates |
 | `reference` | `last_activity` 30–180 days ago | Load summary/frontmatter only — load full file only if the current catch-up has new signals for this domain |
 | `archive` | `last_activity` > 180 days ago | Skip unless explicitly requested or current catch-up emails route to this domain |
@@ -397,12 +370,13 @@ For each email, apply the routing table (§3). If no match, apply content-based 
 ### Step 7 — Process domains (IN PARALLEL where possible)
 For each domain with new emails/events:
 a. Read the domain prompt from `prompts/<domain>.md`
-b. Apply extraction rules from the prompt
-c. Apply Layer 2 semantic redaction (§4): replace PII with tokens before writing to state
-d. Check for duplicate entries: same source + same item ID = update in place, do not duplicate
-e. Update `state/<domain>.md` with new information (read-before-write; never append-only)
-f. Evaluate alert thresholds from the domain prompt
-g. Collect briefing contribution (1–5 bullet points per domain)
+b. If `config/prompt-overlays/<domain>.md` exists, append its content (user customizations)
+c. Apply extraction rules from the prompt
+d. Apply Layer 2 semantic redaction (§4): replace PII with tokens before writing to state
+e. Check for duplicate entries: same source + same item ID = update in place, do not duplicate
+f. Update `state/<domain>.md` with new information (read-before-write; never append-only)
+g. Evaluate alert thresholds from the domain prompt
+h. Collect briefing contribution (1–5 bullet points per domain)
 
 ### Step 7b — Update open_items.md
 After all domains are processed:
@@ -901,18 +875,18 @@ Route emails and events to domain state files based on sender/subject signals. R
 |---|---|---|
 | `*@uscis.gov`, `receipt notice`, `approval notice`, `RFE`, `I-485`, `I-539`, `I-765`, `I-131`, `biometrics`, `Visa Bulletin`, `priority date`, `EAD`, `H-1B`, `H-4`, `green card` | `state/immigration.md` | 🔴 Critical |
 | `*@fidelity.com`, `*@wellsfargo.com`, `*@vanguard.com`, `*@chase.com`, `*@bankofamerica.com`, `bill`, `payment due`, `statement`, `ACH`, `wire transfer`, `payroll`, `tax`, `IRS`, `W-2`, `1099` | `state/finance.md` | 🟠 Urgent |
-| Family's school domains (defined in `user_profile.yaml`), `*@schoology.com`, `ParentSquare`, `grade`, `assignment`, `attendance`, `AP`, `SAT`, `college`, `orthodontist`, `pediatric`, soccer/sports activities, music/arts | `kids.md` | 🟡 Standard |
-| `*@alaskaair.com`, `*@delta.com`, `*@united.com`, `*@marriott.com`, `*@airbnb.com`, `flight`, `hotel`, `itinerary`, `check-in`, `boarding pass`, `passport renewal` | `travel.md` | 🟡 Standard |
+| Family's school domains (defined in `user_profile.yaml`), `*@schoology.com`, `ParentSquare`, `grade`, `assignment`, `attendance`, `AP`, `SAT`, `college`, `orthodontist`, `pediatric`, soccer/sports activities, music/arts | `state/kids.md` | 🟡 Standard |
+| `*@alaskaair.com`, `*@delta.com`, `*@united.com`, `*@marriott.com`, `*@airbnb.com`, `flight`, `hotel`, `itinerary`, `check-in`, `boarding pass`, `passport renewal` | `state/travel.md` | 🟡 Standard |
 | `*@providence.org`, `*@uwmedicine.org`, `*@zocdoc.com`, `appointment`, `prescription`, `refill`, `lab result`, `EOB`, `health insurance`, `FSA`, `HSA` | `state/health.md` | 🟠 Urgent |
-| `*@amazon.com`, `*@costco.com`, `shipped`, `delivery`, `tracking`, `order`, `return`, `warranty` | `shopping.md` | 🔵 Low |
-| `*@usps.com`, `*@fedex.com`, `*@ups.com`, `delivery scheduled`, `out for delivery` | `shopping.md` | 🔵 Low |
-| HOA, `*@propertymanagement.com`, `maintenance`, `repair`, `inspection`, `property tax`, `mortgage` | `home.md` | 🟡 Standard |
+| `*@amazon.com`, `*@costco.com`, `shipped`, `delivery`, `tracking`, `order`, `return`, `warranty` | `state/shopping.md` | 🔵 Low |
+| `*@usps.com`, `*@fedex.com`, `*@ups.com`, `delivery scheduled`, `out for delivery` | `state/shopping.md` | 🔵 Low |
+| HOA, `*@propertymanagement.com`, `maintenance`, `repair`, `inspection`, `property tax`, `mortgage` | `state/home.md` | 🟡 Standard |
 | `*@equifax.com`, `*@experian.com`, `*@transunion.com`, credit alert, identity alert | `state/finance.md` | 🔴 Critical |
-| Google Calendar event | `calendar.md` | 🟡 Standard |
+| Google Calendar event | `state/calendar.md` | 🟡 Standard |
 | Car registration, insurance renewal, service appointment, `*@geico.com`, `*@pemco.com` | `state/vehicle.md` | 🟡 Standard |
 | Estate, will, trust, `*@estateattorney.com`, beneficiary, POA | `state/estate.md` | 🟠 Urgent |
 | Marketing, promotions, newsletters, unsubscribe | SUPPRESS — do not process | — |
-| No match | Classify by content; if still ambiguous, route to `comms.md` | 🔵 Low |
+| No match | Classify by content; if still ambiguous, route to `state/comms.md` | 🔵 Low |
 
 **Deduplication rules** (check before writing to state):
 - Immigration: receipt number is unique key
@@ -1017,25 +991,11 @@ Route tasks to the appropriate LLM based on capability and cost.
 
 ---
 
-## §7 Capabilities Feature Flags
+## §7 Capabilities
 
-These flags control which features are active. Update in `config/settings.md` under `capabilities:`.
+Capabilities are configured in `config/user_profile.yaml` under `integrations:` and associated domain sections. Legacy `config/settings.md` is documentation-only — `user_profile.yaml` is the sole machine-readable source of truth.
 
-| Flag | Default | Description |
-|---|---|---|
-| `gmail_mcp` | false (pending OAuth) | Gmail MCP connectivity |
-| `calendar_mcp` | false (pending OAuth) | Google Calendar MCP connectivity |
-| `gemini_cli` | true | Gemini CLI available |
-| `copilot_cli` | true | GitHub Copilot CLI available |
-| `vault_encryption` | false (pending age install) | `age` encryption active |
-| `email_briefings` | false (pending Gmail MCP) | Email briefings to configured address |
-| `weekly_summary` | true | Auto-generate weekly summary on Mondays |
-| `action_proposals` | true | Surface Action Proposals for write actions |
-| `ensemble_reasoning` | true | Use multi-LLM for high-stakes domains |
-| `visual_generation` | false (Phase 1B) | Gemini Imagen charts |
-| `proactive_checkin` | false (Phase 1B) | Mid-day check-in prompt |
-
-At the start of each catch-up, read `config/settings.md` and skip disabled features gracefully with a note in the briefing footer.
+At the start of each catch-up, verify enabled integrations via `preflight.py` and skip disabled features gracefully with a note in the briefing footer. If a capability is enabled in `user_profile.yaml` but its auth/token is missing, surface a warning — never fail silently.
 
 
 ---

@@ -28,28 +28,11 @@ from __future__ import annotations
 
 # Auto-relaunch inside the Artha venv if not already running there
 import sys, os as _os
-_ARTHA_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-if _os.name == "nt":
-    _VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win", "Scripts", "python.exe")
-    _VENV_PREFIX = _os.path.realpath(_os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv-win"))
-else:
-    _PROJ_VENV_PY = _os.path.join(_ARTHA_DIR, ".venv", "bin", "python")
-    _LOCAL_VENV_PY = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv", "bin", "python")
-    _VENV_PY = _PROJ_VENV_PY if _os.path.exists(_PROJ_VENV_PY) else _LOCAL_VENV_PY
-    _VENV_PREFIX = _os.path.realpath(_os.path.dirname(_os.path.dirname(_VENV_PY)))
-    if not _os.path.exists(_VENV_PY):
-        import subprocess as _sp
-        _local_venv = _os.path.join(_os.path.expanduser("~"), ".artha-venvs", ".venv")
-        _sp.run([sys.executable, "-m", "venv", _local_venv], check=True, capture_output=True)
-        _sp.run([_local_venv + "/bin/pip", "install", "-q", "-r",
-                 _os.path.join(_ARTHA_DIR, "scripts", "requirements.txt")], capture_output=True)
-        _VENV_PY = _local_venv + "/bin/python"
-        _VENV_PREFIX = _os.path.realpath(_local_venv)
-if _os.path.exists(_VENV_PY) and _os.path.realpath(sys.prefix) != _VENV_PREFIX:
-    if _os.name == "nt":
-        import subprocess as _sp; raise SystemExit(_sp.call([_VENV_PY] + sys.argv))
-    else:
-        _os.execv(_VENV_PY, [_VENV_PY] + sys.argv)
+_scripts_dir = _os.path.dirname(_os.path.abspath(__file__))
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+from _bootstrap import reexec_in_venv
+reexec_in_venv()
 
 import json
 import os
@@ -93,8 +76,8 @@ SENSITIVE_FILES = [
     "contacts",
 ]
 
-STALE_THRESHOLD = 300   # 5 minutes — if PID no longer running; fallback for legacy empty lock files
-LOCK_TTL        = 1800  # 30 minutes — hard TTL regardless of PID status
+STALE_THRESHOLD = 300   # 5 minutes — soft TTL: stale IF the locking PID is no longer running
+LOCK_TTL        = 1800  # 30 minutes — hard TTL: stale regardless of PID status (session crash ceiling)
 
 KC_SERVICE = "age-key"
 KC_ACCOUNT = "artha"
@@ -138,14 +121,24 @@ def get_private_key() -> str:
 
 
 def get_public_key() -> str:
-    """Read age recipient public key from settings.md."""
+    """Read age recipient public key from user_profile.yaml (preferred) or settings.md (legacy)."""
+    # Preferred: read from user_profile.yaml via profile_loader
+    try:
+        from scripts.profile_loader import get as _profile_get
+        key = _profile_get("encryption.age_recipient", "")
+        if key and key.startswith("age1"):
+            return key
+    except Exception:
+        pass  # profile_loader may not be available (pre-venv) — fall through
+
+    # Legacy fallback: parse settings.md
     settings_file = CONFIG_DIR / "settings.md"
     if not settings_file.exists():
-        die("config/settings.md not found. Cannot read age_recipient.")
+        die("age_recipient not found in user_profile.yaml or config/settings.md.")
     text = settings_file.read_text()
     match = re.search(r"age_recipient:\s*\"?(age1[a-z0-9]+)", text)
     if not match:
-        die("Cannot read age_recipient from config/settings.md. Populate the file first.")
+        die("Cannot read age_recipient from user_profile.yaml or config/settings.md. Populate encryption.age_recipient in your profile.")
     pubkey = match.group(1)
     if not pubkey.startswith("age1"):
         die(f"Invalid age public key (must start with 'age1'). Got: {pubkey}")
@@ -372,10 +365,13 @@ def do_decrypt() -> None:
                 log(f"INTEGRITY_BACKUP | file: {domain}.md | layer: 1_pre_decrypt")
 
             print(f"  Decrypting {domain}.md.age ...")
-            if age_decrypt(privkey, age_file, plain_file):
+            # Atomic decrypt: write to temp file, validate, then rename
+            tmp_plain = Path(str(plain_file) + ".tmp")
+            if age_decrypt(privkey, age_file, tmp_plain):
                 # Post-decrypt validation: empty?
-                if not plain_file.exists() or plain_file.stat().st_size == 0:
+                if not tmp_plain.exists() or tmp_plain.stat().st_size == 0:
                     print(f"  ERROR: Decrypted {domain}.md is empty — restoring backup", file=sys.stderr)
+                    tmp_plain.unlink(missing_ok=True)
                     bak = Path(str(plain_file) + ".bak")
                     if bak.exists():
                         shutil.move(str(bak), str(plain_file))
@@ -384,17 +380,21 @@ def do_decrypt() -> None:
                     continue
 
                 # Post-decrypt validation: YAML frontmatter?
-                with open(plain_file, encoding="utf-8", errors="replace") as f:
+                with open(tmp_plain, encoding="utf-8", errors="replace") as f:
                     first_line = f.readline()
                 if not first_line.startswith("---"):
                     print(f"  ERROR: Decrypted {domain}.md missing YAML frontmatter — restoring backup",
                           file=sys.stderr)
+                    tmp_plain.unlink(missing_ok=True)
                     bak = Path(str(plain_file) + ".bak")
                     if bak.exists():
                         shutil.move(str(bak), str(plain_file))
                         log(f"INTEGRITY_RESTORE | file: {domain}.md | reason: invalid_yaml | layer: 1")
                     errors += 1
                     continue
+
+                # Atomic rename: tmp -> final (POSIX-atomic on same filesystem)
+                os.replace(str(tmp_plain), str(plain_file))
 
                 # Bootstrap detection
                 text = plain_file.read_text(encoding="utf-8", errors="replace")
@@ -403,6 +403,7 @@ def do_decrypt() -> None:
 
                 log(f"DECRYPT_OK | file: {domain}.md")
             else:
+                tmp_plain.unlink(missing_ok=True)
                 print(f"  ERROR: Failed to decrypt {domain}.md.age", file=sys.stderr)
                 bak = Path(str(plain_file) + ".bak")
                 if bak.exists():

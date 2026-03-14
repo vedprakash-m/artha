@@ -274,6 +274,8 @@ class TestMain:
         monkeypatch.setattr(gi, "_IDENTITY_PATH", identity_path)
         monkeypatch.setattr(gi, "_ASSEMBLED_PATH", assembled_path)
         monkeypatch.setattr(gi, "_ARTHA_DIR", tmp_path)  # for relative_to() in print calls
+        monkeypatch.setattr(gi, "_ROUTING_PATH", tmp_path / "config" / "routing.yaml")
+        monkeypatch.setattr(gi, "_ROUTING_EXAMPLE_PATH", tmp_path / "config" / "routing.example.yaml")
         return assembled_path
 
     def test_validate_mode_does_not_write_files(self, tmp_path, monkeypatch):

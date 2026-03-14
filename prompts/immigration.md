@@ -104,7 +104,7 @@ leading_indicators:
 
   attorney_response_time:
     description: "Days since last response to an email or case question sent to immigration attorney"
-    source: comms.md — email threads with Fragomen or immigration attorney
+    source: comms.md — email threads with the family's immigration attorney (see state/contacts.md)
     target: "Response within 5 business days"
     alert_yellow: "No response in 5–10 business days"
     alert_red: "No response in > 10 business days OR deadline approaching without confirmation"

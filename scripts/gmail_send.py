@@ -63,7 +63,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
-ARTHA_DIR     = os.path.expanduser("~/OneDrive/Artha")
+from lib.common import ARTHA_DIR as _ARTHA_DIR_PATH
+
+ARTHA_DIR     = str(_ARTHA_DIR_PATH)
 BRIEFINGS_DIR = os.path.join(ARTHA_DIR, "briefings")
 
 

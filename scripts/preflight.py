@@ -16,9 +16,9 @@ P0 checks (hard-block catch-up if any fail):
   2  Vault lock status        — no active session collision; stale lock auto-cleared
   3  Gmail OAuth token        — token file exists and is not structurally broken
   4  Calendar OAuth token     — token file exists and is not structurally broken
-  5  gmail_fetch.py --health  — Gmail API connection live
-  6  gcal_fetch.py --health   — Calendar API connection live
-  7  pii_guard.sh test        — PII filter script executable and passing tests
+  5  pipeline.py --health -s gmail   — Gmail API connection live
+  6  pipeline.py --health -s google_calendar — Calendar API connection live
+  7  pii_guard.py test        — PII filter script executable and passing tests
   8  gmail_send.py --health   — Send auth valid (token present)
   9  State directory          — state/ directory writable
 
@@ -27,10 +27,10 @@ P1 checks (logged as warnings, do NOT block catch-up):
   11 Token freshness               — tokens not within 5 min of expiry
   12 Briefings directory           — briefings/ directory writable
   13 Microsoft Graph token         — To Do / email / calendar token valid
-  14 msgraph_fetch.py --health     — Outlook email API live (Mail.Read)
-  15 msgraph_cal_fetch --health    — Outlook Calendar API live (Calendars.Read)
-  16 icloud_mail_fetch --health    — iCloud Mail IMAP live (app-specific password)
-  17 icloud_cal_fetch --health     — iCloud Calendar CalDAV live
+  14 pipeline.py --health -s outlook_email    — Outlook email API live (Mail.Read)
+  15 pipeline.py --health -s outlook_calendar — Outlook Calendar API live (Calendars.Read)
+  16 pipeline.py --health -s icloud_email     — iCloud Mail IMAP live (app-specific password)
+  17 pipeline.py --health -s icloud_calendar  — iCloud Calendar CalDAV live
   18 WorkIQ Calendar               — WorkIQ M365 detection + auth (Windows only, v2.2)
 
 Ref: TS §3.8, TS §7.1 Step 0, T-1A.11.3, PRD §9.4 Step 0
@@ -352,6 +352,48 @@ def check_state_directory() -> CheckResult:
             f"State directory not writable: {exc}",
             fix_hint=f"Check OneDrive sync status and permissions on {STATE_DIR}",
         )
+
+
+def check_state_templates(auto_fix: bool = False) -> CheckResult:
+    """P1: Populate missing state files from state/templates/ on first run."""
+    templates_dir = os.path.join(STATE_DIR, "templates")
+    if not os.path.isdir(templates_dir):
+        return CheckResult(
+            "state templates", "P1", True,
+            "No templates directory — skipping state population",
+        )
+    templates = [f for f in os.listdir(templates_dir) if f.endswith(".md") and f != "README.md"]
+    missing = []
+    for tpl in templates:
+        target = os.path.join(STATE_DIR, tpl)
+        if not os.path.exists(target):
+            missing.append(tpl)
+
+    if not missing:
+        return CheckResult("state templates", "P1", True, "All state files present ✓")
+
+    if auto_fix:
+        populated = []
+        for tpl in missing:
+            src = os.path.join(templates_dir, tpl)
+            dst = os.path.join(STATE_DIR, tpl)
+            try:
+                import shutil
+                shutil.copy2(src, dst)
+                populated.append(tpl)
+            except OSError:
+                pass
+        return CheckResult(
+            "state templates", "P1", True,
+            f"Populated {len(populated)} state files from templates: {', '.join(populated)}",
+            auto_fixed=True,
+        )
+
+    return CheckResult(
+        "state templates", "P1", False,
+        f"{len(missing)} state file(s) missing: {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}",
+        fix_hint="Run preflight with --fix to auto-populate from state/templates/",
+    )
 
 
 def check_open_items() -> CheckResult:
@@ -676,6 +718,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                 fix_hint="Check network connectivity and OAuth credentials",
             ))
     checks.append(check_state_directory())
+
+    # ── P1 — State file population from templates (first-run) ─────────────
+    checks.append(check_state_templates(auto_fix=auto_fix))
 
     # ── P1 — Warnings only ────────────────────────────────────────────────
     checks.append(check_token_freshness("Gmail", "gmail-oauth-token.json"))
