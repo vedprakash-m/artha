@@ -152,3 +152,173 @@ def test_integrity_write_guard(mock_vault_env, capsys):
         captured = capsys.readouterr()
         assert "INTEGRITY ALERT" in captured.out
         assert "Skipping encryption to prevent data loss" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Layer 1 backup restore path tests
+# ---------------------------------------------------------------------------
+
+def test_decrypt_empty_output_restores_backup(mock_vault_env, capsys):
+    """If age_decrypt returns True but output is empty, backup is restored."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    bak_file = mock_vault_env / "state" / "immigration.md.bak"
+    age_file.write_text("encrypted-data")
+    # Prior plaintext exists (becomes the backup)
+    plain_file.write_text("---\nprevious: good data\n---\n# Prior Content")
+
+    def empty_decrypt(key, infile, outfile):
+        outfile.write_text("")  # empty output — simulates corrupt decrypt
+        return True
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", side_effect=empty_decrypt):
+        with pytest.raises(SystemExit):
+            vault.do_decrypt()
+
+    captured = capsys.readouterr()
+    assert "empty" in captured.err.lower()
+    # Backup should have been restored to plain_file
+    assert plain_file.exists()
+    assert "Prior Content" in plain_file.read_text()
+    assert not bak_file.exists()
+
+
+def test_decrypt_invalid_yaml_restores_backup(mock_vault_env, capsys):
+    """If age_decrypt produces a file without YAML frontmatter, backup is restored."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    age_file.write_text("encrypted-data")
+    plain_file.write_text("---\nprevious: good data\n---\n# Prior Content")
+
+    def bad_yaml_decrypt(key, infile, outfile):
+        outfile.write_text("NO YAML FRONTMATTER HERE\nsome garbage")
+        return True
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", side_effect=bad_yaml_decrypt):
+        with pytest.raises(SystemExit):
+            vault.do_decrypt()
+
+    captured = capsys.readouterr()
+    assert "frontmatter" in captured.err.lower()
+    assert plain_file.exists()
+    assert "Prior Content" in plain_file.read_text()
+
+
+def test_decrypt_failure_restores_backup(mock_vault_env, capsys):
+    """If age_decrypt returns False, backup is restored."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    age_file.write_text("encrypted-data")
+    plain_file.write_text("---\nprevious: good data\n---\n# Prior Content")
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", return_value=False):
+        with pytest.raises(SystemExit):
+            vault.do_decrypt()
+
+    captured = capsys.readouterr()
+    assert "Failed to decrypt" in captured.err
+    assert plain_file.exists()
+    assert "Prior Content" in plain_file.read_text()
+
+
+def test_decrypt_failure_no_backup_logs_restore_failed(mock_vault_env, capsys):
+    """If age_decrypt fails and no prior plaintext exists, INTEGRITY_RESTORE_FAILED is logged."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    age_file.write_text("encrypted-data")
+    # No plain_file — first decrypt ever, no .bak will be created
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", return_value=False):
+        with pytest.raises(SystemExit):
+            vault.do_decrypt()
+
+    captured = capsys.readouterr()
+    # No backup available — warning must say so
+    assert "No backup available" in captured.err
+    # Original .age file must be untouched
+    assert age_file.exists()
+    assert not plain_file.exists()
+
+
+def test_decrypt_bak_creation_is_atomic(mock_vault_env, tmp_path):
+    """A partial .bak.tmp left by a previous crash should be overwritten cleanly."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    bak_tmp = mock_vault_env / "state" / "immigration.md.bak.tmp"
+    age_file.write_text("encrypted-data")
+    plain_file.write_text("---\ncurrent: real data\n---\n# Current")
+    # Simulate a stale partial .bak.tmp from a prior crashed session
+    bak_tmp.write_text("PARTIAL GARBAGE")
+
+    def good_decrypt(key, infile, outfile):
+        outfile.write_text("---\nnew: data\n---\n# New")
+        return True
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", side_effect=good_decrypt):
+        vault.do_decrypt()
+
+    # .bak.tmp should be gone (replaced atomically by .bak, then .bak cleaned on success)
+    assert not bak_tmp.exists()
+    # New decrypted content should be in place
+    assert plain_file.read_text().startswith("---")
+
+
+def test_encrypt_cleans_up_bak_on_success(mock_vault_env, capsys):
+    """Successful encryption must remove any orphaned .bak file."""
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    bak_file = mock_vault_env / "state" / "immigration.md.bak"
+    plain_file.write_text("---\ndata: real\n---\n# Content" + " x" * 500)
+    age_file.write_text("x" * 500)  # similar size — passes integrity check
+    bak_file.write_text("---\ndata: old\n---\n# Old Content")
+    (mock_vault_env / ".artha-decrypted").touch()
+    (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
+
+    def good_encrypt(pubkey, infile, outfile):
+        outfile.write_text("encrypted")
+        return True
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("scripts.vault.get_public_key", return_value="age1mock"), \
+         patch("scripts.vault.age_encrypt", side_effect=good_encrypt):
+        vault.do_encrypt()
+
+    assert not bak_file.exists()
+    assert not plain_file.exists()
+    assert age_file.exists()
+
+
+def test_restore_bak_rejects_corrupt_backup(mock_vault_env, capsys):
+    """_restore_bak must reject an empty or invalid .bak and log INTEGRITY_RESTORE_FAILED."""
+    age_file = mock_vault_env / "state" / "immigration.md.age"
+    plain_file = mock_vault_env / "state" / "immigration.md"
+    bak_file = mock_vault_env / "state" / "immigration.md.bak"
+    age_file.write_text("encrypted-data")
+    # Pre-seed a corrupt (empty) .bak and no current plain_file
+    bak_file.write_text("")  # corrupt/empty backup
+
+    def bad_decrypt(key, infile, outfile):
+        outfile.write_text("")  # empty
+        return True
+
+    with patch("scripts.vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("scripts.vault.age_decrypt", side_effect=bad_decrypt):
+        with pytest.raises(SystemExit):
+            vault.do_decrypt()
+
+    captured = capsys.readouterr()
+    # Should warn that backup is empty, not silently restore garbage
+    assert "empty" in captured.err.lower() or "backup" in captured.err.lower()
+    # plain_file must NOT exist (we did not restore the corrupt backup)
+    assert not plain_file.exists()
