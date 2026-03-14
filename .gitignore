@@ -38,6 +38,7 @@ emails_*.jsonl
 review_*.txt
 *.jsonl
 !tests/fixtures/*.jsonl
+!tests/fixtures/**/*.jsonl
 gmail_*.jsonl
 icloud_*.jsonl
 outlook_*.jsonl
