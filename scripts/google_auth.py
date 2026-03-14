@@ -29,7 +29,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Optional
+from typing import Optional, TypedDict
+
+
+class CredentialStatus(TypedDict):
+    """Return type of check_stored_credentials()."""
+    client_id_stored: bool
+    client_secret_stored: bool
+    gmail_token_stored: bool
+    gcal_token_stored: bool
 
 import keyring
 
@@ -365,7 +373,7 @@ def revoke_tokens() -> None:
     print("[google_auth] Stored tokens deleted.")
 
 
-def check_stored_credentials() -> dict:
+def check_stored_credentials() -> CredentialStatus:
     """Return a status dict for /health checks.
     Checks both keyring and the OneDrive-synced mirror file."""
     return {

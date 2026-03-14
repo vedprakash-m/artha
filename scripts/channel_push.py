@@ -265,7 +265,7 @@ def _write_push_marker(channels_pushed: list[str]) -> None:
         log.warning("Could not write push marker: %s", exc)
 
     # Update channel_health section in state/health-check.md for each pushed channel
-    from scripts.lib.common import update_channel_health_md
+    from lib.common import update_channel_health_md
     for ch in channels_pushed:
         try:
             update_channel_health_md(ch, healthy=True, last_push=pushed_at, push_count_today=1)
@@ -327,7 +327,7 @@ def _send_pending_pushes(
     if not _PENDING_PUSHES_DIR.exists():
         return 0
 
-    from scripts.channels.base import ChannelMessage
+    from channels.base import ChannelMessage
 
     now = datetime.now(timezone.utc)
     sent = 0
@@ -412,7 +412,7 @@ def run_push(dry_run: bool = False) -> int:
     Logs warnings for individual channel/recipient failures but always
     returns 0 to preserve non-blocking guarantee.
     """
-    from scripts.channels.registry import (
+    from channels.registry import (
         load_channels_config,
         iter_enabled_channels,
         create_adapter_from_config,
@@ -514,7 +514,7 @@ def run_push(dry_run: bool = False) -> int:
                 ]
 
             # 4. Send
-            from scripts.channels.base import ChannelMessage
+            from channels.base import ChannelMessage
             msg = ChannelMessage(
                 text=filtered_text,
                 recipient_id=recipient_id,
@@ -578,12 +578,12 @@ def health_check() -> tuple[bool, str]:
     Returns:
         (healthy: bool, message: str)
     """
-    from scripts.channels.registry import load_channels_config, iter_enabled_channels
+    from channels.registry import load_channels_config, iter_enabled_channels
 
     config = load_channels_config()
 
     # If channels.yaml doesn't exist, that's OK — push is optional
-    from scripts.lib.common import CONFIG_DIR
+    from lib.common import CONFIG_DIR
     if not (CONFIG_DIR / "channels.yaml").exists():
         return True, "channels.yaml not configured (push disabled) ✓"
 

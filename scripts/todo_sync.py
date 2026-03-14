@@ -34,7 +34,6 @@ import argparse
 import json
 import os
 import re
-import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -178,7 +177,7 @@ def _load_list_ids() -> dict[str, str]:
     """Load todo_lists: mapping from user_profile.yaml (preferred) or artha_config.yaml (legacy)."""
     # Preferred: read from user_profile.yaml via profile_loader
     try:
-        from scripts.profile_loader import get as _profile_get
+        from profile_loader import get as _profile_get
         todo_lists = _profile_get("integrations.microsoft_graph.todo_lists", {})
         if isinstance(todo_lists, dict) and todo_lists:
             return todo_lists

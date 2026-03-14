@@ -46,7 +46,6 @@ from _bootstrap import reexec_in_venv; reexec_in_venv()
 import argparse
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from typing import Optional
 

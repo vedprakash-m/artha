@@ -710,7 +710,7 @@ def check_channel_health() -> CheckResult:
         )
     try:
         sys.path.insert(0, os.path.join(ARTHA_DIR, "scripts"))
-        from scripts.channels.registry import (
+        from channels.registry import (
             load_channels_config,
             iter_enabled_channels,
             create_adapter_from_config,
@@ -744,7 +744,7 @@ def check_channel_health() -> CheckResult:
             unhealthy.append(ch_name)
             _healthy = False
         try:
-            from scripts.lib.common import update_channel_health_md
+            from lib.common import update_channel_health_md
             update_channel_health_md(ch_name, _healthy)
         except Exception:
             pass  # Non-critical

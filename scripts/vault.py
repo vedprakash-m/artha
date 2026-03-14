@@ -52,7 +52,7 @@ import keyring
 # Foundation — shared constants, logging, and cryptographic primitives
 # ---------------------------------------------------------------------------
 
-from scripts.foundation import (
+from foundation import (
     _config,
     ARTHA_DIR, STATE_DIR, CONFIG_DIR, AUDIT_LOG, LOCK_FILE,
     SENSITIVE_FILES, KC_SERVICE, KC_ACCOUNT, STALE_THRESHOLD, LOCK_TTL,
@@ -439,7 +439,7 @@ def do_encrypt() -> None:
     log(f"SESSION_END | lock_file: removed | files_encrypted: {encrypted_count}")
 
     # GFS backup snapshot (§8.5.2) — delegate to backup.py
-    from scripts.backup import backup_snapshot, load_backup_registry
+    from backup import backup_snapshot, load_backup_registry
     registry = load_backup_registry()
     count = backup_snapshot(registry)
     if count == 0:
@@ -606,7 +606,7 @@ def do_health() -> None:
         print("  Backup files: ✓ none (clean)")
 
     # 7. GFS backup catalog
-    from scripts.backup import get_health_summary
+    from backup import get_health_summary
     backup_count, last_validate = get_health_summary()
     if backup_count == 0:
         print("  GFS backups:  ⚠ none — run vault.py encrypt to create first backup")
@@ -667,7 +667,7 @@ def main() -> None:
             sys.exit(1)
         do_store_key(sys.argv[2])
     elif cmd in ("backup-status", "backup_status"):
-        from scripts.backup import do_backup_status as _bkp_status
+        from backup import do_backup_status as _bkp_status
         _bkp_status()
     elif cmd in ("validate-backup", "validate_backup"):
         args     = sys.argv[2:]
@@ -681,7 +681,7 @@ def main() -> None:
                 date_str = args[i + 1]; i += 2
             else:
                 i += 1
-        from scripts.backup import do_validate_backup as _bkp_validate
+        from backup import do_validate_backup as _bkp_validate
         _bkp_validate(domain=domain, date_str=date_str)
     elif cmd == "restore":
         args      = sys.argv[2:]
@@ -701,7 +701,7 @@ def main() -> None:
                 data_only = True; i += 1
             else:
                 i += 1
-        from scripts.backup import do_restore as _bkp_restore
+        from backup import do_restore as _bkp_restore
         _bkp_restore(date_str=date_str, domain=domain, dry_run=dry_run, data_only=data_only)
     elif cmd == "install":
         args      = sys.argv[2:]
@@ -719,7 +719,7 @@ def main() -> None:
         if not zip_arg:
             print("Usage: vault.py install <zipfile> [--data-only] [--dry-run]")
             sys.exit(1)
-        from scripts.backup import do_install as _bkp_install
+        from backup import do_install as _bkp_install
         _bkp_install(zip_arg, dry_run=dry_run, data_only=data_only)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()

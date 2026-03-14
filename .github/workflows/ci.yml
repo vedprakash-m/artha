@@ -23,6 +23,46 @@ jobs:
           python -m py_compile artha.py
           echo "✓ Syntax OK"
 
+  # ── Ruff Linter ───────────────────────────────────────────────────────────
+  ruff:
+    name: Ruff lint (F811, F401, F841)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - name: Run ruff
+        run: ruff check scripts/ tests/ --config pyproject.toml
+
+  # ── Import Convention ─────────────────────────────────────────────────────
+  import-check:
+    name: No dual-import patterns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check for 'from scripts.X' inside scripts/
+        run: |
+          python -c "
+          import ast, pathlib, sys
+          bad = []
+          for p in sorted(pathlib.Path('scripts').rglob('*.py')):
+              if '__pycache__' in str(p): continue
+              for n in ast.walk(ast.parse(p.read_text())):
+                  if isinstance(n, ast.ImportFrom) and (n.module or '').startswith('scripts.'):
+                      bad.append(f'{p}:{n.lineno}: from {n.module}')
+          if bad:
+              print('ERROR: from scripts.X imports found inside scripts/:')
+              print('\n'.join(bad))
+              print('Use from X import ... instead (scripts/ is on sys.path).')
+              sys.exit(1)
+          print('✓ No dual-import patterns')
+          "
+
   # ── Test Suite ────────────────────────────────────────────────────────────
   tests:
     name: pytest (${{ matrix.python-version }})

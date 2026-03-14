@@ -72,7 +72,7 @@ def load_channels_config() -> dict[str, Any]:
         "channels": {},
     }
 
-    from scripts.lib.common import CONFIG_DIR
+    from lib.common import CONFIG_DIR
     channels_file = CONFIG_DIR / "channels.yaml"
 
     if not channels_file.exists():
