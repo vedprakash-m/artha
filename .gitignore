@@ -60,6 +60,9 @@ build/
 htmlcov/
 coverage.xml
 
+# --- Personal development setup docs (machine-specific paths) ---
+docs/cross-platform-git-setup.md
+
 # --- OneDrive artifacts ---
 *conflicted*
 .DS_Store

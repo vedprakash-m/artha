@@ -17,6 +17,14 @@ Artha runs on both macOS and Windows via OneDrive sync. Detect the platform at r
 - **Vault:** Use `python scripts/vault.py` (cross-platform) instead of `bash scripts/vault.sh` (Mac-only)
 - **PII guard:** `pii_guard.py` — pure Python, cross-platform (macOS, Windows, Linux)
 
+**Git workflow (cross-platform, OneDrive-hosted repo):**
+The repo working tree lives inside OneDrive (synced between Mac and Windows). `.git/` is excluded from OneDrive sync on each machine independently — GitHub is the only sync layer for committed code.
+- **Always `git pull origin main` before starting any work session on either machine**
+- **Always `git push origin main` after committing** — never leave commits unpushed when switching machines
+- Never work on both machines simultaneously without a push/pull cycle in between
+- If `git status` shows phantom modified files, run `git update-index --refresh` to clear the stale index
+- For first-time Windows setup or `.git/` corruption recovery, see `docs/cross-platform-git-setup.md` (gitignored, local only)
+
 **Environment awareness — Cowork VM vs local terminal:**
 If running in a Cowork VM (Linux sandbox), the following are **known network constraints** — not configuration errors:
 - `graph.microsoft.com` (Outlook/MS Graph) → blocked by VM proxy → Outlook email + calendar unavailable
