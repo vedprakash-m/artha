@@ -34,6 +34,7 @@ if _scripts_dir not in sys.path:
 from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
+import hashlib
 import json
 import os
 import re
@@ -42,7 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import date as _date_type, datetime, timedelta, timezone
 from pathlib import Path
 
 # Ensure UTF-8 stdout/stderr on Windows (avoids cp1252 encoding errors with ✓/✗)
@@ -81,6 +82,11 @@ LOCK_TTL        = 1800  # 30 minutes — hard TTL: stale regardless of PID statu
 
 KC_SERVICE = "age-key"
 KC_ACCOUNT = "artha"
+
+# GFS Backup — directory layout and retention policy (§8.5.2)
+BACKUP_DIR      = STATE_DIR / "backups"
+BACKUP_MANIFEST = BACKUP_DIR / "manifest.json"
+GFS_RETENTION: dict = {"daily": 7, "weekly": 4, "monthly": 12, "yearly": None}
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +317,322 @@ def do_release_lock(force: bool = True) -> None:
     sys.exit(0)
 
 
+# ---------------------------------------------------------------------------
+# GFS Vault Backup (§8.5.2)
+# ---------------------------------------------------------------------------
+
+def _file_sha256(path: Path) -> str:
+    """Streaming SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_manifest() -> dict:
+    """Load state/backups/manifest.json; return empty structure on missing or corrupt file."""
+    if BACKUP_MANIFEST.exists():
+        try:
+            return json.loads(BACKUP_MANIFEST.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {"files": {}, "last_validate": None}
+
+
+def _save_manifest(manifest: dict) -> None:
+    """Atomically overwrite manifest.json via a .tmp sibling."""
+    BACKUP_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(str(BACKUP_MANIFEST) + ".tmp")
+    try:
+        tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(str(tmp), str(BACKUP_MANIFEST))
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        log(f"MANIFEST_SAVE_FAILED | error: {exc}")
+
+
+def _get_backup_tier(d: "_date_type") -> str:
+    """Return the GFS tier for date *d*.
+
+    Priority (highest first):
+      yearly  — December 31
+      monthly — last day of any month (next calendar day is a different month)
+      weekly  — Sunday
+      daily   — everything else
+    """
+    if d.month == 12 and d.day == 31:
+        return "yearly"
+    if (d + timedelta(days=1)).month != d.month:
+        return "monthly"
+    if d.weekday() == 6:  # Sunday == 6
+        return "weekly"
+    return "daily"
+
+
+def _prune_backups(domain: str, tier: str, keep_n: int) -> None:
+    """Remove oldest backup files for domain/tier beyond keep_n retention limit."""
+    tier_dir = BACKUP_DIR / tier
+    if not tier_dir.exists():
+        return
+    # Glob produces YYYY-MM-DD sorted alphabetically = chronologically
+    files = sorted(tier_dir.glob(f"{domain}-*.md.age"))
+    if len(files) <= keep_n:
+        return
+    manifest = _load_manifest()
+    for old_file in files[: len(files) - keep_n]:
+        key = f"{tier}/{old_file.name}"
+        try:
+            old_file.unlink()
+            manifest["files"].pop(key, None)
+            log(f"BACKUP_PRUNED | file: {old_file.name} | tier: {tier} | retention: {keep_n}")
+        except OSError as exc:
+            log(f"BACKUP_PRUNE_FAILED | file: {old_file.name} | error: {exc}")
+    _save_manifest(manifest)
+
+
+def _backup_snapshot(today: "_date_type | None" = None) -> int:
+    """Snapshot all .age files into the GFS hierarchy.
+
+    Called automatically at the end of a successful vault.py encrypt cycle.
+    Reads from .age files — plaintext has already been deleted at this point.
+    Each file is written atomically via a .tmp sibling then os.replace().
+    Returns the number of files successfully backed up.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date()
+    tier     = _get_backup_tier(today)
+    date_str = today.isoformat()
+    tier_dir = BACKUP_DIR / tier
+    try:
+        tier_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        log(f"BACKUP_MKDIR_FAILED | tier: {tier} | error: {exc}")
+        return 0
+
+    manifest  = _load_manifest()
+    backed_up = 0
+
+    for domain in SENSITIVE_FILES:
+        age_file = STATE_DIR / f"{domain}.md.age"
+        if not age_file.exists():
+            continue
+        dest     = tier_dir / f"{domain}-{date_str}.md.age"
+        dest_tmp = Path(str(dest) + ".tmp")
+        try:
+            shutil.copy2(str(age_file), str(dest_tmp))
+            os.replace(str(dest_tmp), str(dest))
+        except OSError as exc:
+            dest_tmp.unlink(missing_ok=True)
+            log(f"BACKUP_COPY_FAILED | file: {domain}.md.age | tier: {tier} | error: {exc}")
+            continue
+
+        sha256 = _file_sha256(dest)
+        key    = f"{tier}/{domain}-{date_str}.md.age"
+        manifest["files"][key] = {
+            "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "date":    date_str,
+            "domain":  domain,
+            "sha256":  sha256,
+            "size":    dest.stat().st_size,
+            "tier":    tier,
+        }
+        backed_up += 1
+        log(f"BACKUP_OK | file: {domain}.md.age | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
+
+    _save_manifest(manifest)
+
+    # Prune old files after saving new manifest
+    for domain in SENSITIVE_FILES:
+        for t, keep_n in GFS_RETENTION.items():
+            if keep_n is not None:
+                _prune_backups(domain, t, keep_n)
+
+    if backed_up:
+        print(f"  GFS backup: {backed_up} file(s) → {tier}/ ({date_str})")
+    return backed_up
+
+
+def _select_backup_files(domain: "str | None", date_str: "str | None", manifest: dict) -> dict:
+    """Return the subset of manifest entries to validate.
+
+    Rules (first match wins):
+      date_str supplied  → all domains for that date
+      domain supplied    → newest entry for that domain
+      neither            → newest entry per domain (default for full validation)
+    """
+    all_files = manifest.get("files", {})
+    if date_str:
+        return {k: v for k, v in all_files.items() if v.get("date") == date_str}
+    if domain:
+        subset = {k: v for k, v in all_files.items() if v.get("domain") == domain}
+        if not subset:
+            return {}
+        newest_key = max(subset, key=lambda k: subset[k].get("date", ""))
+        return {newest_key: subset[newest_key]}
+    # Default: newest per domain
+    newest: dict = {}
+    for key, meta in all_files.items():
+        d = meta.get("domain", "")
+        if d not in newest or meta.get("date", "") > newest[d][1].get("date", ""):
+            newest[d] = (key, meta)
+    return {k: v for k, v in newest.values()}
+
+
+def do_validate_backup(
+    domain: "str | None" = None,
+    date_str: "str | None" = None,
+) -> None:
+    """Decrypt backup file(s) to a temp directory and validate content.
+
+    Never touches live state.  Checks (in order):
+      1. SHA-256 matches manifest entry           (bit-rot detection)
+      2. age_decrypt succeeds
+      3. Output is non-empty
+      4. First non-blank line starts with '---'   (YAML frontmatter)
+      5. Word count >= 30                         (non-trivial content)
+
+    Updates manifest.last_validate on full success.
+    Exits 1 if any file fails validation.
+    """
+    if not check_age_installed():
+        die("'age' not installed. Install:\n"
+            "  macOS: brew install age\n"
+            "  Windows: winget install FiloSottile.age")
+    privkey  = get_private_key()
+    manifest = _load_manifest()
+
+    if not manifest.get("files"):
+        print("No backups found. Run vault.py encrypt first to create initial backups.")
+        return
+
+    to_validate = _select_backup_files(domain, date_str, manifest)
+    if not to_validate:
+        print(f"No matching backup files found (domain={domain!r}, date={date_str!r}).")
+        sys.exit(1)
+
+    errors    = 0
+    validated = 0
+
+    with tempfile.TemporaryDirectory(prefix="artha_validate_") as tmpdir:
+        tmppath = Path(tmpdir)
+        for key, meta in sorted(to_validate.items()):
+            backup_file = BACKUP_DIR / key
+
+            # File must exist on disk
+            if not backup_file.exists():
+                print(f"  ✗ MISSING:         {key}")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: file_missing")
+                errors += 1
+                continue
+
+            # 1. SHA-256 checksum
+            actual_sha256   = _file_sha256(backup_file)
+            expected_sha256 = meta.get("sha256", "")
+            if expected_sha256 and actual_sha256 != expected_sha256:
+                print(f"  ✗ CHECKSUM FAIL:   {key}")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: checksum_mismatch"
+                    f" | expected: {expected_sha256[:16]} | actual: {actual_sha256[:16]}")
+                errors += 1
+                continue
+
+            # 2. Decrypt to temp dir
+            tmp_plain = tmppath / f"{meta['domain']}-{meta['date']}.md"
+            if not age_decrypt(privkey, backup_file, tmp_plain):
+                print(f"  ✗ DECRYPT FAIL:    {key}")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: decrypt_failed")
+                errors += 1
+                continue
+
+            # 3. Non-empty
+            if not tmp_plain.exists() or tmp_plain.stat().st_size == 0:
+                print(f"  ✗ EMPTY:           {key}")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: empty_content")
+                errors += 1
+                continue
+
+            content = tmp_plain.read_text(encoding="utf-8", errors="replace")
+
+            # 4. YAML frontmatter
+            if not content.lstrip().startswith("---"):
+                print(f"  ✗ NO YAML:         {key}")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: missing_yaml_frontmatter")
+                errors += 1
+                continue
+
+            # 5. Sanity: at least 30 words
+            word_count = len(content.split())
+            if word_count < 30:
+                print(f"  ✗ TOO SHORT:       {key} ({word_count} words)")
+                log(f"BACKUP_VALIDATE_FAIL | key: {key} | reason: content_too_short | words: {word_count}")
+                errors += 1
+                continue
+
+            print(f"  ✓ {key:<55} tier={meta['tier']:<7} date={meta['date']}"
+                  f" words={word_count} sha256={actual_sha256[:12]}...")
+            log(f"BACKUP_VALIDATE_OK | key: {key} | tier: {meta['tier']} | date: {meta['date']}"
+                f" | words: {word_count} | sha256: {actual_sha256[:16]}")
+            validated += 1
+
+    if errors == 0 and validated > 0:
+        manifest["last_validate"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _save_manifest(manifest)
+        print(f"\nBackup validation: ✓ {validated} file(s) valid")
+    else:
+        print(f"\nBackup validation: ✗ {errors} failure(s), {validated} passed")
+        if errors > 0:
+            sys.exit(1)
+
+
+def do_backup_status() -> None:
+    """Show GFS backup catalog, tier counts, and last validation date."""
+    manifest      = _load_manifest()
+    files         = manifest.get("files", {})
+    last_validate = manifest.get("last_validate")
+
+    print("━" * 60)
+    print(f"VAULT BACKUP STATUS — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("━" * 60)
+
+    if last_validate:
+        try:
+            last_dt    = datetime.fromisoformat(last_validate.replace("Z", "+00:00"))
+            days_since = (datetime.now(timezone.utc) - last_dt).days
+            if days_since <= 35:
+                status = f"✓ {days_since}d ago"
+            else:
+                status = f"⚠ {days_since}d ago (overdue — run: vault.py validate-backup)"
+        except ValueError:
+            status = last_validate
+        print(f"  Last validation : {status}")
+    else:
+        print("  Last validation : ⚠ NEVER — run: vault.py validate-backup")
+
+    print()
+    if not files:
+        print("  No backups found. Run vault.py encrypt to create the first backup.")
+    else:
+        for tier in ("yearly", "monthly", "weekly", "daily"):
+            tier_files = {k: v for k, v in files.items() if v.get("tier") == tier}
+            if not tier_files:
+                continue
+            dates  = sorted({v.get("date", "") for v in tier_files.values()}, reverse=True)
+            keep_n = GFS_RETENTION.get(tier)
+            label  = str(keep_n) if keep_n else "∞"
+            print(f"  {tier.upper():<8}  {len(dates)} snapshot(s), keep={label}")
+            for d in dates[:3]:
+                doms   = sorted(v["domain"] for k, v in tier_files.items() if v.get("date") == d)
+                suffix = f" +{len(doms) - 4} more" if len(doms) > 4 else ""
+                print(f"            {d}  {len(doms)} file(s) ({', '.join(doms[:4])}{suffix})")
+            if len(dates) > 3:
+                print(f"            … and {len(dates) - 3} older snapshot(s)")
+    print("━" * 60)
+
+
+# ---------------------------------------------------------------------------
+# Session-level backup helper — restore from GFS when live .age is corrupt
+# ---------------------------------------------------------------------------
+
 def _restore_bak(plain_file: Path, domain: str, reason: str) -> bool:
     """Restore .bak to plain_file if valid.  Returns True if restore succeeded.
 
@@ -501,10 +823,13 @@ def do_encrypt() -> None:
     if errors > 0:
         die(f"{errors} file(s) failed to encrypt. CRITICAL: plaintext may remain on disk.")
 
-    # Remove lock file only if everything succeeded
+    # Remove lock file only after all files are safely encrypted
     LOCK_FILE.unlink(missing_ok=True)
     print(f"vault.py: Encrypt complete. {encrypted_count} files secured. Lock file removed.")
     log(f"SESSION_END | lock_file: removed | files_encrypted: {encrypted_count}")
+
+    # GFS backup snapshot (§8.5.2): copy encrypted .age files into rotation
+    _backup_snapshot()
 
 
 # ---------------------------------------------------------------------------
@@ -622,6 +947,28 @@ def do_health() -> None:
     else:
         print("  Backup files: ✓ none (clean)")
 
+    # 7. GFS backup catalog
+    manifest      = _load_manifest()
+    last_validate = manifest.get("last_validate")
+    backup_count  = len({v.get("date") for v in manifest.get("files", {}).values()})
+    if backup_count == 0:
+        print("  GFS backups:  ⚠ none — run vault.py encrypt to create first backup")
+    else:
+        if last_validate:
+            try:
+                last_dt    = datetime.fromisoformat(last_validate.replace("Z", "+00:00"))
+                days_since = (datetime.now(timezone.utc) - last_dt).days
+                if days_since > 35:
+                    print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but validation overdue ({days_since}d)")
+                    ok = False
+                else:
+                    print(f"  GFS backups:  ✓ {backup_count} snapshot(s), validated {days_since}d ago")
+            except ValueError:
+                print(f"  GFS backups:  ✓ {backup_count} snapshot(s) (validation: {last_validate})")
+        else:
+            print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but never validated — run vault.py validate-backup")
+            ok = False
+
     if ok:
         print("vault.py health: OK")
         sys.exit(0)
@@ -636,13 +983,17 @@ def do_health() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|release-lock}")
         print()
-        print("  decrypt       — unlock sensitive state files for a catch-up session")
-        print("  encrypt       — lock sensitive state files after catch-up")
-        print("  status        — show current encryption state (read-only)")
-        print("  health        — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
-        print("  release-lock  — force-clear a stale session lock (manual recovery)")
+        print("  decrypt          — unlock sensitive state files for a catch-up session")
+        print("  encrypt          — lock sensitive state files after catch-up + GFS backup")
+        print("  status           — show current encryption state (read-only)")
+        print("  health           — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
+        print("  backup-status    — show GFS backup catalog and last validation date")
+        print("  validate-backup  — decrypt newest backup per domain, validate, log result")
+        print("                       [--domain DOMAIN]  validate one domain only")
+        print("                       [--date YYYY-MM-DD] validate a specific date snapshot")
+        print("  release-lock     — force-clear a stale session lock (manual recovery)")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -654,11 +1005,27 @@ def main() -> None:
         do_status()
     elif cmd == "health":
         do_health()
+    elif cmd in ("backup-status", "backup_status"):
+        do_backup_status()
+    elif cmd in ("validate-backup", "validate_backup"):
+        # Parse optional --domain and --date flags
+        args     = sys.argv[2:]
+        domain   = None
+        date_str = None
+        i = 0
+        while i < len(args):
+            if args[i] == "--domain" and i + 1 < len(args):
+                domain = args[i + 1]; i += 2
+            elif args[i] == "--date" and i + 1 < len(args):
+                date_str = args[i + 1]; i += 2
+            else:
+                i += 1
+        do_validate_backup(domain=domain, date_str=date_str)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|release-lock}")
         sys.exit(1)
 
 
