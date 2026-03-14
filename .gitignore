@@ -1,23 +1,30 @@
-# ─── User data (NEVER committed) ─────────────────────────────────────────────
-config/user_profile.yaml          # Personal profile — created by /bootstrap
-config/artha_config.yaml          # To Do list IDs — generated at setup
-config/settings.md                # Legacy config — consolidated into user_profile.yaml
-config/routing.yaml               # User-specific sender→domain routing
-config/Artha.identity.md          # Generated §1 Identity block — personal data
-config/prompt-overlays/*.md       # User-specific prompt extensions
-!config/prompt-overlays/README.md # Keep the README
+# --- User data (NEVER committed) ---
+# Personal profile - created by /bootstrap
+config/user_profile.yaml
+# To Do list IDs - generated at setup
+config/artha_config.yaml
+# Legacy config - consolidated into user_profile.yaml
+config/settings.md
+# User-specific sender->domain routing
+config/routing.yaml
+# Generated Identity block - personal data
+config/Artha.identity.md
+# User-specific prompt extensions
+config/prompt-overlays/*.md
+# Keep the README
+!config/prompt-overlays/README.md
 
-# ─── State files (all user-generated) ────────────────────────────────────────
+# --- State files (all user-generated) ---
 state/*.md
 state/*.md.age
 !state/.gitkeep
 !state/templates/
 
-# ─── Briefing and summary archives ───────────────────────────────────────────
+# --- Briefing and summary archives ---
 briefings/
 summaries/
 
-# ─── Email archives and raw review files ─────────────────────────────────────
+# --- Email archives and raw review files ---
 emails_*.jsonl
 review_*.txt
 *.jsonl
@@ -28,16 +35,15 @@ outlook_*.jsonl
 *_errors.txt
 *_err.txt
 
-# ─── Token and credential files ──────────────────────────────────────────────
+# --- Token and credential files ---
 .tokens/
 *.token.json
-~/.artha-tokens/
 
-# ─── Virtual environments ────────────────────────────────────────────────────
+# --- Virtual environments ---
 .venv/
 .venv-win/
 
-# ─── Python bytecode ─────────────────────────────────────────────────────────
+# --- Python bytecode ---
 __pycache__/
 *.pyc
 *.pyo
@@ -46,7 +52,7 @@ dist/
 build/
 .eggs/
 
-# ─── Test / lint caches ──────────────────────────────────────────────────────
+# --- Test / lint caches ---
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -54,24 +60,21 @@ build/
 htmlcov/
 coverage.xml
 
-# ─── OneDrive artifacts ──────────────────────────────────────────────────────
+# --- OneDrive artifacts ---
 *conflicted*
 .DS_Store
 
-# ─── IDE settings ────────────────────────────────────────────────────────────
+# --- IDE settings ---
 .vscode/
 
-# ─── Archive and working directories ─────────────────────────────────────────
+# --- Archive and working directories ---
 .archive/
 .claude/
 tmp/
 visuals/
 
-# ─── Spec files (fictional example data — safe to commit) ────────────────────
-# specs/ — no longer excluded; PII scrub completed, names are fictional examples
-
-# ─── Assembled instruction file (contains personal identity) ─────────────────
+# --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
 
-# ─── Decrypted state transient files ─────────────────────────────────────────
+# --- Decrypted state transient files ---
 .artha-decrypted
