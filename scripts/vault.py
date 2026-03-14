@@ -37,7 +37,6 @@ reexec_in_venv()
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -48,46 +47,24 @@ from datetime import date as _date_type, datetime, timedelta, timezone
 from pathlib import Path
 
 try:
-    import yaml as _yaml  # PyYAML — in requirements.txt
+    import yaml as _yaml  # PyYAML — in requirements.txt (used by _load_backup_registry)
 except ImportError:  # pragma: no cover
     _yaml = None  # type: ignore[assignment]
-
-# Ensure UTF-8 stdout/stderr on Windows (avoids cp1252 encoding errors with ✓/✗)
-if os.name == "nt":
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import keyring
 
 # ---------------------------------------------------------------------------
-# Constants
+# Foundation — shared constants, logging, and cryptographic primitives
 # ---------------------------------------------------------------------------
 
-ARTHA_DIR   = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-LOCK_FILE   = ARTHA_DIR / ".artha-decrypted"
-STATE_DIR   = ARTHA_DIR / "state"
-CONFIG_DIR  = ARTHA_DIR / "config"
-AUDIT_LOG   = STATE_DIR / "audit.md"
-
-# Sensitive files in state/ that must be encrypted at rest
-SENSITIVE_FILES = [
-    "immigration",
-    "finance",
-    "insurance",
-    "estate",
-    "health",
-    "audit",
-    "vehicle",
-    "skills_cache",
-    "occasions",
-    "contacts",
-]
-
-STALE_THRESHOLD = 300   # 5 minutes — soft TTL: stale IF the locking PID is no longer running
-LOCK_TTL        = 1800  # 30 minutes — hard TTL: stale regardless of PID status (session crash ceiling)
-
-KC_SERVICE = "age-key"
-KC_ACCOUNT = "artha"
+from scripts.foundation import (
+    _config,
+    ARTHA_DIR, STATE_DIR, CONFIG_DIR, AUDIT_LOG, LOCK_FILE,
+    SENSITIVE_FILES, KC_SERVICE, KC_ACCOUNT, STALE_THRESHOLD, LOCK_TTL,
+    log, die,
+    get_private_key, get_public_key,
+    check_age_installed, age_decrypt, age_encrypt,
+)
 
 # GFS Backup — directory layout and retention policy (§8.5.2)
 BACKUP_DIR      = ARTHA_DIR / "backups"      # root-level backups/ — syncs via OneDrive
@@ -95,8 +72,9 @@ BACKUP_MANIFEST = BACKUP_DIR / "manifest.json"
 GFS_RETENTION: dict = {"daily": 7, "weekly": 4, "monthly": 12, "yearly": None}
 
 
+
 # ---------------------------------------------------------------------------
-# Backup registry
+# Backup registry (moved to backup.py in the next extraction step)
 # ---------------------------------------------------------------------------
 
 def _load_backup_registry() -> list:
@@ -162,105 +140,6 @@ def _load_backup_registry() -> list:
             })
 
     return entries
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def log(msg: str) -> None:
-    """Log a vault event to audit.md (if it exists as plaintext) and stdout."""
-    entry = f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] VAULT | {msg}"
-    if AUDIT_LOG.exists():
-        try:
-            with open(AUDIT_LOG, "a") as f:
-                f.write(entry + "\n")
-        except OSError:
-            pass
-    print(entry)
-
-
-def die(msg: str) -> None:
-    """Print error and exit."""
-    print(f"ERROR: {msg}", file=sys.stderr)
-    sys.exit(1)
-
-
-def get_private_key() -> str:
-    """Retrieve private key from system credential store."""
-    try:
-        key = keyring.get_password(KC_SERVICE, KC_ACCOUNT)
-    except Exception as exc:
-        die(f"Cannot access credential store: {exc}")
-    if not key:
-        die(
-            "Cannot retrieve age private key from credential store.\n"
-            "Store it with:\n"
-            f'  python -c "import keyring; keyring.set_password(\'{KC_SERVICE}\',\'{KC_ACCOUNT}\',\'<AGE-SECRET-KEY>\')"'
-        )
-    return key
-
-
-def get_public_key() -> str:
-    """Read age recipient public key from user_profile.yaml (preferred) or settings.md (legacy)."""
-    # Preferred: read from user_profile.yaml via profile_loader
-    try:
-        from scripts.profile_loader import get as _profile_get
-        key = _profile_get("encryption.age_recipient", "")
-        if key and key.startswith("age1"):
-            return key
-    except Exception:
-        pass  # profile_loader may not be available (pre-venv) — fall through
-
-    # Legacy fallback: parse settings.md
-    settings_file = CONFIG_DIR / "settings.md"
-    if not settings_file.exists():
-        die("age_recipient not found in user_profile.yaml or config/settings.md.")
-    text = settings_file.read_text()
-    match = re.search(r"age_recipient:\s*\"?(age1[a-z0-9]+)", text)
-    if not match:
-        die("Cannot read age_recipient from user_profile.yaml or config/settings.md. Populate encryption.age_recipient in your profile.")
-    pubkey = match.group(1)
-    if not pubkey.startswith("age1"):
-        die(f"Invalid age public key (must start with 'age1'). Got: {pubkey}")
-    return pubkey
-
-
-def check_age_installed() -> bool:
-    """Check if `age` encryption tool is on PATH."""
-    return shutil.which("age") is not None
-
-
-def age_decrypt(privkey: str, input_path: Path, output_path: Path) -> bool:
-    """Decrypt a file using age with the private key.
-    Writes key to a temp file (avoids process substitution which is bash-only).
-    Returns True on success.
-    """
-    tmpfd, tmppath = tempfile.mkstemp(prefix="artha_age_", suffix=".key")
-    try:
-        with os.fdopen(tmpfd, "w") as f:
-            f.write(privkey)
-        result = subprocess.run(
-            ["age", "--decrypt", "--identity", tmppath,
-             "--output", str(output_path), str(input_path)],
-            capture_output=True, text=True,
-        )
-        return result.returncode == 0
-    finally:
-        try:
-            os.unlink(tmppath)
-        except OSError:
-            pass
-
-
-def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
-    """Encrypt a file using age with the public key. Returns True on success."""
-    result = subprocess.run(
-        ["age", "--recipient", pubkey,
-         "--output", str(output_path), str(input_path)],
-        capture_output=True, text=True,
-    )
-    return result.returncode == 0
 
 
 # ---------------------------------------------------------------------------
