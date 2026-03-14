@@ -96,6 +96,21 @@ def _validate(profile: dict) -> list[str]:
     if not emails or not any(emails.values()):
         errors.append("ERROR: family.primary_user.emails must have at least one address")
 
+    _PLACEHOLDER_NAMES = {"Alex Smith", "Alex"}
+    _PLACEHOLDER_EMAILS = {"alex.smith@gmail.com"}
+    p_name = _get(profile, "family.primary_user.name", "")
+    if p_name in _PLACEHOLDER_NAMES:
+        errors.append(
+            "ERROR: family.primary_user.name still has the example value "
+            f"'{p_name}' — edit config/user_profile.yaml with your real name"
+        )
+    p_gmail = _get(profile, "family.primary_user.emails.gmail", "")
+    if p_gmail in _PLACEHOLDER_EMAILS:
+        errors.append(
+            "ERROR: family.primary_user.emails.gmail still has the example value "
+            f"'{p_gmail}' — edit config/user_profile.yaml with your real Gmail address"
+        )
+
     tz = _get(profile, "location.timezone", "")
     if not tz:
         errors.append("ERROR: location.timezone is required")

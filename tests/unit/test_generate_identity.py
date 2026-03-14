@@ -163,8 +163,34 @@ class TestValidate:
         }
         errors = gi._validate(no_domain_profile)
         assert errors == []
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.out
+
+    def test_placeholder_name_rejected(self, tmp_path, monkeypatch):
+        core_path = tmp_path / "Artha.core.md"
+        core_path.write_text("# Core\n", encoding="utf-8")
+        monkeypatch.setattr(gi, "_CORE_PATH", core_path)
+        bad = dict(MINIMAL_PROFILE)
+        bad["family"] = {
+            "primary_user": {
+                "name": "Alex Smith",
+                "emails": {"gmail": "jane@example.com"},
+            }
+        }
+        errors = gi._validate(bad)
+        assert any("placeholder" in e.lower() or "Alex Smith" in e for e in errors)
+
+    def test_placeholder_email_rejected(self, tmp_path, monkeypatch):
+        core_path = tmp_path / "Artha.core.md"
+        core_path.write_text("# Core\n", encoding="utf-8")
+        monkeypatch.setattr(gi, "_CORE_PATH", core_path)
+        bad = dict(MINIMAL_PROFILE)
+        bad["family"] = {
+            "primary_user": {
+                "name": "Jane",
+                "emails": {"gmail": "alex.smith@gmail.com"},
+            }
+        }
+        errors = gi._validate(bad)
+        assert any("placeholder" in e.lower() or "alex.smith@gmail.com" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------
