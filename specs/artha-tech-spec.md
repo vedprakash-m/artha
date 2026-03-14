@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 2.6.0 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 2.8 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v4.4
+> **Implements**: PRD v5.2
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v2.8 | 2026-03 | Phase 1b: domain registry, household types, renter mode, pets, passport/subscription skills, RSS connector, offline/degraded mode, performance telemetry, 4 view scripts (status/goals/items/scorecard), migrate_state.py DSL |
 | v2.7 | 2026-03 | ACB v2.1: Multi-LLM Q&A, ensemble mode, HCI command redesign, write commands, /diff, /goals |
 | v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
 | v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
@@ -121,15 +122,19 @@ Artha is a **pull-based personal intelligence system** built on four principles:
 |---|---|---|
 | CLAUDE.md | `~/OneDrive/Artha/CLAUDE.md` | Thin loader — auto-read by Claude Code, delegates to `Artha.md` |
 | Artha.md | `~/OneDrive/Artha/Artha.md` | Primary instruction file — Artha's identity, workflow, routing, and rules |
-| Domain prompts | `~/OneDrive/Artha/prompts/*.md` | Domain-specific extraction, alerting, and state update rules |
+| Domain prompts | `~/OneDrive/Artha/prompts/*.md` | Domain-specific extraction, alerting, and state update rules (24 domains; includes pets, renter overlay) |
+| Domain registry | `~/OneDrive/Artha/config/domain_registry.yaml` | Authoritative manifest for all 24 domains — lazy-load flags, household filters, vault requirements |
 | State files | `~/OneDrive/Artha/state/*.md` | Living world model — one Markdown file per domain |
+| State templates | `~/OneDrive/Artha/state/templates/` | Blank starter files for new users (pets.md, and all domains) |
 | Open items | `~/OneDrive/Artha/state/open_items.md` | Persistent action item list extracted from catch-ups; bridge to Microsoft To Do |
 | Dashboard | `~/OneDrive/Artha/state/dashboard.md` | Life-at-a-glance snapshot — life pulse, active alerts, life scorecard; rebuilt each catch-up *(v2.0)* |
 | Encrypted state | `~/OneDrive/Artha/state/*.md.age` | `age`-encrypted state for high/critical sensitivity domains |
 | Briefing archive | `~/OneDrive/Artha/briefings/*.md` | Historical catch-up briefings (ISO-dated, sensitivity-filtered) |
 | Summary archive | `~/OneDrive/Artha/summaries/*.md` | Historical weekly summaries |
 | Config | `~/OneDrive/Artha/config/settings.md` | Alert thresholds, email targets, sync path, account lists, To Do list IDs |
-| Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Minimal helper scripts (`vault.sh`, `gmail_fetch.py`, `gcal_fetch.py`, `gmail_send.py`, `todo_sync.py`) |
+| View scripts | `~/OneDrive/Artha/scripts/*_view.py` | Script-backed deterministic renderers: `dashboard_view.py`, `domain_view.py`, `status_view.py`, `goals_view.py`, `items_view.py`, `scorecard_view.py`, `diff_view.py` |
+| Migration scripts | `~/OneDrive/Artha/scripts/migrate_state.py` | YAML front-matter schema migration DSL for state files |
+| Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Helper scripts: vault.py, backup.py, pipeline.py, etc. |
 | OneDrive sync | Native OS integration | Cross-device state sync; Mac writes, iPhone/Windows read |
 | Gmail MCP | Claude Code MCP config | Email access via OAuth (read-only) |
 | Google Calendar MCP | Claude Code MCP config | Calendar access via OAuth (read-only) |
@@ -450,6 +455,9 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 | OFX / FDX | Banking API | FI Credentials | `ofxtools` | Direct bank balance pull (Phase 2) |
 | Microsoft Graph | REST API | OAuth2 | `msal` | Outlook Email + MS To Do sync |
 | Home Assistant | Local API | LAN Token | `requests` | Smart home status (Phase 2) |
+| Passport Expiry | `state/immigration.md` | vault-decrypted | stdlib | Alert at 180/90/60 days (Phase 1 — F15.66) |
+| Subscription Monitor | `state/digital.md` | none | stdlib | Price change + trial-to-paid detection (Phase 1 — F15.67) |
+| RSS Feeds | Public RSS/Atom URLs | None | `urllib` + `xml.etree` | Regulatory/news feeds (USCIS, etc.) — disabled by default (Phase 1 — F15.68) |
 
 ### 3.6 Claude Code Capabilities Utilization
 

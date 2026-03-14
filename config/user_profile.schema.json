@@ -103,6 +103,31 @@
         "property_parcel_id": { "type": "string" }
       }
     },
+    "household": {
+      "type": "object",
+      "description": "Household composition and tenure — drives domain filtering and single-person mode.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["single", "couple", "family", "multi_gen", "roommates"],
+          "description": "Household type. Controls which domains are applicable and briefing tone.\n  - single: one adult, no dependents\n  - couple: two adults, no dependents\n  - family: one or more adults with children\n  - multi_gen: multiple adult generations under one roof\n  - roommates: unrelated adults sharing a home"
+        },
+        "tenure": {
+          "type": "string",
+          "enum": ["owner", "renter", "other"],
+          "description": "Housing tenure. 'renter' activates renter-specific home.md overlay (suppresses mortgage/HOA/property-tax rules)."
+        },
+        "adults": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of adults in the household."
+        },
+        "single_person_mode": {
+          "type": "boolean",
+          "description": "Explicit single-person mode flag. Auto-inferred when household.type='single' but can be set independently."
+        }
+      }
+    },
     "domains": {
       "type": "object",
       "additionalProperties": {

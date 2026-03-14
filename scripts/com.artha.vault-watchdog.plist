@@ -3,23 +3,33 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   com.artha.vault-watchdog.plist
-  Artha crash-recovery watchdog — auto-encrypts sensitive state if Claude session dies
+  Artha crash-recovery watchdog — auto-encrypts sensitive state if any AI CLI session dies.
 
-  Logic:
+  Logic (v2 — universal AI CLI detection):
     1. Runs every 5 minutes via StartInterval
-    2. Checks for .artha-decrypted lock file (signal that vault.sh decrypt was run)
-    3. Checks if any 'claude' process is currently running
-    4. If lock file exists AND no claude process → vault.sh encrypt (session died without cleanup)
+    2. Checks for .artha-decrypted lock file (signal that vault.py decrypt was run)
+    3. Checks if ANY Artha-associated AI CLI is currently running:
+         - Claude Code:  claude process referencing Artha
+         - Gemini CLI:   gemini/node process referencing Artha
+         - VS Code:      Code process with Artha folder open
+    4. If lock file exists AND no active AI session → vault.py encrypt
+    5. Additional TTL check: if lock is > vault_ttl_minutes old (from user_profile.yaml,
+       default 30 min), auto-encrypt regardless of process state.
+
+  Why narrowed process detection (specs/enhance.md §10.0.3):
+    - Claude: `claude.*Artha` avoids false positives from unrelated claude processes
+    - Gemini: `gemini.*Artha` avoids false positives from other node processes
+    - VS Code: `Code.*Artha` matches VS Code with Artha folder open
 
   Installation:
-    cp com.artha.vault-watchdog.plist ~/Library/LaunchAgents/
+    cp scripts/com.artha.vault-watchdog.plist ~/Library/LaunchAgents/
     launchctl load ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
 
   Verification:
     launchctl list | grep artha
     cat /tmp/artha-watchdog.log     (watchdog activity log)
 
-  Ref: TS §8.5, T-1A.1.4
+  Ref: specs/enhance.md §10.0.3, TS §8.5
 -->
 <plist version="1.0">
 <dict>
@@ -31,27 +41,49 @@
         <string>/bin/bash</string>
         <string>-c</string>
         <string>
-            LOCK_FILE="${HOME}/OneDrive/Artha/.artha-decrypted"
-            VAULT_PY="${HOME}/OneDrive/Artha/scripts/vault.py"
+            LOCK_FILE="${HOME}/Library/CloudStorage/OneDrive-Personal/Artha/.artha-decrypted"
+            VAULT_PY="${HOME}/Library/CloudStorage/OneDrive-Personal/Artha/scripts/vault.py"
             PYTHON="${HOME}/.artha-venvs/.venv/bin/python"
             WATCHDOG_LOG="/tmp/artha-watchdog.log"
             TIMESTAMP=$(date -Iseconds)
 
             # Only act if lock file exists (session was started)
             if [[ -f "${LOCK_FILE}" ]]; then
-                # Check if any claude process is running
-                if ! pgrep -x "claude" > /dev/null 2>&1 &amp;&amp; \
-                   ! pgrep -f "claude-code" > /dev/null 2>&1; then
-                    # No active Claude session — encrypt stale plaintext
-                    echo "[${TIMESTAMP}] WATCHDOG: Lock file found, no claude process. Auto-encrypting." >> "${WATCHDOG_LOG}"
+
+                ARTHA_SESSION_ACTIVE=false
+
+                # Check TTL: if lock is older than 30 min, force-encrypt regardless
+                LOCK_AGE=$(( $(date +%s) - $(stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0) ))
+                VAULT_TTL=1800  # 30 min default (matches foundation.py LOCK_TTL)
+                if [[ "${LOCK_AGE}" -gt "${VAULT_TTL}" ]]; then
+                    echo "[${TIMESTAMP}] WATCHDOG: Lock TTL exceeded (age: ${LOCK_AGE}s). Auto-encrypting." >> "${WATCHDOG_LOG}"
+                    if [[ -x "${PYTHON}" ]] &amp;&amp; [[ -f "${VAULT_PY}" ]]; then
+                        "${PYTHON}" "${VAULT_PY}" encrypt >> "${WATCHDOG_LOG}" 2>&amp;1
+                        echo "[${TIMESTAMP}] WATCHDOG: TTL auto-encrypt complete." >> "${WATCHDOG_LOG}"
+                    fi
+                    exit 0
+                fi
+
+                # Claude Code — narrow match to avoid false positives
+                pgrep -f "claude.*Artha" &gt; /dev/null 2>&amp;1 &amp;&amp; ARTHA_SESSION_ACTIVE=true
+
+                # Gemini CLI — narrow: gemini process working in Artha dir
+                pgrep -f "gemini.*Artha" &gt; /dev/null 2>&amp;1 &amp;&amp; ARTHA_SESSION_ACTIVE=true
+
+                # VS Code (Copilot) — VS Code with Artha folder open
+                pgrep -f "Code.*Artha" &gt; /dev/null 2>&amp;1 &amp;&amp; ARTHA_SESSION_ACTIVE=true
+
+                if [[ "${ARTHA_SESSION_ACTIVE}" == "false" ]]; then
+                    # No active AI session detected — encrypt stale plaintext
+                    echo "[${TIMESTAMP}] WATCHDOG: Lock file found, no active AI session. Auto-encrypting." >> "${WATCHDOG_LOG}"
                     if [[ -x "${PYTHON}" ]] &amp;&amp; [[ -f "${VAULT_PY}" ]]; then
                         "${PYTHON}" "${VAULT_PY}" encrypt >> "${WATCHDOG_LOG}" 2>&amp;1
                         echo "[${TIMESTAMP}] WATCHDOG: Auto-encrypt complete." >> "${WATCHDOG_LOG}"
                     else
-                        echo "[${TIMESTAMP}] WATCHDOG: ERROR — vault.py or python not found at ${VAULT_PY}" >> "${WATCHDOG_LOG}"
+                        echo "[${TIMESTAMP}] WATCHDOG: ERROR — vault.py or python not found." >> "${WATCHDOG_LOG}"
                     fi
                 else
-                    echo "[${TIMESTAMP}] WATCHDOG: Lock file present + claude process active. No action." >> "${WATCHDOG_LOG}"
+                    echo "[${TIMESTAMP}] WATCHDOG: Active AI session detected. Vault stays open." >> "${WATCHDOG_LOG}"
                 fi
             fi
         </string>

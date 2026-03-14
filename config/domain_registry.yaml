@@ -1,0 +1,499 @@
+# config/domain_registry.yaml — Artha Domain Registry
+# Version: 1.0 | Updated: 2026-03-14
+#
+# Single manifest for every domain: dependencies, sensitivity, loading rules,
+# auto-enable conditions, and household type applicability.
+#
+# Used by:
+#   - profile_loader.py: available_domains(), toggle_domain(), domain_registry()
+#   - generate_identity.py: prompt assembly (only enabled domains)
+#   - Artha.core.md §lazy loading: always_load field for Tier 1 context optimization
+#   - vault_guard.py: derives SENSITIVE_DOMAINS dynamically
+#
+# Ref: specs/enhance.md §2.2, §9.2
+
+schema_version: "1.0"
+
+domains:
+
+  # ── Always-load domains (finance, immigration, health, calendar, comms, goals) ──────
+  # These load on every catch-up regardless of email signal.
+  # Rationale: false-negative risk too high for deadlines and reminders.
+
+  immigration:
+    label: "Immigration & Visa"
+    description: "USCIS filings, visa status, passport, travel docs"
+    sensitivity: high
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/immigration.md"
+    state_file: "state/immigration.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you have an active immigration case or visa?"
+    routing_keywords:
+      - USCIS
+      - I-765
+      - I-485
+      - I-140
+      - visa
+      - receipt notice
+      - EAD
+      - green card
+      - Form I-
+    alert_thresholds:
+      red: "Visa expires in <30 days, case denied"
+      orange: "Visa expires in <90 days, RFE received"
+      yellow: "Priority date advanced, new form available"
+      blue: "Receipt notice received, status update"
+
+  finance:
+    label: "Finance & Banking"
+    description: "Bills, bank accounts, credit cards, investments, taxes"
+    sensitivity: high
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/finance.md"
+    state_file: "state/finance.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track bills and bank accounts?"
+    routing_keywords:
+      - bill
+      - statement
+      - payment due
+      - bank
+      - credit card
+      - invoice
+      - tax
+      - refund
+      - transfer
+      - subscription
+    alert_thresholds:
+      red: "Bill 10+ days overdue, unusual charge >$500"
+      orange: "Bill due within 7 days, subscription price increase"
+      yellow: "Bill due within 14 days, statement available"
+      blue: "Payment confirmed, receipt"
+
+  health:
+    label: "Healthcare"
+    description: "Doctor appointments, prescriptions, insurance, lab results"
+    sensitivity: high
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/health.md"
+    state_file: "state/health.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track medical appointments and prescriptions?"
+    routing_keywords:
+      - appointment
+      - prescription
+      - pharmacy
+      - lab results
+      - insurance
+      - EOB
+      - doctor
+      - clinic
+      - diagnosis
+      - medication
+    alert_thresholds:
+      red: "Prescription runs out in <7 days, missed appointment"
+      orange: "Appointment in <48 hours, prescription due for refill"
+      yellow: "Lab results available, appointment in <1 week"
+      blue: "Appointment confirmation, EOB received"
+
+  calendar:
+    label: "Calendar & Events"
+    description: "Appointments, reminders, events, schedules"
+    sensitivity: standard
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/calendar.md"
+    state_file: "state/calendar.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [google_calendar]
+    optional_connectors: [outlook_calendar, icloud_calendar]
+    auto_enable_when: []
+    routing_keywords:
+      - calendar
+      - meeting
+      - event
+      - appointment
+      - reminder
+
+  comms:
+    label: "Communications"
+    description: "Important messages, follow-ups, pending conversations"
+    sensitivity: standard
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/comms.md"
+    state_file: "state/comms.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [imessage, whatsapp_export]
+    auto_enable_when: []
+
+  goals:
+    label: "Goals & Habits"
+    description: "Personal and family goals, habit tracking, progress"
+    sensitivity: standard
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/goals.md"
+    state_file: "state/goals.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  # ── Standard lazy-loaded domains ──────────────────────────────────────────
+
+  home:
+    label: "Home & Housing"
+    description: "Mortgage/rent, maintenance, utilities, insurance"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/home.md"
+    state_file: "state/home.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - mortgage
+      - rent
+      - lease
+      - HOA
+      - maintenance
+      - utility
+      - electric
+      - water
+      - repairs
+
+  employment:
+    label: "Employment & Work"
+    description: "Payroll, HR, benefits, performance reviews"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/employment.md"
+    state_file: "state/employment.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  kids:
+    label: "Kids & School"
+    description: "School events, homework, grades, activities"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/kids.md"
+    state_file: "state/kids.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, multi_gen]
+    requires_connectors: []
+    optional_connectors: [canvas_lms]
+    auto_enable_when:
+      - condition: "family.children is non-empty"
+        field: "family.children"
+        operator: "non_empty"
+    routing_keywords:
+      - school
+      - homework
+      - grade
+      - canvas
+      - teacher
+      - PTA
+      - field trip
+      - report card
+
+  travel:
+    label: "Travel"
+    description: "Flights, hotels, itineraries, passport"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/travel.md"
+    state_file: "state/travel.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - flight
+      - hotel
+      - booking
+      - itinerary
+      - airline
+      - reservation
+      - travel insurance
+
+  learning:
+    label: "Learning"
+    description: "Online courses, certifications, skills development"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/learning.md"
+    state_file: "state/learning.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  shopping:
+    label: "Shopping"
+    description: "Online orders, returns, price tracking"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/shopping.md"
+    state_file: "state/shopping.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  social:
+    label: "Social & Relationships"
+    description: "Events, birthdays, relationship maintenance"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/social.md"
+    state_file: "state/social.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  digital:
+    label: "Digital & Subscriptions"
+    description: "App subscriptions, digital services, domain names"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/digital.md"
+    state_file: "state/digital.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  insurance:
+    label: "Insurance"
+    description: "Health, auto, home/renter, life insurance policies"
+    sensitivity: high
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/insurance.md"
+    state_file: "state/insurance.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  estate:
+    label: "Estate & Legal"
+    description: "Will, trusts, POA, beneficiaries"
+    sensitivity: high
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/estate.md"
+    state_file: "state/estate.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, multi_gen]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  vehicle:
+    label: "Vehicle"
+    description: "Car registration, maintenance, insurance"
+    sensitivity: high
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/vehicle.md"
+    state_file: "state/vehicle.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  boundary:
+    label: "Boundaries & Digital Wellness"
+    description: "Screen time, balance, personal boundaries"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/boundary.md"
+    state_file: "state/boundary.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  decisions:
+    label: "Decisions & Scenarios"
+    description: "Active decision log, scenario analysis"
+    sensitivity: standard
+    always_load: false
+    phase: existing
+    prompt_file: null
+    state_file: "state/decisions.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  # ── Phase 1b new domains ──────────────────────────────────────────────────
+
+  pets:
+    label: "Pets & Animal Care"
+    description: "Pet health, vaccinations, medications, vet appointments"
+    sensitivity: standard
+    always_load: false
+    phase: phase_1b
+    prompt_file: "prompts/pets.md"
+    state_file: "state/pets.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "domains.pets.animals is non-empty"
+        field: "domains.pets.animals"
+        operator: "non_empty"
+    routing_keywords:
+      - vaccination
+      - rabies
+      - flea
+      - heartworm
+      - pet insurance
+      - grooming
+      - boarding
+      - vet appointment
+    alert_thresholds:
+      red: "Vaccination overdue"
+      orange: "Vaccination due within 30 days, medication refill due"
+      yellow: "Annual wellness check due, license renewal within 60 days"
+      blue: "Grooming/boarding confirmations"
+
+  # ── Phase 2 new domains ───────────────────────────────────────────────────
+
+  caregiving:
+    label: "Caregiving & Elder Care"
+    description: "Care recipient health, facility communications, coordination"
+    sensitivity: high
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/caregiving.md"
+    state_file: "state/caregiving.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, multi_gen]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "family.care_recipients is non-empty"
+        field: "family.care_recipients"
+        operator: "non_empty"
+
+  business:
+    label: "Side Business / Freelance"
+    description: "Invoices, clients, quarterly taxes, expenses"
+    sensitivity: high
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/business.md"
+    state_file: "state/business.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when:
+      - condition: "domains.business.entity_name is set"
+        field: "domains.business.entity_name"
+        operator: "truthy"
+
+  wellness:
+    label: "Fitness & Wellness"
+    description: "Activity, sleep, nutrition, wearable data"
+    sensitivity: standard
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/wellness.md"
+    state_file: "state/wellness.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health, strava, garmin]
+    auto_enable_when: []
+
+  community:
+    label: "Community & Volunteering"
+    description: "Donations, volunteer hours, community organizations"
+    sensitivity: standard
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/community.md"
+    state_file: "state/community.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []

@@ -141,7 +141,20 @@ def die(msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 def get_private_key() -> str:
-    """Retrieve age private key from the system credential store."""
+    """Retrieve age private key: keyring first, ARTHA_AGE_KEY env-var fallback.
+
+    Fallback chain:
+      1. System keyring (macOS Keychain / Windows Credential Manager)
+      2. ARTHA_AGE_KEY environment variable (Cowork VM, CI, non-interactive envs)
+
+    The env-var fallback enables vault operations in ephemeral environments
+    (Linux sandbox VMs, GitHub Actions) where no system keychain is available.
+    """
+    # Env-var check first — cheap, no keyring call needed in CI/VM environments
+    env_key = os.environ.get("ARTHA_AGE_KEY", "").strip()
+    if env_key and env_key.startswith("AGE-SECRET-KEY-"):
+        return env_key
+
     svc = _config["KC_SERVICE"]
     acct = _config["KC_ACCOUNT"]
     try:
@@ -151,8 +164,9 @@ def get_private_key() -> str:
     if not key:
         die(
             "Cannot retrieve age private key from credential store.\n"
-            "Store it with:\n"
-            f'  python -c "import keyring; keyring.set_password(\'{svc}\',\'{acct}\',\'<AGE-SECRET-KEY>\')"'
+            "Options:\n"
+            f'  1. Store in keyring: python -c "import keyring; keyring.set_password(\'{svc}\',\'{acct}\',\'<AGE-SECRET-KEY>\')"\n'
+            "  2. Set env var:     export ARTHA_AGE_KEY=AGE-SECRET-KEY-..."
         )
     return key  # type: ignore[return-value]
 

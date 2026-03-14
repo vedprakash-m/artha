@@ -470,6 +470,46 @@ def do_status() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Auto-lock (called by watchdog/cron — inactivity-based TTL enforce)
+# ---------------------------------------------------------------------------
+
+def do_auto_lock() -> int:
+    """Encrypt vault if lock file is older than LOCK_TTL. Used by watchdog.
+
+    Called by the LaunchAgent/watchdog when the AI session process check is
+    inconclusive. Provides a software-level safety net independent of the
+    OS watchdog's process detection.
+
+    Returns:
+        0 — locked (either already locked or successfully encrypted)
+        1 — lock file not present (nothing to do)
+        2 — encryption failed
+    """
+    if not LOCK_FILE.exists():
+        print("vault.py auto-lock: No lock file — vault already locked. Nothing to do.")
+        return 1
+
+    lock_mtime = os.path.getmtime(LOCK_FILE)
+    lock_age = int(time.time() - lock_mtime)
+    ttl = LOCK_TTL  # 30 min by default
+
+    if lock_age <= ttl:
+        remaining = ttl - lock_age
+        print(f"vault.py auto-lock: Lock age {lock_age}s ≤ TTL {ttl}s. {remaining}s remaining. No action.")
+        return 0
+
+    print(f"vault.py auto-lock: Lock age {lock_age}s > TTL {ttl}s. Auto-encrypting...")
+    log(f"AUTO_LOCK_TRIGGER | lock_age: {lock_age}s | ttl: {ttl}s")
+
+    # Reuse do_encrypt() logic
+    try:
+        do_encrypt()
+        return 0
+    except SystemExit as e:
+        return int(e.code or 2)
+
+
+# ---------------------------------------------------------------------------
 # Health check (used by preflight.py)
 # ---------------------------------------------------------------------------
 
@@ -568,7 +608,7 @@ def do_health() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|release-lock|auto-lock}")
         print("       backup commands → python scripts/backup.py {snapshot|status|validate|restore|install|…}")
         print()
         print("  decrypt      — unlock sensitive state files for a catch-up session")
@@ -576,6 +616,7 @@ def main() -> None:
         print("  status       — show current encryption state (read-only)")
         print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
         print("  release-lock — force-clear a stale session lock (manual recovery)")
+        print("  auto-lock    — encrypt if lock TTL exceeded (called by watchdog/cron)")
         sys.exit(1)
 
     cmd = sys.argv[1].lower()
@@ -644,6 +685,8 @@ def main() -> None:
         _bkp_install(zip_arg, dry_run=dry_run, data_only=data_only)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
+    elif cmd in ("auto-lock", "auto_lock"):
+        sys.exit(do_auto_lock())
     else:
         print(f"Unknown command: {cmd}")
         print("Usage: vault.py {decrypt|encrypt|status|health|release-lock}")

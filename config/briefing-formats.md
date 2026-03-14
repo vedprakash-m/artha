@@ -310,5 +310,90 @@ If approved: create sprint with auto-detected start date and inferred target.
 - Paused sprints: bar grayed with `[PAUSED]` prefix
 - Completed sprints: not shown in active display; archived in goals.md with `status: complete`
 
+### 8.10 Offline Mode Briefing (no connectors available)
+Used when **all** email/calendar connectors are unavailable (network down, token expired, VM proxy block).
+State files are readable but no new emails can be fetched.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARTHA · [Date] — 📴 OFFLINE MODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  No email connectors available. Briefing based on stored state only.
+    Source: state files last updated [date/time]
+    Skipped connectors: [list of failed connectors with reason]
+
+━━ 🔴 CRITICAL (from stored state) ━━━━━━━
+[Critical alerts from state files — these remain valid regardless of connectivity]
+
+━━ 🟠 URGENT (from stored state) ━━━━━━━━━
+[Urgent items from state files]
+
+━━ 📅 TODAY (calendar only) ━━━━━━━━━━━━━━
+[Calendar items — calendar connector may still work even when email is down]
+(No calendar data available — check connection.) ← if calendar also offline
+
+━━ 💡 ONE THING ━━━━━━━━━━━━━━━━━━━━━━━━━━
+[Based on stored state + date-driven reminders from skills]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📴 Offline mode — state-only · To fetch new data: fix connectivity then rerun
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Offline mode trigger conditions** (from `pipeline.py` connector health check):
+- All email connectors return `health_check() → False`
+- No new emails fetched (zero results across all sources)
+- `config/user_profile.yaml → system.offline_mode: true` (manual override)
+
+**Offline mode behavior:**
+- Date-driven skills (passport_expiry, subscription_monitor, property_tax) still run
+- Always-load domain prompts still applied to state files for completeness
+- Lazy domains still skipped (no routing signal possible)
+- briefing footer shows "📴 Offline mode" instead of email count
+- Log to `health-check.md → offline_runs: [{date, reason}]`
+
+---
+
+### 8.11 Degraded Mode Briefing (partial connectors)
+Used when **some** connectors fail but at least one remains functional.
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARTHA · [Date] — ⚠️ DEGRADED MODE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  DEGRADED: [N] of [total] connectors available.
+    Working: [list of working connectors]
+    Failed:  [list of failed connectors] — [brief reason per connector]
+    This briefing may be incomplete for domains served by the failed connectors.
+
+━━ [Standard briefing sections follow for working connectors] ━━━━━━━━━━━━━━━━
+
+[... all standard §8.1 sections, with domain notes where connector is unavailable ...]
+
+━━ ⚠️ DATA GAPS ━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Outlook email unavailable (MS Graph token expired) — employment + some finance may be stale
+• iCloud calendar unavailable (proxy block) — some events may be missing
+[Or: omit this section if the failed connectors serve no enabled domains]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ Degraded · [N] working / [total] connectors · [N] emails (partial)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Degraded mode trigger conditions:**
+- `pipeline.py` reports one or more connectors failed (`exit_code == 3` or partial success)
+- Some but not all connectors returned zero results with a health_check failure
+- OAuth token expired for a subset of providers
+
+**Degraded mode behavior:**
+- Working connectors process normally
+- Failed connectors are logged to `health-check.md → degraded_runs`
+- Domain sections served ONLY by failed connectors show: "⚠️ [domain] data unavailable — [connector] offline"
+- Always-load domains that have multiple connectors continue using the working ones
+- ONE THING is selected only from working-connector data + stored state
+- Recovery suggestion appended to briefing footer: "To restore: re-run `python scripts/setup_XXX_oauth.py`"
+
 ---
 

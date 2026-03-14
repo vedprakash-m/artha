@@ -1,0 +1,31 @@
+---
+domain: home
+schema_version: "1.0"
+extraction_signals:
+  - signal: rent_paid
+    value: "$2,450.00"
+    source_id: home-001
+    required: true
+  - signal: maintenance_scheduled
+    keywords: ["March 17", "faucet"]
+    source_id: home-002
+    required: true
+  - signal: lease_renewal_deadline
+    value: "April 15"
+    source_id: home-003
+    required: true
+  - signal: lease_expiry
+    value: "June 30, 2026"
+    source_id: home-003
+    required: true
+  - signal: renters_insurance_renewal
+    keywords: ["renters insurance", "April 1"]
+    source_id: home-004
+    required: true
+  - signal: utility_bill_due
+    keywords: ["comcast", "March 20"]
+    source_id: home-005
+    required: false
+
+routing_domain: home
+alert_level_expected: red  # Lease renewal deadline requires action by April 15

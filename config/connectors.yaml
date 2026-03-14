@@ -256,3 +256,28 @@ connectors:
   #   output:
   #     format: jsonl
   #     source_tag: "proton"
+
+  # ── RSS / Atom Feeds ──────────────────────────────────────────────────────
+
+  rss_feed:
+    type: feed
+    provider: rss
+    enabled: false          # set to true and configure feeds list below
+    description: "RSS/Atom feed reader — stdlib-only, no auth required. Useful for USCIS updates, visa bulletins, domain-relevant news."
+    auth:
+      method: none
+    fetch:
+      handler: "scripts/connectors/rss_feed.py"
+      timeout_seconds: 10
+      feeds:
+        # Add feed URLs here. Each entry: url, tag, domain (hint for routing).
+        # - url: "https://feeds.uscis.gov/updates/uscis-en.xml"
+        #   tag: "uscis_news"
+        #   domain: "immigration"
+        # - url: "https://travel.state.gov/content/travel/en/rss.xml"
+        #   tag: "state_dept"
+        #   domain: "travel"
+      default_max_results: 50
+    output:
+      format: jsonl
+      source_tag: "rss"
