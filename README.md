@@ -464,7 +464,7 @@ state/
   *.md.age                ← Encrypted sensitive state (gitignored)
 
 prompts/                  ← Domain-specific reasoning prompts (24 domains; includes pets, renter overlay)
-tests/                    ← pytest test suite (426+ test cases)
+tests/                    ← pytest test suite (435+ test cases)
 specs/                    ← Product, technical, and UX specifications
 docs/                     ← User-facing documentation
 briefings/                ← Generated daily briefings (gitignored)
