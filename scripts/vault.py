@@ -632,13 +632,22 @@ def _select_backup_zip(date_str: "str | None", manifest: dict) -> "str | None":
     return max(snapshots, key=lambda k: snapshots[k].get("date", ""))
 
 
-def _restore_from_zip(zip_path: Path, domain: "str | None", dry_run: bool) -> None:
+def _restore_from_zip(
+    zip_path:  Path,
+    domain:    "str | None",
+    dry_run:   bool,
+    data_only: bool = False,
+) -> None:
     """Core restore logic shared by do_restore() and do_install().
 
     For each file in the ZIP's internal manifest:
       state_encrypted → write .age file directly to restore_path
       state_plain     → age_decrypt to restore_path (plain .md)
       config          → age_decrypt to restore_path (original config file)
+
+    data_only=True skips config files — restores only state_encrypted and
+    state_plain entries.  Useful when you want to load personal data onto an
+    already-configured system without overwriting its config.
 
     SHA-256 verified before writing. Existing files overwritten.
     """
@@ -662,16 +671,19 @@ def _restore_from_zip(zip_path: Path, domain: "str | None", dry_run: bool) -> No
             die(f"Cannot read internal manifest in {zip_path.name}: {exc}")
 
         files = internal.get("files", {})
+        if data_only:
+            files = {k: v for k, v in files.items() if v.get("source_type") != "config"}
         if domain:
             files = {k: v for k, v in files.items() if v.get("name") == domain}
             if not files:
                 print(f"No files for domain {domain!r} in {zip_path.name}.")
                 sys.exit(1)
 
-        snap_date = internal.get("date", "unknown")
-        snap_tier = internal.get("tier", "unknown")
+        snap_date  = internal.get("date", "unknown")
+        snap_tier  = internal.get("tier", "unknown")
+        scope_note = " (state only — config skipped)" if data_only else ""
         if dry_run:
-            print(f"DRY RUN — snapshot {snap_tier}/{snap_date} ({zip_path.name}) — no files will be written\n")
+            print(f"DRY RUN — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note} — no files will be written\n")
 
         errors   = 0
         restored = 0
@@ -934,13 +946,19 @@ def do_backup_status() -> None:
 # ---------------------------------------------------------------------------
 
 def do_restore(
-    date_str: "str | None" = None,
-    domain:   "str | None" = None,
-    dry_run:  bool = False,
+    date_str:  "str | None" = None,
+    domain:    "str | None" = None,
+    dry_run:   bool = False,
+    data_only: bool = False,
 ) -> None:
     """Restore from the GFS backup catalog — finds the right ZIP automatically.
 
     vault.py restore [--date YYYY-MM-DD] [--domain DOMAIN] [--dry-run]
+                     [--data-only]
+
+    --data-only  Restore state files only (skip config files).  Use this when
+                 Artha is already configured on the running system and you only
+                 want to refresh personal data from the backup.
     """
     if not check_age_installed():
         die("'age' not installed.")
@@ -956,21 +974,29 @@ def do_restore(
         sys.exit(1)
 
     zip_path = BACKUP_DIR / zip_key
-    print(f"Restoring from {zip_key} ...")
-    _restore_from_zip(zip_path, domain, dry_run)
+    scope = "state only" if data_only else "state + config"
+    print(f"Restoring from {zip_key} ({scope}) ...")
+    _restore_from_zip(zip_path, domain, dry_run, data_only=data_only)
 
 
-def do_install(zip_path_str: str, dry_run: bool = False) -> None:
+def do_install(
+    zip_path_str: str,
+    dry_run:   bool = False,
+    data_only: bool = False,
+) -> None:
     """Restore from an explicit backup ZIP file — for cold-start on a new machine.
 
-    vault.py install <path/to/YYYY-MM-DD.zip> [--dry-run]
+    vault.py install <path/to/YYYY-MM-DD.zip> [--dry-run] [--data-only]
 
     The ZIP is self-contained: it carries its own internal manifest with SHA-256
     checksums and restore paths for every file.  No catalog access needed.
+
+    --data-only  Restore state files only (skip config files).
     """
     zip_path = Path(zip_path_str).expanduser().resolve()
-    print(f"Installing from backup: {zip_path.name} ...")
-    _restore_from_zip(zip_path, domain=None, dry_run=dry_run)
+    scope = "state only" if data_only else "state + config"
+    print(f"Installing from backup: {zip_path.name} ({scope}) ...")
+    _restore_from_zip(zip_path, domain=None, dry_run=dry_run, data_only=data_only)
 
 
 # ---------------------------------------------------------------------------
@@ -1369,10 +1395,11 @@ def main() -> None:
                 i += 1
         do_validate_backup(domain=domain, date_str=date_str)
     elif cmd == "restore":
-        args     = sys.argv[2:]
-        domain   = None
-        date_str = None
-        dry_run  = False
+        args      = sys.argv[2:]
+        domain    = None
+        date_str  = None
+        dry_run   = False
+        data_only = False
         i = 0
         while i < len(args):
             if args[i] == "--domain" and i + 1 < len(args):
@@ -1381,23 +1408,28 @@ def main() -> None:
                 date_str = args[i + 1]; i += 2
             elif args[i] == "--dry-run":
                 dry_run = True; i += 1
+            elif args[i] == "--data-only":
+                data_only = True; i += 1
             else:
                 i += 1
-        do_restore(date_str=date_str, domain=domain, dry_run=dry_run)
+        do_restore(date_str=date_str, domain=domain, dry_run=dry_run, data_only=data_only)
     elif cmd == "install":
-        args    = sys.argv[2:]
-        dry_run = False
-        zip_arg = None
+        args      = sys.argv[2:]
+        dry_run   = False
+        data_only = False
+        zip_arg   = None
         i = 0
         while i < len(args):
             if args[i] == "--dry-run":
                 dry_run = True; i += 1
+            elif args[i] == "--data-only":
+                data_only = True; i += 1
             else:
                 zip_arg = args[i]; i += 1
         if not zip_arg:
-            print("Usage: vault.py install <zipfile> [--dry-run]")
+            print("Usage: vault.py install <zipfile> [--data-only] [--dry-run]")
             sys.exit(1)
-        do_install(zip_arg, dry_run=dry_run)
+        do_install(zip_arg, dry_run=dry_run, data_only=data_only)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
     else:
