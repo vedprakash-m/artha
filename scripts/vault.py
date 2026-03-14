@@ -46,6 +46,11 @@ import time
 from datetime import date as _date_type, datetime, timedelta, timezone
 from pathlib import Path
 
+try:
+    import yaml as _yaml  # PyYAML — in requirements.txt
+except ImportError:  # pragma: no cover
+    _yaml = None  # type: ignore[assignment]
+
 # Ensure UTF-8 stdout/stderr on Windows (avoids cp1252 encoding errors with ✓/✗)
 if os.name == "nt":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -87,6 +92,75 @@ KC_ACCOUNT = "artha"
 BACKUP_DIR      = STATE_DIR / "backups"
 BACKUP_MANIFEST = BACKUP_DIR / "manifest.json"
 GFS_RETENTION: dict = {"daily": 7, "weekly": 4, "monthly": 12, "yearly": None}
+
+
+# ---------------------------------------------------------------------------
+# Backup registry
+# ---------------------------------------------------------------------------
+
+def _load_backup_registry() -> list:
+    """Return the authoritative list of files to include in each backup snapshot.
+
+    Reads config/user_profile.yaml → backup section.  Falls back to
+    SENSITIVE_FILES (all state_encrypted) when the section is absent or
+    unreadable so that existing behaviour is preserved.
+
+    Each entry is a dict with:
+      name         — unique slug used as the manifest 'domain' field
+      source_type  — 'state_encrypted' | 'state_plain' | 'config'
+      source_path  — absolute Path to the live file
+      restore_path — path relative to ARTHA_DIR for restoration
+    """
+    backup_cfg = None
+    if _yaml is not None:
+        try:
+            profile_path = CONFIG_DIR / "user_profile.yaml"
+            profile      = _yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            backup_cfg   = (profile or {}).get("backup")
+        except Exception:
+            backup_cfg = None
+
+    entries: list = []
+
+    if backup_cfg:
+        for sf in backup_cfg.get("state_files", []):
+            name      = sf["name"]
+            sensitive = sf.get("sensitive", False)
+            if sensitive:
+                entries.append({
+                    "name":         name,
+                    "source_type":  "state_encrypted",
+                    "source_path":  STATE_DIR / f"{name}.md.age",
+                    "restore_path": f"state/{name}.md.age",
+                })
+            else:
+                entries.append({
+                    "name":         name,
+                    "source_type":  "state_plain",
+                    "source_path":  STATE_DIR / f"{name}.md",
+                    "restore_path": f"state/{name}.md",
+                })
+        for cfg_rel in backup_cfg.get("config_files", []):
+            # cfg_rel is relative to ARTHA_DIR e.g. "config/user_profile.yaml"
+            slug = "cfg__" + cfg_rel.replace("/", "__").replace(".", "_")
+            entries.append({
+                "name":         slug,
+                "source_type":  "config",
+                "source_path":  ARTHA_DIR / cfg_rel,
+                "restore_path": cfg_rel,
+            })
+
+    if not entries:
+        # Fallback: SENSITIVE_FILES list — all state_encrypted
+        for name in SENSITIVE_FILES:
+            entries.append({
+                "name":         name,
+                "source_type":  "state_encrypted",
+                "source_path":  STATE_DIR / f"{name}.md.age",
+                "restore_path": f"state/{name}.md.age",
+            })
+
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -392,11 +466,18 @@ def _prune_backups(domain: str, tier: str, keep_n: int) -> None:
 
 
 def _backup_snapshot(today: "_date_type | None" = None) -> int:
-    """Snapshot all .age files into the GFS hierarchy.
+    """Snapshot ALL registered files into the GFS hierarchy.
 
     Called automatically at the end of a successful vault.py encrypt cycle.
-    Reads from .age files — plaintext has already been deleted at this point.
-    Each file is written atomically via a .tmp sibling then os.replace().
+    Registry is loaded from config/user_profile.yaml → backup section.
+
+    Handling by source_type:
+      state_encrypted — .age file already on disk; copied directly (read-only).
+      state_plain     — plain .md file; encrypted on-the-fly using the age
+                        public key before being stored (backup is always .age).
+      config          — config file; encrypted on-the-fly before storing.
+
+    Each file is written atomically via a .tmp sibling + os.replace().
     Returns the number of files successfully backed up.
     """
     if today is None:
@@ -410,43 +491,84 @@ def _backup_snapshot(today: "_date_type | None" = None) -> int:
         log(f"BACKUP_MKDIR_FAILED | tier: {tier} | error: {exc}")
         return 0
 
-    manifest  = _load_manifest()
+    registry = _load_backup_registry()
+    manifest = _load_manifest()
+
+    # Obtain public key once — required only for plain/config files that must
+    # be encrypted on-the-fly.  Skip those entries gracefully if key unavailable.
+    need_encrypt = any(e["source_type"] != "state_encrypted" for e in registry)
+    pubkey: "str | None" = None
+    if need_encrypt:
+        try:
+            pubkey = get_public_key()
+        except SystemExit:
+            log("BACKUP_PUBKEY_MISSING | plain/config files will be skipped this run")
+
     backed_up = 0
 
-    for domain in SENSITIVE_FILES:
-        age_file = STATE_DIR / f"{domain}.md.age"
-        if not age_file.exists():
+    for entry in registry:
+        name         = entry["name"]
+        source_type  = entry["source_type"]
+        source_path  = entry["source_path"]
+        restore_path = entry["restore_path"]
+
+        if not source_path.exists():
             continue
-        dest     = tier_dir / f"{domain}-{date_str}.md.age"
+
+        # Destination filename: config files use .cfg.age extension, state files .md.age
+        if source_type == "config":
+            dest_filename = f"{name}-{date_str}.cfg.age"
+        else:
+            dest_filename = f"{name}-{date_str}.md.age"
+        dest     = tier_dir / dest_filename
         dest_tmp = Path(str(dest) + ".tmp")
+        key      = f"{tier}/{dest_filename}"
+
         try:
-            shutil.copy2(str(age_file), str(dest_tmp))
-            os.replace(str(dest_tmp), str(dest))
+            if source_type == "state_encrypted":
+                shutil.copy2(str(source_path), str(dest_tmp))
+                os.replace(str(dest_tmp), str(dest))
+            else:
+                # Encrypt plain file on-the-fly
+                if not pubkey:
+                    log(f"BACKUP_SKIP | file: {source_path.name} | reason: no_pubkey")
+                    continue
+                if not age_encrypt(pubkey, source_path, dest_tmp):
+                    dest_tmp.unlink(missing_ok=True)
+                    log(f"BACKUP_ENCRYPT_FAILED | file: {source_path.name} | tier: {tier}")
+                    continue
+                if dest_tmp.exists():
+                    os.replace(str(dest_tmp), str(dest))
+                else:
+                    log(f"BACKUP_ENCRYPT_FAILED | file: {source_path.name} | reason: no_output")
+                    continue
         except OSError as exc:
             dest_tmp.unlink(missing_ok=True)
-            log(f"BACKUP_COPY_FAILED | file: {domain}.md.age | tier: {tier} | error: {exc}")
+            log(f"BACKUP_COPY_FAILED | file: {source_path.name} | tier: {tier} | error: {exc}")
             continue
 
         sha256 = _file_sha256(dest)
-        key    = f"{tier}/{domain}-{date_str}.md.age"
         manifest["files"][key] = {
-            "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "date":    date_str,
-            "domain":  domain,
-            "sha256":  sha256,
-            "size":    dest.stat().st_size,
-            "tier":    tier,
+            "created":      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "date":         date_str,
+            "domain":       name,
+            "restore_path": restore_path,
+            "sha256":       sha256,
+            "size":         dest.stat().st_size,
+            "source_type":  source_type,
+            "tier":         tier,
         }
         backed_up += 1
-        log(f"BACKUP_OK | file: {domain}.md.age | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
+        log(f"BACKUP_OK | file: {source_path.name} | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
 
     _save_manifest(manifest)
 
-    # Prune old files after saving new manifest
-    for domain in SENSITIVE_FILES:
+    # Prune old backups — iterate every unique name across all tiers
+    all_names = {e["name"] for e in registry}
+    for name in all_names:
         for t, keep_n in GFS_RETENTION.items():
             if keep_n is not None:
-                _prune_backups(domain, t, keep_n)
+                _prune_backups(name, t, keep_n)
 
     if backed_up:
         print(f"  GFS backup: {backed_up} file(s) → {tier}/ ({date_str})")
@@ -627,6 +749,110 @@ def do_backup_status() -> None:
             if len(dates) > 3:
                 print(f"            … and {len(dates) - 3} older snapshot(s)")
     print("━" * 60)
+
+
+# ---------------------------------------------------------------------------
+# GFS restore — rebuild a fresh install from a backup snapshot
+# ---------------------------------------------------------------------------
+
+def do_restore(
+    date_str: "str | None" = None,
+    domain:   "str | None" = None,
+    dry_run:  bool = False,
+) -> None:
+    """Restore files from a GFS backup snapshot to their original locations.
+
+    Intended use: rebuild a fresh Artha install from backup alone.
+      vault.py restore --date YYYY-MM-DD [--dry-run]
+
+    Handling by source_type:
+      state_encrypted — .age backup copied directly back to state/
+      state_plain     — backup decrypted and written as .md to state/
+      config          — backup decrypted and written back to config/
+
+    SHA-256 is verified before each restore.  Existing files are overwritten.
+    Use --dry-run to preview without writing anything.
+    """
+    if not check_age_installed():
+        die("'age' not installed.")
+    privkey  = get_private_key()
+    manifest = _load_manifest()
+
+    if not manifest.get("files"):
+        print("No backups found. Run vault.py encrypt first to create initial backups.")
+        return
+
+    to_restore = _select_backup_files(domain, date_str, manifest)
+    if not to_restore:
+        print(f"No matching backup files found (domain={domain!r}, date={date_str!r}).")
+        sys.exit(1)
+
+    if dry_run:
+        print("DRY RUN — no files will be written\n")
+
+    errors   = 0
+    restored = 0
+
+    for key, meta in sorted(to_restore.items()):
+        backup_file  = BACKUP_DIR / key
+        restore_rel  = meta.get("restore_path", "")
+        source_type  = meta.get("source_type", "state_encrypted")
+
+        if not backup_file.exists():
+            print(f"  ✗ MISSING backup:  {key}")
+            log(f"RESTORE_FAIL | key: {key} | reason: backup_missing")
+            errors += 1
+            continue
+
+        # Verify checksum before touching the filesystem
+        actual_sha256   = _file_sha256(backup_file)
+        expected_sha256 = meta.get("sha256", "")
+        if expected_sha256 and actual_sha256 != expected_sha256:
+            print(f"  ✗ CHECKSUM FAIL:   {key}")
+            log(f"RESTORE_FAIL | key: {key} | reason: checksum_mismatch")
+            errors += 1
+            continue
+
+        dest = ARTHA_DIR / restore_rel
+
+        if dry_run:
+            action = "copy" if source_type == "state_encrypted" else "decrypt"
+            print(f"  would {action}: {key!s:<55} → {restore_rel}")
+            continue
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest_tmp = Path(str(dest) + ".tmp")
+
+        try:
+            if source_type == "state_encrypted":
+                shutil.copy2(str(backup_file), str(dest_tmp))
+                os.replace(str(dest_tmp), str(dest))
+            else:
+                if not age_decrypt(privkey, backup_file, dest_tmp):
+                    dest_tmp.unlink(missing_ok=True)
+                    print(f"  ✗ DECRYPT FAILED:  {key}")
+                    log(f"RESTORE_FAIL | key: {key} | reason: decrypt_failed")
+                    errors += 1
+                    continue
+                os.replace(str(dest_tmp), str(dest))
+        except OSError as exc:
+            dest_tmp.unlink(missing_ok=True)
+            print(f"  ✗ WRITE FAILED:    {key}: {exc}")
+            log(f"RESTORE_FAIL | key: {key} | reason: write_error | detail: {exc}")
+            errors += 1
+            continue
+
+        print(f"  ✓ {restore_rel}")
+        log(f"RESTORE_OK | key: {key} | dest: {restore_rel} | source_type: {source_type}")
+        restored += 1
+
+    print()
+    if errors == 0:
+        if not dry_run:
+            print(f"Restore complete: {restored} file(s) restored.")
+    else:
+        print(f"Restore: {restored} restored, {errors} failed.")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -983,7 +1209,7 @@ def do_health() -> None:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|restore|release-lock}")
         print()
         print("  decrypt          — unlock sensitive state files for a catch-up session")
         print("  encrypt          — lock sensitive state files after catch-up + GFS backup")
@@ -993,6 +1219,10 @@ def main() -> None:
         print("  validate-backup  — decrypt newest backup per domain, validate, log result")
         print("                       [--domain DOMAIN]  validate one domain only")
         print("                       [--date YYYY-MM-DD] validate a specific date snapshot")
+        print("  restore          — restore files from a GFS snapshot (fresh-install rebuild)")
+        print("                       [--date YYYY-MM-DD] snapshot date (default: newest per domain)")
+        print("                       [--domain DOMAIN]   restore one domain only")
+        print("                       [--dry-run]         preview without writing files")
         print("  release-lock     — force-clear a stale session lock (manual recovery)")
         sys.exit(1)
 
@@ -1008,7 +1238,6 @@ def main() -> None:
     elif cmd in ("backup-status", "backup_status"):
         do_backup_status()
     elif cmd in ("validate-backup", "validate_backup"):
-        # Parse optional --domain and --date flags
         args     = sys.argv[2:]
         domain   = None
         date_str = None
@@ -1021,11 +1250,27 @@ def main() -> None:
             else:
                 i += 1
         do_validate_backup(domain=domain, date_str=date_str)
+    elif cmd == "restore":
+        args     = sys.argv[2:]
+        domain   = None
+        date_str = None
+        dry_run  = False
+        i = 0
+        while i < len(args):
+            if args[i] == "--domain" and i + 1 < len(args):
+                domain = args[i + 1]; i += 2
+            elif args[i] == "--date" and i + 1 < len(args):
+                date_str = args[i + 1]; i += 2
+            elif args[i] == "--dry-run":
+                dry_run = True; i += 1
+            else:
+                i += 1
+        do_restore(date_str=date_str, domain=domain, dry_run=dry_run)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|release-lock}")
+        print("Usage: vault.py {decrypt|encrypt|status|health|backup-status|validate-backup|restore|release-lock}")
         sys.exit(1)
 
 

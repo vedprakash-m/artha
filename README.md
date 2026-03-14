@@ -248,7 +248,7 @@ state/
   *.md.age                ← Encrypted sensitive state (gitignored)
 
 prompts/                  ← Domain-specific reasoning prompts (18 domains)
-tests/                    ← pytest test suite (223+ test cases)
+tests/                    ← pytest test suite (241+ test cases)
 specs/                    ← Product, technical, and UX specifications
 docs/                     ← User-facing documentation
 briefings/                ← Generated daily briefings (gitignored)
@@ -269,7 +269,7 @@ Artha is **privacy-first, local-first**. Your personal data never leaves your ma
 | **Pre-commit Hook** | Blocks PII, secrets, and forbidden files from reaching git |
 | **Net-Negative Write Guard** | Prevents accidental data loss when updating state files |
 | **Atomic `.bak` Guard** | Pre-decrypt `.bak` snapshot created atomically before every decrypt; auto-restored if write fails |
-| **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `state/backups/` (daily/weekly/monthly/yearly tiers) |
+| **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `state/backups/` (daily/weekly/monthly/yearly tiers) covering all 31 state files + 4 config files |
 | **Restore Validation** | `validate-backup` decrypts a backup to a temp dir and runs 5 integrity checks: SHA-256, decrypt success, non-empty, YAML frontmatter, word count ≥ 30 |
 | **Audit Logging** | Every vault operation logged to `state/audit.md` |
 | **CI PII Scanning** | GitHub Actions scans every push for PII leaks |
@@ -284,7 +284,21 @@ See [docs/security.md](docs/security.md) for the full threat model.
 
 ## Backup & Restore
 
-Artha uses a **Grandfather-Father-Son (GFS)** rotating backup strategy for all encrypted state files. Every successful `vault.py encrypt` run automatically snapshots the `.age` files into a tiered backup catalog.
+Artha uses a **Grandfather-Father-Son (GFS)** rotating backup strategy for **all state and config files**. Every successful `vault.py encrypt` run automatically snapshots files into a tiered backup catalog — enough to rebuild a fresh Artha install from backup alone.
+
+### What Gets Backed Up
+
+The backup registry is declared in `config/user_profile.yaml → backup` and is the authoritative, user-editable source of truth. By default:
+
+| Type | Count | Example |
+|---|---|---|
+| Encrypted state (`*.md.age`) | 9 files | finance, health, immigration… |
+| Plain state (`*.md`) | 22 files | goals, home, kids, open_items… |
+| Config files | 4 files | user_profile.yaml, routing.yaml… |
+
+Users without certain domains (e.g. no immigration) simply remove those entries from the registry.
+
+**Plain state files and config files are encrypted on-the-fly** using your age key before being stored, so all backups are encrypted at rest regardless of source type.
 
 ### Backup Tiers
 
@@ -324,7 +338,27 @@ python scripts/vault.py validate-backup --domain finance
 
 # Validate a specific snapshot date
 python scripts/vault.py validate-backup --date 2026-02-28
+
+# Preview a full restore without writing anything
+python scripts/vault.py restore --dry-run
+
+# Restore all files from a specific snapshot (fresh-install rebuild)
+python scripts/vault.py restore --date 2026-03-14
+
+# Restore a single domain only
+python scripts/vault.py restore --domain finance
 ```
+
+### Fresh-Install Rebuild
+
+A backup snapshot contains everything needed to rebuild Artha from scratch on a new machine:
+
+1. Install Artha and `age` on the new machine
+2. Copy `state/backups/` (synced via OneDrive) to the new machine
+3. Restore your age private key to the macOS Keychain / Windows Credential Manager
+4. Run `vault.py restore --dry-run` to preview, then `vault.py restore` to restore all files
+
+All config files (`user_profile.yaml`, `routing.yaml`, etc.) and all state files are restored to their original locations in a single command.
 
 ### Restore Validation Checks
 
