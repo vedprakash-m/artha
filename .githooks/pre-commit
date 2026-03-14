@@ -90,7 +90,9 @@ FORBIDDEN_EXEMPT = {
 # Layer 1 (forbidden files) still applies; only Layers 2-3 are skipped.
 PII_SCAN_EXEMPT = {
     "scripts/pii_guard.py",
+    "scripts/backup.py",           # key management module — contains AGE-SECRET-KEY- prefix strings, not real keys
     "tests/unit/test_pii_guard.py",
+    "tests/unit/test_backup.py",   # contains fake test fixture: AGE-SECRET-KEY-1FAKE
     "tests/integration/test_catch_up_e2e.py",
     "tests/pii_test_data.txt",
     "specs/supercharge-reloaded.md",

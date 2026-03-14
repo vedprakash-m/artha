@@ -27,8 +27,11 @@ from __future__ import annotations
 # Auto-relaunch inside the Artha venv if not already running there
 import sys, os as _os
 _scripts_dir = _os.path.dirname(_os.path.abspath(__file__))
+_artha_dir   = _os.path.dirname(_scripts_dir)  # project root (parent of scripts/)
 if _scripts_dir not in sys.path:
     sys.path.insert(0, _scripts_dir)
+if _artha_dir not in sys.path:
+    sys.path.insert(0, _artha_dir)
 from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
