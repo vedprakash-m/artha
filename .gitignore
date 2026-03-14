@@ -20,6 +20,9 @@ state/*.md.age
 !state/.gitkeep
 !state/templates/
 
+# --- GFS backup snapshots (ZIP-per-day, stored at project root) ---
+backups/
+
 # --- Briefing and summary archives ---
 briefings/
 summaries/

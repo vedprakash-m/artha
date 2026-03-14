@@ -12,6 +12,7 @@
 |---------|------|---------|
 | v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
 | v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
+| v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
 | v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema |
 | v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff` |
 | v2.0 | 2026-02 | Supercharge: data integrity guard, bootstrap, coaching, dashboard |
@@ -1670,9 +1671,9 @@ For each modified state file:
 
 **Backup retention:** `.md.bak` files are kept until the next successful encrypt cycle. After `vault.sh encrypt` completes without error, `.bak` files are removed. If the backup is older than 7 days, log a warning.
 
-### 8.5.2 GFS Vault Backup *(v2.4 — P0)*
+### 8.5.2 GFS Vault Backup *(v2.5 — P0)*
 
-Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. All backup files are `.age`-encrypted and sync to OneDrive automatically.
+Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. All backup data is `.age`-encrypted and syncs to OneDrive automatically.
 
 **Backup scope — full state + config:**
 
@@ -1689,19 +1690,34 @@ Default registry (user-editable — users without certain domains simply remove 
 - **22 plain state files**: boundary, calendar, comms, dashboard, decisions, digital, employment, goals, health-check, health-metrics, home, kids, learning, memory, onenote_progress, open_items, scenarios, shopping, social, travel, work-calendar
 - **4 config files**: `config/user_profile.yaml`, `config/routing.yaml`, `config/connectors.yaml`, `config/artha_config.yaml`
 
-**Storage layout:**
+**Storage layout (ZIP-per-snapshot):**
 ```
-state/backups/
-  daily/        ← last 7 snapshots per domain  (Mon–Sat)
-  weekly/       ← last 4 Sunday snapshots per domain
-  monthly/      ← last 12 month-end snapshots per domain
-  yearly/       ← all Dec-31 snapshots per domain (keep forever)
-  manifest.json ← SHA-256 checksums + metadata for every backup file
+backups/                    ← at project root (gitignored, syncs via OneDrive)
+  daily/
+    2026-03-14.zip          ← one ZIP per day, contains ALL registered files
+    2026-03-13.zip
+  weekly/
+    2026-03-08.zip
+  monthly/
+    2026-02-28.zip
+  yearly/
+    2025-12-31.zip
+  manifest.json             ← outer catalog: ZIP keys → sha256, tier, date, file_count
 ```
 
-File naming:
-- State files: `{tier}/{name}-{date}.md.age`
-- Config files: `{tier}/cfg__{slug}-{date}.cfg.age` (path slug with `/` → `__`, `.` → `_`)
+Each ZIP is a self-contained portable snapshot:
+```
+2026-03-14.zip
+  manifest.json             ← internal: sha256 per file, source_type, restore_path
+  state/immigration.md.age  ← state_encrypted: copied as-is
+  state/goals.md.age        ← state_plain: encrypted on-the-fly
+  config/user_profile.yaml.age  ← config: encrypted on-the-fly
+  ...
+```
+
+Internal archive paths:
+- `state_encrypted`: same as live path (`state/{name}.md.age`)
+- `state_plain` / `config`: live path + `.age` suffix (`state/goals.md.age`, `config/user_profile.yaml.age`)
 
 **Tier promotion (priority — highest wins):**
 
@@ -1721,9 +1737,11 @@ File naming:
 | monthly | last 12 | 12 rolling months |
 | yearly | unlimited | Full history |
 
-**Trigger:** `vault.py encrypt` — GFS snapshot taken automatically after every successful encrypt cycle. Each file written atomically via `.tmp` sibling + `os.replace()`.
+**Trigger:** `vault.py encrypt` — GFS snapshot taken automatically after every successful encrypt cycle. The ZIP itself is written atomically via `.tmp` sibling + `os.replace()`.
 
-**Manifest:** `state/backups/manifest.json` records SHA-256, size, domain, tier, date, `source_type`, and `restore_path` for every backup file. Written atomically. `last_validate` tracks the most recent restore validation timestamp.
+**Manifests (two tiers):**
+- **Outer catalog** (`backups/manifest.json`): ZIP key → `{created, date, tier, sha256, size, file_count}`. Written atomically after each snapshot. `last_validate` tracks the most recent restore validation timestamp.
+- **Internal manifest** (inside each ZIP as `manifest.json`): `{date, tier, files: {arc_path → {sha256, size, source_type, restore_path, name}}}`. Self-contained — validate and restore from a ZIP without the outer catalog.
 
 **Restore validation (monthly, mandatory):**
 
@@ -1742,17 +1760,21 @@ Result logged to `audit.md`. `vault.py health` warns if validation is overdue (>
 
 **Fresh-install restore:**
 
-A backup snapshot is self-sufficient for rebuilding Artha from scratch:
+A backup ZIP is self-sufficient for rebuilding Artha from scratch on a new machine:
 
 ```bash
 # Preview what would be restored
 python scripts/vault.py restore --date 2026-03-14 --dry-run
 
-# Restore all files from a specific snapshot
+# Restore all files from a specific snapshot in the local catalog
 python scripts/vault.py restore --date 2026-03-14
 
 # Restore a single domain only
 python scripts/vault.py restore --domain finance
+
+# Install from an explicit ZIP (cold-start on a new machine)
+python scripts/vault.py install /path/to/2026-03-14.zip
+python scripts/vault.py install /path/to/2026-03-14.zip --dry-run
 ```
 
 Restore semantics:
@@ -1767,16 +1789,17 @@ SHA-256 verified before every write. Existing files overwritten. Use `--dry-run`
 | Command | Description |
 |---|---|
 | `vault.py encrypt` | Triggers GFS snapshot after all files encrypted |
-| `vault.py backup-status` | Show backup catalog, tier counts, last validation date |
-| `vault.py validate-backup [--domain X] [--date D]` | Decrypt & validate backup files |
-| `vault.py restore [--date D] [--domain X] [--dry-run]` | Restore files from a GFS snapshot |
+| `vault.py backup-status` | Show ZIP catalog, tier counts, last validation date |
+| `vault.py validate-backup [--domain X] [--date D]` | Open ZIP, decrypt & validate all files in-place |
+| `vault.py restore [--date D] [--domain X] [--dry-run]` | Restore from a ZIP found in the local catalog |
+| `vault.py install <zipfile> [--dry-run]` | Restore from an explicit ZIP path (cold-start) |
 
 **3-2-1 coverage:**
 
 | Copy | Location | Notes |
 |---|---|---|
 | 1 | `state/*.md.age` + `state/*.md` (live) | Always-current encrypted and plain state |
-| 2 | `state/backups/**/*.age` | GFS rotation — up to 1 year of history, all files encrypted |
+| 2 | `backups/{tier}/YYYY-MM-DD.zip` | GFS rotation — up to 1 year of history, all files encrypted inside each ZIP |
 | 3 | Both #1 and #2 sync to OneDrive | Cloud copy of all files |
 
 Encryption keys are device-local only (macOS Keychain / Windows Credential Manager). Cloud possession alone is insufficient to decrypt.

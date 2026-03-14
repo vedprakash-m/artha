@@ -1,8 +1,11 @@
+import hashlib
+import json
 import pytest
 import os
 import shutil
 import subprocess
 import time
+import zipfile
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,10 +13,46 @@ from unittest.mock import MagicMock, patch
 # Import vault logic
 import scripts.vault as vault
 
+# ---------------------------------------------------------------------------
+# ZIP test helpers
+# ---------------------------------------------------------------------------
+
+def _create_test_zip(
+    backup_dir: Path,
+    tier: str,
+    date_str: str,
+    files_dict: dict,
+) -> Path:
+    """Create a valid backup ZIP for tests.
+
+    files_dict: {arc_path: (content_bytes, source_type, restore_path, name)}
+    Returns the Path of the created ZIP file.
+    """
+    tier_dir = backup_dir / tier
+    tier_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = tier_dir / f"{date_str}.zip"
+    internal_files = {}
+    with zipfile.ZipFile(str(zip_path), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for arc_path, (content, source_type, restore_path, name) in files_dict.items():
+            sha256 = hashlib.sha256(content).hexdigest()
+            zf.writestr(arc_path, content)
+            internal_files[arc_path] = {
+                "name": name, "sha256": sha256, "size": len(content),
+                "source_type": source_type, "restore_path": restore_path,
+            }
+        zf.writestr("manifest.json", json.dumps({
+            "artha_backup_version": "2",
+            "created": f"{date_str}T00:00:00+00:00",
+            "date": date_str, "tier": tier,
+            "files": internal_files,
+        }))
+    return zip_path
+
+
 @pytest.fixture
 def mock_vault_env(temp_artha_dir, monkeypatch):
     """Set up a mock environment for vault.py."""
-    backup_dir = temp_artha_dir / "state" / "backups"
+    backup_dir = temp_artha_dir / "backups"  # at project root per new design
     monkeypatch.setattr(vault, "ARTHA_DIR", temp_artha_dir)
     monkeypatch.setattr(vault, "STATE_DIR", temp_artha_dir / "state")
     monkeypatch.setattr(vault, "CONFIG_DIR", temp_artha_dir / "config")
@@ -385,24 +424,22 @@ class TestManifest:
 
     def test_load_returns_empty_when_missing(self, mock_vault_env):
         m = vault._load_manifest()
-        assert m == {"files": {}, "last_validate": None}
+        assert m == {"last_validate": None, "snapshots": {}}
 
     def test_save_and_load_round_trip(self, mock_vault_env):
-        manifest = {"files": {"daily/foo-2026-03-13.md.age": {"sha256": "abc"}}, "last_validate": None}
+        manifest = {"snapshots": {"daily/2026-03-13.zip": {"sha256": "abc"}}, "last_validate": None}
         vault._save_manifest(manifest)
         loaded = vault._load_manifest()
-        assert loaded["files"]["daily/foo-2026-03-13.md.age"]["sha256"] == "abc"
+        assert loaded["snapshots"]["daily/2026-03-13.zip"]["sha256"] == "abc"
 
     def test_load_returns_empty_on_corrupt_json(self, mock_vault_env):
-        # Write garbage to manifest
         vault.BACKUP_MANIFEST.parent.mkdir(parents=True, exist_ok=True)
         vault.BACKUP_MANIFEST.write_text("{ not valid json }")
         m = vault._load_manifest()
-        assert m == {"files": {}, "last_validate": None}
+        assert m == {"last_validate": None, "snapshots": {}}
 
     def test_save_is_atomic(self, mock_vault_env):
-        # After save, no .tmp file should remain
-        vault._save_manifest({"files": {}, "last_validate": None})
+        vault._save_manifest({"snapshots": {}, "last_validate": None})
         tmp = Path(str(vault.BACKUP_MANIFEST) + ".tmp")
         assert not tmp.exists()
         assert vault.BACKUP_MANIFEST.exists()
@@ -413,63 +450,74 @@ class TestManifest:
 # ---------------------------------------------------------------------------
 
 class TestBackupSnapshot:
-    """_backup_snapshot creates backup files, writes manifest, prunes correctly."""
+    """_backup_snapshot creates a single ZIP per GFS tier-day, updates outer manifest."""
 
     def _seed_age_files(self, mock_vault_env, domains=("immigration", "finance")):
+        import yaml as _yaml
+        state_files = [{"name": d, "sensitive": True} for d in domains]
+        profile = {"backup": {"state_files": state_files, "config_files": []}}
+        profile_path = mock_vault_env / "config" / "user_profile.yaml"
+        profile_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_path.write_text(_yaml.dump(profile), encoding="utf-8")
         for d in domains:
             (mock_vault_env / "state" / f"{d}.md.age").write_bytes(b"x" * 500)
 
-    def test_snapshot_creates_files_in_correct_tier(self, mock_vault_env):
+    def test_snapshot_creates_zip_in_daily_tier(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
-        monday = date(2026, 3, 9)  # daily
-        count = vault._backup_snapshot(today=monday)
+        count = vault._backup_snapshot(today=date(2026, 3, 9))  # Monday → daily
         assert count == 2
-        assert (vault.BACKUP_DIR / "daily" / "immigration-2026-03-09.md.age").exists()
-        assert (vault.BACKUP_DIR / "daily" / "finance-2026-03-09.md.age").exists()
+        assert (vault.BACKUP_DIR / "daily" / "2026-03-09.zip").exists()
 
     def test_snapshot_sunday_goes_to_weekly(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
-        sunday = date(2026, 3, 8)
-        vault._backup_snapshot(today=sunday)
-        assert (vault.BACKUP_DIR / "weekly" / "immigration-2026-03-08.md.age").exists()
-        assert not (vault.BACKUP_DIR / "daily" / "immigration-2026-03-08.md.age").exists()
+        vault._backup_snapshot(today=date(2026, 3, 8))
+        assert (vault.BACKUP_DIR / "weekly" / "2026-03-08.zip").exists()
+        assert not (vault.BACKUP_DIR / "daily" / "2026-03-08.zip").exists()
 
     def test_snapshot_month_end_goes_to_monthly(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
         vault._backup_snapshot(today=date(2026, 2, 28))
-        assert (vault.BACKUP_DIR / "monthly" / "immigration-2026-02-28.md.age").exists()
+        assert (vault.BACKUP_DIR / "monthly" / "2026-02-28.zip").exists()
 
     def test_snapshot_dec31_goes_to_yearly(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
         vault._backup_snapshot(today=date(2025, 12, 31))
-        assert (vault.BACKUP_DIR / "yearly" / "immigration-2025-12-31.md.age").exists()
+        assert (vault.BACKUP_DIR / "yearly" / "2025-12-31.zip").exists()
 
-    def test_snapshot_writes_manifest_with_checksum(self, mock_vault_env):
+    def test_snapshot_writes_outer_manifest_with_checksum(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
         vault._backup_snapshot(today=date(2026, 3, 9))
         m = vault._load_manifest()
-        key = "daily/immigration-2026-03-09.md.age"
-        assert key in m["files"]
-        meta = m["files"][key]
+        key = "daily/2026-03-09.zip"
+        assert key in m["snapshots"]
+        meta = m["snapshots"][key]
         assert len(meta["sha256"]) == 64
         assert meta["tier"] == "daily"
-        assert meta["domain"] == "immigration"
         assert meta["date"] == "2026-03-09"
+        assert meta["file_count"] == 2
 
-    def test_snapshot_is_atomic(self, mock_vault_env):
-        """No .tmp file should remain after a successful snapshot."""
+    def test_snapshot_zip_contains_internal_manifest(self, mock_vault_env):
         self._seed_age_files(mock_vault_env)
         vault._backup_snapshot(today=date(2026, 3, 9))
-        tmps = list(vault.BACKUP_DIR.rglob("*.tmp"))
-        assert tmps == []
+        zip_path = vault.BACKUP_DIR / "daily" / "2026-03-09.zip"
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            assert "manifest.json" in zf.namelist()
+
+    def test_snapshot_is_atomic_no_tmp_remains(self, mock_vault_env):
+        self._seed_age_files(mock_vault_env)
+        vault._backup_snapshot(today=date(2026, 3, 9))
+        assert list(vault.BACKUP_DIR.rglob("*.tmp")) == []
 
     def test_snapshot_skips_missing_age_file(self, mock_vault_env):
-        # Only seed one domain
+        import yaml as _yaml
+        profile = {"backup": {"state_files": [{"name": "immigration", "sensitive": True}], "config_files": []}}
+        (mock_vault_env / "config" / "user_profile.yaml").parent.mkdir(parents=True, exist_ok=True)
+        (mock_vault_env / "config" / "user_profile.yaml").write_text(_yaml.dump(profile))
         (mock_vault_env / "state" / "immigration.md.age").write_bytes(b"x" * 200)
         count = vault._backup_snapshot(today=date(2026, 3, 9))
         assert count == 1
 
-    def test_snapshot_returns_zero_when_no_age_files(self, mock_vault_env):
+    def test_snapshot_returns_zero_when_no_files(self, mock_vault_env):
         count = vault._backup_snapshot(today=date(2026, 3, 9))
         assert count == 0
 
@@ -479,54 +527,46 @@ class TestBackupSnapshot:
 # ---------------------------------------------------------------------------
 
 class TestPruning:
-    """_prune_backups enforces retention limits."""
+    """_prune_backups enforces ZIP retention limits per GFS tier."""
 
-    def _create_daily_backups(self, domain, days):
+    def _create_daily_zips(self, n_days):
+        """Create n_days worth of daily ZIP files in vault.BACKUP_DIR/daily."""
         tier_dir = vault.BACKUP_DIR / "daily"
         tier_dir.mkdir(parents=True, exist_ok=True)
-        files = []
-        for i in range(days):
+        manifest = vault._load_manifest()
+        for i in range(n_days):
             d = date(2026, 3, i + 1)
-            f = tier_dir / f"{domain}-{d.isoformat()}.md.age"
-            f.write_bytes(b"x" * 100)
-            files.append(f)
-        return files
+            z = tier_dir / f"{d.isoformat()}.zip"
+            with zipfile.ZipFile(str(z), "w") as zf:
+                zf.writestr("manifest.json", json.dumps({"date": d.isoformat(), "tier": "daily", "files": {}}))
+            manifest["snapshots"][f"daily/{z.name}"] = {
+                "date": d.isoformat(), "tier": "daily",
+                "file_count": 1, "sha256": "x" * 64, "size": 100,
+            }
+        vault._save_manifest(manifest)
 
     def test_prune_keeps_exactly_n(self, mock_vault_env):
-        files = self._create_daily_backups("immigration", 10)
-        vault._prune_backups("immigration", "daily", 7)
-        remaining = sorted((vault.BACKUP_DIR / "daily").glob("immigration-*.md.age"))
+        self._create_daily_zips(10)
+        vault._prune_backups("daily", 7)
+        remaining = sorted((vault.BACKUP_DIR / "daily").glob("*.zip"))
         assert len(remaining) == 7
-        # Most recent 7 kept
-        assert remaining[-1].name == "immigration-2026-03-10.md.age"
-        assert remaining[0].name == "immigration-2026-03-04.md.age"
+        assert remaining[-1].stem == "2026-03-10"
+        assert remaining[0].stem == "2026-03-04"
 
     def test_prune_does_nothing_when_under_limit(self, mock_vault_env):
-        self._create_daily_backups("immigration", 5)
-        vault._prune_backups("immigration", "daily", 7)
-        remaining = list((vault.BACKUP_DIR / "daily").glob("immigration-*.md.age"))
+        self._create_daily_zips(5)
+        vault._prune_backups("daily", 7)
+        remaining = list((vault.BACKUP_DIR / "daily").glob("*.zip"))
         assert len(remaining) == 5
 
     def test_prune_removes_manifest_entries(self, mock_vault_env):
-        self._create_daily_backups("immigration", 10)
-        # Populate manifest with all 10
-        m = {"files": {}, "last_validate": None}
-        for i in range(10):
-            d = date(2026, 3, i + 1)
-            key = f"daily/immigration-{d.isoformat()}.md.age"
-            m["files"][key] = {"domain": "immigration", "tier": "daily", "date": d.isoformat(), "sha256": "x"}
-        vault._save_manifest(m)
-        vault._prune_backups("immigration", "daily", 7)
+        self._create_daily_zips(10)
+        vault._prune_backups("daily", 7)
         loaded = vault._load_manifest()
-        assert len([k for k in loaded["files"] if "immigration" in k]) == 7
+        assert len([k for k in loaded["snapshots"] if k.startswith("daily/")]) == 7
 
     def test_yearly_not_pruned_because_none_keep(self, mock_vault_env):
-        tier_dir = vault.BACKUP_DIR / "yearly"
-        tier_dir.mkdir(parents=True, exist_ok=True)
-        for yr in range(2020, 2027):
-            (tier_dir / f"immigration-{yr}-12-31.md.age").write_bytes(b"x")
-        # Pruning with keep_n=None must be a no-op (caller guards this)
-        # Direct call with keep_n=None would fail — verify caller (GFS_RETENTION) sends None
+        # GFS_RETENTION["yearly"] is None — the caller loop guards against calling prune
         assert vault.GFS_RETENTION["yearly"] is None
 
 
@@ -537,7 +577,7 @@ class TestPruning:
 class TestEncryptTriggersBackup:
     """do_encrypt must call _backup_snapshot after successful encryption."""
 
-    def test_encrypt_creates_backup(self, mock_vault_env, capsys):
+    def test_encrypt_creates_backup_zip(self, mock_vault_env, capsys):
         plain = mock_vault_env / "state" / "immigration.md"
         age   = mock_vault_env / "state" / "immigration.md.age"
         plain.write_text("---\ndata: ok\n---\n" + "x " * 300)
@@ -554,9 +594,8 @@ class TestEncryptTriggersBackup:
              patch("scripts.vault.age_encrypt", side_effect=good_encrypt):
             vault.do_encrypt()
 
-        # Backup directory should have been created with at least one file
-        backup_files = list(vault.BACKUP_DIR.rglob("*.md.age"))
-        assert len(backup_files) >= 1
+        zip_files = list(vault.BACKUP_DIR.rglob("*.zip"))
+        assert len(zip_files) >= 1
 
     def test_encrypt_backup_not_called_on_error(self, mock_vault_env, capsys):
         """If encryption fails, backup must not be taken."""
@@ -581,29 +620,27 @@ class TestEncryptTriggersBackup:
 # ---------------------------------------------------------------------------
 
 class TestValidateBackup:
-    """do_validate_backup \u2014 happy path and all failure modes."""
+    """do_validate_backup — ZIP-based validation: happy path and all failure modes."""
 
-    def _seed_backup(self, mock_vault_env, domain="immigration",
-                     tier="daily", d="2026-03-13", content=None):
-        """Create a real backup file and manifest entry."""
-        if content is None:
-            content = "---\nschema_version: '1.0'\n---\n# Immigration\n" + "word " * 50
-        tier_dir = vault.BACKUP_DIR / tier
-        tier_dir.mkdir(parents=True, exist_ok=True)
-        dest = tier_dir / f"{domain}-{d}.md.age"
-        dest.write_bytes(content.encode())
-        sha256 = vault._file_sha256(dest)
+    def _seed_zip(self, tier="daily", date_str="2026-03-13",
+                  source_type="state_encrypted", restore_path="state/immigration.md.age",
+                  arc_path="state/immigration.md.age", name="immigration",
+                  content=b"encrypted-content"):
+        """Create a ZIP and register it in the outer manifest."""
+        zip_path = _create_test_zip(vault.BACKUP_DIR, tier, date_str, {
+            arc_path: (content, source_type, restore_path, name),
+        })
+        sha256 = vault._file_sha256(zip_path)
         m = vault._load_manifest()
-        m["files"][f"{tier}/{domain}-{d}.md.age"] = {
-            "sha256": sha256, "size": dest.stat().st_size,
-            "domain": domain, "tier": tier, "date": d,
-            "created": "2026-03-13T00:00:00+00:00",
+        m["snapshots"][f"{tier}/{date_str}.zip"] = {
+            "created": f"{date_str}T00:00:00+00:00", "date": date_str, "tier": tier,
+            "sha256": sha256, "size": zip_path.stat().st_size, "file_count": 1,
         }
         vault._save_manifest(m)
-        return dest
+        return zip_path
 
     def test_validate_ok_happy_path(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
+        self._seed_zip()
 
         def good_decrypt(key, infile, outfile):
             outfile.write_text("---\nschema_version: '1.0'\n---\n# Immigration\n" + "word " * 50)
@@ -617,49 +654,63 @@ class TestValidateBackup:
         out = capsys.readouterr().out
         assert "✓" in out
         assert "valid" in out.lower()
-        # last_validate should be updated
-        m = vault._load_manifest()
-        assert m["last_validate"] is not None
+        assert vault._load_manifest()["last_validate"] is not None
 
     def test_validate_fails_checksum_mismatch(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
-        # Corrupt the backup file after manifest was written
-        backup = vault.BACKUP_DIR / "daily" / "immigration-2026-03-13.md.age"
-        backup.write_bytes(b"tampered content!!!")
+        zip_path = self._seed_zip()
+        zip_path.write_bytes(b"corrupted zip contents!!")  # invalidates outer sha256
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("keyring.get_password", return_value="mock-key"):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("keyring.get_password", return_value="mock-key"), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
-        out = capsys.readouterr().out
-        assert "CHECKSUM" in out.upper()
+        assert "CHECKSUM" in capsys.readouterr().out
 
-    def test_validate_fails_missing_file(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
-        # Delete the backup file
-        (vault.BACKUP_DIR / "daily" / "immigration-2026-03-13.md.age").unlink()
+    def test_validate_fails_missing_file_in_zip(self, mock_vault_env, capsys):
+        """Internal manifest references a file not present in the ZIP."""
+        tier_dir = vault.BACKUP_DIR / "daily"
+        tier_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = tier_dir / "2026-03-13.zip"
+        with zipfile.ZipFile(str(zip_path), "w") as zf:
+            zf.writestr("manifest.json", json.dumps({
+                "artha_backup_version": "2", "date": "2026-03-13", "tier": "daily",
+                "files": {"state/immigration.md.age": {
+                    "sha256": "a" * 64, "size": 100,
+                    "source_type": "state_encrypted",
+                    "restore_path": "state/immigration.md.age",
+                    "name": "immigration",
+                }},
+            }))
+            # file body intentionally omitted from the ZIP
+        sha256 = vault._file_sha256(zip_path)
+        m = vault._load_manifest()
+        m["snapshots"]["daily/2026-03-13.zip"] = {
+            "date": "2026-03-13", "tier": "daily", "sha256": sha256,
+            "size": zip_path.stat().st_size, "file_count": 1,
+        }
+        vault._save_manifest(m)
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("keyring.get_password", return_value="mock-key"):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("keyring.get_password", return_value="mock-key"), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
         assert "MISSING" in capsys.readouterr().out
 
     def test_validate_fails_decrypt_error(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
+        self._seed_zip()
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="mock-key"), \
-             patch("scripts.vault.age_decrypt", return_value=False):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("scripts.vault.age_decrypt", return_value=False), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
         assert "DECRYPT" in capsys.readouterr().out
 
     def test_validate_fails_empty_content(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
+        self._seed_zip()
 
         def empty_decrypt(key, infile, outfile):
             outfile.write_text("")
@@ -667,14 +718,14 @@ class TestValidateBackup:
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="mock-key"), \
-             patch("scripts.vault.age_decrypt", side_effect=empty_decrypt):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("scripts.vault.age_decrypt", side_effect=empty_decrypt), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
         assert "EMPTY" in capsys.readouterr().out
 
     def test_validate_fails_no_yaml_frontmatter(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
+        self._seed_zip()
 
         def no_yaml_decrypt(key, infile, outfile):
             outfile.write_text("NO FRONTMATTER HERE\n" + "word " * 50)
@@ -682,14 +733,14 @@ class TestValidateBackup:
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="mock-key"), \
-             patch("scripts.vault.age_decrypt", side_effect=no_yaml_decrypt):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("scripts.vault.age_decrypt", side_effect=no_yaml_decrypt), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
         assert "YAML" in capsys.readouterr().out
 
     def test_validate_fails_too_short(self, mock_vault_env, capsys):
-        self._seed_backup(mock_vault_env)
+        self._seed_zip()
 
         def short_decrypt(key, infile, outfile):
             outfile.write_text("---\ndata: ok\n---\nfew words only")
@@ -697,18 +748,25 @@ class TestValidateBackup:
 
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="mock-key"), \
-             patch("scripts.vault.age_decrypt", side_effect=short_decrypt):
-            with pytest.raises(SystemExit):
-                vault.do_validate_backup()
+             patch("scripts.vault.age_decrypt", side_effect=short_decrypt), \
+             pytest.raises(SystemExit):
+            vault.do_validate_backup()
 
         assert "SHORT" in capsys.readouterr().out.upper()
 
-    def test_validate_domain_filter(self, mock_vault_env, capsys):
-        """--domain flag validates only matching entries."""
-        self._seed_backup(mock_vault_env, domain="immigration")
-        self._seed_backup(mock_vault_env, domain="finance", d="2026-03-13")
-
-        validated = []
+    def test_validate_domain_filter(self, mock_vault_env):
+        """--domain validates only matching entries inside the ZIP."""
+        zip_path = _create_test_zip(vault.BACKUP_DIR, "daily", "2026-03-13", {
+            "state/immigration.md.age": (b"enc-imm", "state_encrypted", "state/immigration.md.age", "immigration"),
+            "state/finance.md.age":     (b"enc-fin", "state_encrypted", "state/finance.md.age",     "finance"),
+        })
+        sha256 = vault._file_sha256(zip_path)
+        m = vault._load_manifest()
+        m["snapshots"]["daily/2026-03-13.zip"] = {
+            "date": "2026-03-13", "tier": "daily", "sha256": sha256,
+            "size": zip_path.stat().st_size, "file_count": 2,
+        }
+        vault._save_manifest(m)
 
         def track_decrypt(key, infile, outfile):
             outfile.write_text("---\nschema_version: '1.0'\n---\n# Content\n" + "word " * 50)
@@ -721,13 +779,11 @@ class TestValidateBackup:
             assert mock_d.call_count == 1
 
     def test_validate_no_backups_exits_gracefully(self, mock_vault_env, capsys):
-        """When no backups exist, prints message and returns without error."""
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="mock-key"):
             vault.do_validate_backup()  # should not raise
 
-        out = capsys.readouterr().out
-        assert "No backups" in out
+        assert "No backups" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -741,20 +797,18 @@ class TestBackupStatus:
         assert "NEVER" in out or "No backups" in out
 
     def test_status_shows_tiers(self, mock_vault_env, capsys):
-        # Seed one backup per tier
+        m = vault._load_manifest()
         for tier, d in [("daily", "2026-03-13"), ("weekly", "2026-03-08"),
                         ("monthly", "2026-02-28"), ("yearly", "2025-12-31")]:
             (vault.BACKUP_DIR / tier).mkdir(parents=True, exist_ok=True)
-            f = vault.BACKUP_DIR / tier / f"immigration-{d}.md.age"
-            f.write_bytes(b"x" * 100)
-            m = vault._load_manifest()
-            m["files"][f"{tier}/immigration-{d}.md.age"] = {
-                "sha256": vault._file_sha256(f), "size": 100,
-                "domain": "immigration", "tier": tier, "date": d,
-                "created": "2026-03-13T00:00:00+00:00",
+            z = vault.BACKUP_DIR / tier / f"{d}.zip"
+            with zipfile.ZipFile(str(z), "w") as zf:
+                zf.writestr("manifest.json", json.dumps({"date": d, "tier": tier, "files": {}}))
+            m["snapshots"][f"{tier}/{d}.zip"] = {
+                "date": d, "tier": tier, "file_count": 5,
+                "sha256": "a" * 64, "size": 1024,
             }
-            vault._save_manifest(m)
-
+        vault._save_manifest(m)
         vault.do_backup_status()
         out = capsys.readouterr().out
         assert "DAILY" in out
@@ -763,7 +817,6 @@ class TestBackupStatus:
         assert "YEARLY" in out
 
     def test_status_warns_when_validation_overdue(self, mock_vault_env, capsys):
-        # Set last_validate to 40 days ago
         from datetime import datetime, timedelta, timezone
         old_ts = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat(timespec="seconds")
         m = vault._load_manifest()
@@ -882,7 +935,7 @@ class TestBackupRegistry:
 # ---------------------------------------------------------------------------
 
 class TestBackupSnapshotComprehensive:
-    """_backup_snapshot encrypts plain/config files on-the-fly."""
+    """_backup_snapshot encrypts plain/config on-the-fly and stores them inside the ZIP."""
 
     def _write_profile(self, mock_vault_env, state_files, config_files=None):
         import yaml as _yaml
@@ -896,27 +949,25 @@ class TestBackupSnapshotComprehensive:
         (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\nword " * 40)
         today = date(2026, 3, 9)
 
+        def fake_encrypt(pk, src, dst):
+            dst.write_bytes(b"encrypted-goals")
+            return True
+
         with patch("scripts.vault.get_public_key", return_value="age1mock"), \
-             patch("scripts.vault.age_encrypt", return_value=True) as mock_enc:
-            # age_encrypt writes nothing to dest_tmp in mock, so seed it
-            def fake_encrypt(pk, src, dst):
-                dst.write_bytes(b"encrypted-goals")
-                return True
-            mock_enc.side_effect = fake_encrypt
+             patch("scripts.vault.age_encrypt", side_effect=fake_encrypt):
             count = vault._backup_snapshot(today=today)
 
         assert count == 1
-        dest = vault.BACKUP_DIR / "daily" / "goals-2026-03-09.md.age"
-        assert dest.exists()
-        m = vault._load_manifest()
-        key = "daily/goals-2026-03-09.md.age"
-        assert key in m["files"]
-        assert m["files"][key]["source_type"] == "state_plain"
-        assert m["files"][key]["restore_path"] == "state/goals.md"
+        zip_path = vault.BACKUP_DIR / "daily" / "2026-03-09.zip"
+        assert zip_path.exists()
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            internal = json.loads(zf.read("manifest.json"))
+        assert "state/goals.md.age" in internal["files"]
+        meta = internal["files"]["state/goals.md.age"]
+        assert meta["source_type"] == "state_plain"
+        assert meta["restore_path"] == "state/goals.md"
 
     def test_config_file_is_encrypted_into_backup(self, mock_vault_env):
-        # Use artha_config.yaml as the config file being backed up so we don't
-        # overwrite user_profile.yaml (which holds the backup registry).
         self._write_profile(mock_vault_env, [], ["config/artha_config.yaml"])
         (mock_vault_env / "config" / "artha_config.yaml").write_text("todo_lists:\n  general: abc123\n")
         today = date(2026, 3, 9)
@@ -930,29 +981,23 @@ class TestBackupSnapshotComprehensive:
             count = vault._backup_snapshot(today=today)
 
         assert count == 1
-        slug = "cfg__config__artha_config_yaml"
-        dest = vault.BACKUP_DIR / "daily" / f"{slug}-2026-03-09.cfg.age"
-        assert dest.exists()
-        m = vault._load_manifest()
-        key = f"daily/{slug}-2026-03-09.cfg.age"
-        assert key in m["files"]
-        assert m["files"][key]["source_type"] == "config"
-        assert m["files"][key]["restore_path"] == "config/artha_config.yaml"
+        zip_path = vault.BACKUP_DIR / "daily" / "2026-03-09.zip"
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            internal = json.loads(zf.read("manifest.json"))
+        assert "config/artha_config.yaml.age" in internal["files"]
+        meta = internal["files"]["config/artha_config.yaml.age"]
+        assert meta["source_type"] == "config"
+        assert meta["restore_path"] == "config/artha_config.yaml"
 
     def test_plain_file_skipped_when_no_pubkey(self, mock_vault_env):
         self._write_profile(mock_vault_env, [{"name": "goals", "sensitive": False}])
         (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\n")
-        today = date(2026, 3, 9)
-
         with patch("scripts.vault.get_public_key", side_effect=SystemExit(1)):
-            count = vault._backup_snapshot(today=today)
-
+            count = vault._backup_snapshot(today=date(2026, 3, 9))
         assert count == 0
 
     def test_mixed_registry_backs_up_all_types(self, mock_vault_env):
-        """Encrypted state, plain state, and config all backed up in one snapshot."""
-        # Use artha_config.yaml (not user_profile.yaml) as the config backup target
-        # to avoid overwriting the profile that holds the backup registry.
+        """Encrypted state, plain state, and config all land inside the same ZIP."""
         self._write_profile(
             mock_vault_env,
             [{"name": "finance", "sensitive": True}, {"name": "goals", "sensitive": False}],
@@ -961,7 +1006,6 @@ class TestBackupSnapshotComprehensive:
         (mock_vault_env / "state" / "finance.md.age").write_bytes(b"x" * 300)
         (mock_vault_env / "state" / "goals.md").write_text("---\n# Goals\n")
         (mock_vault_env / "config" / "artha_config.yaml").write_text("todo_lists:\n  general: abc\n")
-        today = date(2026, 3, 9)
 
         def fake_encrypt(pk, src, dst):
             dst.write_bytes(b"encrypted")
@@ -969,58 +1013,61 @@ class TestBackupSnapshotComprehensive:
 
         with patch("scripts.vault.get_public_key", return_value="age1mock"), \
              patch("scripts.vault.age_encrypt", side_effect=fake_encrypt):
-            count = vault._backup_snapshot(today=today)
+            count = vault._backup_snapshot(today=date(2026, 3, 9))
 
         assert count == 3
-        assert (vault.BACKUP_DIR / "daily" / "finance-2026-03-09.md.age").exists()
-        assert (vault.BACKUP_DIR / "daily" / "goals-2026-03-09.md.age").exists()
-        assert (vault.BACKUP_DIR / "daily" / "cfg__config__artha_config_yaml-2026-03-09.cfg.age").exists()
+        zip_path = vault.BACKUP_DIR / "daily" / "2026-03-09.zip"
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            internal = json.loads(zf.read("manifest.json"))
+        assert "state/finance.md.age" in internal["files"]
+        assert "state/goals.md.age" in internal["files"]
+        assert "config/artha_config.yaml.age" in internal["files"]
 
     def test_manifest_entry_has_restore_path_and_source_type(self, mock_vault_env):
         self._write_profile(mock_vault_env, [{"name": "immigration", "sensitive": True}])
         (mock_vault_env / "state" / "immigration.md.age").write_bytes(b"x" * 200)
         vault._backup_snapshot(today=date(2026, 3, 9))
         m = vault._load_manifest()
-        key = "daily/immigration-2026-03-09.md.age"
-        assert m["files"][key]["source_type"]  == "state_encrypted"
-        assert m["files"][key]["restore_path"] == "state/immigration.md.age"
-
+        key = "daily/2026-03-09.zip"
+        assert key in m["snapshots"]
+        assert m["snapshots"][key]["file_count"] == 1
+        zip_path = vault.BACKUP_DIR / key
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            internal = json.loads(zf.read("manifest.json"))
+        meta = internal["files"]["state/immigration.md.age"]
+        assert meta["source_type"]  == "state_encrypted"
+        assert meta["restore_path"] == "state/immigration.md.age"
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# GFS restore — do_restore
+# GFS restore — do_restore (catalog) and do_install (explicit ZIP)
 # ---------------------------------------------------------------------------
 
 class TestRestore:
-    """do_restore reconstructs files from a GFS snapshot."""
+    """do_restore finds the right ZIP from the catalog and reconstructs files."""
 
-    def _seed_backup(self, backup_dir, key, content, restore_path, source_type):
-        """Create a backup file and manifest entry."""
-        dest = backup_dir / key
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(content)
+    def _seed_zip(self, tier="daily", date_str="2026-03-14"):
+        """Create a ZIP with all three source types and register in outer manifest."""
+        files_dict = {
+            "state/immigration.md.age": (b"enc-imm", "state_encrypted", "state/immigration.md.age", "immigration"),
+            "state/goals.md.age":       (b"enc-goals", "state_plain",    "state/goals.md",           "goals"),
+            "config/user_profile.yaml.age": (b"enc-cfg", "config",       "config/user_profile.yaml", "cfg_user_profile"),
+        }
+        zip_path = _create_test_zip(vault.BACKUP_DIR, tier, date_str, files_dict)
+        sha256 = vault._file_sha256(zip_path)
         m = vault._load_manifest()
-        m["files"][key] = {
-            "sha256":       vault._file_sha256(dest),
-            "size":         len(content),
-            "domain":       Path(key).stem.split("-")[0],
-            "tier":         key.split("/")[0],
-            "date":         "2026-03-14",
-            "created":      "2026-03-14T00:00:00+00:00",
-            "source_type":  source_type,
-            "restore_path": restore_path,
+        m["snapshots"][f"{tier}/{date_str}.zip"] = {
+            "created": f"{date_str}T00:00:00+00:00", "date": date_str, "tier": tier,
+            "sha256": sha256, "size": zip_path.stat().st_size, "file_count": 3,
         }
         vault._save_manifest(m)
+        return zip_path
 
     def test_restore_dry_run_lists_files_without_writing(self, mock_vault_env, capsys):
-        self._seed_backup(
-            vault.BACKUP_DIR,
-            "daily/immigration-2026-03-14.md.age",
-            b"encrypted-imm",
-            "state/immigration.md.age",
-            "state_encrypted",
-        )
+        self._seed_zip()
         with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("scripts.vault.get_private_key", return_value="mock-priv"):
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", return_value=True):
             vault.do_restore(date_str="2026-03-14", dry_run=True)
 
         out = capsys.readouterr().out
@@ -1029,29 +1076,18 @@ class TestRestore:
         assert not (mock_vault_env / "state" / "immigration.md.age").exists()
 
     def test_restore_state_encrypted_copies_age_file(self, mock_vault_env):
-        self._seed_backup(
-            vault.BACKUP_DIR,
-            "daily/immigration-2026-03-14.md.age",
-            b"encrypted-imm",
-            "state/immigration.md.age",
-            "state_encrypted",
-        )
+        self._seed_zip()
         with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("scripts.vault.get_private_key", return_value="mock-priv"):
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
             vault.do_restore(date_str="2026-03-14")
 
         restored = mock_vault_env / "state" / "immigration.md.age"
         assert restored.exists()
-        assert restored.read_bytes() == b"encrypted-imm"
+        assert restored.read_bytes() == b"enc-imm"  # state_encrypted: copied directly
 
     def test_restore_state_plain_decrypts_file(self, mock_vault_env):
-        self._seed_backup(
-            vault.BACKUP_DIR,
-            "daily/goals-2026-03-14.md.age",
-            b"encrypted-goals",
-            "state/goals.md",
-            "state_plain",
-        )
+        self._seed_zip()
 
         def fake_decrypt(key, src, dst):
             dst.write_text("---\n# Goals\n")
@@ -1067,14 +1103,7 @@ class TestRestore:
         assert restored.read_text() == "---\n# Goals\n"
 
     def test_restore_config_decrypts_to_config_dir(self, mock_vault_env):
-        slug = "cfg__config__user_profile_yaml"
-        self._seed_backup(
-            vault.BACKUP_DIR,
-            f"daily/{slug}-2026-03-14.cfg.age",
-            b"encrypted-config",
-            "config/user_profile.yaml",
-            "config",
-        )
+        self._seed_zip()
 
         def fake_decrypt(key, src, dst):
             dst.write_text("age_recipient: age1xxx\n")
@@ -1090,20 +1119,25 @@ class TestRestore:
         assert "age1xxx" in restored.read_text()
 
     def test_restore_fails_on_checksum_mismatch(self, mock_vault_env, capsys):
-        key = "daily/immigration-2026-03-14.md.age"
-        dest = vault.BACKUP_DIR / key
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"tampered")
+        # Create a ZIP where the internal manifest has a wrong sha256 for a file
+        tier_dir = vault.BACKUP_DIR / "daily"
+        tier_dir.mkdir(parents=True, exist_ok=True)
+        zip_path = tier_dir / "2026-03-14.zip"
+        with zipfile.ZipFile(str(zip_path), "w") as zf:
+            zf.writestr("state/immigration.md.age", b"correct-content")
+            zf.writestr("manifest.json", json.dumps({
+                "artha_backup_version": "2", "date": "2026-03-14", "tier": "daily",
+                "files": {"state/immigration.md.age": {
+                    "sha256": "a" * 64,  # intentionally wrong
+                    "size": 15, "source_type": "state_encrypted",
+                    "restore_path": "state/immigration.md.age", "name": "immigration",
+                }},
+            }))
+        sha256 = vault._file_sha256(zip_path)
         m = vault._load_manifest()
-        m["files"][key] = {
-            "sha256":       "000000000000000000000000000000000000000000000000000000000000ffff",
-            "size":         7,
-            "domain":       "immigration",
-            "tier":         "daily",
-            "date":         "2026-03-14",
-            "created":      "2026-03-14T00:00:00+00:00",
-            "source_type":  "state_encrypted",
-            "restore_path": "state/immigration.md.age",
+        m["snapshots"]["daily/2026-03-14.zip"] = {
+            "date": "2026-03-14", "tier": "daily", "sha256": sha256,
+            "size": zip_path.stat().st_size, "file_count": 1,
         }
         vault._save_manifest(m)
 
@@ -1112,36 +1146,84 @@ class TestRestore:
              pytest.raises(SystemExit):
             vault.do_restore(date_str="2026-03-14")
 
-        out = capsys.readouterr().out
-        assert "CHECKSUM" in out
-
-    def test_restore_missing_backup_file_reports_error(self, mock_vault_env, capsys):
-        m = vault._load_manifest()
-        m["files"]["daily/ghost-2026-03-14.md.age"] = {
-            "sha256":       "a" * 64,
-            "size":         100,
-            "domain":       "ghost",
-            "tier":         "daily",
-            "date":         "2026-03-14",
-            "created":      "2026-03-14T00:00:00+00:00",
-            "source_type":  "state_encrypted",
-            "restore_path": "state/ghost.md.age",
-        }
-        vault._save_manifest(m)
-
-        with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
-             pytest.raises(SystemExit):
-            vault.do_restore(date_str="2026-03-14")
-
-        out = capsys.readouterr().out
-        assert "MISSING" in out
+        assert "CHECKSUM" in capsys.readouterr().out
 
     def test_restore_no_backups_exits_gracefully(self, mock_vault_env, capsys):
         with patch("scripts.vault.check_age_installed", return_value=True), \
              patch("scripts.vault.get_private_key", return_value="mock-priv"):
             vault.do_restore(date_str="2026-03-14")
 
+        assert "No backups" in capsys.readouterr().out
+
+
+class TestInstall:
+    """do_install restores a system from an explicit ZIP file path (cold-start)."""
+
+    def _make_zip(self, tmp_path):
+        """Create a temporary ZIP with all three file types."""
+        files_dict = {
+            "state/immigration.md.age": (b"enc-imm", "state_encrypted", "state/immigration.md.age", "immigration"),
+            "state/goals.md.age":       (b"enc-goals", "state_plain",    "state/goals.md",           "goals"),
+            "config/artha_config.yaml.age": (b"enc-cfg", "config",       "config/artha_config.yaml", "artha_config"),
+        }
+        tier_dir = tmp_path / "export"
+        return _create_test_zip(tier_dir, "daily", "2026-03-14", files_dict)
+
+    def test_install_dry_run_previews_without_writing(self, mock_vault_env, tmp_path, capsys):
+        zip_path = self._make_zip(tmp_path)
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", return_value=True):
+            vault.do_install(str(zip_path), dry_run=True)
+
         out = capsys.readouterr().out
-        assert "No backups" in out
+        assert "DRY RUN" in out
+        assert not (mock_vault_env / "state" / "immigration.md.age").exists()
+
+    def test_install_state_encrypted_copied_directly(self, mock_vault_env, tmp_path):
+        zip_path = self._make_zip(tmp_path)
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
+            vault.do_install(str(zip_path))
+
+        restored = mock_vault_env / "state" / "immigration.md.age"
+        assert restored.exists()
+        assert restored.read_bytes() == b"enc-imm"  # not decrypted — copied as-is
+
+    def test_install_state_plain_decrypted(self, mock_vault_env, tmp_path):
+        zip_path = self._make_zip(tmp_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("---\n# Goals\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_install(str(zip_path))
+
+        restored = mock_vault_env / "state" / "goals.md"
+        assert restored.read_text() == "---\n# Goals\n"
+
+    def test_install_config_decrypted_to_config_dir(self, mock_vault_env, tmp_path):
+        zip_path = self._make_zip(tmp_path)
+
+        def fake_decrypt(key, src, dst):
+            dst.write_text("todo_lists:\n  general: id123\n")
+            return True
+
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             patch("scripts.vault.age_decrypt", side_effect=fake_decrypt):
+            vault.do_install(str(zip_path))
+
+        restored = mock_vault_env / "config" / "artha_config.yaml"
+        assert "id123" in restored.read_text()
+
+    def test_install_missing_zip_exits(self, mock_vault_env):
+        with patch("scripts.vault.check_age_installed", return_value=True), \
+             patch("scripts.vault.get_private_key", return_value="mock-priv"), \
+             pytest.raises(SystemExit):
+            vault.do_install("/nonexistent/path/2026-03-14.zip")
 
