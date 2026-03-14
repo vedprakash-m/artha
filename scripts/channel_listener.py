@@ -2247,8 +2247,8 @@ async def process_message(
     # 5. Command normalisation — accept flexible input
     norm_cmd, norm_args = _normalise_command(msg.raw_text)
     if norm_cmd:
-        msg.command = norm_cmd
-        msg.args = norm_args
+        object.__setattr__(msg, "command", norm_cmd)
+        object.__setattr__(msg, "args", norm_args)
     is_slash_command = msg.command.startswith("/")
 
     # Send ack for long-running commands (track message_id for later deletion)
