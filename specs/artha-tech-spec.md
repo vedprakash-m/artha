@@ -2881,7 +2881,7 @@ Claude reads this section and adapts its behavior accordingly. This decouples fe
 ├── Gmail fetch ─────── [MCP: Gmail] ── requires: OAuth, gmail.readonly
 ├── Calendar fetch ──── [MCP: Calendar] ── requires: OAuth, calendar.readonly
 │   └── (parallel with Gmail) ── requires: parallel_tool_invocation: enabled
-├── PII filter ──────── [script: pii_guard.py] ── requires: Python 3.7+
+├── PII filter ──────── [script: pii_guard.py] ── requires: Python 3.11+
 ├── Domain routing ──── [CLAUDE.md routing table] + [domain prompts]
 │   ├── State file read ── [filesystem] ── requires: OneDrive sync
 │   ├── State file write ── [filesystem] ── requires: OneDrive sync

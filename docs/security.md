@@ -8,7 +8,7 @@ describes the threat model, defense layers, and operational security guidelines.
 | Threat | Likelihood | Impact | Mitigation |
 |--------|-----------|--------|------------|
 | State file with PII committed to version control | High | High | Three-layer PII defense (§1) |
-| OAuth tokens leaked in logs or crash output | Medium | High | Tokens in `~/.artha-tokens/`, never in repo |
+| OAuth tokens leaked in logs or crash output | Medium | High | Tokens in `.tokens/` (inside repo, gitignored), never in plaintext logs |
 | Prompt injection in email body crafted to modify state | Medium | Medium | AI model boundary instructions (§4) |
 | Keyring credential exfiltration by malicious package | Low | Critical | Minimal dependency footprint |
 | SSRF via external URL in email body | Low | Medium | No dynamic URL fetching from email content |
@@ -62,22 +62,21 @@ never persisted to disk in final form.
 
 ## §2 — Credential Storage
 
-OAuth tokens are stored in `~/.artha-tokens/` (outside the repo):
+OAuth tokens are stored in `.tokens/` (inside the repo, gitignored):
 
 ```
-~/.artha-tokens/
+<artha-repo>/.tokens/
 ├── gmail-token.json           # Google OAuth2 access + refresh tokens
 ├── gcal-token.json            # Google Calendar (same flow)
 ├── msgraph-token.json         # Microsoft Graph refresh token
-└── icloud-creds.json          # iCloud app-specific password (encrypted)
+└── oauth-status.json          # Last-refresh timestamp per connector
 ```
 
 System credential store (macOS Keychain, Windows Credential Manager) is used
-via the `keyring` library for secrets that must persist across sessions.
+via the `keyring` library for the `age` private key and app-specific passwords.
 
-**Never commit `~/.artha-tokens/` to version control.** The `.gitignore`
-excludes `*.json` token files inside the repo, but token files live outside
-the repo entirely.
+**Never commit `.tokens/` or any `*-token.json` file to version control.** The
+`.gitignore` excludes all token files inside the repo.
 
 ---
 

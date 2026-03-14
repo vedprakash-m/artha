@@ -66,6 +66,9 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 git clone https://github.com/vedprakash-m/artha.git
 cd artha
 
+# (Recommended) Enable the PII safety hook — prevents accidental PII commits
+git config core.hooksPath .githooks
+
 # Create a Python virtual environment
 python3 -m venv ~/.artha-venvs/.venv
 source ~/.artha-venvs/.venv/bin/activate   # macOS/Linux
