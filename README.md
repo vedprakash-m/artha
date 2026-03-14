@@ -248,7 +248,7 @@ state/
   *.md.age                ← Encrypted sensitive state (gitignored)
 
 prompts/                  ← Domain-specific reasoning prompts (18 domains)
-tests/                    ← pytest test suite (175+ test cases)
+tests/                    ← pytest test suite (223+ test cases)
 specs/                    ← Product, technical, and UX specifications
 docs/                     ← User-facing documentation
 briefings/                ← Generated daily briefings (gitignored)
@@ -268,6 +268,9 @@ Artha is **privacy-first, local-first**. Your personal data never leaves your ma
 | **Encryption at Rest** (`vault.py`) | `age` encryption for sensitive state files (health, finance, immigration, etc.) |
 | **Pre-commit Hook** | Blocks PII, secrets, and forbidden files from reaching git |
 | **Net-Negative Write Guard** | Prevents accidental data loss when updating state files |
+| **Atomic `.bak` Guard** | Pre-decrypt `.bak` snapshot created atomically before every decrypt; auto-restored if write fails |
+| **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `state/backups/` (daily/weekly/monthly/yearly tiers) |
+| **Restore Validation** | `validate-backup` decrypts a backup to a temp dir and runs 5 integrity checks: SHA-256, decrypt success, non-empty, YAML frontmatter, word count ≥ 30 |
 | **Audit Logging** | Every vault operation logged to `state/audit.md` |
 | **CI PII Scanning** | GitHub Actions scans every push for PII leaks |
 
@@ -276,6 +279,73 @@ Artha is **privacy-first, local-first**. Your personal data never leaves your ma
 No telemetry. No cloud dependencies. Everything runs locally.
 
 See [docs/security.md](docs/security.md) for the full threat model.
+
+---
+
+## Backup & Restore
+
+Artha uses a **Grandfather-Father-Son (GFS)** rotating backup strategy for all encrypted state files. Every successful `vault.py encrypt` run automatically snapshots the `.age` files into a tiered backup catalog.
+
+### Backup Tiers
+
+| Tier | When | Retention |
+|---|---|---|
+| **daily** | Mon–Sat | Last 7 snapshots per domain |
+| **weekly** | Every Sunday | Last 4 snapshots per domain |
+| **monthly** | Last day of each month | Last 12 snapshots per domain |
+| **yearly** | Dec 31 | Unlimited (never pruned) |
+
+Tier promotion priority: `yearly > monthly > weekly > daily` — a Sunday that falls on Dec 31 is always stored as a yearly snapshot.
+
+### Storage Layout
+
+```
+state/backups/
+  daily/          ← rolling 7-day snapshots
+  weekly/         ← rolling 4-week snapshots
+  monthly/        ← rolling 12-month snapshots
+  yearly/         ← permanent Dec-31 archives
+  manifest.json   ← SHA-256 checksums, sizes, tiers, timestamps
+```
+
+All backup files are `.age`-encrypted. `manifest.json` records the SHA-256 of each file at write time to detect silent bit-rot. The manifest itself is written atomically via a `.tmp` sibling + `os.replace()`.
+
+### CLI Commands
+
+```bash
+# Show backup catalog, tier counts, and last validation date
+python scripts/vault.py backup-status
+
+# Validate the newest backup for every domain (decrypt + 5 integrity checks)
+python scripts/vault.py validate-backup
+
+# Validate a single domain
+python scripts/vault.py validate-backup --domain finance
+
+# Validate a specific snapshot date
+python scripts/vault.py validate-backup --date 2026-02-28
+```
+
+### Restore Validation Checks
+
+When `validate-backup` runs, each backup is verified in order:
+
+1. **SHA-256 integrity** — matches checksum stored in `manifest.json`
+2. **`age` decrypt succeeds** — key is accessible and ciphertext is intact
+3. **Non-empty output** — decrypted content is not blank
+4. **YAML frontmatter** — file begins with `---` (valid state file structure)
+5. **Word count ≥ 30** — file contains meaningful content, not a stub
+
+Any failure is logged to `state/audit.md` with `INTEGRITY_RESTORE_FAILED`.
+
+### Health Monitoring
+
+`vault.py health` reports backup status as part of the system health check. It warns if:
+- No backups exist yet (`⚠ no backups found`)
+- No validation has ever been run (`⚠ never validated`)
+- Last validation was more than 35 days ago (`⚠ validation overdue`)
+
+> **Recommended**: run `vault.py validate-backup` monthly, or after any significant state update.
 
 ---
 
