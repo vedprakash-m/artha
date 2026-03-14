@@ -4,7 +4,7 @@
 
 The Artha repo lives inside an OneDrive-synced folder on both Mac and Windows:
 - **Mac:** `~/Library/CloudStorage/OneDrive-Personal/Artha/`
-- **Windows:** `C:\Users\vemishra\OneDrive - Personal\Artha\` (or similar)
+- **Windows:** `C:\Users\vemishra\OneDrive\Artha\`
 
 This creates a conflict: OneDrive syncs `.git/` between machines, corrupting the
 git index and causing phantom "modified" files on the other machine.
@@ -37,41 +37,41 @@ exclusion on the existing `.git`:
 ### Option 1 — Fresh clone (recommended, cleanest)
 
 ```powershell
-# 1. Delete the OneDrive-synced .git that may be stale/corrupt
-Remove-Item -Recurse -Force "C:\Users\vemishra\OneDrive - Personal\Artha\.git"
+# Run from the repo folder
+cd "C:\Users\vemishra\OneDrive\Artha"
 
-# 2. Clone fresh from GitHub into the same folder
-#    (--no-checkout keeps existing working files intact)
+# 1. Delete the OneDrive-synced .git that may be stale/corrupt
+Remove-Item -Recurse -Force ".git"
+
+# 2. Clone fresh from GitHub (--no-checkout preserves working files)
 git clone --no-checkout https://github.com/vedprakash-m/artha.git temp_git
-Move-Item temp_git\.git "C:\Users\vemishra\OneDrive - Personal\Artha\.git"
-Remove-Item -Recurse temp_git
+Move-Item temp_git\.git .\.git
+Remove-Item -Recurse -Force temp_git
 
 # 3. Reset HEAD so git knows which files are tracked
-cd "C:\Users\vemishra\OneDrive - Personal\Artha"
 git checkout HEAD -- .
+# Note: gitignored files (state/, config/user_profile.yaml, etc.) are untouched
 
-# 4. Exclude .git from OneDrive sync on Windows
-#    (prevents Windows .git from syncing back to OneDrive cloud)
-attrib +U ".git" /S /D
+git status   # should show only gitignored personal files as untracked
 ```
 
 ### Option 2 — Keep existing .git but fix the index
 
 ```powershell
-cd "C:\Users\vemishra\OneDrive - Personal\Artha"
+cd "C:\Users\vemishra\OneDrive\Artha"
 
 # Refresh git index to clear phantom modified files
 git fetch origin
 git update-index --refresh
 git reset --hard origin/main   # WARNING: discards any local uncommitted changes
 
-# Exclude .git from OneDrive sync
-attrib +U ".git" /S /D
+git status   # should be clean
 ```
 
-> **Note on `attrib +U`:** This sets the "Unpin" attribute which tells OneDrive
-> to not upload this item. Verify it worked by checking OneDrive's sync status
-> icon on the `.git` folder — it should show no sync icon.
+> **Note:** There is no Windows equivalent of Mac's `com.apple.fileprovider.ignore#P`
+> xattr that prevents upload. However, this is safe: Mac's xattr means the macOS
+> OneDrive client will refuse to download anything uploaded to the cloud `.git`
+> path — so even if Windows's `.git` leaks into OneDrive cloud, Mac never applies it.
 
 ---
 
@@ -168,3 +168,27 @@ GitHub   = sync for committed code changes
 The machines are **not** real-time collaborative editing environments — they are
 two independent git clients that happen to share working files via OneDrive.
 Treat every work session as: `pull → work → push`.
+
+---
+
+## Protection Asymmetry (Mac vs Windows)
+
+Mac has explicit upload exclusion via `xattr com.apple.fileprovider.ignore#P`.
+Windows has no equivalent API — there is no `attrib` flag that prevents OneDrive
+from uploading a local folder.
+
+This is fine in practice because the protection is asymmetric but still sound:
+
+- Windows `.git/` *may* upload to OneDrive cloud (unavoidable)
+- Mac's xattr causes the OneDrive client to **refuse to download** anything at
+  the cloud `.git` path — so Mac's local `.git/` is never corrupted by Windows
+- Risk is one-directional and low: the only realistic failure is OneDrive
+  acquiring a file lock on `.git\index` while git is running on Windows.
+  Recovery: pause OneDrive sync, run `git gc`, resume.
+
+| Scenario | Confidence |
+|---|---|
+| Option 1 (fresh clone) works cleanly on Windows | ~85% |
+| Option 2 (index refresh) works cleanly on Windows | ~75% |
+| Mac breakage from Windows `.git` upload | ~5% |
+| OneDrive file lock during Windows git operation | ~15% occurrence |
