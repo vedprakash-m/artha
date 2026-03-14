@@ -47,6 +47,46 @@ Deep-dive into a single domain. Read `state/<name>.md` and `prompts/<name>.md`. 
 - Suggested next action (if any)
 Valid domain names: immigration, finance, kids, travel, health, home, shopping, goals, calendar, vehicle, estate, insurance, comms
 
+### `/domains`
+List all available domains with enable/disable status and a one-line description.
+
+**Display format:**
+```
+━━ YOUR DOMAINS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ALWAYS ACTIVE (load every catch-up):
+  ✅ finance       — Bills, bank accounts, credit cards, investments
+  ✅ immigration   — USCIS filings, visa status, passport, travel docs
+  ✅ health        — Doctor appointments, prescriptions, insurance
+  ✅ calendar      — Appointments, reminders, events, schedules
+  ✅ comms         — Important messages, follow-ups
+  ✅ goals         — Personal goals, habit tracking, progress
+
+ENABLED (load when relevant emails received):
+  ✅ home          — Mortgage/rent, maintenance, utilities
+  ✅ employment    — Payroll, HR, benefits
+  ...
+
+DISABLED (not active — enable with /domains enable <name>):
+  ⬜ kids          — School events, homework, grades
+  ⬜ pets          — [household_types: not applicable] Pet health, vaccinations
+  ...
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+N enabled · M disabled · Run a catch-up after enabling to load domain data.
+```
+
+**Sub-commands:**
+- `/domains enable <name>` — enable a domain (calls `toggle_domain(name, enabled=True)` in profile_loader.py)
+- `/domains disable <name>` — disable a domain (calls `toggle_domain(name, enabled=False)`)
+- `/domains info <name>` — show full domain details (sensitivity, required connectors, setup questions)
+
+**Implementation:**
+Read domain list from `config/domain_registry.yaml` via `scripts/profile_loader.py::available_domains()`.
+Cross-reference with `config/user_profile.yaml::domains` to determine enabled/disabled state.
+Filter out `phase_2` domains (show as "Coming soon" in a separate section only if the user explicitly asks).
+For `enable` / `disable` sub-commands: call `profile_loader.toggle_domain()`, then confirm change.
+
+
+
 ### `/cost`
 Show current month API cost estimate vs. configured monthly budget (from `user_profile.yaml → budget.monthly_api_budget_usd`). Read from `health-check.md:cost_tracking`. Estimate tokens used × current AI CLI pricing.
 

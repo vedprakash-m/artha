@@ -1,0 +1,31 @@
+---
+domain: health
+schema_version: "1.0"
+extraction_signals:
+  - signal: appointment_date
+    value: "March 20, 2026"
+    source_id: health-001
+    required: true
+  - signal: appointment_provider
+    keywords: ["Dr. Smith", "Dr. Jane Smith"]
+    source_id: health-001
+    required: true
+  - signal: prescription_pickup
+    keywords: ["Metformin", "March 27"]
+    source_id: health-002
+    required: true
+  - signal: lab_results_available
+    keywords: ["lab", "results"]
+    source_id: health-003
+    required: true
+  - signal: patient_responsibility
+    value: "$90.00"
+    source_id: health-004
+    required: false
+  - signal: annual_physical_due
+    keywords: ["annual physical", "May 2026"]
+    source_id: health-005
+    required: false
+
+routing_domain: health
+alert_level_expected: yellow

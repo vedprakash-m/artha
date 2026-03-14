@@ -57,9 +57,88 @@ Which fits best? (You can always change this later.)"
 → Maps to: `family.cultural_context`
 → If a preset name: load from `config/presets/cultural/<name>.yaml`
 
+## Phase 1b — Household Type + Domain Selection (~2 minutes)
+
+Run this phase immediately after Phase 1 (before any integration setup).
+Use the domain registry from `config/domain_registry.yaml` to drive this section.
+
+### Q6: Household Type
+"What best describes your household? This helps me focus my briefings.
+  1) Just me            → single
+  2) Me + partner       → couple
+  3) Me + partner + kids → family
+  4) Multi-generational (parents/grandparents) → multi_gen
+  5) Roommates / shared housing → roommates"
+→ Maps to: `household.type`
+→ Default if skipped: "single"
+→ Sets initial domain applicability (kids domain auto-hidden for single/couple/roommates)
+
+### Q7: Housing Tenure
+"Do you own or rent your home?
+  1) Own (mortgage / paid off)
+  2) Rent (lease / landlord)
+  3) Other / skip"
+→ Maps to: `household.tenure`
+→ If renter: activate renter overlay in home domain (prompts/home.md §Renter-Overlay)
+
+### Q8: Domain Selection Menu
+Display the domain menu based on `household.type` from Q6. Show only domains
+applicable to this household type (per `domain_registry.yaml::household_types`).
+
+```
+━━ CHOOSE YOUR DOMAINS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+These 6 domains are always active (can't be disabled):
+  ✅ Finance       — Bills, bank, credit cards, investments
+  ✅ Calendar      — Appointments, reminders, events
+  ✅ Comms         — Important messages, follow-ups
+  ✅ Goals         — Personal goals, habit tracking
+  ✅ Health        — Doctor appointments, prescriptions
+
+[If household.type != 'single' && origin_country set]:
+  ✅ Immigration   — USCIS, visa status, passport
+
+──────────────────────────────────────────────────────
+Enable these optional domains? (Artha will watch for related emails)
+
+ Y = yes  N = no  ?  = tell me more  ↵  = yes (default)
+
+  [ ] Home         — Rent/mortgage, maintenance, utilities    (Y/n/?)
+  [ ] Employment   — Payroll, HR, benefits, performance       (Y/n/?)
+[If family or multi_gen]:
+  [ ] Kids & School — Homework, grades, school events         (Y/n/?)
+  [ ] Travel        — Flights, hotels, itineraries            (Y/n/?)
+  [ ] Digital       — App subscriptions, streaming, domains   (Y/n/?)
+  [ ] Learning      — Online courses, certifications          (Y/n/?)
+  [ ] Shopping      — Orders, returns, price tracking         (Y/n/?)
+  [ ] Social        — Events, birthdays, relationships        (Y/n/?)
+  [ ] Insurance     — Health, auto, home/renter policies      (Y/n/?)
+[Additional domains based on profile]:
+  [ ] Vehicle       — Car maintenance, registration           (Y/n/?)
+
+Type domain names to enable more, or press Enter to continue.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Implementation notes:**
+- Use `config/domain_registry.yaml::enabled_by_default` as the pre-selected state
+- Domains with `household_types` that exclude the current type are NOT shown
+- Single-person mode (`household.type = single`): pre-deselect kids, suppress spouse references
+- After selection: write enabled/disabled state to `config/user_profile.yaml::domains`
+- Call `scripts/profile_loader.py::toggle_domain()` for each selection
+- For domains where user says `?`: show the full description from domain_registry.yaml
+
+### Q9: Pets (conditional)
+Show only if user's household_type allows pets (all types):
+"Do you have any pets? (Artha can track vaccinations, medication due dates, vet appointments.)
+  y — yes → enter pet names and types
+  n — no (default)"
+→ If yes: set `domains.pets.enabled: true` + prompt for pet names/species
+→ Maps to: `domains.pets.animals` (name, species for each)
+
+
 ## Phase 2 — First Integration (~2 minutes)
 
-### Q6: Gmail Setup
+### Q10: Gmail Setup
 "Want to connect your Gmail for email briefings? This is the highest-value integration.
  I'll walk you through Google OAuth. (yes/later)"
 → If yes: guide through `python scripts/setup_google_oauth.py`

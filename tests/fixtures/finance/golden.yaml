@@ -1,0 +1,42 @@
+---
+# Golden file: expected extracted items from finance/emails.jsonl
+# Format: list of expected signals that domain processing should identify
+# Threshold: ≥80% of these signals must appear in extracted output
+
+domain: finance
+schema_version: "1.0"
+extraction_signals:
+  # PSE energy bill
+  - signal: bill_due_date
+    value: "March 25, 2026"
+    source_id: fin-001
+    required: true
+  - signal: bill_amount
+    value: "$287.50"
+    source_id: fin-001
+    required: true
+
+  # Chase statement
+  - signal: credit_card_balance
+    value: "$1,234.56"
+    source_id: fin-002
+    required: true
+  - signal: payment_due_date
+    value: "April 5, 2026"
+    source_id: fin-002
+    required: true
+
+  # Netflix subscription
+  - signal: subscription_renewal
+    keywords: ["netflix", "$15.49"]
+    source_id: fin-003
+    required: true
+
+  # Venmo received
+  - signal: income_received
+    value: "$250.00"
+    source_id: fin-005
+    required: false  # Optional: Venmo income may be classified as transfer
+
+routing_domain: finance
+alert_level_expected: yellow  # PSE bill due + credit card minimum due

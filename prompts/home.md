@@ -161,3 +161,106 @@ emergency_kit:
       status: stocked|needs_refresh|missing
 ```
 Alert: `next_review_due` passed without update → 🟡 Standard "Emergency kit overdue for annual review."
+
+---
+
+## Renter-Overlay
+> **Active when:** `household.tenure = renter` in `config/user_profile.yaml`
+>
+> When renter mode is active, **replace** the default owner-centric rules below
+> with the renter-specific rules in this section. Suppress any rules marked
+> ~~strikethrough~~ entirely — do not surface them in briefings.
+
+### Suppressed (Owner-Only) Topics
+When `household.tenure = renter`, **do not track or surface**:
+- ~~Mortgage payment tracking or escrow analysis~~
+- ~~Property tax tracker (F7.12) — owner obligation, not renter~~
+- ~~HOA dues tracker (F7.10) — unless property manager explicitly bills renter for it~~
+- ~~Home value / Zillow Zestimate checks~~
+- ~~Lawn & landscaping ownership tasks~~ (report maintenance requests only)
+
+### Renter-Specific Routing (replaces default sender signatures)
+Route to home domain when:
+- Property manager / landlord communications
+- Subject: rent, lease, move-out, move-in, security deposit
+- Subject: maintenance request, repair request, work order
+- Subject: lease renewal, notice to vacate, rent increase
+- Renter's insurance: policy renewals, claims, premium changes
+- Utility bills (electric, gas, water, internet) if billed directly to tenant
+
+### Renter Extraction Rules (replaces §Extraction Rules for renters)
+1. **Type**: rent payment | maintenance request | lease event | renter's insurance | utility
+2. **Amount**: dollar amount (rent, utility, insurance premium)
+3. **Due date**: when payment or response is required
+4. **Lease details**: expiry date, renewal deadline, notice period
+5. **Action**: pay | respond to landlord | file maintenance request | renew?
+
+### Renter Alert Thresholds
+🔴 **CRITICAL** (renter mode):
+- Lease expires within 30 days with no renewal signed
+- Eviction notice or "notice to vacate" received
+- Security deposit dispute or improper deduction notice
+
+🟠 **URGENT** (renter mode):
+- Rent due within 5 days
+- Lease renewal decision required within 14 days
+- Maintenance request pending >7 days with no landlord response
+- Renter's insurance expires within 30 days
+
+🟡 **STANDARD** (renter mode):
+- Rent due within 14 days (standard reminder)
+- Lease up for renewal within 60 days
+- Utility bill received (route for amount tracking)
+
+### Renter State Schema (state/home.md when tenure=renter)
+```yaml
+tenure: renter
+rent:
+  monthly_amount: XXXX
+  due_day: 1  # day of month
+  auto_pay: true|false
+  payment_method: "[bank/Venmo/Zelle/check]"
+  late_fee_after_day: 5
+  last_paid_date: YYYY-MM-DD
+  last_paid_amount: XXXX
+
+lease:
+  start_date: YYYY-MM-DD
+  end_date: YYYY-MM-DD
+  renewal_deadline: YYYY-MM-DD  # typically 30-60 days before end
+  notice_required_days: 30
+  renewal_offered: null|true|false
+  renewal_amount: null|XXXX
+  renewal_decision: null|accept|decline|negotiating
+
+renter_insurance:
+  provider: "[insurance company]"
+  policy_number: ""
+  premium_monthly: XXXX
+  coverage_amount: XXXX
+  renewal_date: YYYY-MM-DD
+  auto_renew: true|false
+
+landlord:
+  name: ""
+  email: ""
+  phone: ""
+  property_manager: ""  # if different from landlord
+
+maintenance_requests:
+  - id: MR-001
+    description: ""
+    submitted_date: YYYY-MM-DD
+    status: pending|scheduled|completed
+    landlord_response_date: null|YYYY-MM-DD
+    resolved_date: null|YYYY-MM-DD
+```
+
+### Renter Briefing Format
+```
+### Home (Renter)
+• Rent: $X,XXX due [date] — [paid/pending]
+• Lease: expires [date] — [renewing/no decision yet]
+• [Maintenance item]: [status] — [days since submitted if pending]
+• [Renter insurance]: [renewal info if relevant]
+```

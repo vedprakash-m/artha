@@ -47,6 +47,29 @@ When these fail, note them in the briefing footer with the message "run catch-up
 - Store PII outside the designated encrypted state files
 - Propose irreversible actions (cancel subscription, delete data) without explicit confirmation
 
+### Household Type Awareness
+Read `household.type` and `household.tenure` from `config/user_profile.yaml`.
+Adjust all briefing language accordingly:
+
+| `household.type` | Briefing tone | Suppressed elements |
+|---|---|---|
+| `single` | "You have…" / "Your…" | Spouse references, partner check-ins, family coordination |
+| `couple` | "You and [partner] have…" | Kids references (auto-suppressed unless `kids` domain enabled) |
+| `family` | "Your family has…" | — (all domains applicable) |
+| `multi_gen` | "Your household has…" | — (all domains applicable) |
+| `roommates` | "You have…" | Spouse/partner references, joint bills framed individually |
+
+**Single-person mode** (active when `household.type = single` OR `household.single_person_mode: true`):
+- Suppress all "ask spouse / partner" suggestions (Step 8k)
+- Suppress `kids` domain unless explicitly enabled in profile
+- Replace "your family" with "you" throughout the briefing
+- Suppress split-bill / joint-account framing in finance domain
+
+**Renter mode** (active when `household.tenure = renter`):
+- In `home` domain: suppress mortgage payment tracking, property tax reminders, HOA dues
+- Show: rent due date, lease expiry, renter's insurance renewal, maintenance requests
+- (Full renter overlay defined in `prompts/home.md` §Renter-Overlay)
+
 ### First-Run Detection
 If `config/user_profile.yaml` does not exist:
 1. Say: "Welcome to Artha. I notice this is a fresh install."
@@ -345,6 +368,44 @@ else:
 ```
 Log volume tier to `health-check.md → catch_up_runs`. Adjust token cap and processing depth accordingly in subsequent steps.
 
+### Step 4e — Offline / Degraded Mode Detection
+Immediately after Step 4 fetch completes, assess connector health:
+```
+total_connectors = count(enabled connectors in connectors.yaml)
+working_connectors = count(connectors that returned >0 results OR passed health_check)
+failed_connectors = total_connectors - working_connectors
+
+if working_connectors == 0:
+    mode = "offline"          # No connectors working → state-only briefing
+elif failed_connectors > 0:
+    mode = "degraded"         # Some connectors working → partial briefing
+else:
+    mode = "normal"
+
+Log mode to health-check.md → session_mode
+```
+
+**Offline mode** (`mode = "offline"`):
+- Set `email_count = 0`
+- Skip Steps 5–7 (no emails to process)
+- Date-driven skills still run (passport_expiry, subscription_monitor, property_tax)
+- Proceed to Step 8 with stored state only
+- Use §8.10 Offline Mode Briefing template from `config/briefing-formats.md`
+- Log to `health-check.md → offline_runs: [{date, reason: "all connectors failed"}]`
+
+**Degraded mode** (`mode = "degraded"`):
+- Process emails from working connectors normally (Steps 5–7)
+- Build `data_gap_notes` list: `{"connector": name, "reason": error_message}` for failed connectors
+- Append data gap warnings to each affected domain's briefing section
+- Use §8.11 Degraded Mode template's footer and data gaps section
+- Log to `health-check.md → degraded_runs: [{date, failed_connectors: [...], reason}]`
+- Suggest recovery action in briefing footer based on failure reason:
+  - `oauth_expired` → "Re-run `python scripts/setup_XXX_oauth.py`"
+  - `network_error` → "Check network / VPN, then retry"
+  - `api_rate_limit` → "Automatic retry in [N] hours"
+
+
+
 ### Step 5 — PII pre-filter + email pre-processing
 Before processing **any** email body or subject:
 
@@ -375,8 +436,28 @@ Track and record to `health-check.md → email_stats`:
 ### Step 6 — Route emails to domains
 For each email, apply the routing table (§3). If no match, apply content-based classification. Emails may route to multiple domains.
 
+### Step 6b — Domain loading strategy (lazy loading)
+Before processing domains, split the enabled domain list into two tiers:
+
+**Tier A — Always-load** (load regardless of routing signal):
+`calendar`, `comms`, `goals`, `finance`, `immigration`, `health`
+Load these unconditionally — a false-negative for a deadline or health alert is unacceptable.
+
+**Tier B — Lazy-load** (all other enabled domains):
+Load a Tier B domain **only if** at least one email was routed to it in Step 6.
+If no email matched this domain, skip its prompt entirely to reduce context pressure.
+
+> **Rationale:** Most catch-ups route to 3–5 domains. Loading all 20+ prompts for every
+> catch-up wastes context. Tier A covers the high-stakes domains where silence might
+> mean a missed deadline, not an absence of data.
+
+Implementation note for scripts: `domain_registry()` in `scripts/profile_loader.py`
+exposes the `always_load` flag. `available_domains()` returns the filtered list already
+annotated with this field. Tier B domains with `always_load: false` that received zero
+routed emails should be excluded from Step 7 processing.
+
 ### Step 7 — Process domains (IN PARALLEL where possible)
-For each domain with new emails/events:
+For each domain with new emails/events (per Step 6b loading strategy):
 a. Read the domain prompt from `prompts/<domain>.md`
 b. If `config/prompt-overlays/<domain>.md` exists, append its content (user customizations)
 c. Apply extraction rules from the prompt
@@ -523,7 +604,9 @@ Attach a one-line annotation to each Mode 3 alert:
 
 Select the single item with highest `fna_score` as the session-level **⚡ FNA**. Embed in briefing footer block (§8.1).
 
-**8k — Ask spouse suggestion:**
+**8k — Ask spouse suggestion (skipped in single-person mode):**
+> **SKIP this step entirely** if `household.type = single` OR `household.single_person_mode = true`.
+
 Scan current items for decisions in shared domains (Finance, Immigration, Kids, Home, Travel, Health, Calendar) that involve:
 - Household decisions (home, appliances, neighborhood)
 - Kids activities, scheduling, or milestone choices
@@ -771,7 +854,25 @@ catch_up_runs:
     quick_tasks_count: [N]
     auto_discovery_proposals: [N]
     catch_up_count: [cumulative total — increment each catch-up]
+    # Performance telemetry (v1.12)
+    session_mode: [normal|degraded|offline]   # from Step 4e classification
+    domains_loaded: [list of domain names actually loaded this session]
+    domains_skipped: [list of Tier B domains with zero routed emails — lazy-skipped]
+    domain_hits: {immigration: N, finance: N, health: N, ...}  # emails routed per domain
+    connector_timing_ms: {gmail: N, google_calendar: N, ms_graph: N, ...}
+    skill_timing_ms: {passport_expiry: N, subscription_monitor: N, ...}
+    # Per-domain hit rate tracking (alert when rate <60% after min 10 catch-ups)
+    domain_hit_rates:
+      # {domain: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: "YYYY-MM-DD"|null}}
+      immigration: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: null}
+      finance: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: null}
 ```
+
+**Per-domain hit rate tracking:**
+`hit_rate = extracted_total / routed_total × 100`. Update `domain_hit_rates` each session: increment `routed_total` for every email routed to a domain; increment `extracted_total` for every state-file entry created as a result. After ≥10 catch-ups where `routed_total ≥ 1`, if `rate_pct < 60`, set `last_alert` to today and surface ⚠ in `/health` output. Lower-priority domains (P2+) may have systematically lower rates due to fixed priority processing order — this is an accepted trade-off (see R16 in `specs/enhance.md`).
+
+**Performance telemetry guidelines:**
+Record `connector_timing_ms` and `skill_timing_ms` as wall-clock milliseconds measured from connector fetch start to last result. `domains_loaded` = Tier A always-load + Tier B domains that received ≥1 routed email. `domains_skipped` = Tier B domains with 0 routed emails (never loaded). `session_mode` is set in Step 4e and copied verbatim here.
 
 **Context pressure tracking:**
 Estimate tokens used at each workflow step using approximate heuristic (1 token ≈ 4 chars):
@@ -994,7 +1095,7 @@ Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the too
 
 When the user invokes any slash command, read `config/commands.md` for the full command
 reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
-`/domain`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
+`/domain`, `/domains`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
 `/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`.
 ---
 

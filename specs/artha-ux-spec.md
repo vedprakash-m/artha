@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 1.6 | **Status**: Draft | **Date**: March 2026
+> **Version**: 1.8 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v4.4, Tech Spec v2.6
+> **Implements**: PRD v5.2, Tech Spec v2.8
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.8 | 2026-03 | Phase 1b UX: /domains command, household-aware briefings, renter mode, offline/degraded mode banners, script-backed view commands (status/goals/items/scorecard), pet reminders format, domain selection in onboarding |
 | v1.7 | 2026-03 | ACB v2.1 UX: Multi-LLM Q&A, HCI command redesign, write commands, thinking ack, structured output |
 | v1.6 | 2026-03 | Backup & Restore UX: `backup.py` CLI output format, session backup confirmation, cold-start workflow, key management UX, §14.5 |
 | v1.6 | 2026-03 | Channel Bridge UX: push format, interactive commands, scope-filtered output |
@@ -648,12 +649,17 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
 /status          Health check — last run, stale domains      5 seconds
 /goals           Goal scorecard only                         10 seconds
 /domain <name>   Deep-dive into one domain                  10 seconds
+/domains         List all 24 domains with enable/disable     5 seconds   *(v1.8)*
+                 /domains enable <name>
+                 /domains disable <name>
+                 /domains info <name>
 /cost            Monthly API cost vs. budget                 5 seconds
 /health          System integrity — file checks, CLI health  10 seconds
 /items           Open action items from open_items.md        5 seconds
                  Optional filters: /items kids
                                    /items P0
                                    /items overdue
+                                   /items quick (≤5 min phone-ready)
 /decisions       Decision log — active and resolved           10 seconds  *(v1.2)*
 /scenarios       What-if analysis — run or review             15 seconds  *(v1.2)*
 /relationships   Relationship pulse — reconnects, upcoming    10 seconds  *(v1.2)*
