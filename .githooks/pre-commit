@@ -80,6 +80,12 @@ SKIP_SUFFIXES = {
     ".ico", ".woff", ".woff2", ".ttf", ".eot",
 }
 
+# Files exempt from Layer 1 (forbidden file pattern) checks.
+# Use for test fixtures that match broad patterns like *.jsonl.
+FORBIDDEN_EXEMPT = {
+    "tests/fixtures/mock_emails.jsonl",
+}
+
 # Files that contain PII patterns by design (regex definitions, test fixtures).
 # Layer 1 (forbidden files) still applies; only Layers 2-3 are skipped.
 PII_SCAN_EXEMPT = {
@@ -117,6 +123,10 @@ def get_staged_content(rel_path: str) -> str | None:
 
 def check_forbidden(rel_path: str) -> str | None:
     """Layer 1: Check if file matches a forbidden pattern."""
+    # Exempt specific files (e.g. test fixtures) from forbidden patterns
+    if rel_path in FORBIDDEN_EXEMPT:
+        return None
+
     # Exact and glob matches
     for pattern in FORBIDDEN_PATTERNS:
         if fnmatch.fnmatch(rel_path, pattern):

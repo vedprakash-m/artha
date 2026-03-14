@@ -27,8 +27,10 @@ def mock_vault_env(temp_artha_dir, monkeypatch):
 
 def test_vault_status_inactive(mock_vault_env, capsys):
     """Verify status report when vault is inactive (encrypted)."""
+    mock_run = MagicMock(stdout="age v1.1.1", stderr="", returncode=0)
     with patch("scripts.vault.check_age_installed", return_value=True), \
-         patch("keyring.get_password", return_value="mock-key"):
+         patch("keyring.get_password", return_value="mock-key"), \
+         patch("subprocess.run", return_value=mock_run):
         vault.do_status()
         captured = capsys.readouterr()
         assert "SESSION: INACTIVE" in captured.out
@@ -134,9 +136,12 @@ def test_integrity_write_guard(mock_vault_env, capsys):
     age_file.write_text("X" * 1000)
     plain_file.write_text("tiny")
     (mock_vault_env / ".artha-decrypted").touch()
+    # Remove audit.md created by fixture to prevent age_encrypt being called for it
+    (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
     
     with patch("scripts.vault.check_age_installed", return_value=True), \
-         patch("scripts.vault.get_public_key", return_value="age1mock"):
+         patch("scripts.vault.get_public_key", return_value="age1mock"), \
+         patch("scripts.vault.age_encrypt", return_value=True):
         
         # do_encrypt should skip this file and eventually exit non-zero due to errors
         with pytest.raises(SystemExit):
