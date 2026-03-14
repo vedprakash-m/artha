@@ -36,7 +36,7 @@ from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
 import os
-import re
+
 import shutil
 import subprocess
 import sys
@@ -172,7 +172,7 @@ def get_private_key() -> str:
 
 
 def get_public_key() -> str:
-    """Read age recipient public key from user_profile.yaml (preferred) or settings.md (legacy)."""
+    """Read age recipient public key from user_profile.yaml → encryption.age_recipient."""
     # Preferred: read from user_profile.yaml via profile_loader
     try:
         from scripts.profile_loader import get as _profile_get
@@ -182,19 +182,7 @@ def get_public_key() -> str:
     except Exception:
         pass  # profile_loader may not be available (pre-venv) — fall through
 
-    # Legacy fallback: parse settings.md
-    settings_file = _config["CONFIG_DIR"] / "settings.md"
-    if not settings_file.exists():
-        die("age_recipient not found in user_profile.yaml or config/settings.md.")
-    text = settings_file.read_text()
-    match = re.search(r"age_recipient:\s*\"?(age1[a-z0-9]+)", text)
-    if not match:
-        die("Cannot read age_recipient from user_profile.yaml or config/settings.md. "
-            "Populate encryption.age_recipient in your profile.")
-    pubkey = match.group(1)
-    if not pubkey.startswith("age1"):
-        die(f"Invalid age public key (must start with 'age1'). Got: {pubkey}")
-    return pubkey
+    die("age_recipient not found. Set encryption.age_recipient in config/user_profile.yaml")
 
 
 # ---------------------------------------------------------------------------

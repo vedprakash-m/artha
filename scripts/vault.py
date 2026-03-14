@@ -18,7 +18,7 @@ Stale lock handling:
 Security model:
   - Private key lives in system credential store (macOS Keychain / Windows Credential Manager)
     (service: age-key, account: artha)
-  - Public key is read from config/settings.md (safe to sync)
+  - Public key is read from user_profile.yaml → encryption.age_recipient
   - Lock file .artha-decrypted signals an active session
 
 Ref: TS §8.5, T-1A.1.3
@@ -547,7 +547,7 @@ def do_health() -> None:
         pubkey = get_public_key()
         print(f"  Public key:   ✓ {pubkey[:20]}...")
     except SystemExit:
-        print("  Public key:   ✗ NOT found in config/settings.md")
+        print("  Public key:   ✗ NOT found — set encryption.age_recipient in config/user_profile.yaml")
         ok = False
 
     # 4. State directory accessible

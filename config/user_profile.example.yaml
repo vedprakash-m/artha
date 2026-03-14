@@ -135,8 +135,8 @@ domains:
 
 # ─── System ───────────────────────────────────────────────────────────────────
 system:
-  artha_dir: "~/OneDrive/Artha"        # Root directory — auto-detected if blank
-  sync_provider: "onedrive"            # onedrive | icloud | dropbox | none
+  artha_dir: ""                        # Root directory — auto-detected from repo location if blank
+  sync_provider: "none"               # onedrive | icloud | dropbox | none
   venv_path: "~/.artha-venvs/.venv"    # Python venv path (macOS/Linux)
   venv_path_win: "~/.artha-venvs/.venv-win"  # Python venv path (Windows)
   python_cmd: "python3"                # Python executable name

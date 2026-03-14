@@ -126,6 +126,12 @@ rm ~/age-key.txt
 
 ### Step 5 — Connect Your Data Sources
 
+> **Before running the Google setup script**, you need a Google Cloud OAuth client:
+> 1. Go to [console.cloud.google.com](https://console.cloud.google.com/) and create a project
+> 2. Enable the **Gmail API** and **Google Calendar API**
+> 3. Under **Credentials**, create an **OAuth 2.0 Client ID** (type: Desktop app)
+> 4. Download the JSON — the setup script will prompt you to paste the `client_id` and `client_secret`
+
 ```bash
 # Gmail + Google Calendar (recommended)
 python scripts/setup_google_oauth.py
