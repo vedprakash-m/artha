@@ -21,8 +21,10 @@
     - Gemini: `gemini.*Artha` avoids false positives from other node processes
     - VS Code: `Code.*Artha` matches VS Code with Artha folder open
 
-  Installation:
-    cp scripts/com.artha.vault-watchdog.plist ~/Library/LaunchAgents/
+  Installation (substitute your Artha checkout path before copying):
+    export ARTHA_ROOT="$HOME/path/to/artha"   # e.g. ~/Library/CloudStorage/OneDrive-Personal/Artha
+    sed "s|{{ARTHA_ROOT}}|${ARTHA_ROOT}|g" scripts/com.artha.vault-watchdog.plist \
+      > ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
     launchctl load ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
 
   Verification:
@@ -41,8 +43,8 @@
         <string>/bin/bash</string>
         <string>-c</string>
         <string>
-            LOCK_FILE="${HOME}/Library/CloudStorage/OneDrive-Personal/Artha/.artha-decrypted"
-            VAULT_PY="${HOME}/Library/CloudStorage/OneDrive-Personal/Artha/scripts/vault.py"
+            LOCK_FILE="{{ARTHA_ROOT}}/.artha-decrypted"
+            VAULT_PY="{{ARTHA_ROOT}}/scripts/vault.py"
             PYTHON="${HOME}/.artha-venvs/.venv/bin/python"
             WATCHDOG_LOG="/tmp/artha-watchdog.log"
             TIMESTAMP=$(date -Iseconds)
