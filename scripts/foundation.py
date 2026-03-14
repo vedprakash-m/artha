@@ -175,7 +175,7 @@ def get_public_key() -> str:
     """Read age recipient public key from user_profile.yaml → encryption.age_recipient."""
     # Preferred: read from user_profile.yaml via profile_loader
     try:
-        from scripts.profile_loader import get as _profile_get
+        from profile_loader import get as _profile_get
         key = _profile_get("encryption.age_recipient", "")
         if key and key.startswith("age1"):
             return key

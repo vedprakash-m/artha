@@ -210,3 +210,38 @@ class TestRunHealthChecks:
 
         result = run_health_checks(sample_cfg)
         assert result == 1
+
+
+# ── Subprocess smoke test ────────────────────────────────────────────────────
+# These tests run pipeline.py as a *subprocess* — the exact invocation path
+# that preflight.py uses.  This catches import-path bugs (Bug 3) that only
+# manifest when sys.path differs from an in-process import.
+
+class TestPipelineSubprocess:
+    """Verify pipeline.py is importable and runnable as a subprocess."""
+
+    def test_pipeline_imports_cleanly_as_subprocess(self):
+        """All connector handler modules must import without error."""
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, "-c", "import pipeline; print('ok')"],
+            capture_output=True, text=True,
+            cwd=str(_SCRIPTS),
+        )
+        assert result.returncode == 0, f"pipeline import failed: {result.stderr}"
+        assert "ok" in result.stdout
+
+    def test_all_connector_modules_importable(self):
+        """Each connector module in the allowlist must import without error."""
+        import subprocess
+        from pipeline import _ALLOWED_MODULES
+
+        for mod_name in sorted(_ALLOWED_MODULES):
+            result = subprocess.run(
+                [sys.executable, "-c", f"import {mod_name}; print('ok')"],
+                capture_output=True, text=True,
+                cwd=str(_SCRIPTS),
+            )
+            assert result.returncode == 0, (
+                f"{mod_name} failed to import as subprocess: {result.stderr}"
+            )

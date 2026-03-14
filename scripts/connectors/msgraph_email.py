@@ -42,7 +42,7 @@ _MSG_SELECT = ",".join([
 ])
 
 # Body trimming delegated to shared lib
-from scripts.lib.html_processing import trim_body as _trim_body  # noqa: E402
+from lib.html_processing import trim_body as _trim_body  # noqa: E402
 
 
 def _fmt_addr(addr_obj: Optional[dict]) -> str:

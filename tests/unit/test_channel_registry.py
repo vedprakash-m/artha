@@ -19,7 +19,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from scripts.channels.registry import (
+from channels.registry import (
     load_channels_config,
     iter_enabled_channels,
     load_adapter_module,
@@ -29,7 +29,7 @@ from scripts.channels.registry import (
 class TestLoadChannelsConfig:
     def test_returns_safe_default_when_file_missing(self, tmp_path, monkeypatch):
         """No channels.yaml → returns minimal safe default with push disabled."""
-        import scripts.lib.common as common
+        import lib.common as common
         monkeypatch.setattr(common, "CONFIG_DIR", tmp_path)
 
         cfg = load_channels_config()
@@ -39,7 +39,7 @@ class TestLoadChannelsConfig:
     def test_reads_real_config(self, tmp_path, monkeypatch):
         """Reads and parses a valid channels.yaml."""
         import yaml
-        import scripts.lib.common as common
+        import lib.common as common
 
         data = {
             "defaults": {"push_enabled": True},
@@ -105,7 +105,7 @@ class TestLoadAdapterModuleSecurity:
     def test_allows_channels_prefix(self, monkeypatch):
         """Valid scripts/channels/ path is allowed through the security gate."""
         import importlib
-        import scripts.channels.registry as reg
+        import channels.registry as reg
 
         # Mock importlib.import_module to avoid actually loading anything
         mock_module = object()

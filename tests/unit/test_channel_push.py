@@ -31,7 +31,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import scripts.channel_push as cp
+import channel_push as cp
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
@@ -44,7 +44,7 @@ def _isolate_state(tmp_path, monkeypatch):
     monkeypatch.setattr(cp, "_BRIEFINGS_DIR", tmp_path / "briefings")
     monkeypatch.setattr(cp, "_AUDIT_LOG", tmp_path / "state" / "audit.md")
     # Patch CONFIG_DIR in scripts.lib.common (used by run_push health_check)
-    import scripts.lib.common as common
+    import lib.common as common
     monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
     (tmp_path / "state").mkdir()
     (tmp_path / "config").mkdir()
@@ -62,7 +62,7 @@ class TestRunPushNonBlocking:
     def test_returns_zero_on_adapter_exception(self, tmp_path, monkeypatch):
         """Non-blocking: returns 0 even if an adapter raises an exception."""
         import yaml
-        import scripts.lib.common as common
+        import lib.common as common
         cfg = {
             "defaults": {"push_enabled": True},
             "channels": {
@@ -80,7 +80,7 @@ class TestRunPushNonBlocking:
         monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
 
         # Make adapter instantiation raise
-        with patch("scripts.channels.registry.create_adapter_from_config",
+        with patch("channels.registry.create_adapter_from_config",
                    side_effect=RuntimeError("boom")):
             result = cp.run_push()
         assert result == 0
@@ -212,7 +212,7 @@ class TestPushDisabledFlag:
     def test_push_disabled_master_flag(self, tmp_path, monkeypatch):
         """push_enabled: false → silent skip; adapter never called."""
         import yaml
-        import scripts.lib.common as common
+        import lib.common as common
 
         cfg = {
             "defaults": {"push_enabled": False},
@@ -229,7 +229,7 @@ class TestPushDisabledFlag:
         monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
 
         adapter_calls = []
-        with patch("scripts.channels.registry.create_adapter_from_config",
+        with patch("channels.registry.create_adapter_from_config",
                    side_effect=lambda *a, **k: adapter_calls.append(1) or MagicMock()):
             result = cp.run_push()
 
@@ -244,7 +244,7 @@ class TestPiiRedactionCalled:
     def test_pii_redaction_called(self, tmp_path, monkeypatch):
         """pii_guard.filter_text() must be invoked for every recipient send."""
         import yaml
-        import scripts.lib.common as common
+        import lib.common as common
         from unittest.mock import MagicMock, patch
 
         cfg = {
@@ -273,7 +273,7 @@ class TestPiiRedactionCalled:
         mock_adapter = MagicMock()
         mock_adapter.send_message.return_value = True
 
-        with patch("scripts.channels.registry.create_adapter_from_config",
+        with patch("channels.registry.create_adapter_from_config",
                    return_value=mock_adapter):
             with patch.dict("sys.modules", {"pii_guard": MagicMock(filter_text=_fake_filter)}):
                 cp.run_push()

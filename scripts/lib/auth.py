@@ -64,7 +64,8 @@ def load_google_token(token_file: str = ".tokens/gmail-token.json") -> dict:
             f"[auth] google_auth.py not found — run from Artha root directory: {exc}"
         ) from exc
 
-    creds_ok, _ = check_stored_credentials()
+    creds_status = check_stored_credentials()
+    creds_ok = creds_status.get("client_id_stored", False) and creds_status.get("gmail_token_stored", False)
     if not creds_ok:
         raise RuntimeError(
             "[auth] Google credentials not configured. "

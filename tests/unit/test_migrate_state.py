@@ -19,7 +19,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.migrate_state import (  # noqa: E402
+from migrate_state import (  # noqa: E402
     LATEST_SCHEMA_VERSION,
     MIGRATIONS,
     AddField,
@@ -308,20 +308,20 @@ class TestApplyMigrations:
 class TestCheckNeedsMigration:
     def test_returns_true_when_md_files_exist_and_version_behind(self, tmp_path):
         _make_state_file(tmp_path, "finance.md", "last_updated: 2026-03-01\n")
-        with patch("scripts.migrate_state._STATE_DIR", tmp_path):
-            with patch("scripts.migrate_state._read_profile_schema_version", return_value="1.0"):
+        with patch("migrate_state._STATE_DIR", tmp_path):
+            with patch("migrate_state._read_profile_schema_version", return_value="1.0"):
                 needed = check_needs_migration(state_dir=tmp_path)
         assert needed is True
 
     def test_returns_false_when_no_md_files(self, tmp_path):
-        with patch("scripts.migrate_state._read_profile_schema_version", return_value="1.0"):
+        with patch("migrate_state._read_profile_schema_version", return_value="1.0"):
             needed = check_needs_migration(state_dir=tmp_path)
         # Empty directory — no files to migrate
         assert needed is False
 
     def test_returns_false_when_already_current(self, tmp_path):
         _make_state_file(tmp_path, "finance.md", "meta:\n  schema_version: '1.1'\n")
-        with patch("scripts.migrate_state._read_profile_schema_version",
+        with patch("migrate_state._read_profile_schema_version",
                    return_value=LATEST_SCHEMA_VERSION):
             needed = check_needs_migration(state_dir=tmp_path)
         assert needed is False
@@ -338,7 +338,7 @@ class TestMigrationRegistry:
 
     def test_version_chain_is_ordered(self):
         """VERSION_CHAIN must be monotonically increasing."""
-        from scripts.migrate_state import _parse_version_simple
+        from migrate_state import _parse_version_simple
         versions = [tuple(int(x) for x in v.split(".")) for v in _VERSION_CHAIN]
         assert versions == sorted(versions), "Version chain must be in ascending order"
 

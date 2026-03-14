@@ -2262,7 +2262,7 @@ async def process_message(
     )
 
     if _needs_ack:
-        from scripts.channels.base import ChannelMessage as _CM
+        from channels.base import ChannelMessage as _CM
         if msg.command == "/catchup":
             ack_text = "⏳ Running catch-up… this may take a minute or two."
         elif not is_slash_command:
@@ -2346,7 +2346,7 @@ async def process_message(
         pii_found = {}
 
     # 9. Send response — split into chunks if too long for Telegram (4096 limit)
-    from scripts.channels.base import ChannelMessage
+    from channels.base import ChannelMessage
     _TG_MAX = 4000  # leave margin below 4096
 
     chunks = _split_message(filtered, _TG_MAX) if len(filtered) > _TG_MAX else [filtered]
@@ -2449,7 +2449,7 @@ async def run_listener(
     dry_run: bool = False,
 ) -> None:
     """Main asyncio loop. Polls all channels concurrently."""
-    from scripts.channels.registry import create_adapter_from_config
+    from channels.registry import create_adapter_from_config
 
     # Initialize shared state
     deduplicator = _MessageDeduplicator()
@@ -2556,7 +2556,7 @@ async def run_listener(
 
 def health_check_all(channel_names: list[str], config: dict[str, Any]) -> bool:
     """Run health_check() on all specified channels. Returns True if all healthy."""
-    from scripts.channels.registry import create_adapter_from_config
+    from channels.registry import create_adapter_from_config
 
     all_healthy = True
     for ch in channel_names:
@@ -2672,7 +2672,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from scripts.channels.registry import load_channels_config
+    from channels.registry import load_channels_config
     config = load_channels_config()
 
     # Health check mode

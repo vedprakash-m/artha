@@ -75,7 +75,7 @@ def _extract_body(payload: dict) -> str:
 
 
 # Body trimming delegated to shared lib
-from scripts.lib.html_processing import trim_body as _trim_body  # noqa: E402
+from lib.html_processing import trim_body as _trim_body  # noqa: E402
 
 
 def _parse_message(msg: dict) -> dict:
@@ -191,8 +191,8 @@ def health_check(auth_context: Dict[str, Any]) -> bool:
     """Verify Gmail auth and connectivity."""
     try:
         from google_auth import check_stored_credentials  # type: ignore[import]
-        ok, _ = check_stored_credentials()
-        return ok
+        status = check_stored_credentials()
+        return status.get("client_id_stored", False) and status.get("gmail_token_stored", False)
     except Exception as exc:
         print(f"[google_email] health_check failed: {exc}", file=sys.stderr)
         return False

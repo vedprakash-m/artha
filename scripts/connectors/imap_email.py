@@ -41,7 +41,7 @@ _FOLDER_MAP: dict[str, str] = {
 }
 
 # Footer markers delegated to shared lib
-from scripts.lib.html_processing import SIMPLE_FOOTER_MARKERS as _FOOTER_MARKERS  # noqa: E402
+from lib.html_processing import SIMPLE_FOOTER_MARKERS as _FOOTER_MARKERS  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

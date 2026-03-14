@@ -58,7 +58,7 @@ try:
 except ImportError:  # pragma: no cover
     _yaml = None  # type: ignore[assignment]
 
-from scripts.foundation import (
+from foundation import (
     _config,
     SENSITIVE_FILES,
     log, die,

@@ -9,8 +9,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Import vault logic
-import scripts.vault as vault
-import scripts.foundation as foundation
+import vault as vault
+import foundation as foundation
 
 @pytest.fixture
 def mock_vault_env(temp_artha_dir, monkeypatch):
@@ -49,7 +49,7 @@ def mock_vault_env(temp_artha_dir, monkeypatch):
 def test_vault_status_inactive(mock_vault_env, capsys):
     """Verify status report when vault is inactive (encrypted)."""
     mock_run = MagicMock(stdout="age v1.1.1", stderr="", returncode=0)
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
          patch("subprocess.run", return_value=mock_run):
         vault.do_status()
@@ -59,9 +59,9 @@ def test_vault_status_inactive(mock_vault_env, capsys):
 
 def test_vault_health_ok(mock_vault_env, capsys):
     """Verify health check passes when everything is set up."""
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.get_public_key", return_value="age1mockpublickey"), \
+         patch("vault.get_public_key", return_value="age1mockpublickey"), \
          patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(stdout="age v1.1.1", returncode=0)
         
@@ -85,9 +85,9 @@ def test_vault_decrypt_flow(mock_vault_env, capsys):
         outfile.write_text("---\nschema_version: 1.0\n---\n# Decrypted Data")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=side_effect_decrypt) as mock_decrypt:
+         patch("vault.age_decrypt", side_effect=side_effect_decrypt) as mock_decrypt:
         
         vault.do_decrypt()
         
@@ -110,9 +110,9 @@ def test_vault_encrypt_flow(mock_vault_env, capsys):
         outfile.write_text("encrypted-data")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
-         patch("scripts.vault.get_public_key", return_value="age1mock"), \
-         patch("scripts.vault.age_encrypt", side_effect=side_effect_encrypt) as mock_encrypt:
+    with patch("vault.check_age_installed", return_value=True), \
+         patch("vault.get_public_key", return_value="age1mock"), \
+         patch("vault.age_encrypt", side_effect=side_effect_encrypt) as mock_encrypt:
         
         vault.do_encrypt()
         
@@ -138,9 +138,9 @@ def test_stale_lock_handling(mock_vault_env, capsys):
         outfile.write_text("---\nschema_version: 1.0\n---\n# Decrypted Data")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=side_effect_decrypt):
+         patch("vault.age_decrypt", side_effect=side_effect_decrypt):
         
         # do_decrypt should clear stale lock and proceed
         vault.do_decrypt()
@@ -161,9 +161,9 @@ def test_integrity_write_guard(mock_vault_env, capsys):
     # Remove audit.md created by fixture to prevent age_encrypt being called for it
     (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
     
-    with patch("scripts.vault.check_age_installed", return_value=True), \
-         patch("scripts.vault.get_public_key", return_value="age1mock"), \
-         patch("scripts.vault.age_encrypt", return_value=True):
+    with patch("vault.check_age_installed", return_value=True), \
+         patch("vault.get_public_key", return_value="age1mock"), \
+         patch("vault.age_encrypt", return_value=True):
         
         # do_encrypt should skip this file and eventually exit non-zero due to errors
         with pytest.raises(SystemExit):
@@ -193,9 +193,9 @@ def test_decrypt_empty_output_restores_backup(mock_vault_env, capsys):
         outfile.write_text("")  # empty output — simulates corrupt decrypt
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=empty_decrypt):
+         patch("vault.age_decrypt", side_effect=empty_decrypt):
         with pytest.raises(SystemExit):
             vault.do_decrypt()
 
@@ -218,9 +218,9 @@ def test_decrypt_invalid_yaml_restores_backup(mock_vault_env, capsys):
         outfile.write_text("NO YAML FRONTMATTER HERE\nsome garbage")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=bad_yaml_decrypt):
+         patch("vault.age_decrypt", side_effect=bad_yaml_decrypt):
         with pytest.raises(SystemExit):
             vault.do_decrypt()
 
@@ -237,9 +237,9 @@ def test_decrypt_failure_restores_backup(mock_vault_env, capsys):
     age_file.write_text("encrypted-data")
     plain_file.write_text("---\nprevious: good data\n---\n# Prior Content")
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", return_value=False):
+         patch("vault.age_decrypt", return_value=False):
         with pytest.raises(SystemExit):
             vault.do_decrypt()
 
@@ -256,9 +256,9 @@ def test_decrypt_failure_no_backup_logs_restore_failed(mock_vault_env, capsys):
     age_file.write_text("encrypted-data")
     # No plain_file — first decrypt ever, no .bak will be created
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", return_value=False):
+         patch("vault.age_decrypt", return_value=False):
         with pytest.raises(SystemExit):
             vault.do_decrypt()
 
@@ -284,9 +284,9 @@ def test_decrypt_bak_creation_is_atomic(mock_vault_env, tmp_path):
         outfile.write_text("---\nnew: data\n---\n# New")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=good_decrypt):
+         patch("vault.age_decrypt", side_effect=good_decrypt):
         vault.do_decrypt()
 
     # .bak.tmp should be gone (replaced atomically by .bak, then .bak cleaned on success)
@@ -310,9 +310,9 @@ def test_encrypt_cleans_up_bak_on_success(mock_vault_env, capsys):
         outfile.write_text("encrypted")
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
-         patch("scripts.vault.get_public_key", return_value="age1mock"), \
-         patch("scripts.vault.age_encrypt", side_effect=good_encrypt):
+    with patch("vault.check_age_installed", return_value=True), \
+         patch("vault.get_public_key", return_value="age1mock"), \
+         patch("vault.age_encrypt", side_effect=good_encrypt):
         vault.do_encrypt()
 
     assert not bak_file.exists()
@@ -333,9 +333,9 @@ def test_restore_bak_rejects_corrupt_backup(mock_vault_env, capsys):
         outfile.write_text("")  # empty
         return True
 
-    with patch("scripts.vault.check_age_installed", return_value=True), \
+    with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
-         patch("scripts.vault.age_decrypt", side_effect=bad_decrypt):
+         patch("vault.age_decrypt", side_effect=bad_decrypt):
         with pytest.raises(SystemExit):
             vault.do_decrypt()
 
@@ -365,9 +365,9 @@ class TestEncryptTriggersBackup:
             outfile.write_bytes(b"encrypted" + b"x" * 400)
             return True
 
-        with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("scripts.vault.get_public_key", return_value="age1mock"), \
-             patch("scripts.vault.age_encrypt", side_effect=good_encrypt):
+        with patch("vault.check_age_installed", return_value=True), \
+             patch("vault.get_public_key", return_value="age1mock"), \
+             patch("vault.age_encrypt", side_effect=good_encrypt):
             vault.do_encrypt()
 
         zip_files = list(foundation._config["BACKUP_DIR"].rglob("*.zip"))
@@ -382,11 +382,11 @@ class TestEncryptTriggersBackup:
         (mock_vault_env / ".artha-decrypted").touch()
         (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
 
-        with patch("scripts.vault.check_age_installed", return_value=True), \
-             patch("scripts.vault.get_public_key", return_value="age1mock"), \
-             patch("scripts.vault.age_encrypt", return_value=False), \
-             patch("scripts.backup.backup_snapshot") as mock_snapshot, \
-             patch("scripts.backup.load_backup_registry", return_value=[]):
+        with patch("vault.check_age_installed", return_value=True), \
+             patch("vault.get_public_key", return_value="age1mock"), \
+             patch("vault.age_encrypt", return_value=False), \
+             patch("backup.backup_snapshot") as mock_snapshot, \
+             patch("backup.load_backup_registry", return_value=[]):
             with pytest.raises(SystemExit):
                 vault.do_encrypt()
             mock_snapshot.assert_not_called()

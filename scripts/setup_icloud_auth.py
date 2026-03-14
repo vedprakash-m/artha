@@ -44,7 +44,6 @@ import getpass
 import imaplib
 import os as _os
 import subprocess
-import sys
 from typing import Optional
 
 # ---------------------------------------------------------------------------

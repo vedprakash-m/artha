@@ -24,7 +24,7 @@ _ARTHA_ROOT = Path(__file__).resolve().parents[2]
 if str(_ARTHA_ROOT) not in sys.path:
     sys.path.insert(0, str(_ARTHA_ROOT))
 
-import scripts.profile_loader as pl
+import profile_loader as pl
 
 
 # ---------------------------------------------------------------------------

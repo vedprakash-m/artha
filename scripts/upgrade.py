@@ -233,7 +233,7 @@ def upgrade(*, check_only: bool = False, force: bool = False, verbose: bool = Fa
 
     # Run state schema migrations if any are pending
     try:
-        from scripts.migrate_state import apply_migrations, check_needs_migration  # noqa: PLC0415
+        from migrate_state import apply_migrations, check_needs_migration  # noqa: PLC0415
         if check_needs_migration():
             print("[upgrade] State schema migration needed — applying ...")
             mig_results = apply_migrations(verbose=False)
