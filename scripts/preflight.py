@@ -73,6 +73,22 @@ WORKIQ_VERSION_PIN = "0.x"   # pinned version constraint, NOT @latest
 _SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
 
+def _rel(path: str) -> str:
+    """Return path relative to ARTHA_DIR (uses $ARTHA_DIR prefix for display).
+
+    Avoids leaking username / absolute directory structure in console output.
+    Falls back to the basename if the path isn't under ARTHA_DIR.
+    """
+    try:
+        rel = os.path.relpath(path, ARTHA_DIR)
+        # relpath on a different drive (Windows) may return an absolute path
+        if rel.startswith("..") or os.path.isabs(rel):
+            return os.path.basename(path)
+        return "$ARTHA_DIR/" + rel.replace(os.sep, "/")
+    except ValueError:
+        return os.path.basename(path)
+
+
 # ---------------------------------------------------------------------------
 # Check result record
 # ---------------------------------------------------------------------------
@@ -90,6 +106,31 @@ class CheckResult:
 # ---------------------------------------------------------------------------
 # Individual health checks
 # ---------------------------------------------------------------------------
+
+def check_keyring_backend() -> CheckResult:
+    """P0: Verify keyring has a working backend before any credential operations.
+
+    Fails early with an actionable message on headless Linux where no secret
+    service is available, rather than letting vault.py fail silently later.
+    """
+    try:
+        import keyring
+        # A None result is fine (key not stored yet) — what we detect is an
+        # outright backend failure raised as an exception.
+        keyring.get_password("artha-keyring-probe", "preflight")
+        return CheckResult("keyring backend", "P0", True, "keyring backend functional ✓")
+    except Exception as exc:
+        short = str(exc).splitlines()[0][:120]
+        return CheckResult(
+            "keyring backend", "P0", False,
+            f"keyring backend unavailable: {short}",
+            fix_hint=(
+                "pip install secretstorage  (GNOME/KDE desktop) "
+                "or  pip install keyrings.alt  (headless/server). "
+                "See docs/troubleshooting.md#no-recommended-backend-was-available-linux"
+            ),
+        )
+
 
 def check_vault_health() -> CheckResult:
     """Verify age tool installed, credential store key present, state dir writable."""
@@ -147,7 +188,7 @@ def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
     if not os.path.exists(token_path):
         return CheckResult(
             check_name, "P0", False,
-            f"Token file missing: {token_path}",
+            f"Token file missing: {_rel(token_path)}",
             fix_hint="Run: python scripts/setup_google_oauth.py",
         )
 
@@ -178,7 +219,7 @@ def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
         if perms != "600":
             os.chmod(token_path, 0o600)  # auto-fix permissions
 
-    return CheckResult(check_name, "P0", True, f"Token file valid ✓ ({token_path})")
+    return CheckResult(check_name, "P0", True, f"Token file valid ✓ ({_rel(token_path)})")
 
 
 def check_token_freshness(service_name: str, token_filename: str) -> CheckResult:
@@ -241,7 +282,7 @@ def check_script_health(
     if not os.path.exists(script_path):
         return CheckResult(
             check_name, severity, False,
-            f"Script not found: {script_path}",
+            f"Script not found: {_rel(script_path)}",
             fix_hint=f"Restore {script_name} from source control",
         )
 
@@ -337,20 +378,20 @@ def check_state_directory() -> CheckResult:
     if not os.path.isdir(STATE_DIR):
         return CheckResult(
             "state directory", "P0", False,
-            f"State directory missing: {STATE_DIR}",
-            fix_hint=f"Create the directory: {STATE_DIR}",
+            f"State directory missing: {_rel(STATE_DIR)}",
+            fix_hint="Run: python scripts/preflight.py --fix",
         )
     test_path = os.path.join(STATE_DIR, ".preflight_write_test")
     try:
         with open(test_path, "w") as f:
             f.write("ok")
         os.remove(test_path)
-        return CheckResult("state directory", "P0", True, f"{STATE_DIR} writable ✓")
+        return CheckResult("state directory", "P0", True, f"{_rel(STATE_DIR)} writable ✓")
     except OSError as exc:
         return CheckResult(
             "state directory", "P0", False,
             f"State directory not writable: {exc}",
-            fix_hint=f"Check OneDrive sync status and permissions on {STATE_DIR}",
+            fix_hint=f"Check OneDrive sync status and permissions on {_rel(STATE_DIR)}",
         )
 
 
@@ -397,14 +438,30 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     )
 
 
-def check_open_items() -> CheckResult:
-    """P1: Verify open_items.md exists and is readable."""
+def check_open_items(auto_fix: bool = False) -> CheckResult:
+    """P1: Verify open_items.md exists and is readable. Auto-creates from template with --fix."""
     path = os.path.join(STATE_DIR, "open_items.md")
     if not os.path.exists(path):
+        template_path = os.path.join(STATE_DIR, "templates", "open_items.md")
+        if auto_fix and os.path.exists(template_path):
+            try:
+                import shutil
+                shutil.copy2(template_path, path)
+                return CheckResult(
+                    "open_items.md", "P1", True,
+                    "Created state/open_items.md from template ✓",
+                    auto_fixed=True,
+                )
+            except OSError as exc:
+                return CheckResult(
+                    "open_items.md", "P1", False,
+                    f"Could not create open_items.md: {exc}",
+                    fix_hint="Create state/open_items.md manually",
+                )
         return CheckResult(
             "open_items.md", "P1", False,
             "open_items.md not found — action tracking unavailable",
-            fix_hint="Create state/open_items.md (see T-1A.11.1 template)",
+            fix_hint="Run: python scripts/preflight.py --fix  (auto-creates from template)",
         )
     try:
         with open(path) as f:
@@ -422,7 +479,7 @@ def check_briefings_directory() -> CheckResult:
             os.makedirs(briefings_dir, exist_ok=True)
             return CheckResult(
                 "briefings directory", "P1", True,
-                f"Created {briefings_dir} ✓",
+                f"Created {_rel(briefings_dir)} ✓",
                 auto_fixed=True,
             )
         except OSError as exc:
@@ -435,7 +492,7 @@ def check_briefings_directory() -> CheckResult:
         with open(test_path, "w") as f:
             f.write("ok")
         os.remove(test_path)
-        return CheckResult("briefings directory", "P1", True, f"{briefings_dir} writable ✓")
+        return CheckResult("briefings directory", "P1", True, f"{_rel(briefings_dir)} writable ✓")
     except OSError as exc:
         return CheckResult("briefings directory", "P1", False, f"briefings/ not writable: {exc}")
 
@@ -765,6 +822,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks: list[CheckResult] = []
 
     # ── P0 — Hard blocks ──────────────────────────────────────────────────
+    checks.append(check_keyring_backend())
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
@@ -796,7 +854,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     # ── P1 — Warnings only ────────────────────────────────────────────────
     checks.append(check_token_freshness("Gmail", "gmail-oauth-token.json"))
     checks.append(check_token_freshness("Calendar", "gcal-oauth-token.json"))
-    checks.append(check_open_items())
+    checks.append(check_open_items(auto_fix=auto_fix))
     checks.append(check_briefings_directory())
     checks.append(check_msgraph_token())  # T-1B.6.1: non-blocking, To Do sync optional
 

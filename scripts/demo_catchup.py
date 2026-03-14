@@ -144,7 +144,7 @@ def render_briefing(emails: list[dict]) -> str:
         "4 ACTION ITEMS  |  2 UPCOMING DATES  |  0 ALERTS",
         "",
         "To connect your real accounts: python scripts/setup_google_oauth.py",
-        "To populate your profile:       python scripts/_bootstrap.py (or /bootstrap in Artha)",
+        "To populate your profile:       Open your AI CLI and type /bootstrap",
     ]
     return "\n".join(lines)
 
