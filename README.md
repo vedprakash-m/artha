@@ -213,7 +213,9 @@ scripts/
   preflight.py            ← Pre-catch-up health gate
   pii_guard.py            ← PII pre-screening for outbound AI queries
   safe_cli.py             ← PII-safe AI CLI wrapper
-  vault.py                ← age encryption for sensitive state files
+  foundation.py           ← Shared constants, crypto primitives, _config dict
+  vault.py                ← Session lifecycle: age encrypt/decrypt/lock/status
+  backup.py               ← GFS archive engine: snapshot/restore/validate/CLI
   profile_loader.py       ← Profile access API (all scripts use this)
   skill_runner.py         ← Autonomous background skill scheduler
   todo_sync.py            ← Microsoft To Do synchronization
@@ -342,41 +344,67 @@ config/user_profile.yaml.age  ← config: encrypted on-the-fly
 
 ```bash
 # Show ZIP catalog, tier counts, and last validation date
-python scripts/vault.py backup-status
+python scripts/backup.py status
 
 # Validate the newest backup ZIP (decrypt all files + 5 integrity checks each)
-python scripts/vault.py validate-backup
+python scripts/backup.py validate
 
 # Validate a single domain within the newest ZIP
-python scripts/vault.py validate-backup --domain finance
+python scripts/backup.py validate --domain finance
 
 # Validate a specific snapshot date
-python scripts/vault.py validate-backup --date 2026-02-28
+python scripts/backup.py validate --date 2026-02-28
 
 # Preview a full restore without writing anything
-python scripts/vault.py restore --dry-run
+python scripts/backup.py restore --dry-run
 
 # Restore all files from a specific snapshot (catalog-based)
-python scripts/vault.py restore --date 2026-03-14
+python scripts/backup.py restore --date 2026-03-14
 
 # Restore a single domain only
-python scripts/vault.py restore --domain finance
+python scripts/backup.py restore --domain finance
+
+# Restore state files only, skip config (safe on an already-configured system)
+python scripts/backup.py restore --data-only
 
 # Cold-start install on a new machine from an explicit ZIP path
-python scripts/vault.py install /path/to/2026-03-14.zip
-python scripts/vault.py install /path/to/2026-03-14.zip --dry-run
+python scripts/backup.py install /path/to/2026-03-14.zip
+python scripts/backup.py install /path/to/2026-03-14.zip --dry-run
+python scripts/backup.py install /path/to/2026-03-14.zip --data-only
 ```
 
-### Fresh-Install Rebuild
+> **Note:** `vault.py` forwards backup commands for backward compatibility:
+> `python scripts/vault.py backup-status` → runs `backup.py status`, etc.
+
+### Fresh-Install Rebuild (Cold-Start)
 
 A backup ZIP is fully self-sufficient for rebuilding Artha from scratch:
 
-1. Install Artha and `age` on the new machine
-2. Copy or transfer the ZIP file (e.g. from OneDrive or a USB drive)
-3. Restore your age private key to the macOS Keychain / Windows Credential Manager
-4. Run `vault.py install /path/to/YYYY-MM-DD.zip --dry-run` to preview, then without `--dry-run` to restore
+1. Clone or copy the Artha directory to the new machine
+2. Install `age`: `brew install age` (macOS) or `winget install FiloSottile.age` (Windows)
+3. Create the venv: `python scripts/preflight.py` (auto-creates venv on first run)
+4. Import your private key:
+   ```bash
+   python scripts/backup.py import-key
+   # Paste your AGE-SECRET-KEY-... and press Ctrl-D
+   ```
+5. Check readiness: `python scripts/backup.py preflight`
+6. Restore: `python scripts/backup.py install /path/to/YYYY-MM-DD.zip`
 
 All config files and state files are restored to their original locations in a single command. No catalog access needed.
+
+### Key Backup (do this NOW, before you need it)
+
+Your age private key is the **single point of failure**. Without it, every backup ZIP is unrecoverable. Export and store it securely:
+
+```bash
+python scripts/backup.py export-key
+```
+
+Store the output in:
+- Your password manager (1Password, Bitwarden, etc.)
+- A printed copy in a fire safe
+- **NOT** in email, cloud notes, or any synced file
 
 ### Restore Validation Checks
 
