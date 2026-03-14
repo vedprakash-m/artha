@@ -96,6 +96,7 @@ PII_SCAN_EXEMPT = {
     "tests/integration/test_catch_up_e2e.py",
     "tests/pii_test_data.txt",
     "specs/supercharge-reloaded.md",
+    "archive/bkp-rst.md",          # implementation plan — AGE-SECRET-KEY- appears in code examples
     ".githooks/pre-commit",
 }
 
