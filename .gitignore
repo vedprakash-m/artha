@@ -9,6 +9,12 @@ config/settings.md
 config/routing.yaml
 # Generated Identity block - personal data
 config/Artha.identity.md
+# Channel bridge live config — contains recipient IDs (PII)
+config/channels.yaml
+# Channel push artifacts (ephemeral, machine-local)
+state/.channel_push_marker_*.json
+state/.channel_listener.pid
+state/.pending_pushes/
 # User-specific prompt extensions
 config/prompt-overlays/*.md
 # Keep the README

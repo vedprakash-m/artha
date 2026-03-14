@@ -147,9 +147,18 @@ features:
   decision_intelligence:
     spec: "PRD §14"
     status: not_started
-  whatsapp_bridge:
-    spec: "PRD F1.7"
-    status: not_started
+  channel_bridge:
+    spec: "PRD F1.7, specs/conversational-bridge.md"
+    status: implemented
+    note: "Layer 1 push hook + Layer 2 listener + Telegram adapter"
+  channel_push:
+    spec: "conversational-bridge.md §7"
+    status: implemented
+    note: "scripts/channel_push.py — Step 20 of catch-up workflow"
+  channel_listener:
+    spec: "conversational-bridge.md §8"
+    status: implemented
+    note: "scripts/channel_listener.py — asyncio interactive daemon"
   apple_health_import:
     spec: "PRD F6.9"
     status: partial

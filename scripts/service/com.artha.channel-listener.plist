@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.artha.channel-listener.plist — macOS LaunchAgent for the Artha
+  Channel Listener daemon (Layer 2).
+
+  setup_channel.py --install-service will copy this to:
+    ~/Library/LaunchAgents/com.artha.channel-listener.plist
+
+  After install:
+    launchctl load ~/Library/LaunchAgents/com.artha.channel-listener.plist
+    launchctl start com.artha.channel-listener
+
+  Note: {{PYTHON_EXE}} and {{ARTHA_ROOT}} are replaced by setup_channel.py.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.artha.channel-listener</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{PYTHON_EXE}}</string>
+    <string>{{ARTHA_ROOT}}/scripts/channel_listener.py</string>
+    <string>--channel</string>
+    <string>telegram</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{ARTHA_ROOT}}</string>
+
+  <!-- Run at load and after any crash -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <!-- Restart on crash; stop cleanly on exit 0 -->
+    <key>Crashed</key>
+    <true/>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <!-- 30-second restart backoff after crash -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{ARTHA_ROOT}}/tmp/channel-listener.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{ARTHA_ROOT}}/tmp/channel-listener.err</string>
+
+  <!-- Only run when the user is logged in (not on headless servers) -->
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+
+  <!--
+    Environment variables: ALL credentials must be in Keychain, not here.
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>ARTHA_LOG_LEVEL</key>
+      <string>INFO</string>
+    </dict>
+  -->
+</dict>
+</plist>

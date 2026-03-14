@@ -6,7 +6,9 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v1.7 | 2026-03 | ACB v2.1 UX: Multi-LLM Q&A, HCI command redesign, write commands, thinking ack, structured output |
 | v1.6 | 2026-03 | Backup & Restore UX: `backup.py` CLI output format, session backup confirmation, cold-start workflow, key management UX, §14.5 |
+| v1.6 | 2026-03 | Channel Bridge UX: push format, interactive commands, scope-filtered output |
 | v1.5 | 2026-03 | WorkIQ work calendar UX, merged calendar view, Teams join actions |
 | v1.4 | 2026-03 | Intelligence amplification UX (29 enhancements), `/diff`, weekend planner |
 | v1.3 | 2026-02 | Supercharge UX: flash briefing, coaching engine, bootstrap, dashboard |
@@ -1223,7 +1225,195 @@ When all criteria met: briefing footer "🎓 Autonomy Level 2 eligible — use `
 
 Triggered by: 2+ missed critical alerts, financial error >$100, immigration deadline missed, or user-initiated. Immediate notification with explanation. Affected action types listed. Recovery path shown with specific criteria. User can also demote manually.
 
-## 20. UX Gaps & Design Decisions
+## 20. Channel Bridge — Mobile Output Design
+
+### 20.1 Push Message Design (Layer 1)
+
+Post-catch-up push uses the **flash briefing** format truncated to `max_push_length` (default 500 chars). Two flavors:
+
+**Full scope (`full`):**
+```
+ARTHA · Friday, Mar 13
+
+3 alerts today.
+🔴 EAD renewal deadline in 28 days — start I-765 prep
+🟡 Arjun: 2 missing Canvas assignments (AP Physics, AP CS)
+🟢 PSE bill paid ✓ | Fidelity 401k rebalance window open
+
+/status · /tasks · /alerts
+```
+
+**Family scope (`family`):**
+```
+ARTHA · Friday, Mar 13
+
+Family update
+📅 Ananya's orchestra concert Thursday 6 PM
+📚 Arjun: 2 assignments due this week
+🏠 PSE bill paid ✓
+
+/tasks for action items
+```
+
+**Design rules:**
+- No immigration data, no financial details in `family` scope — scope filter is a content gate, not a redaction pass
+- Staleness is implicit — push fires only during catch-up, so data is always fresh
+- If channel API unreachable: message queued in `state/.pending_pushes/`, delivered next run
+
+### 20.2 HCI Command Design (Layer 2) *(v1.7)*
+
+The command interface is designed for **one-thumb phone operation with minimal cognitive load**. Every command has multiple entry paths — the user never needs to remember exact syntax.
+
+**Command normaliser:** 45+ aliases mapped to canonical commands. Longest-match-first strategy handles multi-word aliases (`items add`, `catch up`) before single-word fallback.
+
+| Shortcut | Aliases | Response | Source |
+|----------|---------|----------|--------|
+| `s` | `status`, `/status` | System health + alerts + goal pulse | `health-check.md`, `dashboard.md` |
+| `a` | `alerts`, `/alerts` | Active alerts by severity | Latest briefing, `health-check.md` |
+| `t` | `tasks`, `items`, `/tasks` | Open items (OI-NNN, ≤10 items) | `open_items.md` |
+| `q` | `quick`, `/quick` | Tasks ≤5 min (phone-ready) | `open_items.md` |
+| `d` | `domain`, `/domain` | Domain list (no args) or domain deep-read | State files |
+| `d <name>` | `domain <name>` | Single domain detail; encrypted domains route through LLM | State file or LLM |
+| `g` | `goals`, `goal`, `/goals` | Goal scorecard | `goals.md` |
+| `diff` | `/diff`, `diff 7d` | State changes since last catch-up (or custom period) | State file mtimes |
+| `dash` | `dashboard`, `db` | HTML dashboard | `dashboard.md` |
+| `?` | `help`, `h`, `/help` | Command list (READ/WRITE/OTHER sections) | Static |
+| `catchup` | `catch-up`, `catch up`, `briefing` | Full catch-up pipeline | Pipeline |
+
+**Write commands** *(v1.7)*:
+
+| Command | Example | Action |
+|---------|---------|--------|
+| `items add` | `items add Call estate attorney P0 estate 2026-03-20` | Parses description, priority, domain, deadline; appends OI-NNN |
+| `add item` | `add item Buy groceries` | Alternate word order — same result |
+| `done` | `done OI-005` or `done 5` | Marks item as done, adds `date_resolved` and `resolution` |
+
+**Design principles:**
+- **Slash optional** — `status` and `/status` are identical. Users coming from Telegram bot culture can use slashes; others don't need to.
+- **Hyphens optional** — `catchup`, `catch-up`, `catch up` all work.
+- **Case insensitive** — all input lowercased before matching.
+- **Single-letter shortcuts** — `s`, `a`, `t`, `q`, `d`, `g`, `?` for the most common commands. Designed for speed on a phone keyboard.
+- **Unknown input → LLM Q&A** — anything not matching a command alias is routed to the multi-LLM Q&A pipeline (Layer 3). No "Unknown command" dead ends for conversational questions.
+
+### 20.3 Multi-LLM Q&A UX (Layer 3) *(v1.7)*
+
+Free-form questions get the full power of Artha's multi-LLM stack from a Telegram chat.
+
+**Interaction flow:**
+```
+User: which credit card should I use for grocery shopping?
+  │
+  ├─ Artha sends: "💭 Thinking…" (immediate ack)
+  ├─ Assembles context: prompts/finance.md + state/finance.md.age (decrypted) + open_items
+  ├─ Calls Claude CLI (~16.5s) with workspace context
+  ├─ Vault auto-relocked
+  ├─ Deletes "💭 Thinking…" message
+  └─ Sends structured answer:
+       1. Chase Freedom Flex — 5% grocery (Q1 rotating)
+       2. Amex Gold — 4x points on groceries (always)
+       • Use Freedom Flex this quarter, Amex Gold otherwise
+```
+
+**Ensemble mode:**
+```
+User: aa what are the best 529 plan options for college savings?
+  │
+  ├─ Artha sends: "💭 Thinking…" (immediate ack)
+  ├─ All 3 CLIs called in parallel (~40s total)
+  ├─ Responses consolidated via Claude Haiku
+  ├─ Deletes "💭 Thinking…" message
+  └─ Sends consolidated answer
+```
+
+**Structured output rules:**
+- Numbered lists (1. 2. 3.) for ranked/sequential items
+- Unicode bullets (•) for unordered items
+- One-line direct answer first, then supporting detail
+- No Markdown (`**`, `##`, `` ` ``) — plain text with Unicode only
+- Blank lines between sections
+
+**Thinking ack UX:**
+- "💭 Thinking…" sent immediately via `send_message_get_id()` for all long-running commands (catch-up, domain deep-dive, LLM Q&A, diff, goals)
+- Deleted via `delete_message()` after real response arrives
+- If deletion fails (API error), ack remains — harmless
+- Provides instant feedback that Artha received the message and is working
+
+**Response format:**
+```
+ARTHA Status · Friday, Mar 13
+
+3 alerts · 7 open tasks · Goals: 4/5 on track
+
+🔴 EAD renewal in 28 days
+🟡 Arjun: 2 missing assignments
+🔵 PSE bill due March 20 ($247)
+
+_Last updated: 2h 14m ago_
+```
+
+**Staleness indicator:** Every response ends with `_Last updated: {age} ago_`. If data is >12h old, prefixed with ⚠️.
+
+**Domain list response** *(v1.7)*:
+```
+ARTHA Domains
+
+📖 Direct read:
+  • calendar • kids • goals • shopping • social
+  • learning • digital • boundary • comms
+
+🤖 AI-routed (encrypted):
+  • finance • health • immigration
+  • estate • insurance • vehicle
+
+Use: d <name>
+```
+
+**Message splitting:** Responses exceeding Telegram's 4096-char limit are split at paragraph boundaries. Each chunk sent as a separate message with minimal delay.
+
+### 20.4 Help Response Design *(v1.7)*
+
+Help output is organized into three sections for quick scanning:
+
+```
+ARTHA Commands
+
+📚 READ
+  s  status    a  alerts    t  tasks
+  q  quick     d  domain    g  goals
+  diff         dash
+  catchup
+
+✏️ WRITE
+  items add <desc> [P0/P1/P2] [domain] [deadline]
+  done <OI-NNN>
+
+💡 OTHER
+  aa <question>   → ask all LLMs
+  any text        → AI-powered Q&A
+  ?               → this help
+```
+
+### 20.5 Service Management UX
+
+```bash
+# Set up Telegram and start using it
+python scripts/setup_channel.py --channel telegram
+
+# Install as background service (Layer 2+3)
+python scripts/setup_channel.py --install-service
+
+# Change designated listener to another machine
+python scripts/setup_channel.py --set-listener-host
+```
+
+Service is installed as a background process that restarts on failure:
+- **Windows:** VBScript at Startup folder + Task Scheduler task (runs at login, RestartOnFailure)
+- **macOS:** launchd plist (KeepAlive: true)
+- **Linux:** systemd user unit (Restart=on-failure)
+
+---
+
+## 21. UX Gaps & Design Decisions
 
 ### 20.1 Identified Gaps (Resolved in This Spec)
 

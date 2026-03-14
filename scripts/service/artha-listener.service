@@ -1,0 +1,41 @@
+[Unit]
+Description=Artha Channel Listener (Layer 2 interactive daemon)
+Documentation=https://github.com/vedprakash-m/artha/blob/main/docs/channels.md
+# Start after network is available
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Run as the owning user (--user service, installed via systemctl --user)
+Type=simple
+
+ExecStart={{PYTHON_EXE}} {{ARTHA_ROOT}}/scripts/channel_listener.py
+WorkingDirectory={{ARTHA_ROOT}}
+
+# Restart on crash; do NOT restart on clean exit 0
+Restart=on-failure
+RestartSec=30
+
+# Logs go to journald: journalctl --user -u artha-channel-listener -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=artha-channel-listener
+
+# Hard limits
+TimeoutStartSec=30
+TimeoutStopSec=15
+
+# Security
+# No new privileges — listener does not need elevated access
+NoNewPrivileges=true
+# Read-only /etc to prevent accidental modification
+ProtectSystem=strict
+# Allow writing to the state dir and tmp
+ReadWritePaths={{ARTHA_ROOT}}/state {{ARTHA_ROOT}}/tmp {{ARTHA_ROOT}}/config
+
+# Environment: ALL credentials must be in keyring, not here
+# Environment=ARTHA_LOG_LEVEL=INFO
+
+[Install]
+# Enable for the current user session
+WantedBy=default.target

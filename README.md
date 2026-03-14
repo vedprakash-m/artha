@@ -24,6 +24,7 @@ Instead of starting every AI conversation from scratch, Artha:
 - **Encrypts sensitive state** (health, finance, immigration) with `age` encryption at rest
 - **Runs autonomous skills** (property tax, weather, vehicle recalls, visa bulletin, immigration status) on a schedule
 - **Tracks open action items** and syncs them to Microsoft To Do
+- **Telegram conversational bridge** — always-on mobile interface with 45+ command aliases, multi-LLM Q&A (Claude → Gemini → Copilot failover), ensemble mode, and write commands — all from your phone
 - **Works cross-platform** — macOS, Windows, Linux — with a pure-Python implementation
 
 ---
@@ -189,6 +190,39 @@ The profile is validated against `config/user_profile.schema.json` on every load
 
 ---
 
+## Telegram Conversational Bridge
+
+Artha includes an **always-on Telegram bot** that lets you interact with your personal intelligence system from any device — no terminal required.
+
+### What You Can Do
+
+| Category | Examples |
+|----------|---------|
+| **Read commands** | `s` (status), `a` (alerts), `t` (tasks), `d kids` (domain), `g` (goals), `diff` (changes) |
+| **AI Q&A** | Any free-form question — routed through Claude → Gemini → Copilot failover |
+| **Ensemble** | `aa <question>` — asks all LLMs in parallel, consolidates via Haiku |
+| **Write** | `items add Call attorney P0 estate 2026-03-20` · `done OI-005` |
+| **Catch-up** | `catchup` — full pipeline from your phone |
+
+45+ command aliases with single-letter shortcuts. Slash optional. Designed for one-thumb phone use.
+
+### Setup
+
+```bash
+# Interactive setup (creates bot, configures chat ID, stores token in keyring)
+python scripts/setup_channel.py --channel telegram
+
+# Install as auto-start background service
+python scripts/setup_channel.py --install-service
+
+# Or run manually
+python scripts/channel_listener.py --channel telegram
+```
+
+See [specs/conversational-bridge.md](specs/conversational-bridge.md) for the full design spec.
+
+---
+
 ## Project Structure
 
 ```
@@ -238,6 +272,10 @@ scripts/
     nhtsa_recalls.py      ← Vehicle recall monitoring
 
   actions/                ← Action execution handlers (extensible)
+  channels/               ← Output channel adapters (Telegram, etc.)
+    base.py               ← ChannelAdapter protocol + dataclasses
+    telegram.py           ← Telegram Bot API adapter
+    registry.py           ← Channel loader from channels.yaml
   lib/                    ← Shared library modules
     html_processing.py    ← HTML stripping, footer removal, body trimming
     retry.py              ← Exponential backoff with jitter

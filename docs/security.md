@@ -111,7 +111,46 @@ Report it as a bug.
 
 ---
 
-## §5 — Reporting Security Issues
+## §5 — Channel Bridge Privacy Surface
+
+The Channel Bridge (`scripts/channels/`, `config/channels.yaml`) introduces a
+new category of PII that must be handled carefully.
+
+### Recipient identifiers are PII
+
+| Field | Example value | Classification |
+|-------|--------------|----------------|
+| Telegram `chat_id` | `123456789` | PII — uniquely identifies an individual |
+| Discord user ID | `987654321012345678` | PII — uniquely identifies an individual |
+| Slack member ID | `U01ABCDEFGH` | PII — uniquely identifies an individual |
+
+These IDs can be used to directly message a person. They must **never** be:
+- Committed to version control
+- Written to state files or logs (audit log uses the alias name only)
+- Passed through `pii_guard.py`-scanned code paths unguarded
+
+### `config/channels.yaml` is gitignored
+
+`config/channels.yaml` (the live config with real recipient IDs) is listed in
+`.gitignore` alongside other PII-bearing configs. Only the example file,
+`config/channels.example.yaml`, is tracked in version control and it
+contains no real IDs.
+
+### Audit log privacy guarantee
+
+`CHANNEL_IN`, `CHANNEL_OUT`, and `CHANNEL_PUSH` audit events record only:
+- The recipient **alias** (e.g., `primary`, `spouse`) — never the raw `chat_id`
+- The command name — never the message body
+
+### Future: vault encryption
+
+Long-term plan: encrypt `config/channels.yaml` at rest using `age`, the same
+mechanism used for `state/finance.md.age`, `state/health.md.age`, etc. See
+`scripts/vault.py` for the encryption pattern.
+
+---
+
+## §6 — Reporting Security Issues
 
 Do not use GitHub Issues for security vulnerabilities. Instead, email the
 maintainer directly or open a GitHub Security Advisory (private disclosure).

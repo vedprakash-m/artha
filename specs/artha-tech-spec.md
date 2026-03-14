@@ -10,10 +10,12 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
-| v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
-| v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
-| v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
+| v2.7 | 2026-03 | ACB v2.1: Multi-LLM Q&A, ensemble mode, HCI command redesign, write commands, /diff, /goals |
 | v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict pattern for test isolation; `backup.py` standalone CLI |
+| v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.py install` command |
+| v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore |
+| v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation |
+| v2.3 | 2026-03 | Channel Bridge (ACB v2.0): `scripts/channels/`, `channel_push.py`, `channel_listener.py` |
 | v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema |
 | v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff` |
 | v2.0 | 2026-02 | Supercharge: data integrity guard, bootstrap, coaching, dashboard |
@@ -857,6 +859,87 @@ icloud_calendar_fetch.py --from {today} --to {today+7d} → JSONL (source: "iclo
 ```
 
 **Preflight:** P1 checks in `preflight.py` — `setup_icloud_auth.py --health` (gating) + `icloud_mail_fetch.py --health` + `icloud_calendar_fetch.py --health` (only if auth check passes)
+
+---
+
+### 3.10 Channel Bridge (ACB v2.1) *(v2.4)*
+
+**Purpose:** Platform-agnostic channel bridge with three layers: push notifications, interactive commands, and multi-LLM Q&A. Delivers Artha intelligence to Telegram (and future platforms) via a single adapter protocol. The listener is Artha's always-on mobile interface — no terminal required.
+
+**Architecture:** `scripts/channels/` adapter package mirrors `scripts/connectors/`. The `channels.yaml` registry mirrors `connectors.yaml`. Each adapter implements the `ChannelAdapter` protocol: `send_message()`, `send_message_get_id()`, `send_document()`, `delete_message()`, `health_check()`, `poll()`.
+
+**Layer 1 — Post-Catch-Up Push** (Step 20):
+- Invoked by: `python scripts/channel_push.py` as Step 20 of catch-up workflow
+- Format: flash briefing (≤500 chars, or `max_push_length` from config)
+- Per-recipient access scope filter (`full / family / standard`) applied before send
+- `pii_guard.filter_text()` on every outbound message — mandatory, no bypass
+- Push deduplication: daily marker `state/.channel_push_marker_{YYYY-MM-DD}.json` prevents duplicate pushes across OneDrive-synced machines (12h window)
+- Pending push queue: `state/.pending_pushes/` — retried on next catch-up if API unreachable; 24h expiry
+- Non-blocking: failures log warnings to `state/audit.md`, catch-up continues
+- Feature flag: `config/channels.yaml → defaults.push_enabled: false` (opt-in)
+
+**Layer 2 — Interactive Commands:**
+- Invoked by: `python scripts/channel_listener.py --channel telegram`
+- On inbound message: sender whitelist → command normaliser → rate limit → scope filter → PII redact → send
+- **Command normaliser** (`_normalise_command()`): 45+ aliases mapped to canonical commands via `_COMMAND_ALIASES` dict. Longest-match-first strategy. Single-letter shortcuts (`s/a/t/q/d/g/?`). Slash optional. Hyphens optional. Spaces OK.
+- **Read commands:** `/status`, `/alerts`, `/tasks`, `/quick`, `/domain [name]`, `/goals`, `/diff [period]`, `/dashboard`, `/help`, `/catch-up`
+- **Write commands** *(v2.4)*: `/items_add <description> [P0/P1/P2] [domain] [deadline]` — parses free-form text, finds next OI number, appends to `open_items.md`, audit logged. `/items_done OI-NNN [resolution]` — marks item as done, adds `date_resolved`, audit logged.
+- **Domain listing** *(v2.4)*: `/domain` with no args shows categorised list of all 18 domains (direct-read vs. encrypted/AI-routed)
+- **Encrypted domain routing** *(v2.4)*: `/domain finance` (and other encrypted domains) routes through `_ask_llm()` with context from prompt files. Vault decrypted in-process, auto-relocked after.
+- **State diff** *(v2.4)*: `/diff [7d|24h|Nd]` compares state file mtimes against last catch-up time or custom period
+- Staleness indicator appended to every response
+- `listener_host` in `channels.yaml` prevents multi-instance conflicts on multi-machine setups
+- Cross-platform asyncio with `threading.Event` shutdown (Windows-compatible)
+- Auto-start: VBScript at Windows Startup folder, launchd plist on macOS
+
+**Layer 3 — Multi-LLM Q&A** *(v2.4)*:
+- **Free-form questions:** any message not matching a command alias is treated as a natural language question
+- **LLM failover chain:** Claude Code CLI (~16.5s) → Gemini CLI (~26.1s) → Copilot CLI (~39.1s). Priority order based on benchmarked latency.
+- **CLI configuration:** Claude `--model sonnet`, Gemini `--yolo`, Copilot `--model claude-sonnet-4 --yolo -s`
+- **Workspace context:** CLIs invoked from `cwd=_ARTHA_DIR` (Artha workspace), giving them access to CLAUDE.md, skills, prompt files, and vault
+- **Context assembly:** domain prompts (processing rules) + state file summaries + open items assembled into system prompt for each query
+- **Vault safety:** `_vault_relock_if_needed()` called in `finally` block after every CLI call — checks for decrypted .md siblings of .age files, runs `vault.py encrypt` if found
+- **Structured output:** system prompt requests numbered lists for ranked/sequential items, Unicode bullets (•) for unordered items, one-line direct answer first, no Markdown — plain text with Unicode only
+- **Ensemble mode:** `aa <question>` or `ask all <question>` triggers all CLIs in parallel. Responses consolidated via Claude Haiku (`claude-haiku-4-5-20251001`). Fallback: primary CLI for consolidation if Haiku unavailable; longest individual response if consolidation fails.
+- **Thinking ack:** "💭 Thinking…" message sent immediately via `send_message_get_id()`, then deleted via `delete_message()` after real response arrives
+
+**Content Quality Pipeline:**
+- `_extract_section_summaries()` — pulls key sections from state files
+- `_filter_noise_bullets()` — removes stale/boilerplate lines, date-based auto-skip
+- `_clean_for_telegram()` — universal cleanup: strips Markdown, normalises whitespace
+- `_split_message()` — splits responses at paragraph boundaries for Telegram 4096-char limit
+
+**Directory Structure:**
+```
+scripts/channels/
+  __init__.py         — package init
+  base.py             — ChannelAdapter Protocol + ChannelMessage + InboundMessage dataclasses
+  registry.py         — load channels.yaml, instantiate adapters
+  telegram.py         — reference implementation (push + interactive + health_check + send_message_get_id + delete_message)
+scripts/channel_push.py      — Layer 1 push hook (Step 20, ~350 LOC)
+scripts/channel_listener.py  — Layer 2+3 asyncio daemon (~2100 LOC)
+scripts/setup_channel.py     — interactive setup wizard + service installer
+scripts/service/
+  artha-listener.xml                    — Windows Task Scheduler template
+  com.artha.channel-listener.plist      — macOS launchd template
+  artha-listener.service                — Linux systemd unit
+config/channels.example.yaml            — distributable template (no PII)
+```
+
+**Security Model:** See `specs/conversational-bridge.md §6` for full threat model (T1–T14). Layer 3 (LLM Q&A) adds: prompt injection mitigation via command-first parsing (LLM only invoked for unrecognised commands), vault auto-relock, structured output constraints.
+
+**Key Credentials:**
+| Credential | Keyring Service | Key |
+|-----------|----------------|-----|
+| Telegram bot token | `artha` | `artha-telegram-bot-token` |
+| Discord bot token | `artha` | `artha-discord-bot-token` |
+| Channel PIN | `artha` | `artha-channel-pin` |
+
+**Setup:** `python scripts/setup_channel.py --channel telegram`
+
+**Preflight:** P1 checks — `check_channel_health()` in `preflight.py` verifies enabled channels are reachable. Non-blocking.
+
+**0 new mandatory dependencies.** Adapter SDKs installed on demand via `pip install artha[channels]`.
 
 ---
 
