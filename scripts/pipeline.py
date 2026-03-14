@@ -402,10 +402,14 @@ def run_health_checks(
     results: list[tuple[str, bool]] = []
 
     for conn in connectors:
+        if not isinstance(conn, dict):
+            continue
         name = conn["name"]
-        handler_path = conn.get("health_check", {}).get("handler") or conn.get(
-            "fetch", {}
-        ).get("handler", "")
+        health_check_cfg = conn.get("health_check")
+        handler_path = (
+            (health_check_cfg.get("handler") if isinstance(health_check_cfg, dict) else None)
+            or conn.get("fetch", {}).get("handler", "")
+        )
         if not handler_path:
             print(f"[health] SKIP {name} — no handler defined", file=sys.stderr)
             continue

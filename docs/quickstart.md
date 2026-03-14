@@ -4,17 +4,30 @@ Get from zero to your first personalized briefing in under 15 minutes.
 
 ## Prerequisites
 
-- macOS 13+ or Windows 11 (Linux supported with minor path differences)
-- Python 3.11+
-- A Google account (Gmail + Calendar) — optional but recommended for the best experience
+| Prerequisite | Why | Install |
+|---|---|---|
+| **Python 3.11+** | Runs all Artha scripts | [python.org](https://www.python.org/downloads/) |
+| **Git** | Clone the repo | [git-scm.com](https://git-scm.com/) |
+| **`age`** | Encrypts sensitive state files | [github.com/FiloSottile/age](https://github.com/FiloSottile/age#installation) |
+| **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [GitHub Copilot](https://github.com/github/gh-copilot) · [Claude](https://www.anthropic.com/claude) |
+
+A Google account (Gmail + Calendar) is optional but recommended for the best experience.
 
 ---
 
-## Step 1: Clone the Repository
+## Step 1: Clone & Install
 
 ```bash
-git clone https://github.com/<your-org>/artha.git
+git clone https://github.com/vedprakash-m/artha.git
 cd artha
+
+# Create a Python virtual environment
+python3 -m venv ~/.artha-venvs/.venv
+source ~/.artha-venvs/.venv/bin/activate   # macOS/Linux
+# Windows: ~/.artha-venvs/.venv/Scripts/Activate.ps1
+
+# Install dependencies
+pip install -r scripts/requirements.txt
 ```
 
 ---
@@ -34,7 +47,7 @@ family:
   primary_user:
     name: "Your Name"
     emails:
-      primary: "you@example.com"
+      gmail: "you@gmail.com"      # or outlook/icloud — at least one required
 
 location:
   city: "Your City"
@@ -46,19 +59,43 @@ location:
 
 ---
 
-## Step 3: Install Dependencies
+## Step 3: Generate Artha's Instruction File
 
 ```bash
-python -m venv ~/.artha-venvs/.venv
-source ~/.artha-venvs/.venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r scripts/requirements.txt
-```
+# Validate your profile first (catches errors before generating)
+python scripts/generate_identity.py --validate
 
-The first script you run will auto-bootstrap the venv if it isn't already active.
+# Generate config/Artha.md (the file your AI CLI reads)
+python scripts/generate_identity.py
+```
 
 ---
 
-## Step 4: Connect a Data Source
+## Step 4: Set Up Encryption
+
+```bash
+# Generate an age keypair
+age-keygen -o ~/age-key.txt
+# Output shows: Public key: age1xxxxxxxxxxxxxxxxxxxxxxx
+
+# Store the PRIVATE key in your OS keychain
+python3 -c "
+import os, keyring
+key_path = os.path.expanduser('~/age-key.txt')
+keyring.set_password('age-key', 'artha', open(key_path).read().strip())
+print('Key stored in keychain successfully.')
+"
+
+# Copy the PUBLIC key (printed by age-keygen above) into your profile:
+#   encryption.age_recipient in config/user_profile.yaml
+
+# Then delete the key file — the private key is safely in your keychain
+rm ~/age-key.txt
+```
+
+---
+
+## Step 5: Connect a Data Source
 
 ### Google (Gmail + Calendar) — recommended for most users
 
@@ -93,7 +130,17 @@ output format without connecting any accounts.
 
 ---
 
-## Step 5: Run Your First Catch-Up
+## Step 6: Run Preflight Check
+
+```bash
+python scripts/preflight.py --fix
+```
+
+This verifies all connections, creates missing state files from templates, and reports any issues.
+
+---
+
+## Step 7: Run Your First Catch-Up
 
 Open an Artha-aware AI session (Claude Code, Gemini CLI, or GitHub Copilot)
 and type:
