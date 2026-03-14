@@ -48,7 +48,11 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 
 ---
 
-## Quick Start (15 minutes)
+## Quick Start (~30 minutes)
+
+> **Time breakdown:** ~5 min clone & install · ~5 min profile setup · ~5 min encryption · ~15 min Google OAuth (one-time, optional) · ~5 min first catch-up.
+>
+> **Just want to see what Artha does first?** Run `python scripts/demo_catchup.py` for a sample briefing with no accounts or configuration required.
 
 ### What You'll Need
 
@@ -77,6 +81,14 @@ git config core.hooksPath .githooks
 # (outside the project so cloud sync tools like OneDrive/iCloud don't upload it)
 python3 -m venv ~/.artha-venvs/.venv
 ```
+
+> **What's a virtual environment?** It's an isolated Python sandbox so Artha's packages don't
+> conflict with other Python projects on your machine. We place it in `~/.artha-venvs/` (your
+> home folder) rather than inside the project to prevent OneDrive/iCloud from uploading
+> hundreds of library files.
+>
+> **Remember:** You need to activate the venv every time you open a new terminal:
+> `source ~/.artha-venvs/.venv/bin/activate` (macOS/Linux) or see the block below (Windows).
 
 <details>
 <summary><b>Activate the virtual environment — click to expand for your OS</b></summary>
@@ -135,14 +147,17 @@ age-keygen -o ~/age-key.txt
 ```
 
 > **⚠ Do this now:** Copy the `age1...` public key printed above — you'll need it in a moment.
-> Your terminal may scroll. If you lose it, run `cat ~/age-key.txt` to see the file contents
-> (the last line is the public key).
+> If your terminal scrolled, run this to extract it cleanly:
+> ```bash
+> grep "^age1" ~/age-key.txt
+> ```
 
 ```bash
 # 1. Paste the public key into your profile:
-#    Open config/user_profile.yaml → find encryption.age_recipient → paste the age1... string
-#    Example:
+#    Open config/user_profile.yaml → search for "age_recipient" → paste the age1... value
+#    It's near the bottom of the file under the "encryption" section. Example:
 #      age_recipient: "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"
+#    Tip: keep the string in double quotes to avoid YAML parsing issues.
 
 # 2. Store the PRIVATE key in your OS credential store
 python scripts/vault.py store-key ~/age-key.txt
@@ -211,16 +226,17 @@ python scripts/setup_todo_lists.py
 
 ### Step 6 — Run Preflight Check
 
+> **Expected output on first run:** You will see `NO-GO` errors for Gmail and Calendar
+> because those tokens don't exist until Step 5 is complete. **This is normal.**
+> The only check that must pass right now is the vault key check from Step 4
+> (look for `vault.py health ✓` in the output). Gmail/Calendar errors become real
+> blockers only after you've completed Step 5.
+
 ```bash
 python scripts/preflight.py --fix
 ```
 
-This verifies all connections, creates missing state files from templates, and reports any issues.
-
-> **Fresh install — expected failures:** On a first run, preflight will show `NO-GO` because
-> the Google OAuth tokens don't exist yet (Step 5) and the vault key isn't loaded (Step 4).
-> Complete Steps 4 and 5 first, then re-run. The only check that must pass before any
-> catch-up is `vault.py health` — connector errors are warnings until you've authenticated.
+This creates missing state files from templates and reports any issues with a fix hint.
 
 ### Step 7 — Run Your First Catch-Up
 
