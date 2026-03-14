@@ -107,16 +107,22 @@ This assembles `config/Artha.md` from your personal identity + the core system l
 ```bash
 # Generate an age keypair
 age-keygen -o ~/age-key.txt
-# Output: Public key: age1xxxxxxxxxxxxxxxxxxxxxxx
+# Output shows: Public key: age1xxxxxxxxxxxxxxxxxxxxxxx
 
 # Store the PRIVATE key in your OS keychain
-python -c "import keyring; keyring.set_password('age-key', 'artha', open('$HOME/age-key.txt').read().strip())"
+python3 -c "
+import os, keyring
+key_path = os.path.expanduser('~/age-key.txt')
+keyring.set_password('age-key', 'artha', open(key_path).read().strip())
+print('Key stored in keychain successfully.')
+"
 
-# Paste the PUBLIC key into your profile
-# → Set encryption.age_recipient in config/user_profile.yaml
+# Copy the PUBLIC key (printed by age-keygen above) into your profile:
+#   encryption.age_recipient in config/user_profile.yaml
+
+# Then delete the key file — the private key is safely in your keychain
+rm ~/age-key.txt
 ```
-
-Then delete `~/age-key.txt` — the private key is now safely in your keychain.
 
 ### Step 5 — Connect Your Data Sources
 

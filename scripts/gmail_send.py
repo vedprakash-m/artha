@@ -8,31 +8,31 @@ the authenticated Artha Google account. Zero plaintext credential storage.
 Usage:
   # Send with body as argument
   python scripts/gmail_send.py \
-    --to "ved@gmail.com" \
+    --to "you@gmail.com" \
     --subject "Artha · Mon Mar 9 — 🟠 2 items" \
     --body "Body text here"
 
   # Send with body from stdin (typical use: pipe from catch-up)
   cat briefing.md | python scripts/gmail_send.py \
-    --to "ved@gmail.com" \
+    --to "you@gmail.com" \
     --subject "Artha · Mon Mar 9 — 🟠 2 items"
 
   # Send with HTML body
   python scripts/gmail_send.py \
-    --to "ved@gmail.com" \
+    --to "you@gmail.com" \
     --subject "Artha · ..." \
     --html "<h1>Briefing</h1><p>...</p>"
 
   # Dry-run (validates auth, prints what would be sent, does NOT send)
   python scripts/gmail_send.py \
-    --to "ved@gmail.com" \
+    --to "you@gmail.com" \
     --subject "Artha · Mon Mar 9" \
     --body "Briefing text" \
     --dry-run
 
   # Send and archive to briefings/YYYY-MM-DD.md
   python scripts/gmail_send.py \
-    --to "ved@gmail.com" \
+    --to "you@gmail.com" \
     --subject "Artha · Mon Mar 9" \
     --body "Briefing text" \
     --archive
