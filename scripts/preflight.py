@@ -1275,7 +1275,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Cold-start detection: exit 3 if user_profile.yaml is missing (first run)
-    profile_path = pathlib.Path(__file__).resolve().parent.parent / "config" / "user_profile.yaml"
+    profile_path = pathlib.Path(ARTHA_DIR) / "config" / "user_profile.yaml"
     if not profile_path.exists():
         if args.json:
             print(json.dumps({"pre_flight_ok": False, "cold_start": True, "checks": []}))
