@@ -3,19 +3,34 @@ import os
 import sys
 import json
 import time
-import yaml
 import logging
 import importlib
+import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, Any, List
 
-# Path setup
+# Path setup — must precede venv bootstrap and third-party imports
 ARTHA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILLS_CONFIG = ARTHA_DIR / "config" / "skills.yaml"
 CACHE_FILE = ARTHA_DIR / "tmp" / "skills_cache.json"  # ephemeral, not synced
 SKILLS_DIR = ARTHA_DIR / "scripts" / "skills"
+_SCRIPTS_DIR = ARTHA_DIR / "scripts"
+
+# Make scripts/ importable so _bootstrap (and skills) are resolvable
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+# Ensure correct venv before third-party imports (no-op if already in venv or CI)
+try:
+    from _bootstrap import reexec_in_venv  # type: ignore[import]
+    reexec_in_venv()
+except ImportError:
+    pass  # Running standalone without project structure; continue
+
+# Third-party imports (available after venv is ensured)
+import yaml
 
 # Allowlisted skill modules — only these may be loaded dynamically
 _ALLOWED_SKILLS: frozenset[str] = frozenset({
@@ -27,8 +42,9 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
 # Timeout for individual skill execution (seconds)
 _SKILL_TIMEOUT = 30
 
-# Add scripts to path for imports
-sys.path.append(str(ARTHA_DIR))
+# Add repo root so `import scripts.skills.X` resolves correctly
+if str(ARTHA_DIR) not in sys.path:
+    sys.path.append(str(ARTHA_DIR))
 
 def load_config() -> Dict[str, Any]:
     if not SKILLS_CONFIG.exists():
@@ -107,7 +123,6 @@ def run_skill(skill_name: str, artha_dir: Path) -> Dict[str, Any]:
         # Check for user plugin first
         plugin_path = Path.home() / ".artha-plugins" / "skills" / f"{skill_name}.py"
         if plugin_path.exists():
-            import importlib.util
             spec = importlib.util.spec_from_file_location(f"skills.{skill_name}", plugin_path)
             if spec is None or spec.loader is None:
                 raise ImportError(f"Cannot create module spec for plugin: {plugin_path}")
@@ -221,3 +236,6 @@ def _write_skills_metrics(timing: Dict[str, float], total_elapsed: float) -> Non
         metrics_path.write_text(json.dumps(existing, indent=2))
     except Exception:
         pass
+
+if __name__ == "__main__":
+    main()

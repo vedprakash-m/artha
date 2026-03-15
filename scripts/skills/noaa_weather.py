@@ -105,4 +105,10 @@ def get_skill(artha_dir: Path) -> NOAAWeatherSkill:
             cfg = yaml.safe_load(f)
             keywords = cfg.get("skills", {}).get("noaa_weather", {}).get("trigger_keywords", keywords)
 
+    if lat == 0.0 and lon == 0.0:
+        raise ValueError(
+            "NOAA weather skill not configured: set location.lat and location.lon "
+            "in user_profile.yaml with your coordinates (e.g. lat: 47.6062, lon: -122.3321)"
+        )
+
     return NOAAWeatherSkill(lat=lat, lon=lon, email=email, trigger_keywords=keywords)
