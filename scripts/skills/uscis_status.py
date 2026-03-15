@@ -31,8 +31,20 @@ class USCISStatusSkill(BaseSkill):
                 response = requests.get(url, headers=headers, timeout=10)
                 if response.status_code == 200:
                     results[receipt] = response.json()
+                elif response.status_code == 403:
+                    results[receipt] = {
+                        "error": (
+                            "HTTP 403 — USCIS API is blocking requests from this IP address "
+                            "or network (common on cloud/VPN). Check status manually at "
+                            "https://egov.uscis.gov/casestatus/mycasestatus.do"
+                        ),
+                        "blocked": True,
+                    }
                 else:
-                    results[receipt] = {"error": f"HTTP {response.status_code}", "text": response.text}
+                    results[receipt] = {
+                        "error": f"HTTP {response.status_code}",
+                        "text": response.text[:500],
+                    }
             except Exception as e:
                 results[receipt] = {"error": str(e)}
         
