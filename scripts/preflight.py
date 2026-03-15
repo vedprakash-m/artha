@@ -936,27 +936,70 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 def format_results(
     checks: list[CheckResult],
     quiet: bool = False,
+    first_run: bool = False,
 ) -> tuple[str, bool]:
     """
     Format check results into terminal output.
     Returns (output_string, all_p0_passed).
+
+    first_run=True: uses a softer "Setup Checklist" display where expected
+    OAuth / connector failures are shown as ○ (not yet configured) rather than
+    ⛔ (hard block). The returned all_p0_passed reflects first-run semantics —
+    only truly unexpected P0 failures (e.g. corrupted state dir, broken PII
+    guard) count as failures; OAuth not-yet-configured is acceptable.
     """
-    p0_failures = [c for c in checks if c.severity == "P0" and not c.passed]
+    _FIRST_RUN_OAUTH_HINTS = (
+        "setup_google_oauth.py",
+        "setup_msgraph_oauth.py",
+        "setup_icloud_auth.py",
+    )
+
+    def _is_expected_on_first_run(c: CheckResult) -> bool:
+        """True when a check failure is normal on a fresh install."""
+        hint = c.fix_hint or ""
+        msg  = c.message  or ""
+        if any(h in hint for h in _FIRST_RUN_OAUTH_HINTS):
+            return True
+        if "Token file missing" in msg or "token file missing" in msg.lower():
+            return True
+        if c.name.startswith("pipeline.py") and not c.passed:
+            return True
+        if c.name == "gmail_send.py health" and not c.passed:
+            return True
+        return False
+
+    if first_run:
+        p0_failures = [
+            c for c in checks
+            if c.severity == "P0" and not c.passed and not _is_expected_on_first_run(c)
+        ]
+    else:
+        p0_failures = [c for c in checks if c.severity == "P0" and not c.passed]
+
     p1_warnings = [c for c in checks if c.severity == "P1" and not c.passed]
     all_passed  = not p0_failures
 
     lines: list[str] = []
 
     if not quiet:
-        lines.append("━━ ARTHA PRE-FLIGHT GATE ━━━━━━━━━━━━━━━━━━━━━━━━")
+        if first_run:
+            lines.append("━━ ARTHA SETUP CHECKLIST ━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("  first-run mode — OAuth failures are expected and not blocking")
+        else:
+            lines.append("━━ ARTHA PRE-FLIGHT GATE ━━━━━━━━━━━━━━━━━━━━━━━━")
         for c in checks:
             if quiet and c.passed:
                 continue
-            icon = "✓" if c.passed else ("⛔" if c.severity == "P0" else "⚠")
-            auto_note = " (auto-fixed)" if c.auto_fixed else ""
-            lines.append(f"  {icon} [{c.severity}] {c.name}: {c.message}{auto_note}")
-            if not c.passed and c.fix_hint:
-                lines.append(f"       → {c.fix_hint}")
+            if first_run and not c.passed and _is_expected_on_first_run(c):
+                lines.append(f"  ○ [{c.severity}] {c.name}: not yet configured")
+                if c.fix_hint:
+                    lines.append(f"       → {c.fix_hint}")
+            else:
+                icon = "✓" if c.passed else ("⛔" if c.severity == "P0" else "⚠")
+                auto_note = " (auto-fixed)" if c.auto_fixed else ""
+                lines.append(f"  {icon} [{c.severity}] {c.name}: {c.message}{auto_note}")
+                if not c.passed and c.fix_hint:
+                    lines.append(f"       → {c.fix_hint}")
         lines.append("")
 
     if all_passed:
@@ -967,13 +1010,22 @@ def format_results(
         if auto_fixed_count:
             notes.append(f"{auto_fixed_count} auto-fixed")
         suffix = f" ({', '.join(notes)})" if notes else ""
-        lines.append(f"✓ Pre-flight: GO{suffix} — proceed with catch-up")
+        if first_run:
+            lines.append(f"✓ Setup checklist: ready{suffix} — open your AI CLI and say: catch me up")
+        else:
+            lines.append(f"✓ Pre-flight: GO{suffix} — proceed with catch-up")
     else:
-        lines.append(f"⛔ Pre-flight: NO-GO — {len(p0_failures)} critical check(s) failed")
+        if first_run:
+            lines.append(f"⛔ {len(p0_failures)} critical setup issue(s) need attention:")
+        else:
+            lines.append(f"⛔ Pre-flight: NO-GO — {len(p0_failures)} critical check(s) failed")
         for c in p0_failures:
             lines.append(f"   • {c.name}: {c.message}")
         lines.append("")
-        lines.append("Catch-up aborted. Fix the above issues and re-run.")
+        if first_run:
+            lines.append("Fix the above issues to proceed.")
+        else:
+            lines.append("Catch-up aborted. Fix the above issues and re-run.")
 
     if not quiet:
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -1006,6 +1058,15 @@ def main() -> None:
         "--fix",
         action="store_true",
         help="Auto-fix safe issues (e.g. clear stale lock file, fix token file permissions)",
+    )
+    parser.add_argument(
+        "--first-run",
+        action="store_true",
+        help=(
+            "First-run / setup-checklist mode: OAuth and connector failures are shown as "
+            "'not yet configured' (\u25cb) rather than hard blocks (⛔). "
+            "Exits 0 when only expected setup steps remain."
+        ),
     )
 
     args = parser.parse_args()
@@ -1040,8 +1101,13 @@ def main() -> None:
         }
         print(json.dumps(output, indent=2))
     else:
-        formatted, _ = format_results(checks, quiet=args.quiet)
+        formatted, first_run_ok = format_results(
+            checks, quiet=args.quiet, first_run=args.first_run
+        )
         print(formatted)
+        # In first-run mode use the softer exit-code logic
+        if args.first_run:
+            all_ok = first_run_ok
 
     sys.exit(0 if all_ok else 1)
 
