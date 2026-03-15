@@ -9,8 +9,62 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+---
+
+## [6.0.0] — 2026-03-15
+
 ### Added
-- **Intelligence expansion + platform parity** (PRD v5.8, Tech Spec v3.5, F15.100–F15.113):
+- **Cowork VM & Operational Hardening** (PRD v6.0, Tech Spec v3.7, specs/vm-hardening.md, F15.119–F15.123): addresses 15 failures found during March 15, 2026 Cowork VM diagnostic + 1 silent token expiry failure identified in post-mortem.
+
+- **`scripts/detect_environment.py`** (Phase 1): multi-signal runtime environment detection. 7 probes: cowork marker (`/var/cowork` dir + `$COWORK_SESSION_ID` env var), filesystem writability, `age` installation, keyring functionality, TCP to Google/Microsoft/Apple. Returns `EnvironmentManifest` with `environment` (cowork_vm | local_mac | local_linux | local_windows | unknown), `capabilities` dict, `degradations` list. 5-minute TTL cache in `tmp/.env_manifest.json`. `--debug` flag for raw probe output.
+
+- **`scripts/preflight.py` hardening** (Phase 2):
+  - `--advisory` flag: P0 failures become `⚠️ [ADVISORY]` (non-blocking, exit always 0). For use only in sandboxed/VM environments. JSON output includes `advisory_mode: true` and `degradation_list`.
+  - `check_profile_completeness()` (P1 check): fires when profile has ≤10 YAML keys; validates `family.primary_user.name`, emails, timezone, ≥1 enabled domain.
+  - `check_msgraph_token()` rewrite — 3-layer fix: proactive refresh when near expiry; 60-day cliff warning reading `_last_refresh_success` timestamp; dual-failure message when token expired AND network blocked.
+  - `check_state_templates()` — health-check.md only seeded when absent or `last_catch_up:` not present (never overwrites real data).
+
+- **`scripts/setup_msgraph_oauth.py`**: writes `_last_refresh_success` ISO-8601 timestamp to token file after every successful silent refresh. Feeds the 60-day cliff warning in `check_msgraph_token()`.
+
+- **`state/templates/health-check.md`**: new template with `schema_version: '1.1'`, `last_catch_up: never`, `catch_up_count: 0`. Auto-seeded by preflight on first run.
+
+- **`config/Artha.core.md`**: "Read-Only Environment Protocol" block added — 8-step procedure for VM/sandboxed runs, token+network dual-failure subsection.
+
+- **`scripts/generate_identity.py` compact mode** (Phase 3):
+  - Default output: ~15KB `config/Artha.md` — extracts §1/§4/§5/§6/§7 from `Artha.core.md` + injects §R command router table (`_COMMAND_ROUTER_TABLE` constant) pointing to `config/workflow/*.md`.
+  - `--no-compact` flag: legacy ~78KB full-core output for rollback.
+  - `_extract_sections()` parser, `_COMMAND_ROUTER_TABLE` constant.
+
+- **5 `config/workflow/*.md` files rewritten** (Phases 3+4): all stub content replaced with canonical step content + compliance gates:
+  - `preflight.md`: Steps 0–2b, read-only exceptions per step, dual OAuth failure rule, environment detection Step 0a.
+  - `fetch.md`: Steps 3–4e, mandatory Tier A state file loading checklist, MCP retry protocol (3 tries), Google Calendar IDs warning, offline/degraded mode detection.
+  - `process.md`: Steps 5–7b, **CRITICAL email body mandate** (snippet-only PROHIBITED; `[snippet — verify]` tagging required), net-negative write guard, post-write verification steps.
+  - `reason.md`: Steps 8–11, URGENCY×IMPACT×AGENCY scoring, consequence forecasting (IF YOU DON'T chain), FNA (Fastest Next Action) scoring, required cross-domain pairings.
+  - `finalize.md`: Steps 12–19b, read-only skip list (Steps 7/7b/14–19), **mandatory Connector & Token Health table** (every briefing, even all-green, with Impact + Fix Command columns).
+  - Each file: YAML frontmatter, `⛩️ PHASE GATE` prerequisite checklist, `✅ Phase Complete → Transition` footer.
+
+- **`scripts/audit_compliance.py`** (Phase 5): post-catch-up compliance auditor.
+  - 7 weighted checks: preflight_executed (20pt), connector_health_block_present (25pt), state_files_referenced (15pt), pii_footer_present (15pt), email_bodies_not_snippets (10pt), domain_sections_present (10pt), one_thing_present (5pt).
+  - Degraded-mode auto-detection from `## Session Metadata` footer or `READ-ONLY MODE` header.
+  - `--threshold N`: exit 1 if score below N (for CI/pipeline gates).
+  - `--json`: machine-readable output; default when stdout is non-TTY.
+  - Targets: local catch-up ≥80, VM degraded ≥60.
+
+- **New tests** (106 total across 5 files):
+  - `tests/unit/test_detect_environment.py` (29 tests)
+  - `tests/unit/test_preflight_advisory.py` (17 tests)
+  - `tests/unit/test_token_lifecycle.py` (11 tests)
+  - `tests/unit/test_audit_compliance.py` (37 tests)
+  - `tests/integration/test_vm_degraded.py` (12 tests — IT-4 through IT-8 from spec)
+
+### Changed
+- **`config/Artha.md`** now generated in compact mode by default (~15KB vs 78KB previously). Run `python scripts/generate_identity.py` to regenerate. Use `--no-compact` for legacy behavior.
+
+### Total tests: 804 (698 baseline + 106 new), 0 failures
+
+---
+
+### Added (previously unreleased)
   - `scripts/skills/financial_resilience.py` — `FinancialResilienceSkill`: parses `state/finance.md` for monthly burn rate, emergency fund runway, and single-income stress scenario; registered in `config/skills.yaml` (cadence: weekly, requires_vault: true)
   - `config/domain_registry.yaml`: gig income routing keywords (Stripe, PayPal, Venmo, Upwork, Fiverr, Etsy, DoorDash, Uber earnings, 1099-K, 1099-NEC)
   - `prompts/finance.md`: "Gig & Platform Income Tracking (1099-K)" section with alert thresholds (🟡 >$5K, 🟠 >$20K, 🔴 Q4); "Financial Resilience" briefing section

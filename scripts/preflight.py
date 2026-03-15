@@ -419,6 +419,16 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
         for tpl in missing:
             src = os.path.join(templates_dir, tpl)
             dst = os.path.join(STATE_DIR, tpl)
+            # Special rule for health-check.md: only populate if file is truly absent
+            # OR exists but has no structured YAML frontmatter (last_catch_up field).
+            if tpl == "health-check.md" and os.path.exists(dst):
+                try:
+                    with open(dst, encoding="utf-8") as f:
+                        header_lines = [f.readline() for _ in range(10)]
+                    if any("last_catch_up" in line for line in header_lines):
+                        continue  # Structured health-check already present — skip
+                except OSError:
+                    pass  # Unreadable — let the copy proceed
             try:
                 import shutil
                 shutil.copy2(src, dst)
@@ -498,7 +508,12 @@ def check_briefings_directory() -> CheckResult:
 
 
 def check_msgraph_token() -> CheckResult:
-    """P1: Verify Microsoft Graph token exists and check freshness (for To Do sync).
+    """P1: Verify Microsoft Graph token exists, proactively refresh if near expiry.
+
+    Three-layer fix (vm-hardening.md Phase 2.4):
+      1. Proactive refresh via ensure_valid_token() — parity with Google tokens
+      2. Refresh token age tracking — 60-day warning before 90-day cliff
+      3. Dual message when BOTH token expired AND network blocked
 
     This is P1 (not P0) because To Do sync is non-blocking — catch-up can
     complete without it. A missing token surfaces a clear actionable warning.
@@ -522,37 +537,107 @@ def check_msgraph_token() -> CheckResult:
             fix_hint="Run: python scripts/setup_msgraph_oauth.py --reauth",
         )
 
-    # Check expiry field (written by setup_msgraph_oauth.py)
+    from datetime import datetime as _dt, timezone as _tz
+
+    # --- Layer 2: Refresh token age tracking (warn at 60 days, cliff at 90) ---
+    REFRESH_TOKEN_WARN_DAYS = 60
+    last_refresh_str = token_data.get("_last_refresh_success", "")
+    if last_refresh_str:
+        try:
+            last_dt = _dt.fromisoformat(last_refresh_str.rstrip("Z"))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=_tz.utc)
+            days_since_refresh = (_dt.now(_tz.utc) - last_dt).days
+            if days_since_refresh > REFRESH_TOKEN_WARN_DAYS:
+                return CheckResult(
+                    "Microsoft Graph token", "P1", False,
+                    f"⚠️ Refresh token last used {days_since_refresh}d ago — "
+                    f"expires at 90d (cliff in ~{90 - days_since_refresh}d). "
+                    f"Run catch-up from Mac to keep it alive.",
+                    fix_hint="Run a full catch-up from Mac terminal to reset the 90-day refresh window",
+                )
+        except ValueError:
+            pass
+
+    # Check expiry field
     expiry_str = token_data.get("expiry", "")
+    secs_left   = float("inf")
     if expiry_str:
         try:
-            from datetime import datetime as _dt, timezone as _tz
             expiry_dt = _dt.fromisoformat(expiry_str.rstrip("Z"))
             if expiry_dt.tzinfo is None:
                 expiry_dt = expiry_dt.replace(tzinfo=_tz.utc)
             secs_left = (expiry_dt - _dt.now(_tz.utc)).total_seconds()
-            if secs_left < 0:
-                return CheckResult(
-                    "Microsoft Graph token", "P1", False,
-                    f"Token expired {int(-secs_left/60)}m ago",
-                    fix_hint="Run: python scripts/setup_msgraph_oauth.py --reauth",
-                )
-            if secs_left < TOKEN_EXPIRY_WARN_SECONDS:
-                return CheckResult(
-                    "Microsoft Graph token", "P1", False,
-                    f"Token expires in {int(secs_left/60)}m — will auto-refresh",
-                )
-            return CheckResult(
-                "Microsoft Graph token", "P1", True,
-                f"Valid for {int(secs_left/60)}m ✓",
-            )
         except ValueError:
-            pass
+            secs_left = float("inf")
 
-    # Has token but no parseable expiry
+    # --- Layer 1: Proactive refresh if near / past expiry ---
+    if secs_left < TOKEN_EXPIRY_WARN_SECONDS:
+        refresh_succeeded = False
+        try:
+            scripts_dir = os.path.dirname(os.path.abspath(__file__))
+            if scripts_dir not in sys.path:
+                sys.path.insert(0, scripts_dir)
+            from setup_msgraph_oauth import ensure_valid_token
+            refreshed = ensure_valid_token(warn_seconds=TOKEN_EXPIRY_WARN_SECONDS)
+            new_expiry_str = refreshed.get("expiry", "")
+            if new_expiry_str:
+                new_dt = _dt.fromisoformat(new_expiry_str.rstrip("Z"))
+                if new_dt.tzinfo is None:
+                    new_dt = new_dt.replace(tzinfo=_tz.utc)
+                new_secs = (new_dt - _dt.now(_tz.utc)).total_seconds()
+                if new_secs > 0:
+                    refresh_succeeded = True
+                    return CheckResult(
+                        "Microsoft Graph token", "P1", True,
+                        f"Valid for {int(new_secs/60)}m ✓ (just refreshed)",
+                    )
+        except Exception:
+            pass  # Fall through to expiry/network reporting
+
+        # Refresh failed — report expiry AND possibly network block
+        checks_to_return: list[CheckResult] = []
+
+        if secs_left < 0:
+            expired_msg = f"Token expired {int(-secs_left/60)}m ago"
+        else:
+            expired_msg = f"Token expires in {int(secs_left/60)}m"
+
+        # --- Layer 3: Dual message — check network block ---
+        network_blocked = False
+        try:
+            from detect_environment import detect as _detect_env
+            manifest = _detect_env(skip_network=False)
+            network_blocked = not manifest.capabilities.get("network_microsoft", True)
+        except ImportError:
+            pass  # detect_environment not available — skip network check
+
+        if network_blocked:
+            # Return two separate results: but CheckResult is a single value.
+            # We embed both messages in one result with a dual-hint.
+            return CheckResult(
+                "Microsoft Graph token", "P1", False,
+                f"{expired_msg} | graph.microsoft.com network-blocked in this environment",
+                fix_hint=(
+                    "Token: python scripts/setup_msgraph_oauth.py --reauth (run from Mac). "
+                    "Network block: expected in Cowork VM — not fixable from this environment."
+                ),
+            )
+        return CheckResult(
+            "Microsoft Graph token", "P1", False,
+            expired_msg,
+            fix_hint="Run: python scripts/setup_msgraph_oauth.py --reauth",
+        )
+
+    if secs_left == float("inf"):
+        return CheckResult(
+            "Microsoft Graph token", "P1", True,
+            "Token present (expiry unknown — will validate on use) ✓",
+        )
+
     return CheckResult(
         "Microsoft Graph token", "P1", True,
-        "Token present (expiry unknown — will validate on use) ✓",
+        f"Valid for {int(secs_left/60)}m ✓",
     )
 
 
@@ -817,6 +902,96 @@ def check_channel_health() -> CheckResult:
     )
 
 
+def check_profile_completeness() -> CheckResult:
+    """P1: Verify user_profile.yaml has minimum viable fields populated.
+
+    Only fires on near-empty profiles (≤10 YAML keys total). Users with
+    intentionally partial configs (>10 keys) are not warned.
+    Ref: vm-hardening.md Phase 2.2
+    """
+    profile_path = os.path.join(ARTHA_DIR, "config", "user_profile.yaml")
+    if not os.path.exists(profile_path):
+        return CheckResult(
+            "user_profile completeness", "P1", True,
+            "user_profile.yaml not found — cold start (handled by preflight gate) ✓",
+        )
+
+    try:
+        import yaml  # type: ignore
+        with open(profile_path, encoding="utf-8") as f:
+            profile = yaml.safe_load(f) or {}
+    except Exception as exc:
+        return CheckResult(
+            "user_profile completeness", "P1", False,
+            f"user_profile.yaml unreadable: {exc}",
+        )
+
+    def _count_keys(d: dict) -> int:
+        """Recursively count all keys in a nested dict."""
+        if not isinstance(d, dict):
+            return 0
+        total = len(d)
+        for v in d.values():
+            total += _count_keys(v)
+        return total
+
+    total_keys = _count_keys(profile)
+
+    # Silent pass for profiles that have been meaningfully filled in
+    if total_keys > 10:
+        return CheckResult(
+            "user_profile completeness", "P1", True,
+            f"Profile populated ({total_keys} keys) ✓",
+        )
+
+    # Near-empty profile — surface actionable warnings
+    missing: list[str] = []
+
+    def _get(d: dict, path: str):
+        parts = path.split(".")
+        node = d
+        for part in parts:
+            if not isinstance(node, dict):
+                return None
+            node = node.get(part)
+            if node is None:
+                return None
+        return node
+
+    if not _get(profile, "family.primary_user.name"):
+        missing.append("family.primary_user.name")
+    emails = _get(profile, "family.primary_user.emails") or {}
+    if not any((emails or {}).values()):
+        missing.append("family.primary_user.emails")
+    if not _get(profile, "location.timezone"):
+        missing.append("location.timezone")
+
+    domains = _get(profile, "domains") or {}
+    enabled = [d for d, v in (domains if isinstance(domains, dict) else {}).items()
+               if isinstance(v, dict) and v.get("enabled")]
+    if not enabled:
+        missing.append("domains.<at least one>.enabled: true")
+
+    recommendations: list[str] = []
+    if not _get(profile, "integrations.google_calendar.calendar_ids"):
+        recommendations.append("integrations.google_calendar.calendar_ids")
+    if not _get(profile, "household.type"):
+        recommendations.append("household.type")
+
+    hint_parts = []
+    if missing:
+        hint_parts.append(f"Required missing: {', '.join(missing)}")
+    if recommendations:
+        hint_parts.append(f"Recommended: {', '.join(recommendations)}")
+    hint_parts.append("Run /bootstrap or edit config/user_profile.yaml")
+
+    return CheckResult(
+        "user_profile completeness", "P1", False,
+        f"Profile near-empty ({total_keys} keys) — catch-up will have limited context",
+        fix_hint=" | ".join(hint_parts),
+    )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -857,6 +1032,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_open_items(auto_fix=auto_fix))
     checks.append(check_briefings_directory())
     checks.append(check_msgraph_token())  # T-1B.6.1: non-blocking, To Do sync optional
+
+    # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
+    checks.append(check_profile_completeness())
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
@@ -937,16 +1115,18 @@ def format_results(
     checks: list[CheckResult],
     quiet: bool = False,
     first_run: bool = False,
+    advisory: bool = False,
 ) -> tuple[str, bool]:
     """
     Format check results into terminal output.
     Returns (output_string, all_p0_passed).
 
-    first_run=True: uses a softer "Setup Checklist" display where expected
-    OAuth / connector failures are shown as ○ (not yet configured) rather than
-    ⛔ (hard block). The returned all_p0_passed reflects first-run semantics —
-    only truly unexpected P0 failures (e.g. corrupted state dir, broken PII
-    guard) count as failures; OAuth not-yet-configured is acceptable.
+    first_run=True: softer "Setup Checklist" display — OAuth failures shown
+    as ○ (not yet configured) rather than ⛔ (hard block).
+
+    advisory=True: P0 failures reclassified to ADVISORY in output; exit always 0.
+    Use ONLY in sandboxed/VM environments where hard blocks are known and accepted.
+    NEVER use on local machines.
     """
     _FIRST_RUN_OAUTH_HINTS = (
         "setup_google_oauth.py",
@@ -977,12 +1157,17 @@ def format_results(
         p0_failures = [c for c in checks if c.severity == "P0" and not c.passed]
 
     p1_warnings = [c for c in checks if c.severity == "P1" and not c.passed]
-    all_passed  = not p0_failures
+    # In advisory mode, P0 failures become advisories — exit always 0
+    all_passed  = advisory or not p0_failures
 
     lines: list[str] = []
 
     if not quiet:
-        if first_run:
+        if advisory:
+            lines.append("━━ ARTHA PRE-FLIGHT GATE (ADVISORY MODE) ━━━━━━━━━")
+            lines.append("  ⚠️  Advisory mode active — P0 failures are non-blocking")
+            lines.append("  ⚠️  Use ONLY in sandboxed/VM environments. NEVER on local Mac.")
+        elif first_run:
             lines.append("━━ ARTHA SETUP CHECKLIST ━━━━━━━━━━━━━━━━━━━━━━━━━")
             lines.append("  first-run mode — OAuth failures are expected and not blocking")
         else:
@@ -992,6 +1177,10 @@ def format_results(
                 continue
             if first_run and not c.passed and _is_expected_on_first_run(c):
                 lines.append(f"  ○ [{c.severity}] {c.name}: not yet configured")
+                if c.fix_hint:
+                    lines.append(f"       → {c.fix_hint}")
+            elif advisory and not c.passed and c.severity == "P0":
+                lines.append(f"  ⚠️  [ADVISORY] {c.name}: {c.message}")
                 if c.fix_hint:
                     lines.append(f"       → {c.fix_hint}")
             else:
@@ -1009,8 +1198,12 @@ def format_results(
             notes.append(f"{len(p1_warnings)} warning(s)")
         if auto_fixed_count:
             notes.append(f"{auto_fixed_count} auto-fixed")
+        if advisory and p0_failures:
+            notes.append(f"{len(p0_failures)} advisory (non-blocking in this environment)")
         suffix = f" ({', '.join(notes)})" if notes else ""
-        if first_run:
+        if advisory:
+            lines.append(f"⚠️  Pre-flight: ADVISORY GO{suffix} — proceed with degraded catch-up")
+        elif first_run:
             lines.append(f"✓ Setup checklist: ready{suffix} — open your AI CLI and say: catch me up")
         else:
             lines.append(f"✓ Pre-flight: GO{suffix} — proceed with catch-up")
@@ -1068,6 +1261,16 @@ def main() -> None:
             "Exits 0 when only expected setup steps remain."
         ),
     )
+    parser.add_argument(
+        "--advisory",
+        action="store_true",
+        help=(
+            "Advisory mode: run all checks but report P0 failures as ADVISORY instead of "
+            "NO-GO. Exits 0 regardless of P0 failures. "
+            "Use ONLY in sandboxed/VM environments where hard blocks are known and accepted. "
+            "NEVER use on local machines."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1081,12 +1284,17 @@ def main() -> None:
             print("   Run /bootstrap or say 'catch me up' to start guided setup.")
         sys.exit(3)
 
-    checks  = run_preflight(auto_fix=args.fix, quiet=args.quiet)
-    all_ok  = all(c.passed for c in checks if c.severity == "P0")
+    advisory = getattr(args, "advisory", False)
+    checks   = run_preflight(auto_fix=args.fix, quiet=args.quiet)
+    all_ok   = advisory or all(c.passed for c in checks if c.severity == "P0")
 
     if args.json:
         output = {
-            "pre_flight_ok": all_ok,
+            "pre_flight_ok":  all_ok,
+            "advisory_mode":  advisory,
+            "degradation_list": [
+                c.name for c in checks if c.severity == "P0" and not c.passed
+            ] if advisory else [],
             "checks": [
                 {
                     "name":       c.name,
@@ -1102,7 +1310,7 @@ def main() -> None:
         print(json.dumps(output, indent=2))
     else:
         formatted, first_run_ok = format_results(
-            checks, quiet=args.quiet, first_run=args.first_run
+            checks, quiet=args.quiet, first_run=args.first_run, advisory=advisory
         )
         print(formatted)
         # In first-run mode use the softer exit-code logic

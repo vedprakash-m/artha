@@ -17,6 +17,7 @@
 PyYAML==6.0.2
 keyring==25.6.0
 jsonschema==4.23.0
+pydantic>=2.0.0
 
 # ── Google connector ─────────────────────────────────────────────────────────
 google-api-python-client==2.166.0

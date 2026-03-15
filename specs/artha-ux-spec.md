@@ -1,11 +1,13 @@
 # Artha — UX Specification
 
-> **Version**: 1.9 | **Status**: Draft | **Date**: March 2026
+> **Version**: 2.1 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.8, Tech Spec v3.5
+> **Implements**: PRD v6.0, Tech Spec v3.7
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v2.1 | 2026-03 | VM Hardening UX: `⚠️ READ-ONLY MODE` briefing header pattern, per-connector degradation notices, mandatory Connector & Token Health table in every briefing (format defined in config/workflow/finalize.md), `⛩️ PHASE GATE` checklist format in workflow files, `[snippet — verify in email client]` annotation for partial email reads, `## Session Metadata` read-only footer block (implements PRD v6.0 F15.119–F15.123) |
+| v2.0 | 2026-03 | Deep Agents UX: harness mode indicators, structured output format, session summarization progress indicator (implements PRD v5.9 F15.114–F15.118) |
 | v1.9 | 2026-03 | Intelligence expansion + platform parity: financial_resilience briefing block, gig income 1099-K alert thresholds, purchase interval observation format, structured contact profiles UX, pre-meeting context injection briefing block, digital estate inventory UX, instruction-sheet action type, subscription action proposals format, setup.ps1 Windows onboarding, --doctor diagnostic UX, Apple Health connector entry point, longitudinal lab tracking (implements PRD v5.8 F15.100–F15.113) |
 | v1.8 | 2026-03 | Phase 1b UX: /domains command, household-aware briefings, renter mode, offline/degraded mode banners, script-backed view commands (status/goals/items/scorecard), pet reminders format, domain selection in onboarding |
 | v1.7 | 2026-03 | ACB v2.1 UX: Multi-LLM Q&A, HCI command redesign, write commands, thinking ack, structured output |
@@ -775,6 +777,19 @@ Scorecard table (all goals: status, trend, metric, target, pace). Per-goal detai
 
 File integrity (registry.md check), MCP health, CLI availability, OAuth token status, state file freshness, context window stats, catch-up history stats (avg duration, reliability, costs). Green/yellow/red per component.
 
+**Harness metrics block *(v2.0)*:** When `harness:` is enabled, `/health` appends a `DEEP AGENTS HARNESS` section showing last-session metrics:
+
+```
+── DEEP AGENTS HARNESS ──
+Context offloading  ✔  3 artifacts | ~18K tokens freed
+Progressive disclose ✔  4 prompts loaded · 14 skipped (≈12K saved)
+Session summary     ✔  triggered (threshold: 70%) → tmp/session_history_1.md
+Middleware          ✔  0 blocks · 0 verify failures · 12 writes audited
+Structured output   ✔  validated → tmp/briefing_structured.json
+```
+
+All values sourced from `state/health-check.md → harness_metrics`. If any phase is disabled, its line shows `— disabled`. If a phase recorded errors, the line shows 🟡 with error count.
+
 ### 10.6 /items Output Design
 
 Open items grouped by priority (P0→P1→P2). Per item: domain tag, description, deadline, age. Filters: `/items kids`, `/items P0`, `/items overdue`. To Do sync status shown.
@@ -1256,6 +1271,8 @@ LAYER 3 — Raw State File
 
 The user never needs to go to Layer 3 — but they can. This transparency builds trust. "I can always go check the source" is a powerful confidence builder.
 
+> **Harness Layer 0 — Domain Index *(v2.0)*:** Before any domain data is loaded, `domain_index.py` builds a compact index card from state file frontmatter. This is an **invisible pre-layer** — the user never sees it, but it determines which domain prompts load. `/status` and `/items` load zero prompts; `/catch-up` loads only routed-domain prompts. The user experiences this as faster responses and more focused briefings.
+
 ### 16.2 Information Density by Context
 
 | Context | Density | Example |
@@ -1642,14 +1659,17 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | UX-7 | Respect the user's time budget | Line count targets, reading time estimates, max limits on check-in items |
 | UX-8 | Family-aware output | First names, per-child sections, family briefing variant |
 
+| UX-9 | Harness is transparent by default | Session summarization, structured validation, and context offloading are invisible to the user. Only `/health` surfaces harness metrics. |
+| UX-10 | Graceful degradation is always silent | If any harness phase fails or is disabled, the catch-up continues unchanged. No user-visible error for internal infrastructure failures. |
+
 ---
 
-*Artha UX Spec v1.9 — End of Document*
+*Artha UX Spec v2.0 — End of Document*
 
 *"The best interface is the one you forget you're using. Artha speaks when it matters, is silent when it doesn't, and always tells you where you stand — in under 3 minutes."*
 
 ---
 
 **Cross-references:**
-- PRD v5.8: §6 (Interaction Modes), §7 (FR-1 through FR-18 + F15.100–F15.113), §8 (Goal Intelligence), §9 (Architecture), §10 (Autonomy Framework), §11 (Relationship Intelligence), §12.6 (Privacy Surface), Phase 2A–B (Canvas, Apple Health)
-- Tech Spec v3.5: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §18 (revision history)
+- PRD v5.9: §6 (Interaction Modes), §7 (FR-1 through FR-18 + F15.100–F15.118), §8 (Goal Intelligence), §9 (Architecture), §10 (Autonomy Framework), §11 (Relationship Intelligence), §12.6 (Privacy Surface), Phase 2A–B (Canvas, Apple Health)
+- Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)

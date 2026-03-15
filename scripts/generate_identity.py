@@ -357,42 +357,156 @@ def _build_identity_block(profile: dict) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Assembly
+# Assembly (compact + legacy modes)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# §R — Command Router Table (injected into compact Artha.md)
+# Tells the AI which workflow files to load for each command.
+_COMMAND_ROUTER_TABLE = """\
+## §R — Command Router
+
+Load ONLY the files listed for the current command. Do NOT load all workflow
+files for light commands that don't invoke the catch-up workflow.
+
+| Command | Load These Files (in order) | State Files |
+|---------|-----------------------------|----|
+| `/catch-up`, `/catch-up flash`, `/catch-up deep`, `catch me up` | `config/workflow/preflight.md` → `fetch.md` → `process.md` → `reason.md` → `finalize.md` | Per tiered loading in fetch.md |
+| `/catch-up standard` | Same as `/catch-up` | Same |
+| `/status` | — | `state/health-check.md` |
+| `/items` | — | `state/open_items.md` |
+| `/items quick` | — | `state/open_items.md`, `state/memory.md` |
+| `/goals` | — | `state/goals.md`, `prompts/goals.md` |
+| `/domain <X>` | `config/workflow/process.md`, `config/workflow/reason.md` | `state/<X>.md`, `prompts/<X>.md` |
+| `/dashboard` | — | `state/dashboard.md` |
+| `/bootstrap` | `config/bootstrap-interview.md` | Various |
+| `/diff` | — | `state/` (git diff) |
+| `/scorecard` | — | All state frontmatter |
+| `/health` | — | `state/health-check.md` |
+| `/power` | — | `state/open_items.md`, `state/goals.md` |
+
+**CRITICAL for `/catch-up`:**
+Load each workflow file BEFORE executing that phase.
+Do NOT skip any workflow file.
+If a file fails to load, halt and report: "⛔ Cannot load config/workflow/<file>.md — catch-up aborted."
+"""
+
+
+def _extract_sections(core_text: str) -> dict[str, str]:
+    """
+    Extract named sections from Artha.core.md by §N markers.
+
+    Returns keys: behavior, privacy, commands, routing_table, capabilities
+    These are the sections retained in compact Artha.md.
+    §2 (catch-up workflow) is moved OUT to config/workflow/ files.
+    §3 (routing table) is already in config/routing.yaml.
+    """
+    import re
+
+    # Split on top-level ## §N markers
+    # We keep: §1 (behavior), §4 (privacy), §5 (commands), §6 (routing), §7 (capabilities)
+    # We exclude: §2-§3 (workflow + routing table — in separate files), §8-§14 (meta, in core.md only)
+    sections: dict[str, str] = {}
+
+    # Find §1 (behavior/directives) — from start to before §2
+    m_s1 = re.search(r"^## §1 ", core_text, re.MULTILINE)
+    m_s2 = re.search(r"^## §2 ", core_text, re.MULTILINE)
+    if m_s1 and m_s2:
+        sections["behavior"] = core_text[m_s1.start():m_s2.start()].rstrip()
+
+    # §4 Privacy & Redaction Rules
+    m_s4 = re.search(r"^## §4 ", core_text, re.MULTILINE)
+    m_s5 = re.search(r"^## §5 ", core_text, re.MULTILINE)
+    if m_s4 and m_s5:
+        sections["privacy"] = core_text[m_s4.start():m_s5.start()].rstrip()
+    elif m_s4:
+        sections["privacy"] = core_text[m_s4.start():].rstrip()
+
+    # §5 Slash Commands
+    m_s5 = re.search(r"^## §5 ", core_text, re.MULTILINE)
+    m_s6 = re.search(r"^## §6 ", core_text, re.MULTILINE)
+    if m_s5 and m_s6:
+        sections["commands"] = core_text[m_s5.start():m_s6.start()].rstrip()
+    elif m_s5:
+        sections["commands"] = core_text[m_s5.start():].rstrip()
+
+    # §6 Multi-LLM Routing
+    m_s6 = re.search(r"^## §6 ", core_text, re.MULTILINE)
+    m_s7 = re.search(r"^## §7 ", core_text, re.MULTILINE)
+    if m_s6 and m_s7:
+        sections["routing_table"] = core_text[m_s6.start():m_s7.start()].rstrip()
+    elif m_s6:
+        sections["routing_table"] = core_text[m_s6.start():].rstrip()
+
+    # §7 Capabilities
+    m_s7 = re.search(r"^## §7 ", core_text, re.MULTILINE)
+    m_s8 = re.search(r"^## §8 ", core_text, re.MULTILINE)
+    if m_s7 and m_s8:
+        sections["capabilities"] = core_text[m_s7.start():m_s8.start()].rstrip()
+    elif m_s7:
+        sections["capabilities"] = core_text[m_s7.start():].rstrip()
+
+    return sections
+
 
 def _write_identity(identity_block: str) -> None:
     _IDENTITY_PATH.write_text(identity_block, encoding="utf-8")
     print(f"  Written: {_IDENTITY_PATH.relative_to(_ARTHA_DIR)}")
 
 
-def _assemble_artha_md(identity_block: str) -> None:
+def _assemble_artha_md(identity_block: str, compact: bool = True) -> None:
+    """
+    Assemble config/Artha.md from identity block + core.
+
+    compact=True (default):
+        Produces ≤20KB output: identity + §1 behavior + §R router + §4–§7.
+        The 21-step catch-up workflow (§2) is referenced via config/workflow/*.md.
+        AI must load those files as directed by §R.
+
+    compact=False (legacy, --no-compact):
+        Produces original 78KB+ output by prepending identity to full core.md.
+        Use for rollback or debugging when workflow files are suspect.
+    """
     core_text = _CORE_PATH.read_text(encoding="utf-8")
-
-    # Strip the generic §1 placeholder from core (first line until the first ## §2)
-    # The core.md may start with the file header comment and then the generic §1
-    # We inject our generated §1 at the top, replacing the generic identity placeholder.
-    # The core.md §1 starts with "## §1 Identity & Core Behavior" — we keep the rest.
-    # But the first 2-3 lines of core.md are the title + generic identity, so we
-    # insert the generated §1 block before the content of core.md.
-    # Design choice: identity.md IS prepended directly; core.md starts with §2+ behavior.
-    # Since core.md currently starts with "# Artha — Personal Intelligence System" header
-    # and then the §1 block, we need to clip that.
-
-    # Find where §2 starts in core.md to avoid duplicating the system behavior in §1
-    # The core.md §1 contains only system behavior (cross-platform, directives) — no personal data.
-    # We prepend the generated identity, then append core.md from its §2 marker.
-    # BUT: the core.md's §1 system behavior is still useful. So the assembly is:
-    #   generated identity (§1a personal context) + full core.md (§1b system + §2-§14)
-    # We just prepend; the generated §1 replaces the personal lines we stripped from core.md.
 
     header = (
         "<!-- AUTO-GENERATED — DO NOT EDIT.\n"
         "     Modify config/Artha.core.md or config/user_profile.yaml instead,\n"
         "     then run: python scripts/generate_identity.py -->\n\n"
     )
-    assembled = header + identity_block + "\n\n---\n\n" + core_text
+
+    if not compact:
+        # Legacy mode: full core.md, no changes
+        assembled = header + identity_block + "\n\n---\n\n" + core_text
+        print("  [legacy --no-compact mode: full core.md included]")
+    else:
+        # Compact mode: extract retained sections
+        sections = _extract_sections(core_text)
+        missing = [k for k in ("behavior", "privacy", "commands", "capabilities") if k not in sections]
+        if missing:
+            print(f"  WARNING: Could not extract sections {missing} — falling back to legacy mode")
+            assembled = header + identity_block + "\n\n---\n\n" + core_text
+        else:
+            compact_body = "\n\n".join(filter(None, [
+                sections.get("behavior", ""),
+                _COMMAND_ROUTER_TABLE,
+                sections.get("privacy", ""),
+                sections.get("commands", ""),
+                sections.get("routing_table", ""),
+                sections.get("capabilities", ""),
+            ]))
+            workflow_ref = (
+                "\n\n---\n\n"
+                "## §2 — Catch-Up Workflow\n\n"
+                "The catch-up workflow is in `config/workflow/` files.\n"
+                "Load them as directed by §R above.\n"
+                "Full canonical step definitions are in `config/Artha.core.md`.\n"
+            )
+            assembled = header + identity_block + "\n\n---\n\n" + compact_body + workflow_ref
+
     _ASSEMBLED_PATH.write_text(assembled, encoding="utf-8")
-    print(f"  Written: {_ASSEMBLED_PATH.relative_to(_ARTHA_DIR)}")
+    size_kb = len(assembled.encode("utf-8")) / 1024
+    print(f"  Written: {_ASSEMBLED_PATH.relative_to(_ARTHA_DIR)} ({size_kb:.1f} KB)")
+
 
 
 def _generate_routing_yaml(profile: dict) -> None:
@@ -461,6 +575,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip routing.yaml generation",
     )
+    parser.add_argument(
+        "--no-compact",
+        action="store_true",
+        help=(
+            "Legacy mode: prepend identity to the full Artha.core.md (produces 78KB+ output). "
+            "Use for rollback when config/workflow/ files are suspect. "
+            "Default is compact mode (~15KB) with workflow steps in config/workflow/."
+        ),
+    )
     args = parser.parse_args(argv)
 
     print("Artha identity generator")
@@ -501,7 +624,8 @@ def main(argv: list[str] | None = None) -> int:
     identity_block = _build_identity_block(profile)
 
     _write_identity(identity_block)
-    _assemble_artha_md(identity_block)
+    compact_mode = not getattr(args, "no_compact", False)
+    _assemble_artha_md(identity_block, compact=compact_mode)
 
     if not args.no_routing:
         print("Generating routing.yaml...")

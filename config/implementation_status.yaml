@@ -163,3 +163,40 @@ features:
     spec: "PRD F6.9"
     status: partial
     note: "parse_apple_health.py exists, not wired to catch-up"
+
+  # ── Deep Agents Harness (Option B — Phases 1–5) ─────────────────────────
+  harness_context_offloading:
+    spec: "specs/deep-agents.md Phase 1"
+    status: implemented
+    confidence: high
+    note: "scripts/context_offloader.py — offloads large artifacts to tmp/"
+  harness_progressive_disclosure:
+    spec: "specs/deep-agents.md Phase 2"
+    status: implemented
+    confidence: high
+    note: "scripts/domain_index.py — command-aware prompt loading"
+  harness_session_summarization:
+    spec: "specs/deep-agents.md Phase 3"
+    status: implemented
+    confidence: high
+    note: "scripts/session_summarizer.py — Pydantic SessionSummary + context-pct guard"
+  harness_middleware:
+    spec: "specs/deep-agents.md Phase 4"
+    status: implemented
+    confidence: high
+    note: "scripts/middleware/ — PII, write-guard, verify, audit, rate-limiter"
+  harness_structured_output:
+    spec: "specs/deep-agents.md Phase 5"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/ — BriefingOutput, SessionSummarySchema, DomainIndexCard"
+  harness_state_abstraction:
+    spec: "specs/deep-agents.md Phase 6"
+    status: not_started
+    confidence: low
+    note: "Deferred — pending Phase 1-5 production validation"
+  harness_subtask_isolation:
+    spec: "specs/deep-agents.md Phase 7"
+    status: not_started
+    confidence: low
+    note: "Deferred — pending Phase 1-5 production validation"
