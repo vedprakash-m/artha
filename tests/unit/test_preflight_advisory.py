@@ -269,3 +269,91 @@ class TestHealthCheckTemplateSeeding:
             pf.check_state_templates(auto_fix=True)
         # Original content should be preserved
         assert (state_dir / "health-check.md").read_text() == existing_content
+
+
+# ---------------------------------------------------------------------------
+# check_vault_health — exit code 2 (soft warning) is P1, not P0
+# ---------------------------------------------------------------------------
+
+class TestVaultHealthExitCodes:
+    """Verify preflight maps vault.py exit codes to correct severity."""
+
+    def test_vault_health_exit2_is_p1_not_p0(self, tmp_path):
+        """vault.py health exit 2 (soft warnings) must produce a P1 result, not a P0 block."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 2
+        mock_proc.stdout = "⚠  Backup files: 3 orphaned .bak file(s) — run: python3 scripts/vault.py encrypt\nvault.py health: OK (warnings present)"
+        mock_proc.stderr = ""
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)), \
+             patch("subprocess.run", return_value=mock_proc):
+            result = pf.check_vault_health()
+        assert result.severity == "P1", "exit 2 must be P1, not P0"
+        assert not result.passed
+        assert "python3 scripts/vault.py encrypt" in (result.fix_hint or "")
+
+    def test_vault_health_exit1_is_p0(self, tmp_path):
+        """vault.py health exit 1 (hard failure) must produce a P0 block."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 1
+        mock_proc.stdout = "✗  age binary not found\nvault.py health: FAILED"
+        mock_proc.stderr = ""
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)), \
+             patch("subprocess.run", return_value=mock_proc):
+            result = pf.check_vault_health()
+        assert result.severity == "P0"
+        assert not result.passed
+
+    def test_vault_health_exit0_is_p0_pass(self, tmp_path):
+        """vault.py health exit 0 (fully healthy) must produce a P0 pass."""
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "vault.py health: OK"
+        mock_proc.stderr = ""
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)), \
+             patch("subprocess.run", return_value=mock_proc):
+            result = pf.check_vault_health()
+        assert result.severity == "P0"
+        assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# check_vault_lock — stale locks are auto-cleared without --fix
+# ---------------------------------------------------------------------------
+
+class TestVaultLockAutoClean:
+    """Stale locks are cleared unconditionally; active locks require --fix."""
+
+    def _write_lock(self, path: Path, pid: int = 0, age_seconds: int = 0) -> None:
+        import json, time
+        past_ts = time.time() - age_seconds
+        path.write_text(json.dumps({"pid": pid, "ts": past_ts}))
+        # Backdate the file's mtime so os.path.getmtime() matches the JSON ts
+        os.utime(path, (past_ts, past_ts))
+
+    def test_stale_lock_by_age_auto_cleared_no_fix_flag(self, tmp_path):
+        """A lock older than 30m is removed unconditionally (auto_fix=False)."""
+        lock_path = tmp_path / ".artha-decrypted"
+        self._write_lock(lock_path, pid=0, age_seconds=3600)  # 60m old
+        with patch.object(pf, "LOCK_FILE", str(lock_path)):
+            result = pf.check_vault_lock(auto_fix=False)
+        assert result.passed, "stale lock should auto-clear even without --fix"
+        assert result.auto_fixed
+        assert not lock_path.exists()
+
+    def test_stale_lock_by_dead_pid_auto_cleared(self, tmp_path):
+        """A lock held by a dead PID is removed unconditionally."""
+        lock_path = tmp_path / ".artha-decrypted"
+        self._write_lock(lock_path, pid=999999999, age_seconds=10)  # recent but dead pid
+        with patch.object(pf, "LOCK_FILE", str(lock_path)):
+            result = pf.check_vault_lock(auto_fix=False)
+        assert result.passed
+        assert result.auto_fixed
+        assert not lock_path.exists()
+
+    def test_no_lock_file_passes(self, tmp_path):
+        """No lock file → immediate P0 pass."""
+        lock_path = tmp_path / ".artha-decrypted"
+        with patch.object(pf, "LOCK_FILE", str(lock_path)):
+            result = pf.check_vault_lock()
+        assert result.passed
+        assert result.severity == "P0"

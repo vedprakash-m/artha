@@ -32,7 +32,10 @@ def _parse_event(event: dict, calendar_name: str = "primary") -> dict:
     end_dt = end_raw.get("dateTime") or end_raw.get("date", "")
     all_day = "dateTime" not in start_raw
     attendees = [
-        {"email": a.get("email", ""), "name": a.get("displayName", ""), "self": a.get("self", False)}
+        # Redact email addresses: attendee presence and name are useful for briefing
+        # context; raw email addresses add no briefing value and constitute PII
+        # that should not appear in terminal output or pipeline JSONL logs.
+        {"name": a.get("displayName", "") or a.get("email", "").split("@")[0], "self": a.get("self", False)}
         for a in event.get("attendees", [])
     ]
     return {

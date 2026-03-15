@@ -82,7 +82,12 @@ def test_vault_status_inactive(mock_vault_env, capsys):
         assert "[MISSING]   immigration" in captured.out
 
 def test_vault_health_ok(mock_vault_env, capsys):
-    """Verify health check passes when everything is set up."""
+    """Verify health check reports OK when hard capabilities are intact.
+
+    The mock env has no GFS backups and no key export — these are soft
+    warnings (exit 2), not hard failures.  Hard capabilities (age, key,
+    state dir) all pass, so exit code must be 0 or 2 (not 1).
+    """
     with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="AGE-SECRET-KEY-1MOCK"), \
          patch("vault.get_public_key", return_value="age1mockpublickey"), \
@@ -91,9 +96,33 @@ def test_vault_health_ok(mock_vault_env, capsys):
         
         with pytest.raises(SystemExit) as exc:
             vault.do_health()
-        assert exc.value.code == 0
+        # Exit 2 = hard capabilities OK, only soft warnings present
+        assert exc.value.code in (0, 2)
         captured = capsys.readouterr()
         assert "vault.py health: OK" in captured.out
+
+
+def test_vault_health_bak_files_exit_2_not_1(mock_vault_env, capsys):
+    """Orphaned .bak files must produce exit 2 (soft warning), never exit 1 (hard failure).
+
+    Before the 3-exit-code model, .bak files set ok=False → exit 1, which
+    blocked catch-up entirely.  Regression test that confirms this path is gone.
+    """
+    # Create an orphaned .bak file in the state directory
+    bak_file = mock_vault_env / "state" / "immigration.md.bak"
+    bak_file.write_text("orphaned backup content")
+
+    with patch("vault.check_age_installed", return_value=True), \
+         patch("keyring.get_password", return_value="AGE-SECRET-KEY-1MOCK"), \
+         patch("vault.get_public_key", return_value="age1mockpublickey"), \
+         patch("subprocess.run", return_value=MagicMock(stdout="age v1.1.1", returncode=0)):
+        with pytest.raises(SystemExit) as exc:
+            vault.do_health()
+    # Must be 2 (soft warn) — NEVER 1 (hard fail)
+    assert exc.value.code == 2, f"Expected exit 2 for .bak files, got {exc.value.code}"
+    captured = capsys.readouterr()
+    assert "⚠" in captured.out
+    assert "vault.py health: OK (warnings present)" in captured.out
 
 def test_vault_decrypt_flow(mock_vault_env, capsys):
     """Verify the decryption flow (mocking age calls)."""
@@ -1026,13 +1055,18 @@ class TestHealthKeyValidation:
         assert "INVALID FORMAT" in out
 
     def test_health_shows_key_export_status(self, mock_vault_env, capsys):
-        """Health check shows key backup/export status."""
+        """Health check shows key backup/export status.
+
+        Mock env has no key export recorded, so a warning is expected and
+        the exit code is 2 (soft warning, not hard failure).
+        """
         with patch("vault.check_age_installed", return_value=True), \
              patch("keyring.get_password", return_value="AGE-SECRET-KEY-1MOCK"), \
              patch("vault.get_public_key", return_value="age1mockpublickey"), \
              patch("subprocess.run", return_value=MagicMock(stdout="age v1.1.1", returncode=0)):
             with pytest.raises(SystemExit) as exc:
                 vault.do_health()
-            assert exc.value.code == 0
+            # Hard capabilities OK; key-never-exported is a soft warning (exit 2)
+            assert exc.value.code in (0, 2)
         out = capsys.readouterr().out
         assert "Key backup:" in out or "NEVER exported" in out

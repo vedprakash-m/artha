@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9.1 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9.2 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.1
+> **Implements**: PRD v7.0.2
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.9.2 | 2026-03 | Operational safety hardening: `vault.py do_health()` 3-exit-code model (0=clean, 1=hard fail, 2=soft warnings); `preflight.check_vault_health()` exit-2 path (P1, not P0) with correct `.bak` warning extraction + `python3` fix hint; `preflight.check_vault_lock()` unconditional stale-lock auto-clear + PID liveness check + actual lock path in errors; `detect_environment.detect_json()` TTY-aware compact/pretty output + `--pretty` CLI flag; `google_calendar._parse_event()` attendee email PII redaction; `config/Artha.core.md` + `config/Artha.md` `python3` consistency + Step 0 hard-vs-soft P0 distinction + `alias python=python3` note. 943 tests (+7). |
 | v3.9.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx: Any | None = None` to all child middlewares. Test mocks updated to match Protocol contract. |
 | v3.9 | 2026-03 | Agentic Intelligence (PRD F15.128–F15.132, specs/agentic-improve.md Phases 1–5): `scripts/artha_context.py` (ArthaContext Pydantic model, ContextPressure, build_context()); `scripts/checkpoint.py` (step checkpoints, 4h TTL, read/write/clear); `scripts/fact_extractor.py` (5 signal detectors, PII strip, SHA-256 dedup, memory.md v2.0 persist); `context_offloader.py` EvictionTier enum + `_ARTIFACT_TIERS`; `audit_compliance.py` `_check_ooda_protocol()` (weight=10); `middleware/__init__.py` `ctx` param; `config/workflow/` Step 0a + Step 11c + checkpoint writes at Steps 4/7/8; `config/artha_config.yaml` `harness.agentic:` 4 flags; `state/memory.md` v2.0 schema; `state/templates/memory.md` template. 936 tests (+120). See §8.10. |
 | v3.7 | 2026-03 | Cowork VM & Operational Hardening (PRD F15.119–F15.123, specs/vm-hardening.md): `scripts/detect_environment.py` (7-probe manifest, 5-min TTL cache); `scripts/audit_compliance.py` (7-check compliance scorer, `--threshold`); `scripts/preflight.py` `--advisory` flag + `check_profile_completeness()` + 3-layer `check_msgraph_token()` rewrite; `scripts/setup_msgraph_oauth.py` `_last_refresh_success` tracking; `scripts/generate_identity.py` compact mode + `--no-compact`; 5 `config/workflow/*.md` files rewritten with canonical steps + ⛩️ gates; `state/templates/health-check.md`; `config/Artha.core.md` Read-Only Environment Protocol; 804 tests (+106). |

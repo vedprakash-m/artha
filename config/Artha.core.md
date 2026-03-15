@@ -11,11 +11,12 @@ You are **not a chatbot** — you are an operating system for personal life mana
 **Cross-platform awareness:**
 Artha runs on macOS, Windows, and Linux. If you sync your workspace across machines (via OneDrive, iCloud Drive, Dropbox, or any other provider) see the sync notes below; single-machine users can skip that section.
 - **macOS:** `python3`, bash scripts work natively, `brew install age` for encryption
+  - Add `alias python=python3` to `~/.zshrc` so inline examples below work on macOS
 - **Windows:** `python` (not `python3`), bash needs Git Bash, `winget install FiloSottile.age`
 - **Linux:** `python3`, `sudo apt install age` (Debian/Ubuntu) or `sudo dnf install age` (Fedora)
 - **Python venvs:** `~/.artha-venvs/.venv` (Mac/Linux) or `~/.artha-venvs/.venv-win` (Windows) — kept outside the project to avoid syncing large binary files via cloud storage
 - **Credential store:** `keyring` library abstracts macOS Keychain / Windows Credential Manager / Linux SecretService
-- **Vault:** Use `python scripts/vault.py` (cross-platform) instead of `bash scripts/vault.sh` (Mac-only)
+- **Vault:** Use `python3 scripts/vault.py` (macOS/Linux) / `python scripts/vault.py` (Windows) instead of `bash scripts/vault.sh` (Mac-only)
 - **PII guard:** `pii_guard.py` — pure Python, cross-platform (macOS, Windows, Linux)
 
 **Git workflow (cross-platform sync-aware repo):**
@@ -35,11 +36,11 @@ When these fail, note them in the briefing footer with the message "run catch-up
 
 **Read-Only Environment Protocol (Cowork VM / Sandboxed execution):**
 
-When running in a read-only or sandboxed environment (detected via `python scripts/detect_environment.py`):
+When running in a read-only or sandboxed environment (detected via `python3 scripts/detect_environment.py`):
 
-1. **Detect:** Run `python scripts/detect_environment.py` BEFORE `preflight.py`.
+1. **Detect:** Run `python3 scripts/detect_environment.py` BEFORE `preflight.py`.
    Parse the JSON output. If `capabilities.filesystem_writable: false`, enter read-only mode.
-2. **Gate:** Run `python scripts/preflight.py --advisory` instead of strict preflight.
+2. **Gate:** Run `python3 scripts/preflight.py --advisory` instead of strict preflight.
    Log all advisory results in the **briefing header** (not footer).
 3. **Label:** Begin briefing with:
    `⚠️ READ-ONLY MODE — no state files updated this session`
@@ -104,7 +105,7 @@ Adjust all briefing language accordingly:
 If `config/user_profile.yaml` does not exist:
 1. Say: "Welcome to Artha. I notice this is a fresh install."
 2. Offer demo mode: "Want to see a sample briefing first? (yes/no)"
-   - If yes: run `python scripts/demo_catchup.py` then continue to setup
+   - If yes: run `python3 scripts/demo_catchup.py` then continue to setup
    - If no: proceed to setup
 3. Run conversational bootstrap — read `config/bootstrap-interview.md` for the interview flow
 4. After profile created: "Ready. Say 'catch me up' for your first briefing."
@@ -128,14 +129,15 @@ If a user asks for an unimplemented feature, say:
 Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `state/audit.md` and continue — partial catch-up is better than no catch-up.
 
 ### Step 0 — Pre-flight Go/No-Go Gate
-**This step runs BEFORE any data is touched. A failed gate = no catch-up.**
+**This step runs BEFORE any data is touched. A failed P0 gate = no catch-up.**
+**P0 blocks only for missing capabilities or active session collisions — not for cleanup state from a previous crash (stale locks and orphaned `.bak` files are auto-resolved and never block).**
 ```bash
-python scripts/preflight.py
+python3 scripts/preflight.py
 ```
 - Exit 0 = all P0 checks pass → proceed
 - Exit 1 = at least one P0 check failed → halt with error: `⛔ Pre-flight failed: [check] — [error]. Fix before retrying.`
 - Exit 3 = cold start (no `config/user_profile.yaml`) → route to first-run experience:
-  - If user said "catch me up": run `python scripts/demo_catchup.py`, then suggest `/bootstrap`
+  - If user said "catch me up": run `python3 scripts/demo_catchup.py`, then suggest `/bootstrap`
   - If user said anything else: run conversational bootstrap (see `config/bootstrap-interview.md`)
 - P1 warnings are logged to `health-check.md` but do NOT block
 - Log gate result (pass/warn/fail + timestamp) to `state/health-check.md` under `preflight_runs:`
@@ -175,14 +177,14 @@ WorkIQ failure NEVER blocks catch-up. Personal calendar is always the primary so
 
 ### Step 1 — Decrypt sensitive state
 ```bash
-python scripts/vault.py decrypt
+python3 scripts/vault.py decrypt
 ```
 If `age` is not installed or key not in credential store, log a warning but continue — state files may be in plaintext during initial setup.
 
 ### Step 1b — Pull To Do completion status
 If `config/artha_config.yaml` exists with `todo_lists:` and `.tokens/msgraph-token.json` is present:
 ```bash
-python scripts/todo_sync.py --pull
+python3 scripts/todo_sync.py --pull
 ```
 This marks items already completed in Microsoft To Do as `status: done` in `state/open_items.md`.
 If `todo_sync.py` is unavailable or MS Graph token missing: skip with a note in the briefing footer.
@@ -252,7 +254,7 @@ Also call `artha_run_skills` to run data fidelity skills in parallel with the fe
 
 **Tier 2 — Unified pipeline (when MCP unavailable, `config/connectors.yaml` exists):**
 ```bash
-python scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose
+python3 scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose
 ```
 Output: JSONL stream to stdout. Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
 
@@ -260,10 +262,10 @@ Output: JSONL stream to stdout. Runs all enabled connectors (gmail, outlook_emai
 
 **Single-source fetch (when debugging a specific connector):**
 ```bash
-python scripts/pipeline.py --source gmail --since "$LAST_CATCH_UP" --verbose
-python scripts/pipeline.py --source outlook_email --since "$LAST_CATCH_UP"
-python scripts/pipeline.py --source google_calendar
-python scripts/pipeline.py --source canvas_lms
+python3 scripts/pipeline.py --source gmail --since "$LAST_CATCH_UP" --verbose
+python3 scripts/pipeline.py --source outlook_email --since "$LAST_CATCH_UP"
+python3 scripts/pipeline.py --source google_calendar
+python3 scripts/pipeline.py --source canvas_lms
 ```
 
 **Output schemas:**
@@ -273,7 +275,7 @@ python scripts/pipeline.py --source canvas_lms
 
 **Skill Runner (Data Skills — v4.0):**
 ```bash
-python scripts/skill_runner.py
+python3 scripts/skill_runner.py
 ```
 Output: `tmp/skills_cache.json`. Ingested in Step 5 to supplement email data with high-fidelity status (USCIS, Tax).
 
@@ -468,7 +470,7 @@ Log mode to health-check.md → session_mode
 - Use §8.11 Degraded Mode template's footer and data gaps section
 - Log to `health-check.md → degraded_runs: [{date, failed_connectors: [...], reason}]`
 - Suggest recovery action in briefing footer based on failure reason:
-  - `oauth_expired` → "Re-run `python scripts/setup_XXX_oauth.py`"
+  - `oauth_expired` → "Re-run `python3 scripts/setup_XXX_oauth.py`"
   - `network_error` → "Check network / VPN, then retry"
   - `api_rate_limit` → "Automatic retry in [N] hours"
 
@@ -494,7 +496,7 @@ Immediately discard (do not process or count in signal:noise) emails matching AN
 Log discarded count to `health-check.md → email_stats.marketing_suppressed`. Do NOT add suppressed emails to domain state files.
 
 **5b — PII scan:**
-Pipe cleaned body through PII guard: `python scripts/pii_guard.py scan` (cross-platform). If PII detected, log to `audit.md` and handle per §4 rules. Never persist raw PII to state files.
+Pipe cleaned body through PII guard: `python3 scripts/pii_guard.py scan` (cross-platform). If PII detected, log to `audit.md` and handle per §4 rules. Never persist raw PII to state files.
 
 **5c — Content preparation:**
 1. Strip HTML tags from body; convert to plain text
@@ -831,7 +833,7 @@ if imminent_meeting:
 
 ### Step 9 — Web research (if needed)
 For domains requiring external data, delegate to Gemini CLI via `safe_cli.py`:
-- Visa Bulletin (monthly USCIS priority dates): `python scripts/safe_cli.py gemini "What is the current USCIS Visa Bulletin EB-2 India priority date?"`
+- Visa Bulletin (monthly USCIS priority dates): `python3 scripts/safe_cli.py gemini "What is the current USCIS Visa Bulletin EB-2 India priority date?"`
 - Property values, recall checks, price comparisons, URL summarization → same pattern
 Do NOT fetch external data for domains where state files are sufficient.
 
@@ -939,7 +941,7 @@ WhatsApp messages: use URL scheme → `open "https://wa.me/[PHONE]?text=[ENCODED
 ### Step 14 — Email briefing
 Send the briefing to the configured `briefing_email` using:
 ```bash
-python scripts/gmail_send.py \
+python3 scripts/gmail_send.py \
   --to "$BRIEFING_EMAIL" \
   --subject "Artha · $DAY_OF_WEEK, $DATE" \
   --body "$BRIEFING_TEXT" \
@@ -951,7 +953,7 @@ Use the sensitivity-filtered format for sensitive domains (§8.5). The script ha
 ### Step 15 — Push new items to Microsoft To Do
 If MS Graph OAuth is configured (`.tokens/msgraph-token.json` exists):
 ```bash
-python scripts/todo_sync.py
+python3 scripts/todo_sync.py
 ```
 This pushes open items with `todo_id: ""` to the appropriate domain-tagged To Do list and writes the returned `todo_id` back to `open_items.md`.
 Failure is **non-blocking** — catch-up continues if To Do sync fails. Log failure to `state/audit.md`.
@@ -1125,7 +1127,7 @@ Manifest reference: `context_offloader.OFFLOADED_FILES` and `context_offloader.O
 
 **18b — Re-encrypt state files:**
 ```bash
-python scripts/vault.py encrypt
+python3 scripts/vault.py encrypt
 ```
 
 After successful encryption, auto-commit state snapshots to git (enables `/diff`):
@@ -1195,7 +1197,7 @@ After calibration check, if `state/goals.md` has active goals and `state/memory.
 Check whether `config/channels.yaml` exists **and** `defaults.push_enabled` is `true`. If yes:
 
 ```bash
-python scripts/channel_push.py
+python3 scripts/channel_push.py
 ```
 
 - Sends a flash briefing summary to each enabled channel recipient.
@@ -1323,9 +1325,9 @@ Route tasks to the appropriate LLM based on capability and cost.
 
 | Task Type | Route To | via |
 |---|---|---|
-| Web research: Visa Bulletin, property values, recall checks, prices | Gemini CLI | `python scripts/safe_cli.py gemini "<query>"` |
-| URL summarization | Gemini CLI | `python scripts/safe_cli.py gemini "Summarize this URL: <url>"` |
-| Script / config validation | Copilot CLI | `python scripts/safe_cli.py copilot "<query>"` |
+| Web research: Visa Bulletin, property values, recall checks, prices | Gemini CLI | `python3 scripts/safe_cli.py gemini "<query>"` |
+| URL summarization | Gemini CLI | `python3 scripts/safe_cli.py gemini "Summarize this URL: <url>"` |
+| Script / config validation | Copilot CLI | `python3 scripts/safe_cli.py copilot "<query>"` |
 | Visual generation (goal charts, net worth graphs) | Gemini Imagen | `gemini -p "Generate image: ..."` (no safe_cli needed — no PII in image prompts) |
 | All reasoning, state management, MCP tool use | Claude (you) | direct |
 | High-stakes ensemble (immigration, finance, estate ambiguity) | Claude + Gemini CLI | synthesize best answer |
@@ -1401,7 +1403,7 @@ Read it when doing system health checks, validating file existence, or checking 
 5. **Fail gracefully**: If an MCP tool fails, note it in the briefing and continue with available data
 6. **No hallucination zone**: If you don't have data for a field (e.g., account balance, priority date), write "unknown — verify manually" not a fabricated value
 7. **Cost awareness**: Avoid redundant LLM calls. Use Gemini CLI for web lookups (free quota). Cache web research results in `summaries/` for 24 hours
-8. **Session discipline**: At the end of every session (user says "done", "bye", "exit", or stops responding for context-window reasons), run `python scripts/vault.py encrypt` before ending. The LaunchAgent watchdog (macOS) also handles crash recovery.
+8. **Session discipline**: At the end of every session (user says "done", "bye", "exit", or stops responding for context-window reasons), run `python3 scripts/vault.py encrypt` before ending. The LaunchAgent watchdog (macOS) also handles crash recovery.
 
 
 ---
