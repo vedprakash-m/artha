@@ -30,6 +30,7 @@ Ref: specs/deep-agents.md Phase 1
 from __future__ import annotations
 
 import json
+from enum import IntEnum
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,6 +39,42 @@ from lib.common import ARTHA_DIR
 _CHARS_PER_TOKEN = 4  # heuristic: 1 token ≈ 4 chars
 _MAX_CARD_TOKENS = 500  # summary card must never exceed this
 
+# ---------------------------------------------------------------------------
+# Tiered eviction — Phase 2 (specs/agentic-improve.md)
+# ---------------------------------------------------------------------------
+
+
+class EvictionTier(IntEnum):
+    """Artifact eviction priority.  Lower value = higher preservation priority (evicted LAST)."""
+
+    PINNED = 0       # Never offload (e.g., session summary card)
+    CRITICAL = 1     # Keep in-context at normal pressure; offload only at CRITICAL pressure
+    INTERMEDIATE = 2  # Default; offload at base threshold
+    EPHEMERAL = 3    # Evict first — aggressive threshold (pipeline JSONL, raw emails)
+
+
+# Threshold multipliers per tier (applied to the caller-supplied threshold_tokens).
+# float("inf") means never offload.
+_TIER_THRESHOLDS: dict[EvictionTier, float] = {
+    EvictionTier.PINNED: float("inf"),   # Never offload
+    EvictionTier.CRITICAL: 1.0,          # Use base threshold
+    EvictionTier.INTERMEDIATE: 1.0,      # Use base threshold
+    EvictionTier.EPHEMERAL: 0.4,         # Aggressive: 40% of base (≈2K at default 5K)
+}
+
+# Default tier assignments for known artifact names.
+# Any unregistered name receives INTERMEDIATE.
+_ARTIFACT_TIERS: dict[str, EvictionTier] = {
+    "pipeline_output": EvictionTier.EPHEMERAL,
+    "processed_emails": EvictionTier.EPHEMERAL,
+    "domain_extractions": EvictionTier.INTERMEDIATE,
+    "cross_domain_analysis": EvictionTier.INTERMEDIATE,
+    "alert_list": EvictionTier.CRITICAL,
+    "one_thing": EvictionTier.CRITICAL,
+    "compound_signals": EvictionTier.CRITICAL,
+    "session_summary": EvictionTier.PINNED,
+}
+
 # Registry of all filenames/patterns that context_offloader may write to tmp/.
 # Step 18 ephemeral cleanup uses this manifest to ensure complete removal.
 OFFLOADED_FILES: list[str] = [
@@ -45,6 +82,7 @@ OFFLOADED_FILES: list[str] = [
     "processed_emails.json",
     "domain_extractions",  # directory — remove recursively
     "cross_domain_analysis.json",
+    ".checkpoint.json",    # Phase 4: step checkpoint marker
 ]
 # Session history files match pattern: session_history_N.md (written by session_summarizer)
 OFFLOADED_GLOB_PATTERNS: list[str] = [
@@ -159,10 +197,11 @@ def offload_artifact(
     threshold_tokens: int = 5_000,
     preview_lines: int = 10,
     artha_dir: Path | None = None,
+    tier: EvictionTier | None = None,
 ) -> str:
-    """Write data to tmp/{name}.json; return summary card if data > threshold.
+    """Write data to tmp/{name}.json; return summary card if data > tier-adjusted threshold.
 
-    If the serialized data is at or below ``threshold_tokens``, returns the
+    If the serialized data is at or below the effective threshold, returns the
     serialized text directly — no file is written.
 
     If the data exceeds the threshold (and the feature flag is enabled in
@@ -181,6 +220,12 @@ def offload_artifact(
         preview_lines: Number of serialized lines included in the card preview.
         artha_dir: Override the Artha project root (used in tests to point
             at a temporary directory instead of the real ``ARTHA_DIR``).
+        tier: Explicit eviction tier override.  When ``None``, the tier is
+            looked up in ``_ARTIFACT_TIERS`` by ``name``; unknown names
+            default to ``INTERMEDIATE``.  ``PINNED`` artifacts are never
+            offloaded regardless of size.  ``EPHEMERAL`` artifacts use 40%
+            of ``threshold_tokens``.  Ignored when tiered eviction is
+            disabled via feature flag.
 
     Returns:
         str: Serialized data (if below threshold) or a compact summary card
@@ -192,9 +237,25 @@ def offload_artifact(
         return serialized
 
     serialized, ext = _serialize(data)
+
+    # Determine effective eviction threshold
+    if load_harness_flag("agentic.tiered_eviction.enabled"):
+        effective_tier = (
+            tier
+            if tier is not None
+            else _ARTIFACT_TIERS.get(name, EvictionTier.INTERMEDIATE)
+        )
+        multiplier = _TIER_THRESHOLDS[effective_tier]
+        if multiplier == float("inf"):
+            # PINNED — never offload regardless of size
+            return serialized
+        effective_threshold = max(1, int(threshold_tokens * multiplier))
+    else:
+        effective_threshold = threshold_tokens
+
     estimated_tokens = _estimate_tokens(serialized)
 
-    if estimated_tokens <= threshold_tokens:
+    if estimated_tokens <= effective_threshold:
         # Below threshold — return inline, no file written
         return serialized
 

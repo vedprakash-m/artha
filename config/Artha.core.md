@@ -1043,6 +1043,33 @@ catch_up_runs:
         validation_passed: [true|false]
         validation_errors: []
         structured_file: [tmp/briefing_structured.json]
+      # Agentic Intelligence Phases (specs/agentic-improve.md)
+      agentic:
+        eviction_tiers:
+          ephemeral_evicted: [N]       # count of EPHEMERAL artifacts offloaded this session
+          critical_preserved: [N]      # count of CRITICAL artifacts kept in-context
+          pinned_preserved: [N]        # count of PINNED artifacts kept in-context
+          tokens_saved_by_tiers: [N]   # estimated tokens saved by tier-aware eviction
+        session:
+          command: [command]
+          environment: [local_mac|cowork_vm|unknown]
+          pressure: [green|yellow|red|critical]
+          preflight_passed: [true|false]
+          is_degraded: [true|false]
+          connectors_online: [list]
+          steps_executed: [list]
+        checkpoints:
+          last_step: [N]
+          resume_count: [N]            # sessions resumed from checkpoint this catch-up
+        facts:
+          extracted_count: [N]         # facts extracted this session
+          total_count: [N]             # total facts in state/memory.md
+          corrections_applied: [N]     # corrections that suppressed alerts
+          expired_count: [N]           # facts expired this session
+        ooda:
+          compliance_rate: [N]         # % of catch-ups with all 4 OODA markers
+          compound_signals_fired: [N]  # compound cross-domain signals detected
+          cycles_executed: [N]         # ACT→ORIENT validation cycles (0–2)
 ```
 
 **Per-domain hit rate tracking:**

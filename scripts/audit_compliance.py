@@ -197,6 +197,23 @@ def _check_one_thing_present(text: str) -> CheckResult:
     )
 
 
+def _check_ooda_protocol(text: str) -> CheckResult:
+    """Step 8 — OODA protocol markers present in cross-domain reasoning output."""
+    markers = ["[OBSERVE]", "[ORIENT]", "[DECIDE]", "[ACT]"]
+    found = [m for m in markers if m in text]
+    # Pass if at least 3 of 4 markers present (allow 1 partial miss)
+    passed = len(found) >= 3
+    missing = [m for m in markers if m not in text]
+    return CheckResult(
+        name="ooda_protocol_followed",
+        passed=passed,
+        weight=10,
+        detail=f"OODA markers found: {found}." if passed
+               else f"OODA protocol incomplete — found: {found}, missing: {missing}. "
+                    "Cross-domain reasoning should produce [OBSERVE], [ORIENT], [DECIDE], [ACT] blocks.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Degraded-mode detection
 # ---------------------------------------------------------------------------
@@ -278,6 +295,7 @@ def audit_latest_briefing(briefing_path: str) -> ComplianceReport:
         _check_no_unacknowledged_snippets(text),
         _check_domain_sections_present(text),
         _check_one_thing_present(text),
+        _check_ooda_protocol(text),
     ]
 
     degraded_mode, metadata = _detect_degraded_mode(text)

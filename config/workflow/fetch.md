@@ -115,6 +115,12 @@ else:                            mode = "normal"
 
 Log mode to `health-check.md → session_mode`.
 
+**Checkpoint (Step 4 complete):** After fetch + mode detection, write:
+```bash
+python -c "from scripts.checkpoint import write_checkpoint; from pathlib import Path; write_checkpoint(Path('.'), 4, email_count=N, session_mode='normal|degraded|offline')"
+```
+Replace `N` with the actual email count and `session_mode` with the detected mode.
+
 ## Error handling
 - Individual connector failures don't block other connectors
 - Pipeline exit code 3 = partial success
