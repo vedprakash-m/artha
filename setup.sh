@@ -31,12 +31,12 @@ blank() { echo ""; }
 
 # ── Header ────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
-echo -e "${BOLD}  Artha Turbo Setup                                               ${RESET}"
+echo -e "${BOLD}   A R T H A  —  Personal Intelligence OS                        ${RESET}"
 echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 blank
 
-# ── Prerequisite checks ───────────────────────────────────────────────────────
-echo -e "${BOLD}Checking prerequisites...${RESET}"
+# ── [1/4] Prerequisite checks ─────────────────────────────────────────────────
+echo -e "${BOLD}[1/4] Checking prerequisites...${RESET}"
 
 ERRORS=0
 
@@ -82,34 +82,37 @@ fi
 
 blank
 
-# ── Virtual environment ───────────────────────────────────────────────────────
+# ── [2/4] Virtual environment ─────────────────────────────────────────────────
+echo -e "${BOLD}[2/4] Setting up virtual environment...${RESET}"
 VENV_DIR="$HOME/.artha-venvs/.venv"
 
 if [ -d "$VENV_DIR" ]; then
-  info "Virtual environment already exists at $VENV_DIR"
+  pass "Virtual environment already exists at ~/.artha-venvs/.venv"
 else
-  info "Creating virtual environment at $VENV_DIR ..."
+  info "Creating virtual environment at ~/.artha-venvs/.venv ..."
   python3 -m venv "$VENV_DIR"
   pass "Virtual environment created"
 fi
 
 # shellcheck disable=SC1090
 source "$VENV_DIR/bin/activate"
-info "Dependencies installing (this takes ~30 seconds the first time) ..."
-pip install -q -r scripts/requirements.txt
-pass "Dependencies installed"
-
 blank
 
-# ── PII safety git hook ───────────────────────────────────────────────────────
+# ── [3/4] Dependencies ────────────────────────────────────────────────────────
+echo -e "${BOLD}[3/4] Installing dependencies...${RESET}"
+info "This takes ~30 seconds the first time (cached on subsequent runs)"
+pip install -q --disable-pip-version-check -r scripts/requirements.txt
+pass "Dependencies installed"
+
+# PII safety git hook
 if git rev-parse --git-dir &>/dev/null 2>&1; then
   git config core.hooksPath .githooks 2>/dev/null && pass "PII safety hook activated" || true
 fi
 
 blank
 
-# ── Demo briefing ─────────────────────────────────────────────────────────────
-echo -e "${BOLD}Running demo briefing...${RESET}"
+# ── [4/4] Demo briefing ────────────────────────────────────────────────────────
+echo -e "${BOLD}[4/4] Running demo briefing...${RESET}"
 echo -e "${DIM}(Fictional data — no real accounts connected)${RESET}"
 blank
 python scripts/demo_catchup.py

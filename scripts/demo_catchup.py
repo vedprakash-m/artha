@@ -117,41 +117,59 @@ FIXTURE_EMAILS = [
 
 def render_briefing(emails: list[dict]) -> str:
     today = date.today().isoformat()
+    tty = sys.stdout.isatty()
+    # ANSI colors — only when writing to a real terminal
+    BOLD    = "\033[1m"  if tty else ""
+    YELLOW  = "\033[33m" if tty else ""
+    GREEN   = "\033[32m" if tty else ""
+    RED     = "\033[31m" if tty else ""
+    DIM     = "\033[2m"  if tty else ""
+    RST     = "\033[0m"  if tty else ""
+
+    def action(text: str) -> str:
+        return f"  {YELLOW}ACTION:{RST} {text}"
+
+    def good(text: str) -> str:
+        return f"  {GREEN}•{RST} {text}"
+
+    def alert(text: str) -> str:
+        return f"  {RED}•{RST} {text}"
+
+    def bullet(text: str) -> str:
+        return f"  • {text}"
+
     lines = [
-        f"━━ ARTHA DEMO BRIEFING — {today} ━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "⚠  DEMO MODE — All data is fictional. No real accounts connected.",
+        f"{BOLD}━━ ARTHA DEMO BRIEFING — {today} ━━━━━━━━━━━━━━━━━━━━━━━━━━━{RST}",
+        f"{DIM}⚠  DEMO MODE — All data is fictional. No real accounts connected.{RST}",
         "",
-        "## IMMIGRATION",
-        "  • I-485 received (IOE0987654321) — biometrics notice expected within 60 days",
-        "  • H-1B extension approved through 2028-09-30 (WAC2612345678)",
-        "  ACTION: Verify I-94 reflects new H-1B validity on next US entry",
+        f"{BOLD}## IMMIGRATION{RST}",
+        bullet("I-485 received (IOE0987654321) — biometrics notice expected within 60 days"),
+        good("H-1B extension approved through 2028-09-30 (WAC2612345678)"),
+        action("Verify I-94 reflects new H-1B validity on next US entry"),
         "",
-        "## FINANCE",
-        "  • Mortgage payment $2,340 due 2026-04-01 (balance $412,500)",
-        "  ACTION: Schedule April 1 mortgage payment",
+        f"{BOLD}## FINANCE{RST}",
+        bullet("Mortgage payment $2,340 due 2026-04-01 (balance $412,500)"),
+        action("Schedule April 1 mortgage payment"),
         "",
-        "## HEALTH",
-        "  • Annual wellness exam 2026-03-25 @ 10:00 AM with Dr. Emily Chen",
-        "  • Lisinopril 10mg refill ready — pickup by 2026-03-17",
-        "  ACTION: Pick up prescription; complete pre-visit questionnaire",
+        f"{BOLD}## HEALTH{RST}",
+        bullet("Annual wellness exam 2026-03-25 @ 10:00 AM with Dr. Emily Chen"),
+        alert("Lisinopril 10mg refill ready — pickup by 2026-03-17"),
+        action("Pick up prescription; complete pre-visit questionnaire"),
         "",
-        "## KIDS",
-        "  • Ella Q3 report: Exceeds Expectations (Reading 4/4, Math 3/4)",
-        "  • Parent-teacher conference 2026-03-20 @ 4:30 PM",
-        "  ACTION: Confirm conference attendance",
+        f"{BOLD}## KIDS{RST}",
+        good("Ella Q3 report: Exceeds Expectations (Reading 4/4, Math 3/4)"),
+        bullet("Parent-teacher conference 2026-03-20 @ 4:30 PM"),
+        action("Confirm conference attendance"),
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "4 ACTION ITEMS  |  2 UPCOMING DATES  |  0 ALERTS",
+        f"{BOLD}4 ACTION ITEMS  |  2 UPCOMING DATES  |  0 ALERTS{RST}",
         "",
-        "💡 Imagine waking up to a briefing like this — but for YOUR life.",
+        f"💡 {BOLD}Imagine waking up to a briefing like this — but for YOUR life.{RST}",
         "   Your real email. Your family's calendar. Your financial deadlines.",
         "   Your immigration status. Your kids' parent-teacher conferences.",
         "   Artha surfaces what matters, every morning, before you open your inbox.",
         "",
-        "━━  Ready to set this up?  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-        "  • Fast way:     bash setup.sh",
-        "  • Connect data: python scripts/setup_google_oauth.py",
-        "  • Guided setup: open your AI CLI and type  /bootstrap",
+        f"{DIM}🔒  Your data stays on this machine. Artha never phones home.{RST}",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)
