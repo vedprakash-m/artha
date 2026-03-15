@@ -139,3 +139,56 @@ employer_benefits:
       notes: "[brief description]"
 ```
 Update when benefits confirmation emails arrive. Alert in October for enrollment review.
+
+---
+
+## Longitudinal Lab Results (I-14)
+
+> **Ref: specs/improve.md I-14** — Structured lab history tracking for trend detection.
+> Populated from Apple Health imports, patient portal emails, or user-provided data.
+
+When lab results are available from any source (Apple Health import, patient portal email,
+or user-provided data), maintain a chronological table in `state/health.md`:
+
+```markdown
+#### Lab History — [Person Name]
+| Date       | Test                | Result | Unit   | Reference Range | Flag |
+|------------|---------------------|--------|--------|----------------|------|
+| YYYY-MM-DD | Total Cholesterol   | 205    | mg/dL  | <200           | 🟡   |
+| YYYY-MM-DD | LDL                 | 130    | mg/dL  | <100           | 🟠   |
+| YYYY-MM-DD | Fasting Glucose     | 95     | mg/dL  | 70–99          | ✅   |
+| YYYY-MM-DD | HbA1c               | 5.4    | %      | <5.7           | ✅   |
+| YYYY-MM-DD | Weight              | 82.5   | kg     | (tracked)      | —    |
+```
+
+**Flag codes:** ✅ normal | 🟡 borderline | 🟠 out of range | 🔴 critically abnormal | — (informational)
+
+### Trend Detection
+
+If a lab value has ≥ 3 data points, note the trend in the quarterly scorecard:
+- **↑ Increasing** — latest value > average of previous 2
+- **↓ Decreasing** — latest value < average of previous 2
+- **→ Stable** — within 5% of previous 2 average
+
+**Surfacing trends:** Include in quarterly health summary:
+`"[Test] ↑ trending up over [N] months — [N data points]"`
+
+**Important boundary:** Report trends factually. Do NOT interpret medical significance,
+diagnose conditions, or recommend treatment changes. That is medical advice and is
+outside Artha's scope. Always suggest discussing trends with a healthcare provider.
+
+### Apple Health Import Processing
+
+When `apple_health` connector output is available in the JSONL stream:
+1. Map record types to human-readable names:
+   - `BodyMass` → Weight
+   - `BloodPressureSystolic` / `BloodPressureDiastolic` → Blood Pressure
+   - `HeartRate` → Heart Rate
+   - `BloodGlucose` → Blood Glucose
+   - `OxygenSaturation` → SpO2
+2. Update the Lab History table for the appropriate person.
+3. For blood pressure: record as a pair "SYS/DIA mmHg" on the same date.
+4. Archive older entries (keep last 24 months inline; note total record count).
+
+**Privacy note:** `state/health.md.age` is encrypted. Lab result details must never
+appear in plain state files, briefings sent to unencrypted channels, or audit logs.

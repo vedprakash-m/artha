@@ -357,3 +357,52 @@ benefits:
   cell_phone_protection: true|false
   cash_back_categories: ["[category]: [%]"]
 ```
+
+---
+
+## Gig & Platform Income Tracking (1099-K)
+
+> **Ref: specs/improve.md I-02** — Pure prompt alert; no code changes.
+
+When processing emails, track cumulative year-to-date (YTD) income from these platforms:
+- Stripe, PayPal, Venmo (business), Square, Etsy, eBay, Upwork, Fiverr, Uber, Lyft, DoorDash, Airbnb
+
+Maintain a running total in a "Platform Income" section of `state/finance.md`:
+
+```
+### Platform Income (YTD)
+| Platform | YTD Income  | Last Updated |
+|----------|-------------|---------------|
+| Stripe   | $X,XXX      | YYYY-MM-DD   |
+```
+
+**Alert thresholds:**
+- 🟡 YTD from any single platform ≥ $5,000 → "1099-K will be issued for [platform] — keep records"
+- 🟠 YTD total across all platforms ≥ $20,000 → "Consider quarterly estimated tax payment"
+- 🔴 Q4 dates (Oct–Dec) with no quarterly payments on record → "Estimated tax deadline approaching"
+
+**Boundary:** Surface the threshold facts. Do NOT calculate tax amounts or advise on withholding.
+That is tax advice and is outside Artha's scope.
+
+---
+
+## Financial Resilience (Skill Output)
+
+> **Ref: specs/improve.md I-01** — populated by `financial_resilience.py` skill (cadence: weekly).
+
+If the `financial_resilience` skill has run and produced output, include this section in the
+briefing when any of the following is true:
+- Runway < 6 months (alert 🟠) or < 3 months (alert 🔴)
+- Single-income runway < 3 months
+- Burn rate changed >15% from previous period
+
+**Briefing format when skill output available:**
+```
+💰 Financial Resilience
+• Monthly burn rate: $[X,XXX] (avg of last [N] months)
+• Emergency fund runway: [N.N] months (at current burn rate)
+• Single-income runway: [N.N] months [if applicable]
+```
+
+**If skill output is not available** (vault locked, insufficient data): omit this section silently.
+**Boundary:** Show the numbers. Do NOT label them as "healthy" or "alarming" — let the user draw conclusions.

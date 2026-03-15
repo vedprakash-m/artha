@@ -40,3 +40,10 @@ skills:
     requires_vault: false
     safety_critical: false
     description: "Detect subscription price increases and trial-to-paid conversions from state/digital.md."
+  financial_resilience:
+    enabled: true
+    priority: P1
+    cadence: weekly
+    requires_vault: true
+    safety_critical: false
+    description: "Compute monthly burn rate, emergency fund runway, and single-income stress scenario from state/finance.md."
