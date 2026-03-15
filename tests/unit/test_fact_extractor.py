@@ -447,3 +447,109 @@ class TestMakeId:
         fid = _make_id("pattern", "calendar", "Weekly on TUESDAY at 4PM")
         assert fid == fid.lower()
         assert " " not in fid
+
+
+# ---------------------------------------------------------------------------
+# AR-1: Memory capacity enforcement (_consolidate_facts)
+# ---------------------------------------------------------------------------
+
+from fact_extractor import _consolidate_facts, MAX_MEMORY_CHARS, MAX_FACTS_COUNT  # noqa: E402
+
+
+def _make_fact(fact_id: str, fact_type: str = "pattern", confidence: float = 0.8) -> Fact:
+    """Helper: create a minimal Fact for consolidation tests."""
+    return Fact(
+        id=fact_id,
+        type=fact_type,
+        domain="general",
+        statement=f"Statement for {fact_id}",
+        confidence=confidence,
+    )
+
+
+class TestConsolidateFacts:
+    def test_within_limits_unchanged(self):
+        """When within both limits, facts are returned as-is."""
+        facts = [_make_fact(f"f{i}") for i in range(5)]
+        result = _consolidate_facts(facts, max_facts=30, max_chars=3000)
+        assert len(result) == 5
+
+    def test_drops_ttl_expired_facts(self):
+        """TTL-expired facts are removed in the first pass."""
+        old = (date.today() - timedelta(days=200)).isoformat()
+        expired = Fact(
+            id="expired-fact", type="pattern", domain="general",
+            statement="old fact", confidence=0.9,
+            date_added=old, last_seen=old, ttl_days=100,
+        )
+        fresh = _make_fact("fresh")
+        result = _consolidate_facts([expired, fresh], max_facts=30, max_chars=3000)
+        ids = [f.id for f in result]
+        assert "expired-fact" not in ids
+        assert "fresh" in ids
+
+    def test_evicts_lowest_confidence_when_over_count(self):
+        """When count > max_facts, lowest-confidence non-protected facts are evicted."""
+        facts = [_make_fact(f"f{i}", confidence=float(i) / 10) for i in range(10)]
+        result = _consolidate_facts(facts, max_facts=5, max_chars=99999)
+        # Should keep at most 5 facts
+        assert len(result) <= 5
+        # The surviving facts should be higher-confidence ones
+        surviving_ids = {f.id for f in result}
+        # f0 (lowest confidence) should have been evicted
+        assert "f0" not in surviving_ids
+
+    def test_never_evicts_corrections(self):
+        """Correction-type facts are pinned and never evicted regardless of confidence."""
+        correction = _make_fact("correction-1", fact_type="correction", confidence=0.1)
+        low_others = [_make_fact(f"p{i}", confidence=0.5) for i in range(10)]
+        all_facts = [correction] + low_others
+        result = _consolidate_facts(all_facts, max_facts=5, max_chars=99999)
+        ids = [f.id for f in result]
+        assert "correction-1" in ids
+
+    def test_never_evicts_preferences(self):
+        """Preference-type facts are pinned and never evicted regardless of confidence."""
+        pref = _make_fact("pref-1", fact_type="preference", confidence=0.1)
+        low_others = [_make_fact(f"q{i}", confidence=0.5) for i in range(10)]
+        result = _consolidate_facts([pref] + low_others, max_facts=5, max_chars=99999)
+        ids = [f.id for f in result]
+        assert "pref-1" in ids
+
+    def test_empty_input_returns_empty(self):
+        """Empty input returns empty list without error."""
+        result = _consolidate_facts([], max_facts=30, max_chars=3000)
+        assert result == []
+
+    def test_persist_within_limits_no_consolidation(self, tmp_path):
+        """persist_facts() stays within limits — no eviction needed."""
+        (tmp_path / "state").mkdir()
+        facts = [_make_fact(f"f{i}") for i in range(3)]
+        with _enabled():
+            count = persist_facts(facts, tmp_path)
+        assert count == 3
+        loaded = load_existing_facts(tmp_path)
+        assert len(loaded) == 3
+
+    def test_persist_over_count_limit_consolidates(self, tmp_path):
+        """persist_facts() evicts surplus low-confidence facts when over MAX_FACTS_COUNT."""
+        # Pre-populate with MAX_FACTS_COUNT low-confidence facts
+        today = date.today().isoformat()
+        existing = [
+            {"id": f"existing-{i}", "type": "pattern", "domain": "general",
+             "statement": f"Existing fact {i}", "confidence": 0.3,
+             "date_added": today, "last_seen": today, "source": "", "ttl_days": None}
+            for i in range(MAX_FACTS_COUNT)
+        ]
+        _write_memory(tmp_path, existing)
+
+        new_high_conf = [_make_fact("high-conf-new", confidence=0.95)]
+        with patch("fact_extractor._load_harness_config", return_value={
+            "agentic": {"memory_capacity": {"enabled": True, "max_chars": 999999, "max_facts": MAX_FACTS_COUNT}}
+        }):
+            with _enabled():
+                persist_facts(new_high_conf, tmp_path)
+
+        loaded = load_existing_facts(tmp_path)
+        assert len(loaded) <= MAX_FACTS_COUNT
+

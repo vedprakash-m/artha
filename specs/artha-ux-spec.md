@@ -1,8 +1,8 @@
 # Artha — UX Specification
 
-> **Version**: 2.4 | **Status**: Draft | **Date**: March 2026
+> **Version**: 2.5 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.2, Tech Spec v3.9.2
+> **Implements**: PRD v7.0.3, Tech Spec v3.9.3
 
 | Version | Date | Summary |
 |---------|------|---------|

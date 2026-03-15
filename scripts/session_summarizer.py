@@ -127,6 +127,11 @@ if _PYDANTIC_AVAILABLE:
             default="post_command",
             description="Why summarization was triggered: post_command or proactive_threshold",
         )
+        pre_flush_facts_persisted: int = PydanticField(
+            default=0,
+            description="Number of facts flushed to memory.md before this compression (AR-3)",
+            ge=0,
+        )
 
         def to_markdown(self) -> str:
             """Render the summary as a Markdown document for tmp/ storage."""
@@ -177,6 +182,7 @@ else:
             context_before_pct: float = 0.0,
             context_after_pct: float = 0.0,
             trigger_reason: str = "post_command",
+            pre_flush_facts_persisted: int = 0,
         ) -> None:
             self.session_intent = session_intent
             self.command_executed = command_executed
@@ -188,6 +194,7 @@ else:
             self.context_before_pct = context_before_pct
             self.context_after_pct = context_after_pct
             self.trigger_reason = trigger_reason
+            self.pre_flush_facts_persisted = pre_flush_facts_persisted
 
         def model_dump(self) -> dict:
             return self.__dict__.copy()
@@ -283,6 +290,31 @@ def should_summarize_now(context_text: str, command: str | None = None) -> bool:
     return pct >= threshold
 
 
+def should_flush_memory(context_text: str) -> bool:
+    """Decide whether to flush in-context facts to memory.md before compression (AR-3).
+
+    Pre-eviction flush should trigger whenever summarization is about to
+    compress the context — ensuring no accumulated facts are lost in the
+    compression window.
+
+    A flush is warranted when:
+    - The config flag harness.agentic.pre_eviction_flush.enabled is true, AND
+    - Context usage has reached ≥50% of the model window (earlier flush is safer).
+
+    Args:
+        context_text: Current accumulated context string (for size estimation).
+
+    Returns:
+        True if facts should be flushed to memory.md before compression.
+    """
+    if not load_harness_flag("agentic.pre_eviction_flush.enabled"):
+        return False
+    # Flush at half the summarization threshold (conservative — fail safe)
+    pct = estimate_context_pct(context_text)
+    trigger_pct = load_threshold_pct() / 2.0
+    return pct >= trigger_pct
+
+
 def create_session_summary(
     session_intent: str,
     command_executed: str,
@@ -293,6 +325,7 @@ def create_session_summary(
     context_before_pct: float = 0.0,
     context_after_pct: float = 0.0,
     trigger_reason: str = "post_command",
+    pre_flush_facts_persisted: int = 0,
 ) -> "SessionSummary":
     """Create a validated SessionSummary from the provided fields.
 
@@ -327,6 +360,7 @@ def create_session_summary(
         context_before_pct=context_before_pct,
         context_after_pct=context_after_pct,
         trigger_reason=trigger_reason,
+        pre_flush_facts_persisted=max(0, pre_flush_facts_persisted),
     )
 
     if _PYDANTIC_AVAILABLE:

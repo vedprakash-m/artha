@@ -45,7 +45,7 @@ Config flag: harness.agentic.fact_extraction.enabled (default: true)
 When disabled, extract_facts_from_summary returns [] and persist_facts
 is a no-op.
 
-Ref: specs/agentic-improve.md Phase 5
+Ref: specs/agentic-improve.md Phase 5, specs/agentic-reloaded.md AR-1
 """
 from __future__ import annotations
 
@@ -54,6 +54,13 @@ import textwrap
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
+
+# ── AR-1: Bounded Memory Capacity ────────────────────────────────────────────
+# Hard limits inspired by Hermes Agent's 2,200-char MEMORY.md discipline.
+# When either limit is exceeded, consolidation fires (not silent truncation).
+MAX_MEMORY_CHARS: int = 3_000  # Max characters in the serialised facts section
+MAX_FACTS_COUNT: int = 30      # Max individual fact entries
+# ─────────────────────────────────────────────────────────────────────────────
 
 try:
     import yaml
@@ -470,6 +477,52 @@ def _rebuild_frontmatter(content: str, updated_data: dict[str, Any]) -> str:
     return f"---\n{fm_text}---\n{body}"
 
 
+def _load_harness_config() -> dict:
+    """Load harness section from artha_config.yaml (silent on failure)."""
+    try:
+        import yaml as _yaml  # local import to avoid circular on partial installs
+        cfg_path = Path(__file__).resolve().parents[1] / "config" / "artha_config.yaml"
+        raw = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        return raw.get("harness", {})
+    except Exception:
+        return {}
+
+
+def _consolidate_facts(
+    facts: list[Fact],
+    max_facts: int,
+    max_chars: int,
+) -> list[Fact]:
+    """Reduce *facts* to within (max_facts, max_chars) limits.
+
+    Strategy (in order):
+    1. Remove TTL-expired facts.
+    2. Remove lowest-confidence non-protected facts (type not in
+       correction/preference) until both limits satisfied.
+    Protected fact types (correction, preference) are NEVER evicted.
+
+    Returns the trimmed list — caller must persist the result.
+    """
+    # Pass 1: expire by TTL
+    result = [f for f in facts if not f.is_expired()]
+
+    # Pass 2: evict lowest-confidence ephemeral facts if still over limit
+    protected_types = {"correction", "preference"}
+    while True:
+        serialized_size = sum(len(str(f.to_dict())) for f in result)
+        if len(result) <= max_facts and serialized_size <= max_chars:
+            break
+        evictable = [f for f in result if f.type not in protected_types]
+        if not evictable:
+            break  # Only protected facts remain — can't reduce further
+        # Remove the lowest-confidence (then oldest) fact
+        evictable.sort(key=lambda f: (f.confidence, f.date_added))
+        victim = evictable[0]
+        result = [f for f in result if f.id != victim.id]
+
+    return result
+
+
 def persist_facts(
     new_facts: list[Fact],
     artha_dir: Path,
@@ -479,16 +532,20 @@ def persist_facts(
     Loads existing facts, deduplicates, expires stale facts by TTL, then
     writes the merged set back.  The markdown body is preserved intact.
 
-    An upper cap of 500 facts is enforced: when the merged set exceeds
-    500, the oldest non-correction, non-preference facts are evicted first.
+    AR-1 Capacity Enforcement (specs/agentic-reloaded.md):
+    - Hard cap: MAX_FACTS_COUNT (30) entries AND MAX_MEMORY_CHARS (3,000) chars.
+    - When either limit is breached, ``_consolidate_facts()`` fires:
+        1. Remove TTL-expired facts.
+        2. Remove lowest-confidence facts (non-correction, non-preference) until
+           within limits.
+    - User corrections (type='correction', confidence=1.0) are NEVER auto-evicted.
 
     Args:
         new_facts: Newly extracted facts to persist.
         artha_dir: Artha project root.
 
     Returns:
-        int: Count of net-new facts added (0 if all were duplicates or
-            feature disabled).
+        int: Count of net-new facts added (0 if all were duplicates or flag off).
     """
     if not _load_harness_flag("agentic.fact_extraction.enabled"):
         return 0
@@ -507,14 +564,14 @@ def persist_facts(
 
     merged = active + unique_new
 
-    # Enforce 500-fact cap — evict INTERMEDIATE facts (not corrections/preferences)
-    _MAX_FACTS = 500
-    if len(merged) > _MAX_FACTS:
-        evictable = [f for f in merged if f.type not in ("correction", "preference")]
-        preserved = [f for f in merged if f.type in ("correction", "preference")]
-        evictable.sort(key=lambda f: f.date_added)
-        overflow = len(merged) - _MAX_FACTS
-        merged = preserved + evictable[overflow:]
+    # AR-1: enforce dual capacity limits (Hermes-inspired bounded memory)
+    config = _load_harness_config()
+    cap_cfg = (config.get("agentic") or {}).get("memory_capacity") or {}
+    max_chars = cap_cfg.get("max_chars", MAX_MEMORY_CHARS)
+    max_facts = cap_cfg.get("max_facts", MAX_FACTS_COUNT)
+    serialized_size = sum(len(str(f.to_dict())) for f in merged)
+    if len(merged) > max_facts or serialized_size > max_chars:
+        merged = _consolidate_facts(merged, max_facts, max_chars)
 
     memory_path = artha_dir / "state" / "memory.md"
     if memory_path.exists():

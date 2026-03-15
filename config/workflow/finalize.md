@@ -39,7 +39,7 @@ Log each: `⏭️ Step N skipped — read-only mode`
 After the session summary is generated, extract durable facts for cross-session learning:
 
 ```bash
-python -c "
+python3 -c "
 from pathlib import Path
 from scripts.fact_extractor import extract_facts_from_summary, persist_facts
 import glob
@@ -57,6 +57,42 @@ else:
 If during this session the user corrected a previous finding (e.g., "that's not an anomaly"
 or "ignore X"), an explicit correction fact is created automatically. These corrections
 will suppress matching alerts in future sessions via the OODA OBSERVE phase.
+
+#### Memory Capacity Check (AR-1)
+
+After extracting facts, `persist_facts()` automatically enforces capacity limits
+(≤ 30 facts, ≤ 3,000 characters). If limits are exceeded, consolidation fires automatically:
+1. TTL-expired facts are removed first.
+2. Lowest-confidence, non-protected facts are evicted until within limits.
+3. User corrections (type: correction) and preferences are **never** auto-evicted.
+
+The limit is the discipline — it forces distillation of the most valuable knowledge.
+
+#### Self-Model Update (AR-2)
+
+After fact extraction, update `state/self_model.md` **only if** genuine insight was gained
+about your own performance this session:
+- A domain where you were notably accurate or inaccurate
+- A user preference about communication style discovered
+- An effective strategy worth preserving
+- A mistake worth noting as a blind spot
+
+Keep total content ≤ 1,500 characters. Consolidate if approaching limit.
+**Do NOT update every session** — only when real insight emerged.
+
+#### Procedure Extraction (AR-5)
+
+If during this session:
+- You completed a task requiring 5+ distinct tool calls or file operations
+- You encountered errors and found the working path through trial
+- The user corrected your approach and the correction led to success
+
+Then extract the working procedure:
+1. Search `state/learned_procedures/` — does a similar procedure exist?
+   - If yes, patch the existing file (update steps, add new pitfalls discovered)
+   - If no, create: `state/learned_procedures/{domain}-{slug}.md`
+2. Format: trigger, steps, pitfalls, verification (≤ 1,500 chars)
+3. **Threshold**: only create when genuinely non-obvious. Simple tasks don't qualify.
 
 ### Step 12 — Surface active alerts
 

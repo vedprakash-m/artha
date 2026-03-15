@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v7.0.2
+## Product Requirements Document · v7.0.3
 
 **Author:** [Author]
 **Date:** March 15, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.0.3 | 2026-03 | Agentic Reloaded (AR-1–AR-8): bounded memory capacity enforcement (`MAX_MEMORY_CHARS=3000`, `MAX_FACTS_COUNT=30`, `_consolidate_facts()`); self-model metacognition template (`state/templates/self_model.md`); pre-eviction memory flush (`should_flush_memory()`); cross-session search (`session_search.py`, grep-based with relevance ranking); procedural memory store (`procedure_index.py`, `state/learned_procedures/`); prompt stability architecture (frozen layer marker in `generate_identity.py`); delegation protocol (`delegation.py`, `DelegationRequest/Result`); root-cause-before-retry in `fetch.md`; 2 new audit checks (`check_memory_capacity`, `check_prompt_stability`); AR-* config flags in `artha_config.yaml`. 1015 tests (+72). |
 | v7.0.2 | 2026-03 | Operational safety hardening: vault health 3-exit-code model (exit 2 = soft warnings, never blocks catch-up); stale lock auto-clear without `--fix`; `detect_environment.py` compact JSON when piped; calendar attendee PII redaction; `python3` consistency in AI agent instructions; +7 targeted tests (936→943). |
 | v7.0.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx` to all child middlewares (was silently dropped). Test mocks updated to match `StateMiddleware` Protocol. |
 | v7.0 | 2026-03 | Agentic Intelligence — OODA reasoning protocol, tiered context eviction, typed runtime context carrier (ArthaContext), implicit step checkpoints for crash recovery, persistent fact extraction across sessions. New scripts: `artha_context.py`, `checkpoint.py`, `fact_extractor.py`. `context_offloader.py` EvictionTier enum. `audit_compliance.py` OODA check. `state/memory.md` v2.0 schema. `harness.agentic.*` feature flags. 936 tests (+120). (F15.128–F15.132) |

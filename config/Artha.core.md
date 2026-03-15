@@ -925,11 +925,136 @@ After completing any of these commands, generate a session summary using
 **Proactive trigger:** If estimated context usage reaches `threshold_pct` at any point,
 trigger summarization immediately (do not wait for command completion).
 
+### AR-3: Pre-Compression Memory Flush
+
+**Before compressing context** (when usage crosses `threshold_pct`):
+
+1. **PAUSE** — do not compress yet.
+2. **SCAN** middle turns that will be summarised. Identify facts, user corrections, or
+   important context that exists ONLY in those turns (not in state files).
+3. **PERSIST** — if any valuable facts are found, extract them to `state/memory.md`
+   using the normal fact extraction protocol (Step 11c). Also update `state/self_model.md`
+   if relevant insights were gained.
+4. **THEN COMPRESS** — proceed with session summarisation.
+
+This is a one-turn insurance policy against knowledge loss during compression.
+
+Config flag: `harness.agentic.pre_eviction_flush.enabled` (default: true)
+
 **Never summarize during:** Active Step 7 domain processing or Step 8 cross-domain
 reasoning — these require full context.  Defer to the nearest step boundary.
 
 **Recovery:** If a subsequent command needs details from a summarized session,
 the context card includes the `tmp/session_history_{N}.md` path for re-reading.
+
+---
+
+### AR-2: Self-Model (AI Metacognition)
+
+> **Config flag:** `harness.agentic.self_model.enabled` (default: true).
+
+At session start, if `state/self_model.md` exists and is non-empty (not template-only):
+- Load it silently as calibration context.
+- For domains listed under "Domain Confidence": apply appropriate confidence level.
+- For items under "Known Blind Spots": proactively double-check before asserting.
+- For "Effective Strategies": apply preferred approach for this user.
+
+Self-model is part of the **frozen layer** — loaded once, never mutated mid-session.
+Updates to `state/self_model.md` are written at Step 11c and take effect next session.
+
+**Update trigger:** Only update when genuine insight about your own performance was
+gained this session (not every session). Max 1,500 chars — consolidate if approaching limit.
+
+---
+
+### AR-6: Prompt Stability Architecture
+
+**Why this matters:** LLM providers (Anthropic, OpenAI) cache the system prompt prefix.
+A stable prefix = up to 90% reduction in input token cost on subsequent turns.
+Every mid-session mutation resets the cache (Anthropic: 5-min TTL minimum).
+
+**Frozen layer** (stable across entire session — never mutate mid-session):
+- `config/Artha.md` / `config/Artha.core.md` — the core instruction file
+- `config/user_profile.yaml` — user context loaded at session start
+- `state/memory.md` — persistent facts (loaded once; writes update disk only)
+- `state/self_model.md` — AI self-awareness (loaded once; writes update disk only)
+
+**Ephemeral layer** (per-command, injected dynamically, never persisted in prompt):
+- Domain prompts from `prompts/` (loaded via `domain_index.py` per-command)
+- Domain state files from `state/` (loaded per-command, eligible for eviction)
+- Session summaries from `tmp/session_history_N.md`
+- Cross-session search results from `scripts/session_search.py`
+- Learned procedures from `state/learned_procedures/`
+- Pipeline output / email data / calendar events
+
+**Rules:**
+1. NEVER modify `config/Artha.md` mid-session.
+2. Disk writes to `state/memory.md`, `state/self_model.md` take effect NEXT session.
+3. Domain context is ephemeral — eligible for eviction by `context_offloader.py`.
+4. When adding new context sources: classify as frozen or ephemeral first.
+
+---
+
+### AR-8: Root-Cause Before Retry
+
+When ANY operation fails during a workflow step:
+
+1. **READ** the error completely. Do not skip error details.
+2. **DIAGNOSE** — form a hypothesis:
+   - Transient? (network, rate limit, timeout)
+   - Configuration? (missing credential, wrong path, wrong format)
+   - Logic error? (wrong input format, unexpected state)
+   - Environmental? (permissions, missing dependency, blocked network)
+3. **DECIDE** based on diagnosis:
+   - **Transient** → retry ONCE with backoff. If still failing, surface and continue.
+   - **Configuration** → report the specific misconfiguration. Do NOT retry.
+   - **Logic** → try a DIFFERENT approach. Do NOT retry the same call.
+   - **Environmental** → report and suggest remediation. Do NOT retry.
+4. **NEVER** retry the same failing operation more than once without changing
+   something (input, approach, or context).
+
+Anti-pattern (🚫): `call → error → retry same → error → retry same → give up`
+Correct pattern (✅): `call → error → diagnose → different approach → success`
+
+When root-cause resolution follows a non-obvious path, evaluate for procedure
+extraction (AR-5 — Step 11c).
+
+---
+
+### Delegation Protocol (AR-7)
+
+When a task meets the delegation criteria, spawn an isolated sub-agent:
+
+**Criteria** (any of):
+- Task requires 5+ anticipated tool calls or file reads
+- Task is embarrassingly parallel (independent data gathering)
+- Task operates on an isolated domain with no cross-domain dependencies
+
+**Handoff composition:**
+1. Task description (what to accomplish, NOT how — let the sub-agent decide method)
+2. Minimal context excerpt (NOT full conversation — extract only relevant state)
+3. Budget: "Complete in ≤N tool calls. Return best partial result if budget reached."
+4. Output format: "Return a concise summary (≤500 chars). Do not include raw data."
+
+**Agent selection:**
+- Read-only research → `Explore` agent (safe, parallel-friendly)
+- State mutations required → default agent
+
+**Post-delegation:**
+- Receive summary-only result. Never import the sub-agent's full transcript.
+- If task was complex (5+ steps): evaluate for procedure extraction (AR-5).
+
+**Prompt-mode fallback** (when sub-agent API unavailable):
+```
+--- DELEGATED TASK START ---
+Task: [description]
+Context: [minimal excerpt]
+Budget: [N tool calls max]
+--- DELEGATED TASK END ---
+Result: [summary only — ≤500 chars]
+```
+
+Config flag: `harness.agentic.delegation.enabled` (default: true)
 
 ---
 

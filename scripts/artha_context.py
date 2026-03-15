@@ -124,6 +124,9 @@ class ArthaContext(BaseModel):
     # Active domains (populated after Step 6 routing)
     active_domains: list[str] = []
 
+    # Agentic capabilities (AR-4)
+    session_recall_available: bool = False  # True when session_search.py found prior context
+
     # Workflow progress (step numbers appended as each step completes)
     steps_executed: list[int] = []
 
