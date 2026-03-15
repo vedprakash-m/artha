@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.7 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.8 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v6.0
+> **Implements**: PRD v6.1
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -2093,9 +2093,11 @@ No actual PII values are logged — only the type, source email ID, and action t
 Targeted Python scripts that pull high-fidelity data from institutional portals or official APIs.
 
 **1. Skill Runner Orchestrator (`scripts/skill_runner.py`)**
-- **Discovery:** Discover active skills from `config/skills.yaml`. 
+- **Venv Bootstrap:** Calls `reexec_in_venv()` from `_bootstrap.py` before third-party imports, ensuring correct venv when invoked directly from CLI agents (Gemini, Claude, shell scripts). *(v3.8 — F15.124)*
+- **Entrypoint:** `if __name__ == "__main__": main()` — script is directly executable. *(v3.8 — F15.124)*
+- **Discovery:** Discover active skills from `config/skills.yaml`.
 - **Parallelism:** Execute each skill in parallel using `ThreadPoolExecutor`.
-- **Dynamic Loader:** Use `importlib` to load modules from `scripts/skills/`. If a module is missing, log a warning and continue.
+- **Dynamic Loader:** Use `importlib` (module-level import including `importlib.util`) to load modules from `scripts/skills/`. If a module is missing, log a warning and continue. *(v3.8 — importlib.util scope fix)*
 - **Aggregation:** Aggregate results into a standard JSON format.
 - **Change Detection:** Compare `current` fetch results against `previous` state in `state/skills_cache.json`.
 - **Cache Persistence:** Write results to `state/skills_cache.json` (encrypted).
@@ -2131,7 +2133,8 @@ skills:
 
 **4. Skill-Specific Parsers**
 - **Visa Bulletin:** Parses `travel.state.gov` Table A & B. Determines authorized chart from USCIS "Adjustment of Status Filing Charts" page. Regex validation: `(\d{2}[A-Z]{3}\d{2}|C|U)`.
-- **NOAA Weather:** Two-step call (`/points/{lat},{lon}` → extract forecast URL). Coordinates read from `user_profile.yaml` (location.lat, location.lon). Requires `owner_email` from `config/artha_config.yaml` in User-Agent.
+- **NOAA Weather:** Two-step call (`/points/{lat},{lon}` → extract forecast URL). Coordinates read from `user_profile.yaml` (location.lat, location.lon). Requires `owner_email` from `config/artha_config.yaml` in User-Agent. `get_skill()` raises `ValueError` when `lat==lon==0.0` (placeholder defaults) to surface misconfiguration early instead of silently fetching a 404. *(v3.8 — F15.126)*
+- **USCIS Status:** Checks `https://egov.uscis.gov/csol-api/case-statuses/{receipt}`. HTTP 403 returns `{"blocked": True, "error": "...IP-blocked...check at egov.uscis.gov"}` — distinguishable from transient failures. Other non-200 responses truncate `response.text` to 500 chars. *(v3.8 — F15.127)*
 - **NHTSA Recalls:** Prefers `/recalls/recallsByVIN/{vin}` with make/model fallback.
 
 **5. Centralized Cache (`state/skills_cache.json`)**

@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 2.1 | **Status**: Draft | **Date**: March 2026
+> **Version**: 2.2 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v6.0, Tech Spec v3.7
+> **Implements**: PRD v6.1, Tech Spec v3.8
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v2.2 | 2026-03 | Agentic CLI Hardening UX: skill runner now directly executable (no silent failure when invoked from CLI agents like Gemini/Claude); pipeline health output always visible without `--verbose` — `[health] ✓ name` per connector; NOAA skill surfaces misconfigured coordinates as `ValueError` with inline fix guidance instead of opaque 404; USCIS 403 response includes `blocked: true` flag + direct link to egov.uscis.gov for manual check. (implements PRD v6.1 F15.124–F15.127) |
 | v2.1 | 2026-03 | VM Hardening UX: `⚠️ READ-ONLY MODE` briefing header pattern, per-connector degradation notices, mandatory Connector & Token Health table in every briefing (format defined in config/workflow/finalize.md), `⛩️ PHASE GATE` checklist format in workflow files, `[snippet — verify in email client]` annotation for partial email reads, `## Session Metadata` read-only footer block (implements PRD v6.0 F15.119–F15.123) |
 | v2.0 | 2026-03 | Deep Agents UX: harness mode indicators, structured output format, session summarization progress indicator (implements PRD v5.9 F15.114–F15.118) |
 | v1.9 | 2026-03 | Intelligence expansion + platform parity: financial_resilience briefing block, gig income 1099-K alert thresholds, purchase interval observation format, structured contact profiles UX, pre-meeting context injection briefing block, digital estate inventory UX, instruction-sheet action type, subscription action proposals format, setup.ps1 Windows onboarding, --doctor diagnostic UX, Apple Health connector entry point, longitudinal lab tracking (implements PRD v5.8 F15.100–F15.113) |
