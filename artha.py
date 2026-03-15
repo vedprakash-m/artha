@@ -32,6 +32,7 @@ _GREEN = "\033[32m" if _TTY else ""
 _CYAN  = "\033[36m" if _TTY else ""
 _YELLOW = "\033[33m" if _TTY else ""
 _DIM   = "\033[2m"  if _TTY else ""
+_RED   = "\033[31m" if _TTY else ""
 _RST   = "\033[0m"  if _TTY else ""
 
 _ROOT = Path(__file__).resolve().parent
@@ -57,6 +58,52 @@ _TZ_SHORTCUTS: dict[str, str] = {
     "jst": "Asia/Tokyo",
     "aest": "Australia/Sydney",
 }
+
+# Known AI CLI commands to detect
+_AI_CLIS = [
+    ("claude",  "Claude Code",      "https://docs.anthropic.com/en/docs/claude-code"),
+    ("gemini",  "Gemini CLI",        "https://github.com/google-gemini/gemini-cli"),
+]
+
+
+def _detect_ai_clis() -> list[tuple[str, str, bool]]:
+    """Return list of (name, install_url, is_installed) for known AI CLIs."""
+    import shutil
+    return [
+        (name, url, shutil.which(cmd) is not None)
+        for cmd, name, url in _AI_CLIS
+    ]
+
+
+def _print_ai_cli_status() -> None:
+    """Print a tailored 'your next step' block based on installed AI CLIs."""
+    clis = _detect_ai_clis()
+    installed = [(name, url) for name, url, found in clis if found]
+    missing   = [(name, url) for name, url, found in clis if not found]
+
+    # Copilot lives inside VS Code — check separately
+    import shutil
+    has_code = shutil.which("code") is not None
+
+    if installed or has_code:
+        detected_parts = [name for name, _ in installed]
+        if has_code:
+            detected_parts.append("GitHub Copilot (VS Code)")
+        print(f"  {_GREEN}Detected:{_RST}  {', '.join(detected_parts)}")
+        print()
+        print(f"  {_BOLD}Your next step:{_RST}")
+        if installed:
+            cmd_name = installed[0][0].lower().split()[0]  # e.g. 'claude'
+            print(f"    → Run: {_BOLD}{cmd_name}{_RST}  (then say: {_BOLD}catch me up{_RST})")
+        if has_code:
+            print(f"    → Open VS Code and ask Copilot: {_BOLD}catch me up{_RST}")
+    else:
+        print(f"  {_YELLOW}No AI CLI detected.{_RST}  Install one to use Artha:")
+        for name, url in missing:
+            print(f"    {_CYAN}•{_RST} {name}: {url}")
+        print(f"    {_CYAN}•{_RST} GitHub Copilot: install VS Code + the Copilot extension")
+        print()
+        print(f"  After installing, open your CLI and say: {_BOLD}catch me up{_RST}")
 
 
 def _run(script: str, *args: str) -> int:
@@ -308,15 +355,22 @@ def do_setup(skip_wizard: bool = False) -> None:
         print(f"     python scripts/generate_identity.py")
 
     print()
-    print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
-    print(f"{_BOLD}  🎉  Setup complete! Open your AI CLI and say: catch me up{_RST}")
+    print(f"{_BOLD}┌─────────────────────────────────────────────────────────────────────┐{_RST}")
+    print(f"{_BOLD}│  {_GREEN}✓  Artha knows who you are now.{_RST}{_BOLD}                                  │{_RST}")
+    print(f"{_BOLD}│                                                                     │{_RST}")
+    print(f"{_BOLD}│  {_RST}Next: open your AI assistant and say:{_BOLD}                            │{_RST}")
+    print(f"{_BOLD}│        {_GREEN}catch me up{_RST}{_BOLD}                                               │{_RST}")
+    print(f"{_BOLD}│                                                                     │{_RST}")
+    print(f"{_BOLD}│  {_DIM}🔒  Your data stays on this machine. Artha never phones home.{_RST}{_BOLD}  │{_RST}")
+    print(f"{_BOLD}└─────────────────────────────────────────────────────────────────────┘{_RST}")
     print()
-    print(f"  Optionally:",)
+    _print_ai_cli_status()
+    print()
+    print(f"  {_DIM}Optional next steps:{_RST}")
     print(f"    Connect Gmail/Calendar:  python scripts/setup_google_oauth.py")
     print(f"    Set up encryption:       brew install age  (then: age-keygen)")
     print(f"    Full guided setup:       /bootstrap  (inside your AI CLI)")
-    print(f"    Edit profile manually:   config/user_profile.yaml")
-    print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
+    print()
 
 
 def _do_setup_minimal() -> None:
@@ -350,13 +404,14 @@ def do_welcome() -> None:
     print(f"{_BOLD}│  {_GREEN}✓{_RST}{_BOLD}  Artha is configured and ready.                              │{_RST}")
     print(f"{_BOLD}└─────────────────────────────────────────────────────────────────┘{_RST}")
     print()
-    print(f"{_BOLD}Usage:{_RST}")
-    print(f"  {_CYAN}•{_RST} Open your AI CLI and say {_BOLD}'catch me up'{_RST} for your morning briefing.")
+    _print_ai_cli_status()
+    print()
+    print(f"{_DIM}Other commands:{_RST}")
     print(f"  {_CYAN}•{_RST} python scripts/preflight.py        — system health check")
     print(f"  {_CYAN}•{_RST} python scripts/pipeline.py --health — connector health")
-    print(f"  {_CYAN}•{_RST} python scripts/upgrade.py          — apply pending upgrades")
-    print()
-    print(f"{_DIM}Run 'python artha.py --demo' to replay the sample briefing.{_RST}")
+    print(f"  {_CYAN}•{_RST} python artha.py --demo             — replay the demo briefing")
+    print(f"  {_CYAN}•{_RST} python artha.py --setup            — re-run setup wizard")
+    print(f"  {_DIM}🔒  Your data stays on this machine. See docs/security.md{_RST}")
     print()
 
 
@@ -411,11 +466,6 @@ def main(argv: list[str] | None = None) -> int:
     # Users can run: python scripts/preflight.py  when they want a health check.
     do_welcome()
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 
 if __name__ == "__main__":
