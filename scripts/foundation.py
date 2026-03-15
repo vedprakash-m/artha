@@ -75,7 +75,7 @@ def _init_config() -> None:
         "CONFIG_DIR":   artha_dir / "config",
         "AUDIT_LOG":    artha_dir / "state" / "audit.md",
         "LOCK_FILE":    artha_dir / ".artha-decrypted",
-        # 9 entries — skills_cache removed (never existed on disk; see bkp-rst.md §2.3)
+        # 10 entries — skills_cache removed (never existed on disk; see bkp-rst.md §2.3)
         "SENSITIVE_FILES": [
             "immigration",
             "finance",
@@ -86,6 +86,7 @@ def _init_config() -> None:
             "vehicle",
             "contacts",
             "occasions",
+            "transactions",
         ],
         "KC_SERVICE":      "age-key",
         "KC_ACCOUNT":      "artha",
