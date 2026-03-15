@@ -25,32 +25,98 @@ source: config/Artha.core.md §2, Steps 8–11
 
 ## Steps
 
-### Step 8 — Cross-domain reasoning
+### Step 8 — Cross-Domain Reasoning (OODA Protocol)
 
 **This is the highest-value step — it produces intelligence no single-domain analysis can provide.**
+**Execute the full 4-phase OODA protocol below. Do NOT skip any phase.**
 
-Required pairings to check (MINIMUM):
-- Immigration deadline ≤90 days + upcoming travel → flag travel/advance-parole conflict
-- Bill due date + low cash balance → flag timing risk
-- Kids school event + work calendar conflict → surface to user
-- Open item overdue + no progress signal → escalate priority
+---
 
-**8a — URGENCY × IMPACT × AGENCY scoring:**
-For each item and cross-domain insight:
+### 8-O: OBSERVE — Gather Evidence
+
+Collect ALL signals from the completed domain processing:
+- List every alert triggered (with severity and domain)
+- List every state file mutation (what changed, delta magnitude)
+- List every anomaly detected (unusual patterns, thresholds crossed)
+- Note which domains had NO activity (absence is signal)
+
+**Read `state/memory.md` facts section.** For each fact present:
+- **Corrections:** Suppress any alert that matches a correction fact (type: correction, confidence ≥ 0.9)
+- **Patterns:** Reference known patterns when evaluating anomalies (type: pattern)
+- **Thresholds:** Use user-calibrated thresholds instead of system defaults (type: threshold)
+
+**Output: `[OBSERVE]` block** with structured signal inventory and applied corrections from memory.
+
+---
+
+### 8-Or: ORIENT — Analyze Cross-Domain Connections
+
+For EACH mandatory cross-domain pair below, explicitly state whether a connection exists
+and what it implies:
+
+| Pair | Why Check |
+|------|-----------|
+| Immigration × Finance | Visa fees, status changes affect employment authorization |
+| Immigration × Calendar | Filing deadlines, interview dates, document expiry |
+| Kids/School × Calendar | School events, parent-teacher, activity conflicts |
+| Health × Calendar | Appointments, prescription refills, lab follow-ups |
+| Travel × Immigration | Visa validity for travel, re-entry requirements, advance parole |
+| Finance × Home | Property tax, utility anomalies, maintenance costs |
+| Employment × Finance | Payroll changes, benefits enrollment, RSU vesting |
+| Goals × [All Domains] | Which goals made progress? Which are stalled? |
+
+For each pair: "Connection found: [description]" or "No connection."
+
+Additionally, check for **COMPOUND SIGNALS** — situations where 2+ domains together imply
+something that neither domain alone would surface:
+- Example: Immigration filing receipt + Finance large wire = filing fee paid
+- Example: Health appointment + Calendar conflict = needs rescheduling
+- Example: Kids school break + Travel booking = family trip context
+
+**Output: `[ORIENT]` block** with connection matrix and compound signals list.
+
+---
+
+### 8-D: DECIDE — Prioritize with U×I×A Scoring
+
+From the ORIENT output, score ALL findings using URGENCY × IMPACT × AGENCY:
+
 ```
 URGENCY: 3=deadline ≤7d | 2=deadline 8-30d | 1=deadline 31-90d | 0=none
 IMPACT:  3=affects immigration/finance/health of 2+ people | 2=single, significant | 1=minor
 AGENCY:  3=clear action today | 2=action needs info first | 1=monitoring | 0=none
 Score = URGENCY × IMPACT × AGENCY
-ONE THING = highest scoring item
 ```
-Display: `[U×I×A = N] [domain]`
 
-**8b — Net-negative write guard** (applies to all Step 7 writes — already enforced there)
+Display each scored item: `[U×I×A = N] [domain] — [description]`
 
-**8c — Post-write verification** (applies to all Step 7 writes — already enforced there)
+Rank ALL findings by score:
+1. 🔴 Critical (score ≥ 6): action TODAY
+2. 🟠 Urgent (score 3–5): action THIS WEEK
+3. 🟡 Standard (score 1–2): informational, notable
+4. 🔵 Info (score 0): low-priority
 
-**8g — Consequence forecasting (🔴 Critical + 🟠 Urgent items only):**
+Select the **ONE THING** — the single highest-scoring item that is:
+- **Actionable** (user can do something about it)
+- **Time-sensitive** (matters NOW, not next month)
+- **High-impact** (affects a high-stakes domain or multiple domains)
+
+**Output: `[DECIDE]` block** with prioritized action list, scored items, and ONE THING selection.
+
+---
+
+### 8-A: ACT — Validate, Enrich, and Output
+
+**8-A-1 — Validation:** Before finalizing, verify:
+- Does each alert cite a specific data source (email, calendar event, state file)?
+- Are there any claims not grounded in observed data? ← REMOVE THESE
+- Does the ONE THING pass the "so what?" test?
+- Any domain that had activity but produced zero alerts — re-examine.
+
+If validation fails for an item: cycle back to ORIENT for that item.
+Maximum cycles: 2. After 2 cycles, proceed with best-effort output.
+
+**8-A-2 — Consequence forecasting (🔴 Critical + 🟠 Urgent items only):**
 For items rated Critical/Urgent, generate IF YOU DON'T chain:
 ```
 IF YOU DON'T: [action]
@@ -60,16 +126,23 @@ CASCADE:      [what follows]
 ```
 Max 3 forecasts per briefing (1 in flash mode).
 
-**8h — Dashboard rebuild (skip in read-only mode):**
-Rebuild `state/dashboard.md` with current data from all domains.
-
-**8j — Fastest Next Action (FNA):**
+**8-A-3 — Fastest Next Action (FNA):**
 For 🔴/🟠 items: `fna_score = urgency_impact_agency / (friction × time_estimate)`
 Attach to each: `→ Fastest action: [action] ([time], [friction])`
 
-**8n — PII Guard stats:**
+**8-A-4 — Dashboard rebuild (skip in read-only mode):**
+Rebuild `state/dashboard.md` with current data from all domains.
+
+**8-A-5 — PII Guard stats:**
 Retrieve from pii_guard.py output for briefing footer:
 `{emails_scanned: N, redactions_applied: N}`
+
+**Output: `[ACT]` block** confirms validation passed. Validated findings flow into Step 9 (briefing synthesis).
+
+**Checkpoint (Step 8 complete):** After OODA Act phase, write:
+```bash
+python -c "from scripts.checkpoint import write_checkpoint; from pathlib import Path; write_checkpoint(Path('.'), 8, ooda_completed=True)"
+```
 
 ### Step 9 — Web research (if triggered)
 

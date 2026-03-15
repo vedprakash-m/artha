@@ -8,13 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from scripts.audit_compliance import (
+from audit_compliance import (
     ComplianceReport,
     audit_latest_briefing,
     _check_connector_health_block,
     _check_domain_sections_present,
     _check_no_unacknowledged_snippets,
     _check_one_thing_present,
+    _check_ooda_protocol,
     _check_pii_footer,
     _check_preflight_executed,
     _check_state_files_referenced,
@@ -144,6 +145,37 @@ class TestCheckOneThingPresent:
         assert not r.passed
 
 
+class TestCheckOodaProtocol:
+    def test_passes_with_all_four_markers(self):
+        text = "[OBSERVE] signals\n[ORIENT] connections\n[DECIDE] priorities\n[ACT] validated"
+        r = _check_ooda_protocol(text)
+        assert r.passed
+
+    def test_passes_with_three_markers(self):
+        # Allow 1 partial miss
+        text = "[OBSERVE] signals\n[ORIENT] connections\n[DECIDE] one thing"
+        r = _check_ooda_protocol(text)
+        assert r.passed
+
+    def test_fails_with_fewer_than_three_markers(self):
+        text = "[OBSERVE] some signals\n[ORIENT] some connections"
+        r = _check_ooda_protocol(text)
+        assert not r.passed
+
+    def test_fails_when_absent(self):
+        r = _check_ooda_protocol("Nice cross-domain section but no OODA blocks.")
+        assert not r.passed
+
+    def test_weight_is_10(self):
+        assert _check_ooda_protocol("").weight == 10
+
+    def test_detail_lists_missing_markers(self):
+        text = "[OBSERVE] signals only"
+        r = _check_ooda_protocol(text)
+        assert not r.passed
+        assert "[ORIENT]" in r.detail or "missing" in r.detail.lower()
+
+
 # ---------------------------------------------------------------------------
 # Degraded mode detection
 # ---------------------------------------------------------------------------
@@ -199,6 +231,11 @@ class TestAuditLatestBriefing:
 
             ## Immigration
             No urgent items.
+
+            [OBSERVE] 3 alerts: finance×2, immigration×1. No stale domains.
+            [ORIENT] Immigration×Calendar: I-131 renewal due before trip date.
+            [DECIDE] [U×I×A = 9] immigration — File N-400 by April 1.
+            [ACT] Validated: all alerts cite data sources. ONE THING passes so-what test.
 
             ## ONE THING
             [U×I×A = 9] immigration — File N-400 by April 1.

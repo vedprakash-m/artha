@@ -31,6 +31,9 @@ from context_offloader import (
     load_harness_flag,
     offload_artifact,
     pipeline_summary,
+    EvictionTier,
+    _ARTIFACT_TIERS,
+    _TIER_THRESHOLDS,
 )
 
 
@@ -371,3 +374,168 @@ class TestBuiltinSummaryFunctions:
         result = cross_domain_summary(data)
         assert "3 top alerts" in result
         assert "2 compound signals" in result
+
+
+# ---------------------------------------------------------------------------
+# Tiered eviction — Phase 2 (specs/agentic-improve.md)
+# ---------------------------------------------------------------------------
+
+class TestEvictionTierEnum:
+    def test_pinned_has_lower_value_than_ephemeral(self):
+        assert EvictionTier.PINNED < EvictionTier.EPHEMERAL
+
+    def test_critical_has_lower_value_than_intermediate(self):
+        assert EvictionTier.CRITICAL < EvictionTier.INTERMEDIATE
+
+    def test_four_tiers_defined(self):
+        assert len(EvictionTier) == 4
+
+
+class TestTierThresholds:
+    def test_pinned_threshold_is_infinity(self):
+        assert _TIER_THRESHOLDS[EvictionTier.PINNED] == float("inf")
+
+    def test_ephemeral_multiplier_is_less_than_one(self):
+        assert _TIER_THRESHOLDS[EvictionTier.EPHEMERAL] < 1.0
+
+    def test_intermediate_and_critical_use_base_threshold(self):
+        assert _TIER_THRESHOLDS[EvictionTier.INTERMEDIATE] == 1.0
+        assert _TIER_THRESHOLDS[EvictionTier.CRITICAL] == 1.0
+
+
+class TestArtifactTierAssignments:
+    def test_pipeline_output_is_ephemeral(self):
+        assert _ARTIFACT_TIERS["pipeline_output"] == EvictionTier.EPHEMERAL
+
+    def test_processed_emails_is_ephemeral(self):
+        assert _ARTIFACT_TIERS["processed_emails"] == EvictionTier.EPHEMERAL
+
+    def test_session_summary_is_pinned(self):
+        assert _ARTIFACT_TIERS["session_summary"] == EvictionTier.PINNED
+
+    def test_alert_list_is_critical(self):
+        assert _ARTIFACT_TIERS["alert_list"] == EvictionTier.CRITICAL
+
+    def test_one_thing_is_critical(self):
+        assert _ARTIFACT_TIERS["one_thing"] == EvictionTier.CRITICAL
+
+
+class TestPinnedArtifactNeverOffloaded:
+    def test_pinned_never_offloads_regardless_of_size(self, tmp_path):
+        """PINNED artifact stays in context no matter how big it is."""
+        huge_data = {"content": "x" * 100_000}
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="session_summary",  # PINNED in _ARTIFACT_TIERS
+                data=huge_data,
+                summary_fn=lambda d: "session summary",
+                threshold_tokens=1,    # extremely low threshold
+                artha_dir=tmp_path,
+            )
+
+        assert "📦 OFFLOADED" not in result
+        assert not (tmp_path / "tmp" / "session_summary.json").exists()
+
+    def test_pinned_explicit_tier_never_offloads(self, tmp_path):
+        """Explicit PINNED tier prevents offloading."""
+        huge = {"content": "y" * 50_000}
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="custom_artifact",
+                data=huge,
+                summary_fn=lambda d: "custom",
+                threshold_tokens=1,
+                tier=EvictionTier.PINNED,
+                artha_dir=tmp_path,
+            )
+
+        assert "📦 OFFLOADED" not in result
+
+
+class TestEphemeralArtifactLowerThreshold:
+    def test_ephemeral_offloads_at_40pct_threshold(self, tmp_path):
+        """EPHEMERAL artifact offloads at 40% of base threshold_tokens."""
+        # ~600 chars = ~150 tokens — above 40% of 5000 (2000), below 100%
+        # So with threshold=500 tokens, ephemeral threshold = 200 tokens
+        # Content at 250 tokens (1000 chars) should be offloaded
+        medium_data = {"content": "a" * 1000}
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="pipeline_output",  # EPHEMERAL in _ARTIFACT_TIERS
+                data=medium_data,
+                summary_fn=lambda d: "pipeline stats",
+                threshold_tokens=500,   # base threshold, effective = 200
+                artha_dir=tmp_path,
+            )
+
+        # At 250 tokens, above ephemeral threshold of 200 → should offload
+        assert "📦 OFFLOADED" in result
+
+    def test_ephemeral_explicit_tier_uses_lower_threshold(self, tmp_path):
+        """Explicit EPHEMERAL tier uses 40% threshold."""
+        medium_data = {"content": "b" * 1000}  # ~250 tokens
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="unknown_artifact",
+                data=medium_data,
+                summary_fn=lambda d: "stats",
+                threshold_tokens=500,
+                tier=EvictionTier.EPHEMERAL,
+                artha_dir=tmp_path,
+            )
+
+        assert "📦 OFFLOADED" in result
+
+
+class TestFeatureFlagDisabledFlatThreshold:
+    def test_flag_disabled_uses_flat_threshold(self, tmp_path):
+        """When tiered_eviction disabled, all tiers use base threshold (backward compat)."""
+        medium_data = {"content": "c" * 1000}  # ~250 tokens
+
+        def mock_flag(path: str, default: bool = True) -> bool:
+            if path == "context_offloading.enabled":
+                return True
+            if path == "agentic.tiered_eviction.enabled":
+                return False  # tiered eviction disabled
+            return default
+
+        with patch("context_offloader.load_harness_flag", side_effect=mock_flag):
+            result = offload_artifact(
+                name="pipeline_output",  # EPHEMERAL—but flag disabled
+                data=medium_data,
+                summary_fn=lambda d: "stats",
+                threshold_tokens=5_000,  # base threshold: 250 tokens < 5000 → not offloaded
+                artha_dir=tmp_path,
+            )
+
+        # With flat threshold 5000, 250 tokens should NOT be offloaded
+        assert "📦 OFFLOADED" not in result
+
+
+class TestUnknownArtifactDefaultsTier:
+    def test_unknown_name_uses_intermediate_tier(self, tmp_path):
+        """Unregistered artifact names default to INTERMEDIATE tier."""
+        # INTERMEDIATE has multiplier 1.0, so threshold is base threshold
+        # Medium data (250 tokens) below base 5K threshold → not offloaded
+        medium = {"content": "d" * 500}  # ~125 tokens
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="my_completely_custom_artifact",
+                data=medium,
+                summary_fn=lambda d: "stats",
+                threshold_tokens=1_000,
+                artha_dir=tmp_path,
+            )
+
+        # 125 tokens < 1000 → not offloaded (INTERMEDIATE = 1.0x)
+        assert "📦 OFFLOADED" not in result
+
+
+class TestCheckpointInOffloadedFiles:
+    def test_checkpoint_file_in_manifest(self):
+        assert ".checkpoint.json" in OFFLOADED_FILES

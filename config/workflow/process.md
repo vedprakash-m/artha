@@ -104,6 +104,12 @@ h. Collect briefing contribution (1–5 bullets per domain)
 - Net-negative guard = block write, surface diff, await user decision
 - Read-only mode = skip all writes, continue reading
 
+**Checkpoint (Steps 7–7b complete):** After domain processing and open_items update, write:
+```bash
+python -c "from scripts.checkpoint import write_checkpoint; from pathlib import Path; write_checkpoint(Path('.'), 7, domains_processed=['finance','immigration','...'])"
+```
+Replace the list with the actual domains processed this session.
+
 ---
 ## ✅ Phase Complete — Transition
 → **Load `config/workflow/reason.md` now.** Do NOT proceed without it.
