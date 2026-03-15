@@ -10,6 +10,22 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ## [Unreleased]
 
 ### Added
+- **10-layer defense-in-depth for state data protection** (PRD v5.5, Tech Spec v3.2, F15.88):
+  - Advisory file lock (`flock`/`msvcrt`) prevents concurrent encrypt/decrypt
+  - Cloud sync fence detects OneDrive/Dropbox/iCloud in flight, waits for quiescence
+  - Post-encrypt verification: `.age` output ≥ plaintext size, aborts on truncation
+  - Deferred plaintext deletion: `.md` files only removed after all domains succeed
+  - Encrypt-failure lockdown: `chmod 000` on remaining plaintext to block cloud sync
+  - Auto-lock mtime guard: skips encryption if any `.md` modified within 60 seconds
+  - Net-negative override: `ARTHA_FORCE_SHRINK` env var with `.pre-shrink` pin
+  - GFS prune protection: sole-carrier ZIPs pinned from deletion
+  - Confirm gate: `restore`/`install` require `--confirm` or `--dry-run`
+  - Pre-restore safety backup of live files to `backups/pre-restore/`
+  - Key health monitoring: validates `AGE-SECRET-KEY-` format and export status
+  - `backup.py`: domain checksums stored in manifest for prune-safe rotation
+  - 66 new tests (26 vault, 7 backup defense tests + updated existing);
+    total 501 tests, all passing
+
 - **Novice UX deep audit round 2 — 15 issues resolved across 3 commits** (PRD v5.4, Tech Spec v3.1, F15.78–F15.87):
   - Quick Start time estimate updated to `~30 minutes` with per-step breakdown
   - Demo mode callout added immediately after `pip install` (before Step 2)

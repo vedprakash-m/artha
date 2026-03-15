@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.1 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.2 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.4
+> **Implements**: PRD v5.5
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.2 | 2026-03 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
 | v3.0 | 2026-03 | Novice UX hardening (PRD F15.72–F15.77): Step 6 restored to README, age key deletion order fixed, `<details>` OS blocks, Node.js prereq, System keyring prereq, `check_keyring_backend()` P0 preflight gate, `open_items.md` template + `--fix` auto-create, `_rel()` path masker for all preflight console output, example profile PII neutralized (King County WA → Springfield IL), demo footer fixed, Google OAuth deep-link doc, catchup alias note |
 | v2.9 | 2026-03 | Distribution audit: 15-issue hardening — git history PII purge, connector defaults (Gmail+GCal only), jsonschema dedup, Python >=3.11 enforced, token path corrected (.tokens/ not ~/.artha-tokens/), settings.md legacy code removed, pre-commit hook activation documented, registry.md sanitized |
 | v2.8 | 2026-03 | Phase 1b: domain registry, household types, renter mode, pets, passport/subscription skills, RSS connector, offline/degraded mode, performance telemetry, 4 view scripts (status/goals/items/scorecard), migrate_state.py DSL |
@@ -1765,6 +1766,45 @@ For each modified state file:
 
 **Backup retention:** `.md.bak` files are kept until the next successful encrypt cycle. After `vault.sh encrypt` completes without error, `.bak` files are removed. If the backup is older than 7 days, log a warning.
 
+#### 8.5.1b 10-Layer Defense-in-Depth *(v3.2 — PRD F15.88, P0)*
+
+Beyond the three-layer guard above, `vault.py` and `backup.py` implement 10 additional protections against identified data loss scenarios. All protections are implemented in Python, cross-platform (macOS/Windows/Linux), and covered by 501 tests.
+
+| # | Protection | Module | Threat Mitigated |
+|---|---|---|---|
+| 1 | **Advisory file lock** | `vault.py` | Concurrent encrypt/decrypt (cron + manual, parallel terminals) |
+| 2 | **Cloud sync fence** | `vault.py` | OneDrive/Dropbox/iCloud syncing mid-encrypt overwrites `.age` with stale version |
+| 3 | **Post-encrypt verification** | `vault.py` | Truncated `.age` output from `age` CLI crash or disk-full |
+| 4 | **Deferred plaintext deletion** | `vault.py` | Partial encrypt failure leaves some domains with neither `.md` nor valid `.age` |
+| 5 | **Encrypt-failure lockdown** | `vault.py` | Cloud sync uploads unencrypted `.md` files after partial encrypt failure |
+| 6 | **Auto-lock mtime guard** | `vault.py` | `auto-lock` encrypts while user/AI is actively writing state files |
+| 7 | **Net-negative override** | `vault.py` | Legitimate large state file shrink blocked by 80% size guard (e.g., annual cleanup) |
+| 8 | **GFS prune protection** | `backup.py` | Rotation deletes the only ZIP containing a domain's data |
+| 9 | **Confirm gate** | `backup.py` | Accidental `restore` or `install` overwrites live state |
+| 10 | **Key health monitoring** | `vault.py` | Invalid key format or never-exported key discovered only at disaster recovery time |
+
+**Implementation details:**
+
+**1. Advisory file lock** — `_acquire_op_lock()` / `_release_op_lock()` use `fcntl.flock(LOCK_EX | LOCK_NB)` on POSIX and `msvcrt.locking(LK_NBLCK)` on Windows. The `@_with_op_lock` decorator wraps `do_decrypt()` and `do_encrypt()`. Second caller gets an immediate error (non-blocking).
+
+**2. Cloud sync fence** — `_is_cloud_synced()` checks if the workspace path contains OneDrive, Dropbox, or iCloud markers. `_check_sync_fence()` samples all `.age` mtimes, sleeps 2 seconds, re-checks. If any mtime changed, sync is in flight — operation is aborted. Automatically skipped for non-cloud paths.
+
+**3. Post-encrypt verification** — After each `age -r` call, the new `.age.tmp` file size is compared to the plaintext `.md` size. If `.age.tmp < .md` size, the encrypt is considered truncated: the `.age.tmp` is removed, `_lockdown_plaintext()` is called, and the operation aborts.
+
+**4. Deferred plaintext deletion** — During `do_encrypt()`, successfully encrypted domains are collected in an `encrypted_domains` list. Plaintext `.md` files are only deleted in a final sweep after all domains have encrypted successfully. If any domain fails, no plaintext is deleted.
+
+**5. Encrypt-failure lockdown** — `_lockdown_plaintext()` sets `chmod 0o000` on all remaining plaintext `.md` files for sensitive domains. This prevents cloud sync from uploading unencrypted data. `_unlock_plaintext()` restores `0o644` at the start of the next `do_decrypt()`.
+
+**6. Auto-lock mtime guard** — `do_auto_lock()` checks if any sensitive `.md` file has been modified within the last 60 seconds. If so, it refreshes the lock file TTL and returns exit code 2 (deferred), preventing `auto-lock` from encrypting while the user or AI CLI is actively writing.
+
+**7. Net-negative override** — `is_integrity_safe()` supports the `ARTHA_FORCE_SHRINK` environment variable: set to `1` to override all domains, or to a specific domain name. When overridden, the old `.age` file is pinned to `.age.pre-shrink` for manual recovery.
+
+**8. GFS prune protection** — `_prune_backups()` computes domain checksums for every retained snapshot (across all tiers). Before deleting a ZIP, it verifies that every domain checksum in that ZIP exists in at least one other retained snapshot. Sole-carrier ZIPs are pinned and not pruned, even if they exceed the retention limit.
+
+**9. Confirm gate** — `_restore_from_zip()` requires either `--confirm` or `--dry-run`. Without either flag, it shows a preview and exits without writing. Before a confirmed restore, live state files are backed up to `backups/pre-restore/` for recovery.
+
+**10. Key health monitoring** — `do_health()` validates the credential-store key starts with `AGE-SECRET-KEY-` (not a garbage value). It also checks the `last_key_export` timestamp in the backup manifest and warns if the key has never been exported.
+
 ### 8.5.2 GFS Vault Backup *(v2.6 — P0)*
 
 Grandfather-Father-Son (GFS) rotation provides point-in-time recovery beyond the cycle-level `.md.bak` protection of §8.5.1. All backup data is `.age`-encrypted and syncs to OneDrive automatically.
@@ -1874,14 +1914,14 @@ python scripts/backup.py import-key
 python scripts/backup.py restore --date 2026-03-14 --dry-run
 
 # Restore all files from a specific snapshot in the local catalog
-python scripts/backup.py restore --date 2026-03-14
+python scripts/backup.py restore --date 2026-03-14 --confirm
 
 # Restore a single domain only
-python scripts/backup.py restore --domain finance
+python scripts/backup.py restore --domain finance --confirm
 
 # Install from an explicit ZIP (cold-start on a new machine)
-python scripts/backup.py install /path/to/2026-03-14.zip
-python scripts/backup.py install /path/to/2026-03-14.zip --data-only
+python scripts/backup.py install /path/to/2026-03-14.zip --confirm
+python scripts/backup.py install /path/to/2026-03-14.zip --data-only --confirm
 ```
 
 **Key management:**
@@ -1908,8 +1948,8 @@ SHA-256 verified before every write. Existing files overwritten. Use `--dry-run`
 | `backup.py snapshot` | Run GFS snapshot manually without a full vault session |
 | `backup.py status` | Show ZIP catalog, tier counts, last validation date |
 | `backup.py validate [--domain X] [--date D]` | Open ZIP, decrypt & validate all files in-place |
-| `backup.py restore [--date D] [--domain X] [--dry-run] [--data-only]` | Restore from a ZIP found in the local catalog |
-| `backup.py install <zipfile> [--dry-run] [--data-only]` | Restore from an explicit ZIP path (cold-start on new machine) |
+| `backup.py restore [--date D] [--domain X] [--dry-run] [--data-only] [--confirm]` | Restore from a ZIP found in the local catalog; requires `--confirm` or `--dry-run` |
+| `backup.py install <zipfile> [--dry-run] [--data-only] [--confirm]` | Restore from an explicit ZIP path (cold-start on new machine); requires `--confirm` or `--dry-run` |
 | `backup.py export-key` | Print the age private key to stdout for secure storage |
 | `backup.py import-key` | Read age key from stdin, store in system keychain |
 | `backup.py preflight` | Verify age binary, keychain key, and backup directory are present |

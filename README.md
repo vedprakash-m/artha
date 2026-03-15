@@ -464,7 +464,7 @@ state/
   *.md.age                ← Encrypted sensitive state (gitignored)
 
 prompts/                  ← Domain-specific reasoning prompts (24 domains; includes pets, renter overlay)
-tests/                    ← pytest test suite (435+ test cases)
+tests/                    ← pytest test suite (500+ test cases)
 specs/                    ← Product, technical, and UX specifications
 docs/                     ← User-facing documentation
 briefings/                ← Generated daily briefings (gitignored)
@@ -483,10 +483,20 @@ Artha is **privacy-first, local-first**. Your personal data never leaves your ma
 | **Outbound Guard** (`safe_cli.py`) | Screens all CLI queries before they reach any AI API |
 | **Encryption at Rest** (`vault.py`) | `age` encryption for sensitive state files (health, finance, immigration, etc.) |
 | **Pre-commit Hook** | Blocks PII, secrets, and forbidden files from reaching git |
-| **Net-Negative Write Guard** | Prevents accidental data loss when updating state files |
+| **Advisory File Lock** | OS-level `flock`/`msvcrt` lock prevents concurrent encrypt/decrypt operations |
+| **Cloud Sync Fence** | Detects OneDrive/Dropbox/iCloud in flight and waits for quiescence before vault operations |
+| **Net-Negative Write Guard** | Prevents accidental data loss when updating state files; supports `ARTHA_FORCE_SHRINK` override with `.pre-shrink` pin |
+| **Post-Encrypt Verification** | Verifies `.age` output ≥ plaintext size; aborts on truncation |
+| **Deferred Plaintext Deletion** | Plaintext `.md` files are only removed after *all* domains encrypt successfully |
+| **Encrypt-Failure Lockdown** | On partial encrypt failure, remaining plaintext files are `chmod 000` to prevent cloud sync of unencrypted data |
+| **Auto-Lock Mtime Guard** | `auto-lock` skips encryption if any `.md` file was modified in the last 60 seconds (active write detection) |
 | **Atomic `.bak` Guard** | Pre-decrypt `.bak` snapshot created atomically before every decrypt; auto-restored if write fails |
 | **GFS Backup Rotation** | Every successful encrypt triggers a Grandfather-Father-Son snapshot into `backups/` (daily/weekly/monthly/yearly tiers) covering all 31 state files + 4 config files — one self-contained ZIP per tier-day |
+| **Prune Protection** | GFS pruning pins any ZIP that is the sole carrier of a domain checksum — prevents accidental data loss during rotation |
+| **Confirm Gate** | `restore` and `install` require `--confirm` (or `--dry-run`) to prevent accidental overwrites |
+| **Pre-Restore Safety Backup** | Before a confirmed restore, live state files are saved to `backups/pre-restore/` |
 | **Restore Validation** | `validate-backup` decrypts a backup to a temp dir and runs 5 integrity checks: SHA-256, decrypt success, non-empty, YAML frontmatter, word count ≥ 30 |
+| **Key Health Monitoring** | `vault.py health` validates key format (`AGE-SECRET-KEY-` prefix) and warns if key has never been exported |
 | **Audit Logging** | Every vault operation logged to `state/audit.md` |
 | **CI PII Scanning** | GitHub Actions scans every push for PII leaks |
 
@@ -576,18 +586,18 @@ python scripts/backup.py validate --date 2026-02-28
 python scripts/backup.py restore --dry-run
 
 # Restore all files from a specific snapshot (catalog-based)
-python scripts/backup.py restore --date 2026-03-14
+python scripts/backup.py restore --date 2026-03-14 --confirm
 
 # Restore a single domain only
-python scripts/backup.py restore --domain finance
+python scripts/backup.py restore --domain finance --confirm
 
 # Restore state files only, skip config (safe on an already-configured system)
-python scripts/backup.py restore --data-only
+python scripts/backup.py restore --data-only --confirm
 
 # Cold-start install on a new machine from an explicit ZIP path
-python scripts/backup.py install /path/to/2026-03-14.zip
+python scripts/backup.py install /path/to/2026-03-14.zip --confirm
 python scripts/backup.py install /path/to/2026-03-14.zip --dry-run
-python scripts/backup.py install /path/to/2026-03-14.zip --data-only
+python scripts/backup.py install /path/to/2026-03-14.zip --data-only --confirm
 
 # Check age binary, keychain key, and backup dir are ready
 python scripts/backup.py preflight
@@ -611,7 +621,7 @@ A backup ZIP is fully self-sufficient for rebuilding Artha from scratch:
    # Paste your AGE-SECRET-KEY-... and press Ctrl-D
    ```
 5. Check readiness: `python scripts/backup.py preflight`
-6. Restore: `python scripts/backup.py install /path/to/YYYY-MM-DD.zip`
+6. Restore: `python scripts/backup.py install /path/to/YYYY-MM-DD.zip --confirm`
 
 All config files and state files are restored to their original locations in a single command. No catalog access needed.
 
