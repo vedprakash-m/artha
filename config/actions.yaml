@@ -135,3 +135,42 @@ actions:
   #     text: "{message_text}"
   #   pii_check: true
   #   audit: true
+
+  # ── Instruction sheet actions (I-09, I-10: specs/improve.md §7) ──────────
+  # These actions generate human-readable step-by-step guides — no script execution.
+  # The AI generates the guide from its knowledge base; handler is null.
+  # type: instruction_sheet means the AI produces the output, not a Python script.
+
+  cancel_subscription:
+    type: instruction_sheet
+    enabled: true
+    handler: null                     # no script — AI generates from knowledge
+    requires_approval: false          # read-only guide generation
+    friction: low
+    description: >
+      Generate a step-by-step cancellation guide for a specific subscription.
+      Include: direct URL to cancellation page, phone number for phone-only
+      cancellations, estimated time to complete, known retention tactics and
+      how to decline them. Output as a numbered action list.
+    params:
+      service_name: "{service}"
+    pii_check: false
+    audit: true
+
+  dispute_charge:
+    type: instruction_sheet
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    description: >
+      Generate a step-by-step guide for disputing a charge with a merchant
+      or credit card company. Include: merchant contact information, credit
+      card dispute process (phone + online), documentation needed, timeline,
+      and CFPB complaint as escalation path.
+    params:
+      merchant: "{merchant}"
+      amount: "{amount}"
+      reason: "{reason}"
+    pii_check: false
+    audit: true

@@ -36,3 +36,20 @@ Track active orders, deliveries, returns, and warranties. Low signal — only su
 ## Briefing Format
 Only include in briefing if there's an exception (failed delivery, return deadline).
 Otherwise completely omit Shopping from the briefing.
+
+---
+
+## Purchase Interval Observation
+
+> **Ref: specs/improve.md I-04** — Observational only; no auto-ordering.
+
+When you observe a pattern of recurring purchases (same item or category, ≥ 3 occurrences),
+note the typical interval in the Shopping section of `state/shopping.md`.
+
+If the current date exceeds the expected reorder date by > 50%, include a low-priority
+note in the briefing:
+
+🔵 "You typically order [item/category] every ~[N] weeks. Last order was [M] weeks ago."
+
+This is observational only — do NOT auto-order, stage carts, or propose purchases.
+Do NOT surface this note if there is no established pattern (< 3 historical data points).

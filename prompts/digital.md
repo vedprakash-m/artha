@@ -184,3 +184,36 @@ Surface any subscriptions with `roi_score < 1.5` or `usage_frequency = 0`:
 # Subscription confirmation IDs: allow reference numbers from known services
 # Domain registration IDs: allow ICANN ROID numbers
 ```
+
+---
+
+## Subscription Action Proposals (I-10)
+
+> **Ref: specs/improve.md I-10** — Proactive cancel guide offers when subscription events detected.
+
+When the `subscription_monitor` skill or email processing detects any of the following,
+include an action proposal in the briefing:
+
+**Price increase detected:**
+```
+🟡 [Service] price increased: $[old] → $[new]/month (+[X]%)
+   Say "cancel guide [service]" for step-by-step cancellation instructions.
+```
+
+**Trial-to-paid conversion approaching (within 7 days):**
+```
+🟠 [Service] trial ends [date] — converts to $[amount]/month
+   Say "cancel guide [service]" to cancel before conversion.
+```
+
+**Free trial already converted (price appears for first time):**
+```
+🟡 [Service] trial has converted — now billing $[amount]/month
+   Say "cancel guide [service]" if you want to cancel now.
+```
+
+The `cancel_subscription` action (config/actions.yaml) generates a step-by-step
+instruction sheet — no browser automation. The user executes manually with full control.
+
+**Boundary:** Artha proposes, never executes. No subscription is cancelled
+without explicit user action.

@@ -79,6 +79,20 @@ domains:
       - refund
       - transfer
       - subscription
+      # Gig & platform income routing (I-03: specs/improve.md)
+      - Stripe
+      - PayPal
+      - Venmo
+      - Upwork
+      - Fiverr
+      - Etsy
+      - "1099-K"
+      - "1099-NEC"
+      - payout
+      - "earnings summary"
+      - "direct deposit"
+      - DoorDash
+      - "Uber earnings"
     alert_thresholds:
       red: "Bill 10+ days overdue, unusual charge >$500"
       orange: "Bill due within 7 days, subscription price increase"
