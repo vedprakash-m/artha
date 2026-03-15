@@ -44,8 +44,8 @@ FORBIDDEN_DIR_PREFIXES = [
     "tmp/",
 ]
 
-# State files: block everything in state/ except templates/ and .gitkeep
-STATE_BLOCK_RE = re.compile(r"^state/(?!templates/|\.gitkeep$)")
+# State files: block everything in state/ except templates/, learned_procedures/ and .gitkeep
+STATE_BLOCK_RE = re.compile(r"^state/(?!templates/|learned_procedures/|\.gitkeep$)")
 
 # ─── Layer 2: Secret patterns ────────────────────────────────────────────────
 SECRET_PATTERNS = [

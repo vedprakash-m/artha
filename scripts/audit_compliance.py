@@ -214,6 +214,91 @@ def _check_ooda_protocol(text: str) -> CheckResult:
     )
 
 
+def _check_memory_capacity(artha_dir: Path | None = None) -> CheckResult:
+    """AR-1 — memory.md is within bounded capacity limits (≤30 facts, ≤3000 chars).
+
+    Reads state/memory.md directly (not the briefing text) to verify the
+    memory file has not grown beyond the AR-1 dual-limit thresholds.
+    Weight: 5 — informational health check, not a briefing compliance issue.
+    """
+    base = artha_dir or Path(__file__).resolve().parents[1]
+    memory_path = base / "state" / "memory.md"
+    if not memory_path.exists():
+        return CheckResult(
+            name="memory_capacity_within_limits",
+            passed=True,   # no memory file = trivially within limits
+            weight=5,
+            detail="state/memory.md not found — capacity check skipped (no memory yet).",
+        )
+    try:
+        content = memory_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return CheckResult(
+            name="memory_capacity_within_limits",
+            passed=False,
+            weight=5,
+            detail=f"Could not read state/memory.md: {exc}",
+        )
+    char_count = len(content)
+    # Count fact entries: lines starting with "- " or YAML list entries
+    fact_lines = [ln for ln in content.splitlines() if re.match(r"^\s*-\s+\w", ln)]
+    fact_count = len(fact_lines)
+
+    MAX_CHARS = 3000
+    MAX_FACTS = 30
+    violations = []
+    if char_count > MAX_CHARS:
+        violations.append(f"char_count={char_count} > {MAX_CHARS}")
+    if fact_count > MAX_FACTS:
+        violations.append(f"fact_count={fact_count} > {MAX_FACTS}")
+
+    passed = not violations
+    return CheckResult(
+        name="memory_capacity_within_limits",
+        passed=passed,
+        weight=5,
+        detail=f"memory.md OK: {char_count} chars, ~{fact_count} facts." if passed
+               else f"memory.md over limit: {'; '.join(violations)}. "
+                    "Run fact_extractor.py to consolidate (AR-1).",
+    )
+
+
+def _check_prompt_stability(artha_dir: Path | None = None) -> CheckResult:
+    """AR-6 — config/Artha.md has the prompt-stability marker (frozen layer).
+
+    The stability marker is added by generate_identity.py and confirms the
+    system prompt has not been modified mid-session.
+    Weight: 5 — advisory check for prompt hygiene.
+    """
+    base = artha_dir or Path(__file__).resolve().parents[1]
+    artha_md = base / "config" / "Artha.md"
+    if not artha_md.exists():
+        return CheckResult(
+            name="prompt_stability_marker_present",
+            passed=True,   # advisory: no marker required if file absent
+            weight=5,
+            detail="config/Artha.md not found — prompt stability check skipped (advisory).",
+        )
+    try:
+        header = artha_md.read_text(encoding="utf-8", errors="replace")[:2000]
+    except OSError as exc:
+        return CheckResult(
+            name="prompt_stability_marker_present",
+            passed=True,   # can't determine → advisory pass
+            weight=5,
+            detail=f"Could not read config/Artha.md: {exc} — check skipped (advisory).",
+        )
+    has_marker = "PROMPT STABILITY" in header or "AUTO-GENERATED" in header
+    return CheckResult(
+        name="prompt_stability_marker_present",
+        passed=has_marker,
+        weight=5,
+        detail="Prompt stability marker found in config/Artha.md." if has_marker
+               else "Prompt stability marker missing — config/Artha.md may have been manually edited. "
+                    "Re-run generate_identity.py (AR-6).",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Degraded-mode detection
 # ---------------------------------------------------------------------------
@@ -285,6 +370,7 @@ def audit_latest_briefing(briefing_path: str) -> ComplianceReport:
         )
 
     text = path.read_text(encoding="utf-8", errors="replace")
+    artha_dir = path.resolve().parents[1]  # briefings/ is one level below artha root
 
     # Run all checks
     checks: list[CheckResult] = [
@@ -296,6 +382,8 @@ def audit_latest_briefing(briefing_path: str) -> ComplianceReport:
         _check_domain_sections_present(text),
         _check_one_thing_present(text),
         _check_ooda_protocol(text),
+        _check_memory_capacity(artha_dir),
+        _check_prompt_stability(artha_dir),
     ]
 
     degraded_mode, metadata = _detect_degraded_mode(text)
