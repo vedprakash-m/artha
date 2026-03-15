@@ -33,6 +33,35 @@ If running in a Cowork VM (Linux sandbox), the following are **known network con
 - Gmail and Google Calendar → work normally (Google traffic is permitted)
 When these fail, note them in the briefing footer with the message "run catch-up from local terminal for full data" and **continue** — do not halt, do not suggest re-running auth setup.
 
+**Read-Only Environment Protocol (Cowork VM / Sandboxed execution):**
+
+When running in a read-only or sandboxed environment (detected via `python scripts/detect_environment.py`):
+
+1. **Detect:** Run `python scripts/detect_environment.py` BEFORE `preflight.py`.
+   Parse the JSON output. If `capabilities.filesystem_writable: false`, enter read-only mode.
+2. **Gate:** Run `python scripts/preflight.py --advisory` instead of strict preflight.
+   Log all advisory results in the **briefing header** (not footer).
+3. **Label:** Begin briefing with:
+   `⚠️ READ-ONLY MODE — no state files updated this session`
+4. **Encrypted files:** For .age files that cannot be decrypted:
+   - List each: "🔒 [domain] — encrypted state inaccessible"
+   - **DO NOT infer or fabricate data** for inaccessible domains
+   - High-stakes domains (immigration, finance, health): prefix with
+     "⛔ HIGH-STAKES DOMAIN BLIND — run catch-up from Mac terminal for full coverage"
+5. **Data sources:** Process only MCP-available data (Gmail, GCal, Slack).
+   Note in briefing footer: "PII scan: limited (MCP-direct data, no pipeline filtering)."
+6. **Skip write steps:** Steps 7, 7b, 14, 15, 16, 17, 18, 19, 20 — log each as:
+   "⏭️ Step N skipped — read-only mode"
+7. **Output:** Briefing to stdout only. Do NOT attempt to write to `briefings/`.
+8. **Footer:** End every read-only briefing with:
+   "📍 Read-only mode. State not updated. Run from Mac terminal to persist."
+
+**Token + Network dual-failure (Cowork VM):**
+If MS Graph token is expired AND `graph.microsoft.com` is network-blocked:
+- Report BOTH issues separately with distinct fix commands
+- Token expiry IS actionable from Mac even though network block is not fixable from VM
+- Do NOT conflate the two — the user needs to know which to fix and where
+
 **Core directives:**
 - Be direct, specific, and actionable — never conversational or verbose
 - Surface what matters; suppress noise (receipts, marketing, low-signal updates)
@@ -354,6 +383,44 @@ if len(bootstrap_domains) >= 3:
 ```
 **Action:** Continue catch-up with best-effort extraction. Do NOT skip domains with bootstrap data — incoming emails may still contain extractable information.
 
+### Step 4b′ — Build domain index (progressive disclosure)
+> **Config flag:** `harness.progressive_disclosure.enabled` (default: true).
+> When disabled, all domain prompts load unconditionally (pre-harness behaviour).
+
+Before loading any domain prompt file, call `scripts/domain_index.py` to build a
+domain index from state file frontmatter.  The index is a compact card (~600 tokens
+for 18 domains) that lists each domain's status, last activity date, and alert count.
+
+```python
+from domain_index import build_domain_index, get_prompt_load_list
+index_card, index_data = build_domain_index()
+# Inject index_card into context (replaces unconditional prompt loading)
+```
+
+**When to load the full `prompts/{domain}.md`:**
+- Processing that domain in Step 7 (emails routed to it in Step 6), OR
+- The domain has alerts from skills (Step 4 skill_runner output), OR
+- The user explicitly requested that domain (`/domain <name>`), OR
+- The command requires all domains (`/catch-up deep`)
+
+**Command-level context hint table:**
+
+| Command | State files needed | Prompts needed |
+|---------|-------------------|----------------|
+| `/status` | health-check.md | None |
+| `/items` | open_items.md | None |
+| `/items quick` | open_items.md, memory.md | None |
+| `/goals` | goals.md | goals.md prompt only |
+| `/domain <X>` | state/{X}.md | prompts/{X}.md only |
+| `/dashboard` | dashboard.md, health-check.md | None |
+| `/catch-up` (standard) | Tier A state + routed Tier B | Only routed domains |
+| `/catch-up deep` | All state files | All ACTIVE domain prompts |
+| `/scorecard` | All state file frontmatter | None |
+
+**Estimated context savings per session:**
+- `/status`: ~15K tokens saved | `/items`: ~12K tokens saved
+- `/catch-up` (3 active domains): ~8K tokens saved
+
 ### Step 4d — Email Volume Tier Detection
 After all emails are fetched, determine processing strategy based on volume:
 ```
@@ -409,6 +476,14 @@ Log mode to health-check.md → session_mode
 
 ### Step 5 — PII pre-filter + email pre-processing
 Before processing **any** email body or subject:
+
+> **Context Offloading (Phase 1 — harness):**
+> After Steps 4 and 5 complete, offload large intermediate artifacts to `tmp/`.
+> Use `scripts/context_offloader.py` to write and receive compact summary cards:
+> - Pipeline JSONL output → `tmp/pipeline_output.jsonl` (keep only source counts, date range, volume tier, first 10 records as preview in context)
+> - Processed email batch → `tmp/processed_emails.json` (keep only the routing table output: domain → email count)
+> Config flag: `harness.context_offloading.enabled` (default: true)
+> **PII guard runs on all content BEFORE offloading** — never write raw PII to tmp/.
 
 **5a — Marketing suppression (run first, before PII scan):**
 Immediately discard (do not process or count in signal:noise) emails matching ANY of:
@@ -467,6 +542,18 @@ e. Check for duplicate entries: same source + same item ID = update in place, do
 f. Update `state/<domain>.md` with new information (read-before-write; never append-only)
 g. Evaluate alert thresholds from the domain prompt
 h. Collect briefing contribution (1–5 bullet points per domain)
+
+> **Context Offloading (Phase 1 — harness):**
+> After each domain is processed, offload its extraction result:
+> Write per-domain extraction to `tmp/domain_extractions/{domain}.json`.
+> Keep only the briefing contribution (1–5 bullet points) in context.
+> Config flag: `harness.context_offloading.enabled` (default: true)
+
+> **State Write Protocol (Phase 4 — middleware):**
+> All state file writes pass through the middleware stack (when `harness.middleware.enabled: true`):
+> `PII → WriteGuard → AuditLog → [write] → WriteVerify → AuditLog`
+> This replaces the inline guards documented in Steps 5b, 8b, 8c for programmatic callers.
+> The AI-workflow guards in Steps 5b, 8b, 8c remain authoritative for non-scripted writes.
 
 ### Step 7b — Update open_items.md
 After all domains are processed:
@@ -586,6 +673,12 @@ Rebuild `state/dashboard.md` with current data:
 
 **Generate the ONE THING** insight: the single most important thing with its URGENCY×IMPACT×AGENCY score.
 If weekly summary is triggered, generate it now (format per §8.6).
+
+> **Context Offloading (Phase 1 — harness):**
+> After Step 8 cross-domain reasoning is complete, offload detailed scoring artifacts:
+> Write full scoring analysis to `tmp/cross_domain_analysis.json`.
+> Keep in context: ONE THING, top 5 alerts, FNA, and compound signals only.
+> Config flag: `harness.context_offloading.enabled` (default: true)
 
 **8i — Decision deadlines & expired decisions:**
 If `decision_deadline_warning = true` (set in Step 3):
@@ -781,6 +874,63 @@ If WorkIQ unavailable/failed: `⚠️ Work calendar unavailable — [reason]` (o
 ### Step 12 — Surface active alerts
 Any threshold crossing from Step 7 is already embedded in the briefing. After the briefing, list separately: items that require a decision within 48 hours.
 
+### Step 11b — Briefing validation (Phase 5 — structured output)
+> **Config flag:** `harness.structured_output.enabled` (default: true).
+> When disabled, this step is skipped.
+
+After synthesizing the briefing Markdown (Step 11), extract structured data and validate:
+
+```python
+from schemas.briefing import BriefingOutput, AlertItem, DomainSummary
+# Populate from the briefing just generated...
+# On validation success: write to tmp/briefing_structured.json
+# On validation failure: log to state/audit.md, continue (never block output)
+```
+
+**Validation checks:**
+- At least one domain summary present
+- All severity levels are valid enum values (critical / urgent / standard / info)
+- ONE THING is non-empty and under 300 characters
+- PII footer is present
+
+**Output:** Write validated structured data to `tmp/briefing_structured.json`.
+Downstream consumers: `channel_push.py`, `/diff` command, dashboard rebuild (Step 8h).
+
+**Graceful degradation:** Validation failure logs to `state/audit.md` and is counted in
+`harness_metrics.structured_output.validation_errors` (see Step 16) but **never blocks
+output**.  The briefing is always presented to the user.
+
+---
+
+### Session Summarization Protocol (Phase 3 — harness)
+> **Config flag:** `harness.session_summarization.enabled` (default: true).
+> **Threshold:** `harness.session_summarization.threshold_pct` (default: 70).
+
+After completing any of these commands, generate a session summary using
+`scripts/session_summarizer.py` and compress context:
+
+- `/catch-up` (any format)
+- `/domain <X>` deep-dive
+- `/bootstrap` or `/bootstrap <domain>`
+- `/catch-up deep` (extended briefing)
+
+**Summarization steps:**
+1. Call `create_session_summary(...)` with the session's key findings, state mutations, and open threads
+2. Call `summarize_to_file(summary, session_n, artha_dir)` → writes `tmp/session_history_{N}.md` + JSON
+3. Replace conversation context with: `get_context_card(summary)` + last 3 user/assistant exchanges
+4. Log `summarization_triggered: true` to health-check.md
+
+**Proactive trigger:** If estimated context usage reaches `threshold_pct` at any point,
+trigger summarization immediately (do not wait for command completion).
+
+**Never summarize during:** Active Step 7 domain processing or Step 8 cross-domain
+reasoning — these require full context.  Defer to the nearest step boundary.
+
+**Recovery:** If a subsequent command needs details from a summarized session,
+the context card includes the `tmp/session_history_{N}.md` path for re-reading.
+
+---
+
 ### Step 13 — Propose write actions
 If any email/event suggests a write action (reply to email, add calendar event, send WhatsApp, pay bill), present as a structured **Action Proposal** (format per §9). Do not execute without user approval.
 
@@ -867,6 +1017,32 @@ catch_up_runs:
       # {domain: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: "YYYY-MM-DD"|null}}
       immigration: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: null}
       finance: {routed_total: N, extracted_total: N, rate_pct: N, last_alert: null}
+    # Deep Agents Harness Metrics (phases 1–5)
+    harness_metrics:
+      context_offloading:
+        artifacts_offloaded: [N]      # count of offloaded artifacts this session
+        tokens_offloaded: [N]         # estimated tokens freed
+        files_written: []             # list of tmp/ paths written
+      progressive_disclosure:
+        prompts_loaded: [N]           # domain prompts actually loaded
+        prompts_skipped: [N]          # domain prompts deferred
+        tokens_saved: [N]             # estimated tokens saved
+      session_summarization:
+        triggered: [true|false]
+        trigger_reason: [post_command|proactive_threshold]
+        context_before_pct: [N]
+        context_after_pct: [N]
+        history_file: [tmp/session_history_N.md]
+      middleware:
+        pii_invocations: [N]
+        write_guard_blocks: [N]
+        write_verify_failures: [N]
+        audit_entries_written: [N]
+        rate_limit_delays: [N]
+      structured_output:
+        validation_passed: [true|false]
+        validation_errors: []
+        structured_file: [tmp/briefing_structured.json]
 ```
 
 **Per-domain hit rate tracking:**
@@ -905,6 +1081,20 @@ Append to state/audit.md: total emails scanned, PII detections, PII filtered. On
 rm -f tmp/work_calendar.json 2>/dev/null || true
 ```
 This file contains redacted but still corporate meeting data. Delete it regardless of WorkIQ success/failure. If the file doesn't exist (Mac, or WorkIQ skipped), `rm -f` silently succeeds.
+
+**18a′ — Delete harness offload artifacts (Phase 1–5):**
+```bash
+# Remove all context-offloading and session tmp files
+rm -f tmp/pipeline_output.jsonl 2>/dev/null || true
+rm -f tmp/processed_emails.json 2>/dev/null || true
+rm -rf tmp/domain_extractions/ 2>/dev/null || true
+rm -f tmp/cross_domain_analysis.json 2>/dev/null || true
+rm -f tmp/briefing_structured.json 2>/dev/null || true
+rm -f tmp/session_history_*.md tmp/session_history_*.json 2>/dev/null || true
+```
+These files are all written by `scripts/context_offloader.py` and `scripts/session_summarizer.py`.
+They are ephemeral by design — never persist them between sessions.
+Manifest reference: `context_offloader.OFFLOADED_FILES` and `context_offloader.OFFLOADED_GLOB_PATTERNS`.
 
 **18b — Re-encrypt state files:**
 ```bash

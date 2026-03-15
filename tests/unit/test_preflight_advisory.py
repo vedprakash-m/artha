@@ -1,0 +1,271 @@
+"""
+Unit tests for Phase 2 preflight.py additions:
+  - Advisory mode (--advisory flag, exit codes, JSON output)
+  - check_profile_completeness() (near-empty vs populated)
+  - health-check.md template seeding (only seeds when missing or unstructured)
+
+Ref: specs/vm-hardening.md Phase 2
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+_ARTHA_ROOT  = Path(__file__).resolve().parents[2]
+_SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
+for _p in [str(_ARTHA_ROOT), str(_SCRIPTS_DIR)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+import preflight as pf
+
+
+# ---------------------------------------------------------------------------
+# check_profile_completeness
+# ---------------------------------------------------------------------------
+
+class TestCheckProfileCompleteness:
+    """Profile completeness check fires on near-empty, passes silently on full."""
+
+    def test_missing_profile_passes_silently(self, tmp_path):
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_profile_completeness()
+        assert result.passed
+        assert result.severity == "P1"
+
+    def test_near_empty_profile_fails_with_hint(self, tmp_path):
+        """A 4-line skeleton (schema_version + age_recipient only) should fail."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        profile = config_dir / "user_profile.yaml"
+        profile.write_text("schema_version: '1.0'\nage_recipient: 'age1abc'\n")
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_profile_completeness()
+        assert not result.passed
+        assert result.severity == "P1"
+        assert "near-empty" in result.message
+        assert result.fix_hint
+
+    def test_populated_profile_passes_silently(self, tmp_path):
+        """A profile with >10 keys should pass without comment."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        profile = config_dir / "user_profile.yaml"
+        # Write a profile with plenty of keys
+        profile.write_text(
+            "schema_version: '1.0'\n"
+            "family:\n"
+            "  primary_user:\n"
+            "    name: Jane\n"
+            "    nickname: Jane\n"
+            "    emails:\n"
+            "      gmail: jane@example.com\n"
+            "location:\n"
+            "  city: Portland\n"
+            "  state: OR\n"
+            "  timezone: America/Los_Angeles\n"
+            "household:\n"
+            "  type: single\n"
+            "domains:\n"
+            "  finance:\n"
+            "    enabled: true\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_profile_completeness()
+        assert result.passed
+        assert "populated" in result.message
+
+    def test_missing_required_fields_listed_in_hint(self, tmp_path):
+        """Missing name/email/timezone surfaced in fix_hint."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        profile = config_dir / "user_profile.yaml"
+        profile.write_text("schema_version: '1.0'\n")
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_profile_completeness()
+        assert not result.passed
+        # Required fields should be in hint
+        assert "family.primary_user.name" in result.fix_hint
+
+    def test_unreadable_yaml_fails_gracefully(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        profile = config_dir / "user_profile.yaml"
+        profile.write_text(":\t: invalid yaml ]]]\n")
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_profile_completeness()
+        assert not result.passed
+        assert result.severity == "P1"
+
+
+# ---------------------------------------------------------------------------
+# Advisory mode — format_results
+# ---------------------------------------------------------------------------
+
+class TestAdvisoryMode:
+    """Advisory mode reclassifies P0 failures as non-blocking ADVISORY."""
+
+    def _make_p0_failure(self, name: str = "test check") -> pf.CheckResult:
+        return pf.CheckResult(name, "P0", False, "something failed", "run this fix")
+
+    def _make_p0_pass(self) -> pf.CheckResult:
+        return pf.CheckResult("passing check", "P0", True, "all good")
+
+    def test_advisory_exits_0_with_p0_failure(self):
+        checks = [self._make_p0_failure()]
+        _, all_passed = pf.format_results(checks, advisory=True)
+        assert all_passed is True
+
+    def test_strict_exits_1_with_p0_failure(self):
+        checks = [self._make_p0_failure()]
+        _, all_passed = pf.format_results(checks, advisory=False)
+        assert all_passed is False
+
+    def test_advisory_output_contains_advisory_prefix(self):
+        checks = [self._make_p0_failure()]
+        output, _ = pf.format_results(checks, advisory=True)
+        assert "ADVISORY" in output
+
+    def test_advisory_output_contains_warning_mode_header(self):
+        checks = [self._make_p0_failure()]
+        output, _ = pf.format_results(checks, advisory=True)
+        assert "ADVISORY MODE" in output
+
+    def test_non_advisory_output_shows_no_go(self):
+        checks = [self._make_p0_failure()]
+        output, _ = pf.format_results(checks, advisory=False)
+        assert "NO-GO" in output
+
+    def test_advisory_go_when_all_pass(self):
+        checks = [self._make_p0_pass()]
+        output, all_passed = pf.format_results(checks, advisory=True)
+        assert all_passed is True
+
+    def test_advisory_mode_note_in_summary_when_p0_failures(self):
+        checks = [self._make_p0_failure()]
+        output, _ = pf.format_results(checks, advisory=True)
+        assert "advisory" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Advisory mode — JSON output
+# ---------------------------------------------------------------------------
+
+class TestAdvisoryJsonOutput:
+    """JSON output includes advisory_mode and degradation_list."""
+
+    def _run_main_json_advisory(self, tmp_path, monkeypatch):
+        """Run main() with --json --advisory and capture stdout."""
+        import io
+        from contextlib import ExitStack, redirect_stdout
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        # Minimal valid profile
+        (config_dir / "user_profile.yaml").write_text(
+            "schema_version: '1.0'\n"
+            "family:\n  primary_user:\n    name: Jane\n    emails:\n      gmail: j@ex.com\n"
+            "location:\n  timezone: America/Los_Angeles\n"
+        )
+        monkeypatch.chdir(tmp_path)
+
+        _ok = lambda name, pri="P1": pf.CheckResult(name, pri, True, "ok")  # noqa: E731
+        patches = [
+            patch.object(pf, "ARTHA_DIR", str(tmp_path)),
+            patch.object(pf, "STATE_DIR",  str(tmp_path / "state")),
+            patch.object(pf, "TOKEN_DIR",  str(tmp_path / ".tokens")),
+            patch.object(pf, "SCRIPTS_DIR", str(tmp_path / "scripts")),
+            patch("preflight.check_keyring_backend",   return_value=_ok("keyring backend", "P0")),
+            patch("preflight.check_vault_health",
+                  return_value=pf.CheckResult("vault.py health", "P0", False, "age missing")),
+            patch("preflight.check_vault_lock",        return_value=_ok("vault lock state", "P0")),
+            patch("preflight.check_oauth_token",       return_value=_ok("OAuth token", "P0")),
+            patch("preflight.check_pii_guard",         return_value=_ok("pii_guard.py test", "P0")),
+            patch("preflight.check_state_directory",   return_value=_ok("state directory", "P0")),
+            patch("preflight.check_state_templates",   return_value=_ok("state templates")),
+            patch("preflight.check_token_freshness",   return_value=_ok("token freshness")),
+            patch("preflight.check_open_items",        return_value=_ok("open_items.md")),
+            patch("preflight.check_briefings_directory", return_value=_ok("briefings directory")),
+            patch("preflight.check_msgraph_token",     return_value=_ok("Microsoft Graph token")),
+            patch("preflight.check_workiq",
+                  return_value=pf.CheckResult("WorkIQ Calendar", "P1", True, "skipped")),
+            patch("preflight.check_channel_health",    return_value=_ok("channel health")),
+            patch("preflight.check_dep_freshness",     return_value=_ok("venv dependencies")),
+            patch("preflight.check_profile_completeness",
+                  return_value=_ok("user_profile completeness")),
+            patch("sys.argv", ["preflight.py", "--json", "--advisory"]),
+        ]
+
+        buf = io.StringIO()
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            with pytest.raises(SystemExit) as exc_info:
+                with redirect_stdout(buf):
+                    pf.main()
+
+        return exc_info.value.code, buf.getvalue()
+
+    def test_advisory_json_exits_zero_with_p0_failure(self, tmp_path, monkeypatch):
+        code, output = self._run_main_json_advisory(tmp_path, monkeypatch)
+        assert code == 0
+
+    def test_advisory_json_contains_advisory_mode_true(self, tmp_path, monkeypatch):
+        _, output = self._run_main_json_advisory(tmp_path, monkeypatch)
+        data = json.loads(output)
+        assert data["advisory_mode"] is True
+
+    def test_advisory_json_contains_degradation_list(self, tmp_path, monkeypatch):
+        _, output = self._run_main_json_advisory(tmp_path, monkeypatch)
+        data = json.loads(output)
+        assert "degradation_list" in data
+        assert isinstance(data["degradation_list"], list)
+        # vault.py health failed → should appear in degradation_list
+        assert "vault.py health" in data["degradation_list"]
+
+
+# ---------------------------------------------------------------------------
+# Health-check.md template seeding
+# ---------------------------------------------------------------------------
+
+class TestHealthCheckTemplateSeeding:
+    """check_state_templates respects special health-check.md seeding logic."""
+
+    def _make_templates_dir(self, tmp_path) -> Path:
+        templates = tmp_path / "state" / "templates"
+        templates.mkdir(parents=True)
+        # Create health-check.md template
+        (templates / "health-check.md").write_text(
+            "---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 0\n---\n"
+        )
+        return templates
+
+    def test_seeds_health_check_when_absent(self, tmp_path):
+        """Template is copied when state/health-check.md doesn't exist."""
+        self._make_templates_dir(tmp_path)
+        state_dir = tmp_path / "state"
+        with patch.object(pf, "STATE_DIR", str(state_dir)):
+            result = pf.check_state_templates(auto_fix=True)
+        assert "health-check.md" in result.message or result.passed
+        assert (state_dir / "health-check.md").exists()
+
+    def test_does_not_overwrite_structured_health_check(self, tmp_path):
+        """Existing health-check.md with last_catch_up: field is NOT overwritten."""
+        self._make_templates_dir(tmp_path)
+        state_dir = tmp_path / "state"
+        # Create a "real" health-check with existing catch-up data
+        existing_content = (
+            "---\nschema_version: '1.1'\nlast_catch_up: 2026-03-14T22:00:00Z\n"
+            "catch_up_count: 5\n---\n## History\n- Run 1\n"
+        )
+        (state_dir / "health-check.md").write_text(existing_content)
+        with patch.object(pf, "STATE_DIR", str(state_dir)):
+            pf.check_state_templates(auto_fix=True)
+        # Original content should be preserved
+        assert (state_dir / "health-check.md").read_text() == existing_content

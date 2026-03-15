@@ -1,41 +1,125 @@
-# Phase 2 — Fetch (Steps 3–4d)
+---
+phase: fetch
+steps: 3–4e
+source: config/Artha.core.md §2, Steps 3–4e
+---
+
+## ⛩️ PHASE GATE — Fetch
+
+**If running /catch-up and you haven't loaded this file yet, STOP and read it now.**
+
+**Before executing this phase, verify:**
+- [ ] Preflight (Step 0) has completed (exit 0 or advisory)
+- [ ] `briefing_format` and `hours_elapsed` are set (from preflight.md Steps 2–2b)
+- [ ] Read-only mode status is known
+
+**MANDATORY: You MUST read at least these state files before proceeding to Step 5:**
+- `state/health-check.md` — always
+- `state/open_items.md` — always
+- `state/memory.md` — always
+- `state/comms.md` — always (Tier A)
+- `state/calendar.md` — always (Tier A)
+- `state/goals.md` — always (Tier A)
+
+**Reading ZERO state files is a WORKFLOW VIOLATION. Briefings without state context are invalid.**
+
+**If ANY prerequisite is not met, STOP and complete it first.**
+
+---
 
 ## Steps
 
-### Step 3: Periodic triggers
-- Check skills cadence via `python scripts/skill_runner.py`
-- Skills: USCIS status, visa bulletin, NOAA weather, NHTSA recalls, property tax
-- Cadence: daily / weekly / every_run (configured in skills.yaml)
+### Step 3 — Periodic triggers
 
-### Step 4: Fetch (parallel — all sources simultaneously)
-- Run `python scripts/pipeline.py --since <48h_ago>`
-- Sources: Gmail, Outlook, iCloud, Google Calendar, MS Calendar, Canvas LMS
-- Output: JSONL records to stdout
-- Retry: exponential backoff with jitter (lib/retry.py)
-- **Parallelism**: `pipeline.py` uses `ThreadPoolExecutor` (max 8 workers) to
-  fetch all enabled connectors concurrently. Each connector runs in its own
-  thread with isolated JSONL buffering; results are flushed sequentially to
-  stdout after all threads complete to prevent interleaving.
-- **Metrics**: Per-connector wall-clock timings are logged and persisted to
-  `tmp/pipeline_metrics.json` (last 50 runs, append-only). Use
-  `python scripts/eval_runner.py --perf` to view trends.
+Set session flags based on today's date and `state/health-check.md` data:
 
-### Step 4b: Tiered Context Loading
-- Tier 1 (always): immigration, finance, kids, health
-- Tier 2 (if within context budget): home, vehicle, travel
-- Tier 3 (on-demand): social, digital, learning, boundary
-- Context budget: ~100k tokens across all state files
+- **Monday**: `week_ahead = true` (add §8.11 Week Ahead section in Step 11)
+- **Friday**: `weekend_planner = true` (add §8.12 Weekend Planner in Step 11)
+- **1st of month** AND last monthly retro >28 days ago: `generate_monthly_retro = true`
+- **Monday** AND last weekly summary >8 days ago: `generate_weekly_summary = true`
+- **Goal sprint at 14-day mark**: `sprint_calibration = true` for that sprint
+- **Decision deadline ≤14 days**: `decision_deadline_warning = true`
 
-### Step 4c: Bootstrap State Detection
-- If a domain's state file says "updated_by: bootstrap" → flag for user
-- Suggest `/bootstrap <domain>` for unpopulated domains
+Run skills:
+```bash
+python scripts/skill_runner.py
+```
+Output: `tmp/skills_cache.json`. Ingested in Step 5 to supplement email data.
 
-### Step 4d: Email Volume Tier Detection
-- < 20 emails: full analysis
-- 20–50 emails: standard (skip low-priority senders)
-- 50+ emails: triage mode (P0/P1 only, defer P2)
+### Step 4 — Fetch (IN PARALLEL — all sources simultaneously)
+
+**MCP tools (preferred):**
+```
+artha_fetch_data(since="$LAST_CATCH_UP", max_results=200)
+artha_run_skills()   # run data fidelity skills in parallel
+```
+
+**Pipeline (when MCP unavailable):**
+```bash
+python scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose
+```
+Fetches all enabled connectors simultaneously (ThreadPoolExecutor, max 8 workers).
+In read-only mode: Outlook and iCloud connectors will fail (network blocked) — log as
+`⚠️ Connector offline: [name] — network blocked in this environment (not an auth failure)`.
+
+**MCP retry protocol (MANDATORY):**
+For any MCP source returning zero results:
+1. Retry with tighter date range (today only)
+2. Retry with broader query (remove filters)
+3. If still zero: accept, log "0 results — verified with 3 queries"
+
+**Google Calendar:** ALWAYS query ALL calendar IDs from `user_profile.yaml`
+→ `integrations.google_calendar.calendar_ids`. If not configured, query "primary" + log warning.
+Silently dropping secondary calendars (family, US Holidays) is a workflow violation.
+
+**Error handling for VM/network failures:**
+- `graph.microsoft.com` blocked → note in footer: "Outlook unavailable — VM network constraint. Run from Mac for full data."
+- `imap.mail.me.com` blocked → note in footer: "iCloud unavailable — VM network constraint."
+- Do NOT suggest re-running auth setup for network-blocked connectors
+
+### Step 4b — Tiered Context Loading
+
+After fetch, load domain state files by tier:
+
+| Tier | Condition | Action |
+|------|-----------|--------|
+| `always` | Core files | Load: health-check.md, memory.md, open_items.md, comms.md, calendar.md |
+| `active` | last_activity ≤30 days | Load fully |
+| `reference` | last_activity 30–180 days | Load frontmatter + last 30 lines |
+| `archive` | last_activity >180 days | Skip unless new emails route here |
+
+Tier A domains (always load regardless of routing): `calendar`, `comms`, `goals`, `finance`, `immigration`, `health`
+
+### Step 4c — Bootstrap State Detection
+
+For each loaded state file with `updated_by: bootstrap`:
+- Flag domain as bootstrap
+- Prepend to briefing header: "⚠ UNPOPULATED STATE FILES: [list] — best-effort extraction only"
+
+### Step 4d — Email Volume Tier Detection
+
+```
+≤50 emails:   volume_tier = "standard"   (1,500-token cap per email)
+51–200:        volume_tier = "medium"    (aggressive suppression, 1,000-token cap)
+201–500:       volume_tier = "high"      (two-pass: P0 domains first)
+>500:          volume_tier = "extreme"   (three-pass: P0 full, P1 summary, P2 count-only)
+```
+
+### Step 4e — Offline / Degraded Mode Detection
+
+```
+if working_connectors == 0:     mode = "offline"   → state-only briefing
+elif failed_connectors > 0:     mode = "degraded"  → partial briefing with data gap notes
+else:                            mode = "normal"
+```
+
+Log mode to `health-check.md → session_mode`.
 
 ## Error handling
 - Individual connector failures don't block other connectors
-- Pipeline exit code 3 = partial success (some connectors errored)
-- P0 skill failures (e.g., USCIS) = logged as critical but don't halt catch-up
+- Pipeline exit code 3 = partial success
+- All connector failures = offline mode, state-only briefing
+
+---
+## ✅ Phase Complete — Transition
+→ **Load `config/workflow/process.md` now.** Do NOT proceed without it.
