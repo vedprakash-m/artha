@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9.1 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0
+> **Implements**: PRD v7.0.1
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.9.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx: Any | None = None` to all child middlewares. Test mocks updated to match Protocol contract. |
 | v3.9 | 2026-03 | Agentic Intelligence (PRD F15.128–F15.132, specs/agentic-improve.md Phases 1–5): `scripts/artha_context.py` (ArthaContext Pydantic model, ContextPressure, build_context()); `scripts/checkpoint.py` (step checkpoints, 4h TTL, read/write/clear); `scripts/fact_extractor.py` (5 signal detectors, PII strip, SHA-256 dedup, memory.md v2.0 persist); `context_offloader.py` EvictionTier enum + `_ARTIFACT_TIERS`; `audit_compliance.py` `_check_ooda_protocol()` (weight=10); `middleware/__init__.py` `ctx` param; `config/workflow/` Step 0a + Step 11c + checkpoint writes at Steps 4/7/8; `config/artha_config.yaml` `harness.agentic:` 4 flags; `state/memory.md` v2.0 schema; `state/templates/memory.md` template. 936 tests (+120). See §8.10. |
 | v3.7 | 2026-03 | Cowork VM & Operational Hardening (PRD F15.119–F15.123, specs/vm-hardening.md): `scripts/detect_environment.py` (7-probe manifest, 5-min TTL cache); `scripts/audit_compliance.py` (7-check compliance scorer, `--threshold`); `scripts/preflight.py` `--advisory` flag + `check_profile_completeness()` + 3-layer `check_msgraph_token()` rewrite; `scripts/setup_msgraph_oauth.py` `_last_refresh_success` tracking; `scripts/generate_identity.py` compact mode + `--no-compact`; 5 `config/workflow/*.md` files rewritten with canonical steps + ⛩️ gates; `state/templates/health-check.md`; `config/Artha.core.md` Read-Only Environment Protocol; 804 tests (+106). |
 | v3.6 | 2026-03 | Deep Agents Option B — Core Harness Patterns (Phases 1–5, PRD F15.114–F15.118): `scripts/context_offloader.py`, `scripts/domain_index.py`, `scripts/session_summarizer.py`, `scripts/middleware/` (5 modules), `scripts/schemas/` (4 modules). `config/Artha.md`/`config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements. 698 tests (+157). See §9.5. |
@@ -2426,13 +2427,18 @@ The Deep Agents Harness (Option B, Phases 1–5) is a set of composable infrastr
 **Protocol** (`scripts/middleware/__init__.py`):
 ```python
 class StateMiddleware(Protocol):
-    def before_write(self, domain: str, current_content: str, proposed_content: str) -> str | None: ...
+    def before_write(
+        self, domain: str, current_content: str, proposed_content: str,
+        ctx: Any | None = None,  # ArthaContext carrier — forwarded through composed chains
+    ) -> str | None: ...
     # Returns None to BLOCK the write; returns (possibly modified) content to allow
     def after_write(self, domain: str, file_path: str) -> None: ...
 
 def compose_middleware(middlewares: list[StateMiddleware]) -> StateMiddleware: ...
-# before_write: left-to-right chain • after_write: right-to-left
+# before_write: left-to-right chain, ctx forwarded to every child • after_write: right-to-left
 ```
+
+`_ComposedMiddleware.before_write` accepts `ctx: Any | None = None` and passes it to every child middleware's `before_write` call. All concrete `StateMiddleware` implementations must accept `ctx=None` to be composable.
 
 | Module | Class | Behaviour |
 |--------|-------|-----------|

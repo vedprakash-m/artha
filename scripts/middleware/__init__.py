@@ -126,10 +126,11 @@ class _ComposedMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         content = proposed_content
         for mw in self._middlewares:
-            result = mw.before_write(domain, current_content, content)
+            result = mw.before_write(domain, current_content, content, ctx)
             if result is None:
                 return None  # blocked
             content = result

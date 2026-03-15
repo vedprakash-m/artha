@@ -11,6 +11,14 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.1] — 2026-03-15
+
+### Fixed
+- **`scripts/middleware/__init__.py`** — `_ComposedMiddleware.before_write` now accepts and forwards the `ctx` optional parameter to all child middlewares. Previously `ctx` was silently dropped, causing `TypeError` when callers passed `ctx=` to a composed chain.
+- **`tests/unit/test_middleware.py`** — Updated all 5 test-mock `before_write` signatures to include `ctx=None`, matching the `StateMiddleware` Protocol contract.
+
+---
+
 ## [7.0.0] — 2026-03-15
 
 ### Added — Agentic Intelligence (specs/agentic-improve.md Phases 1–5)
