@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v5.3
+## Product Requirements Document · v5.5
 
 **Author:** [Author]
 **Date:** March 14, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v5.5 | 2026-03 | 10-layer defense-in-depth for state data protection: advisory file locking, cloud sync fence, post-encrypt verification, deferred plaintext deletion, encrypt-failure lockdown, auto-lock mtime guard, net-negative override with `.pre-shrink` pin, GFS prune protection, confirm gate for restore/install, pre-restore safety backup, key health monitoring (F15.88) |
 | v5.4 | 2026-03 | Novice UX deep audit round 2 (15 issues): demo-first onboarding, placeholder guard, Windows venv, household section, contributor hook, vault --help, preflight expectations table, AI CLI cost transparency, Google OAuth safety explanation, mosaic PII docs (F15.78–F15.86) |
 | v5.3 | 2026-03 | Novice UX hardening (15-issue audit): Step 6 restored, age key deletion trap fixed, keyring check, open_items template, path PII masking, Node.js prereq, `<details>` OS blocks, AI CLI guidance, Linux age installs, Google OAuth deep links, catchup aliases, example profile PII neutralized (F15.72–F15.77) |
 | v5.2 | 2026-03 | Phase 1b capabilities: domain registry, household types, renter mode, pet reminders, passport skill, subscription monitor, RSS connector, offline/degraded mode, performance telemetry, view scripts (F15.60–F15.71) |
@@ -819,6 +820,7 @@ Hey — quick check-in on your week:
 | F15.85 | **Novice UX: AI CLI Cost Transparency** *(v5.4 — P1)* — "Which AI CLI?" callout rewritten with per-tool tier detail: Gemini (free tier), Claude Code (rate-limited free / Pro $20/mo), Copilot (free in VS Code / Pro $10/mo). Replaces blanket "free to try" claim. | P1 |
 | F15.86 | **Novice UX: Google OAuth Safety Explanation** *(v5.4 — P0)* — "This app isn't verified" warning callout expanded with safety rationale (own app, own account, data stays local, no third parties). Click path clarified. Links to `docs/google-oauth-setup.md` screenshot walkthrough. | P0 |
 | F15.87 | **Privacy: Mosaic PII Risk Documentation** *(v5.4 — P1)* — `docs/security.md` gains §6 Mosaic PII Risk documenting that `cultural_context + immigration.context` can form a demographic fingerprint (mosaic effect). Guidance for forkers and public config sharers. | P1 |
+| F15.88 | **10-Layer Defense-in-Depth** *(v5.5 — P0)* — Comprehensive protection against 10 identified data loss scenarios for state files. **Layer 1 — Advisory file lock:** OS-level `flock` (POSIX) / `msvcrt.locking` (Windows) prevents concurrent encrypt/decrypt via `_with_op_lock` decorator. **Layer 2 — Cloud sync fence:** Detects OneDrive/Dropbox/iCloud workspace, samples `.age` mtimes with 2s delay, waits for quiescence before vault operations. **Layer 3 — Post-encrypt verification:** After each `age -r` call, verifies `.age` output ≥ plaintext size; aborts and lockdowns on truncation. **Layer 4 — Deferred plaintext deletion:** `.md` files only removed after *all* domains encrypt successfully; partial encrypt preserves plaintext. **Layer 5 — Encrypt-failure lockdown:** On encrypt failure, remaining plaintext files set to `chmod 000` preventing cloud sync; restored at next decrypt. **Layer 6 — Auto-lock mtime guard:** `auto-lock` checks if any `.md` was modified within 60s; defers encryption by refreshing lock TTL if active writes detected. **Layer 7 — Net-negative override:** `ARTHA_FORCE_SHRINK=1` (or `=domain`) env var bypasses the 80% size check; old `.age` pinned to `.age.pre-shrink` for recovery. **Layer 8 — GFS prune protection:** Before deleting a ZIP, verifies every domain checksum exists in at least one other retained snapshot; sole-carrier ZIPs are pinned. **Layer 9 — Confirm gate:** `restore` and `install` require `--confirm` flag (or `--dry-run` for preview) before writing; prevents accidental overwrites. Pre-restore backup of live files saved to `backups/pre-restore/`. **Layer 10 — Key health monitoring:** `vault.py health` validates key format (`AGE-SECRET-KEY-` prefix) and warns if key has never been exported (`last_key_export` in manifest). 501 tests, all passing. | P0 |
 
 ---
 
