@@ -21,6 +21,7 @@ SKILLS_DIR = ARTHA_DIR / "scripts" / "skills"
 _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "uscis_status", "property_tax", "king_county_tax",
     "visa_bulletin", "noaa_weather", "nhtsa_recalls",
+    "passport_expiry", "subscription_monitor", "financial_resilience",
 })
 
 # Timeout for individual skill execution (seconds)

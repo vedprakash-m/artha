@@ -281,3 +281,34 @@ connectors:
     output:
       format: jsonl
       source_tag: "rss"
+
+  # ── Apple Health Export (I-13: specs/improve.md) ──────────────────────────
+
+  apple_health:
+    type: health
+    provider: apple
+    enabled: false          # opt-in: set to true and provide export ZIP path
+    description: >
+      Apple Health XML export parser — local file only, no network access.
+      Export from iPhone: Health app → Profile → Export All Health Data.
+      Place the export.zip in any directory and run:
+        python scripts/pipeline.py --source apple_health --file path/to/export.zip
+      Output goes to state/health.md (encrypted at rest).
+    auth:
+      method: none            # no OAuth — purely local file parsing
+    fetch:
+      handler: "scripts/connectors/apple_health.py"
+      default_max_results: 10000
+      default_lookback: "365d"
+      # file: "/path/to/export.zip"   # override via --file flag or set here
+    output:
+      format: jsonl
+      fields: [source, type, type_short, value, unit, date_iso, device, id]
+      source_tag: "apple_health"
+    health_check: false       # no network endpoint to ping
+    mcp:
+      prefer_mcp: false       # not applicable — local file connector
+    retry:
+      max_retries: 1
+      base_delay: 0.0
+      max_delay: 0.0

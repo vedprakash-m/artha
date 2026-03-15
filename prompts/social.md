@@ -286,3 +286,73 @@ reciprocity_rules:
 # Exception: contacts.md is encrypted — the phone numbers live there safely
 # State/social.md must NEVER store phone numbers — use name + contacts.md reference only
 ```
+
+---
+
+## Structured Contact Profiles (I-05)
+
+> **Ref: specs/improve.md I-05** — Structured per-contact notes for relationship intelligence.
+
+Maintain per-contact profiles in `state/social.md` using this template.
+Create a new profile only when bootstrapping or when the user explicitly provides
+contact details. During automated catch-up, **only update existing profiles** — never
+create new ones from unknown senders.
+
+```
+### [Full Name]
+- **Relation:** [friend | colleague | family | neighbor | [custom]]
+- **Spouse/Partner:** [name, if known]
+- **Children:** [name (age)], if known
+- **Dietary/Allergies:** [if known]
+- **Key dates:** Birthday [MM-DD], Anniversary [MM-DD], if known
+- **Last contact:** YYYY-MM-DD ([channel: email | call | in-person | WhatsApp])
+- **Recent topics:** [2–3 bullet points from last interaction]
+- **Notes:** [anything useful for future conversations]
+- **Communication preference:** [WhatsApp | email | text | call]
+```
+
+---
+
+## Pre-Meeting Relationship Context Injection (I-06)
+
+> **Ref: specs/improve.md I-06** — Cross-reference calendar attendees with contact profiles.
+
+When processing calendar events during catch-up, for each attendee or meeting title:
+1. Check if the attendee name or email matches a contact profile in `state/social.md`.
+2. If matched AND the profile has substantive notes (beyond name and birthday), include a
+   compact context block immediately after the calendar entry in the briefing:
+
+```
+📅 Lunch with [Name] — [date/time] @ [location]
+   ℹ [Name]: [relation]. [Key fact 1]. [Key fact 2]. Last spoke [date] re: [topic].
+```
+
+**Rules:**
+- Only inject context for contacts with substantive profiles (at minimum: relation + one fact).
+- Do NOT inject for contacts whose profile is only a name and birthday.
+- The context block is a single-line summary — do not reproduce the full profile.
+- If no profile match: show the calendar event as-is with no context block.
+
+---
+
+## Passive Fact Extraction (I-07)
+
+> **Ref: specs/improve.md I-07** — AI-driven contact fact extraction from email stream.
+
+During the email processing phase, when you encounter emails **from or about known contacts**
+(i.e., contacts who already have a profile in `state/social.md`), silently update their
+profile with any new factual information revealed:
+
+- Job changes mentioned in signatures or email body
+- Children's names or ages mentioned in conversation
+- Upcoming events they mention (weddings, moves, new jobs)
+- Dietary preferences mentioned ("we're vegetarian now", "I'm doing keto")
+- Health mentions ("recovering from knee surgery") → note sensitively, no diagnosis details
+
+**Extraction rules:**
+- **Only update** contacts with existing profiles — do not create new profiles from email senders.
+- Do NOT extract from marketing emails, newsletters, or automated notifications.
+- Mark extracted facts with a source date: `[from email YYYY-MM-DD]`.
+- If you are uncertain about a fact (e.g., ambiguous pronoun reference), do not record it.
+- Sensitive health mentions: note the fact (e.g., "recovering from surgery") but omit
+  diagnosis, treatment, or prognosis details — these belong in `state/health.md` (encrypted).
