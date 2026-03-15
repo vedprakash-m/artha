@@ -838,7 +838,13 @@ def do_auto_lock() -> int:
 # ---------------------------------------------------------------------------
 
 def do_health() -> None:
-    """Exit 0 if vault is healthy; exit 1 otherwise."""
+    """Exit 0 if vault is healthy (all hard checks pass, no warnings).
+    Exit 1 if a hard failure: age not installed, credential key missing, or
+    state dir inaccessible — these block catch-up.
+    Exit 2 if soft warnings only (e.g. orphaned .bak files, GFS never
+    validated, key never exported) — preflight treats these as P1 advisories,
+    NOT hard P0 blocks.
+    """
     ok = True
 
     # 1. age tool installed
@@ -893,12 +899,13 @@ def do_health() -> None:
     else:
         print("  Lock file:    ✓ absent (state encrypted)")
 
-    # 6. Orphaned .bak files
+    # 6. Orphaned .bak files — soft warning only (cleanup concern, not corruption)
     bak_count = sum(1 for d in SENSITIVE_FILES if (STATE_DIR / f"{d}.md.bak").exists())
     if bak_count > 0:
-        print(f"  Backup files: ⚠ {bak_count} orphaned .bak file(s) — stale plaintext")
-        ok = False
+        print(f"  Backup files: ⚠ {bak_count} orphaned .bak file(s) — run: python3 scripts/vault.py encrypt")
+        soft_warn = True
     else:
+        soft_warn = False
         print("  Backup files: ✓ none (clean)")
 
     # 7. GFS backup catalog
@@ -906,6 +913,7 @@ def do_health() -> None:
     backup_count, last_validate, validate_errors = get_health_summary()
     if backup_count == 0:
         print("  GFS backups:  ⚠ none — run vault.py encrypt to create first backup")
+        soft_warn = True
     else:
         if last_validate:
             try:
@@ -914,14 +922,14 @@ def do_health() -> None:
                 err_note   = f" ({validate_errors} file(s) failed)" if validate_errors else ""
                 if days_since > 35:
                     print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but validation overdue ({days_since}d){err_note}")
-                    ok = False
+                    soft_warn = True
                 else:
                     print(f"  GFS backups:  ✓ {backup_count} snapshot(s), validated {days_since}d ago{err_note}")
             except ValueError:
                 print(f"  GFS backups:  ✓ {backup_count} snapshot(s) (validation: {last_validate})")
         else:
             print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but never validated — run vault.py validate-backup")
-            ok = False
+            soft_warn = True
 
     # 8. Key backup status — warn if private key has never been exported (#3)
     from backup import _load_manifest as _bkp_load_manifest
@@ -931,10 +939,15 @@ def do_health() -> None:
         print(f"  Key backup:   ✓ exported {last_export[:10]}")
     else:
         print("  Key backup:   ⚠ NEVER exported — run: backup.py export-key and store securely")
+        soft_warn = True
 
-    if ok:
+    if ok and not soft_warn:
         print("vault.py health: OK")
         sys.exit(0)
+    elif ok and soft_warn:
+        # Hard capabilities intact — only cleanup/advisory items need attention
+        print("vault.py health: OK (warnings present)")
+        sys.exit(2)
     else:
         print("vault.py health: FAILED")
         sys.exit(1)

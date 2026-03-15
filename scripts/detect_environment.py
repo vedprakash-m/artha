@@ -302,9 +302,16 @@ def detect_cached(
 
 
 def detect_json(debug: bool = False, skip_network: bool = False) -> str:
-    """CLI entry point — returns manifest as JSON string (always fresh probe)."""
+    """CLI entry point — returns manifest as JSON string (always fresh probe).
+
+    Output is compact (no indentation) when stdout is not a TTY (i.e. piped
+    to a script or tool), and pretty-printed when writing to an interactive
+    terminal.  Pass --pretty to force indented output regardless.
+    """
     manifest = detect_cached(force_refresh=True, skip_network=skip_network)
-    return json.dumps(manifest.to_dict(include_signals=debug), indent=2)
+    indent = 2 if sys.stdout.isatty() else None
+    sep = None if indent else (',', ':')
+    return json.dumps(manifest.to_dict(include_signals=debug), indent=indent, separators=sep)
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +328,11 @@ def main() -> None:
         help="Include raw detection signals in output",
     )
     parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Force indented (pretty-print) JSON output even when piped",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Force fresh probe, ignoring cached result",
@@ -334,9 +346,15 @@ def main() -> None:
 
     if args.no_cache:
         manifest = detect(skip_network=args.skip_network)
-        print(json.dumps(manifest.to_dict(include_signals=args.debug), indent=2))
+        indent = 2 if (args.pretty or sys.stdout.isatty()) else None
+        sep = None if indent else (',', ':')
+        print(json.dumps(manifest.to_dict(include_signals=args.debug), indent=indent, separators=sep))
     else:
-        print(detect_json(debug=args.debug, skip_network=args.skip_network))
+        output = detect_json(debug=args.debug, skip_network=args.skip_network)
+        if args.pretty and '\n' not in output:
+            # Re-indent if compact form was returned
+            output = json.dumps(json.loads(output), indent=2)
+        print(output)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v7.0.1
+## Product Requirements Document · v7.0.2
 
 **Author:** [Author]
 **Date:** March 15, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.0.2 | 2026-03 | Operational safety hardening: vault health 3-exit-code model (exit 2 = soft warnings, never blocks catch-up); stale lock auto-clear without `--fix`; `detect_environment.py` compact JSON when piped; calendar attendee PII redaction; `python3` consistency in AI agent instructions; +7 targeted tests (936→943). |
 | v7.0.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx` to all child middlewares (was silently dropped). Test mocks updated to match `StateMiddleware` Protocol. |
 | v7.0 | 2026-03 | Agentic Intelligence — OODA reasoning protocol, tiered context eviction, typed runtime context carrier (ArthaContext), implicit step checkpoints for crash recovery, persistent fact extraction across sessions. New scripts: `artha_context.py`, `checkpoint.py`, `fact_extractor.py`. `context_offloader.py` EvictionTier enum. `audit_compliance.py` OODA check. `state/memory.md` v2.0 schema. `harness.agentic.*` feature flags. 936 tests (+120). (F15.128–F15.132) |
 | v6.1 | 2026-03 | Agentic CLI Hardening (Gemini CLI feedback cycle): `skill_runner.py` venv bootstrap + entrypoint + importlib scope fix; `pipeline.py` venv bootstrap + unconditional health output; `noaa_weather.get_skill()` 0.0/0.0 coordinate guard; `uscis_status` actionable 403 IP-block message. Preflight `ARTHA_DIR`-relative cold-start check (CI fix). 816 tests (+12). (F15.124–F15.127) |
