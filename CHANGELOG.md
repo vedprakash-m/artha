@@ -10,6 +10,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ## [Unreleased]
 
 ### Added
+- **Interactive setup wizard + first-run friction fixes** (PRD v5.6, Tech Spec v3.3, F15.89–F15.94):
+  - `config/user_profile.starter.yaml` — minimal 45-line first-run template (blank name/email forces real data entry; replaces 234-line example as default for new users)
+  - `artha.py do_setup()` — interactive wizard collecting name, email, timezone (ET/PT/IST shortcuts), household type, children; writes clean YAML, auto-runs `generate_identity.py`
+  - `artha.py --no-wizard` flag — copies starter profile for manual editing
+  - Configured path now calls `do_welcome()` only — removed `do_preflight()` auto-call that caused ✅→⛔ cognitive whiplash
+  - `generate_identity._collect_warnings()` — non-blocking advisory for placeholder child names and cities
+  - `generate_identity._print_validate_summary()` — identity preview on `--validate` success
+  - `preflight.py --first-run` flag — Setup Checklist view with `○ not yet configured` for expected OAuth items; exit 0 when only setup steps remain
+  - `setup.sh` wizard integration: removed 234-line profile copy; prompts "Run the 2-minute setup wizard now?"; non-interactive CI path silently copies starter profile
+  - 11 new tests (`TestCollectWarnings`, `TestPrintValidateSummary`); 485 total, all passing; PII scan clean
+
 - **10-layer defense-in-depth for state data protection** (PRD v5.5, Tech Spec v3.2, F15.88):
   - Advisory file lock (`flock`/`msvcrt`) prevents concurrent encrypt/decrypt
   - Cloud sync fence detects OneDrive/Dropbox/iCloud in flight, waits for quiescence
