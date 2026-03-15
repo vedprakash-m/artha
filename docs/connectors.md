@@ -18,6 +18,7 @@ as a Python handler module in `scripts/connectors/`.
 | `icloud_calendar` | calendar | iCloud CalDAV | ✅ Active |
 | `canvas_lms` | education | Canvas LMS API | ✅ Active |
 | `onenote` | notes | Microsoft Graph OneNote | ✅ Active |
+| `apple_health` | health | Local Apple Health export | ⭕ Opt-in (disabled by default) |
 
 ---
 
@@ -181,3 +182,33 @@ connectors (Fastmail, ProtonMail Bridge).  To share a connector:
 3. Submit a pull request with both files.
 
 See [docs/contributing.md](contributing.md) for the contribution workflow.
+
+---
+
+## Apple Health Connector
+
+The `apple_health` connector parses Apple Health exports **locally** — no network traffic, no Apple account needed.
+
+### Enable
+
+1. In `config/connectors.yaml`, set `apple_health.enabled: true`
+2. Export your Apple Health data from the iPhone Health app:
+   - Open **Health** → tap your profile photo → **Export All Health Data**
+   - Transfer the `export.zip` to your Artha directory (e.g., `state/apple_health_export.zip`)
+3. Run a catch-up: `catch me up` — the connector picks up the ZIP automatically
+
+### Supported Metrics (16 HKQuantityTypeIdentifier types)
+
+Steps, resting heart rate, walking heart rate, heart rate, body mass (weight),
+BMI, body fat percentage, sleep analysis, blood pressure (systolic/diastolic),
+blood oxygen, respiratory rate, active energy, VO2 max, environmental noise,
+headphone audio exposure.
+
+### Options (`config/connectors.yaml`)
+
+```yaml
+apple_health:
+  enabled: true                # opt-in
+  since: "365d"                # relative (NNd) or absolute ISO date
+  default_max_results: 10000   # max records returned per metric type
+```

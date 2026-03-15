@@ -1,6 +1,6 @@
 # Artha — Technical Specification
 
-> **Version**: 3.4 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.5 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v5.7
 
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.5 | 2026-03 | Intelligence expansion + platform parity (PRD F15.100–113): `financial_resilience` skill (burn rate/runway), gig income routing keywords, purchase interval observation, structured contact profiles, pre-meeting context injection, passive fact extraction, digital estate inventory, instruction-sheet actions, subscription action proposals, `setup.ps1` Windows parity, `artha.py --doctor` 11-point diagnostic, `apple_health` connector (iterparse/ZIP), longitudinal lab tracking; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS`; 541 tests |
 | v3.4 | 2026-03 | OOBE polish audit (PRD F15.95–99): setup.sh brand mark + step counters, AI CLI auto-detection (`_detect_ai_clis()`/`_print_ai_cli_status()`), colorized demo briefing (yellow/green/red ANSI), README 624→142 lines, docs/backup.md, specs/README.md, make start; 485 tests |
 | v3.3 | 2026-03 | Interactive setup wizard + first-run friction fixes (PRD F15.89–94): `artha.py` wizard, starter profile, no auto-preflight, advisory warnings, `--first-run` preflight, `setup.sh` wizard prompt; 485 tests |
 | v3.2 | 2026-03 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
@@ -465,6 +466,8 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 | Passport Expiry | `state/immigration.md` | vault-decrypted | stdlib | Alert at 180/90/60 days (Phase 1 — F15.66) |
 | Subscription Monitor | `state/digital.md` | none | stdlib | Price change + trial-to-paid detection (Phase 1 — F15.67) |
 | RSS Feeds | Public RSS/Atom URLs | None | `urllib` + `xml.etree` | Regulatory/news feeds (USCIS, etc.) — disabled by default (Phase 1 — F15.68) |
+| Financial Resilience | `state/finance.md` | vault-decrypted | stdlib | Burn rate, emergency runway, single-income stress (Phase 1 — F15.100) |
+| Apple Health | Local ZIP/XML export | None (local only) | `xml.etree.ElementTree.iterparse` | 16 HK quantity types, memory-efficient streaming parse, opt-in (Phase 1 — F15.111) |
 
 ### 3.6 Claude Code Capabilities Utilization
 
@@ -3263,7 +3266,7 @@ The PII Guard test suite includes:
 
 ---
 
-*Artha Tech Spec v3.4 — End of Document*
+*Artha Tech Spec v3.5 — End of Document*
 
 ---
 
@@ -3271,6 +3274,7 @@ The PII Guard test suite includes:
 
 | Version | Changes |
 |---------|---------|
+| v3.5 | Intelligence expansion + platform parity (PRD F15.100–113): `scripts/skills/financial_resilience.py` (`FinancialResilienceSkill` — burn rate, emergency runway, single-income stress; regex parsers for `state/finance.md`; cadence weekly, requires_vault); gig income routing keywords added to `domain_registry.yaml` (Stripe, PayPal, Venmo, Upwork, Fiverr, Etsy, DoorDash, Uber, 1099-K/NEC); `prompts/shopping.md` purchase interval observation; `prompts/social.md` structured contact profiles (9-field) + pre-meeting context injection + passive fact extraction; `prompts/estate.md` digital estate inventory (5 tables); `config/actions.yaml` `cancel_subscription` + `dispute_charge` instruction-sheet actions; `prompts/digital.md` subscription action proposals; `setup.ps1` Windows onboarding parity script; `artha.py --doctor` 11-point diagnostic (`do_doctor()`); `scripts/connectors/apple_health.py` (iterparse streaming, 16 HK types, ZIP+XML, opt-in); `prompts/health.md` longitudinal lab results; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS` frozenset. 541 tests (+56 from 485 baseline). |
 | v3.4 | OOBE polish audit (PRD F15.95–99): `setup.sh` brand mark + `[1/4]`–`[4/4]` step counters + `--disable-pip-version-check`; `artha.py` `_detect_ai_clis()` + `_print_ai_cli_status()` for tailored post-wizard / welcome next-step; `demo_catchup.py` ANSI colorized output (yellow ACTION, green good, red alert), removed dead footer; `README.md` 624→142 lines + `docs/backup.md` + `specs/README.md` disclaimer; `Makefile` `start` target. 485 tests. |
 | v3.3 | Interactive setup wizard + first-run friction fixes: `artha.py` wizard (`do_setup()`), starter profile, no auto-preflight on welcome, `_collect_warnings()` + `_print_validate_summary()` in `generate_identity.py`, `--first-run` preflight mode, `setup.sh` wizard prompt. See §11.4 |
 | v3.2 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |

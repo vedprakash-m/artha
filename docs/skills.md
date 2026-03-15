@@ -156,3 +156,19 @@ and calls the module-level `get_skill(artha_dir)` factory.
   being embedded in state files.
 - Skills must read user config from `profile_loader` — never hardcode
   names, coordinates, email addresses, or account IDs.
+
+---
+
+## Built-In Skill Registry
+
+| Skill | Module | Domain | Cadence | Data Source | Description |
+|-------|--------|--------|---------|-------------|-------------|
+| `uscis_status` | `scripts/skills/uscis_status.py` | immigration | daily | Public lookup | USCIS case status polling |
+| `property_tax` | `scripts/skills/property_tax.py` | finance | yearly | `state/home.md` | Property tax deadline alerts |
+| `king_county_tax` | `scripts/skills/king_county_tax.py` | finance | yearly | Public lookup | King County WA tax records |
+| `visa_bulletin` | `scripts/skills/visa_bulletin.py` | immigration | monthly | Public lookup | Visa bulletin priority date tracking |
+| `noaa_weather` | `scripts/skills/noaa_weather.py` | home | daily | NOAA API | Weather and severe event alerts |
+| `nhtsa_recalls` | `scripts/skills/nhtsa_recalls.py` | vehicle | weekly | NHTSA API | Vehicle safety recall tracking |
+| `passport_expiry` | `scripts/skills/passport_expiry.py` | immigration | weekly | `state/immigration.md` | Passport expiry at 180/90/60-day thresholds |
+| `subscription_monitor` | `scripts/skills/subscription_monitor.py` | digital | weekly | `state/digital.md` | Price change + trial-to-paid detection |
+| `financial_resilience` | `scripts/skills/financial_resilience.py` | finance | weekly | `state/finance.md` (vault) | Burn rate, emergency fund runway, single-income stress scenario |
