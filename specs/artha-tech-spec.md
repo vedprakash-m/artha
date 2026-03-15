@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.5 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.7 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.7
+> **Implements**: PRD v6.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,8 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.7 | 2026-03 | Cowork VM & Operational Hardening (PRD F15.119–F15.123, specs/vm-hardening.md): `scripts/detect_environment.py` (7-probe manifest, 5-min TTL cache); `scripts/audit_compliance.py` (7-check compliance scorer, `--threshold`); `scripts/preflight.py` `--advisory` flag + `check_profile_completeness()` + 3-layer `check_msgraph_token()` rewrite; `scripts/setup_msgraph_oauth.py` `_last_refresh_success` tracking; `scripts/generate_identity.py` compact mode + `--no-compact`; 5 `config/workflow/*.md` files rewritten with canonical steps + ⛩️ gates; `state/templates/health-check.md`; `config/Artha.core.md` Read-Only Environment Protocol; 804 tests (+106). |
+| v3.6 | 2026-03 | Deep Agents Option B — Core Harness Patterns (Phases 1–5, PRD F15.114–F15.118): `scripts/context_offloader.py`, `scripts/domain_index.py`, `scripts/session_summarizer.py`, `scripts/middleware/` (5 modules), `scripts/schemas/` (4 modules). `config/Artha.md`/`config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements. 698 tests (+157). See §9.5. |
 | v3.5 | 2026-03 | Intelligence expansion + platform parity (PRD F15.100–113): `financial_resilience` skill (burn rate/runway), gig income routing keywords, purchase interval observation, structured contact profiles, pre-meeting context injection, passive fact extraction, digital estate inventory, instruction-sheet actions, subscription action proposals, `setup.ps1` Windows parity, `artha.py --doctor` 11-point diagnostic, `apple_health` connector (iterparse/ZIP), longitudinal lab tracking; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS`; 541 tests |
 | v3.4 | 2026-03 | OOBE polish audit (PRD F15.95–99): setup.sh brand mark + step counters, AI CLI auto-detection (`_detect_ai_clis()`/`_print_ai_cli_status()`), colorized demo briefing (yellow/green/red ANSI), README 624→142 lines, docs/backup.md, specs/README.md, make start; 485 tests |
 | v3.3 | 2026-03 | Interactive setup wizard + first-run friction fixes (PRD F15.89–94): `artha.py` wizard, starter profile, no auto-preflight, advisory warnings, `--first-run` preflight, `setup.sh` wizard prompt; 485 tests |
@@ -1268,19 +1270,19 @@ Full domain prompts live in `prompts/*.md`. Above are condensed schema reference
 
 **Step 3:** PII pre-flight filter (HALT on failure). Email content pre-processing: strip HTML, remove footers, marketing suppression, thread collapse, 1,500 token cap per email, batch summarization (>50 emails).
 
-**Step 4:** Read all state files. Parallel skill pull (USCIS, Tax, WorkIQ calendar). Tiered context loading (Always/Active/Reference/Archive — target 30-40% token savings).
+**Step 4:** Read all state files. Parallel skill pull (USCIS, Tax, WorkIQ calendar). Tiered context loading (Always/Active/Reference/Archive — target 30-40% token savings). Build domain index card via `domain_index.py` (Step 4b′ — Phase 2 progressive disclosure): compact ~600-token frontmatter summary that gates which domain prompts load for this command.
 
-**Step 5 [PARALLEL per domain]:** Route emails → apply domain prompt extraction → Layer 2 redaction → update state file → evaluate alerts → collect briefing contribution. Update open_items.md (fuzzy-match, re-surface overdue).
+**Step 5 [PARALLEL per domain]:** Route emails → apply domain prompt extraction → Layer 2 redaction → update state file via middleware stack (Phase 4: PII → WriteGuard → AuditLog → [write] → WriteVerify → AuditLog) → evaluate alerts → collect briefing contribution. Update open_items.md (fuzzy-match, re-surface overdue). Context offloading (Phase 1): after Steps 4-5 complete, offload pipeline JSONL + email batch to `tmp/`; keep only routing table counts in context.
 
-**Step 6:** Cross-domain reasoning (immigration+travel, bill+cashflow, school+work calendar). WorkIQ conflict rules (cross-domain=3, internal=1, >300min=heavy load). ONE THING scoring (URGENCY×IMPACT×AGENCY). Decision graph check, scenario trigger.
+**Step 6:** Cross-domain reasoning (immigration+travel, bill+cashflow, school+work calendar). WorkIQ conflict rules (cross-domain=3, internal=1, >300min=heavy load). ONE THING scoring (URGENCY×IMPACT×AGENCY). Decision graph check, scenario trigger. Context offloading (Phase 1): write full scoring analysis to `tmp/cross_domain_analysis.json`; keep ONE THING + top 5 alerts in context.
 
-**Step 7:** Synthesize briefing per §5.1 format. Calibration questions (post-briefing accuracy check). Decision deadline check (expired→🔴, ≤14d→nudge, open >14d→set deadline).
+**Step 7:** Synthesize briefing per §5.1 format. Run structured output validation (Phase 5): populate `BriefingOutput` schema, write `tmp/briefing_structured.json`, log validation errors non-blocking. Calibration questions (post-briefing accuracy check). Decision deadline check (expired→🔴, ≤14d→nudge, open >14d→set deadline).
 
-**Step 8:** Email briefing, save to briefings/, update health-check, log to audit, push/pull To Do, rebuild dashboard.md, update work-calendar.md (count+duration only), meeting-triggered OIs.
+**Step 8:** Email briefing, save to briefings/, update health-check (include `harness_metrics` block), log to audit, push/pull To Do, rebuild dashboard.md, update work-calendar.md (count+duration only), meeting-triggered OIs.
 
-**Step 8b:** Net-negative write guard — HALT if any state file would lose >20% of fields (show diff, require confirmation).
+**Step 8b:** Net-negative write guard (now part of `WriteGuardMiddleware` in Phase 4 middleware stack) — blocks write if state file would lose >20% of fields.
 
-**Step 9:** Delete tmp/work_calendar.json, then vault.sh encrypt.
+**Step 9:** Delete `tmp/work_calendar.json` (corporate data). Delete all harness offload artifacts: `tmp/pipeline_output.jsonl`, `tmp/processed_emails.json`, `tmp/domain_extractions/`, `tmp/cross_domain_analysis.json`, `tmp/briefing_structured.json`, `tmp/session_history_*.{md,json}` (Step 18a′). Then vault encrypt.
 
 ### 7.2 Error Handling
 
@@ -2230,6 +2232,119 @@ Start with maximum Claude reliance. Add code only when Claude proves unreliable 
 - Output: stdout (for Claude to read) or direct file write
 - Logging: Append to `~/OneDrive/Artha/state/audit.md`
 - Error handling: Print error message and exit with non-zero code
+
+---
+
+## 9.5 Deep Agents Harness — Component Reference *(v3.6)*
+
+The Deep Agents Harness (Option B, Phases 1–5) is a set of composable infrastructure modules that reduce context pressure, protect state integrity, and validate AI output — without changing the workflow or prompt structure. All phases are feature-flagged under `harness:` in `config/artha_config.yaml` and default to `enabled: true`.
+
+### Phase 1 — Context Offloading (`scripts/context_offloader.py`)
+
+**Purpose:** Writes large intermediate artifacts to `tmp/` when they exceed a token threshold; returns a compact summary card in their place.
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `offload_artifact` | `(name, data, summary_fn, *, threshold_tokens=5_000, preview_lines=10, artha_dir=None) -> str` | Returns card string; writes file to `tmp/`. PII guard must run before calling. |
+| `pipeline_summary` | `(data) -> str` | Built-in summary fn for pipeline JSONL output |
+| `emails_summary` | `(data) -> str` | Summary fn for processed email batch |
+| `domain_extraction_summary` | `(data) -> str` | Summary fn for per-domain extraction |
+| `cross_domain_summary` | `(data) -> str` | Summary fn for cross-domain scoring |
+| `load_harness_flag` | `(feature_path, default=True) -> bool` | Reads `config/artha_config.yaml` under `harness:` key |
+| `OFFLOADED_FILES` | `list[str]` | Manifest of tmp/ files for Step 18a′ cleanup |
+| `OFFLOADED_GLOB_PATTERNS` | `list[str]` | Glob patterns for wildcard cleanup |
+
+**Config flag:** `harness.context_offloading.enabled` • **Token threshold:** 5,000 (configurable per call) • **Max card tokens:** 500
+
+### Phase 2 — Progressive Domain Disclosure (`scripts/domain_index.py`)
+
+**Purpose:** Reads YAML frontmatter from `state/*.md` to build a compact domain index, enabling command-aware prompt loading decisions.
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `build_domain_index` | `(artha_dir=None) -> tuple[str, dict]` | Returns (card_text, index_data) |
+| `should_load_prompt` | `(domain, index_data, command) -> bool` | True = load full prompt |
+| `get_prompt_load_list` | `(index_data, command, routed_domains=None) -> list[str]` | Returns list of domain names to load |
+| `_domain_status` | `(days_since_active) -> str` | ACTIVE≤30d, STALE≤180d, ARCHIVE>180d |
+
+**Config flag:** `harness.progressive_disclosure.enabled` • **Index size:** ~600 tokens for 18 domains
+
+### Phase 3 — Session Summarization (`scripts/session_summarizer.py`)
+
+**Purpose:** Creates structured `SessionSummary` objects and writes them to `tmp/`, enabling context compression after heavy commands.
+
+| Symbol | Signature | Notes |
+|--------|-----------|-------|
+| `SessionSummary` | Pydantic v2 BaseModel | Falls back to dataclass if pydantic absent |
+| `create_session_summary` | `(...) -> SessionSummary` | Populates from command outputs |
+| `summarize_to_file` | `(summary, session_n, artha_dir) -> Path` | Writes `.md` + `.json` to `tmp/` |
+| `estimate_context_pct` | `(text, model_limit_chars=800_000) -> float` | 0.0–1.0 |
+| `should_summarize_now` | `(context_text, command=None) -> bool` | True if above threshold or post-command |
+| `get_context_card` | `(summary) -> str` | Compact card replacing full session history |
+| `load_threshold_pct` | `() -> float` | Default 70.0 |
+
+**Config flag:** `harness.session_summarization.enabled` • **Threshold:** `harness.session_summarization.threshold_pct` (default: 70)
+
+### Phase 4 — Middleware Stack (`scripts/middleware/`)
+
+**Purpose:** Composable `StateMiddleware` Protocol that all state file writes pass through.
+
+**Protocol** (`scripts/middleware/__init__.py`):
+```python
+class StateMiddleware(Protocol):
+    def before_write(self, domain: str, current_content: str, proposed_content: str) -> str | None: ...
+    # Returns None to BLOCK the write; returns (possibly modified) content to allow
+    def after_write(self, domain: str, file_path: str) -> None: ...
+
+def compose_middleware(middlewares: list[StateMiddleware]) -> StateMiddleware: ...
+# before_write: left-to-right chain • after_write: right-to-left
+```
+
+| Module | Class | Behaviour |
+|--------|-------|-----------|
+| `pii_middleware.py` | `PiiMiddleware` | Runs `pii_guard.py filter` subprocess; redacts and continues (never blocks) |
+| `write_guard.py` | `WriteGuardMiddleware(max_loss_pct=20.0)` | Counts YAML fields via `r"^\s{0,4}[\w_-]+\s*:"`, blocks if loss > threshold. Bootstrap files (`updated_by: bootstrap`) exempt. |
+| `write_verify.py` | `WriteVerifyMiddleware` | Post-write: checks file exists + >100B, starts with `---`, has `domain:` field, has `last_updated:` ISO-8601. Logs failures to `state/audit.md`. |
+| `audit_middleware.py` | `AuditMiddleware` | Appends `MIDDLEWARE_WRITE` entries to `state/audit.md`. `log_event(event_type, details)` available for custom events. |
+| `rate_limiter.py` | `RateLimiterMiddleware` | Sliding 60s window per provider. Reads limits from `config/connectors.yaml`. Defaults: Gmail 30/min, MS Graph 20/min, iCloud 10/min. Raises `RateLimitExceeded`. |
+
+**Config flag:** `harness.middleware.enabled` (checked inside `compose_middleware` — returns passthrough when disabled)
+
+### Phase 5 — Structured Output Validation (`scripts/schemas/`)
+
+**Purpose:** Pydantic v2 schemas validate AI-generated output structures before downstream consumption.
+
+| Schema | Module | Key Constraints |
+|--------|--------|----------------|
+| `BriefingOutput` | `schemas/briefing.py` | `one_thing` ≤300 chars, `briefing_format` Literal enum, requires `pii_footer` |
+| `AlertItem` | `schemas/briefing.py` | `severity` Literal(`critical`/`urgent`/`standard`/`info`), `score` 0–27 |
+| `DomainSummary` | `schemas/briefing.py` | `bullet_points` max_length=5, `alert_count` ≥0 |
+| `FlashBriefingOutput` | `schemas/briefing.py` | Compact variant for flash mode |
+| `SessionSummarySchema` | `schemas/session.py` | `key_findings` max_length=5 with `mode="before"` validator for graceful truncation |
+| `DomainIndexCard` | `schemas/domain_index.py` | `from_index_data(card_text, index_data)` factory |
+
+**Output artifact:** `tmp/briefing_structured.json` • **Config flag:** `harness.structured_output.enabled`
+**Graceful degradation:** Validation failure → log to `state/audit.md` + increment `harness_metrics.structured_output.validation_errors` — never blocks briefing output.
+
+### Harness Feature Flags (`config/artha_config.yaml`)
+
+```yaml
+harness:
+  context_offloading:
+    enabled: true
+    threshold_tokens: 5000
+  progressive_disclosure:
+    enabled: true
+  session_summarization:
+    enabled: true
+    threshold_pct: 70
+  middleware:
+    enabled: true
+  structured_output:
+    enabled: true
+```
+
+All flags default to `true` when absent. Set `enabled: false` to restore pre-harness behaviour for any phase independently.
 
 ---
 
@@ -3238,6 +3353,7 @@ To support the automated testing requirements in PRD §14.4, Artha employs a Pyt
 - **Testing Library:** `pytest` (standard Python testing framework).
 - **Mocking:** `pytest-mock` for isolating scripts from the filesystem, network, and credential store.
 - **Snapshot Testing:** `pytest-snapshot` or custom logic for "Golden File" validation.
+- **Test count:** 698 passed, 5 skipped, 20 xfailed (post v3.6 Deep Agents harness implementation).
 - **Data Diffing:** `datadiﬀ` for granular comparison of extracted Markdown vs. expected snapshots.
 
 ### 17.2 Test Categories
@@ -3274,6 +3390,7 @@ The PII Guard test suite includes:
 
 | Version | Changes |
 |---------|---------|
+| v3.6 | Deep Agents Option B — Core Harness Patterns (PRD F15.114–F15.118): `scripts/context_offloader.py` (`offload_artifact`, builtin summary fns, `OFFLOADED_FILES`/`OFFLOADED_GLOB_PATTERNS`); `scripts/domain_index.py` (`build_domain_index`, `get_prompt_load_list`, `_domain_status` ACTIVE/STALE/ARCHIVE); `scripts/session_summarizer.py` (`SessionSummary` Pydantic v2 + dataclass fallback, `estimate_context_pct`, `should_summarize_now`, `get_context_card`); `scripts/middleware/` package — `StateMiddleware` Protocol + `compose_middleware()`, `PiiMiddleware`, `WriteGuardMiddleware`, `WriteVerifyMiddleware`, `AuditMiddleware`, `RateLimiterMiddleware`; `scripts/schemas/` package — `BriefingOutput`, `AlertItem`, `DomainSummary`, `FlashBriefingOutput`, `SessionSummarySchema`, `DomainIndexCard`. `config/Artha.md` + `config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements.txt. 698 tests (+157 from 541). |
 | v3.5 | Intelligence expansion + platform parity (PRD F15.100–113): `scripts/skills/financial_resilience.py` (`FinancialResilienceSkill` — burn rate, emergency runway, single-income stress; regex parsers for `state/finance.md`; cadence weekly, requires_vault); gig income routing keywords added to `domain_registry.yaml` (Stripe, PayPal, Venmo, Upwork, Fiverr, Etsy, DoorDash, Uber, 1099-K/NEC); `prompts/shopping.md` purchase interval observation; `prompts/social.md` structured contact profiles (9-field) + pre-meeting context injection + passive fact extraction; `prompts/estate.md` digital estate inventory (5 tables); `config/actions.yaml` `cancel_subscription` + `dispute_charge` instruction-sheet actions; `prompts/digital.md` subscription action proposals; `setup.ps1` Windows onboarding parity script; `artha.py --doctor` 11-point diagnostic (`do_doctor()`); `scripts/connectors/apple_health.py` (iterparse streaming, 16 HK types, ZIP+XML, opt-in); `prompts/health.md` longitudinal lab results; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS` frozenset. 541 tests (+56 from 485 baseline). |
 | v3.4 | OOBE polish audit (PRD F15.95–99): `setup.sh` brand mark + `[1/4]`–`[4/4]` step counters + `--disable-pip-version-check`; `artha.py` `_detect_ai_clis()` + `_print_ai_cli_status()` for tailored post-wizard / welcome next-step; `demo_catchup.py` ANSI colorized output (yellow ACTION, green good, red alert), removed dead footer; `README.md` 624→142 lines + `docs/backup.md` + `specs/README.md` disclaimer; `Makefile` `start` target. 485 tests. |
 | v3.3 | Interactive setup wizard + first-run friction fixes: `artha.py` wizard (`do_setup()`), starter profile, no auto-preflight on welcome, `_collect_warnings()` + `_print_validate_summary()` in `generate_identity.py`, `--first-run` preflight mode, `setup.sh` wizard prompt. See §11.4 |

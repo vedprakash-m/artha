@@ -347,6 +347,8 @@ def ensure_valid_token(warn_seconds: int = 300) -> dict:
         else:
             new_token = _acquire_token_silent(client_id, token_data)
             if new_token:
+                # --- Layer 2: Track refresh token usage (vm-hardening.md Phase 2.4) ---
+                new_token["_last_refresh_success"] = datetime.now(timezone.utc).isoformat()
                 _save_token(new_token, client_id=client_id)
                 return new_token
             # Silent refresh failed — token may still work, return it

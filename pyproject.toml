@@ -13,6 +13,7 @@ dependencies = [
     "pyyaml>=6.0.1",
     "keyring>=25.0.0",
     "jsonschema>=4.20.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +59,7 @@ Documentation = "https://github.com/vedprakash-m/artha/tree/main/docs"
 
 [tool.setuptools]
 py-modules = ["artha"]
-packages = ["scripts", "scripts.lib", "scripts.skills", "scripts.connectors", "scripts.actions", "scripts.channels"]
+packages = ["scripts", "scripts.lib", "scripts.skills", "scripts.connectors", "scripts.actions", "scripts.channels", "scripts.middleware", "scripts.schemas"]
 
 # ---------------------------------------------------------------------------
 # Ruff — lightweight linter catching bugs that py_compile misses
