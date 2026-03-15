@@ -43,8 +43,13 @@ import vault as vault
 
 
 # ---------------------------------------------------------------------------
-# ZIP test helper (shared across all test classes)
+# Helpers
 # ---------------------------------------------------------------------------
+
+def _fake_age_bytes(label: str = "test") -> bytes:
+    """Return bytes that pass foundation.is_valid_age_file (header + padding)."""
+    return ("age-encryption.org/v1\n-> X25519 fake\n" + "A" * 80 + f"\n--- {label}").encode()
+
 
 def _create_test_zip(
     backup_dir: Path,
@@ -233,7 +238,7 @@ class TestBackupSnapshot:
         profile_path.parent.mkdir(parents=True, exist_ok=True)
         profile_path.write_text(_yaml.dump(profile), encoding="utf-8")
         for d in domains:
-            (state_dir / f"{d}.md.age").write_bytes(b"x" * 500)
+            (state_dir / f"{d}.md.age").write_bytes(_fake_age_bytes(d))
 
     def _make_registry(self, state_dir, domains):
         return [
@@ -312,7 +317,7 @@ class TestBackupSnapshot:
 
     def test_snapshot_skips_missing_age_file(self, mock_backup_env):
         state_dir  = foundation._config["STATE_DIR"]
-        (state_dir / "immigration.md.age").write_bytes(b"x" * 200)
+        (state_dir / "immigration.md.age").write_bytes(_fake_age_bytes("immigration"))
         registry = [
             {"name": "immigration", "source_type": "state_encrypted",
              "source_path": state_dir / "immigration.md.age",
@@ -330,6 +335,30 @@ class TestBackupSnapshot:
         ]
         count = backup.backup_snapshot(registry, today=date(2026, 3, 9))
         assert count == 0
+
+    def test_snapshot_rejects_corrupt_age_at_ingress(self, mock_backup_env, capsys):
+        """A corrupt .age stub must be rejected at backup ingress, never packed into ZIP."""
+        state_dir = foundation._config["STATE_DIR"]
+        # Write a 7-byte stub like the real-world corruption
+        (state_dir / "immigration.md.age").write_text("enc-imm")
+        # Write a valid file to ensure mixed-health registries still work
+        (state_dir / "finance.md.age").write_bytes(_fake_age_bytes("finance"))
+        registry = [
+            {"name": "immigration", "source_type": "state_encrypted",
+             "source_path": state_dir / "immigration.md.age",
+             "restore_path": "state/immigration.md.age"},
+            {"name": "finance", "source_type": "state_encrypted",
+             "source_path": state_dir / "finance.md.age",
+             "restore_path": "state/finance.md.age"},
+        ]
+        count = backup.backup_snapshot(registry, today=date(2026, 3, 9))
+        # Only finance should be backed up (immigration rejected at ingress)
+        assert count == 1
+        zip_path = foundation._config["BACKUP_DIR"] / "daily" / "2026-03-09.zip"
+        with zipfile.ZipFile(str(zip_path), "r") as zf:
+            internal = json.loads(zf.read("manifest.json"))
+        assert "state/finance.md.age" in internal["files"]
+        assert "state/immigration.md.age" not in internal["files"]
 
 
 # ---------------------------------------------------------------------------
@@ -789,7 +818,7 @@ class TestBackupSnapshotComprehensive:
     def test_mixed_registry_backs_up_all_types(self, mock_backup_env):
         state_dir  = foundation._config["STATE_DIR"]
         config_dir = foundation._config["CONFIG_DIR"]
-        (state_dir / "finance.md.age").write_bytes(b"x" * 300)
+        (state_dir / "finance.md.age").write_bytes(_fake_age_bytes("finance"))
         (state_dir / "goals.md").write_text("---\n# Goals\n")
         (config_dir / "artha_config.yaml").write_text("todo_lists:\n  general: abc\n")
 
@@ -823,7 +852,7 @@ class TestBackupSnapshotComprehensive:
 
     def test_manifest_entry_has_restore_path_and_source_type(self, mock_backup_env):
         state_dir = foundation._config["STATE_DIR"]
-        (state_dir / "immigration.md.age").write_bytes(b"x" * 200)
+        (state_dir / "immigration.md.age").write_bytes(_fake_age_bytes("immigration"))
         registry = [
             {"name": "immigration", "source_type": "state_encrypted",
              "source_path": state_dir / "immigration.md.age",
@@ -883,7 +912,7 @@ class TestRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
-            backup.do_restore(date_str="2026-03-14")
+            backup.do_restore(date_str="2026-03-14", confirm=True)
 
         restored = foundation._config["STATE_DIR"] / "immigration.md.age"
         assert restored.exists()
@@ -900,7 +929,7 @@ class TestRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_restore(date_str="2026-03-14")
+            backup.do_restore(date_str="2026-03-14", confirm=True)
 
         restored = foundation._config["STATE_DIR"] / "goals.md"
         assert restored.exists()
@@ -917,7 +946,7 @@ class TestRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_restore(date_str="2026-03-14")
+            backup.do_restore(date_str="2026-03-14", confirm=True)
 
         restored = foundation._config["CONFIG_DIR"] / "user_profile.yaml"
         assert restored.exists()
@@ -949,7 +978,7 @@ class TestRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              pytest.raises(SystemExit):
-            backup.do_restore(date_str="2026-03-14")
+            backup.do_restore(date_str="2026-03-14", confirm=True)
 
         assert "CHECKSUM" in capsys.readouterr().out
 
@@ -994,7 +1023,7 @@ class TestInstall:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=lambda k, s, d: d.write_bytes(b"dec") or True):
-            backup.do_install(str(zip_path))
+            backup.do_install(str(zip_path), confirm=True)
 
         restored = foundation._config["STATE_DIR"] / "immigration.md.age"
         assert restored.exists()
@@ -1010,7 +1039,7 @@ class TestInstall:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_install(str(zip_path))
+            backup.do_install(str(zip_path), confirm=True)
 
         restored = foundation._config["STATE_DIR"] / "goals.md"
         assert restored.read_text() == "---\n# Goals\n"
@@ -1025,7 +1054,7 @@ class TestInstall:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_install(str(zip_path))
+            backup.do_install(str(zip_path), confirm=True)
 
         restored = foundation._config["CONFIG_DIR"] / "artha_config.yaml"
         assert "id123" in restored.read_text()
@@ -1073,7 +1102,7 @@ class TestDataOnlyRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_restore(date_str="2026-03-14", data_only=True)
+            backup.do_restore(date_str="2026-03-14", data_only=True, confirm=True)
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
         assert (foundation._config["STATE_DIR"] / "goals.md").exists()
@@ -1091,7 +1120,7 @@ class TestDataOnlyRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_restore(date_str="2026-03-14")
+            backup.do_restore(date_str="2026-03-14", confirm=True)
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
         assert (foundation._config["CONFIG_DIR"] / "routing.yaml").exists()
@@ -1121,7 +1150,7 @@ class TestDataOnlyRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_install(str(zip_path), data_only=True)
+            backup.do_install(str(zip_path), data_only=True, confirm=True)
 
         assert (foundation._config["STATE_DIR"] / "immigration.md.age").exists()
         assert (foundation._config["STATE_DIR"] / "goals.md").exists()
@@ -1138,7 +1167,7 @@ class TestDataOnlyRestore:
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-priv"), \
              patch("backup.age_decrypt", side_effect=fake_decrypt):
-            backup.do_install(str(zip_path))
+            backup.do_install(str(zip_path), confirm=True)
 
         assert (foundation._config["CONFIG_DIR"] / "routing.yaml").exists()
 
@@ -1208,7 +1237,7 @@ class TestBackupCLI:
         """backup.main(['snapshot']) creates a ZIP when .age files exist."""
         state_dir  = foundation._config["STATE_DIR"]
         config_dir = foundation._config["CONFIG_DIR"]
-        (state_dir / "finance.md.age").write_bytes(b"encrypted-content")
+        (state_dir / "finance.md.age").write_bytes(_fake_age_bytes("finance"))
 
         import yaml as _yaml
         profile = {"backup": {"state_files": [{"name": "finance", "sensitive": True}]}}
@@ -1253,3 +1282,214 @@ class TestKeyManagement:
         monkeypatch.setattr("sys.stdin", io.StringIO("not-a-valid-key\n"))
         with pytest.raises(SystemExit):
             backup.do_import_key()
+
+
+# ---------------------------------------------------------------------------
+# §15 Domain checksums in manifest (#6)
+# ---------------------------------------------------------------------------
+
+class TestDomainChecksums:
+    """backup_snapshot stores per-domain checksums in the outer manifest."""
+
+    def test_snapshot_records_domain_checksums(self, mock_backup_env):
+        state_dir  = foundation._config["STATE_DIR"]
+        config_dir = foundation._config["CONFIG_DIR"]
+        (state_dir / "finance.md.age").write_bytes(_fake_age_bytes("finance"))
+
+        import yaml as _yaml
+        profile = {"backup": {"state_files": [{"name": "finance", "sensitive": True}]}}
+        (config_dir / "user_profile.yaml").write_text(_yaml.dump(profile), encoding="utf-8")
+
+        registry = backup.load_backup_registry()
+        count = backup.backup_snapshot(registry)
+        assert count > 0
+
+        m = backup._load_manifest()
+        snap = list(m["snapshots"].values())[0]
+        assert "domain_checksums" in snap
+        assert "finance" in snap["domain_checksums"]
+        assert len(snap["domain_checksums"]["finance"]) == 64  # SHA-256 hex
+
+
+# ---------------------------------------------------------------------------
+# §16 Prune protection (#6)
+# ---------------------------------------------------------------------------
+
+class TestPruneProtection:
+    """_prune_backups pins ZIPs that are the sole carrier of a domain checksum."""
+
+    def test_prune_protects_sole_carrier(self, mock_backup_env):
+        """A ZIP is not pruned if it contains a domain checksum not found elsewhere."""
+        backup_dir = foundation._config["BACKUP_DIR"]
+        state_dir  = foundation._config["STATE_DIR"]
+
+        # Create 3 daily ZIPs: day1 has unique content, day2,3 have same content
+        unique_content = _fake_age_bytes("unique-day1")
+        common_content = _fake_age_bytes("common")
+
+        m = backup._load_manifest()
+        for i, (day, content) in enumerate([
+            ("2026-03-01", unique_content),
+            ("2026-03-02", common_content),
+            ("2026-03-03", common_content),
+        ]):
+            zip_path = _create_test_zip(
+                backup_dir, "daily", day,
+                {"state/finance.md.age": (content, "state_encrypted", "state/finance.md.age", "finance")},
+            )
+            sha = backup._file_sha256(zip_path)
+            m["snapshots"][f"daily/{day}.zip"] = {
+                "date": day, "tier": "daily", "sha256": sha,
+                "size": zip_path.stat().st_size, "file_count": 1,
+                "domain_checksums": {"finance": hashlib.sha256(content).hexdigest()},
+            }
+        backup._save_manifest(m)
+
+        # Prune with keep_n=2: day1 is candidate for deletion
+        backup._prune_backups("daily", 2)
+
+        # day1 should be PINNED (sole carrier of unique checksum)
+        assert (backup_dir / "daily" / "2026-03-01.zip").exists()
+        # All 3 ZIPs still exist (day1 pinned + day2,3 retained)
+        zips = sorted((backup_dir / "daily").glob("*.zip"))
+        assert len(zips) == 3
+
+    def test_prune_deletes_when_checksum_duplicated(self, mock_backup_env):
+        """A ZIP is pruned if all its domain checksums exist in other retained ZIPs."""
+        backup_dir = foundation._config["BACKUP_DIR"]
+        common = _fake_age_bytes("same")
+
+        m = backup._load_manifest()
+        for day in ("2026-03-01", "2026-03-02", "2026-03-03"):
+            zip_path = _create_test_zip(
+                backup_dir, "daily", day,
+                {"state/finance.md.age": (common, "state_encrypted", "state/finance.md.age", "finance")},
+            )
+            sha = backup._file_sha256(zip_path)
+            m["snapshots"][f"daily/{day}.zip"] = {
+                "date": day, "tier": "daily", "sha256": sha,
+                "size": zip_path.stat().st_size, "file_count": 1,
+                "domain_checksums": {"finance": hashlib.sha256(common).hexdigest()},
+            }
+        backup._save_manifest(m)
+
+        backup._prune_backups("daily", 2)
+
+        # day1 should be deleted (checksum duplicated in day2 and day3)
+        assert not (backup_dir / "daily" / "2026-03-01.zip").exists()
+        zips = sorted((backup_dir / "daily").glob("*.zip"))
+        assert len(zips) == 2
+
+
+# ---------------------------------------------------------------------------
+# §17 Pre-restore backup (#7)
+# ---------------------------------------------------------------------------
+
+class TestPreRestoreBackup:
+    """Restore creates a pre-restore backup of live files before overwriting."""
+
+    def test_pre_restore_backup_created(self, mock_backup_env, capsys):
+        """Live files are backed up to backups/pre-restore/ before restore writes."""
+        backup_dir = foundation._config["BACKUP_DIR"]
+        state_dir  = foundation._config["STATE_DIR"]
+
+        # Create a live file that will be overwritten
+        (state_dir / "immigration.md.age").write_bytes(_fake_age_bytes("live"))
+
+        # Create a backup ZIP to restore from
+        zip_path = _create_test_zip(
+            backup_dir, "daily", "2026-03-14",
+            {"state/immigration.md.age": (
+                _fake_age_bytes("backup"), "state_encrypted",
+                "state/immigration.md.age", "immigration",
+            )},
+        )
+        sha = backup._file_sha256(zip_path)
+        m = backup._load_manifest()
+        m["snapshots"]["daily/2026-03-14.zip"] = {
+            "date": "2026-03-14", "tier": "daily", "sha256": sha,
+            "size": zip_path.stat().st_size, "file_count": 1,
+        }
+        backup._save_manifest(m)
+
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"), \
+             patch("backup.age_decrypt", return_value=True):
+            backup.do_restore(date_str="2026-03-14", confirm=True)
+
+        # Pre-restore backup directory should exist with the live file
+        pre_restore = backup_dir / "pre-restore"
+        assert pre_restore.exists()
+        backed_files = list(pre_restore.iterdir())
+        assert len(backed_files) >= 1
+
+
+# ---------------------------------------------------------------------------
+# §18 Confirm gate (#7)
+# ---------------------------------------------------------------------------
+
+class TestConfirmGate:
+    """Restore requires --confirm to write files (safety gate)."""
+
+    def test_restore_without_confirm_shows_preview(self, mock_backup_env, capsys):
+        """Without --confirm, restore shows preview without writing."""
+        backup_dir = foundation._config["BACKUP_DIR"]
+        state_dir  = foundation._config["STATE_DIR"]
+
+        zip_path = _create_test_zip(
+            backup_dir, "daily", "2026-03-14",
+            {"state/immigration.md.age": (
+                b"enc-imm", "state_encrypted",
+                "state/immigration.md.age", "immigration",
+            )},
+        )
+        sha = backup._file_sha256(zip_path)
+        m = backup._load_manifest()
+        m["snapshots"]["daily/2026-03-14.zip"] = {
+            "date": "2026-03-14", "tier": "daily", "sha256": sha,
+            "size": zip_path.stat().st_size, "file_count": 1,
+        }
+        backup._save_manifest(m)
+
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"):
+            backup.do_restore(date_str="2026-03-14")  # no confirm
+
+        out = capsys.readouterr().out
+        assert "PREVIEW" in out
+        assert "--confirm" in out
+        assert not (state_dir / "immigration.md.age").exists()
+
+    def test_install_without_confirm_shows_preview(self, mock_backup_env, tmp_path, capsys):
+        """Install without --confirm shows preview."""
+        zip_path = _create_test_zip(
+            tmp_path / "export", "daily", "2026-03-14",
+            {"state/immigration.md.age": (
+                b"enc-imm", "state_encrypted",
+                "state/immigration.md.age", "immigration",
+            )},
+        )
+
+        with patch("backup.check_age_installed", return_value=True), \
+             patch("backup.get_private_key", return_value="mock-priv"):
+            backup.do_install(str(zip_path))  # no confirm
+
+        out = capsys.readouterr().out
+        assert "PREVIEW" in out
+        assert "--confirm" in out
+
+
+# ---------------------------------------------------------------------------
+# §19 Key export timestamp (#3)
+# ---------------------------------------------------------------------------
+
+class TestKeyExportTimestamp:
+    """export-key records a timestamp in the manifest for health check."""
+
+    def test_export_records_timestamp(self, mock_backup_env):
+        with patch("keyring.get_password", return_value="AGE-SECRET-KEY-1FAKE"):
+            backup.do_export_key()
+
+        m = backup._load_manifest()
+        assert "last_key_export" in m
+        assert m["last_key_export"].startswith("20")

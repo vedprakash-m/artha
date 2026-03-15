@@ -231,6 +231,36 @@ def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Age file validation
+# ---------------------------------------------------------------------------
+
+# Minimum size for a valid age-encrypted file (header + key stanza + body).
+_AGE_MIN_FILE_SIZE = 100
+_AGE_HEADER_PREFIX = b"age-encryption.org"
+
+
+def is_valid_age_file(age_file: Path) -> bool:
+    """Return True if *age_file* looks like a valid age-encrypted file.
+
+    Checks:
+      1. File is at least _AGE_MIN_FILE_SIZE bytes (header + key stanza + body).
+      2. First line starts with the age header prefix.
+
+    Used by vault.py (decrypt pre-validation) and backup.py (snapshot ingress
+    gate) to reject corrupt stubs before they propagate.
+    """
+    try:
+        size = age_file.stat().st_size
+        if size < _AGE_MIN_FILE_SIZE:
+            return False
+        with open(age_file, "rb") as f:
+            header = f.read(len(_AGE_HEADER_PREFIX))
+        return header == _AGE_HEADER_PREFIX
+    except OSError:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -247,4 +277,6 @@ __all__ = [
     "get_private_key", "get_public_key",
     # Encryption
     "check_age_installed", "age_decrypt", "age_encrypt",
+    # Validation
+    "is_valid_age_file",
 ]

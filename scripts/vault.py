@@ -48,6 +48,16 @@ from pathlib import Path
 
 import keyring
 
+# Advisory lock support (POSIX: fcntl, Windows: msvcrt)
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None  # type: ignore[assignment]
+try:
+    import msvcrt as _msvcrt
+except ImportError:
+    _msvcrt = None  # type: ignore[assignment]
+
 # ---------------------------------------------------------------------------
 # Foundation — shared constants, logging, and cryptographic primitives
 # ---------------------------------------------------------------------------
@@ -269,6 +279,10 @@ def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
     Prevent data loss by checking if the new plaintext is significantly
     smaller than the existing encrypted version.
     Returns True if safe, False if potentially corrupted/truncated.
+
+    Override: set ARTHA_FORCE_SHRINK=1 (all domains) or
+    ARTHA_FORCE_SHRINK=<domain> to accept a legitimate shrink.
+    The old .age is pinned to .age.pre-shrink for recovery (#5).
     """
     if not age_file.exists():
         return True # New file, no baseline to compare
@@ -281,19 +295,204 @@ def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
     
     # 20% loss threshold
     if new_size < (old_size * 0.8):
+        domain = plain_file.stem  # e.g. "immigration"
         print(f"  ⚠ INTEGRITY ALERT: {plain_file.name} is significantly smaller than previous version.")
         print(f"    New size: {new_size} bytes | Old size: {old_size} bytes")
+
+        # Check for explicit override via environment variable
+        force = os.environ.get("ARTHA_FORCE_SHRINK", "").strip()
+        if force and (force == "1" or force == domain):
+            pre_shrink = Path(str(age_file) + ".pre-shrink")
+            if not pre_shrink.exists():
+                shutil.copy2(str(age_file), str(pre_shrink))
+            log(f"INTEGRITY_OVERRIDE | file: {domain}.md | new_size: {new_size} | old_size: {old_size} | pinned: {pre_shrink.name}")
+            print(f"    Override accepted (ARTHA_FORCE_SHRINK). Old .age pinned to {pre_shrink.name}")
+            return True
+
+        print(f"    To override: ARTHA_FORCE_SHRINK=1 python scripts/vault.py encrypt")
         return False
     
     return True
+
+
+# Re-export for backward compat and local use
+from foundation import is_valid_age_file as _is_valid_age_file
+
+
+# ---------------------------------------------------------------------------
+# Advisory file lock — prevents concurrent vault operations (#10)
+# ---------------------------------------------------------------------------
+
+_op_lock_fd = None
+
+
+def _acquire_op_lock() -> bool:
+    """Acquire OS-level advisory lock. Returns True if acquired.
+
+    Uses fcntl.flock() on POSIX or msvcrt.locking() on Windows.
+    The lock is automatically released when the file descriptor is closed
+    (including on process exit or crash).
+    """
+    global _op_lock_fd
+    lock_path = _config["ARTHA_DIR"] / ".artha-op-lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = open(lock_path, "w")
+        if _msvcrt is not None:
+            _msvcrt.locking(fd.fileno(), _msvcrt.LK_NBLCK, 1)
+        elif _fcntl is not None:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        else:
+            # No advisory lock support — proceed without lock
+            fd.close()
+            return True
+        _op_lock_fd = fd
+        return True
+    except (IOError, OSError):
+        try:
+            fd.close()
+        except Exception:
+            pass
+        return False
+
+
+def _release_op_lock() -> None:
+    """Release the advisory file lock."""
+    global _op_lock_fd
+    if _op_lock_fd is not None:
+        try:
+            _op_lock_fd.close()
+        except Exception:
+            pass
+        _op_lock_fd = None
+
+
+def _with_op_lock(func):
+    """Decorator: acquire advisory lock before func, release after (even on exception)."""
+    def wrapper(*args, **kwargs):
+        if not _acquire_op_lock():
+            print("\u26d4 Another vault operation is in progress. Aborting.", file=sys.stderr)
+            log("OP_BLOCKED | reason: advisory_lock_held")
+            sys.exit(1)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _release_op_lock()
+    wrapper.__name__ = func.__name__
+    wrapper.__doc__ = func.__doc__
+    return wrapper
+
+
+# ---------------------------------------------------------------------------
+# Sync-fence check — detect cloud sync in flight (#2)
+# ---------------------------------------------------------------------------
+
+_CLOUD_SYNC_MARKERS = ("CloudStorage", "OneDrive", "Dropbox", "Google Drive", "iCloud")
+
+
+def _is_cloud_synced() -> bool:
+    """Return True if the Artha workspace is inside a cloud-synced folder."""
+    return any(m in str(_config["ARTHA_DIR"]) for m in _CLOUD_SYNC_MARKERS)
+
+
+def _check_sync_fence() -> bool:
+    """Check whether cloud sync is actively modifying state files.
+
+    Samples .age file mtimes, waits 2 seconds, then re-checks. If any file
+    changed during the window, sync is in flight and decrypt should be deferred.
+
+    No-op (returns True immediately) for non-cloud-synced workspaces.
+    """
+    if not _is_cloud_synced():
+        return True
+    state_dir = _config["STATE_DIR"]
+    existing = []
+    for d in _config["SENSITIVE_FILES"]:
+        f = state_dir / f"{d}.md.age"
+        if f.exists():
+            existing.append((f, f.stat().st_mtime))
+    if not existing:
+        return True
+    time.sleep(2)
+    for f, mtime in existing:
+        if f.exists() and abs(f.stat().st_mtime - mtime) > 0.001:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Encrypt failure lockdown — restrict permissions on exposed plaintext (#9)
+# ---------------------------------------------------------------------------
+
+def _lockdown_plaintext() -> None:
+    """Remove read permissions on remaining plaintext files after encrypt failure.
+
+    Prevents Spotlight indexing, cloud sync, and casual access while the user
+    fixes the encrypt issue. Permissions are restored on next successful decrypt.
+    """
+    state_dir = _config["STATE_DIR"]
+    locked = 0
+    for domain in _config["SENSITIVE_FILES"]:
+        plain = state_dir / f"{domain}.md"
+        if plain.exists():
+            try:
+                if os.name != "nt":
+                    os.chmod(plain, 0o000)
+                else:
+                    # Windows: set hidden + system attributes
+                    subprocess.run(
+                        ["attrib", "+H", "+S", str(plain)],
+                        capture_output=True, timeout=5,
+                    )
+                locked += 1
+            except OSError:
+                pass
+    if locked:
+        log(f"LOCKDOWN | files_locked: {locked}")
+        print(f"  \u26a0 {locked} plaintext file(s) locked down (permissions removed).")
+        print(f"    Fix the encrypt issue, then re-run: python scripts/vault.py encrypt")
+
+
+def _unlock_plaintext() -> None:
+    """Restore read/write permissions on plaintext files (called at decrypt start)."""
+    state_dir = _config["STATE_DIR"]
+    for domain in _config["SENSITIVE_FILES"]:
+        plain = state_dir / f"{domain}.md"
+        if plain.exists():
+            try:
+                if os.name != "nt":
+                    os.chmod(plain, 0o600)
+                else:
+                    subprocess.run(
+                        ["attrib", "-H", "-S", str(plain)],
+                        capture_output=True, timeout=5,
+                    )
+            except OSError:
+                pass
+
+
+def _quarantine_file(file_path: Path, domain: str, reason: str) -> None:
+    """Move a corrupt file to state/.quarantine/ for manual inspection."""
+    quarantine_dir = file_path.parent / ".quarantine"
+    quarantine_dir.mkdir(exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    dest = quarantine_dir / f"{file_path.name}.{ts}"
+    shutil.move(str(file_path), str(dest))
+    log(f"QUARANTINE | file: {domain} | reason: {reason} | dest: {dest.name}")
+    print(f"  ⚠ Quarantined corrupt file: {file_path.name} → .quarantine/{dest.name}")
 
 
 # ---------------------------------------------------------------------------
 # Decrypt
 # ---------------------------------------------------------------------------
 
+@_with_op_lock
 def do_decrypt() -> None:
-    """Decrypt all sensitive .age files to plaintext .md."""
+    """Decrypt all sensitive .age files to plaintext .md.
+
+    Corrupt .age files (invalid header / tiny stubs) are quarantined and
+    skipped — they do not block decryption of healthy files.
+    """
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
@@ -303,14 +502,33 @@ def do_decrypt() -> None:
     if lock_state == 2:
         sys.exit(1)
 
+    # Sync-fence: detect cloud sync in flight before touching .age files (#2)
+    if not _check_sync_fence():
+        print("  ⚠ Cloud sync in progress — .age file(s) changed during fence check.", file=sys.stderr)
+        print("    Wait for sync to complete and retry.", file=sys.stderr)
+        log("SYNC_FENCE_FAILED | reason: mtime_changed_during_fence")
+        sys.exit(1)
+
+    # Restore permissions if a prior encrypt failure locked down plaintext (#9)
+    _unlock_plaintext()
+
     privkey = get_private_key()
     errors = 0
+    quarantined = 0
 
     for domain in SENSITIVE_FILES:
         age_file = STATE_DIR / f"{domain}.md.age"
         plain_file = STATE_DIR / f"{domain}.md"
 
         if age_file.exists():
+            # Pre-validation: detect corrupt stubs before wasting time on age CLI
+            if not _is_valid_age_file(age_file):
+                size = age_file.stat().st_size
+                print(f"  ⚠ {domain}.md.age is corrupt (size={size}B, missing age header) — quarantining", file=sys.stderr)
+                _quarantine_file(age_file, domain, f"invalid_age_file (size={size})")
+                quarantined += 1
+                continue
+
             # Layer 1: Pre-decrypt backup (atomic: copy to .bak.tmp then rename)
             if plain_file.exists():
                 bak_tmp = Path(str(plain_file) + ".bak.tmp")
@@ -359,6 +577,10 @@ def do_decrypt() -> None:
         elif plain_file.exists():
             print(f"  {domain}.md already exists as plaintext (no .age file). Leaving as-is.")
 
+    if quarantined > 0:
+        print(f"\n  ⚠ {quarantined} corrupt .age file(s) quarantined to state/.quarantine/")
+        print(f"    Reconstruct the source data and re-encrypt to resolve.")
+
     if errors > 0:
         die(f"{errors} file(s) failed to decrypt. Aborting catch-up.")
 
@@ -393,16 +615,38 @@ def _mark_backup_failure() -> None:
 # Encrypt
 # ---------------------------------------------------------------------------
 
+@_with_op_lock
 def do_encrypt() -> None:
-    """Encrypt all sensitive plaintext .md files back to .age and remove plaintext."""
+    """Encrypt all sensitive plaintext .md files back to .age and remove plaintext.
+
+    Protections:
+      - Post-encrypt size verification detects truncation from disk-full (#8)
+      - Plaintext deletion is deferred until ALL encrypts succeed (#1)
+      - On failure, remaining plaintext is locked down (permissions removed) (#9)
+    """
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
             "  Windows: winget install FiloSottile.age  (or scoop install age)")
 
-    pubkey = get_public_key()
+    try:
+        pubkey = get_public_key()
+    except SystemExit:
+        # Public key missing — cannot encrypt. Do NOT remove lock file.
+        # This prevents the "one-way door" where decrypt works but encrypt
+        # silently fails, leaving plaintext exposed indefinitely.
+        plaintext_count = sum(1 for d in SENSITIVE_FILES if (STATE_DIR / f"{d}.md").exists())
+        print(f"\n  CRITICAL: Cannot encrypt — age_recipient public key not configured.", file=sys.stderr)
+        print(f"  {plaintext_count} sensitive file(s) remain in PLAINTEXT.", file=sys.stderr)
+        print(f"  Fix: Set encryption.age_recipient in config/user_profile.yaml", file=sys.stderr)
+        print(f"  Then re-run: python scripts/vault.py encrypt", file=sys.stderr)
+        log(f"ENCRYPT_BLOCKED | reason: no_public_key | plaintext_files: {plaintext_count}")
+        _lockdown_plaintext()
+        sys.exit(1)
+
     errors = 0
     encrypted_count = 0
+    encrypted_domains: list[str] = []  # deferred cleanup list (#1)
 
     for domain in SENSITIVE_FILES:
         plain_file = STATE_DIR / f"{domain}.md"
@@ -418,11 +662,24 @@ def do_encrypt() -> None:
             print(f"  Encrypting {domain}.md ...")
             tmp_file = Path(str(age_file) + ".tmp")
             if age_encrypt(pubkey, plain_file, tmp_file):
+                # Post-encrypt verification: detect truncation from disk-full (#8)
+                try:
+                    tmp_size = tmp_file.stat().st_size
+                    plain_size = plain_file.stat().st_size
+                except OSError:
+                    tmp_size = 0
+                    plain_size = 1
+                if tmp_size < plain_size:
+                    print(f"  ERROR: {domain}.md.age appears truncated "
+                          f"({tmp_size}B < {plain_size}B plaintext) — possible disk full",
+                          file=sys.stderr)
+                    log(f"ENCRYPT_TRUNCATED | file: {domain}.md | age_size: {tmp_size} | plain_size: {plain_size}")
+                    tmp_file.unlink(missing_ok=True)
+                    errors += 1
+                    continue
+
                 shutil.move(str(tmp_file), str(age_file))
-                plain_file.unlink()
-                # Clean up backup
-                bak = Path(str(plain_file) + ".bak")
-                bak.unlink(missing_ok=True)
+                encrypted_domains.append(domain)
                 encrypted_count += 1
                 log(f"ENCRYPT_OK | file: {domain}.md")
             else:
@@ -431,7 +688,25 @@ def do_encrypt() -> None:
                 errors += 1
 
     if errors > 0:
+        _lockdown_plaintext()
         die(f"{errors} file(s) failed to encrypt. CRITICAL: plaintext may remain on disk.")
+
+    # Deferred cleanup: remove plaintext + .bak only after ALL encrypts verified (#1)
+    for domain in encrypted_domains:
+        plain_file = STATE_DIR / f"{domain}.md"
+        plain_file.unlink(missing_ok=True)
+        bak = Path(str(plain_file) + ".bak")
+        bak.unlink(missing_ok=True)
+
+    # Clean up orphaned plaintext stubs: if .md exists alongside a valid .age,
+    # the .md is a leftover from a prior interrupted encrypt cycle.
+    for domain in SENSITIVE_FILES:
+        plain_file = STATE_DIR / f"{domain}.md"
+        age_file = STATE_DIR / f"{domain}.md.age"
+        if plain_file.exists() and age_file.exists() and _is_valid_age_file(age_file):
+            plain_file.unlink()
+            log(f"ORPHAN_CLEANUP | file: {domain}.md | reason: plaintext_alongside_valid_age")
+            print(f"  Cleaned orphaned plaintext: {domain}.md")
 
     # Remove lock file only after all files are safely encrypted
     LOCK_FILE.unlink(missing_ok=True)
@@ -533,6 +808,23 @@ def do_auto_lock() -> int:
     print(f"vault.py auto-lock: Lock age {lock_age}s > TTL {ttl}s. Auto-encrypting...")
     log(f"AUTO_LOCK_TRIGGER | lock_age: {lock_age}s | ttl: {ttl}s")
 
+    # Mtime guard: don't auto-lock if state files are being actively written (#4)
+    _ACTIVE_WRITE_THRESHOLD = 60  # seconds
+    now = time.time()
+    for domain in SENSITIVE_FILES:
+        md_path = STATE_DIR / f"{domain}.md"
+        if md_path.exists():
+            try:
+                md_age = now - os.path.getmtime(md_path)
+            except OSError:
+                continue
+            if md_age < _ACTIVE_WRITE_THRESHOLD:
+                print(f"vault.py auto-lock: {domain}.md modified {int(md_age)}s ago — deferring.")
+                log(f"AUTO_LOCK_DEFERRED | reason: active_write | file: {domain}.md | mod_age: {int(md_age)}s")
+                # Refresh lock file mtime to extend the TTL
+                LOCK_FILE.touch()
+                return 0
+
     # Reuse do_encrypt() logic
     try:
         do_encrypt()
@@ -562,11 +854,15 @@ def do_health() -> None:
             print("        Install: brew install age")
         ok = False
 
-    # 2. Private key retrievable
+    # 2. Private key retrievable and well-formed (#3)
     try:
         key = keyring.get_password(KC_SERVICE, KC_ACCOUNT)
         if key:
-            print("  Credential store key: ✓ present")
+            if key.strip().startswith("AGE-SECRET-KEY-"):
+                print("  Credential store key: ✓ present (valid format)")
+            else:
+                print("  Credential store key: ⚠ present but INVALID FORMAT (expected AGE-SECRET-KEY-...)")
+                ok = False
         else:
             print("  Credential store key: ✗ NOT found")
             ok = False
@@ -607,7 +903,7 @@ def do_health() -> None:
 
     # 7. GFS backup catalog
     from backup import get_health_summary
-    backup_count, last_validate = get_health_summary()
+    backup_count, last_validate, validate_errors = get_health_summary()
     if backup_count == 0:
         print("  GFS backups:  ⚠ none — run vault.py encrypt to create first backup")
     else:
@@ -615,16 +911,26 @@ def do_health() -> None:
             try:
                 last_dt    = datetime.fromisoformat(last_validate.replace("Z", "+00:00"))
                 days_since = (datetime.now(timezone.utc) - last_dt).days
+                err_note   = f" ({validate_errors} file(s) failed)" if validate_errors else ""
                 if days_since > 35:
-                    print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but validation overdue ({days_since}d)")
+                    print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but validation overdue ({days_since}d){err_note}")
                     ok = False
                 else:
-                    print(f"  GFS backups:  ✓ {backup_count} snapshot(s), validated {days_since}d ago")
+                    print(f"  GFS backups:  ✓ {backup_count} snapshot(s), validated {days_since}d ago{err_note}")
             except ValueError:
                 print(f"  GFS backups:  ✓ {backup_count} snapshot(s) (validation: {last_validate})")
         else:
             print(f"  GFS backups:  ⚠ {backup_count} snapshot(s) but never validated — run vault.py validate-backup")
             ok = False
+
+    # 8. Key backup status — warn if private key has never been exported (#3)
+    from backup import _load_manifest as _bkp_load_manifest
+    bkp_manifest = _bkp_load_manifest()
+    last_export = bkp_manifest.get("last_key_export")
+    if last_export:
+        print(f"  Key backup:   ✓ exported {last_export[:10]}")
+    else:
+        print("  Key backup:   ⚠ NEVER exported — run: backup.py export-key and store securely")
 
     if ok:
         print("vault.py health: OK")
@@ -695,6 +1001,7 @@ def main() -> None:
         date_str  = None
         dry_run   = False
         data_only = False
+        confirm   = False
         i = 0
         while i < len(args):
             if args[i] == "--domain" and i + 1 < len(args):
@@ -705,14 +1012,18 @@ def main() -> None:
                 dry_run = True; i += 1
             elif args[i] == "--data-only":
                 data_only = True; i += 1
+            elif args[i] == "--confirm":
+                confirm = True; i += 1
             else:
                 i += 1
         from backup import do_restore as _bkp_restore
-        _bkp_restore(date_str=date_str, domain=domain, dry_run=dry_run, data_only=data_only)
+        _bkp_restore(date_str=date_str, domain=domain, dry_run=dry_run,
+                     data_only=data_only, confirm=confirm)
     elif cmd == "install":
         args      = sys.argv[2:]
         dry_run   = False
         data_only = False
+        confirm   = False
         zip_arg   = None
         i = 0
         while i < len(args):
@@ -720,13 +1031,15 @@ def main() -> None:
                 dry_run = True; i += 1
             elif args[i] == "--data-only":
                 data_only = True; i += 1
+            elif args[i] == "--confirm":
+                confirm = True; i += 1
             else:
                 zip_arg = args[i]; i += 1
         if not zip_arg:
-            print("Usage: vault.py install <zipfile> [--data-only] [--dry-run]")
+            print("Usage: vault.py install <zipfile> [--data-only] [--dry-run] [--confirm]")
             sys.exit(1)
         from backup import do_install as _bkp_install
-        _bkp_install(zip_arg, dry_run=dry_run, data_only=data_only)
+        _bkp_install(zip_arg, dry_run=dry_run, data_only=data_only, confirm=confirm)
     elif cmd in ("release-lock", "release_lock", "--release-lock"):
         do_release_lock()
     elif cmd in ("auto-lock", "auto_lock"):
