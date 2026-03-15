@@ -64,6 +64,7 @@ from foundation import (
     log, die,
     get_public_key, get_private_key,
     check_age_installed, age_encrypt, age_decrypt,
+    is_valid_age_file,
     KC_SERVICE, KC_ACCOUNT,
 )
 
@@ -212,7 +213,13 @@ def _get_backup_tier(d: "_date_type") -> str:
 
 
 def _prune_backups(tier: str, keep_n: int) -> None:
-    """Remove oldest ZIP snapshots in tier_dir beyond keep_n retention limit."""
+    """Remove oldest ZIP snapshots in tier_dir beyond keep_n retention limit.
+
+    Last-known-good protection (#6): before deleting a ZIP, verify that every
+    domain checksum it contains also exists in at least one other retained
+    snapshot (across ALL tiers). If a ZIP is the sole carrier of a domain's
+    checksum, it is pinned and not pruned.
+    """
     backup_dir = _config["BACKUP_DIR"]
     tier_dir   = backup_dir / tier
     if not tier_dir.exists():
@@ -221,11 +228,43 @@ def _prune_backups(tier: str, keep_n: int) -> None:
     if len(zips) <= keep_n:
         return
     manifest = _load_manifest()
+    snapshots = manifest.get("snapshots", {})
+
+    # Build a global domain→set-of-checksums map from ALL retained snapshots
+    # (i.e. snapshots that are NOT candidates for pruning in this call)
+    candidates = {f"{tier}/{z.name}" for z in zips[: len(zips) - keep_n]}
+
     for old_zip in zips[: len(zips) - keep_n]:
         key = f"{tier}/{old_zip.name}"
+        snap_meta = snapshots.get(key, {})
+        domain_checksums = snap_meta.get("domain_checksums", {})
+
+        # Check if any domain checksum in this ZIP is unique across all other snapshots
+        pinned = False
+        if domain_checksums:
+            for domain, chk in domain_checksums.items():
+                found_elsewhere = False
+                for other_key, other_meta in snapshots.items():
+                    if other_key == key:
+                        continue
+                    if other_key in candidates and other_key != key:
+                        continue  # skip other candidates (they might also be pruned)
+                    other_checksums = other_meta.get("domain_checksums", {})
+                    if other_checksums.get(domain) == chk:
+                        found_elsewhere = True
+                        break
+                if not found_elsewhere:
+                    log(f"BACKUP_PIN | zip: {old_zip.name} | reason: sole_carrier_of_{domain} | sha256: {chk[:16]}")
+                    pinned = True
+                    break
+
+        if pinned:
+            candidates.discard(key)
+            continue
+
         try:
             old_zip.unlink()
-            manifest["snapshots"].pop(key, None)
+            snapshots.pop(key, None)
             log(f"BACKUP_PRUNED | zip: {old_zip.name} | tier: {tier} | retention: {keep_n}")
         except OSError as exc:
             log(f"BACKUP_PRUNE_FAILED | zip: {old_zip.name} | error: {exc}")
@@ -316,6 +355,10 @@ def backup_snapshot(registry: list, today: "_date_type | None" = None) -> int:
 
             try:
                 if source_type == "state_encrypted":
+                    if not is_valid_age_file(source_path):
+                        size = source_path.stat().st_size
+                        log(f"BACKUP_SKIP | name: {name} | reason: invalid_age_file (size={size})")
+                        continue
                     shutil.copy2(str(source_path), str(staged))
                 else:
                     if not pubkey:
@@ -372,17 +415,22 @@ def backup_snapshot(registry: list, today: "_date_type | None" = None) -> int:
             log(f"BACKUP_ZIP_FAILED | tier: {tier} | date: {date_str} | error: {exc}")
             return 0
 
-    # Update outer manifest catalog
+    # Update outer manifest catalog (with per-domain checksums for prune protection #6)
     zip_sha256 = _file_sha256(dest)
+    domain_checksums = {
+        meta["name"]: meta["sha256"]
+        for meta in internal_files.values()
+    }
     outer = _load_manifest()
     outer.setdefault("snapshots", {})
     outer["snapshots"][f"{tier}/{zip_name}"] = {
-        "created":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "date":       date_str,
-        "file_count": backed_up,
-        "sha256":     zip_sha256,
-        "size":       dest.stat().st_size,
-        "tier":       tier,
+        "created":           datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "date":              date_str,
+        "file_count":        backed_up,
+        "sha256":            zip_sha256,
+        "size":              dest.stat().st_size,
+        "tier":              tier,
+        "domain_checksums":  domain_checksums,
     }
     _save_manifest(outer)
 
@@ -440,6 +488,7 @@ def _restore_from_zip(
     domain:    "str | None",
     dry_run:   bool,
     data_only: bool = False,
+    confirm:   bool = False,
 ) -> None:
     """Core restore logic shared by do_restore() and do_install().
 
@@ -451,6 +500,10 @@ def _restore_from_zip(
     data_only=True skips config files — restores only state_encrypted and
     state_plain entries.  Useful when you want to load personal data onto an
     already-configured system without overwriting its config.
+
+    confirm=True is required to actually write files (unless dry_run).
+    If neither dry_run nor confirm is set, a preview is shown and the user is
+    told to add --confirm (#7).
 
     SHA-256 verified before writing. Existing files overwritten.
     """
@@ -489,6 +542,16 @@ def _restore_from_zip(
         scope_note = " (state only — config skipped)" if data_only else ""
         if dry_run:
             print(f"DRY RUN — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note} — no files will be written\n")
+        elif not confirm:
+            # Show preview and require --confirm (#7)
+            print(f"PREVIEW — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note}\n")
+            for arc_path, meta in sorted(files.items()):
+                restore_path = meta.get("restore_path", "")
+                source_type  = meta.get("source_type", "state_encrypted")
+                action = "copy" if source_type == "state_encrypted" else "decrypt"
+                print(f"  would {action}: {arc_path!s:<55} -> {restore_path}")
+            print(f"\n  Add --confirm to execute this restore.")
+            return
 
         zip_ver = internal.get("artha_backup_version", "unknown")
         if zip_ver != "2":
@@ -496,6 +559,27 @@ def _restore_from_zip(
 
         errors   = 0
         restored = 0
+
+        # Pre-restore backup: snapshot current live files before overwriting (#7)
+        if not dry_run:
+            pre_restore_dir = _config["BACKUP_DIR"] / "pre-restore"
+            pre_restore_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            backed = 0
+            for arc_path, meta in files.items():
+                rp = meta.get("restore_path", "")
+                live = artha_dir / rp
+                if live.exists():
+                    safe_name = rp.replace("/", "__").replace("\\\\", "__")
+                    dest_bak = pre_restore_dir / f"{ts}__{safe_name}"
+                    try:
+                        shutil.copy2(str(live), str(dest_bak))
+                        backed += 1
+                    except OSError:
+                        pass
+            if backed:
+                log(f"PRE_RESTORE_BACKUP | files: {backed} | dir: pre-restore/ | ts: {ts}")
+                print(f"  Pre-restore backup: {backed} live file(s) saved to backups/pre-restore/")
 
         with tempfile.TemporaryDirectory(prefix="artha_restore_") as tmpdir:
             tmppath = Path(tmpdir)
@@ -569,9 +653,13 @@ def _restore_from_zip(
 # ---------------------------------------------------------------------------
 
 def get_health_summary() -> tuple:
-    """Return (snapshot_count, last_validate_iso) for vault health check."""
+    """Return (snapshot_count, last_validate_iso, validation_errors) for vault health check."""
     manifest = _load_manifest()
-    return len(manifest.get("snapshots", {})), manifest.get("last_validate")
+    return (
+        len(manifest.get("snapshots", {})),
+        manifest.get("last_validate"),
+        manifest.get("last_validate_errors", 0),
+    )
 
 
 def do_backup_status() -> None:
@@ -752,10 +840,20 @@ def do_validate_backup(
         sys.exit(1)
 
     print()
-    if errors == 0 and validated > 0:
-        manifest["last_validate"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if validated > 0:
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        manifest["last_validate"] = now_iso
+        if errors > 0:
+            manifest["last_validate_errors"] = errors
+        else:
+            manifest.pop("last_validate_errors", None)
         _save_manifest(manifest)
+
+    if errors == 0 and validated > 0:
         print(f"Backup validation: \u2713 {validated} file(s) valid  [{zip_key}]")
+    elif errors > 0 and validated > 0:
+        print(f"Backup validation: \u2713 {validated} passed, \u2717 {errors} failed  [{zip_key}]")
+        print(f"  last_validate updated (partial success). Fix failing files to reach full pass.")
     else:
         print(f"Backup validation: \u2717 {errors} failure(s), {validated} passed  [{zip_key}]")
         if errors > 0:
@@ -767,15 +865,17 @@ def do_restore(
     domain:    "str | None" = None,
     dry_run:   bool = False,
     data_only: bool = False,
+    confirm:   bool = False,
 ) -> None:
     """Restore from the GFS backup catalog — finds the right ZIP automatically.
 
     backup.py restore [--date YYYY-MM-DD] [--domain DOMAIN] [--dry-run]
-                      [--data-only]
+                      [--data-only] [--confirm]
 
     --data-only  Restore state files only (skip config files).  Use this when
                  Artha is already configured on the running system and you only
                  want to refresh personal data from the backup.
+    --confirm    Required to actually write files (safety gate #7).
     """
     backup_dir = _config["BACKUP_DIR"]
 
@@ -795,27 +895,29 @@ def do_restore(
     zip_path = backup_dir / zip_key
     scope = "state only" if data_only else "state + config"
     print(f"Restoring from {zip_key} ({scope}) ...")
-    _restore_from_zip(zip_path, domain, dry_run, data_only=data_only)
+    _restore_from_zip(zip_path, domain, dry_run, data_only=data_only, confirm=confirm)
 
 
 def do_install(
     zip_path_str: str,
     dry_run:   bool = False,
     data_only: bool = False,
+    confirm:   bool = False,
 ) -> None:
     """Restore from an explicit backup ZIP file — for cold-start on a new machine.
 
-    backup.py install <path/to/YYYY-MM-DD.zip> [--dry-run] [--data-only]
+    backup.py install <path/to/YYYY-MM-DD.zip> [--dry-run] [--data-only] [--confirm]
 
     The ZIP is self-contained: it carries its own internal manifest with SHA-256
     checksums and restore paths for every file.  No catalog access needed.
 
     --data-only  Restore state files only (skip config files).
+    --confirm    Required to actually write files (safety gate #7).
     """
     zip_path = Path(zip_path_str).expanduser().resolve()
     scope = "state only" if data_only else "state + config"
     print(f"Installing from backup: {zip_path.name} ({scope}) ...")
-    _restore_from_zip(zip_path, domain=None, dry_run=dry_run, data_only=data_only)
+    _restore_from_zip(zip_path, domain=None, dry_run=dry_run, data_only=data_only, confirm=confirm)
 
 
 # ---------------------------------------------------------------------------
@@ -845,6 +947,11 @@ def do_export_key() -> None:
     print()
     print("=" * 60)
     log("KEY_EXPORTED | action: private_key_displayed_to_stdout")
+
+    # Record export timestamp in manifest for health check (#3)
+    manifest = _load_manifest()
+    manifest["last_key_export"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _save_manifest(manifest)
 
 
 def do_import_key() -> None:
@@ -924,11 +1031,13 @@ def main(argv: "list[str] | None" = None) -> None:
     rst.add_argument("--date", help="Restore a specific date (YYYY-MM-DD)")
     rst.add_argument("--dry-run", action="store_true", help="Preview without writing files")
     rst.add_argument("--data-only", action="store_true", help="Restore state files only (skip config)")
+    rst.add_argument("--confirm", action="store_true", help="Required to actually write files (safety gate)")
 
     inst = sub.add_parser("install", help="Restore from an explicit backup ZIP file")
     inst.add_argument("zipfile", help="Path to the backup ZIP file")
     inst.add_argument("--dry-run", action="store_true", help="Preview without writing files")
     inst.add_argument("--data-only", action="store_true", help="Restore state files only (skip config)")
+    inst.add_argument("--confirm", action="store_true", help="Required to actually write files (safety gate)")
 
     # ── Key management ──
     sub.add_parser("export-key", help="Display the age private key (for secure backup)")
@@ -952,9 +1061,11 @@ def main(argv: "list[str] | None" = None) -> None:
         do_restore(
             date_str=args.date, domain=args.domain,
             dry_run=args.dry_run, data_only=args.data_only,
+            confirm=args.confirm,
         )
     elif args.command == "install":
-        do_install(args.zipfile, dry_run=args.dry_run, data_only=args.data_only)
+        do_install(args.zipfile, dry_run=args.dry_run, data_only=args.data_only,
+                   confirm=args.confirm)
     elif args.command == "export-key":
         do_export_key()
     elif args.command == "import-key":
