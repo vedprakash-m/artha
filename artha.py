@@ -24,6 +24,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ANSI color helpers — only applied when stdout is a real terminal
+_TTY = sys.stdout.isatty()
+_BOLD  = "\033[1m"  if _TTY else ""
+_GREEN = "\033[32m" if _TTY else ""
+_CYAN  = "\033[36m" if _TTY else ""
+_DIM   = "\033[2m"  if _TTY else ""
+_RST   = "\033[0m"  if _TTY else ""
+
 _ROOT = Path(__file__).resolve().parent
 _SCRIPTS = _ROOT / "scripts"
 _CONFIG = _ROOT / "config"
@@ -46,8 +54,8 @@ def _is_configured() -> bool:
 
 def do_demo() -> None:
     """Run demo_catchup.py to show a fictional briefing."""
-    print("\n── Artha Demo ──────────────────────────────────────────────────────")
-    print("Showing a sample briefing with fictional data.\n")
+    print(f"\n{_BOLD}── Artha Demo ──────────────────────────────────────────────────────{_RST}")
+    print(f"{_DIM}Showing a sample briefing with fictional data. No real accounts needed.{_RST}\n")
     rc = _run("demo_catchup.py")
     if rc != 0:
         print("\n[artha] Demo script exited with errors — see above for details.")
@@ -89,15 +97,18 @@ def do_preflight() -> int:
 
 def do_welcome() -> None:
     """Print a brief welcome for already-configured users."""
-    print("\n── Artha ───────────────────────────────────────────────────────────")
-    print("Configuration found.  Artha is ready.\n")
-    print("Usage:")
-    print("  • Open an AI CLI session and say 'catch me up' for your briefing.")
-    print("  • python scripts/preflight.py      — check system health")
-    print("  • python scripts/pipeline.py --health — check connector health")
-    print("  • python scripts/upgrade.py        — apply any pending upgrades")
-    print("\nRun 'python artha.py --demo' to see a sample briefing.")
-    print("────────────────────────────────────────────────────────────────────\n")
+    print(f"\n{_BOLD}┌─────────────────────────────────────────────────────────────────┐{_RST}")
+    print(f"{_BOLD}│  {_GREEN}✓{_RST}{_BOLD}  Artha is configured and ready.                              │{_RST}")
+    print(f"{_BOLD}└─────────────────────────────────────────────────────────────────┘{_RST}")
+    print()
+    print(f"{_BOLD}Usage:{_RST}")
+    print(f"  {_CYAN}•{_RST} Open your AI CLI and say {_BOLD}'catch me up'{_RST} for your morning briefing.")
+    print(f"  {_CYAN}•{_RST} python scripts/preflight.py       — system health check")
+    print(f"  {_CYAN}•{_RST} python scripts/pipeline.py --health — connector health")
+    print(f"  {_CYAN}•{_RST} python scripts/upgrade.py         — apply pending upgrades")
+    print()
+    print(f"{_DIM}Run 'python artha.py --demo' to replay the sample briefing.{_RST}")
+    print()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,14 +136,26 @@ def main(argv: list[str] | None = None) -> int:
 
     # Auto-detect
     if not _is_configured():
-        print("\nWelcome to Artha!  No configuration found yet.\n")
+        print()
+        print(f"{_BOLD}┌─────────────────────────────────────────────────────────────────┐{_RST}")
+        print(f"{_BOLD}│  👋  Welcome to Artha — Personal Intelligence OS                │{_RST}")
+        print(f"{_BOLD}│                                                                 │{_RST}")
+        print(f"{_BOLD}│  No profile found yet.  Let's show you what Artha does first.  │{_RST}")
+        print(f"{_BOLD}└─────────────────────────────────────────────────────────────────┘{_RST}")
+        print()
         do_demo()
         print()
-        answer = input("Want to set up Artha for your life? [yes/no]: ").strip().lower()
+        print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
+        print(f"{_BOLD}  Ready to set this up for YOUR life?{_RST}")
+        print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
+        print()
+        answer = input("  Start guided setup now? [yes/no]: ").strip().lower()
         if answer in ("yes", "y"):
             do_setup()
         else:
-            print("\nRun 'python artha.py --setup' whenever you're ready.")
+            print()
+            print(f"  Run {_BOLD}'python artha.py --setup'{_RST} whenever you're ready.")
+            print(f"  Or run {_BOLD}'bash setup.sh'{_RST} for the automated quick-start.")
         return 0
 
     # Configured path: show welcome, run preflight

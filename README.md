@@ -48,248 +48,148 @@ Artha runs inside an AI CLI — the CLI is the runtime. These are the officially
 
 ---
 
-## Quick Start (~30 minutes)
+## Quick Start — 3 Steps, 3 Minutes
 
-> **Time breakdown:** ~5 min clone & install · ~5 min profile setup · ~5 min encryption · ~15 min Google OAuth (one-time, optional) · ~5 min first catch-up.
->
-> **Just want to see what Artha does first?** Run `python scripts/demo_catchup.py` for a sample briefing with no accounts or configuration required.
+**What you need: Python 3.11+ and Git.** That's it for the first run.
 
-### What You'll Need
+### Step 1 — Clone & Run Setup
+
+```bash
+git clone https://github.com/vedprakash-m/artha.git
+cd artha
+bash setup.sh
+```
+
+`setup.sh` handles everything automatically: creates a virtual environment, installs dependencies, copies the profile template, activates the PII safety hook, and **auto-runs a demo briefing** — so you see Artha's output in under 60 seconds.
+
+<details>
+<summary><b>Windows (PowerShell) — manual one-time setup</b></summary>
+
+```powershell
+git clone https://github.com/vedprakash-m/artha.git
+cd artha
+python -m venv $HOME\.artha-venvs\.venv
+& $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
+pip install -r scripts/requirements.txt
+cp config/user_profile.example.yaml config/user_profile.yaml
+python scripts/demo_catchup.py
+```
+
+</details>
+
+### Step 2 — Fill In Your Profile
+
+Open `config/user_profile.yaml` and set three fields:
+
+```yaml
+family:
+  primary_user:
+    name: "Your Name"
+    emails:
+      gmail: "you@gmail.com"
+location:
+  timezone: "America/New_York"   # PT=Los_Angeles · MT=Denver · CT=Chicago · ET=New_York
+```
+
+> **Guided setup:** Open your AI CLI and run `/bootstrap` — a step-by-step interview that
+> populates every domain conversationally.
+
+### Step 3 — Generate Your Context & Catch Up
+
+```bash
+python scripts/generate_identity.py   # builds config/Artha.md — your AI's instruction file
+```
+
+Then open your AI CLI (Claude, Gemini, or GitHub Copilot) and say:
+
+```
+catch me up
+```
+
+Your first personalized briefing runs immediately. `catch me up`, `/catch-up`, and `catchup` are all recognized aliases.
+
+---
+
+<details>
+<summary><b>⚙ Advanced Setup — encryption, Google OAuth, more connectors, full prerequisites</b></summary>
+
+### Full Prerequisites
 
 | Prerequisite | Why | Install |
 |---|---|---|
 | **Python 3.11+** | Runs all Artha scripts | [python.org](https://www.python.org/downloads/) |
 | **Git** | Clone the repo | [git-scm.com](https://git-scm.com/) |
 | **`age`** | Encrypts sensitive state files | `brew install age` (macOS) · `sudo apt install age` (Debian/Ubuntu 22.04+) · `sudo dnf install age` (Fedora) · `sudo pacman -S age` (Arch) · `winget install FiloSottile.age` (Windows) · or [download directly](https://github.com/FiloSottile/age/releases) |
-| **Node.js 18+** | Required to install Claude Code or Gemini CLI | [nodejs.org](https://nodejs.org/) (includes `npm`) — skip if using GitHub Copilot only |
-| **System keyring** *(Linux only)* | Stores encryption keys and OAuth tokens | Pre-installed on GNOME/KDE desktops. Headless servers: `pip install keyrings.alt` — see [Troubleshooting](docs/troubleshooting.md#no-recommended-backend-was-available-linux) |
-| **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | **Recommended for beginners:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) (terminal, `npm install -g @anthropic-ai/claude-code`) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) (terminal, `npm install -g @google/gemini-cli`) · [GitHub Copilot](https://github.com/features/copilot) (VS Code extension) |
+| **Node.js 18+** | Only needed to install Claude Code or Gemini CLI via `npm` | [nodejs.org](https://nodejs.org/) — skip if using GitHub Copilot only |
+| **System keyring** *(Linux only)* | Stores encryption keys and OAuth tokens | Pre-installed on GNOME/KDE. Headless: `pip install keyrings.alt` — see [Troubleshooting](docs/troubleshooting.md#no-recommended-backend-was-available-linux) |
+| **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) · [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [GitHub Copilot](https://github.com/features/copilot) |
 
-> **Which AI CLI should I use?**
-> - **Gemini CLI** — Free tier available (generous for personal/daily use). Requires a Google account. Terminal-based.
-> - **Claude Code** — Free tier available with rate limits; daily Artha catch-ups may need Claude Pro ($20/mo) for heavier email volumes.
-> - **GitHub Copilot** — Free tier available in VS Code with limits; full use requires Copilot Pro ($10/mo). Editor-based.
+> **Which AI CLI?**
+> - **Gemini CLI** — Free tier available (terminal-based, generous for daily use).
+> - **Claude Code** — Free tier with rate limits; heavier use may need Claude Pro ($20/mo).
+> - **GitHub Copilot** — Free tier in VS Code; full use requires Copilot Pro ($10/mo).
 >
 > All three work with Artha. See [docs/supported-clis.md](docs/supported-clis.md) for a detailed comparison.
 
-### Step 1 — Clone & Install
-
-```bash
-# Clone the repository
-git clone https://github.com/vedprakash-m/artha.git
-cd artha
-```
-
-> **Contributors/forkers only:** Enable the PII safety hook to prevent accidentally committing
-> personal data: `git config core.hooksPath .githooks`
-> Safe to skip if you're using Artha, not modifying its code.
-
-<details>
-<summary><b>Create the Python virtual environment — click to expand for your OS</b></summary>
-
-**macOS / Linux:**
-```bash
-# Outside the project so OneDrive/iCloud don't upload library files
-python3 -m venv ~/.artha-venvs/.venv
-```
-
-**Windows (PowerShell):**
-```powershell
-# On Windows, Python installs as "python" not "python3"
-python -m venv $HOME\.artha-venvs\.venv
-```
-
-</details>
-
-> **What's a virtual environment?** It's an isolated Python sandbox so Artha's packages don't
-> conflict with other Python projects on your machine. We place it in `~/.artha-venvs/` (your
-> home folder) rather than inside the project to prevent OneDrive/iCloud from uploading
-> hundreds of library files.
->
-> **Remember:** You need to activate the venv every time you open a new terminal:
-> `source ~/.artha-venvs/.venv/bin/activate` (macOS/Linux) or see the block below (Windows).
-
-<details>
-<summary><b>Activate the virtual environment — click to expand for your OS</b></summary>
-
-**macOS / Linux:**
-```bash
-source ~/.artha-venvs/.venv/bin/activate
-```
-
-**Windows (PowerShell):**
-```powershell
-& $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
-```
-
-</details>
-
-```bash
-# Install dependencies
-pip install -r scripts/requirements.txt
-```
-
-> **Want to see Artha in action first?** Run `python scripts/demo_catchup.py` — uses fictional
-> data, no accounts or configuration needed. Continue to Step 2 when ready.
-
-### Step 2 — Create Your Profile
-
-```bash
-# Copy the example profile
-cp config/user_profile.example.yaml config/user_profile.yaml
-```
-
-Open `config/user_profile.yaml` in any text editor and fill in your details. At minimum, set:
-
-- `family.primary_user.name` — your name
-- `family.primary_user.emails.gmail` — your Gmail address
-- `location.timezone` — your timezone in `Continent/City` format (e.g. `America/New_York`, `America/Chicago`, `Europe/London`). [Full list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). Common values: `America/Los_Angeles` (PT), `America/Denver` (MT), `America/Chicago` (CT), `America/New_York` (ET).
-
-> **Tip**: You can also run `/bootstrap` inside your AI CLI for a guided, conversational setup.
-
-### Step 3 — Generate Artha's Instruction File
-
-```bash
-# Validate your profile first (catches errors before generating)
-python scripts/generate_identity.py --validate
-
-# Generate config/Artha.md (the file your AI CLI reads)
-python scripts/generate_identity.py
-```
-
-This assembles `config/Artha.md` from your personal identity + the core system logic.
-
-### Step 4 — Set Up Encryption
+### Set Up Encryption
 
 ```bash
 # Generate an age keypair
 age-keygen -o ~/age-key.txt
-# Output looks like:
-#   Public key: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
-```
+# Output: Public key: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
 
-> **⚠ Do this now:** Copy the `age1...` public key printed above — you'll need it in a moment.
-> If your terminal scrolled, run this to extract it cleanly:
-> ```bash
-> grep "^age1" ~/age-key.txt
-> ```
-
-```bash
-# 1. Paste the public key into your profile:
-#    Open config/user_profile.yaml → search for "age_recipient" → paste the age1... value
-#    It's near the bottom of the file under the "encryption" section. Example:
-#      age_recipient: "age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"
-#    Tip: keep the string in double quotes to avoid YAML parsing issues.
+# 1. Paste that public key into your profile:
+#    config/user_profile.yaml → encryption.age_recipient
+#    (keep the value in double quotes to avoid YAML parsing issues)
 
 # 2. Store the PRIVATE key in your OS credential store
 python scripts/vault.py store-key ~/age-key.txt
 
-# Linux note: if keyring raises "No recommended backend was available", install
-# one of: python3-secretstorage (GNOME/KDE) or python3-keyrings.alt (plaintext fallback)
-#   pip install secretstorage   # or: pip install keyrings.alt
+# Linux keyring note: if "No recommended backend was available", install
+#   pip install secretstorage   # GNOME/KDE
+#   pip install keyrings.alt    # headless fallback
 
-# 3. Verify the key is stored correctly
-python scripts/vault.py status
-# Look for: credential store key ✓
+# 3. Verify
+python scripts/vault.py status   # look for: credential store key ✓
+
+# 4. Delete the plaintext key file ONLY after vault.py status passes
+rm ~/age-key.txt                  # macOS/Linux
+# Windows: Remove-Item $HOME\age-key.txt
 ```
 
-> **Only delete the key file AFTER `vault.py status` shows the key is stored:**
+> **Alternative:** `export ARTHA_AGE_KEY=$(cat ~/age-key.txt)` — useful for headless Linux or CI.
 
-<details>
-<summary><b>Delete the key file — click to expand for your OS</b></summary>
-
-**macOS / Linux:**
-```bash
-rm ~/age-key.txt
-```
-
-**Windows (PowerShell):**
-```powershell
-python scripts/vault.py store-key $HOME\age-key.txt
-Remove-Item $HOME\age-key.txt
-```
-
-</details>
-
-> **Alternatively**, if you prefer not to use the keyring, you can export the key to an environment
-> variable instead: `export ARTHA_AGE_KEY=$(cat ~/age-key.txt)` (useful for headless Linux or CI).
-> Run `python scripts/vault.py` with no arguments to see all available commands.
-
-### Step 5 — Connect Your Data Sources
+### Connect Your Data Sources
 
 #### Google (Gmail + Calendar) — recommended
 
-Before running the setup script you need a Google Cloud OAuth client (~15 min, one-time):
+Create a Google Cloud OAuth client (~15 min, one-time):
 
-1. [Create a new project](https://console.cloud.google.com/projectcreate) (e.g., "Artha Personal")
+1. [Create a project](https://console.cloud.google.com/projectcreate) (e.g., "Artha Personal")
 2. Enable APIs: [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) · [Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
-3. [Configure OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) → choose **External** → fill App name ("Artha") and your email → add yourself under **Test users**
-4. [Create credentials](https://console.cloud.google.com/apis/credentials) → **+ Create Credentials** → **OAuth 2.0 Client ID** → **Desktop app** → copy `client_id` and `client_secret`
+3. [OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent) → External → add yourself under **Test users**
+4. [Create credentials](https://console.cloud.google.com/apis/credentials) → OAuth 2.0 Client ID → Desktop app → copy `client_id` and `client_secret`
 5. Run the setup script and paste the values when prompted:
 
-> For a step-by-step walkthrough, see [docs/google-oauth-setup.md](docs/google-oauth-setup.md).
-
 ```bash
-# Gmail + Google Calendar (recommended)
-python scripts/setup_google_oauth.py
-
-# Microsoft Outlook + Calendar (optional)
-python scripts/setup_msgraph_oauth.py
-
-# Microsoft To Do sync (optional)
-python scripts/setup_todo_lists.py
+python scripts/setup_google_oauth.py    # Gmail + Google Calendar
+python scripts/setup_msgraph_oauth.py   # Microsoft Outlook + Calendar (optional)
+python scripts/setup_todo_lists.py      # Microsoft To Do (optional)
 ```
 
-> **"This app isn't verified" warning:** During the Google login flow, Chrome/Firefox will
-> show a red warning screen. **This is completely safe** — you created this OAuth app yourself
-> in Step 5, it only accesses your own Gmail/Calendar, and all data stays on your machine.
-> No data is sent to any third party. Google shows this warning for any personal OAuth app that
-> hasn't been submitted for Google's review process (which is only needed for public apps).
+> For a screenshot walkthrough, see [docs/google-oauth-setup.md](docs/google-oauth-setup.md).
 >
-> To proceed: click **Advanced** (small text at bottom-left) → **Go to Artha (unsafe)**.
-> See [docs/google-oauth-setup.md](docs/google-oauth-setup.md) for a screenshot walkthrough.
+> **"This app isn't verified":** click **Advanced → Go to Artha (unsafe)** — expected for personal OAuth apps.
 
-> **No cloud accounts yet?** You can explore Artha's output format first with: `python scripts/demo_catchup.py`
-
-### Step 6 — Run Preflight Check
-
-> **Expected output on first run:** Preflight will show a mix of `✓` passes and `⛔ NO-GO` failures — this is normal. Here's what to expect:
->
-> | Check | Fresh-install result | When it resolves |
-> |-------|---------------------|------------------|
-> | vault.py health | ✓ Passes after Step 4 | Immediately after `store-key` |
-> | Gmail / Calendar OAuth token | ⛔ Fails if Step 5 skipped | After running `setup_google_oauth.py` |
-> | pipeline.py Gmail health | ⛔ Normal on first install | After first successful catch-up |
-> | gmail_send.py health | ⛔ Normal on first install | Only if you enable email briefings |
->
-> The only check that **must** pass before your first catch-up is `vault.py health ✓`. All OAuth-related failures are expected until Step 5 is complete.
+### Run Preflight Check
 
 ```bash
 python scripts/preflight.py --fix
 ```
 
-This creates missing state files from templates and reports any issues with a fix hint.
+> **Expected on first run:** OAuth-related checks show `⛔ NO-GO` until data sources are connected — that's normal. Only `vault.py health ✓` must pass before your first catch-up.
 
-### Step 7 — Run Your First Catch-Up
-
-Open your AI CLI and say:
-
-```
-catch me up
-```
-
-> **Note:** `catch me up`, `/catch-up`, and `catchup` are all recognized aliases — your AI CLI
-> understands natural language. From Telegram, use `catchup` or the shortcut `c`.
-
-Or load `config/Artha.md` directly into a session. Artha will fetch your email, calendar, and data sources, then generate a personalized briefing.
-
-### Not ready to connect accounts? Try Demo Mode first
-
-```bash
-python scripts/demo_catchup.py
-```
-
-This runs a complete sample briefing with fictional data — no accounts, no OAuth, no configuration required. A good way to see what Artha produces before committing to Steps 4–5.
+</details>
 
 ### Migrating from Legacy Settings
 
