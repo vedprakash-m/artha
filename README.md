@@ -60,7 +60,7 @@ cd artha
 bash setup.sh
 ```
 
-`setup.sh` handles everything automatically: creates a virtual environment, installs dependencies, copies the profile template, activates the PII safety hook, and **auto-runs a demo briefing** — so you see Artha's output in under 60 seconds.
+`setup.sh` handles everything automatically: creates a virtual environment, installs dependencies, activates the PII safety hook, and **auto-runs a demo briefing** — so you see Artha's output in under 60 seconds. After the demo, it prompts you to run the 2-minute setup wizard.
 
 <details>
 <summary><b>Windows (PowerShell) — manual one-time setup</b></summary>
@@ -71,26 +71,39 @@ cd artha
 python -m venv $HOME\.artha-venvs\.venv
 & $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
 pip install -r scripts/requirements.txt
-cp config/user_profile.example.yaml config/user_profile.yaml
+cp config/user_profile.starter.yaml config/user_profile.yaml
 python scripts/demo_catchup.py
+python artha.py --setup
 ```
 
 </details>
 
-### Step 2 — Fill In Your Profile
+### Step 2 — Create Your Profile
 
-Open `config/user_profile.yaml` and set three fields:
-
-```yaml
-family:
-  primary_user:
-    name: "Your Name"
-    emails:
-      gmail: "you@gmail.com"
-location:
-  timezone: "America/New_York"   # PT=Los_Angeles · MT=Denver · CT=Chicago · ET=New_York
+`setup.sh` ends with this prompt:
+```
+Run the 2-minute setup wizard now? [yes/no]:
 ```
 
+Type **yes** and the interactive wizard collects your name, email, timezone (common shortcuts like `ET`, `PT`, `IST` are accepted), household type, and any children — then writes `config/user_profile.yaml` automatically.
+
+```
+  Your name:    Jane Smith
+  Email:        jane@gmail.com
+  Timezone:     pt              ← expands to America/Los_Angeles
+  Household:    couple
+  Children:     (none)
+```
+
+Or run it any time:
+
+```bash
+python artha.py --setup          # interactive wizard
+python artha.py --setup --no-wizard  # copies minimal starter profile for manual editing
+```
+
+> **Prefer editing YAML directly?** Open `config/user_profile.yaml` (created by the wizard, or copied from `config/user_profile.starter.yaml`) and fill in your name, email, and timezone. The full reference with all options is in `config/user_profile.example.yaml`.
+>
 > **Guided setup:** Open your AI CLI and run `/bootstrap` — a step-by-step interview that
 > populates every domain conversationally.
 
@@ -184,10 +197,11 @@ python scripts/setup_todo_lists.py      # Microsoft To Do (optional)
 ### Run Preflight Check
 
 ```bash
-python scripts/preflight.py --fix
+python scripts/preflight.py --fix         # fix auto-correctable issues
+python scripts/preflight.py --first-run   # softer view: OAuth shown as ○ not yet configured
 ```
 
-> **Expected on first run:** OAuth-related checks show `⛔ NO-GO` until data sources are connected — that's normal. Only `vault.py health ✓` must pass before your first catch-up.
+> **Expected on first run:** OAuth-related checks normally show `⛔ NO-GO` until data sources are connected — that's normal. Use `--first-run` to see a Setup Checklist view where expected OAuth items display as `○ not yet configured` rather than hard failures. Only `vault.py health ✓` must pass before your first catch-up.
 
 </details>
 
@@ -293,9 +307,10 @@ config/
   Artha.md                ← Assembled runtime file (auto-generated, gitignored)
   Artha.core.md           ← Distributable system logic template
   Artha.identity.md       ← Personal identity block (auto-generated, gitignored)
-  user_profile.yaml       ← Your personal config (gitignored)
-  user_profile.example.yaml ← Template for new users
-  user_profile.schema.json  ← JSON Schema for profile validation (includes household type enum)
+  user_profile.yaml         ← Your personal config (gitignored — created by wizard)
+  user_profile.starter.yaml  ← Minimal 45-line template for manual editing
+  user_profile.example.yaml  ← Full 234-line reference with all options
+  user_profile.schema.json   ← JSON Schema for profile validation (includes household type enum)
   domain_registry.yaml    ← Authoritative manifest for all 24 domains (lazy-load flags, household filters)
   connectors.yaml         ← Connector configuration
   skills.yaml             ← Skill scheduler configuration

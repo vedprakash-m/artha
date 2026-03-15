@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.2 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.3 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.5
+> **Implements**: PRD v5.6
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.3 | 2026-03 | Interactive setup wizard + first-run friction fixes (PRD F15.89–94): `artha.py` wizard, starter profile, no auto-preflight, advisory warnings, `--first-run` preflight, `setup.sh` wizard prompt; 485 tests |
 | v3.2 | 2026-03 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
 | v3.0 | 2026-03 | Novice UX hardening (PRD F15.72–F15.77): Step 6 restored to README, age key deletion order fixed, `<details>` OS blocks, Node.js prereq, System keyring prereq, `check_keyring_backend()` P0 preflight gate, `open_items.md` template + `--fix` auto-create, `_rel()` path masker for all preflight console output, example profile PII neutralized (King County WA → Springfield IL), demo footer fixed, Google OAuth deep-link doc, catchup alias note |
 | v2.9 | 2026-03 | Distribution audit: 15-issue hardening — git history PII purge, connector defaults (Gmail+GCal only), jsonschema dedup, Python >=3.11 enforced, token path corrected (.tokens/ not ~/.artha-tokens/), settings.md legacy code removed, pre-commit hook activation documented, registry.md sanitized |
@@ -134,7 +135,9 @@ Artha is a **pull-based personal intelligence system** built on four principles:
 | Encrypted state | `~/OneDrive/Artha/state/*.md.age` | `age`-encrypted state for high/critical sensitivity domains |
 | Briefing archive | `~/OneDrive/Artha/briefings/*.md` | Historical catch-up briefings (ISO-dated, sensitivity-filtered) |
 | Summary archive | `~/OneDrive/Artha/summaries/*.md` | Historical weekly summaries |
+| Entry point | `artha.py` | CLI entry point: `--setup` (interactive wizard), `--demo`, `--preflight`. Detects configured vs unconfigured state and routes accordingly. No auto-preflight on welcome. |
 | Config | `config/user_profile.yaml` | Personal configuration — identity, family, integrations, encryption, system settings. Single source of truth. |
+| Starter profile | `config/user_profile.starter.yaml` | Minimal 45-line first-run template (blank name/email forces fill-in). Used by wizard non-interactive path. |
 | View scripts | `~/OneDrive/Artha/scripts/*_view.py` | Script-backed deterministic renderers: `dashboard_view.py`, `domain_view.py`, `status_view.py`, `goals_view.py`, `items_view.py`, `scorecard_view.py`, `diff_view.py` |
 | Migration scripts | `~/OneDrive/Artha/scripts/migrate_state.py` | YAML front-matter schema migration DSL for state files |
 | Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Helper scripts: vault.py, backup.py, pipeline.py, etc. |
@@ -2458,7 +2461,58 @@ Direct API read via MS Graph — no forwarding required. Token is live as of 202
 
 ---
 
-## 12. Governance & Evolution Framework
+### 11.4 Entry Point & Interactive Setup Wizard *(v3.3 — PRD F15.89–F15.94)*
+
+`artha.py` is the primary CLI entry point for both new and returning users.
+
+#### Flags
+
+| Flag | Behavior |
+|---|---|
+| *(no flag)* | Detects configured vs unconfigured state. Unconfigured → wizard prompt; Configured → `do_welcome()` only (no auto-preflight). |
+| `--setup` | Run interactive setup wizard. |
+| `--setup --no-wizard` | Copy `user_profile.starter.yaml` for manual editing; print next-step card. |
+| `--demo` | Show demo briefing with fictional data (no accounts needed). |
+| `--preflight` | Run preflight gate and exit. |
+
+#### Setup Wizard (`do_setup()`)
+
+Collects five inputs interactively:
+1. **Name** — required; loops until non-empty
+2. **Email** — validated for `@` presence; auto-detects type (gmail/outlook/icloud) to pre-configure integrations
+3. **Timezone** — accepts shortcuts (`ET`→`America/New_York`, `PT`→`America/Los_Angeles`, `IST`→`Asia/Kolkata`, `CT`/`MT`/`UTC`/`GMT`/`BST`/`CET`/`JST`/`AEST`); falls back to full IANA string passthrough
+4. **Household type** — `single` / `couple` / `family`
+5. **Children** — up to 6 (name, age, grade); only if household = `family`
+
+After inputs: writes `config/user_profile.yaml` as formatted YAML string (not `yaml.dump`), auto-runs `generate_identity.py`, prints success box with next steps.
+
+#### Starter Profile (`config/user_profile.starter.yaml`)
+
+- 45 lines; blank `name` and `email` fields force user to fill in real data
+- `_validate()` rejects blank/missing name and any-empty emails — starter profile intentionally fails validation
+- Used by `--no-wizard` path and `setup.sh` non-interactive (CI) path
+- Full reference with all options remains in `config/user_profile.example.yaml` (234 lines)
+
+#### Advisory Warnings (`generate_identity.py`)
+
+`_collect_warnings(profile) -> list[str]`:
+- Placeholder child names (`Child1`, `Child2`, `ChildName`, `Child`) → indexed advisory `family.children[0].name is still placeholder 'Child1'`
+- Placeholder cities (`Springfield`, `Anytown`, `Your City`, `Exampleville`) → advisory
+- Non-blocking: generation proceeds even with warnings
+
+`_print_validate_summary(profile)`:
+- Prints identity preview on `--validate` success: name (email), location, enabled domains
+- Helps users confirm their profile was read correctly before committing to a full generate
+
+#### First-Run Preflight (`preflight.py --first-run`)
+
+`--first-run` flag activates a Setup Checklist display mode:
+- Header: `━━ ARTHA SETUP CHECKLIST ━━━`
+- OAuth/connector failures detected by `fix_hint` content (setup_google_oauth/setup_msgraph_oauth/setup_icloud_auth) displayed as `○ [P0] Gmail OAuth token: not yet configured`
+- Exit 0 when only expected first-run setup items remain incomplete
+- Truly unexpected P0 failures (broken PII guard, missing state dir) still cause exit 1
+
+---
 
 Artha is a living system: new domains, data sources, MCP servers, and AI capabilities will be added as trust and utility grow. This section defines the lifecycle processes that keep the system coherent, extensible, and self-improving.
 
@@ -3194,7 +3248,7 @@ The PII Guard test suite includes:
 
 ---
 
-*Artha Tech Spec v2.9 — End of Document*
+*Artha Tech Spec v3.3 — End of Document*
 
 ---
 
@@ -3202,6 +3256,9 @@ The PII Guard test suite includes:
 
 | Version | Changes |
 |---------|---------|
+| v3.3 | Interactive setup wizard + first-run friction fixes: `artha.py` wizard (`do_setup()`), starter profile, no auto-preflight on welcome, `_collect_warnings()` + `_print_validate_summary()` in `generate_identity.py`, `--first-run` preflight mode, `setup.sh` wizard prompt. See §11.4 |
+| v3.2 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
+| v3.0 | Novice UX hardening: Step 6 restored, age key deletion order fixed, keyring check, open_items template, path PII masking, Node.js prereq, OS blocks |
 | v2.9 | Clone-audit hardening (#1–#30): PII scrub in all spec/doc files; vault store-key command; state/templates/ directory with 18 starter files; user_profile.example.yaml extended to 24 domains; preflight P1 enforcement; plist placeholder; PII guard; requirements.txt reorganised; CHANGELOG.md; 429-test suite with xfail markers |
 | v2.1 | Initial public release — `/diff`, Weekend Planner, Canvas LMS API Fetch, Apple Health XML Import |
 
