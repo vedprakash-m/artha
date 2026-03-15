@@ -154,6 +154,21 @@ def load_backup_registry() -> list:
                 "restore_path": f"state/{name}.md.age",
             })
 
+    # Always include agent-learned procedures (AR-5, agentic-reloaded.md).
+    # These are non-sensitive markdown files created by the agent from experience.
+    proc_dir = artha_dir / "state" / "learned_procedures"
+    if proc_dir.is_dir():
+        for proc_file in sorted(proc_dir.glob("*.md")):
+            if proc_file.name.lower() == "readme.md":
+                continue  # README is tracked by git, not backup
+            slug = "proc__" + proc_file.stem
+            entries.append({
+                "name":         slug,
+                "source_type":  "state_plain",
+                "source_path":  proc_file,
+                "restore_path": f"state/learned_procedures/{proc_file.name}",
+            })
+
     return entries
 
 

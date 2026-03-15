@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.9.3 | 2026-03 | Agentic Reloaded (specs/agentic-reloaded.md AR-1–AR-8): `scripts/session_search.py` (grep-based cross-session recall, `SearchResult` dataclass, relevance = `match_count / √file_lines`, PII-safe excerpts); `scripts/procedure_index.py` (`ProcedureMatch` dataclass, 90-day confidence decay with 0.5 floor, `find_matching_procedures()`, `format_procedures_for_context()`); `scripts/delegation.py` (`DelegationRequest/DelegationResult` dataclasses, `should_delegate()` step≥5/parallel/isolated criteria, `compose_handoff()` context compression ≤500 chars, `evaluate_for_procedure()`, `is_delegation_enabled()`); `scripts/fact_extractor.py` `MAX_MEMORY_CHARS=3000` + `MAX_FACTS_COUNT=30` constants + `_consolidate_facts()` (TTL expiry → lowest-confidence eviction, protects `correction`/`preference` types) + `_load_harness_config()`; `scripts/session_summarizer.py` `should_flush_memory()` + `pre_flush_facts_persisted: int = 0` in both `SessionSummary` classes; `scripts/artha_context.py` `session_recall_available: bool = False`; `scripts/backup.py` `learned_procedures/` dynamic registry via `state/learned_procedures/*.md` scan; `scripts/generate_identity.py` `PROMPT STABILITY` frozen-layer comment; `scripts/audit_compliance.py` `_check_memory_capacity()` (weight 5, advisory-pass when absent) + `_check_prompt_stability()` (weight 5, advisory-pass when absent); `config/artha_config.yaml` 6 new `harness.agentic.*` flag blocks; `state/templates/self_model.md` (AR-2 schema); `state/learned_procedures/README.md`; `config/Artha.core.md` 5 new protocol sections; `config/workflow/finalize.md` Step 11c AR-1/2/5 instructions; `config/workflow/reason.md` Pre-OODA recall (AR-4) + procedure lookup (AR-5); `config/workflow/fetch.md` AR-8 connector root-cause protocol. 1015 tests (+72). See §8.11. |
 | v3.9.2 | 2026-03 | Operational safety hardening: `vault.py do_health()` 3-exit-code model (0=clean, 1=hard fail, 2=soft warnings); `preflight.check_vault_health()` exit-2 path (P1, not P0) with correct `.bak` warning extraction + `python3` fix hint; `preflight.check_vault_lock()` unconditional stale-lock auto-clear + PID liveness check + actual lock path in errors; `detect_environment.detect_json()` TTY-aware compact/pretty output + `--pretty` CLI flag; `google_calendar._parse_event()` attendee email PII redaction; `config/Artha.core.md` + `config/Artha.md` `python3` consistency + Step 0 hard-vs-soft P0 distinction + `alias python=python3` note. 943 tests (+7). |
 | v3.9.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx: Any | None = None` to all child middlewares. Test mocks updated to match Protocol contract. |
 | v3.9 | 2026-03 | Agentic Intelligence (PRD F15.128–F15.132, specs/agentic-improve.md Phases 1–5): `scripts/artha_context.py` (ArthaContext Pydantic model, ContextPressure, build_context()); `scripts/checkpoint.py` (step checkpoints, 4h TTL, read/write/clear); `scripts/fact_extractor.py` (5 signal detectors, PII strip, SHA-256 dedup, memory.md v2.0 persist); `context_offloader.py` EvictionTier enum + `_ARTIFACT_TIERS`; `audit_compliance.py` `_check_ooda_protocol()` (weight=10); `middleware/__init__.py` `ctx` param; `config/workflow/` Step 0a + Step 11c + checkpoint writes at Steps 4/7/8; `config/artha_config.yaml` `harness.agentic:` 4 flags; `state/memory.md` v2.0 schema; `state/templates/memory.md` template. 936 tests (+120). See §8.10. |
@@ -2320,6 +2321,154 @@ facts: []
 ```
 
 Invoked at Step 11c of `config/workflow/finalize.md`. Facts read back into OODA 8-O OBSERVE phase for cross-session continuity. Feature flag: `harness.agentic.fact_extraction.enabled`.
+
+---
+
+### 8.11 Agentic Reloaded — Intelligence Amplification *(v3.9.3 — agentic-reloaded.md AR-1–AR-8)*
+
+Eight targeted enhancements that complete the transition from reactive assistant to self-improving intelligence engine. All new modules integrate with the existing `harness.agentic` flag namespace and are backward compatible.
+
+---
+
+#### 8.11.1 Bounded Memory (AR-1)
+
+**File:** `scripts/fact_extractor.py`
+
+Hard capacity limits prevent unbounded growth of `state/memory.md`:
+
+```python
+MAX_MEMORY_CHARS  = 3000   # Total character ceiling for the facts block
+MAX_FACTS_COUNT   = 30     # Maximum number of discrete fact entries
+```
+
+`_consolidate_facts(facts) → list[Fact]` is invoked when either limit is reached. Consolidation strategy: oldest facts with lowest signal weight are evicted first; facts of the same type with overlapping semantics are merged into a single entry. All existing extraction, deduplication, and PII-strip logic (`extract_facts_from_summary`, `deduplicate_facts`, `persist_facts`) is unchanged.
+
+---
+
+#### 8.11.2 Self-Model (AR-2)
+
+**Files:** `state/templates/self_model.md`, `config/Artha.core.md`
+
+Artha maintains a persistent self-model capturing its operational identity:
+
+```markdown
+## Self-Model
+- capabilities: [...]
+- limitations: [...]
+- current_context: {...}
+- adaptation_history: [...]
+```
+
+`state/templates/self_model.md` provides the starter schema. `config/Artha.core.md` contains the **Self-Model Protocol** sub-section specifying when the model is read and updated (Steps 8-Or and 11c). The self-model is never sent to external APIs — it is a local introspection layer only.
+
+---
+
+#### 8.11.3 Pre-Eviction Fact Flush (AR-3)
+
+**File:** `scripts/session_summarizer.py`
+
+`should_flush_memory(ctx: ArthaContext) → bool` triggers an early fact-extraction pass when context pressure reaches `RED` (≥70%), before eviction would discard valuable in-session observations. The `SessionSummary` schema gains a `pre_flush_facts_persisted: int` field (default `0`) tracking how many facts were saved in the pre-eviction pass. This ensures high-signal facts are never lost due to context window overflow.
+
+---
+
+#### 8.11.4 Session Search / Cross-Session Recall (AR-4)
+
+**File:** `scripts/session_search.py`
+
+Grep-based recall over `briefings/YYYY-MM-DD.md` without requiring vector embeddings:
+
+```python
+@dataclass
+class SearchResult:
+    date: str
+    snippet: str
+    relevance: float   # match_count / sqrt(line_count)
+
+def search_sessions(query: str, artha_dir: Path,
+                    max_results: int = 5,
+                    days_back: int = 90) -> list[SearchResult]
+```
+
+Results surface in the OODA OBSERVE phase (Step 8-O) when relevant prior sessions exist. `ArthaContext` gains `session_recall_available: bool = False` (set to `True` once search completes with ≥1 result). Feature flag: `harness.agentic.session_recall.enabled`.
+
+---
+
+#### 8.11.5 Procedural Memory (AR-5)
+
+**File:** `scripts/procedure_index.py`, **Dir:** `state/learned_procedures/`
+
+Artha reads, indexes, and executes multi-step procedures it has learned across sessions:
+
+```python
+@dataclass
+class ProcedureMatch:
+    name: str
+    path: Path
+    confidence: float   # Decays by 50 % per 90 days since last_used
+    relevance: float    # Keyword overlap score
+
+def find_procedures(query: str, artha_dir: Path,
+                    min_confidence: float = 0.3,
+                    min_relevance: float = 0.1) -> list[ProcedureMatch]
+```
+
+Procedure files live in `state/learned_procedures/*.md`. `scripts/backup.py` dynamically scans this directory to include all procedure files in GFS backup rotation (slug prefix: `proc__`). `state/learned_procedures/README.md` explains the directory purpose and format. Pre-commit hook updated to allow `state/learned_procedures/` alongside `state/templates/`.
+
+---
+
+#### 8.11.6 Prompt Stability Layer (AR-6)
+
+**Files:** `scripts/generate_identity.py`, `config/Artha.md`
+
+The identity file header is partitioned into frozen vs. ephemeral layers via a stability marker:
+
+```
+# ── PROMPT STABILITY ──────────────────────────────────────────────────────
+# Frozen layer  (do NOT regenerate from user_profile): lines above this block
+# Ephemeral layer (regenerated each run): lines below this block
+# ─────────────────────────────────────────────────────────────────────────
+```
+
+`generate_identity.py` writes this marker into the generated `config/Artha.md` header. `audit_compliance.py` gains `_check_prompt_stability(text) → CheckResult` (weight=5): passes if the `PROMPT STABILITY` string is present in the identity file. Advisory — does not block a passing audit.
+
+---
+
+#### 8.11.7 Delegation Protocol (AR-7)
+
+**File:** `scripts/delegation.py`
+
+Structured handoff mechanics when Artha escalates a task to an external agent or model:
+
+```python
+@dataclass
+class DelegationRequest:
+    task: str
+    context_summary: str   # ≤500 chars compressed via compose_handoff()
+    domain: str
+    priority: str          # "P0" | "P1" | "P2"
+
+@dataclass
+class DelegationResult:
+    accepted: bool
+    agent_id: str | None
+    response: str | None
+
+def should_delegate(task: str, ctx: ArthaContext) -> bool
+def compose_handoff(request: DelegationRequest) -> str   # ≤500 char payload
+```
+
+`config/Artha.core.md` contains the **Delegation Protocol** section specifying when `should_delegate()` is evaluated (after DECIDE phase, Step 8-D) and how handoff payloads are formatted.
+
+---
+
+#### 8.11.8 Root-Cause Analysis (AR-8)
+
+**Files:** `config/Artha.core.md`, `config/workflow/fetch.md`
+
+Structured root-cause reasoning is embedded in the OODA DECIDE phase and the fetch failure path:
+
+- `config/Artha.core.md` — **Root-Cause Protocol** section: 5-Why template + resolution registry pattern, invoked whenever an alert repeats across ≥2 consecutive sessions.
+- `config/workflow/fetch.md` — fetch failure path now includes a "Root-Cause" block distinguishing transient errors (retry) from systematic failures (log + defer) using structured cause categories (`auth`, `rate_limit`, `schema_change`, `network`, `config`).
 
 ---
 
