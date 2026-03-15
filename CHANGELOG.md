@@ -11,6 +11,64 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.0] — 2026-03-15
+
+### Added — Agentic Intelligence (specs/agentic-improve.md Phases 1–5)
+
+- **Phase 1 — OODA Reasoning Protocol** (`config/workflow/reason.md` Step 8, `scripts/audit_compliance.py`):
+  - Step 8 rewritten as structured Boyd OODA loop: **8-O OBSERVE** → **8-Or ORIENT** → **8-D DECIDE** → **8-A ACT**.
+  - OBSERVE reads `state/memory.md` correction/pattern/threshold facts from prior sessions.
+  - ORIENT builds 8-domain cross-connection matrix + compound-signal detection.
+  - DECIDE applies U×I×A scoring (1–3 scale) to rank every item; selects ONE THING.
+  - ACT includes consequence forecasting (8-A-2), FNA pipeline (8-A-3), dashboard rebuild (8-A-4), PII stats (8-A-5).
+  - `audit_compliance.py`: added `_check_ooda_protocol()` (weight=10); briefings must contain ≥3/4 OODA phase markers to pass. 6 new audit tests.
+
+- **Phase 2 — Tiered Context Eviction** (`scripts/context_offloader.py`):
+  - `EvictionTier(IntEnum)`: PINNED=0 (never evict), CRITICAL=1 (1.0×threshold), INTERMEDIATE=2 (1.0×threshold), EPHEMERAL=3 (0.4×threshold — aggressive).
+  - `_ARTIFACT_TIERS` dict: 8 predefined artifact-to-tier mappings; unknown artifacts → INTERMEDIATE.
+  - `offload_artifact()` gains `tier` param; feature-flagged via `harness.agentic.tiered_eviction.enabled`.
+  - `.checkpoint.json` added to `OFFLOADED_FILES`.
+  - `config/artha_config.yaml`: `harness.agentic:` namespace with 4 sub-flags (all `enabled: true`).
+  - 9 new eviction tests.
+
+- **Phase 3 — ArthaContext Typed Runtime Carrier** (`scripts/artha_context.py` — new):
+  - `ContextPressure(str, Enum)`: GREEN / YELLOW / RED / CRITICAL.
+  - `ConnectorStatus(BaseModel)` + `ArthaContext(BaseModel)`: 9 fields, `connectors_online`/`connectors_offline` properties, `health_summary()` method.
+  - `build_context(command, artha_dir, env_manifest, preflight_results) → ArthaContext` builder.
+  - `scripts/middleware/__init__.py`: `StateMiddleware.before_write()` gains `ctx: Any | None = None` (backward compatible).
+  - Feature flag: `harness.agentic.context.enabled`. 25 new context + middleware tests.
+
+- **Phase 4 — Implicit Step Checkpoints** (`scripts/checkpoint.py` — new):
+  - `write_checkpoint()` / `read_checkpoint()` / `clear_checkpoint()` utilities.
+  - Writes `tmp/.checkpoint.json` after Steps 4, 7, 8; clears in Step 18 cleanup.
+  - 4-hour TTL: stale checkpoints (>4h old) ignored on resume.
+  - `config/workflow/preflight.md`: Step 0a "Check for Resumable Session" added — auto-resumes in pipeline mode; interactive prompt otherwise.
+  - `config/workflow/finalize.md` Step 18: `.checkpoint.json` added to `rm -f` cleanup + programmatic `clear_checkpoint()` call.
+  - Feature flag: `harness.agentic.checkpoints.enabled`. 21 new checkpoint tests.
+
+- **Phase 5 — Persistent Fact Extraction** (`scripts/fact_extractor.py` — new):
+  - Extracts 5 fact types (correction, pattern, preference, threshold, schedule) from `tmp/session_history_*.md` summaries via regex signal detectors.
+  - PII stripped (phone/email/SSN) before persistence; SHA-256 dedup (last 16 hex chars as ID).
+  - Persists to `state/memory.md` v2.0 YAML frontmatter (`schema_version: '2.0'`, `facts: []`).
+  - `config/workflow/finalize.md`: Step 11c "Persistent Fact Extraction" added (before Step 12).
+  - `state/memory.md`: upgraded from placeholder to v2.0 schema.
+  - `state/templates/memory.md`: new template file.
+  - Feature flag: `harness.agentic.fact_extraction.enabled`. 38 new fact tests.
+
+- **`config/Artha.core.md`**: `harness_metrics:` block extended with `agentic:` sub-section (eviction_tiers, session, checkpoints, facts, ooda telemetry).
+
+### Tests
+- +120 new tests; **936 total** (was 816, 5 skipped, 20 xfailed)
+- New test files: `tests/unit/test_artha_context.py`, `tests/unit/test_checkpoint.py`, `tests/unit/test_fact_extractor.py`
+- Updated test files: `tests/unit/test_context_offloader.py`, `tests/unit/test_audit_compliance.py`
+
+### Specs
+- PRD v6.1 → **v7.0** (F15.128–F15.132 added)
+- Tech Spec v3.8 → **v3.9** (§8.10 Agentic Intelligence Modules added)
+- UX Spec v2.2 → **v2.3** (Implements PRD v7.0, Tech Spec v3.9)
+
+---
+
 ## [6.1.0] — 2026-03-15
 
 ### Fixed / Hardened

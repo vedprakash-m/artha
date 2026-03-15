@@ -32,6 +32,32 @@ Log each: `⏭️ Step N skipped — read-only mode`
 
 ## Steps
 
+### Step 11c — Persistent Fact Extraction
+
+**SKIP in read-only mode** → log `⏭️ Step 11c skipped — read-only mode`
+
+After the session summary is generated, extract durable facts for cross-session learning:
+
+```bash
+python -c "
+from pathlib import Path
+from scripts.fact_extractor import extract_facts_from_summary, persist_facts
+import glob
+
+summaries = sorted(glob.glob('tmp/session_history_*.md'))
+if summaries:
+    facts = extract_facts_from_summary(Path(summaries[-1]), Path('.'))
+    count = persist_facts(facts, Path('.'))
+    print(f'Extracted {count} new facts to state/memory.md')
+else:
+    print('No session summary found — skipping fact extraction')
+"
+```
+
+If during this session the user corrected a previous finding (e.g., "that's not an anomaly"
+or "ignore X"), an explicit correction fact is created automatically. These corrections
+will suppress matching alerts in future sessions via the OODA OBSERVE phase.
+
 ### Step 12 — Surface active alerts
 
 Scan all processed domains for P0/P1 alerts.
@@ -100,14 +126,19 @@ Append PII filter stats to `state/audit.md`:
 **SKIP in read-only mode** → log `⏭️ Step 18 skipped — read-only mode`
 
 ```bash
-# Clear ephemeral cache
-rm -f tmp/*.json tmp/*.jsonl
+# Clear ephemeral cache (including checkpoint and skills cache)
+rm -f tmp/*.json tmp/*.jsonl tmp/.checkpoint.json
 
 # Re-encrypt sensitive state
 python scripts/vault.py encrypt
 ```
 Verify `.artha-decrypted` lock file is removed.
 If re-encryption fails: LOUD warning — `⛔ Re-encryption failed — sensitive state left decrypted`.
+
+Also clear the checkpoint programmatically (belt-and-suspenders):
+```bash
+python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import Path; clear_checkpoint(Path('.'))"
+```
 
 ### Step 19 — Accuracy calibration check
 

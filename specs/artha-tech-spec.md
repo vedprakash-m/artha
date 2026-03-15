@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.8 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v6.1
+> **Implements**: PRD v7.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.9 | 2026-03 | Agentic Intelligence (PRD F15.128–F15.132, specs/agentic-improve.md Phases 1–5): `scripts/artha_context.py` (ArthaContext Pydantic model, ContextPressure, build_context()); `scripts/checkpoint.py` (step checkpoints, 4h TTL, read/write/clear); `scripts/fact_extractor.py` (5 signal detectors, PII strip, SHA-256 dedup, memory.md v2.0 persist); `context_offloader.py` EvictionTier enum + `_ARTIFACT_TIERS`; `audit_compliance.py` `_check_ooda_protocol()` (weight=10); `middleware/__init__.py` `ctx` param; `config/workflow/` Step 0a + Step 11c + checkpoint writes at Steps 4/7/8; `config/artha_config.yaml` `harness.agentic:` 4 flags; `state/memory.md` v2.0 schema; `state/templates/memory.md` template. 936 tests (+120). See §8.10. |
 | v3.7 | 2026-03 | Cowork VM & Operational Hardening (PRD F15.119–F15.123, specs/vm-hardening.md): `scripts/detect_environment.py` (7-probe manifest, 5-min TTL cache); `scripts/audit_compliance.py` (7-check compliance scorer, `--threshold`); `scripts/preflight.py` `--advisory` flag + `check_profile_completeness()` + 3-layer `check_msgraph_token()` rewrite; `scripts/setup_msgraph_oauth.py` `_last_refresh_success` tracking; `scripts/generate_identity.py` compact mode + `--no-compact`; 5 `config/workflow/*.md` files rewritten with canonical steps + ⛩️ gates; `state/templates/health-check.md`; `config/Artha.core.md` Read-Only Environment Protocol; 804 tests (+106). |
 | v3.6 | 2026-03 | Deep Agents Option B — Core Harness Patterns (Phases 1–5, PRD F15.114–F15.118): `scripts/context_offloader.py`, `scripts/domain_index.py`, `scripts/session_summarizer.py`, `scripts/middleware/` (5 modules), `scripts/schemas/` (4 modules). `config/Artha.md`/`config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements. 698 tests (+157). See §9.5. |
 | v3.5 | 2026-03 | Intelligence expansion + platform parity (PRD F15.100–113): `financial_resilience` skill (burn rate/runway), gig income routing keywords, purchase interval observation, structured contact profiles, pre-meeting context injection, passive fact extraction, digital estate inventory, instruction-sheet actions, subscription action proposals, `setup.ps1` Windows parity, `artha.py --doctor` 11-point diagnostic, `apple_health` connector (iterparse/ZIP), longitudinal lab tracking; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS`; 541 tests |
@@ -2187,6 +2188,136 @@ $CLI "$QUERY"
 **Artha.md instruction:** "Never call `gemini` or `copilot` directly for queries that may contain user data. Always use `./scripts/safe_cli.sh gemini 'your query'` or `./scripts/safe_cli.sh copilot 'your query'`. The wrapper scans for PII patterns and blocks the call if any are detected."
 
 **Scope:** Applies to all external CLI calls from §3.7 — web research, script validation, ensemble reasoning queries. Does NOT apply to Gemini Imagen calls (which receive only descriptive text prompts, not user data).
+
+---
+
+### 8.10 Agentic Intelligence Modules *(v3.9 — PRD F15.128–F15.132)*
+
+Five tightly-coupled modules that elevate Artha from reactive summarizer to proactive cross-domain intelligence engine. All 4 feature flags default to `enabled: true` and can be individually reverted via `config/artha_config.yaml` under `harness.agentic:`.
+
+---
+
+#### 8.10.1 OODA Reasoning Protocol *(F15.128)*
+
+**File:** `config/workflow/reason.md` (Step 8 rewrite) + `scripts/audit_compliance.py`
+
+The complete Step 8 reasoning loop is restructured into the [Boyd OODA cycle](https://en.wikipedia.org/wiki/OODA_loop):
+
+| Phase | Step | Action |
+|-------|------|--------|
+| **OBSERVE** | 8-O | Load all domain signals; read `state/memory.md` correction/pattern/threshold facts into active context |
+| **ORIENT** | 8-Or | 8-domain cross-connection matrix (finance↔employment, immigration↔finance, health↔employment, etc.); compound-signal detection |
+| **DECIDE** | 8-D | U×I×A priority matrix (Urgency × Impact × Agency, 1–3 scale each); rank all items; select ONE THING |
+| **ACT** | 8-A | Validation, consequence forecasting (8-A-2), First-Next-After pipeline (8-A-3), dashboard rebuild (8-A-4), PII stats (8-A-5) |
+
+`audit_compliance.py` gains `_check_ooda_protocol(text) → CheckResult` (weight=10). Passes if ≥3 of 4 markers (`[OBSERVE]`, `[ORIENT]`, `[DECIDE]`, `[ACT]`) are present in the briefing text.
+
+Writer checkpoint written after Step 8 completes.
+
+---
+
+#### 8.10.2 Tiered Context Eviction *(F15.129)*
+
+**File:** `scripts/context_offloader.py`
+
+```python
+class EvictionTier(IntEnum):
+    PINNED       = 0   # Never offloaded (session_summary)
+    CRITICAL     = 1   # Standard threshold × 1.0 (alert_list, one_thing, compound_signals)
+    INTERMEDIATE = 2   # Standard threshold × 1.0 (predictions, domain_output)
+    EPHEMERAL    = 3   # Standard threshold × 0.4 — aggressively evicted (pipeline_output, processed_emails)
+```
+
+`offload_artifact(name, content, tier=None)` selects the effective size threshold based on tier. Unknown artifacts default to `INTERMEDIATE`. Feature flag: `harness.agentic.tiered_eviction.enabled` — when `false`, flat threshold is used (backward compatible).
+
+---
+
+#### 8.10.3 ArthaContext Typed Runtime Context Carrier *(F15.130)*
+
+**File:** `scripts/artha_context.py`
+
+```python
+class ContextPressure(str, Enum):
+    GREEN    = "green"     # < 40% context window used
+    YELLOW   = "yellow"    # 40–70%
+    RED      = "red"       # 70–90%
+    CRITICAL = "critical"  # > 90%
+
+class ArthaContext(BaseModel):
+    command: str
+    artha_dir: Path
+    pressure: ContextPressure = ContextPressure.GREEN
+    connectors: list[ConnectorStatus] = []
+    degradations: list[str] = []
+    steps_executed: list[str] = []
+    start_time: datetime
+    env_manifest: dict | None = None
+    preflight_results: dict | None = None
+```
+
+`build_context(command, artha_dir, env_manifest=None, preflight_results=None) → ArthaContext` integrates environment and preflight data into a single typed carrier passed through the middleware stack via `StateMiddleware.before_write(key, value, ctx=None)`. Backward compatible — `ctx` defaults to `None`.
+
+Feature flag: `harness.agentic.context.enabled`.
+
+---
+
+#### 8.10.4 Implicit Step Checkpoints *(F15.131)*
+
+**File:** `scripts/checkpoint.py`
+
+```python
+_CHECKPOINT_FILE = "tmp/.checkpoint.json"
+_MAX_AGE_HOURS   = 4
+
+def write_checkpoint(artha_dir, last_step: str, **metadata) → None
+def read_checkpoint(artha_dir) → dict | None   # Returns None if missing or stale
+def clear_checkpoint(artha_dir) → None
+```
+
+Checkpoint schema:
+```json
+{
+  "last_step": "step_7_process",
+  "timestamp": "2026-03-15T09:23:11.000Z",
+  "session_id": "catch-up-2026-03-15T09:20:00",
+  "command": "catch-up"
+}
+```
+
+Written at Steps 4 (fetch), 7 (process), 8 (reason/OODA). Cleared in Step 18 (finalize cleanup). `config/workflow/preflight.md` Step 0a checks for a valid checkpoint and offers resume — auto-resumes in `--pipeline` mode. Feature flag: `harness.agentic.checkpoints.enabled`.
+
+---
+
+#### 8.10.5 Persistent Fact Extraction *(F15.132)*
+
+**File:** `scripts/fact_extractor.py`
+
+Five extraction signal types:
+
+| Type | Example signal phrase |
+|------|-----------------------|
+| `correction` | "actually", "should be", "is wrong", "I said earlier" |
+| `pattern` | "always happens", "every time", "typically", "usually" |
+| `preference` | "prefer", "prefers", "preference", "would like", "likes to" |
+| `threshold` | "alert me when", "above X", "below Y", "remind me" |
+| `schedule` | "every Monday", "first of the month", cron-pattern |
+
+Pipeline: `extract_facts_from_summary(path) → list[Fact]` → `deduplicate_facts(new, existing) → list[Fact]` → `persist_facts(facts, artha_dir) → int` (returns count of new facts written).
+
+PII strip: phone (`\b\d{3}[-.]?\d{3}[-.]?\d{4}\b`), email (`\S+@\S+\.\S+`), SSN (`\b\d{3}-\d{2}-\d{4}\b`) redacted to `[REDACTED]` before persistence.
+
+Deduplication: SHA-256 of fact content (last 16 hex chars as ID). Duplicate = same ID already in `state/memory.md` frontmatter.
+
+`state/memory.md` v2.0 schema:
+```yaml
+---
+schema_version: '2.0'
+last_updated: null
+facts: []
+---
+```
+
+Invoked at Step 11c of `config/workflow/finalize.md`. Facts read back into OODA 8-O OBSERVE phase for cross-session continuity. Feature flag: `harness.agentic.fact_extraction.enabled`.
 
 ---
 

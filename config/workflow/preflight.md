@@ -18,6 +18,31 @@ source: config/Artha.core.md §2, Steps 0–2b
 
 ## Steps
 
+### Step 0a — Check for Resumable Session
+
+Before running preflight, check for a previous checkpoint:
+```bash
+python -c "
+from scripts.checkpoint import read_checkpoint
+from pathlib import Path
+import json
+cp = read_checkpoint(Path('.'))
+print(json.dumps(cp) if cp else 'none')
+"
+```
+
+If a checkpoint exists and is <4 hours old:
+- Report: "📍 Resumable session found — last completed Step {N}"
+- Ask user: "Resume from Step {N+1}? (y/n)"
+  - If yes: skip Steps 0 through N, load existing tmp/ artifacts
+  - If no: clear checkpoint and start fresh:
+    ```bash
+    python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import Path; clear_checkpoint(Path('.'))"
+    ```
+- Auto-resume (no prompt) if running in pipeline/automated mode
+
+If no checkpoint or stale (>4h): proceed normally from Step 0.
+
 ### Step 0 — Pre-flight Go/No-Go Gate
 
 **This step runs BEFORE any data is touched. A failed gate = no catch-up.**

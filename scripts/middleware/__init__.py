@@ -43,7 +43,7 @@ Ref: specs/deep-agents.md Phase 4
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -59,6 +59,7 @@ class StateMiddleware(Protocol):
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         """Called before a state file write.
 
@@ -66,6 +67,11 @@ class StateMiddleware(Protocol):
             domain: The domain being written (e.g. "finance").
             current_content: The existing file content (empty string if new).
             proposed_content: The content about to be written.
+            ctx: Optional ``ArthaContext`` runtime context.  Existing
+                middleware implementors that do not accept this parameter
+                are unaffected — the argument defaults to ``None`` and is
+                never required.  New middleware may inspect ``ctx.pressure``
+                or ``ctx.is_degraded`` for context-aware gating.
 
         Returns:
             The (possibly modified) content to write, or ``None`` to **block**
@@ -92,6 +98,7 @@ class _PassthroughMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         return proposed_content
 
