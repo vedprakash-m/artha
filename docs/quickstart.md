@@ -1,15 +1,31 @@
 # Artha Quick Start Guide
 
-Get from zero to your first personalized briefing in under 15 minutes.
+Get from zero to your first personalized briefing in **3 minutes**.
+
+## The Fast Way (macOS / Linux)
+
+```bash
+git clone https://github.com/vedprakash-m/artha.git
+cd artha
+bash setup.sh
+```
+
+`setup.sh` checks prerequisites, creates your virtual environment, installs dependencies, copies the profile template, and **runs a demo briefing** — all automatically.
+
+Then edit `config/user_profile.yaml`, run `python scripts/generate_identity.py`, open your AI CLI, and say **"catch me up"**.
+
+**What you need: Python 3.11+ and Git.** Everything else is optional until you're ready.
+
+---
 
 ## Prerequisites
 
-| Prerequisite | Why | Install |
+| Prerequisite | Why | Notes |
 |---|---|---|
 | **Python 3.11+** | Runs all Artha scripts | [python.org](https://www.python.org/downloads/) |
 | **Git** | Clone the repo | [git-scm.com](https://git-scm.com/) |
-| **`age`** | Encrypts sensitive state files | [github.com/FiloSottile/age](https://github.com/FiloSottile/age#installation) |
-| **An AI CLI** | Runtime — Artha runs *inside* your AI CLI | [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [GitHub Copilot](https://github.com/github/gh-copilot) · [Claude](https://www.anthropic.com/claude) |
+| **`age`** | Encrypts sensitive state files — *optional on first run* | `brew install age` · `sudo apt install age` · [github.com/FiloSottile/age](https://github.com/FiloSottile/age#installation) |
+| **An AI CLI** | Runtime — Artha runs *inside* your chosen CLI | [Gemini CLI](https://github.com/google-gemini/gemini-cli) · [GitHub Copilot](https://github.com/features/copilot) · [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) |
 
 A Google account (Gmail + Calendar) is optional but recommended for the best experience.
 
@@ -20,22 +36,29 @@ A Google account (Gmail + Calendar) is optional but recommended for the best exp
 ```bash
 git clone https://github.com/vedprakash-m/artha.git
 cd artha
+bash setup.sh          # handles venv, deps, profile copy, and demo briefing
+```
 
-# Create a Python virtual environment
-# (outside the project so cloud sync tools like OneDrive/iCloud don't upload it)
+**Manual (Windows / advanced):**
+
+```bash
+# Create a Python virtual environment outside the project
+# (prevents OneDrive/iCloud from uploading hundreds of library files)
 python3 -m venv ~/.artha-venvs/.venv
 source ~/.artha-venvs/.venv/bin/activate   # macOS/Linux
 # Windows (PowerShell): & $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
 
-# Install dependencies
 pip install -r scripts/requirements.txt
+cp config/user_profile.example.yaml config/user_profile.yaml
+python scripts/demo_catchup.py             # see what Artha produces before configuring
 ```
 
 ---
 
 ## Step 2: Create Your Profile
 
-Copy the example profile and fill in your details:
+If `setup.sh` already copied the template for you, just open and edit it.
+Otherwise:
 
 ```bash
 cp config/user_profile.example.yaml config/user_profile.yaml
