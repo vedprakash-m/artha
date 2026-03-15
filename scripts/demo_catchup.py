@@ -143,8 +143,16 @@ def render_briefing(emails: list[dict]) -> str:
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         "4 ACTION ITEMS  |  2 UPCOMING DATES  |  0 ALERTS",
         "",
-        "To connect your real accounts: python scripts/setup_google_oauth.py",
-        "To populate your profile:       Open your AI CLI and type /bootstrap",
+        "💡 Imagine waking up to a briefing like this — but for YOUR life.",
+        "   Your real email. Your family's calendar. Your financial deadlines.",
+        "   Your immigration status. Your kids' parent-teacher conferences.",
+        "   Artha surfaces what matters, every morning, before you open your inbox.",
+        "",
+        "━━  Ready to set this up?  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "  • Fast way:     bash setup.sh",
+        "  • Connect data: python scripts/setup_google_oauth.py",
+        "  • Guided setup: open your AI CLI and type  /bootstrap",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)
 
