@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.3 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.4 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v5.6
+> **Implements**: PRD v5.7
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.4 | 2026-03 | OOBE polish audit (PRD F15.95–99): setup.sh brand mark + step counters, AI CLI auto-detection (`_detect_ai_clis()`/`_print_ai_cli_status()`), colorized demo briefing (yellow/green/red ANSI), README 624→142 lines, docs/backup.md, specs/README.md, make start; 485 tests |
 | v3.3 | 2026-03 | Interactive setup wizard + first-run friction fixes (PRD F15.89–94): `artha.py` wizard, starter profile, no auto-preflight, advisory warnings, `--first-run` preflight, `setup.sh` wizard prompt; 485 tests |
 | v3.2 | 2026-03 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
 | v3.0 | 2026-03 | Novice UX hardening (PRD F15.72–F15.77): Step 6 restored to README, age key deletion order fixed, `<details>` OS blocks, Node.js prereq, System keyring prereq, `check_keyring_backend()` P0 preflight gate, `open_items.md` template + `--fix` auto-create, `_rel()` path masker for all preflight console output, example profile PII neutralized (King County WA → Springfield IL), demo footer fixed, Google OAuth deep-link doc, catchup alias note |
@@ -2475,6 +2476,20 @@ Direct API read via MS Graph — no forwarding required. Token is live as of 202
 | `--demo` | Show demo briefing with fictional data (no accounts needed). |
 | `--preflight` | Run preflight gate and exit. |
 
+#### AI CLI Detection (`do_welcome()` + `do_setup()` completion)
+
+`_AI_CLIS` constant: list of `(cmd, name, url)` tuples for known AI CLIs (`claude`, `gemini`).
+
+`_detect_ai_clis() -> list[tuple[str, str, bool]]` — calls `shutil.which(cmd)` for each entry; returns `(name, url, is_installed)`. Stdlib-only, no new dependencies.
+
+`_print_ai_cli_status()` — called after wizard completion and in `do_welcome()`:
+- If any CLI detected (including `code` for VS Code / GitHub Copilot): lists detected names, shows tailored `Your next step: → Run: <cmd>  (then say: catch me up)`.
+- If none found: shows install URLs for all known CLIs + VS Code/Copilot.
+
+#### setup.sh Step Counters (v5.7)
+
+`setup.sh` displays `[1/4] Checking prerequisites...` through `[4/4] Running demo briefing...` with a branded header `A R T H A  —  Personal Intelligence OS`. `pip install` uses `--disable-pip-version-check` to suppress internal path leakage in upgrade notices.
+
 #### Setup Wizard (`do_setup()`)
 
 Collects five inputs interactively:
@@ -3248,7 +3263,7 @@ The PII Guard test suite includes:
 
 ---
 
-*Artha Tech Spec v3.3 — End of Document*
+*Artha Tech Spec v3.4 — End of Document*
 
 ---
 
@@ -3256,6 +3271,7 @@ The PII Guard test suite includes:
 
 | Version | Changes |
 |---------|---------|
+| v3.4 | OOBE polish audit (PRD F15.95–99): `setup.sh` brand mark + `[1/4]`–`[4/4]` step counters + `--disable-pip-version-check`; `artha.py` `_detect_ai_clis()` + `_print_ai_cli_status()` for tailored post-wizard / welcome next-step; `demo_catchup.py` ANSI colorized output (yellow ACTION, green good, red alert), removed dead footer; `README.md` 624→142 lines + `docs/backup.md` + `specs/README.md` disclaimer; `Makefile` `start` target. 485 tests. |
 | v3.3 | Interactive setup wizard + first-run friction fixes: `artha.py` wizard (`do_setup()`), starter profile, no auto-preflight on welcome, `_collect_warnings()` + `_print_validate_summary()` in `generate_identity.py`, `--first-run` preflight mode, `setup.sh` wizard prompt. See §11.4 |
 | v3.2 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletion, lockdown, mtime guard, net-negative override, prune protection, confirm gate, key health; 501 tests |
 | v3.0 | Novice UX hardening: Step 6 restored, age key deletion order fixed, keyring check, open_items template, path PII masking, Node.js prereq, OS blocks |
