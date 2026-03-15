@@ -77,6 +77,15 @@ Silently dropping secondary calendars (family, US Holidays) is a workflow violat
 - `imap.mail.me.com` blocked → note in footer: "iCloud unavailable — VM network constraint."
 - Do NOT suggest re-running auth setup for network-blocked connectors
 
+**AR-8: Connector Failure Root-Cause Protocol**
+If a connector returns an error (not zero results — actual error):
+1. Classify: transient (network/timeout/rate-limit) vs. configuration vs. logic vs. environmental?
+2. Transient → ONE automatic retry (pipeline's `lib/retry.py` handles this). If retry fails: log + continue.
+3. Configuration → report the specific issue (e.g., "Gmail token expired"). Do NOT retry.
+4. Environmental → note in footer (see VM/network above). Do NOT retry.
+5. Log root-cause diagnosis to `state/audit.md`: `connector | error | diagnosis | action`.
+6. Never blind-retry the same failing call more than once without changing the approach.
+
 ### Step 4b — Tiered Context Loading
 
 After fetch, load domain state files by tier:

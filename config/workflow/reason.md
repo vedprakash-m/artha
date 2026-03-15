@@ -32,6 +32,24 @@ source: config/Artha.core.md §2, Steps 8–11
 
 ---
 
+#### Pre-OODA: Recall & Procedure Check (AR-4, AR-5)
+
+**Before entering the OODA protocol, run two checks:**
+
+**1. Cross-Session Recall** (AR-4) — if this catch-up or the user's request references past sessions
+(e.g., "we discussed", "last time", "remember when", "previously", or a recurring issue):
+- Extract key terms from the reference.
+- Search `briefings/` and `summaries/` for relevant context using `scripts/session_search.py`.
+- Include top matches (≤3 excerpts) in the OBSERVE evidence base.
+- Cite source: "Per your March 8 briefing, ..."
+
+**2. Procedure Lookup** (AR-5) — before generating a novel analysis approach:
+- Check `state/learned_procedures/` for procedures matching today's active domains.
+- If a matching procedure with confidence ≥ 0.7 exists: follow it as the primary approach.
+- A matched procedure supersedes the ORIENT/DECIDE phases for that specific sub-task.
+
+---
+
 ### 8-O: OBSERVE — Gather Evidence
 
 Collect ALL signals from the completed domain processing:
@@ -44,6 +62,9 @@ Collect ALL signals from the completed domain processing:
 - **Corrections:** Suppress any alert that matches a correction fact (type: correction, confidence ≥ 0.9)
 - **Patterns:** Reference known patterns when evaluating anomalies (type: pattern)
 - **Thresholds:** Use user-calibrated thresholds instead of system defaults (type: threshold)
+
+**Read `state/self_model.md`** (if non-empty): apply domain confidence calibration and
+double-check domains listed under "Known Blind Spots" before asserting conclusions.
 
 **Output: `[OBSERVE]` block** with structured signal inventory and applied corrections from memory.
 

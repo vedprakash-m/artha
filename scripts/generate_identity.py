@@ -471,7 +471,10 @@ def _assemble_artha_md(identity_block: str, compact: bool = True) -> None:
     header = (
         "<!-- AUTO-GENERATED — DO NOT EDIT.\n"
         "     Modify config/Artha.core.md or config/user_profile.yaml instead,\n"
-        "     then run: python scripts/generate_identity.py -->\n\n"
+        "     then run: python scripts/generate_identity.py -->\n"
+        "<!-- PROMPT STABILITY: This file is the frozen system prompt layer.\n"
+        "     Do NOT modify mid-session. Changes take effect on next session start.\n"
+        "     See config/Artha.core.md § AR-6: Prompt Stability Architecture. -->\n\n"
     )
 
     if not compact:

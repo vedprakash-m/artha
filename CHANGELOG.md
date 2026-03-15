@@ -11,6 +11,64 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.3] — 2026-03-15
+
+### Added — Agentic Reloaded (specs/agentic-reloaded.md AR-1–AR-8)
+
+**AR-1: Bounded Memory & Consolidation Discipline**
+- **`scripts/fact_extractor.py`** — Added `MAX_MEMORY_CHARS = 3_000` and `MAX_FACTS_COUNT = 30` constants; `_load_harness_config()` reads capacity from `artha_config.yaml`; `_consolidate_facts()` enforces dual limits via TTL expiry followed by lowest-confidence eviction; `correction` and `preference` fact types are protected and never evicted.
+- **`config/workflow/finalize.md`** — Step 11c expanded with Memory Capacity Check (AR-1) instructions.
+- **`config/artha_config.yaml`** — Added `harness.agentic.memory_capacity` config block (`enabled`, `max_chars`, `max_facts`).
+
+**AR-2: Self-Model (AI Metacognition)**
+- **`state/templates/self_model.md`** — New template for agent self-model state file (domain confidence, effective strategies, blind spots, interaction patterns; capped at 1500 chars).
+- **`config/Artha.core.md`** — Added AR-2 Self-Model protocol section (frozen-layer loading, session-boundary update discipline, 1500-char cap).
+- **`config/artha_config.yaml`** — Added `harness.agentic.self_model` config block.
+
+**AR-3: Pre-Eviction Memory Flush**
+- **`scripts/session_summarizer.py`** — Added `should_flush_memory(context_text)` function (AR-3 pre-compression flush trigger at `threshold_pct/2`); added `pre_flush_facts_persisted: int = 0` field to both Pydantic and fallback `SessionSummary` classes; `create_session_summary()` accepts `pre_flush_facts_persisted` parameter.
+- **`config/Artha.core.md`** — Added AR-3 Pre-Compression Memory Flush protocol section.
+- **`config/artha_config.yaml`** — Added `harness.agentic.pre_eviction_flush` config block.
+
+**AR-4: Cross-Session Search & Recall**
+- **`scripts/session_search.py`** (new) — Grep-based full-text search over `briefings/` and `summaries/`; `SearchResult` dataclass; relevance scoring (`match_count / sqrt(line_count)`); PII-safe excerpts; `format_results_for_context()` renderer; CLI entry point.
+- **`scripts/artha_context.py`** — Added `session_recall_available: bool = False` field to `ArthaContext`.
+- **`config/workflow/reason.md`** — Added Pre-OODA Cross-Session Recall block with `session_search.py` instructions.
+- **`config/artha_config.yaml`** — Added `harness.agentic.session_search` config block.
+
+**AR-5: Procedural Memory**
+- **`scripts/procedure_index.py`** (new) — Scan `state/learned_procedures/*.md` frontmatter; `ProcedureMatch` dataclass; `_decay_confidence()` with 90-day decay interval and 0.5 floor; `find_matching_procedures()` with min_confidence/min_relevance filters; `format_procedures_for_context()`; CLI entry point.
+- **`state/learned_procedures/README.md`** (new) — Directory for agent-discovered reusable procedures (git-tracked, not backup-tracked).
+- **`config/workflow/finalize.md`** — Step 11c Procedure Extraction (AR-5) instructions.
+- **`config/workflow/reason.md`** — Pre-OODA Procedure Lookup (AR-5) instructions.
+- **`config/artha_config.yaml`** — Added `harness.agentic.procedural_memory` config block.
+
+**AR-6: Prompt Stability Architecture**
+- **`scripts/generate_identity.py`** — Added `PROMPT STABILITY` frozen-layer comment to generated `config/Artha.md` header.
+- **`config/Artha.core.md`** — Added AR-6 Prompt Stability Architecture section (frozen vs ephemeral layer classification, 4 usage rules).
+
+**AR-7: Delegation Protocol**
+- **`scripts/delegation.py`** (new) — `DelegationRequest` / `DelegationResult` dataclasses; `should_delegate()` (step threshold ≥5, parallel, isolated); `compose_handoff()` with context compression to ≤500 chars; `evaluate_for_procedure()` to surface delegation patterns as AR-5 candidates; `is_delegation_enabled()`; CLI smoke-test.
+- **`config/Artha.core.md`** — Added Delegation Protocol (AR-7) section.
+- **`config/artha_config.yaml`** — Added `harness.agentic.delegation` config block (`default_budget`, `max_budget`, `fallback_mode`).
+
+**AR-8: Root-Cause Before Retry**
+- **`config/Artha.core.md`** — Added Root-Cause Before Retry section (4-step diagnosis, anti-pattern contrast, AR-5 evaluation trigger).
+- **`config/workflow/fetch.md`** — Added AR-8 Connector Failure Root-Cause Protocol (6-step classify/retry/log).
+
+**Audit & Observability**
+- **`scripts/audit_compliance.py`** — Added `_check_memory_capacity()` (weight 5, verifies `state/memory.md` ≤30 facts AND ≤3000 chars; advisory pass when file absent) and `_check_prompt_stability()` (weight 5, verifies `PROMPT STABILITY` marker in `config/Artha.md`; advisory pass when file absent); both checks added to `audit_latest_briefing()`.
+
+### Tests
+- Added 72 new tests across 4 test files:
+  - `tests/unit/test_fact_extractor.py` — 8 AR-1 tests for `_consolidate_facts()` and `persist_facts()` capacity enforcement (protects `correction`/`preference` types, evicts expired + lowest-confidence).
+  - `tests/unit/test_session_search.py` (new) — 14 tests for `session_search.py` (match, no-match, empty query, ranking, excerpts, multi-term, disabled flag, `format_results_for_context`).
+  - `tests/unit/test_procedure_index.py` (new) — 19 tests for `procedure_index.py` (`list_procedures`, `_decay_confidence`, `find_matching_procedures`, `format_procedures_for_context`).
+  - `tests/unit/test_delegation.py` (new) — 31 tests for `delegation.py` (`should_delegate`, `compose_handoff`, `DelegationRequest.to_prompt`, `evaluate_for_procedure`, `_compress_context`, `is_delegation_enabled`).
+- Total: **1015 tests** (+72 from 943).
+
+---
+
 ## [7.0.2] — 2026-03-15
 
 ### Fixed
