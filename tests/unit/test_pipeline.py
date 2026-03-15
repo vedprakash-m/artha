@@ -211,6 +211,41 @@ class TestRunHealthChecks:
         result = run_health_checks(sample_cfg)
         assert result == 1
 
+    @patch("pipeline._load_handler")
+    @patch("pipeline.load_auth_context")
+    def test_healthy_connector_always_printed_without_verbose(self, mock_auth, mock_handler, sample_cfg, capsys):
+        """A passing connector must appear in stderr even without --verbose.
+
+        Rationale: silence is ambiguous in automated health gates (preflight).
+        check_script_health() captures stderr to use as note text, so a silent
+        success falls back to 'OK' with no connector name visible.
+        """
+        from pipeline import run_health_checks
+
+        handler_mod = MagicMock()
+        handler_mod.health_check.return_value = True
+        mock_handler.return_value = handler_mod
+        mock_auth.return_value = {"token": "fake"}
+
+        run_health_checks(sample_cfg, verbose=False)
+        captured = capsys.readouterr()
+        assert "[health] ✓ test_email" in captured.err
+
+    @patch("pipeline._load_handler")
+    @patch("pipeline.load_auth_context")
+    def test_summary_line_always_printed_on_success(self, mock_auth, mock_handler, sample_cfg, capsys):
+        """The 'All N connectors healthy' summary must appear without --verbose."""
+        from pipeline import run_health_checks
+
+        handler_mod = MagicMock()
+        handler_mod.health_check.return_value = True
+        mock_handler.return_value = handler_mod
+        mock_auth.return_value = {"token": "fake"}
+
+        run_health_checks(sample_cfg, verbose=False)
+        captured = capsys.readouterr()
+        assert "connectors healthy" in captured.err
+
 
 # ── Subprocess smoke test ────────────────────────────────────────────────────
 # These tests run pipeline.py as a *subprocess* — the exact invocation path

@@ -50,6 +50,13 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+# Ensure correct venv before third-party imports (no-op if already in venv or CI)
+try:
+    from _bootstrap import reexec_in_venv  # type: ignore[import]
+    reexec_in_venv()
+except ImportError:
+    pass  # Running standalone without project structure; continue
+
 try:
     import yaml  # type: ignore[import]
 except ImportError:
@@ -436,8 +443,8 @@ def run_health_checks(
 
         results.append((name, ok))
         status = "✓" if ok else "✗"
-        if verbose or not ok:
-            print(f"[health] {status} {name}", file=sys.stderr)
+        # Always print per-connector status — silence is ambiguous for health gates
+        print(f"[health] {status} {name}", file=sys.stderr)
 
     _write_health_report(results)
 
@@ -448,8 +455,7 @@ def run_health_checks(
             file=sys.stderr,
         )
         return 1
-    if verbose:
-        print(f"[health] All {len(results)} connectors healthy.", file=sys.stderr)
+    print(f"[health] All {len(results)} connectors healthy.", file=sys.stderr)
     return 0
 
 

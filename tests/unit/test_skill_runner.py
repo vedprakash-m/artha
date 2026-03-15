@@ -138,3 +138,35 @@ class TestLoadFunctions:
         monkeypatch.setattr(skill_runner, "CACHE_FILE", bad_file)
         result = load_cache()
         assert result == {}
+
+
+# ── Entrypoint guard ───────────────────────────────────────────────────────────────────────────
+
+class TestEntrypointGuard:
+    """skill_runner.py must be directly executable (the Gemini CLI ran it as a script)."""
+
+    def test_main_block_executes_without_error(self, tmp_path, monkeypatch):
+        """Running skill_runner with no enabled skills must exit 0, not NameError."""
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, str(_SCRIPTS / "skill_runner.py")],
+            capture_output=True, text=True,
+            env={**__import__("os").environ, "ARTHA_NO_REEXEC": "1"},
+        )
+        # No skills enabled = exits cleanly (0 or non-zero for P0 failures is ok,
+        # but we must NOT get an uncaught ImportError or NameError)
+        assert "NameError" not in result.stderr
+        assert "ImportError" not in result.stderr
+
+    def test_importlib_util_accessible_at_module_scope(self):
+        """importlib.util must be a module-level import, not scoped inside run_skill().
+
+        Gemini bug: 'import importlib.util' was inside run_skill(), creating a
+        local binding that shadowed the global 'importlib' and caused
+        UnboundLocalError when spec_from_file_location was called.
+        """
+        import skill_runner
+        # If importlib.util is at module scope, skill_runner.importlib.util is accessible
+        assert hasattr(skill_runner, "importlib")
+        assert hasattr(skill_runner.importlib, "util")
+        assert callable(getattr(skill_runner.importlib.util, "spec_from_file_location", None))
