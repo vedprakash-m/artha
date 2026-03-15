@@ -132,6 +132,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 | [Connectors](docs/connectors.md) | Email, calendar, LMS data sources |
 | [Skills](docs/skills.md) | Autonomous background data pulls |
 | [Channels](docs/channels.md) | Telegram bridge setup |
+| [Plugins](docs/plugins.md) | User-contributed connectors and skills |
 | [Backup & Restore](docs/backup.md) | GFS snapshots, cold-start restore |
 | [Security & Privacy](docs/security.md) | Threat model, encryption, PII defense |
 | [Domains](docs/domains.md) | 24 life domains explained |
