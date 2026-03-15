@@ -11,6 +11,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [6.1.0] — 2026-03-15
+
+### Fixed / Hardened
+- **`scripts/skill_runner.py`** — Agentic CLI hardening (PRD F15.124):
+  - Added `if __name__ == "__main__": main()` entrypoint (was inert when run as script from CLI agents like Gemini/Claude).
+  - Restructured imports: stdlib → path setup → `reexec_in_venv()` → third-party (`yaml`). Eliminates `ImportError: PyYAML not installed` when run outside venv.
+  - `importlib.util` moved to module scope (was inside `run_skill()`, causing potential `UnboundLocalError` on user-plugin path).
+
+- **`scripts/pipeline.py`** — Venv bootstrap + unambiguous health output (PRD F15.125):
+  - Added `reexec_in_venv()` call (same pattern as `skill_runner.py`). Prevents silent `ImportError` on bare Python.
+  - `run_health_checks()` now always prints `[health] ✓ name` per connector and `All N connectors healthy.` summary — previously these were gated on `--verbose`, making automated health gates (preflight `check_script_health()`) see an empty stderr that fell back to a generic `OK ✓` note.
+
+- **`scripts/skills/noaa_weather.py`** — Unconfigured coordinates guard (PRD F15.126):
+  - `get_skill()` raises `ValueError` when `lat==lon==0.0` (placeholder defaults). Previously the skill silently issued a request to `api.weather.gov/points/0.0,0.0` which returns HTTP 404 from the mid-Atlantic Ocean, appearing as an API failure rather than a configuration problem.
+
+- **`scripts/skills/uscis_status.py`** — Actionable 403 IP-block message (PRD F15.127):
+  - HTTP 403 now returns `{"blocked": True, "error": "USCIS API is blocking requests from this IP address or network (common on cloud/VPN). Check status manually at https://egov.uscis.gov/casestatus/..."}`. Previous generic `{"error": "HTTP 403", "text": <large HTML>}` was not actionable.
+  - Other non-200 responses truncate `response.text` to 500 chars (prevents log bloat).
+
+- **`scripts/preflight.py`** — CI fix: cold-start profile check now uses `ARTHA_DIR` constant instead of `__file__`-relative path. `config/user_profile.yaml` is gitignored so CI never has it; the `__file__`-relative path bypassed the test mock, causing 3 `TestAdvisoryJsonOutput` tests to hit exit 3 (cold start) in CI.
+
+### Tests
+- **+12 new tests** (816 total, 5 skipped, 20 xfailed):
+  - `tests/unit/test_pipeline.py`: `test_healthy_connector_always_printed_without_verbose`, `test_summary_line_always_printed_on_success`
+  - `tests/unit/test_skill_runner.py`: `test_main_block_executes_without_error`, `test_importlib_util_accessible_at_module_scope`
+  - `tests/unit/test_skills.py` *(new file)*: `TestNOAAUnconfiguredCoordinates` (2 tests), `TestUSCIS403ErrorMessage` (6 tests)
+
+### Specs
+- PRD v6.0 → **v6.1**, features F15.124–F15.127 added
+- Tech Spec v3.7 → **v3.8**, §8.9 updated for skill_runner, noaa_weather, uscis_status changes
+- UX Spec v2.1 → **v2.2**, agentic CLI hardening UX patterns added
+
+### Deferred (spec entry required before implementation)
+- `pipeline.py` exit 1 when `--source` filter matches no configured connector (changes observable exit contract)
+- Vault lock PID-aware auto-clear (requires `vault.py` lock file format change)
+
+---
+
 ## [6.0.0] — 2026-03-15
 
 ### Added
