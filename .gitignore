@@ -91,3 +91,6 @@ config/Artha.md
 
 # --- Decrypted state transient files ---
 .artha-decrypted
+
+# --- Runtime lock and ephemeral files ---
+.artha-op-lock
