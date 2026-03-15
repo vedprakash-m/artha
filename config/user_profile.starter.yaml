@@ -1,0 +1,58 @@
+# config/user_profile.yaml — created by Artha setup wizard
+# Edit to update your information.
+# Full configuration reference: config/user_profile.example.yaml
+# Guided setup in your AI CLI: /bootstrap
+schema_version: "1.0"
+
+family:
+  primary_user:
+    name: ""
+    emails:
+      gmail: ""          # your Gmail address
+      outlook: ""        # your Outlook/Microsoft address (optional)
+      icloud: ""         # your iCloud address (optional)
+
+household:
+  type: "single"         # single | couple | family
+  tenure: "owner"        # owner | renter
+
+location:
+  timezone: "America/New_York"   # ET=New_York CT=Chicago MT=Denver PT=Los_Angeles
+
+domains:
+  finance:
+    enabled: true
+  health:
+    enabled: true
+  home:
+    enabled: true
+  goals:
+    enabled: true
+  calendar:
+    enabled: true
+  comms:
+    enabled: true
+  digital:
+    enabled: true
+  kids:
+    enabled: false
+
+integrations:
+  gmail:
+    enabled: true
+    account: ""
+  google_calendar:
+    enabled: true
+  microsoft_graph:
+    enabled: false
+    account: ""
+  icloud:
+    enabled: false
+    account: ""
+
+briefing:
+  default_format: "standard"
+  archive_enabled: true
+
+encryption:
+  age_recipient: ""   # paste your age1... public key here after running: age-keygen

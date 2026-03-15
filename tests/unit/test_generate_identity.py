@@ -342,3 +342,111 @@ class TestMain:
         result = gi.main([])
         assert result == 1
         assert not assembled_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# _collect_warnings  (advisory, non-blocking)
+# ---------------------------------------------------------------------------
+
+class TestCollectWarnings:
+    def test_no_warnings_on_clean_profile(self):
+        warnings = gi._collect_warnings(MINIMAL_PROFILE)
+        assert warnings == []
+
+    def test_placeholder_child1_name_warns(self):
+        profile = dict(MINIMAL_PROFILE)
+        profile["family"] = {
+            "primary_user": {
+                "name": "Jane",
+                "emails": {"gmail": "jane@example.com"},
+            },
+            "children": [{"name": "Child1", "age": 10}],
+        }
+        warnings = gi._collect_warnings(profile)
+        assert any("Child1" in w for w in warnings)
+
+    def test_placeholder_child2_name_warns(self):
+        profile = dict(MINIMAL_PROFILE)
+        profile["family"] = {
+            "primary_user": {"name": "Jane", "emails": {"gmail": "jane@example.com"}},
+            "children": [{"name": "Child2", "age": 8}],
+        }
+        warnings = gi._collect_warnings(profile)
+        assert any("Child2" in w for w in warnings)
+
+    def test_real_child_name_no_warning(self):
+        profile = dict(MINIMAL_PROFILE)
+        profile["family"] = {
+            "primary_user": {"name": "Jane", "emails": {"gmail": "jane@example.com"}},
+            "children": [{"name": "Emma", "age": 10}],
+        }
+        warnings = gi._collect_warnings(profile)
+        assert all("Emma" not in w for w in warnings)
+
+    def test_placeholder_city_warns(self):
+        profile = {
+            "schema_version": "1.0",
+            "family": {
+                "primary_user": {
+                    "name": "Jane",
+                    "emails": {"gmail": "jane@example.com"},
+                }
+            },
+            "location": {"city": "Springfield", "timezone": "America/Los_Angeles"},
+            "domains": {"finance": {"enabled": True}},
+        }
+        warnings = gi._collect_warnings(profile)
+        assert any("Springfield" in w for w in warnings)
+
+    def test_real_city_no_warning(self):
+        profile = {
+            "schema_version": "1.0",
+            "family": {
+                "primary_user": {
+                    "name": "Jane",
+                    "emails": {"gmail": "jane@example.com"},
+                }
+            },
+            "location": {"city": "Portland", "timezone": "America/Los_Angeles"},
+            "domains": {},
+        }
+        warnings = gi._collect_warnings(profile)
+        assert not any("Portland" in w for w in warnings)
+
+    def test_multiple_placeholder_children_multiple_warnings(self):
+        profile = dict(MINIMAL_PROFILE)
+        profile["family"] = {
+            "primary_user": {"name": "Jane", "emails": {"gmail": "jane@example.com"}},
+            "children": [{"name": "Child1"}, {"name": "Child2"}],
+        }
+        warnings = gi._collect_warnings(profile)
+        assert len(warnings) == 2
+
+
+# ---------------------------------------------------------------------------
+# _print_validate_summary
+# ---------------------------------------------------------------------------
+
+class TestPrintValidateSummary:
+    def test_prints_name_and_email(self, capsys):
+        gi._print_validate_summary(MINIMAL_PROFILE)
+        captured = capsys.readouterr().out
+        assert "Jane" in captured
+        assert "jane@example.com" in captured
+
+    def test_prints_location(self, capsys):
+        gi._print_validate_summary(MINIMAL_PROFILE)
+        captured = capsys.readouterr().out
+        assert "Portland" in captured or "America/Los_Angeles" in captured
+
+    def test_prints_enabled_domains(self, capsys):
+        gi._print_validate_summary(MINIMAL_PROFILE)
+        captured = capsys.readouterr().out
+        assert "finance" in captured
+
+    def test_prints_full_profile_name_and_domains(self, capsys):
+        gi._print_validate_summary(FULL_PROFILE)
+        captured = capsys.readouterr().out
+        assert "John" in captured
+        assert "immigration" in captured or "finance" in captured
+
