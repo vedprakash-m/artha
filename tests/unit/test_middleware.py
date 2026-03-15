@@ -50,7 +50,7 @@ def _make_valid_state(domain: str = "testdomain") -> str:
 
 class _UpperMiddleware:
     """Test middleware that uppercases proposed content."""
-    def before_write(self, domain, current, proposed):
+    def before_write(self, domain, current, proposed, ctx=None):
         return proposed.upper()
 
     def after_write(self, domain, path):
@@ -59,7 +59,7 @@ class _UpperMiddleware:
 
 class _BlockingMiddleware:
     """Test middleware that always blocks writes."""
-    def before_write(self, domain, current, proposed):
+    def before_write(self, domain, current, proposed, ctx=None):
         return None
 
     def after_write(self, domain, path):
@@ -72,7 +72,7 @@ class _TrackingMiddleware:
         self.name = name
         self.log = log
 
-    def before_write(self, domain, current, proposed):
+    def before_write(self, domain, current, proposed, ctx=None):
         self.log.append(f"before:{self.name}")
         return proposed
 
@@ -126,7 +126,7 @@ class TestComposeMiddleware:
         class _AppendMiddleware:
             def __init__(self, suffix):
                 self.suffix = suffix
-            def before_write(self, domain, current, proposed):
+            def before_write(self, domain, current, proposed, ctx=None):
                 return proposed + self.suffix
             def after_write(self, domain, path):
                 pass
@@ -152,7 +152,7 @@ class TestComposeMiddleware:
     def test_after_write_exception_does_not_propagate(self, tmp_path):
         """Exceptions in after_write must be silently swallowed."""
         class _BrokenAfterMiddleware:
-            def before_write(self, d, c, p):
+            def before_write(self, d, c, p, ctx=None):
                 return p
             def after_write(self, d, path):
                 raise RuntimeError("boom")
