@@ -10,6 +10,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ## [Unreleased]
 
 ### Added
+- **Intelligence expansion + platform parity** (PRD v5.8, Tech Spec v3.5, F15.100–F15.113):
+  - `scripts/skills/financial_resilience.py` — `FinancialResilienceSkill`: parses `state/finance.md` for monthly burn rate, emergency fund runway, and single-income stress scenario; registered in `config/skills.yaml` (cadence: weekly, requires_vault: true)
+  - `config/domain_registry.yaml`: gig income routing keywords (Stripe, PayPal, Venmo, Upwork, Fiverr, Etsy, DoorDash, Uber earnings, 1099-K, 1099-NEC)
+  - `prompts/finance.md`: "Gig & Platform Income Tracking (1099-K)" section with alert thresholds (🟡 >$5K, 🟠 >$20K, 🔴 Q4); "Financial Resilience" briefing section
+  - `prompts/shopping.md`: "Purchase Interval Observation" section — recurring purchase pattern tracking
+  - `prompts/social.md`: structured contact profiles (9-field template), pre-meeting context injection (📅 briefing block), passive fact extraction (date-annotated, high-confidence only)
+  - `prompts/estate.md`: complete "Digital Estate Inventory" — 5 tables (legal documents, password/access recovery, beneficiary designations, auto-renewing services, emergency contacts); stale alerts at 6/12 months
+  - `config/actions.yaml`: `cancel_subscription` and `dispute_charge` instruction-sheet actions
+  - `prompts/digital.md`: "Subscription Action Proposals" section — price increase, trial conversion, and already-converted trial alert formats
+  - `setup.ps1` — Windows PowerShell onboarding script: [1/5] prerequisites, [2/5] venv at `$HOME\.artha-venvs\.venv-win`, [3/5] pip install, [4/5] PII hook, [5/5] demo + wizard; `Write-Host -ForegroundColor` (no ANSI)
+  - `artha.py --doctor` — `do_doctor()`: 11-point diagnostic (Python ≥3.11, venv active, core packages, age binary, age key in keyring, age_recipient, Gmail token, Outlook token, state dir file count, PII hook, last catch-up recency); `━━ ARTHA DOCTOR ━━` banner; exits 0 for warnings-only, 1 for failures
+  - `scripts/connectors/apple_health.py` — local Apple Health export parser: ZIP and bare XML input, `iterparse + elem.clear()` streaming, 16 `HKQuantityTypeIdentifier` types, `since` relative/absolute date filter; `enabled: false` by default (opt-in)
+  - `prompts/health.md`: "Longitudinal Lab Results" section — date-keyed table, flag codes (✅🟡🟠🔴), trend arrows (↑↓→), Apple Health mapping
+  - **Bug fix**: `passport_expiry` and `subscription_monitor` added to `_ALLOWED_SKILLS` frozenset in `skill_runner.py` (both skills existed but were missing from allowlist)
+  - `README.md`: updated Windows section to reference `setup.ps1`; `--doctor` in dev commands; Apple Health + financial_resilience + `--doctor` in "What You Get"
+  - 56 new tests (`test_financial_resilience.py`: 21, `test_doctor.py`: 14, `test_apple_health.py`: 21); 541 total, all passing, PII scan clean
+
 - **OOBE polish audit — first-impression redesign** (PRD v5.7, Tech Spec v3.4, F15.95–F15.99):
   - `setup.sh`: branded header `A R T H A  —  Personal Intelligence OS`, `[1/4]`–`[4/4]` step counters, `--disable-pip-version-check` (suppresses internal path leakage in pip upgrade notices)
   - `artha.py`: `_detect_ai_clis()` + `_print_ai_cli_status()` — detects `claude`, `gemini`, `code` (VS Code/Copilot) via `shutil.which`; shows tailored "Your next step:" after wizard and on welcome; shows install URLs if no CLI found
