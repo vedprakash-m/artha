@@ -82,7 +82,7 @@ def _get(profile: dict, key_path: str, default: Any = None) -> Any:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Validation
+# Validation (blocking errors)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _validate(profile: dict) -> list[str]:
@@ -127,6 +127,72 @@ def _validate(profile: dict) -> list[str]:
         errors.append(f"ERROR: {_CORE_PATH} not found — nothing to assemble with")
 
     return errors
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Advisory warnings (non-blocking — placeholder data the user may not have noticed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PLACEHOLDER_CHILD_NAMES = {"Child1", "Child2", "ChildName", "Child"}
+_PLACEHOLDER_CITIES = {"Springfield", "Anytown", "Your City", "Exampleville"}
+
+
+def _collect_warnings(profile: dict) -> list[str]:
+    """
+    Return non-blocking advisory warnings about placeholder data.
+
+    These are NOT validation errors — they don't block identity generation.
+    They surface fields that look like unedited example values so the user
+    can update them before their first real catch-up.
+    """
+    warnings: list[str] = []
+
+    children = _get(profile, "family.children", []) or []
+    for i, child in enumerate(children):
+        name = child.get("name", "")
+        if name in _PLACEHOLDER_CHILD_NAMES:
+            warnings.append(
+                f"family.children[{i}].name is still placeholder '{name}' — "
+                "update config/user_profile.yaml with your child's real name"
+            )
+
+    city = _get(profile, "location.city", "")
+    if city in _PLACEHOLDER_CITIES:
+        warnings.append(
+            f"location.city is still placeholder '{city}' — "
+            "update config/user_profile.yaml with your real city"
+        )
+
+    return warnings
+
+
+def _print_validate_summary(profile: dict) -> None:
+    """Print a concise preview of what the generated identity will contain."""
+    name = _get(profile, "family.primary_user.name", "")
+    emails = _get(profile, "family.primary_user.emails", {}) or {}
+    email_display = next((v for v in emails.values() if v), "no email set")
+
+    city  = _get(profile, "location.city", "")
+    state = _get(profile, "location.state", "")
+    tz    = _get(profile, "location.timezone", "")
+    location = ", ".join(p for p in [city, state] if p) or tz or "not set"
+
+    household = _get(profile, "household.type", "")
+    children  = _get(profile, "family.children", []) or []
+    domains   = _get(profile, "domains", {}) or {}
+    enabled   = sorted(d for d, v in domains.items()
+                       if isinstance(v, dict) and v.get("enabled", False))
+
+    print("  Identity preview:")
+    print(f"    Name:      {name}  ({email_display})")
+    print(f"    Location:  {location}")
+    if household:
+        c_note = f", {len(children)} child(ren)" if children else ""
+        print(f"    Household: {household}{c_note}")
+    if enabled:
+        print(f"    Domains:   {', '.join(enabled)}")
+    print()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -405,7 +471,7 @@ def main(argv: list[str] | None = None) -> int:
     # Load
     profile = _load_profile()
 
-    # Validate
+    # Blocking validation errors
     errors = _validate(profile)
     if errors:
         print("Validation failed:")
@@ -415,8 +481,19 @@ def main(argv: list[str] | None = None) -> int:
         print("Existing Artha.md NOT modified.")
         return 1
 
+    # Non-blocking advisory warnings (placeholder data the user may not have noticed)
+    warnings = _collect_warnings(profile)
+    if warnings:
+        print("⚠  Advisory warnings (non-blocking):")
+        for w in warnings:
+            print(f"     {w}")
+        print()
+
     if args.validate:
+        _print_validate_summary(profile)
         print("Validation passed. (--validate mode: no files written)")
+        if warnings:
+            print(f"  ⚠  {len(warnings)} advisory warning(s) — review above before generating")
         return 0
 
     # Generate

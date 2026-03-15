@@ -101,16 +101,6 @@ pass "Dependencies installed"
 
 blank
 
-# ── Profile template ──────────────────────────────────────────────────────────
-if [ ! -f "config/user_profile.yaml" ]; then
-  cp config/user_profile.example.yaml config/user_profile.yaml
-  pass "Profile template copied → config/user_profile.yaml"
-else
-  info "Profile already exists at config/user_profile.yaml"
-fi
-
-blank
-
 # ── PII safety git hook ───────────────────────────────────────────────────────
 if git rev-parse --git-dir &>/dev/null 2>&1; then
   git config core.hooksPath .githooks 2>/dev/null && pass "PII safety hook activated" || true
@@ -125,25 +115,42 @@ blank
 python scripts/demo_catchup.py
 blank
 
-# ── Next-steps mission card ───────────────────────────────────────────────────
-echo -e "${BOLD}┌─────────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   🚀  Artha is installed.  3 steps to your first real briefing: │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   1.  Edit config/user_profile.yaml   ← fill in your details   │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   2.  python scripts/generate_identity.py                       │${RESET}"
-echo -e "${BOLD}│       (builds config/Artha.md — your AI's instruction file)     │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   3.  Open your AI CLI and say:  catch me up                    │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   ─────────────────────────── when you're ready ─────────────  │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   Connect Gmail/Calendar:  python scripts/setup_google_oauth.py │${RESET}"
-echo -e "${BOLD}│   Set up encryption:       brew install age  →  see README.md   │${RESET}"
-echo -e "${BOLD}│   Guided profile setup:    /bootstrap  (inside your AI CLI)     │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}│   Full guide: docs/quickstart.md                                │${RESET}"
-echo -e "${BOLD}│                                                                 │${RESET}"
-echo -e "${BOLD}└─────────────────────────────────────────────────────────────────┘${RESET}"
-blank
+# ── Interactive wizard or next-steps ─────────────────────────────────────────
+if [ -t 0 ] && [ -t 1 ]; then
+  # Running in an interactive terminal — offer the guided wizard
+  echo -e "${BOLD}  Ready to personalize Artha for YOUR life?${RESET}"
+  read -rp "  Run the 2-minute setup wizard now? [yes/no]: " WIZARD_ANSWER
+  if [[ "$WIZARD_ANSWER" =~ ^[Yy] ]]; then
+    blank
+    python artha.py --setup
+  else
+    blank
+    # Copy minimal starter profile for manual editing
+    if [ ! -f "config/user_profile.yaml" ]; then
+      if [ -f "config/user_profile.starter.yaml" ]; then
+        cp config/user_profile.starter.yaml config/user_profile.yaml
+        pass "Minimal profile template copied → config/user_profile.yaml"
+      else
+        cp config/user_profile.example.yaml config/user_profile.yaml
+        pass "Profile template copied → config/user_profile.yaml"
+      fi
+    fi
+    echo -e "${BOLD}┌─────────────────────────────────────────────────────────────────┐${RESET}"
+    echo -e "${BOLD}│  3 steps to your first real briefing:                           │${RESET}"
+    echo -e "${BOLD}│                                                                 │${RESET}"
+    echo -e "${BOLD}│  1.  Edit config/user_profile.yaml   ← your name, email, tz    │${RESET}"
+    echo -e "${BOLD}│  2.  python scripts/generate_identity.py                        │${RESET}"
+    echo -e "${BOLD}│  3.  Open your AI CLI and say:  catch me up                     │${RESET}"
+    echo -e "${BOLD}│                                                                 │${RESET}"
+    echo -e "${BOLD}│  Or re-run the wizard anytime:   python artha.py --setup        │${RESET}"
+    echo -e "${BOLD}└─────────────────────────────────────────────────────────────────┘${RESET}"
+    blank
+  fi
+else
+  # Non-interactive (CI / piped) — just copy the starter profile silently
+  if [ ! -f "config/user_profile.yaml" ]; then
+    src="config/user_profile.starter.yaml"
+    [ -f "$src" ] || src="config/user_profile.example.yaml"
+    cp "$src" config/user_profile.yaml
+  fi
+fi
