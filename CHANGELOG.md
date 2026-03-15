@@ -11,6 +11,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.2] — 2026-03-15
+
+### Fixed
+- **`scripts/vault.py`** — `do_health()` now uses a 3-exit-code model: exit 0 (fully healthy), exit 1 (hard failure — age binary, key, or state dir), exit 2 (soft warnings only — orphaned `.bak` files, GFS never validated, key never exported). Previously `.bak` files set `ok=False` → exit 1, which blocked catch-up entirely.
+- **`scripts/preflight.py`** — `check_vault_health()` handles vault exit 2 as a P1 advisory (non-blocking). Extracts the `⚠ .bak` warning line for accurate display; fix hint now correctly reads `python3 scripts/vault.py encrypt`.
+- **`scripts/preflight.py`** — `check_vault_lock()` auto-clears stale locks unconditionally (no `--fix` required). Checks PID liveness in addition to age threshold. All error messages now show the actual lock file path instead of the generic `~/.artha-decrypted`.
+- **`scripts/detect_environment.py`** — `detect_json()` emits compact single-line JSON when stdout is not a TTY (pipeline-safe), and indented JSON when printing to a terminal. Added `--pretty` CLI flag for explicit formatting.
+- **`scripts/connectors/google_calendar.py`** — `_parse_event()` no longer includes raw attendee email addresses in JSONL output. Attendees are now `{name, self}` only; display name falls back to the username portion of the email address.
+- **`config/Artha.core.md` + `config/Artha.md`** — All `python scripts/` references updated to `python3 scripts/` for macOS/Linux consistency; added prescriptive `alias python=python3` note in §1; vault §1 note updated for cross-platform; Step 0 clarified: stale locks and orphaned `.bak` files are crash-state that auto-resolves and never constitutes a blocking P0.
+
+### Tests
+- Added 7 targeted regression/contract tests: `test_vault_health_bak_files_exit_2_not_1`, `TestVaultHealthExitCodes` (3 tests covering exit 0/1/2 → P0/P1 mapping), `TestVaultLockAutoClean` (3 tests covering stale-by-age, stale-by-dead-PID, no-lock). Total: 943 tests (+7).
+
+---
+
 ## [7.0.1] — 2026-03-15
 
 ### Fixed

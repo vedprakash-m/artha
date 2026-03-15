@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 2.3 | **Status**: Draft | **Date**: March 2026
+> **Version**: 2.4 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0, Tech Spec v3.9
+> **Implements**: PRD v7.0.2, Tech Spec v3.9.2
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v2.4 | 2026-03 | Preflight UX hardening: orphaned `.bak` files displayed as P1 advisory (⚠, non-blocking) rather than P0 block — catch-up always proceeds with a `Run: python3 scripts/vault.py encrypt` inline hint; stale session lock shows `auto-cleared ✓` instead of error; `detect_environment.py` emits single-line JSON when stdout is piped (pipeline-friendly) and pretty JSON in terminal; all `python` commands in AI agent instructions updated to `python3` (macOS) with explicit alias note. (implements PRD v7.0.2) |
 | v2.3 | 2026-03 | Agentic Intelligence UX: briefings produced via structured OODA loop show cross-domain compound insights (not just single-domain alerts); context pressure indicator (GREEN/YELLOW/RED/CRITICAL) surfaces in `## Session Metadata`; crash-recovery resume prompt shown at session start when valid checkpoint exists; persistent facts (correction, pattern, preference facts from prior sessions) silently inform briefing orientation without separate user action. (implements PRD v7.0 F15.128–F15.132) |
 | v2.2 | 2026-03 | Agentic CLI Hardening UX: skill runner now directly executable (no silent failure when invoked from CLI agents like Gemini/Claude); pipeline health output always visible without `--verbose` — `[health] ✓ name` per connector; NOAA skill surfaces misconfigured coordinates as `ValueError` with inline fix guidance instead of opaque 404; USCIS 403 response includes `blocked: true` flag + direct link to egov.uscis.gov for manual check. (implements PRD v6.1 F15.124–F15.127) |
 | v2.1 | 2026-03 | VM Hardening UX: `⚠️ READ-ONLY MODE` briefing header pattern, per-connector degradation notices, mandatory Connector & Token Health table in every briefing (format defined in config/workflow/finalize.md), `⛩️ PHASE GATE` checklist format in workflow files, `[snippet — verify in email client]` annotation for partial email reads, `## Session Metadata` read-only footer block (implements PRD v6.0 F15.119–F15.123) |
