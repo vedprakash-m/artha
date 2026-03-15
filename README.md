@@ -32,11 +32,10 @@ Setup runs a demo briefing in under 10 seconds, then offers a 2-minute wizard to
 ```powershell
 git clone https://github.com/vedprakash-m/artha.git
 cd artha
-python -m venv $HOME\.artha-venvs\.venv
-& $HOME\.artha-venvs\.venv\Scripts\Activate.ps1
-pip install -r scripts/requirements.txt
-python artha.py --setup
+.\setup.ps1
 ```
+
+`setup.ps1` mirrors `setup.sh` — creates a venv at `$HOME\.artha-venvs\.venv-win`, installs dependencies, runs the demo, then offers the setup wizard.
 
 </details>
 
@@ -97,12 +96,13 @@ python scripts/migrate.py             # write config/user_profile.yaml
 ## What You Get
 
 - **Morning briefings** with action items across 24 life domains (health, finance, goals, immigration, kids, home, and more)
-- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS
+- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health
 - **Encrypted state** for sensitive domains with `age` — health, finance, immigration at rest
-- **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor
+- **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor, financial resilience
 - **Telegram bridge** — conversational interface from your phone (45+ command aliases, multi-LLM Q&A)
 - **Household-aware** — adapts to single, couple, family, or roommate configurations; owner vs. renter
-- **Works everywhere** — macOS, Windows, Linux; pure Python
+- **Works everywhere** — macOS, Windows (`setup.ps1`), Linux; pure Python
+- **`--doctor`** — unified 11-point diagnostic: Python, venv, packages, age, keychain, tokens, state, PII hook, last catch-up
 
 ---
 
@@ -113,6 +113,10 @@ pip install -e ".[dev]"
 make test      # run test suite
 make check     # lint + tests + PII scan + schema validation
 make start     # re-run setup.sh from scratch
+```
+
+```bash
+python artha.py --doctor   # 11-point health check for your installation
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
