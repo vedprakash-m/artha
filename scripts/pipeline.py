@@ -330,12 +330,14 @@ def run_pipeline(
                 error_count += 1
             else:
                 # Flush buffered lines to stdout (sequential to prevent interleave)
-                for line in lines:
+                # Apply email marketing classifier inline if available
+                classified_lines = _classify_email_lines(lines, verbose=verbose)
+                for line in classified_lines:
                     print(line)
-                total_records += len(lines)
+                total_records += len(classified_lines)
                 if verbose:
                     print(
-                        f"[pipeline] ✓ {name}: {len(lines)} records in {elapsed:.1f}s",
+                        f"[pipeline] ✓ {name}: {len(classified_lines)} records in {elapsed:.1f}s",
                         file=sys.stderr,
                     )
 
@@ -357,6 +359,51 @@ def run_pipeline(
     _write_pipeline_metrics(timing, total_records, error_count)
 
     return 3 if error_count > 0 else 0
+
+
+def _classify_email_lines(lines: list[str], verbose: bool = False) -> list[str]:
+    """Apply email marketing classification to buffered JSONL lines.
+
+    Each email record gains a ``marketing: bool`` and optional
+    ``marketing_category: str`` field.  Non-email records and unparseable
+    lines are returned unchanged.
+
+    Falls back silently if email_classifier is unavailable (e.g. fresh
+    install) — records pass through without classification tags.
+    """
+    try:
+        from email_classifier import classify_records  # type: ignore[import]
+    except ImportError:
+        return lines  # Classifier not yet available — pass through unchanged
+
+    records: list[dict] = []
+    idx_map: list[int] = []  # maps records index → original lines index
+    for i, line in enumerate(lines):
+        try:
+            records.append(json.loads(line))
+            idx_map.append(i)
+        except json.JSONDecodeError:
+            pass
+
+    if not records:
+        return lines
+
+    classify_records(records)
+
+    # Reconstruct lines list with classified records
+    result = list(lines)
+    for rec, orig_idx in zip(records, idx_map):
+        result[orig_idx] = json.dumps(rec, ensure_ascii=False, default=str)
+
+    if verbose:
+        marketing_count = sum(1 for r in records if r.get("marketing"))
+        if marketing_count:
+            print(
+                f"[pipeline] email_classifier: {marketing_count}/{len(records)} records tagged marketing",
+                file=sys.stderr,
+            )
+
+    return result
 
 
 def _write_pipeline_metrics(

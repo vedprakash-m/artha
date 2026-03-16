@@ -34,10 +34,19 @@ If a full email body cannot be read:
 ### Step 5 — PII pre-filter + email pre-processing
 
 **5a — Marketing suppression (run first, before PII scan):**
+
+When pipeline.py is run, it automatically calls `scripts/email_classifier.py`
+for each connector's email records, tagging them with `marketing: true|false`.
+Records with `marketing: true` should be suppressed and NOT routed in Step 6.
+
+If using AI CLI without pipeline.py, apply these rules manually:
 Immediately discard emails matching:
 - Known marketing sender domains: `@promotions.google.com`, `@e.amazon.com`, `*.bulk-mailer.*`
 - Subject: "unsubscribe", "20% off", "sale ends", "limited time offer", "flash sale"
 - Header: `List-Unsubscribe:` present AND sender is not a trusted domain
+
+Trusted domains (never suppress): USCIS, IRS, HDFC, Chase, Fragomen, Microsoft HR,
+medical insurance providers, government agencies.
 
 **5b — PII scan:**
 ```bash
@@ -54,6 +63,17 @@ Note in footer: "PII scan: limited (MCP-direct data, no pipeline filtering)."
 3. Strip standard footers
 4. Truncate each body to 1,500 tokens — append `[…truncated]` if cut
 5. Batch-summarize if digest mode or >50 emails
+
+**5d — Context offloading (pipeline mode):**
+After pre-processing, offload the bulk pipeline output to reduce context pressure:
+```bash
+python3 -c "
+from scripts.context_offloader import offload_artifact
+offload_artifact('pipeline_output', pipeline_jsonl_str)
+"
+```
+In AI CLI mode: write the processed email batch to `tmp/pipeline_output.jsonl` and
+reference it by path throughout Steps 6–9 rather than holding it in context.
 
 ### Step 6 — Route emails to domains
 

@@ -36,8 +36,11 @@ Log each: `⏭️ Step N skipped — read-only mode`
 
 **SKIP in read-only mode** → log `⏭️ Step 11c skipped — read-only mode`
 
-After the session summary is generated, extract durable facts for cross-session learning:
+After the session summary is generated, extract durable facts for cross-session learning.
+`get_context_card()` in `session_summarizer.py` now automatically calls `fact_extractor`
+for catch-up commands — no manual invocation needed when using the Python harness.
 
+For manual invocation (AI CLI context or fallback):
 ```bash
 python3 -c "
 from pathlib import Path
@@ -53,6 +56,12 @@ else:
     print('No session summary found — skipping fact extraction')
 "
 ```
+
+After pipeline run, write calendar events to state/calendar.md:
+```bash
+python3 scripts/calendar_writer.py --input tmp/pipeline_output.jsonl
+```
+If `tmp/pipeline_output.jsonl` was not written (AI CLI mode), skip silently.
 
 If during this session the user corrected a previous finding (e.g., "that's not an anomaly"
 or "ignore X"), an explicit correction fact is created automatically. These corrections
@@ -130,14 +139,23 @@ Sync `state/open_items.md` → Microsoft To Do lists.
 
 **SKIP in read-only mode** → log `⏭️ Step 16 skipped — read-only mode`
 
-Write catch-up metadata to `state/health-check.md` frontmatter:
-```yaml
-last_catch_up: YYYY-MM-DDTHH:MM:SSZ
-catch_up_count: N+1
-domains_processed: [list]
-email_count: N
-session_mode: normal|degraded|offline|read-only
+Call the script to atomically update `state/health-check.md` frontmatter and
+rotate connector health logs older than 7 days to `tmp/connector_health_log.md`:
+
+```bash
+python3 scripts/health_check_writer.py \
+    --last-catch-up "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --email-count N \
+    --domains-processed domain1,domain2 \
+    --mode normal
 ```
+
+Replace `N` with the actual email count and the comma-separated list with
+domains processed this session.  `--mode` is one of: `normal`, `degraded`,
+`offline`, `read-only`.
+
+The script is idempotent — safe to call multiple times; each call increments
+`catch_up_count` by 1 and replaces bootstrap stubs with the proper schema.
 
 In read-only mode: embed session metadata in briefing footer instead:
 ```

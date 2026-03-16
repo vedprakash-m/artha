@@ -11,6 +11,44 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.4] — 2026-03-15
+
+### Added — Catch-Up Quality Hardening (P0/P1/P2)
+
+**P0: Critical Reliability Fixes**
+- **`scripts/preflight.py`** — `check_msgraph_token()` now attempts proactive refresh when the token is already expired (`secs_left < 0`), not just within 5 minutes; previously an expired token silently skipped the refresh branch and caused the entire catch-up to fail with 401 errors.
+- **`scripts/preflight.py`** — Added `_is_bootstrap_stub(path)` helper that detects un-populated YAML template stubs (files containing `# Content\nsome: value` fingerprint). `check_state_templates()` now reports and, with `--fix`, replaces stubs — in addition to creating missing files. Summary line now reads "created N + replaced M bootstrap stubs".
+- **`scripts/migrate_oi.py`** (new) — Idempotent one-time backfill scanner: reads all `state/*.md` files, extracts `OI-NNN` references, and appends any missing IDs to `state/open_items.md` as `-[ ] OI-NNN (backfilled)` entries. Reports the highest OI-NNN seen so users can update the next-ID counter in `state/memory.md`. Supports `--dry-run`.
+
+**P1: Workflow Script Coverage**
+- **`scripts/health_check_writer.py`** (new) — Atomic writer for `state/health-check.md` frontmatter. Non-blocking 3-second file lock (`state/.health-check.lock`); detects and replaces bootstrap stubs; upserts individual YAML keys while preserving unknown fields; rotates connector log blocks older than 7 days to `tmp/connector_health_log.md`; writes via `os.replace()` for atomicity. CLI: `python3 scripts/health_check_writer.py --last-catch-up ISO --email-count N --domains-processed a,b,c --mode normal`.
+- **`config/workflow/finalize.md`** — Step 16 rewritten: replaces the AI-manual YAML instruction with a direct `health_check_writer.py` CLI call, eliminating frontmatter corruption from hand-edited YAML.
+- **`config/workflow/finalize.md`** — Step 11c updated to include `python3 scripts/calendar_writer.py --input tmp/pipeline_output.jsonl` for automatic calendar state persistence.
+- **`scripts/preflight.py`** — Added 48-hour advance advisory for MS Graph token expiry (`TOKEN_ADVANCE_WARN_SECONDS = 172800`). When `0 < secs_left < 172800`, emits a P1 advisory "expires in ~Nh; run --reauth before your next session" so users act proactively rather than hitting an expired token mid-catch-up.
+- **`scripts/calendar_writer.py`** (new) — Reads pipeline JSONL output (stdin, `--input PATH`, or auto-detects `tmp/pipeline_output.jsonl`), filters for calendar/event records, deduplicates events via SHA-256 fingerprint (`<!-- dedup:KEY -->`), and appends new events to `state/calendar.md`. Recognises `google_calendar`, `gcal`, `outlook_calendar`, `msgraph_calendar`, `caldav_calendar`, and `workiq_calendar` connector output. Detects and replaces bootstrap stubs with a proper calendar YAML schema.
+
+**P2: Noise Reduction & Context Quality**
+- **`scripts/email_classifier.py`** (new) — Rule-based marketing email tagger. Whitelist-first: `_IMPORTANT_SENDER_DOMAINS` (USCIS, HDFC, banks, Microsoft, Fragomen, etc.) and `_IMPORTANT_SUBJECT_PATTERNS` (order/shipment, security alerts, immigration, tax) always override marketing signals. Classifies remaining emails by sender patterns and subject keywords into `marketing`, `newsletter`, `promotional`, `social`, or `transactional` categories; sets `marketing: true` on records that are noise. Configurable custom domain whitelist via `artha_config.yaml` `email_classifier.whitelist_domains`.
+- **`scripts/pipeline.py`** — Added `_classify_email_lines()` helper that is invoked post-fetch per connector. Falls back silently if `email_classifier` is not importable (safe for fresh installs). Eliminates ~52 % context noise from routine marketing emails.
+- **`scripts/session_summarizer.py`** — `get_context_card()` now auto-invokes `fact_extractor.extract_facts_from_summary()` + `persist_facts()` for catch-up commands via `_auto_extract_facts_if_catchup()`. Appends "Facts persisted to memory: N" to the context card when facts are saved. Gated on `harness.agentic.fact_extraction.enabled` config flag; fails silently if `fact_extractor` is unavailable.
+- **`config/workflow/process.md`** — Step 5a updated: documents that `pipeline.py` now auto-calls `email_classifier.py`; lists trusted-domain override rules for AI fallback. New Step 5d: context offloading instruction using `context_offloader.offload_artifact('pipeline_output', ...)` referencing `tmp/pipeline_output.jsonl`.
+
+### Tests
+- Added 27 new tests in `tests/unit/test_catchup_quality_fixes.py`:
+  - `TestEmailClassifier` (10 tests) — whitelist overrides, marketing sender/subject/header detection, category labels, `classify_records` batch method.
+  - `TestHealthCheckWriter` (3 tests) — file creation from template, key upsert with existing file, stub detection.
+  - `TestCalendarWriter` (5 tests) — calendar record detection, dedup key generation, dedup key scan, writer integration, non-calendar record passthrough.
+  - `TestMigrateOI` (4 tests) — OI reference extraction, skip-file list, already-present deduplication, dry-run mode.
+  - `TestPreflightBootstrapStub` (5 tests) — stub fingerprint detection, non-stub passthrough, check_state_templates stub reporting, auto-fix stub replacement, fix-count summary line format.
+- Total: **1042 tests** (+27 from 1015).
+
+### Specs
+- **`specs/artha-prd.md`** → v7.0.4: version table row added.
+- **`specs/artha-tech-spec.md`** → v3.9.4: version table row added; §8.12 "Catch-Up Quality Hardening" added (§8.12.1 Email Classifier, §8.12.2 Health Check Writer, §8.12.3 Calendar Writer, §8.12.4 OI Migration, §8.12.5 Preflight Fixes).
+- **`specs/artha-ux-spec.md`** → v2.6: version table row added.
+
+---
+
 ## [7.0.3] — 2026-03-15
 
 ### Added — Agentic Reloaded (specs/agentic-reloaded.md AR-1–AR-8)

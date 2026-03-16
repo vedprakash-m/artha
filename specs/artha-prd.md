@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v7.0.3
+## Product Requirements Document · v7.0.4
 
 **Author:** [Author]
 **Date:** March 15, 2026
@@ -14,6 +14,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.0.4 | 2026-03 | Catch-up quality hardening (catch-up-quality-report 2026-03-15): `scripts/email_classifier.py` (rule-based marketing tagger, whitelist-first, tags `marketing: bool` + `marketing_category:` on pipeline email records, auto-wired into `pipeline.py`); `scripts/health_check_writer.py` (atomic frontmatter updater for `state/health-check.md`, connector log rotation >7d to `tmp/connector_health_log.md`, lock-safe atomic write); `scripts/calendar_writer.py` (pipeline GCal/Outlook records → `state/calendar.md`, SHA-256 dedup on date+title, bootstrap stub detection); `scripts/migrate_oi.py` (idempotent OI backfill scanner — finds OI-NNN refs in all state files, appends to `open_items.md`); `scripts/preflight.py` token fix (refresh attempted when access token already expired, not just within 300s window) + bootstrap stub detection (`_is_bootstrap_stub()`) in `check_state_templates()` + 48h advance expiry advisory for MS Graph; `scripts/session_summarizer.py` `get_context_card()` auto-invokes `fact_extractor` for catch-up commands; `config/workflow/finalize.md` Step 11c (calendar_writer call) + Step 16 rewritten to call `health_check_writer.py` script; `config/workflow/process.md` Step 5a (email_classifier context) + Step 5d (context_offloader instruction). 1042 tests (+27). See §8.12. |
 | v7.0.3 | 2026-03 | Agentic Reloaded (AR-1–AR-8): bounded memory capacity enforcement (`MAX_MEMORY_CHARS=3000`, `MAX_FACTS_COUNT=30`, `_consolidate_facts()`); self-model metacognition template (`state/templates/self_model.md`); pre-eviction memory flush (`should_flush_memory()`); cross-session search (`session_search.py`, grep-based with relevance ranking); procedural memory store (`procedure_index.py`, `state/learned_procedures/`); prompt stability architecture (frozen layer marker in `generate_identity.py`); delegation protocol (`delegation.py`, `DelegationRequest/Result`); root-cause-before-retry in `fetch.md`; 2 new audit checks (`check_memory_capacity`, `check_prompt_stability`); AR-* config flags in `artha_config.yaml`. 1015 tests (+72). |
 | v7.0.2 | 2026-03 | Operational safety hardening: vault health 3-exit-code model (exit 2 = soft warnings, never blocks catch-up); stale lock auto-clear without `--fix`; `detect_environment.py` compact JSON when piped; calendar attendee PII redaction; `python3` consistency in AI agent instructions; +7 targeted tests (936→943). |
 | v7.0.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx` to all child middlewares (was silently dropped). Test mocks updated to match `StateMiddleware` Protocol. |
