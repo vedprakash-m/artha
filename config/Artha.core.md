@@ -1333,6 +1333,43 @@ python3 scripts/channel_push.py
 - Audit: `CHANNEL_PUSH` events logged to `state/audit.md`.
 - If `channels.yaml` is missing or `push_enabled: false`, silently skipped in < 10ms.
 
+### Step 21 — Persistent Fact Extraction
+
+After channel push (Step 20), extract durable facts from this session and persist them to `state/memory.md`. This enables cross-session learning — corrections made today suppress false-positive alerts tomorrow.
+
+**Only runs if `harness.agentic.fact_extraction.enabled: true` in `artha_config.yaml`** (defaults to `true`).
+
+```python
+python3 -c "
+import glob
+from pathlib import Path
+from scripts.fact_extractor import extract_facts_from_summary, persist_facts
+
+# Find the most recent session history written by session_summarizer.py
+summaries = sorted(glob.glob('tmp/session_history_*.json'))
+if summaries:
+    artha_dir = Path('.')
+    facts = extract_facts_from_summary(Path(summaries[-1]), artha_dir)
+    if facts:
+        count = persist_facts(facts, artha_dir)
+        print(f'Step 21: {count} new facts persisted to state/memory.md')
+    else:
+        print('Step 21: no extractable facts in this session')
+else:
+    print('Step 21: no session history found — skipping fact extraction')
+"
+```
+
+**What gets extracted** (per `fact_extractor.py` schema):
+- `correction` — any item where user said "that's not right" / "ignore X"
+- `pattern` — recurring observations detected across sessions (e.g. "PSE bill arrives ~15th")
+- `preference` — user behavior signals (e.g. flash format preferred on weekdays)
+- `contact` — contact updates mentioned in session
+- `schedule` — recurring calendar patterns
+- `threshold` — user-calibrated alert thresholds
+
+**Failure mode:** If `fact_extractor.py` import fails or extraction errors, this step is **non-blocking** — log the error and continue. Catch-up completes regardless.
+
 ---
 
 **Catch-up complete.** Display summary line: `Artha catch-up complete. [N] emails → [N] actionable items. Next recommended catch-up: [time].`
