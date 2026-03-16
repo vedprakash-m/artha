@@ -124,7 +124,7 @@ def log(msg: str) -> None:
     audit_log = _config["AUDIT_LOG"]
     if audit_log.exists():
         try:
-            with open(audit_log, "a") as f:
+            with open(audit_log, "a", encoding="utf-8") as f:
                 f.write(entry + "\n")
         except OSError:
             pass

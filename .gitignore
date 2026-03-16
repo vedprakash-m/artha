@@ -94,6 +94,8 @@ config/Artha.md
 
 # --- Runtime lock and ephemeral files ---
 .artha-op-lock
+*.bak
+state/.preflight_write_test
 
 # --- OneDrive conflict copies ---
 *-CPC-vemis-DJD0M*

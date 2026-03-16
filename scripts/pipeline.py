@@ -516,7 +516,7 @@ def _write_health_report(results: list[tuple[str, bool]]) -> None:
         mark = "✅" if ok else "❌"
         lines.append(f"- {mark} `{name}`\n")
     try:
-        with open(_HEALTH_CHECK_MD, "a") as fh:
+        with open(_HEALTH_CHECK_MD, "a", encoding="utf-8") as fh:
             fh.writelines(lines)
     except OSError:
         pass  # Non-fatal

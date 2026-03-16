@@ -50,7 +50,7 @@ _REQUIRED_DOMAINS = ["finance", "health", "home", "kids", "immigration"]
 _REQUIRED_SIGNAL_THRESHOLD = 0.80
 
 # Mark expensive tests that call the real Claude API
-pytestmark = pytest.mark.usefixtures()
+# (pytestmark removed: usefixtures() without arguments has no effect)
 
 
 # ---------------------------------------------------------------------------

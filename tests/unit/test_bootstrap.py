@@ -74,8 +74,8 @@ class TestVenvPython:
     def test_posix_path(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "linux")
         py = bs._venv_python()
-        assert "bin/python3" in str(py)
-        assert ".artha-venvs" in str(py)
+        assert "bin/python3" in py.as_posix()
+        assert ".artha-venvs" in py.as_posix()
 
     def test_windows_path(self, monkeypatch):
         monkeypatch.setattr(sys, "platform", "win32")
