@@ -1,5 +1,5 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v7.0.5
+## Product Requirements Document · v7.0.6
 
 **Author:** [Author]
 **Date:** March 15, 2026

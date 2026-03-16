@@ -317,3 +317,8 @@ class OccasionTrackerSkill(BaseSkill):
     @property
     def compare_fields(self) -> list:
         return ["total", "checked_on"]
+
+
+def get_skill(artha_dir=None):
+    """Factory called by skill_runner to instantiate this skill."""
+    return OccasionTrackerSkill(artha_dir=artha_dir)
