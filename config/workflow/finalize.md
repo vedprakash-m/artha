@@ -108,6 +108,18 @@ Then extract the working procedure:
 Scan all processed domains for P0/P1 alerts.
 Format with severity indicators per their URGENCY×IMPACT×AGENCY scores.
 
+**Skill output integration:** If `skill_runner.py` produced output this session,
+incorporate it into the relevant briefing sections:
+- `relationship_pulse` → RELATIONSHIP PULSE section (stale contacts, overdue reconnects)
+- `occasion_tracker` → OCCASIONS & WISHES section (🔴 within 3 days, 🟠 within 7, 🟡 within 14)
+- `bill_due_tracker` → Finance section (bills due soon or overdue)
+- `credit_monitor` → Finance section (🔴 fraud alerts surface before all other Finance items)
+- `school_calendar` → Kids section (upcoming school events, grade alerts)
+
+Skill output for `occasion_tracker` with imminent items (≤ 3 days) should be
+elevated to 🔴 CRITICAL if the person is in `core_family`, or 🟠 URGENT for
+`extended_family_india` and `best_friends` circles.
+
 ### Step 13 — Propose write actions
 
 For each recommended action from domain processing:

@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9.5 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9.6 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.5
+> **Implements**: PRD v7.0.6
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.

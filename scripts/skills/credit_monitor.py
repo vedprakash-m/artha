@@ -181,3 +181,8 @@ class CreditMonitorSkill(BaseSkill):
     @property
     def compare_fields(self) -> list:
         return ["total", "has_fraud", "checked_on"]
+
+
+def get_skill(artha_dir=None):
+    """Factory called by skill_runner to instantiate this skill."""
+    return CreditMonitorSkill(artha_dir=artha_dir)

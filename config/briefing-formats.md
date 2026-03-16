@@ -44,9 +44,23 @@ Last catch-up: [N] hrs ago | Emails: [N] | Period: since [date/time]
 
 ━━ 🤝 RELATIONSHIP PULSE ━━━━━━━━━━━━━━━━━
 • On cadence: [N] close family · [N] friends | Overdue: [N reconnects]
-• Upcoming 14 days: [birthday/occasion list or "none"]
 • [Top 1 reconnect suggestion if overdue: "Consider reaching out to [Name] — [N] days"]
 (omit if social.md has no overdue contacts and no upcoming occasions)
+
+━━ 🎂 OCCASIONS & WISHES ━━━━━━━━━━━━━━━━━
+(omit entire section if no occasions within 14 days)
+
+**🔴 Within 3 days:**
+• [Person] birthday — [Date], turning [age]. Circle: [circle]. Last WA: [date or "never"].
+  → "[WhatsApp greeting suggestion]" [Send ↗]
+
+**🟠 Within 7 days:**
+• [Person or Festival] — [Date]. [action if applicable]
+
+**🟡 Within 14 days:**
+• [N] occasions coming up — check occasions.md
+
+(Source: occasion_tracker + relationship_pulse skills)
 
 ━━ 💡 ONE THING ━━━━━━━━━━━━━━━━━━━━━━━━━━
 [The single most important insight — specific, actionable, not generic]

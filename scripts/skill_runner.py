@@ -37,6 +37,9 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "uscis_status", "property_tax", "king_county_tax",
     "visa_bulletin", "noaa_weather", "nhtsa_recalls",
     "passport_expiry", "subscription_monitor", "financial_resilience",
+    # U-9 utilization uplift skills
+    "relationship_pulse", "occasion_tracker", "bill_due_tracker",
+    "credit_monitor", "school_calendar",
 })
 
 # Timeout for individual skill execution (seconds)
