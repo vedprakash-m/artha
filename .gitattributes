@@ -1,0 +1,16 @@
+# Normalize line endings to LF on commit (prevents OneDrive/Windows CRLF contamination)
+* text=auto eol=lf
+
+# Explicitly binary files — no line-ending normalization
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.db binary
+*.sqlite binary
+*.pyc binary
