@@ -45,6 +45,36 @@ features:
     spec: "PRD F4.10"
     status: implemented
     confidence: medium
+  work_calendar:
+    spec: "specs/work-domain-assessment.md §17-22"
+    status: implemented
+    confidence: high
+    note: "workiq_bridge connector (Wave 1) — calendar, email, Teams via WorkIQ"
+  work_comms:
+    spec: "specs/work-domain-assessment.md §17-22"
+    status: implemented
+    confidence: high
+    note: "workiq_bridge connector — email triage + Teams messages"
+  work_projects:
+    spec: "specs/work-domain-assessment.md §17-22"
+    status: implemented
+    confidence: high
+    note: "ado_workitems connector — Azure DevOps WIQL + batch fetch via az_cli bearer"
+  work_people:
+    spec: "specs/work-domain-assessment.md §17-22"
+    status: partial
+    confidence: medium
+    note: "Wave 2 — workiq_bridge people mode + Graph org chart enrichment"
+  work_notes:
+    spec: "specs/work-domain-assessment.md §17-22"
+    status: partial
+    confidence: medium
+    note: "Wave 2 — WorkIQ document queries (not independently tested)"
+  auth_az_cli:
+    spec: "specs/work-domain-assessment.md §18.4"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/auth.py — load_az_cli_token() for corporate ADO auth"
 
   # ── Briefing & Output ───────────────────────────────────────────────────
   standard_briefing:

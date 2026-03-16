@@ -308,7 +308,56 @@ if workiq_ready:
 
     # Save parsed+redacted events to tmp/work_calendar.json (ephemeral — deleted at Step 18)
 ```
-If WorkIQ fails at any point, log to state/audit.md and continue. Briefing footer: "⚠️ Work calendar unavailable — [reason]".
+
+**WorkIQ Work Comms (work-comms domain — opt-in, non-blocking):**
+Only runs if `workiq_ready == true` AND `domains.work-comms.enabled == true` in user_profile.yaml.
+```
+if workiq_ready and work_comms_enabled:
+    # Email triage query — surface inbox items needing response
+    email_query = "List emails in my inbox from the last 48 hours that need a response from me. " \
+                  "Format as one line per email: SENDER | SUBJECT | RECEIVED_DATE | NEEDS_RESPONSE(yes/no)"
+
+    # Teams query — surface DMs and channel messages needing action
+    teams_query = "List my Teams messages from the last 48 hours that need my attention. " \
+                  "Format as one line per message: SENDER | CHANNEL_OR_DM | MESSAGE_PREVIEW | NEEDS_ACTION(yes/no)"
+
+    # Run email and Teams queries; results route to work-comms domain (prompts/work-comms.md)
+    # Apply redact_keywords to all subjects/previews before writing to state/work-comms.md
+    # Pre-filter: suppress no-reply@, RSVP, automated pipeline notifications
+```
+
+**WorkIQ Work People (work-people domain — trigger-loaded, opt-in):**
+Loaded ON-DEMAND only — when work-calendar triggers attendee lookup, or user asks "who is [name]?"
+Not fetched on every catch-up. Each lookup uses the workiq_bridge connector's `people` mode.
+```
+if work_people_enabled and trigger_person_name:
+    people_query = "Who is {person_name}? Include: job title, department, manager, " \
+                   "how we have collaborated recently."
+    # Results enrich the meeting prep section of the work-calendar briefing
+    # Cache TTL: 7 days (org relationships change slowly)
+```
+
+**ADO Work Projects (work-projects domain — opt-in, non-blocking):**
+Only runs if `integrations.azure_devops.enabled == true` in user_profile.yaml.
+```
+if ado_enabled:
+    # pipeline.py --source ado_workitems runs as part of Step 4 parallel fetch
+    # Auth: az_cli bearer token (primary), PAT from keyring (fallback)
+    # WIQL query → batch fetch → normalise to: id, title, state, type, priority, dates, sprint
+    # Results route to work-projects domain (prompts/work-projects.md)
+    # Alert thresholds applied: P0/P1 bugs → 🔴, sprint ending <3d → 🟠
+```
+
+**Parallel execution note (v3.0 — Work Domains):**
+When work domains are enabled, all WorkIQ queries run in parallel alongside personal data fetches.
+Typical wall-clock budget:
+  WorkIQ calendar  ~40s, email  ~47s, Teams  ~37s — all parallelized → wall time ~47s
+  ADO work items   ~3s (independent)
+  Gmail + Google Calendar  ~5s (unchanged)
+  Total pipeline: ~50s (limited by WorkIQ email query; within acceptable budget)
+WorkIQ failures are always non-blocking — personal data is fetched regardless.
+
+
 
 **Calendar deduplication rule:** After merging all calendar feeds (Google, Outlook, iCloud, WorkIQ), if two events match on (summary ± minor variation) AND (start time ± 5 minutes), keep one record and set `"source": "both"`. For WorkIQ↔personal matches specifically, use field-merge dedup: keep personal event as primary, merge in work title + Teams link from work event, set `"merged": true`. Merged events are excluded from cross-domain conflict detection. Do NOT deduplicate email feeds — each email source is a distinct inbox.
 

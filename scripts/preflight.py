@@ -882,8 +882,94 @@ def check_workiq() -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
-# Main preflight runner
+# ADO auth check (Work Domains — opt-in, non-blocking)
 # ---------------------------------------------------------------------------
+
+def check_ado_auth() -> CheckResult:
+    """P1 non-blocking: Verify Azure CLI is available and has an active ADO session.
+
+    Only runs if azure_devops.enabled is true in user_profile.yaml.
+    Silently passes if the ADO integration is not configured.
+    """
+    # Check if azure_devops integration is configured and enabled
+    ado_enabled = False
+    ado_org = ""
+    try:
+        _sys = sys
+        if SCRIPTS_DIR not in _sys.path:
+            _sys.path.insert(0, SCRIPTS_DIR)
+        import yaml as _yaml
+        _profile_path = os.path.join(ARTHA_DIR, "config", "user_profile.yaml")
+        if os.path.exists(_profile_path):
+            with open(_profile_path, encoding="utf-8") as _f:
+                _profile = _yaml.safe_load(_f) or {}
+            _ado = (_profile.get("integrations") or {}).get("azure_devops") or {}
+            ado_enabled = bool(_ado.get("enabled", False))
+            ado_org = str(_ado.get("organization_url", "")).strip()
+    except Exception:
+        pass
+
+    if not ado_enabled:
+        return CheckResult(
+            "Azure DevOps auth", "P1", True,
+            "ADO integration not enabled — skipped ✓",
+        )
+
+    if not ado_org:
+        return CheckResult(
+            "Azure DevOps auth", "P1", False,
+            "ADO enabled but organization_url not set",
+            fix_hint="Add integrations.azure_devops.organization_url to user_profile.yaml",
+        )
+
+    # Try to get an ADO bearer token from Azure CLI
+    ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
+    az_candidates = [
+        "az",
+        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+    ]
+    for az_cmd in az_candidates:
+        try:
+            result = subprocess.run(
+                [az_cmd, "account", "get-access-token",
+                 "--resource", ADO_RESOURCE, "--output", "json"],
+                capture_output=True, text=True, timeout=15,
+                env=_SUBPROCESS_ENV,
+            )
+            if result.returncode == 0:
+                import json as _json
+                data = _json.loads(result.stdout)
+                expires = data.get("expiresOn", "")[:16]
+                return CheckResult(
+                    "Azure DevOps auth", "P1", True,
+                    f"Azure CLI ADO token valid (expires {expires}) ✓",
+                )
+            # Non-zero return: auth failure
+            return CheckResult(
+                "Azure DevOps auth", "P1", False,
+                "Azure CLI is available but not authenticated",
+                fix_hint="Run: az login --tenant <your-tenant-id>",
+            )
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return CheckResult(
+                "Azure DevOps auth", "P1", False,
+                "Azure CLI token request timed out",
+                fix_hint="Check network connectivity and Azure CLI installation",
+            )
+
+    return CheckResult(
+        "Azure DevOps auth", "P1", False,
+        "Azure CLI not found — ADO connector requires az CLI",
+        fix_hint=(
+            "Install Azure CLI: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli"
+        ),
+    )
+
+
+
 
 # Minimal set of importable module names that must exist in the venv.
 # Keys are the import name; values are the install package name.
@@ -1136,6 +1222,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
+    checks.append(check_ado_auth())
 
     # ── P1 — Channel health (v5.0 — non-blocking) ─────────────────────────
     checks.append(check_channel_health())

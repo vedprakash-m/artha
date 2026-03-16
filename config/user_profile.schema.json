@@ -278,7 +278,31 @@
               "type": "array",
               "items": { "type": "string" },
               "description": "Calendar event titles that trigger open-item creation."
+            },
+            "work_modes": {
+              "type": "object",
+              "description": "Which WorkIQ query modes are active for work domains.",
+              "properties": {
+                "calendar":  { "type": "boolean" },
+                "email":     { "type": "boolean" },
+                "teams":     { "type": "boolean" },
+                "people":    { "type": "boolean" },
+                "documents": { "type": "boolean", "description": "Experimental — not independently tested." }
+              }
             }
+          }
+        },
+        "azure_devops": {
+          "type": "object",
+          "description": "Azure DevOps integration — work item tracking (opt-in).",
+          "properties": {
+            "enabled":          { "type": "boolean" },
+            "organization_url": { "type": "string", "format": "uri",
+                                  "description": "ADO org root URL, e.g. https://dev.azure.com/myorg" },
+            "project":          { "type": "string",
+                                  "description": "Primary ADO project name, e.g. MyProject" },
+            "auth_method":      { "type": "string", "enum": ["az_cli", "pat"],
+                                  "description": "az_cli uses Azure CLI bearer (preferred); pat uses keyring PAT." }
           }
         }
       },

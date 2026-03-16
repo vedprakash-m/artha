@@ -9,6 +9,8 @@ Supported auth methods:
   oauth2       — JSON token file (Google, Microsoft Graph)
   app_password — System keyring credential (iCloud, Fastmail, etc.)
   api_key      — System keyring API key (Canvas, custom providers)
+  az_cli       — Azure CLI bearer token (corporate resources, ADO)
+  none         — Connector manages its own auth (WorkIQ, outlookctl)
 
 Security guarantees:
   - All tokens loaded from system credential store (keyring) or files in .tokens/
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -174,6 +177,64 @@ def load_api_key(credential_key: str, service_name: str = "artha") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Azure CLI bearer token (corporate resources — ADO, Graph work account)
+# ---------------------------------------------------------------------------
+
+def load_az_cli_token(resource: str) -> dict:
+    """Get a bearer token from Azure CLI for corporate resources.
+
+    Searches multiple az.cmd paths to handle Windows Program Files layouts
+    and PATH misconfiguration inside virtual environments.
+
+    Args:
+        resource: Azure resource ID or URI.  For ADO use the UUID form:
+                  "499b84ac-1321-427f-aa17-267ca6975798"
+
+    Returns dict with {provider, access_token, expires_on}.
+    Raises RuntimeError with user-actionable message on failure.
+    """
+    if not resource:
+        raise RuntimeError("[auth] az_cli auth requires auth.az_resource to be set")
+
+    az_candidates = [
+        "az",  # on PATH (Linux / Mac / Windows when properly configured)
+        r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd",
+        os.path.expanduser(r"~\AppData\Local\Programs\Microsoft Azure CLI\wbin\az.cmd"),
+    ]
+    for az_cmd in az_candidates:
+        try:
+            result = subprocess.run(
+                [az_cmd, "account", "get-access-token",
+                 "--resource", resource, "--output", "json"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                return {
+                    "provider": "az_cli",
+                    "access_token": data["accessToken"],
+                    "expires_on": data.get("expiresOn", ""),
+                }
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "[auth] Azure CLI token request timed out (>15s). "
+                "Check network connectivity."
+            )
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise RuntimeError(
+                f"[auth] Azure CLI returned unexpected token format: {exc}\n"
+                "Run: az account show  (to verify active session)"
+            ) from exc
+    raise RuntimeError(
+        "[auth] Azure CLI not available or not authenticated. "
+        "Run: az login  (then retry)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Generic dispatcher — reads connector config and dispatches to right loader
 # ---------------------------------------------------------------------------
 
@@ -218,8 +279,17 @@ def load_auth_context(connector_config: dict) -> dict:
         # Canvas and similar: key is per-item (e.g. per-child), loaded by handler
         return {"provider": provider, "method": "api_key"}
 
+    elif method == "az_cli":
+        # Azure CLI bearer token for corporate resources (ADO, work Graph endpoints)
+        resource = auth_cfg.get("az_resource", "")
+        return load_az_cli_token(resource)
+
+    elif method == "none":
+        # Connector manages its own auth internally (WorkIQ, outlookctl COM bridge)
+        return {"provider": connector_config.get("provider", ""), "method": "none"}
+
     else:
         raise RuntimeError(
             f"[auth] Unknown auth method: {method!r} "
-            f"(valid: oauth2, app_password, api_key)"
+            f"(valid: oauth2, app_password, api_key, az_cli, none)"
         )
