@@ -238,14 +238,15 @@ class TestCalendarWriter:
         assert cw._is_calendar_record({"type": "event"}) is True
         assert cw._is_calendar_record({"type": "email", "source": "gmail"}) is False
 
-    def test_bootstrap_stub_replaced_on_read(self):
+    def test_bootstrap_stub_replaced_on_read(self, tmp_path):
         cw = self._import()
         stub_content = "---\n# Content\nsome: value\n---\n"
-        from unittest.mock import patch as _patch, mock_open
-        with _patch("builtins.open", mock_open(read_data=stub_content)):
-            with _patch.object(Path, "exists", return_value=True):
-                # _read_or_init_calendar should replace the stub
-                result = cw._read_or_init_calendar()
+        cal = tmp_path / "calendar.md"
+        cal.write_text(stub_content, encoding="utf-8")
+        from unittest.mock import patch as _patch
+        with _patch.object(cw, "CALENDAR_FILE", cal):
+            # _read_or_init_calendar should replace the stub
+            result = cw._read_or_init_calendar()
         assert "# Content" not in result
         assert "domain: calendar" in result
 
