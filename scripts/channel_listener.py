@@ -2617,15 +2617,31 @@ def _acquire_singleton_lock() -> bool:
             return False
         # We own the mutex — keep the handle alive
         _singleton_mutex_handle = handle
+        # Write PID file for operator convenience
+        try:
+            _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+            _PID_FILE.write_text(str(os.getpid()))
+        except OSError:
+            pass
+        return True
     except Exception:
-        # ctypes unavailable or failed — fall back to PID file heuristic
         pass
 
-    # Write PID file for operator convenience
+    # ctypes unavailable — fall back to PID file heuristic (best-effort, not atomic)
     try:
         _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if _PID_FILE.exists():
+            existing_pid = int(_PID_FILE.read_text().strip())
+            try:
+                import psutil
+                if psutil.pid_exists(existing_pid):
+                    return False  # Another instance is running
+            except ImportError:
+                # psutil not available — trust the PID file
+                return False
         _PID_FILE.write_text(str(os.getpid()))
-    except OSError:
+        return True
+    except (OSError, ValueError):
         pass
 
     return True
