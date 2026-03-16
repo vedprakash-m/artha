@@ -453,6 +453,23 @@ def check_state_directory() -> CheckResult:
         )
 
 
+def _is_bootstrap_stub(path: str) -> bool:
+    """Return True if the file is an unpopulated bootstrap placeholder.
+
+    Bootstrap stubs are created by setup.sh/setup.ps1 and contain the exact
+    two-line body ``# Content\\nsome: value`` inside the YAML frontmatter.
+    Any file that has been genuinely populated will have different frontmatter.
+    We match only the exact fingerprint to avoid false positives on real data.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read(256)  # Only need the first few lines
+        # Exact stub fingerprint: frontmatter starts with ---\n# Content\nsome: value
+        return "# Content\nsome: value" in raw
+    except OSError:
+        return False
+
+
 def check_state_templates(auto_fix: bool = False) -> CheckResult:
     """P1: Populate missing state files from state/templates/ on first run."""
     templates_dir = os.path.join(STATE_DIR, "templates")
@@ -464,17 +481,20 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
         )
     templates = [f for f in os.listdir(templates_dir) if f.endswith(".md") and f != "README.md"]
     missing = []
+    stubs = []
     for tpl in templates:
         target = os.path.join(STATE_DIR, tpl)
         if not os.path.exists(target):
             missing.append(tpl)
+        elif _is_bootstrap_stub(target):
+            stubs.append(tpl)
 
-    if not missing:
+    if not missing and not stubs:
         return CheckResult("state templates", "P1", True, "All state files present ✓")
 
     if auto_fix:
         populated = []
-        for tpl in missing:
+        for tpl in list(missing) + list(stubs):
             src = os.path.join(templates_dir, tpl)
             dst = os.path.join(STATE_DIR, tpl)
             # Special rule for health-check.md: only populate if file is truly absent
@@ -493,15 +513,23 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
                 populated.append(tpl)
             except OSError:
                 pass
+        msg_parts = []
+        if any(t in populated for t in missing):
+            msg_parts.append(f"created {sum(1 for t in missing if t in populated)}")
+        if any(t in populated for t in stubs):
+            msg_parts.append(f"replaced {sum(1 for t in stubs if t in populated)} bootstrap stubs")
+        msg = f"Populated {len(populated)} state files ({', '.join(msg_parts)}): {', '.join(populated)}"
         return CheckResult(
             "state templates", "P1", True,
-            f"Populated {len(populated)} state files from templates: {', '.join(populated)}",
+            msg,
             auto_fixed=True,
         )
 
+    all_needing_fix = missing + stubs
+    stub_note = f" ({len(stubs)} are bootstrap stubs)" if stubs else ""
     return CheckResult(
         "state templates", "P1", False,
-        f"{len(missing)} state file(s) missing: {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}",
+        f"{len(all_needing_fix)} state file(s) need population{stub_note}: {', '.join(all_needing_fix[:5])}{'…' if len(all_needing_fix) > 5 else ''}",
         fix_hint="Run preflight with --fix to auto-populate from state/templates/",
     )
 
@@ -629,7 +657,10 @@ def check_msgraph_token() -> CheckResult:
         except ValueError:
             secs_left = float("inf")
 
-    # --- Layer 1: Proactive refresh if near / past expiry ---
+    # --- Layer 1: Proactive refresh if near / past expiry (including already expired) ---
+    # Attempt refresh whenever within warn window OR already expired (secs_left < 0).
+    # Previously this branch was skipped when secs_left < 0 causing expired tokens
+    # to fall straight to the error path without attempting auto-recovery.
     if secs_left < TOKEN_EXPIRY_WARN_SECONDS:
         refresh_succeeded = False
         try:
@@ -691,6 +722,15 @@ def check_msgraph_token() -> CheckResult:
         return CheckResult(
             "Microsoft Graph token", "P1", True,
             "Token present (expiry unknown — will validate on use) ✓",
+        )
+
+    # 48h advance warning — prompts re-auth before the token expires mid-session
+    TOKEN_ADVANCE_WARN_SECONDS = 172800  # 48 hours
+    if 0 < secs_left < TOKEN_ADVANCE_WARN_SECONDS:
+        hours_left = int(secs_left // 3600)
+        return CheckResult(
+            "Microsoft Graph token", "P1", True,
+            f"Valid for {int(secs_left/60)}m ✓ — ⚠ expires in ~{hours_left}h, run setup_msgraph_oauth.py --reauth before next session",
         )
 
     return CheckResult(

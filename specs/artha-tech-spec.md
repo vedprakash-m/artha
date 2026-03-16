@@ -1,6 +1,6 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9.3 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9.4 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.0.3
 
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.9.4 | 2026-03 | Catch-up quality hardening: `scripts/email_classifier.py` (deterministic marketing tagger — whitelist-first, `_IMPORTANT_SENDER_DOMAINS` frozenset, `_IMPORTANT_SUBJECT_PATTERNS`, `_MARKETING_SENDER_PATTERNS`, `_MARKETING_SUBJECT_PATTERNS`, `_MARKETING_HEADERS`; tags `marketing: bool` + `marketing_category` per record; auto-wired into `pipeline.py` `_classify_email_lines()` post-fetch); `scripts/health_check_writer.py` (atomic POSIX-rename write, YAML frontmatter upsert, connector log rotation >7d to `tmp/connector_health_log.md`, vault lock guard, bootstrap stub detection); `scripts/calendar_writer.py` (`_is_calendar_record()`, `_event_dedup_key()` SHA-256 hash, `_rotate_connector_logs()`-style run into `state/calendar.md`, bootstrap stub auto-repair); `scripts/migrate_oi.py` (`_OI_PATTERN = r"\bOI-(\d{3,})\b"`, `_is_bootstrap_stub()` candidate, idempotent backfill, dry-run, highest-ID report); `scripts/preflight.py` `_is_bootstrap_stub()` + `check_state_templates()` stubs detection + 48h advance advisory for MS Graph + expired-token refresh path fix (was skipping `secs_left < 0`); `scripts/session_summarizer.py` `_auto_extract_facts_if_catchup()` auto-triggers `fact_extractor` for catch-up commands in `get_context_card()`; `config/workflow/finalize.md` Steps 11c + 16 updated to use script-backed writes; `config/workflow/process.md` Steps 5a + 5d context_offloader instruction. 1042 tests (+27). See §8.12. |
 | v3.9.3 | 2026-03 | Agentic Reloaded (specs/agentic-reloaded.md AR-1–AR-8): `scripts/session_search.py` (grep-based cross-session recall, `SearchResult` dataclass, relevance = `match_count / √file_lines`, PII-safe excerpts); `scripts/procedure_index.py` (`ProcedureMatch` dataclass, 90-day confidence decay with 0.5 floor, `find_matching_procedures()`, `format_procedures_for_context()`); `scripts/delegation.py` (`DelegationRequest/DelegationResult` dataclasses, `should_delegate()` step≥5/parallel/isolated criteria, `compose_handoff()` context compression ≤500 chars, `evaluate_for_procedure()`, `is_delegation_enabled()`); `scripts/fact_extractor.py` `MAX_MEMORY_CHARS=3000` + `MAX_FACTS_COUNT=30` constants + `_consolidate_facts()` (TTL expiry → lowest-confidence eviction, protects `correction`/`preference` types) + `_load_harness_config()`; `scripts/session_summarizer.py` `should_flush_memory()` + `pre_flush_facts_persisted: int = 0` in both `SessionSummary` classes; `scripts/artha_context.py` `session_recall_available: bool = False`; `scripts/backup.py` `learned_procedures/` dynamic registry via `state/learned_procedures/*.md` scan; `scripts/generate_identity.py` `PROMPT STABILITY` frozen-layer comment; `scripts/audit_compliance.py` `_check_memory_capacity()` (weight 5, advisory-pass when absent) + `_check_prompt_stability()` (weight 5, advisory-pass when absent); `config/artha_config.yaml` 6 new `harness.agentic.*` flag blocks; `state/templates/self_model.md` (AR-2 schema); `state/learned_procedures/README.md`; `config/Artha.core.md` 5 new protocol sections; `config/workflow/finalize.md` Step 11c AR-1/2/5 instructions; `config/workflow/reason.md` Pre-OODA recall (AR-4) + procedure lookup (AR-5); `config/workflow/fetch.md` AR-8 connector root-cause protocol. 1015 tests (+72). See §8.11. |
 | v3.9.2 | 2026-03 | Operational safety hardening: `vault.py do_health()` 3-exit-code model (0=clean, 1=hard fail, 2=soft warnings); `preflight.check_vault_health()` exit-2 path (P1, not P0) with correct `.bak` warning extraction + `python3` fix hint; `preflight.check_vault_lock()` unconditional stale-lock auto-clear + PID liveness check + actual lock path in errors; `detect_environment.detect_json()` TTY-aware compact/pretty output + `--pretty` CLI flag; `google_calendar._parse_event()` attendee email PII redaction; `config/Artha.core.md` + `config/Artha.md` `python3` consistency + Step 0 hard-vs-soft P0 distinction + `alias python=python3` note. 943 tests (+7). |
 | v3.9.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx: Any | None = None` to all child middlewares. Test mocks updated to match Protocol contract. |
@@ -2469,6 +2470,79 @@ Structured root-cause reasoning is embedded in the OODA DECIDE phase and the fet
 
 - `config/Artha.core.md` — **Root-Cause Protocol** section: 5-Why template + resolution registry pattern, invoked whenever an alert repeats across ≥2 consecutive sessions.
 - `config/workflow/fetch.md` — fetch failure path now includes a "Root-Cause" block distinguishing transient errors (retry) from systematic failures (log + defer) using structured cause categories (`auth`, `rate_limit`, `schema_change`, `network`, `config`).
+
+---
+
+### 8.12 Catch-Up Quality Hardening *(v3.9.4 — catch-up-quality-report 2026-03-15)*
+
+Five targeted fixes that eliminate the most common failure modes observed in production catch-up runs.
+
+---
+
+#### 8.12.1 Email Marketing Classifier (`scripts/email_classifier.py`)
+
+Rule-based, whitelist-first classifier applied inline by `pipeline.py` post-fetch. Zero API calls, zero latency overhead.
+
+**Classification priority (highest → lowest):**
+1. `_IMPORTANT_SENDER_DOMAINS` frozenset (government, banks, HR, legal) — always keep
+2. `_IMPORTANT_SUBJECT_PATTERNS` regex list (order/shipment, security, immigration, tax) — always keep
+3. Auto-notification patterns (GitHub, Jira, calendar invites) — keep, tag as `auto-notification`
+4. `_MARKETING_SENDER_PATTERNS` (substack, mailchimp, noreply/newsletter prefixes) — tag `marketing: True`
+5. `List-Unsubscribe` / bulk header presence — tag `marketing: True`
+6. `_MARKETING_SUBJECT_PATTERNS` (sale, digest, roundup, newsletter) — tag `marketing: True`
+
+Output fields added to each record: `marketing: bool`, `marketing_category: str | None`.
+
+`pipeline.py` calls `_classify_email_lines(lines)` after each connector batch. Falls back silently if `email_classifier` is unavailable (pass-through). Custom domain whitelist configurable in `config/artha_config.yaml` under `email_classifier.whitelist_domains`.
+
+---
+
+#### 8.12.2 Atomic Health-Check Writer (`scripts/health_check_writer.py`)
+
+Replaces the AI instruction-only Step 16 write with a deterministic script.
+
+- **Atomic write**: POSIX `os.replace()` (temp file → rename) prevents partial writes.
+- **Lock guard**: acquires `state/.artha-lock` (non-blocking, 3s timeout, fails safely).
+- **YAML upsert**: `_update_frontmatter()` adds/updates keys without destroying unrecognized fields.
+- **Bootstrap stub detection**: replaces `# Content\nsome: value` stubs with template content.
+- **Log rotation**: moves `## Connector health —` blocks older than 7 days to `tmp/connector_health_log.md` (append-only archive), keeping `health-check.md` ≤ ~100 lines.
+
+CLI: `python3 scripts/health_check_writer.py --last-catch-up ISO --email-count N --domains-processed a,b,c --mode normal|degraded|offline|read-only`
+
+---
+
+#### 8.12.3 Calendar Event Writer (`scripts/calendar_writer.py`)
+
+Consumes pipeline JSONL output and appends structured calendar events to `state/calendar.md`.
+
+- **Source detection**: `_is_calendar_record()` accepts `google_calendar`, `gcal`, `outlook_calendar`, `msgraph_calendar`, `caldav_calendar`, `workiq_calendar` source tags + `type=event|calendar_event`.
+- **Deduplication**: SHA-256 of `(date, title)` → 16-hex key embedded as `<!-- dedup:KEY -->` comment; never writes the same event twice across multiple runs.
+- **Bootstrap stub repair**: detects `# Content\nsome: value` and replaces with proper schema before appending.
+- **Input**: stdin JSONL, `--input PATH`, or auto-reads `tmp/pipeline_output.jsonl`.
+
+---
+
+#### 8.12.4 OI Backfill Migration (`scripts/migrate_oi.py`)
+
+Idempotent scanner that reconciles `open_items.md` against all domain state files.
+
+- **Pattern**: `\bOI-(\d{3,})\b` at word boundary, skipping table separators.
+- **Skip files**: `open_items.md`, `audit.md`, `memory.md`, `health-check.md` (to avoid circular refs).
+- **Dedup**: existing IDs in `open_items.md` are never duplicated.
+- **Output**: highest OI-NNN seen reported so `state/memory.md` next-ID can be updated.
+- **Dry-run**: `--dry-run` flag shows what would be added without writing.
+
+---
+
+#### 8.12.5 Preflight Bootstrap Stub Detection + Token Fixes (`scripts/preflight.py`)
+
+Three targeted improvements to `preflight.py`:
+
+| Fix | Description |
+|-----|-------------|
+| `_is_bootstrap_stub(path)` | Detects `# Content\nsome: value` fingerprint; `check_state_templates()` now treats stubs as equivalent to missing files for `--fix` replacement |
+| Expired token refresh | `check_msgraph_token()` now attempts `ensure_valid_token()` when `secs_left < 0` (already expired), not just within 300s window |
+| 48h advance advisory | When MS Graph token is valid but expires within 48h, emits a P1 advisory "run --reauth before next session" to prevent mid-session expiry |
 
 ---
 
