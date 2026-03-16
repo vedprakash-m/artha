@@ -401,8 +401,46 @@ def summarize_to_file(
     return md_path
 
 
-def get_context_card(summary: "SessionSummary") -> str:
+def _auto_extract_facts_if_catchup(summary: "SessionSummary", artha_dir: Path | None = None) -> int:
+    """Auto-invoke persistent fact extraction when a catch-up session completes (AR-3).
+
+    Only runs when:
+    - The command was a catch-up variant
+    - The harness flag ``harness.agentic.fact_extraction.enabled`` is True
+    - A session history file exists in tmp/
+
+    Returns the count of new facts persisted (0 if skipped or unavailable).
+    """
+    from context_offloader import load_harness_flag  # already imported at module level
+    if not load_harness_flag("agentic.fact_extraction.enabled"):
+        return 0
+
+    cmd = summary.command_executed.lower().strip()
+    if not any(kw in cmd for kw in ("catch-up", "catch_up", "catchup", "/catch")):
+        return 0
+
+    base_dir = artha_dir if artha_dir is not None else ARTHA_DIR
+    tmp_dir = base_dir / TMP_DIR.name if artha_dir is not None else TMP_DIR
+
+    try:
+        import glob as _glob
+        summaries = sorted(_glob.glob(str(tmp_dir / "session_history_*.md")))
+        if not summaries:
+            return 0
+        from fact_extractor import extract_facts_from_summary, persist_facts  # type: ignore[import]
+        facts = extract_facts_from_summary(Path(summaries[-1]), base_dir)
+        count = persist_facts(facts, base_dir)
+        return count
+    except Exception:
+        return 0  # Non-fatal — fact extraction is best-effort
+
+
+def get_context_card(summary: "SessionSummary", artha_dir: Path | None = None) -> str:
     """Return a compact in-context card replacing full conversation history.
+
+    Automatically triggers persistent fact extraction when a catch-up has
+    completed (AR-3 pre-eviction flush integration). The fact count is
+    embedded in the card footer.
 
     This replaces the full conversation history after summarization, keeping
     the AI informed about the session state without the full token cost.
@@ -410,10 +448,14 @@ def get_context_card(summary: "SessionSummary") -> str:
     Returns:
         ~500-token string summarizing the completed command.
     """
+    # Auto-extract facts for catch-up commands (AR-3 / AR-5 integration)
+    facts_persisted = _auto_extract_facts_if_catchup(summary, artha_dir=artha_dir)
+
     findings_block = "\n".join(f"  {i+1}. {f}" for i, f in enumerate(summary.key_findings))
     mutations_block = ", ".join(summary.state_mutations) if summary.state_mutations else "none"
     threads_block = "\n".join(f"  - {t}" for t in summary.open_threads) if summary.open_threads else "  none"
 
+    facts_note = f"\nFacts persisted to memory: {facts_persisted}" if facts_persisted > 0 else ""
     return (
         f"[SESSION CONTEXT — {summary.timestamp[:19]}Z]\n"
         f"Command: {summary.command_executed}\n"
@@ -422,5 +464,6 @@ def get_context_card(summary: "SessionSummary") -> str:
         f"\nState files modified: {mutations_block}\n"
         f"\nOpen threads:\n{threads_block}\n"
         + (f"\nNext suggested: {summary.next_suggested}\n" if summary.next_suggested else "")
-        + "[END SESSION CONTEXT — full history in tmp/session_history_N.md]"
+        + facts_note
+        + "\n[END SESSION CONTEXT — full history in tmp/session_history_N.md]"
     )
