@@ -74,6 +74,15 @@ skills:
     safety_critical: false
     description: "Extract bill due dates from occasions.md. Alert 7/3/1 days before due, flag overdue."
 
+  whatsapp_last_contact:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: false
+    safety_critical: false
+    platform: macos_only
+    description: "Refresh Last WA dates and relationship warmth from local WhatsApp ChatStorage.sqlite. Surfaces stale contacts per circle cadence and infers birthdays from sent wishes."
+
   credit_monitor:
     enabled: true
     priority: P1

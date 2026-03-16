@@ -94,3 +94,7 @@ config/Artha.md
 
 # --- Runtime lock and ephemeral files ---
 .artha-op-lock
+
+# --- OneDrive conflict copies ---
+*-CPC-vemis-DJD0M*
+".git 2/"

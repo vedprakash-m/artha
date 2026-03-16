@@ -40,6 +40,8 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     # U-9 utilization uplift skills
     "relationship_pulse", "occasion_tracker", "bill_due_tracker",
     "credit_monitor", "school_calendar",
+    # U-9.6 WhatsApp live enrichment
+    "whatsapp_last_contact",
 })
 
 # Timeout for individual skill execution (seconds)

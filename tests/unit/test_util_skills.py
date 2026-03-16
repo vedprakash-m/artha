@@ -420,3 +420,220 @@ class TestSchoolCalendar:
         d = skill.to_dict()
         assert "summary" in d
         assert isinstance(d["summary"], str)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestWhatsAppLastContact (U-9.6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestWhatsAppLastContact:
+    """
+    Tests for WhatsAppLastContact skill.
+
+    All tests use an in-memory SQLite DB that mimics the ChatStorage.sqlite
+    schema so no real WhatsApp installation is needed.
+    """
+
+    # ── Fixtures ─────────────────────────────────────────────────────────────
+
+    def _make_wa_db(self, tmp_path: Path, rows: list[dict]) -> Path:
+        """Create a minimal fake ChatStorage.sqlite with the given chat rows."""
+        import sqlite3
+        db_path = tmp_path / "wa_test.sqlite"
+        con = sqlite3.connect(str(db_path))
+        cur = con.cursor()
+        # Minimal schema matching what the skill queries
+        cur.executescript("""
+            CREATE TABLE ZWACHATSESSION (
+                Z_PK INTEGER PRIMARY KEY,
+                ZPARTNERNAME TEXT,
+                ZCONTACTJID TEXT,
+                ZSESSIONTYPE INTEGER,
+                ZLASTMESSAGEDATE REAL
+            );
+            CREATE TABLE ZWAMESSAGE (
+                Z_PK INTEGER PRIMARY KEY,
+                ZCHATSESSION INTEGER,
+                ZTEXT TEXT,
+                ZISFROMME INTEGER,
+                ZMESSAGEDATE REAL
+            );
+            CREATE TABLE ZWAGROUPMEMBER (
+                Z_PK INTEGER PRIMARY KEY,
+                ZCHATSESSION INTEGER,
+                ZMEMBERJID TEXT
+            );
+        """)
+        for i, row in enumerate(rows, 1):
+            cur.execute(
+                "INSERT INTO ZWACHATSESSION VALUES (?,?,?,?,?)",
+                (i, row["name"], row.get("jid", f"{i}@s.whatsapp.net"),
+                 row.get("type", 0), row.get("last_ts", 0.0))
+            )
+            for j, msg in enumerate(row.get("messages", []), 1):
+                cur.execute(
+                    "INSERT INTO ZWAMESSAGE VALUES (?,?,?,?,?)",
+                    (i * 1000 + j, i, msg.get("text", ""), msg.get("from_me", 0), msg.get("ts", 0.0))
+                )
+        con.commit()
+        con.close()
+        return db_path
+
+    def _make_contacts(self, tmp_path: Path, members: list[str], cadence: str = "monthly") -> Path:
+        content = f"""\
+---
+schema_version: "1.1"
+circles:
+  us_friends:
+    label: "US Friends"
+    members: {members!r}
+    cadence: "{cadence}"
+    nudge: true
+---
+# Contacts
+| Name | Team | Phone | Email | Location | Notes |
+|------|------|-------|-------|----------|-------|
+"""
+        p = tmp_path / "state" / "contacts.md"
+        _write(p, content)
+        return tmp_path
+
+    # ── Apple epoch helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _days_ago_ts(n: int) -> float:
+        """Return an Apple CoreData timestamp for n days ago."""
+        from datetime import timezone
+        d = date.today() - timedelta(days=n)
+        unix_ts = d.toordinal() - date(1970, 1, 1).toordinal()
+        return float(unix_ts * 86400 - 978307200)
+
+    # ── Tests ─────────────────────────────────────────────────────────────────
+
+    def test_db_unavailable_raises_file_not_found(self, tmp_path, monkeypatch):
+        """Skill raises FileNotFoundError when WA DB is absent (non-macOS / no app)."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact, _WA_DB_SOURCE
+        monkeypatch.setattr(
+            "scripts.skills.whatsapp_last_contact._WA_DB_SOURCE",
+            tmp_path / "nonexistent.sqlite",
+        )
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        with pytest.raises(FileNotFoundError):
+            skill.pull()
+
+    def test_phone_normalisation(self):
+        """_normalize_phone strips JID suffixes correctly."""
+        from scripts.skills.whatsapp_last_contact import _normalize_phone
+        assert _normalize_phone("14251234567@s.whatsapp.net") == "14251234567"
+        assert _normalize_phone("148863767855175@lid") == "148863767855175"
+        assert _normalize_phone("918800123456@s.whatsapp.net") == "918800123456"
+
+    def test_apple_ts_conversion(self):
+        """_ts_to_date converts Apple CoreData timestamp to correct date."""
+        from scripts.skills.whatsapp_last_contact import _ts_to_date
+        # 2024-01-01 = 86400 * (date(2024,1,1) - date(2001,1,1)).days
+        d = date(2024, 1, 1)
+        ts = (d.toordinal() - date(2001, 1, 1).toordinal()) * 86400.0
+        assert _ts_to_date(ts) == d
+
+    def test_stale_contact_surfaced(self, tmp_path, monkeypatch):
+        """Contact with last WA > cadence threshold appears in nudges."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact, _WA_DB_COPY
+
+        db = self._make_wa_db(tmp_path, [
+            {"name": "Alice S", "jid": "15550110000@s.whatsapp.net",
+             "last_ts": self._days_ago_ts(45)},
+        ])
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_SOURCE", db)
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_COPY",
+                            tmp_path / "copy.sqlite")
+
+        self._make_contacts(tmp_path, ["Alice S"], cadence="monthly")
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        result = skill.execute()
+
+        assert result["status"] == "success"
+        assert result["data"]["nudge_count"] >= 1
+
+    def test_fresh_contact_not_in_nudges(self, tmp_path, monkeypatch):
+        """Contact within cadence window does NOT appear in nudges."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
+
+        db = self._make_wa_db(tmp_path, [
+            {"name": "Bob F", "jid": "15550220000@s.whatsapp.net",
+             "last_ts": self._days_ago_ts(5)},
+        ])
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_SOURCE", db)
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_COPY",
+                            tmp_path / "copy.sqlite")
+
+        self._make_contacts(tmp_path, ["Bob F"], cadence="monthly")
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        result = skill.execute()
+
+        nudges = result["data"]["nudges"]
+        assert not any(n["contact"] == "Bob F" for n in nudges)
+
+    def test_lid_contact_does_not_crash(self, tmp_path, monkeypatch):
+        """LID-type contacts (privacy mode) are handled gracefully — no exception."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
+
+        db = self._make_wa_db(tmp_path, [
+            {"name": "Mukul M", "jid": "148863767855175@lid",
+             "last_ts": self._days_ago_ts(20)},
+        ])
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_SOURCE", db)
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_COPY",
+                            tmp_path / "copy.sqlite")
+
+        self._make_contacts(tmp_path, ["Mukul M"], cadence="biweekly")
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        result = skill.execute()  # must not raise
+        assert result["status"] == "success"
+
+    def test_birthday_wish_inferred(self, tmp_path, monkeypatch):
+        """Birthday wishes I sent are returned in inferred_dobs list."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
+
+        # ts for Apr 17 of current year (or last year)
+        today = date.today()
+        wish_date = today.replace(month=4, day=17) if today.month > 4 or (today.month == 4 and today.day >= 17) \
+            else today.replace(year=today.year - 1, month=4, day=17)
+        wish_ts = (wish_date.toordinal() - date(2001, 1, 1).toordinal()) * 86400.0
+
+        db = self._make_wa_db(tmp_path, [
+            {
+                "name": "Vishnu T",
+                "jid": "14259613223@s.whatsapp.net",
+                "last_ts": wish_ts,
+                "messages": [{"text": "Happy Birthday Vishnu! 🎂", "from_me": 1, "ts": wish_ts}],
+            }
+        ])
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_SOURCE", db)
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_COPY",
+                            tmp_path / "copy.sqlite")
+
+        self._make_contacts(tmp_path, ["Vishnu T"])
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        result = skill.execute()
+
+        dobs = result["data"]["inferred_dobs"]
+        assert any(d["name"] == "Vishnu T" and d["probable_dob_month"] == 4 for d in dobs)
+
+    def test_empty_contacts_no_crash(self, tmp_path, monkeypatch):
+        """Skill runs cleanly even when contacts.md has no circles."""
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
+
+        db = self._make_wa_db(tmp_path, [])
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_SOURCE", db)
+        monkeypatch.setattr("scripts.skills.whatsapp_last_contact._WA_DB_COPY",
+                            tmp_path / "copy.sqlite")
+
+        # Write a minimal contacts.md without circles
+        (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "state" / "contacts.md").write_text("# Contacts\n", encoding="utf-8")
+
+        skill = WhatsAppLastContact(artha_dir=tmp_path)
+        result = skill.execute()
+        assert result["status"] == "success"
+        assert result["data"]["nudge_count"] == 0
