@@ -487,7 +487,7 @@ class TestPreflight_CheckAdoAuth:
 
     def test_ado_enabled_az_cli_success(self, tmp_path):
         """When enabled and az_cli returns a token, check should pass."""
-        import json, yaml as _yaml
+        import yaml as _yaml
         profile = {"integrations": {"azure_devops": {
             "enabled": True,
             "organization_url": "https://dev.azure.com/myorg",
