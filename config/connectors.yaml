@@ -282,7 +282,96 @@ connectors:
       format: jsonl
       source_tag: "rss"
 
+  # ── Work Domains — M365 via WorkIQ (opt-in, disabled by default) ─────────
+  # Enable via: /bootstrap work
+  # Requires: Node.js + npx + WorkIQ M365 enterprise auth
+
+  workiq_bridge:
+    type: multi
+    provider: workiq
+    enabled: false          # Set to true after /bootstrap work
+    description: "WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)"
+    auth:
+      method: none          # WorkIQ manages its own M365 enterprise auth via npx
+    fetch:
+      handler: "scripts/connectors/workiq_bridge.py"
+      modes: [calendar, email, teams, people, documents]
+      default_lookback: "48h"
+      subprocess_timeout_seconds: 90
+      cache_file: "tmp/.workiq_cache.json"
+      cache_ttl:
+        calendar: 14400     # 4 hours
+        email: 3600         # 1 hour
+        teams: 7200         # 2 hours
+        people: 604800      # 7 days
+        documents: 14400    # 4 hours
+    output:
+      format: jsonl
+      source_tag: "workiq"
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: "scripts/pipeline.py --source workiq_bridge"
+    retry:
+      max_retries: 1
+      base_delay: 5.0
+      max_delay: 30.0
+
+  ado_workitems:
+    type: project_tracker
+    provider: azure_devops
+    enabled: false          # Set to true after /bootstrap work (ADO)
+    description: "Azure DevOps — work items assigned to me"
+    auth:
+      method: az_cli
+      az_resource: "499b84ac-1321-427f-aa17-267ca6975798"
+      fallback_method: api_key
+      fallback_credential_key: "artha-ado-pat"
+    fetch:
+      handler: "scripts/connectors/ado_workitems.py"
+      api_version: "7.1"
+      default_max_results: 200
+      # org_url and project read from user_profile.yaml at runtime:
+      org_from_profile: "integrations.azure_devops.organization_url"
+      project_from_profile: "integrations.azure_devops.project"
+    output:
+      format: jsonl
+      fields: [id, title, state, type, priority, target_date, changed_date, iteration_path]
+      source_tag: "ado"
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: "scripts/pipeline.py --source ado_workitems"
+    retry:
+      max_retries: 2
+      base_delay: 2.0
+      max_delay: 30.0
+
   # ── Apple Health Export (I-13: specs/improve.md) ──────────────────────────
+
+  outlookctl_bridge:
+    type: calendar_fallback
+    provider: outlook
+    enabled: false          # Windows-only; set true for fast calendar checks without WorkIQ
+    description: >
+      Fast Outlook calendar fallback via outlookctl COM bridge.
+      Windows-only. Used for /status quick checks when WorkIQ cache is stale.
+      Latency: ~3s (vs WorkIQ ~60s). Attendee list not available (outlookctl 0.1.0 limitation).
+    platform: windows
+    auth:
+      method: none
+    fetch:
+      handler: "scripts/connectors/outlookctl_bridge.py"
+      lookahead_days: 2
+    output:
+      format: jsonl
+      fields: [uid, title, start, end, duration_min, is_all_day, is_online, location, is_recurring, organizer]
+      source_tag: "outlook"
+    health_check: true
+    retry:
+      max_retries: 1
+      base_delay: 1.0
+      max_delay: 5.0
 
   apple_health:
     type: health

@@ -87,6 +87,11 @@ _HANDLER_MAP: dict[str, str] = {
     "connectors.caldav_calendar": "connectors.caldav_calendar",
     "connectors.canvas_lms": "connectors.canvas_lms",
     "connectors.onenote": "connectors.onenote",
+    # Work domain connectors (opt-in — Wave 1)
+    "connectors.workiq_bridge": "connectors.workiq_bridge",
+    "connectors.ado_workitems": "connectors.ado_workitems",
+    # Work domain connectors (opt-in — Wave 2)
+    "connectors.outlookctl_bridge": "connectors.outlookctl_bridge",
 }
 
 

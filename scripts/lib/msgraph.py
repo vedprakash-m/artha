@@ -149,3 +149,56 @@ def _graph_get_paginated(
         params = None  # already embedded in next_link
 
     return results
+
+
+def get_org_chart(access_token: str) -> dict:
+    """Return a compact org-chart snapshot for the signed-in user.
+
+    Calls three confirmed-working Graph endpoints:
+      GET /me/manager          → 1 record (manager)
+      GET /me/directReports    → 0-N records (direct reports)
+      GET /me/                 → self record for display name / title
+
+    Returns a dict:
+        {
+          "self":    {"displayName": ..., "jobTitle": ..., "department": ...},
+          "manager": {"displayName": ..., "jobTitle": ..., "department": ...} | None,
+          "direct_reports": [ {"displayName": ..., "jobTitle": ..., "department": ...}, ... ]
+        }
+
+    If a call returns 404 or 403 the corresponding key is None / [].
+    Used by work-people domain for org-hierarchy enrichment.
+    """
+    _PERSON_FIELDS = "$select=displayName,jobTitle,department,mail,userPrincipalName"
+
+    def _safe_get(path: str) -> Optional[dict]:
+        try:
+            return _graph_get(access_token, path + "?" + _PERSON_FIELDS)
+        except Exception:
+            return None
+
+    def _safe_list(path: str) -> list:
+        try:
+            data = _graph_get(access_token, path + "?" + _PERSON_FIELDS)
+            return data.get("value", [])
+        except Exception:
+            return []
+
+    def _trim(raw: Optional[dict]) -> Optional[dict]:
+        if not raw:
+            return None
+        return {
+            "displayName": raw.get("displayName", ""),
+            "jobTitle": raw.get("jobTitle", ""),
+            "department": raw.get("department", ""),
+        }
+
+    me_raw = _safe_get("/me")
+    manager_raw = _safe_get("/me/manager")
+    reports_raw = _safe_list("/me/directReports")
+
+    return {
+        "self": _trim(me_raw),
+        "manager": _trim(manager_raw),
+        "direct_reports": [_trim(r) for r in reports_raw if r],
+    }

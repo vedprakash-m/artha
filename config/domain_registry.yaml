@@ -511,3 +511,177 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+
+  # ── Work Domains (opt-in, disabled by default) ─────────────────────────────
+  # Requires: WorkIQ (M365 calendar/email/Teams/people) and/or Azure CLI (ADO)
+  # Enable via: /bootstrap work
+  # These domains have ZERO impact on personal-only users.
+  # All state files (state/work-*.md) are gitignored — never committed to GitHub.
+
+  work-calendar:
+    label: "Work Calendar"
+    description: "Corporate calendar events, meetings, Teams calls, scheduling conflicts"
+    sensitivity: standard
+    always_load: false          # On-signal only (Mon-Fri when workiq enabled)
+    phase: phase_work
+    prompt_file: "prompts/work-calendar.md"
+    state_file: "state/work-calendar.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: [outlookctl_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want to track your work calendar in Artha?"
+    routing_keywords:
+      - standup
+      - sprint planning
+      - sprint review
+      - retrospective
+      - "1:1"
+      - one-on-one
+      - team sync
+      - all-hands
+      - office hours
+      - design review
+      - code review
+    alert_thresholds:
+      red: "Meeting starts in <15 minutes with unreviewed prep material"
+      orange: "Double-booked slot today, meeting with skip-level or VP+"
+      yellow: "3+ hours of back-to-back meetings, no lunch break"
+      blue: "Meeting cancelled, new recurring meeting added"
+
+  work-comms:
+    label: "Work Communications"
+    description: "Work email triage, Teams messages needing response"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-comms.md"
+    state_file: "state/work-comms.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to surface work emails and Teams messages that need your response?"
+    routing_keywords:
+      - action required
+      - please review
+      - needs your input
+      - feedback requested
+      - approval needed
+      - sign-off
+      - blocking on you
+    alert_thresholds:
+      red: "VP+ email awaiting response >24h, escalation from manager"
+      orange: "Manager email unanswered >12h, cross-team request >24h"
+      yellow: "5+ unacknowledged threads, Teams DM with action request"
+      blue: "FYI-only threads, automated notifications filtered"
+
+  work-projects:
+    label: "Work Projects"
+    description: "Azure DevOps work items, sprint status, blockers"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-projects.md"
+    state_file: "state/work-projects.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [ado_workitems]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.azure_devops.enabled is true"
+        field: "integrations.azure_devops.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you use Azure DevOps for work item tracking?"
+      - "What is your ADO organization URL? (e.g. https://dev.azure.com/myorg)"
+      - "What is your primary ADO project name?"
+    routing_keywords:
+      - work item
+      - bug
+      - user story
+      - task
+      - sprint
+      - iteration
+      - pull request
+      - PR review
+      - deployment
+      - release
+      - pipeline
+      - blocked
+    alert_thresholds:
+      red: "Work item past target date, P0/P1 bug assigned, blocked item >48h"
+      orange: "Sprint ends in <3 days with active items, new P2 bug"
+      yellow: "Work item state changed, new items assigned to me"
+      blue: "Item completed, PR merged, sprint started"
+  work-people:
+    label: "Work People"
+    description: "Meeting prep context: org chart, roles, collaboration history"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-people.md"
+    state_file: "state/work-people.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: [microsoft_graph]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want meeting prep context (role, team, history) for people you meet?"
+    routing_keywords: []
+    alert_thresholds:
+      red: "Meeting with skip-level in <2h, no context available"
+      orange: "First meeting with someone new today — no prior interaction on record"
+      yellow: "Org change detected (manager change, team restructure)"
+      blue: "Collaboration summary updated for recurring 1:1"
+
+  work-notes:
+    label: "Work Notes"
+    description: "Recently edited documents, Loop pages, and shared artifacts"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-notes.md"
+    state_file: "state/work-notes.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want a weekly digest of documents and pages you have been editing?"
+    routing_keywords:
+      - recent docs
+      - documents
+      - loop
+      - sharepoint
+      - onenote
+      - working on
+      - shared doc
+    alert_thresholds:
+      red: ""
+      orange: "Shared document modified by collaborator awaiting your review"
+      yellow: "Document you own was edited by someone else in last 24h"
+      blue: "Weekly digest of document activity"
