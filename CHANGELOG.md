@@ -11,6 +11,54 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.5] — 2026-03-14
+
+### Added — Utilization Uplift (specs/util.md U-1–U-9)
+
+**U-5: Privacy Hardening**
+- **`config/connectors.yaml`** — All 8 personal-data connectors (`google_gmail`, `google_calendar`, `microsoft_outlook`, `microsoft_todo`, `apple_icloud_calendar`, `apple_reminders`, `workiq`, `health_kit`) now have `prefer_mcp: false` with comment `# PRIVACY: no official MCP — use direct API only`. Previously all 8 were `prefer_mcp: true`, routing personal data through unapproved 3rd-party MCP proxies.
+
+**U-6: Profile Scaffold**
+- **`config/user_profile.yaml`** — Rebuilt from a 4-line stub to a 130+ line comprehensive scaffold with all known values: full family members (primary user, spouse, 2 children with school info), Washington state location, household info, 17 enabled domains, integration preferences, encryption key preserved. 8 `# FILL:` markers left for user to supply (Gmail address, iCloud, city, parcel ID, Canvas URLs, VINs, briefing email, Telegram IDs). Passes `generate_identity.py --validate` with 17 domains enabled.
+
+**U-7: Routing Generation**
+- **`config/routing.yaml`** — Generated from enriched user profile via `generate_identity.py --with-routing`. Was `key: value` (completely broken). Now contains `system_routes` (immigration/USCIS, finance institutions, estate, kids/school, marketing suppression) and `user_routes` (school domains, finance institutions list).
+
+**U-8: Pipeline Step 21**
+- **`config/Artha.core.md`** — Step 21 added after Step 20 (channel push): runs `fact_extractor.py` on `tmp/session_history_*.json` to extract 6 fact types (correction, pattern, preference, contact, schedule, threshold) and persist to `state/memory.md`. Non-blocking (failure never breaks catch-up). Gated on `harness.agentic.fact_extraction.enabled`.
+
+**U-2: Occasions Enrichment**
+- **`state/occasions.md`** — Schema bumped to v1.1. Added "Extended Family — India Birthdays" table (11 contacts with DOBs extracted from `state/contacts.md`). Added "Cultural & Religious Occasions (2026–2027)" table with 16 Indian festivals (Holi, Diwali, Navratri, Ganesh Chaturthi, etc.). Added "US Public Holidays (2026)" table with 12 holidays. Fixed all existing entries: ISO date format, corrected ages, standardized tables.
+
+**U-1: Circles Schema**
+- **`state/contacts.md`** — YAML frontmatter replaced with full circles classification (schema v1.1): 6 circles defined — `core_family` (nudge: false), `extended_family_india` (14-day cadence), `best_friends` (30-day cadence), `us_friends` (30-day cadence), `spiritual` (weekly), `professional` (as-needed). Each circle has label, members list, cadence, nudge flag, signal_sources, and description.
+
+**U-9: New Relationship & Life Skills**
+- **`scripts/skills/relationship_pulse.py`** (new) — Reads circle definitions from `state/contacts.md` YAML frontmatter; extracts last-contact ISO dates from table rows; computes `days_since_contact` vs `_CADENCE_DAYS` threshold per circle; returns top-10 most overdue contacts sorted by `overdue_by`. Only processes circles with `nudge: true`.
+- **`scripts/skills/occasion_tracker.py`** (new) — Parses `state/occasions.md` for birthdays, festivals, anniversaries, and holidays. `_this_year_occurrence()` handles Feb-29 leap-year edge case; `_parse_date_flexible()` handles ISO-8601. Alert windows: birthday 🔴 ≤3d / 🟠 ≤7d / 🟡 ≤14d; festival/holiday 7d window. Generates contextual WhatsApp greeting suggestions per event type.
+- **`scripts/skills/bill_due_tracker.py`** (new) — Extracts bill rows from `state/occasions.md` Financial/Legal/Deadline sections. `_parse_bill_date()` handles 4 formats: ISO, "Month Day, Year", "Monthly (Nth)", "Semi-annual (Mo & Mo)". Alert severities: 🔴 ≤1d, 🟠 ≤3d, 🟡 ≤7d; also detects overdue items.
+- **`scripts/skills/credit_monitor.py`** (new) — Scans `state/digital.md` and `state/finance.md` for credit monitoring signals using 4 regex patterns: `_FRAUD_PATTERN` (🔴), `_INQUIRY_PATTERN` (🟠), `_NEW_ACCOUNT_PATTERN` (🟠), `_SCORE_CHANGE_PATTERN` (🟡). Deduplicates by excerpt key; sorts fraud first; gracefully degrades when vault-encrypted files unavailable.
+- **`scripts/skills/school_calendar.py`** (new) — Scans `state/calendar.md`, `state/occasions.md`, and `state/kids.md` for LWSD school events. `_SCHOOL_KEYWORDS` regex covers PTC, parent-teacher, LWSD, Tesla STEM, Inglewood, no-school days, breaks, graduation. `_GRADE_PATTERN` detects failing/incomplete/missing assignments. Deduplicates events by `(date, event[:40])` key.
+- **`config/skills.yaml`** — 5 new skills registered: `relationship_pulse`, `occasion_tracker`, `bill_due_tracker`, `credit_monitor`, `school_calendar`. Total: 13 skills (was 8).
+
+**U-2.4: Occasion-Aware Social Prompt**
+- **`prompts/social.md`** — Added "Occasion-Aware Intelligence" section (schema v1.1): 3-day priority lane (🔴 URGENT block for imminent birthdays/festivals/anniversaries), circle cross-reference protocol (channel + tone per circle type), 8 WhatsApp message templates (birthday peer, birthday elder, birthday child, Diwali, Holi, Raksha Bandhan, Eid, reconnect), and structured briefing output format with 🔴/🟠/🟡 windows.
+
+### Fixed
+- **`tests/conftest.py`** — Added `_PROJECT_ROOT` (project root directory) to `sys.path` alongside the existing `_SCRIPTS_DIR`. Previously, tests using `from scripts.skills.*` imports only worked when run as part of the full suite (order-dependent via other imports); isolated runs (`pytest tests/unit/test_util_skills.py`) failed with `ModuleNotFoundError: No module named 'scripts.skills'`. Both `from skills.X import Y` and `from scripts.skills.X import Y` import styles now work in all invocation modes.
+
+### Tests
+- Added **27** new tests in `tests/unit/test_util_skills.py`:
+  - `TestRelationshipPulse` (6 tests) — stale contact detection, fresh contact exclusion, `nudge: false` circle skip, never-contacted contact inclusion, missing file graceful degradation, `to_dict()` summary format.
+  - `TestOccasionTracker` (7 tests) — upcoming birthday detection, past birthday exclusion, festival window detection, anniversary 30-day window, empty occasions graceful return, 🔴 severity within 3 days, `to_dict()` summary.
+  - `TestBillDueTracker` (5 tests) — 🟠 severity 3-day bill, 🔴 severity 1-day bill, 30-day bill not surfaced, `_parse_bill_date()` monthly format, missing occasions file graceful return.
+  - `TestCreditMonitor` (4 tests) — hard inquiry detection, fraud alert prioritization, clean content no alerts, missing state files empty return.
+  - `TestSchoolCalendar` (5 tests) — school keyword event detection, non-school event exclusion, grade alert detection from kids.md, missing files empty return, `to_dict()` summary.
+
+**Total test count: 1069 (+27 from baseline 1042)**
+
+---
+
 ## [7.0.4] — 2026-03-15
 
 ### Added — Catch-Up Quality Hardening (P0/P1/P2)

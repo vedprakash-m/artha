@@ -47,3 +47,46 @@ skills:
     requires_vault: true
     safety_critical: false
     description: "Compute monthly burn rate, emergency fund runway, and single-income stress scenario from state/finance.md."
+
+  # ── New skills added 2026-03-15 (U-9.1 to U-9.5) ─────────────────────
+
+  relationship_pulse:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: false
+    safety_critical: false
+    description: "Check contact freshness across circles. Nudges stale relationships; cadence-aware."
+
+  occasion_tracker:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: false
+    safety_critical: false
+    description: "7-day lookahead for birthdays, anniversaries, Indian festivals, US holidays. Greeting suggestions."
+
+  bill_due_tracker:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    requires_vault: false
+    safety_critical: false
+    description: "Extract bill due dates from occasions.md. Alert 7/3/1 days before due, flag overdue."
+
+  credit_monitor:
+    enabled: true
+    priority: P1
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    description: "Scan state files for credit monitoring signals. Hard inquiries, score changes, fraud alerts."
+
+  school_calendar:
+    enabled: true
+    priority: P1
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    description: "Track LWSD school events for Parth and Trisha. Alert 3 days ahead. Scans kids.md for grade alerts."
+

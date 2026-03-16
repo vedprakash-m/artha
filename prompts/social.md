@@ -1,9 +1,9 @@
 ---
-schema_version: "1.0"
+schema_version: "1.1"
 domain: social
 priority: P2
 sensitivity: standard
-last_updated: 2026-03-07
+last_updated: 2026-03-14
 ---
 # Social Domain Prompt
 
@@ -67,6 +67,94 @@ python scripts/safe_cli.py gemini -p "Generate a [occasion] greeting card with t
 Check `state/social.md` Reconnect Radar section:
 - Flag contacts with `last_contact` > 90 days in weekly summary
 - Propose a reconnect message (personalize based on `state/memory.md` notes)
+
+---
+
+## Occasion-Aware Intelligence (U-2.4)
+
+### 3-Day Lookahead Priority Lane
+
+On every run, check `state/occasions.md` for events in the **next 3 days** first.
+These are 🔴 URGENT and must be surfaced at the top of the social briefing section:
+
+```
+🔴 [PERSON/EVENT] in [N] day(s) — [occasion type]
+   Circle: [circle name from contacts.md]
+   Last contact: [date or "never"]
+   Suggested: "[message template]"
+   [Send via WhatsApp]
+```
+
+**3-day lookahead checks:**
+1. Birthdays in `state/occasions.md` (all tables: core family, extended family, India contacts)
+2. Cultural/religious festivals within 3 days
+3. Anniversaries within 3 days
+
+If a 3-day-window occasion belongs to a contact in `state/contacts.md`, cross-reference:
+- Which **circle** they belong to (from YAML frontmatter)
+- Their **last WA contact date** (from table row)
+- If last contact > circle cadence → add urgency marker `⚠️ stale contact`
+
+### Circle Cross-Reference Protocol
+
+When proposing a greeting, always check `state/contacts.md` circles:
+
+| Circle | Greeting Channel | Tone |
+|--------|-----------------|------|
+| `core_family` | WhatsApp | Warm / personal |
+| `extended_family_india` | WhatsApp | Respectful / warm |
+| `best_friends` | WhatsApp | Casual / fun |
+| `us_friends` | WhatsApp or email | Friendly |
+| `spiritual` | WhatsApp | Reverent |
+| `professional` | Email | Professional |
+
+If a contact is NOT in any circle, default to WhatsApp with neutral tone.
+
+### Message Templates
+
+Use these templates as starting points. Personalize with actual name, occasion, and relationship details.
+
+**Birthday — peer/friend:**
+> "Happy Birthday [Name]! 🎂 Hope you have a wonderful day. Wishing you all the joy and success! 🎉"
+
+**Birthday — elder (Hindi-context):**
+> "Happy Birthday [Name]! 🙏 Wishing you long life, good health, and happiness. Regards from our family."
+
+**Birthday — child/younger:**
+> "Happy Birthday [Name]! 🎈 Hope you have the most amazing day! 🥳"
+
+**Diwali:**
+> "Happy Diwali! 🪔 May this festival of lights bring joy, prosperity, and happiness to you and your family!"
+
+**Holi:**
+> "Happy Holi! 🌈 Wishing you and your family a colourful and joyous celebration!"
+
+**Raksha Bandhan:**
+> "Happy Raksha Bandhan! 🎀 Thinking of you fondly. May our bond always stay strong."
+
+**Eid:**
+> "Eid Mubarak! 🌙 Wishing you peace, happiness, and blessings!"
+
+**Generic festival:**
+> "Warm wishes for [Festival Name]! 🙏 May this occasion bring joy to you and your family."
+
+**Reconnect after long gap:**
+> "Hi [Name]! Been a while — hope you and the family are doing well. Thinking of you! 😊"
+
+### Briefing Output Format
+
+```
+### 🗓️ Occasions & Wishes
+**🔴 Next 3 days:**
+• [Person] birthday ([date]) — turning [age]. Circle: [circle]. Last WA: [date or never].
+  [Suggested WhatsApp] "[message]" [Send ↗]
+
+**🟠 Next 7 days:**
+• [Festival/Birthday] ([date]) — [action]
+
+**🟡 Next 14 days:**
+• [N] birthdays coming up — plan greetings
+```
 
 ---
 

@@ -6,12 +6,17 @@ import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Ensure scripts/ is on sys.path so tests can import modules the same way
-# the production code does (e.g. ``import foundation`` not
-# ``import scripts.foundation``).  This prevents the Python dual-import
-# problem where the same .py file gets loaded as two separate modules.
+# Ensure:
+#   1. scripts/ is on sys.path so tests can import modules directly,
+#      e.g. ``from foundation import ...`` not ``from scripts.foundation import``
+#      This prevents the Python dual-import problem.
+#   2. The project root is on sys.path so tests can also import via the full
+#      package path, e.g. ``from scripts.skills.X import Y``.
 # ---------------------------------------------------------------------------
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent / "scripts")
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 

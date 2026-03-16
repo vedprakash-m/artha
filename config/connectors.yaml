@@ -38,7 +38,7 @@ connectors:
       source_tag: ""
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source gmail"
     retry:
       max_retries: 3
@@ -67,7 +67,7 @@ connectors:
       source_tag: "outlook"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source outlook_email"
     retry:
       max_retries: 3
@@ -95,7 +95,7 @@ connectors:
       source_tag: "icloud"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source icloud_email"
     retry:
       max_retries: 2
@@ -126,7 +126,7 @@ connectors:
       source_tag: ""
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source google_calendar"
 
   outlook_calendar:
@@ -149,7 +149,7 @@ connectors:
       source_tag: "outlook"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source outlook_calendar"
 
   icloud_calendar:
@@ -171,7 +171,7 @@ connectors:
       source_tag: "icloud"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source icloud_calendar"
 
   # ── Learning Management ───────────────────────────────────────────────────
@@ -193,7 +193,7 @@ connectors:
       target: "state/kids.md"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source canvas_lms"
 
   # ── Notes ─────────────────────────────────────────────────────────────────
@@ -218,7 +218,7 @@ connectors:
       target: "state/onenote_progress.md"
     health_check: true
     mcp:
-      prefer_mcp: true
+      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
       fallback: "scripts/pipeline.py --source onenote"
 
   # ── Community Extension Examples (disabled by default) ───────────────────
