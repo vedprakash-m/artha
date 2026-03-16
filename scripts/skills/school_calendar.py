@@ -221,3 +221,8 @@ class SchoolCalendarSkill(BaseSkill):
     @property
     def compare_fields(self) -> list:
         return ["total_events", "checked_on"]
+
+
+def get_skill(artha_dir=None):
+    """Factory called by skill_runner to instantiate this skill."""
+    return SchoolCalendarSkill(artha_dir=artha_dir)

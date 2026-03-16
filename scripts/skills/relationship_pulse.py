@@ -196,3 +196,8 @@ class RelationshipPulseSkill(BaseSkill):
     @property
     def compare_fields(self) -> list:
         return ["total_stale", "checked_at"]
+
+
+def get_skill(artha_dir=None):
+    """Factory called by skill_runner to instantiate this skill."""
+    return RelationshipPulseSkill(artha_dir=artha_dir)

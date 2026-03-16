@@ -11,6 +11,34 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [7.0.6] — 2026-03-15
+
+### Fixed — Post-audit runtime fixes
+
+**Skill Runtime (get_skill() factories)**
+- **`scripts/skills/relationship_pulse.py`** — Added `get_skill(artha_dir=None)` factory function required by `skill_runner.py` for dynamic loading. Was present as a `BaseSkill` subclass but missing the module-level factory, causing `AttributeError` on every `skill_runner` invocation.
+- **`scripts/skills/occasion_tracker.py`** — Same fix: added `get_skill()` factory.
+- **`scripts/skills/bill_due_tracker.py`** — Same fix: added `get_skill()` factory.
+- **`scripts/skills/credit_monitor.py`** — Same fix: added `get_skill()` factory.
+- **`scripts/skills/school_calendar.py`** — Same fix: added `get_skill()` factory.
+
+**Skill Runner Allowlist**
+- **`scripts/skill_runner.py`** — Added all 5 new skills to `_ALLOWED_SKILLS` frozenset: `relationship_pulse`, `occasion_tracker`, `bill_due_tracker`, `credit_monitor`, `school_calendar`. Previously they were blocked with `"Skill X is not in the allowlist"` ERROR on every run.
+
+**Location Coordinates**
+- **`config/user_profile.yaml`** *(gitignored)* — Added `lat: 47.6162` and `lon: -122.0355` (Sammamish, WA) to `location` section. Previously missing, causing NOAA weather skill to raise `ValueError: NOAA weather skill not configured`.
+
+**Briefing Format — Occasions & Wishes (U-2.5)**
+- **`config/briefing-formats.md`** — Added dedicated `━━ 🎂 OCCASIONS & WISHES` section with 🔴/🟠/🟡 urgency windows, greeting suggestion format, and source attribution. Previously occasions data had no dedicated briefing placement.
+
+**Finalize Workflow — Skill Output Integration (U-2.5)**
+- **`config/workflow/finalize.md`** — Extended Step 12 with explicit skill-to-section mapping: `relationship_pulse` → RELATIONSHIP PULSE, `occasion_tracker` → OCCASIONS & WISHES (with core_family escalation to 🔴), `bill_due_tracker` + `credit_monitor` → Finance section, `school_calendar` → Kids section.
+
+**Channels Config**
+- **`config/channels.yaml`** *(gitignored)* — Created from `channels.example.yaml` template with `telegram.enabled: true`, `bot_username: artha_ved_bot`, `push_enabled: false` (pending bot token). Chat IDs left empty pending `@userinfobot` lookup.
+
+---
+
 ## [7.0.5] — 2026-03-14
 
 ### Added — Utilization Uplift (specs/util.md U-1–U-9)

@@ -235,3 +235,8 @@ class BillDueTrackerSkill(BaseSkill):
     @property
     def compare_fields(self) -> list:
         return ["total_bills", "checked_on"]
+
+
+def get_skill(artha_dir=None):
+    """Factory called by skill_runner to instantiate this skill."""
+    return BillDueTrackerSkill(artha_dir=artha_dir)
