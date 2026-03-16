@@ -758,10 +758,10 @@ class TestAdvisoryLock:
 
     def test_double_acquire_fails(self, mock_vault_env):
         """Second acquire fails while first is held (simulated via fd)."""
+        fcntl = pytest.importorskip("fcntl", reason="fcntl is Unix-only")
         assert vault._acquire_op_lock()
         # Open a second fd to the same file — should fail to flock
         lock_path = foundation._config["ARTHA_DIR"] / ".artha-op-lock"
-        import fcntl
         fd2 = open(lock_path, "w")
         try:
             fcntl.flock(fd2, fcntl.LOCK_EX | fcntl.LOCK_NB)

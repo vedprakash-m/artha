@@ -176,7 +176,7 @@ class TestDegradedCatchupBehavior:
             - encrypted_domains_blind: immigration, finance, health
         """)
         p = tmp_path / "2026-03-15.md"
-        p.write_text(briefing_content)
+        p.write_text(briefing_content, encoding="utf-8")
 
         from scripts.audit_compliance import audit_latest_briefing
         report = audit_latest_briefing(str(p))
@@ -240,7 +240,7 @@ class TestComplianceAuditOfDegradedBriefing:
             - encrypted_domains_blind: immigration, finance
         """)
         p = tmp_path / "degraded_briefing.md"
-        p.write_text(briefing_content)
+        p.write_text(briefing_content, encoding="utf-8")
 
         from scripts.audit_compliance import audit_latest_briefing
         report = audit_latest_briefing(str(p))
