@@ -48,7 +48,7 @@ connectors:
   outlook_email:
     type: email
     provider: microsoft
-    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
+    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
     description: "Outlook / Microsoft 365 email"
     auth:
       method: oauth2
@@ -132,7 +132,7 @@ connectors:
   outlook_calendar:
     type: calendar
     provider: microsoft
-    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
+    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
     description: "Outlook Calendar / Microsoft 365"
     auth:
       method: oauth2
@@ -200,8 +200,8 @@ connectors:
 
   onenote:
     type: notes
-    provider: onenote
-    enabled: false   # Enable after: python scripts/setup_msgraph_oauth.py
+    provider: microsoft
+    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
     description: "Microsoft OneNote — work notes and notebooks"
     auth:
       method: oauth2
