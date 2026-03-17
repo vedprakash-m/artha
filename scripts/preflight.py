@@ -1022,6 +1022,85 @@ def check_dep_freshness() -> CheckResult:
     return CheckResult("venv dependencies", "P1", True, f"All {len(_REQUIRED_DEPS)} core deps found ✓")
 
 
+def check_channel_config() -> CheckResult:
+    """P1: Validate channels.yaml has no incomplete placeholder values.
+
+    Catches the three misconfigs that silently blocked Telegram responses:
+      1. recipients.primary.id is empty or missing (CHANNEL_REJECT unknown_sender)
+      2. push_enabled is False (outbound push blocked)
+      3. listener_host is empty or a placeholder value (listener skips this host)
+
+    Pure YAML parsing — no network calls, no adapter imports. Non-blocking.
+    Only applicable when channels.yaml exists and at least one channel is enabled.
+    """
+    config_path = Path(os.path.join(ARTHA_DIR, "config", "channels.yaml"))
+    if not config_path.exists():
+        return CheckResult(
+            "channel config", "P1", True,
+            "channels.yaml not found — channel push disabled ✓",
+        )
+
+    try:
+        import yaml as _yaml
+        with open(config_path, encoding="utf-8") as _f:
+            cfg = _yaml.safe_load(_f) or {}
+    except Exception as exc:
+        return CheckResult(
+            "channel config", "P1", False,
+            f"channels.yaml parse error: {exc}",
+            fix_hint="Validate YAML syntax in config/channels.yaml",
+        )
+
+    enabled_channels = {
+        k: v for k, v in cfg.get("channels", {}).items()
+        if isinstance(v, dict) and v.get("enabled", False)
+    }
+    if not enabled_channels:
+        return CheckResult("channel config", "P1", True, "No channels enabled — skipped ✓")
+
+    issues: list[str] = []
+    _PLACEHOLDER_HOSTS = {"", "NOT-THIS-HOST-XYZ", "your-hostname-here"}
+
+    # Check 1 — listener_host not a placeholder
+    listener_host = str(cfg.get("defaults", {}).get("listener_host", "")).strip()
+    if listener_host in _PLACEHOLDER_HOSTS:
+        issues.append(
+            "defaults.listener_host is empty/placeholder — listener will skip every machine; "
+            "run: python scripts/setup_channel.py --set-listener-host"
+        )
+
+    # Check 2 — push_enabled
+    push_enabled = cfg.get("defaults", {}).get("push_enabled", False)
+    if not push_enabled:
+        issues.append(
+            "defaults.push_enabled is false — post-catch-up push disabled; "
+            "set push_enabled: true in config/channels.yaml"
+        )
+
+    # Check 3 — each enabled channel has a non-empty primary recipient ID
+    for ch_name, ch_cfg in enabled_channels.items():
+        primary_id = str(
+            (ch_cfg.get("recipients") or {}).get("primary", {}).get("id", "")
+        ).strip()
+        if not primary_id:
+            issues.append(
+                f"{ch_name}: recipients.primary.id is empty — all inbound messages will be "
+                f"rejected (unknown_sender); run: python scripts/setup_channel.py --channel {ch_name}"
+            )
+
+    if issues:
+        return CheckResult(
+            "channel config", "P1", False,
+            f"{len(issues)} channel misconfiguration(s) detected",
+            fix_hint=" | ".join(issues),
+        )
+
+    return CheckResult(
+        "channel config", "P1", True,
+        f"Channel config valid ({len(enabled_channels)} channel(s)) ✓",
+    )
+
+
 def check_channel_health() -> CheckResult:
     """P1: Verify enabled channel adapters (Telegram, etc.) are reachable.
 
@@ -1225,6 +1304,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
     checks.append(check_ado_auth())
+
+    # ── P1 — Channel config (v5.1 — non-blocking) ──────────────────────────
+    checks.append(check_channel_config())
 
     # ── P1 — Channel health (v5.0 — non-blocking) ─────────────────────────
     checks.append(check_channel_health())
