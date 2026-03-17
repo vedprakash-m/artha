@@ -27,6 +27,114 @@ import preflight as pf
 
 
 # ---------------------------------------------------------------------------
+# check_channel_config
+# ---------------------------------------------------------------------------
+
+class TestCheckChannelConfig:
+    """check_channel_config catches the three Telegram silent-failure misconfigs."""
+
+    def _write_channels_yaml(self, config_dir, content: str) -> None:
+        (config_dir / "channels.yaml").write_text(content, encoding="utf-8")
+
+    def test_no_channels_yaml_passes(self, tmp_path):
+        """Missing channels.yaml is not an error — channel push is optional."""
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert result.passed
+        assert result.severity == "P1"
+
+    def test_no_enabled_channels_passes(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir, "defaults:\n  push_enabled: true\nchannels:\n  telegram:\n    enabled: false\n")
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert result.passed
+
+    def test_empty_primary_id_fails(self, tmp_path):
+        """Empty recipients.primary.id must be caught — causes CHANNEL_REJECT."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: true\n  listener_host: my-host\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: ''\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert not result.passed
+        assert result.severity == "P1"
+        assert "recipients.primary.id" in result.fix_hint
+        assert "setup_channel.py" in result.fix_hint
+
+    def test_placeholder_listener_host_fails(self, tmp_path):
+        """listener_host=NOT-THIS-HOST-XYZ causes listener to skip every machine."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: true\n  listener_host: NOT-THIS-HOST-XYZ\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '12345'\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert not result.passed
+        assert "listener_host" in result.fix_hint
+        assert "set-listener-host" in result.fix_hint
+
+    def test_empty_listener_host_fails(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: true\n  listener_host: ''\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '12345'\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert not result.passed
+        assert "listener_host" in result.fix_hint
+
+    def test_push_disabled_fails(self, tmp_path):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: false\n  listener_host: my-host\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '12345'\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert not result.passed
+        assert "push_enabled" in result.fix_hint
+
+    def test_multiple_issues_combines_hints(self, tmp_path):
+        """All three problems present — hint should mention all three."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: false\n  listener_host: ''\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: ''\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert not result.passed
+        assert "3 channel misconfiguration" in result.message
+        assert "listener_host" in result.fix_hint
+        assert "push_enabled" in result.fix_hint
+        assert "recipients.primary.id" in result.fix_hint
+
+    def test_fully_configured_passes(self, tmp_path):
+        """All three fields properly set — check passes cleanly."""
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        self._write_channels_yaml(config_dir,
+            "defaults:\n  push_enabled: true\n  listener_host: my-laptop\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '8679396255'\n"
+        )
+        with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
+            result = pf.check_channel_config()
+        assert result.passed
+        assert "valid" in result.message
+
+
+# ---------------------------------------------------------------------------
 # check_profile_completeness
 # ---------------------------------------------------------------------------
 
@@ -195,6 +303,7 @@ class TestAdvisoryJsonOutput:
             patch("preflight.check_msgraph_token",     return_value=_ok("Microsoft Graph token")),
             patch("preflight.check_workiq",
                   return_value=pf.CheckResult("WorkIQ Calendar", "P1", True, "skipped")),
+            patch("preflight.check_channel_config",    return_value=_ok("channel config")),
             patch("preflight.check_channel_health",    return_value=_ok("channel health")),
             patch("preflight.check_dep_freshness",     return_value=_ok("venv dependencies")),
             patch("preflight.check_profile_completeness",

@@ -217,9 +217,38 @@ def setup_telegram() -> None:
     _save_yaml(_CHANNELS_YAML, cfg)
     _print_ok(f"Saved: {_CHANNELS_YAML.name}")
 
+    # Sync primary_chat_id to user_profile.yaml so both sources stay consistent.
+    # channels.yaml (gitignored) is the source of truth for the channel bridge;
+    # user_profile.yaml records it for reference by other scripts.
+    _sync_chat_id_to_profile(primary_id)
+
     # Test the connection
     print("\nTesting connection…")
     _test_channel("telegram", cfg)
+
+
+def _sync_chat_id_to_profile(primary_chat_id: str) -> None:
+    """Write channels.telegram.primary_chat_id to user_profile.yaml.
+
+    Keeps user_profile.yaml in sync with channels.yaml after Telegram setup.
+    Only updates the single leaf key; leaves everything else untouched.
+    Silent no-op if user_profile.yaml cannot be parsed or doesn't exist.
+    """
+    profile_path = _CONFIG_DIR / "user_profile.yaml"
+    if not profile_path.exists():
+        return
+    try:
+        import yaml
+        with open(profile_path, encoding="utf-8") as _f:
+            profile = yaml.safe_load(_f) or {}
+        profile.setdefault("channels", {})
+        profile["channels"].setdefault("telegram", {})
+        profile["channels"]["telegram"]["primary_chat_id"] = primary_chat_id
+        with open(profile_path, "w", encoding="utf-8") as _f:
+            yaml.safe_dump(profile, _f, default_flow_style=False, allow_unicode=True)
+        _print_ok(f"Synced primary_chat_id to user_profile.yaml")
+    except Exception as exc:
+        _print_warn(f"Could not sync chat ID to user_profile.yaml: {exc}")
 
 
 def _ensure_channels_yaml_exists() -> None:
