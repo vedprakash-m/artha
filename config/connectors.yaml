@@ -289,7 +289,7 @@ connectors:
   workiq_bridge:
     type: multi
     provider: workiq
-    enabled: false          # Set to true after /bootstrap work
+    enabled: true           # Enabled: WorkIQ authenticated, work domains active
     description: "WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)"
     auth:
       method: none          # WorkIQ manages its own M365 enterprise auth via npx
@@ -320,7 +320,7 @@ connectors:
   ado_workitems:
     type: project_tracker
     provider: azure_devops
-    enabled: false          # Set to true after /bootstrap work (ADO)
+    enabled: true           # Enabled: az CLI authenticated, org=dev.azure.com/microsoft project=OS
     description: "Azure DevOps — work items assigned to me"
     auth:
       method: az_cli
@@ -352,7 +352,7 @@ connectors:
   outlookctl_bridge:
     type: calendar_fallback
     provider: outlook
-    enabled: false          # Windows-only; set true for fast calendar checks without WorkIQ
+    enabled: true           # Enabled: outlookctl installed at C:\Users\vemishra\AppData\Local\Programs\Python\Python313\Scripts\outlookctl.exe
     description: >
       Fast Outlook calendar fallback via outlookctl COM bridge.
       Windows-only. Used for /status quick checks when WorkIQ cache is stale.
