@@ -213,6 +213,7 @@ def load_az_cli_token(resource: str) -> dict:
                 data = json.loads(result.stdout)
                 return {
                     "provider": "az_cli",
+                    "method": "az_cli",
                     "access_token": data["accessToken"],
                     "expires_on": data.get("expiresOn", ""),
                 }
