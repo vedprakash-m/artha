@@ -130,6 +130,11 @@ _COMMAND_ALIASES: dict[str, str] = {
     "?":           "/help",
     # unlock
     "unlock":      "/unlock",
+    # action queue
+    "queue":       "/queue",
+    "approve":     "/approve",
+    "reject":      "/reject",
+    "undo":        "/undo",
 }
 
 ALLOWED_COMMANDS = frozenset(_COMMAND_ALIASES.values())
@@ -2097,6 +2102,213 @@ async def cmd_items_done(args: list[str], scope: str) -> tuple[str, str]:
         return f"Failed to update: {exc}", "N/A"
 
 
+async def cmd_queue(args: list[str], scope: str) -> tuple[str, str]:
+    """Show pending action queue."""
+    try:
+        from action_executor import ActionExecutor  # noqa: PLC0415
+        executor = ActionExecutor(_ARTHA_DIR)
+        pending = executor.pending()
+        if not pending:
+            return "✅ No pending actions.", "N/A"
+
+        lines = [f"⚡ PENDING ACTIONS ({len(pending)})"]
+        lines.append("")
+        for i, p in enumerate(pending, 1):
+            friction_badge = {"low": "🟢", "standard": "🟡", "high": "🔴"}.get(
+                p.get("friction", "standard"), "🟡"
+            )
+            lines.append(
+                f"{i}. {friction_badge} {p.get('title', '?')} "
+                f"[{p.get('action_type', '?')}]"
+            )
+            lines.append(f"   ID: {p.get('id', '?')[:12]}…")
+        lines.append("")
+        lines.append("Say: approve <ID> · reject <ID> · undo <ID>")
+        return "\n".join(lines), "N/A"
+    except ImportError:
+        return "⚠️ Action layer not available.", "N/A"
+    except Exception as e:
+        return f"⚠️ Queue error: {e}", "N/A"
+
+
+async def cmd_approve(args: list[str], scope: str) -> tuple[str, str]:
+    """Approve a pending action by ID prefix."""
+    if not args:
+        return "_Usage: approve <action-id>_", "N/A"
+
+    action_id_prefix = args[0].strip()
+
+    try:
+        from action_executor import ActionExecutor  # noqa: PLC0415
+        executor = ActionExecutor(_ARTHA_DIR)
+
+        # Resolve full ID from prefix
+        pending = executor.pending()
+        matched = [
+            p for p in pending
+            if p.get("id", "").startswith(action_id_prefix)
+        ]
+        if not matched:
+            return f"⚠️ No pending action found matching '{action_id_prefix}'.", "N/A"
+        if len(matched) > 1:
+            ids = [m["id"][:12] for m in matched]
+            return f"⚠️ Ambiguous ID prefix — matches: {', '.join(ids)}", "N/A"
+
+        full_id = matched[0]["id"]
+        result = executor.approve(full_id, approved_by="user:telegram")
+
+        if result.status == "success":
+            return f"✅ Approved + executed: {result.message}", "N/A"
+        elif result.status == "failure":
+            return f"❌ Execution failed: {result.message}", "N/A"
+        else:
+            return f"ℹ️ {result.status}: {result.message}", "N/A"
+
+    except ImportError:
+        return "⚠️ Action layer not available.", "N/A"
+    except Exception as e:
+        return f"⚠️ Approve error: {e}", "N/A"
+
+
+async def cmd_reject(args: list[str], scope: str) -> tuple[str, str]:
+    """Reject a pending action by ID prefix."""
+    if not args:
+        return "_Usage: reject <action-id> [reason]_", "N/A"
+
+    action_id_prefix = args[0].strip()
+    reason = " ".join(args[1:]) if len(args) > 1 else "user:telegram:rejected"
+
+    try:
+        from action_executor import ActionExecutor  # noqa: PLC0415
+        executor = ActionExecutor(_ARTHA_DIR)
+
+        pending = executor.pending()
+        matched = [
+            p for p in pending
+            if p.get("id", "").startswith(action_id_prefix)
+        ]
+        if not matched:
+            return f"⚠️ No pending action found matching '{action_id_prefix}'.", "N/A"
+        if len(matched) > 1:
+            ids = [m["id"][:12] for m in matched]
+            return f"⚠️ Ambiguous ID prefix — matches: {', '.join(ids)}", "N/A"
+
+        full_id = matched[0]["id"]
+        executor.reject(full_id, reason=reason)
+        return f"❌ Rejected: {matched[0].get('title', full_id[:12])}", "N/A"
+
+    except ImportError:
+        return "⚠️ Action layer not available.", "N/A"
+    except Exception as e:
+        return f"⚠️ Reject error: {e}", "N/A"
+
+
+async def cmd_undo(args: list[str], scope: str) -> tuple[str, str]:
+    """Undo a recently executed action by ID prefix."""
+    if not args:
+        return "_Usage: undo <action-id>_", "N/A"
+
+    action_id_prefix = args[0].strip()
+
+    try:
+        from action_executor import ActionExecutor  # noqa: PLC0415
+        executor = ActionExecutor(_ARTHA_DIR)
+
+        # Check recent history for the action
+        history = executor.history(limit=50)
+        matched = [
+            h for h in history
+            if h.get("id", "").startswith(action_id_prefix)
+        ]
+        if not matched:
+            return f"⚠️ No recent action found matching '{action_id_prefix}'.", "N/A"
+        if len(matched) > 1:
+            ids = [m["id"][:12] for m in matched]
+            return f"⚠️ Ambiguous ID prefix — matches: {', '.join(ids)}", "N/A"
+
+        full_id = matched[0]["id"]
+        result = executor.undo(full_id, actor="user:telegram")
+
+        if result.status == "success":
+            return f"↩️ Undone: {result.message}", "N/A"
+        else:
+            return f"⚠️ Undo failed: {result.message}", "N/A"
+
+    except ImportError:
+        return "⚠️ Action layer not available.", "N/A"
+    except Exception as e:
+        return f"⚠️ Undo error: {e}", "N/A"
+
+
+async def _handle_callback_query(
+    callback_data: str,
+    sender_id: str,
+    msg,
+    adapter,
+) -> None:
+    """Handle Telegram inline keyboard button presses for action approval.
+
+    callback_data format: "act:APPROVE:action_id" | "act:REJECT:action_id" | "act:DEFER:action_id"
+
+    Ref: specs/act.md §5.3
+    """
+    from channels.base import ChannelMessage as _CM  # noqa: PLC0415
+
+    parts = callback_data.split(":", 2)
+    if len(parts) != 3 or parts[0] != "act":
+        return  # Not an action callback — ignore
+
+    verb = parts[1].upper()
+    action_id = parts[2]
+
+    if not action_id:
+        return
+
+    try:
+        from action_executor import ActionExecutor  # noqa: PLC0415
+        executor = ActionExecutor(_ARTHA_DIR)
+
+        if verb == "APPROVE":
+            result = executor.approve(action_id, approved_by="user:telegram")
+            if result.status == "success":
+                reply = f"✅ {result.message}"
+            elif result.status == "failure":
+                reply = f"❌ Failed: {result.message}"
+            else:
+                reply = f"ℹ️ {result.status}: {result.message}"
+
+        elif verb == "REJECT":
+            executor.reject(action_id, reason="user:telegram:button")
+            reply = f"❌ Action rejected."
+
+        elif verb == "DEFER":
+            executor.defer(action_id, until="+24h")
+            reply = f"⏰ Deferred 24 hours."
+
+        else:
+            reply = f"⚠️ Unknown action verb: {verb}"
+
+        _audit_log(
+            "CHANNEL_ACTION_CALLBACK",
+            sender=sender_id,
+            verb=verb,
+            action_id=action_id[:16],
+        )
+        adapter.send_message(_CM(text=reply, recipient_id=sender_id))
+
+    except ImportError:
+        adapter.send_message(_CM(
+            text="⚠️ Action layer not available.",
+            recipient_id=sender_id,
+        ))
+    except Exception as e:
+        log.error("[channel_listener] callback_query handler error: %s", e)
+        adapter.send_message(_CM(
+            text=f"⚠️ Action handler error: {e}",
+            recipient_id=sender_id,
+        ))
+
+
 async def cmd_help(args: list[str], scope: str) -> tuple[str, str]:
     """Return available commands."""
     lines = [
@@ -2118,6 +2330,12 @@ async def cmd_help(args: list[str], scope: str) -> tuple[str, str]:
         "WRITE",
         "items add <desc> [P0|P1|P2] [domain] [date]",
         "done <OI-NNN>  — Mark item complete",
+        "",
+        "ACTIONS",
+        "queue  — Show pending approvals",
+        "approve <id>  — Approve + execute action",
+        "reject <id>  — Reject action",
+        "undo <id>  — Undo within window",
         "",
         "OTHER",
         "unlock <PIN>  — 15-min sensitive session",
@@ -2245,6 +2463,18 @@ async def process_message(
         command=msg.command,
     )
 
+    # ── Callback query intercept: act:VERB:action_id (§5.3) ──────────────
+    # Inline keyboard button presses arrive with raw_text = "act:VERB:uuid"
+    # They bypass the command whitelist but are still sender-whitelisted above.
+    if msg.raw_text.startswith("act:"):
+        await _handle_callback_query(
+            callback_data=msg.raw_text,
+            sender_id=msg.sender_id,
+            msg=msg,
+            adapter=adapter,
+        )
+        return
+
     # 5. Command normalisation — accept flexible input
     norm_cmd, norm_args = _normalise_command(msg.raw_text)
     if norm_cmd:
@@ -2290,6 +2520,11 @@ async def process_message(
         "/items_add": cmd_items_add,
         "/items_done": cmd_items_done,
         "/help": cmd_help,
+        # Action layer commands (§5.3)
+        "/queue": cmd_queue,
+        "/approve": cmd_approve,
+        "/reject": cmd_reject,
+        "/undo": cmd_undo,
     }
 
     if is_slash_command and msg.command not in ALLOWED_COMMANDS:

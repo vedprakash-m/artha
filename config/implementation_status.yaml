@@ -167,6 +167,94 @@ features:
   health:
     status: implemented
 
+  # ── Action Layer (specs/act.md v1.3.0) ─────────────────────────────────
+  action_queue:
+    spec: "specs/act.md §3"
+    status: implemented
+    confidence: high
+    note: "SQLite WAL, ACID transitions, 10-state machine, age encryption at rest"
+  action_executor:
+    spec: "specs/act.md §5"
+    status: implemented
+    confidence: high
+    note: "propose/approve/reject/defer/undo + validation before state transition"
+  trust_enforcer:
+    spec: "specs/act.md §6"
+    status: implemented
+    confidence: high
+    note: "autonomy floor hard-coded; evaluate_elevation; apply_demotion"
+  action_composer:
+    spec: "specs/act.md §10"
+    status: implemented
+    confidence: high
+    note: "17 signal types → ActionProposal; compose_workflow for address_change, tax_prep"
+  action_rate_limiter:
+    spec: "specs/act.md §4.2"
+    status: implemented
+    confidence: high
+  pii_firewall_actions:
+    spec: "specs/act.md §7"
+    status: implemented
+    confidence: high
+    note: "double-scan at enqueue AND execution; block-not-redact; allowlisted fields"
+  handler_email_send:
+    spec: "specs/act.md §8.1"
+    status: implemented
+    confidence: high
+    note: "Gmail drafts.create/send; 30s undo window via messages.trash"
+  handler_email_reply:
+    spec: "specs/act.md §8.2"
+    status: implemented
+    confidence: high
+  handler_calendar_create:
+    spec: "specs/act.md §8.3"
+    status: implemented
+    confidence: high
+  handler_calendar_modify:
+    spec: "specs/act.md §8.4"
+    status: implemented
+    confidence: high
+  handler_reminder_create:
+    spec: "specs/act.md §8.5"
+    status: implemented
+    confidence: high
+  handler_whatsapp_send:
+    spec: "specs/act.md §8.6"
+    status: partial
+    confidence: high
+    note: "Phase 1: wa.me URL scheme only. Phase 2 (Cloud API) not_started"
+  handler_todo_sync:
+    spec: "specs/act.md §8"
+    status: implemented
+    confidence: high
+  handler_instruction_sheet:
+    spec: "specs/act.md §8.7"
+    status: implemented
+    confidence: high
+  action_telegram_approvals:
+    spec: "specs/act.md §5.3"
+    status: implemented
+    confidence: high
+    note: "act:APPROVE/REJECT/DEFER:{id} inline keyboard callbacks in channel_listener.py"
+  action_preflight_check:
+    spec: "specs/act.md §5.2 Step 0c"
+    status: implemented
+    confidence: high
+
+  # ── Phase 2 Actions (not_started) ────────────────────────────────────────
+  handler_bill_pay:
+    spec: "specs/act.md §9.1"
+    status: not_started
+    note: "Requires Plaid Transfer API integration"
+  handler_appointment_book:
+    spec: "specs/act.md §9.2"
+    status: not_started
+    note: "Phase 2A: Zocdoc API; Phase 1 via email_send already available"
+  whatsapp_cloud_api:
+    spec: "specs/act.md §8.6 Phase 2"
+    status: not_started
+    note: "Requires Meta Business account; Phase 1 URL scheme implemented"
+
   # ── Phase 2B — NOT IMPLEMENTED ──────────────────────────────────────────
   sentiment_tracking:
     spec: "PRD §14"

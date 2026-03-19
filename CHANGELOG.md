@@ -11,6 +11,63 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.0.0] — 2026-03-19
+
+### Added — Action Layer v1.3 (specs/act.md)
+
+Artha evolves from **read–reason–report** to **read–reason–act**. Every alert now resolves to an executable action with a human-gated approval queue, full audit trail, and Telegram inline keyboards.
+
+**Core Infrastructure (Phase 0)**
+- **`scripts/action_queue.py`** — SQLite-backed persistent approval queue (`state/actions.db`). WAL mode, ACID transitions, 10-state machine (`pending → approved → executing → succeeded`), immutable audit log, age encryption for sensitive parameters at rest.
+- **`scripts/action_executor.py`** — Core engine: `propose()`, `approve()`, `reject()`, `defer()`, `undo()`, `run_health_checks()`. Validation gates (trust + PII + rate limit) checked **before** any state transition to prevent queue corruption. New methods: `propose_direct()`, `get_action()`, `list_pending()`, `list_history()`, `queue` property.
+- **`scripts/trust_enforcer.py`** — Trust level gate (0=observe, 1=propose, 2=pre-approve). Hard-coded autonomy floor: `autonomy_floor: true` actions always require human approval regardless of trust level, configuration, or user override. `evaluate_elevation()` and `apply_demotion()` with optional args.
+- **`scripts/action_composer.py`** — DomainSignal → ActionProposal mapping (17 signal types). `ActionComposer(artha_dir=artha_dir)` loads config automatically. `compose()` and `compose_workflow()` for multi-step scenarios (address change, tax prep).
+- **`scripts/action_rate_limiter.py`** — Per-action-type sliding-window rate limiting from `actions.yaml` config.
+- **`scripts/schemas/action.py`** — JSON Schema validation for ActionProposal serialization.
+- **`scripts/actions/base.py`** — `ActionHandler` Protocol with 5 methods: `validate`, `dry_run`, `execute`, `health_check`, `build_reverse_proposal`. `ActionProposal`, `ActionResult`, `DomainSignal` dataclasses. State machine constants.
+- **`scripts/actions/__init__.py`** — `_HANDLER_MAP` allowlist (8 Phase 1 handlers). No arbitrary module loading.
+- **`scripts/foundation.py`** — Added `age_encrypt_string()` and `age_decrypt_string()` wrappers for in-memory string encryption (used by action queue for sensitive parameter storage).
+- **`state/health-check.md`** — Added `autonomy:` block with full schema (trust_level, days_at_level, acceptance_rate_90d, critical_false_positives, pre_approved_categories, last_demotion, last_elevation).
+
+**Phase 1 Action Handlers (8 handlers)**
+- **`scripts/actions/email_send.py`** — Gmail `drafts.create` / `drafts.send` / `messages.trash`. Draft-first by default. 30-second undo window.
+- **`scripts/actions/email_reply.py`** — Reply-to-thread with auto In-Reply-To / References headers. Draft-first.
+- **`scripts/actions/calendar_create.py`** — Google Calendar `events.insert`. All-day support, attendees, reminders. 1-hour undo window.
+- **`scripts/actions/calendar_modify.py`** — Google Calendar `events.patch` with original-value snapshot for undo.
+- **`scripts/actions/reminder_create.py`** — Microsoft Graph To Do `tasks` API. Auto-creates list if not found.
+- **`scripts/actions/whatsapp_send.py`** — Phase 1: `wa.me/{phone}?text={encoded}` URL scheme. Phase 2: Cloud API (future).
+- **`scripts/actions/todo_sync_action.py`** — Subprocess wrapper for `todo_sync.py --push / --pull / --both`.
+- **`scripts/actions/instruction_sheet.py`** — Pure text markdown guide generation, saved to `tmp/instructions/`.
+
+**Workflow Integration**
+- **`scripts/preflight.py`** — Added `check_action_handlers()` (P1 check): sweeps expired actions, runs handler health checks at Step 0c.
+- **`scripts/channel_listener.py`** — Added `/queue`, `/approve`, `/reject`, `/undo` commands. `_handle_callback_query()` handles `act:APPROVE:{id}`, `act:REJECT:{id}`, `act:DEFER:{id}` inline keyboard responses.
+- **`config/actions.yaml`** — Migrated to schema v2.0: all 8 Phase 1 handlers with `min_trust`, `sensitivity`, `timeout_sec`, `retry`, `reversible`, `undo_window_sec`, `rate_limit`, `autonomy_floor`, `pii_allowlist`. Disabled Phase 2 stubs (bill_pay, appointment_book) and run_pipeline (no handler).
+- **`config/workflow/finalize.md`** — Added Steps 12.5 (compose proposals from signals), 14.5 (push to Telegram with inline keyboards), 19.5 (action layer summary in audit + briefing footer).
+
+**Tests (110 tests, 7 files)**
+- `tests/unit/test_action_queue.py` — Queue lifecycle, state machine, dedup, expiry, audit trail
+- `tests/unit/test_action_executor.py` — Propose/approve/reject/defer lifecycle, autonomy floor, handler allowlist
+- `tests/unit/test_trust_enforcer.py` — Trust gates, autonomy floor, demotion, elevation
+- `tests/unit/test_email_send_handler.py` — Gmail API mock tests, draft/send/undo flows
+- `tests/unit/test_calendar_handler.py` — Calendar create/modify handler protocol tests
+- `tests/unit/test_pii_firewall_actions.py` — SSN/CC detection, block-not-redact contract
+- `tests/unit/test_safety_redteam.py` — Adversarial: prompt injection, trust bypass, handler injection, SQL injection, state machine violations, undo deadline, callback validation
+
+### Changed
+- **`config/actions.yaml`** — `run_pipeline` disabled (`enabled: false`): invoke `pipeline.py` directly; no handler in action framework.
+- **`scripts/trust_enforcer.py`** — `check()` signature updated to `check(proposal, approved_by, action_config)` for ergonomic use; autonomy floor is enforced structurally regardless of `action_config` contents.
+
+### Security
+- Autonomy floor is a **hard-coded structural rule** — not bypassable by config, trust level, or `approved_by` value
+- PII firewall runs at enqueue AND at execution (double-scan for modified proposals)
+- Handler allowlist (`_HANDLER_MAP`) prevents arbitrary module loading
+- All sensitive action parameters encrypted at rest with age
+- SQL injection resistance: all queue operations use parameterized queries
+- State machine enforced server-side: no client can skip states or transition from terminal states
+
+
+
 ## [7.0.6] — 2026-03-15
 
 ### Fixed — Post-audit runtime fixes
