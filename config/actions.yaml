@@ -1,103 +1,260 @@
-# config/actions.yaml
-# Artha Declarative Action Registry
-#
-# Defines all write actions the Artha AI CLI may propose and execute.
-# The AI reads this file to know what actions are available, their
-# friction level, and whether human approval is required.
+# config/actions.yaml — Artha Declarative Action Registry
+# Schema version 2.0
 #
 # SECURITY CONTRACT
 # -----------------
-# - requires_approval: true  → must receive explicit "yes" before execution
-# - pii_check: true          → safe_cli.py / pii_guard.py runs on all params
-#                              before the action fires
-# - enabled: false           → action is known but cannot be executed; AI
-#                              should inform the user it is unavailable
+# - autonomy_floor: true  → ALWAYS requires explicit human approval
+#                           regardless of trust level, configuration, or user override.
+#                           Hard-coded in TrustEnforcer — NOT bypassable.
+# - pii_check: true       → pii_guard.py scans all non-allowlisted parameter fields
+#                           before enqueueing AND before execution.
+# - enabled: false        → action is known but cannot be executed; AI informs user.
 #
-# Adding a custom action
-# ----------------------
-# 1. Add an entry below with a unique key.
-# 2. Create an optional handler script (scripts/actions/<your_handler>.py).
-# 3. Re-run `python scripts/generate_identity.py` to rebuild Artha.md.
+# v2.0 Changes from v1.0
+# -----------------------
+# - schema_version replaces version
+# - handler now points to scripts/actions/ modules
+# - New fields: min_trust, sensitivity, timeout_sec, retry, reversible,
+#               undo_window_sec, rate_limit, autonomy_floor, pii_allowlist
+# - friction vocabulary: low | standard | high  ("medium" → "standard")
+# - Key renames: send_email → email_send, send_whatsapp → whatsapp_send,
+#                add_calendar_event → calendar_create
 #
-# Ref: specs/supercharge.md §6, config/Artha.core.md §9
+# Ref: specs/act.md §4.2
 
-version: "1.0"
+schema_version: "2.0"
 
 actions:
 
-  send_email:
-    type: email_send
-    enabled: true
-    handler: "scripts/gmail_send.py"
-    requires_approval: true           # human-gated — no email leaves without "yes"
-    friction: low
-    description: >
-      Send an email via the primary Gmail account.
-      Recipient, subject, and body are all required params.
-    params:
-      to: "{recipient}"
-      subject: "{subject}"
-      body: "{body}"
-      cc: "{cc | optional}"
-    pii_check: true                   # run safe_cli.py before send
-    audit: true                       # log to state/audit.md on execution
+  # ── Email ────────────────────────────────────────────────────────────────
 
-  send_whatsapp:
-    type: url_open
+  email_send:
+    handler: "scripts/actions/email_send.py"
     enabled: true
-    handler: null                     # uses OS url_open, no script needed
-    requires_approval: true
-    friction: low
-    description: >
-      Open a pre-filled WhatsApp message in the default browser / iOS app.
-      Phone numbers are read from state/contacts.md (encrypted at rest).
-    url_template: "https://wa.me/{phone}?text={encoded_text}"
-    params:
-      phone: "{phone}"                # E.164 format without leading +
-      text: "{message_text}"
-    pii_check: false                  # phone numbers live in encrypted contacts
-    audit: true
-
-  add_calendar_event:
-    type: calendar_write
-    enabled: false                    # disabled — Google Calendar write scope not yet added
-    handler: null                     # not yet implemented; gcal_add_event.py pending
-    requires_approval: true
-    friction: medium
-    description: >
-      Create a new Google Calendar event.
-      Disabled until handler is implemented and write OAuth scope granted.
-    params:
-      summary: "{title}"
-      start: "{start_iso}"
-      end: "{end_iso}"
-      description: "{description | optional}"
-      calendar_id: "{calendar_id | default: primary}"
+    friction: standard           # individual review each time
+    min_trust: 1                 # Trust Level 1+ required
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false                 # no retry for sent emails
+    reversible: true
+    undo_window_sec: 30          # 30-second Gmail unsend window
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
     pii_check: true
+    pii_allowlist:               # these fields are INTENDED to contain personal data
+      - "to"
+      - "cc"
+      - "bcc"
+      - "recipient_name"
     audit: true
+    autonomy_floor: true         # ALWAYS requires human approval — not bypassable
+    description: "Send email via Gmail API on behalf of user"
+
+  email_reply:
+    handler: "scripts/actions/email_reply.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: true
+    undo_window_sec: 30
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
+    pii_check: true
+    pii_allowlist:
+      - "to"
+      - "cc"
+      - "bcc"
+      - "recipient_name"
+    audit: true
+    autonomy_floor: true
+    description: "Reply to email thread via Gmail API"
+
+  # ── Calendar ─────────────────────────────────────────────────────────────
+
+  calendar_create:
+    handler: "scripts/actions/calendar_create.py"
+    enabled: true
+    friction: low                # batch-approvable at Trust Level 1
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 3600        # 1 hour to undo (delete created event)
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 100
+    pii_check: false             # calendar events rarely contain PII
+    audit: true
+    autonomy_floor: false        # CAN be pre-approved at Trust Level 2
+    description: "Create Google Calendar event (calendar.events scope — already authorized)"
+
+  calendar_modify:
+    handler: "scripts/actions/calendar_modify.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 3600
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 50
+    pii_check: false
+    audit: true
+    autonomy_floor: false
+    description: "Modify or reschedule existing Google Calendar event"
+
+  # ── Reminders & Tasks ────────────────────────────────────────────────────
+
+  reminder_create:
+    handler: "scripts/actions/reminder_create.py"
+    enabled: true
+    friction: low
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 86400       # 24 hours
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: false
+    audit: true
+    autonomy_floor: false
+    description: "Create reminder in Microsoft To Do"
 
   todo_sync:
-    type: api_call
+    handler: "scripts/actions/todo_sync_action.py"
     enabled: true
-    handler: "scripts/todo_sync.py"
-    requires_approval: false          # automated — bidirectional sync, no approval
     friction: low
-    description: >
-      Sync state/open_items.md with Microsoft To Do (bidirectional).
-      Runs automatically during catch-up Step 3. Can also be invoked manually.
-    params: {}                        # no user-supplied params; reads state files
+    min_trust: 0                 # automated sync; works at Trust Level 0
+    sensitivity: standard
+    timeout_sec: 30
+    retry: true
+    retry_max: 2
+    reversible: false
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
     pii_check: false
-    audit: false                      # todo_sync logs its own changes to open_items.md
+    audit: true
+    autonomy_floor: false
+    description: "Bidirectional sync with Microsoft To Do"
+
+  # ── Messaging ────────────────────────────────────────────────────────────
+
+  whatsapp_send:
+    handler: "scripts/actions/whatsapp_send.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: false
+    reversible: false            # WhatsApp messages cannot be recalled via API
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
+    pii_check: true
+    pii_allowlist:
+      - "phone_number"
+      - "recipient_name"
+    audit: true
+    autonomy_floor: true         # ALWAYS requires human approval
+    description: "Send WhatsApp message (Phase 1: URL scheme; Phase 2: Cloud API)"
+
+  # ── Content Generation ───────────────────────────────────────────────────
+
+  instruction_sheet:
+    handler: "scripts/actions/instruction_sheet.py"
+    enabled: true
+    friction: low
+    min_trust: 0                 # read-only; generates text only; no external side effects
+    sensitivity: standard
+    timeout_sec: 10
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: false
+    audit: true
+    autonomy_floor: false
+    description: "Generate step-by-step instruction sheet (no external execution)"
+
+  # ── Pipeline ─────────────────────────────────────────────────────────────
 
   run_pipeline:
-    type: api_call
-    enabled: true
     handler: "scripts/pipeline.py"
-    requires_approval: false          # read-only data fetch
+    enabled: false               # Not in actions/_HANDLER_MAP — invoke pipeline.py directly
     friction: low
-    description: >
-      Fetch fresh data from all enabled connectors (email, calendar, Canvas,
-      OneNote). Outputs JSONL to stdout. Used in catch-up Step 4.
+    min_trust: 0
+    sensitivity: standard
+    timeout_sec: 120
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
+    pii_check: false
+    audit: false                 # pipeline logs its own output
+    autonomy_floor: false
+    description: "Fetch fresh data from all enabled connectors (read-only)"
+
+  # ── Phase 2 (disabled until API integrations are configured) ─────────────
+
+  bill_pay:
+    handler: "scripts/actions/bill_pay.py"
+    enabled: false               # Phase 2 — Plaid integration required
+    friction: high               # NEVER batch-approvable
+    min_trust: 1
+    sensitivity: critical
+    timeout_sec: 60
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 5
+      max_per_day: 20
+    pii_check: true
+    pii_allowlist:
+      - "from_account"
+      - "payee"
+    audit: true
+    autonomy_floor: true         # ALWAYS requires human approval — financial transaction
+    description: "Pay a bill via Plaid ACH transfer (Phase 2)"
+
+  appointment_book:
+    handler: "scripts/actions/appointment_book.py"
+    enabled: false               # Phase 2
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: true
+    undo_window_sec: 3600
+    rate_limit:
+      max_per_hour: 5
+      max_per_day: 10
+    pii_check: true
+    pii_allowlist:
+      - "provider_name"
+      - "patient_name"
+    audit: true
+    autonomy_floor: false
+    description: "Book appointment (Phase 2 — Zocdoc/Calendly API)"
     params:
       since: "{since_iso}"
       source: "{source | optional}"

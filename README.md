@@ -96,10 +96,11 @@ python scripts/migrate.py             # write config/user_profile.yaml
 ## What You Get
 
 - **Morning briefings** with action items across 24 life domains (health, finance, goals, immigration, kids, home, and more)
+- **Action Layer** *(v1.3)* — Artha can now **act**, not just report. Propose, approve, and execute real actions — send emails, create calendar events, set reminders, draft WhatsApp messages — with a human-gated approval queue, full audit trail, and one-tap Telegram approval
 - **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health
 - **Encrypted state** for sensitive domains with `age` — health, finance, immigration at rest
 - **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor, financial resilience
-- **Telegram bridge** — conversational interface from your phone (45+ command aliases, multi-LLM Q&A)
+- **Telegram bridge** — conversational interface from your phone (45+ command aliases, multi-LLM Q&A, inline action approvals)
 - **Household-aware** — adapts to single, couple, family, or roommate configurations; owner vs. renter
 - **Works everywhere** — macOS, Windows (`setup.ps1`), Linux; pure Python
 - **`--doctor`** — unified 11-point diagnostic: Python, venv, packages, age, keychain, tokens, state, PII hook, last catch-up
@@ -129,6 +130,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 |---|---|
 | [Quick Start](docs/quickstart.md) | Zero to first briefing in 15 minutes |
 | [Supported CLIs](docs/supported-clis.md) | Claude, Gemini, Copilot — setup and comparison |
+| [Actions](docs/actions.md) | Action Layer: approve, execute, undo actions |
 | [Connectors](docs/connectors.md) | Email, calendar, LMS data sources |
 | [Skills](docs/skills.md) | Autonomous background data pulls |
 | [Channels](docs/channels.md) | Telegram bridge setup |

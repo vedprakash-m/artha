@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+# pii-guard: ignore-file — infrastructure module, no personal data
+"""
+scripts/trust_enforcer.py — Trust level gate enforcement.
+
+Reads the `autonomy:` block from state/health-check.md and enforces:
+  1. autonomy_floor actions ALWAYS require explicit human approval —
+     NOT bypassable by trust level, configuration, or user override.
+  2. Current trust level must be ≥ action's min_trust.
+  3. Auto-approval via 'auto:L2' is blocked for friction="high" actions.
+  4. Trust elevation and demotion criteria are evaluated here.
+
+AUTONOMY FLOOR CONTRACT (§6.2, specs/act.md):
+  Actions with autonomy_floor=true in actions.yaml ALWAYS require
+  a human actor.  If approved_by contains "auto:", the check fails
+  regardless of trust level.  This is a hard-coded structural rule —
+  not a policy — and cannot be overridden by configuration.
+
+Ref: specs/act.md §6
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+# "auto:" prefix in approved_by = autonomous approval (not human)
+_AUTO_APPROVER_PREFIX = "auto:"
+
+
+class TrustEnforcer:
+    """Enforces trust level gates on action proposal execution.
+
+    Usage:
+        enforcer = TrustEnforcer(artha_dir)
+        ok, reason = enforcer.check(proposal, action_config, approved_by)
+        if not ok:
+            raise PermissionError(reason)
+    """
+
+    def __init__(self, artha_dir: Path) -> None:
+        self._artha_dir = artha_dir
+        self._health_check_path = artha_dir / "state" / "health-check.md"
+        self._autonomy: dict[str, Any] | None = None
+
+    def _load_autonomy(self, force: bool = False) -> dict[str, Any]:
+        """Load the autonomy block from health-check.md.
+
+        Caches the result in-process to avoid repeated file reads.
+        Pass force=True to re-read (e.g. after elevation/demotion).
+        """
+        if self._autonomy is not None and not force:
+            return self._autonomy
+
+        defaults: dict[str, Any] = {
+            "trust_level": 0,
+            "trust_level_since": datetime.now(timezone.utc).date().isoformat(),
+            "days_at_level": 0,
+            "acceptance_rate_90d": 0.0,
+            "critical_false_positives": 0,
+            "pre_approved_categories": [],
+            "last_demotion": None,
+            "last_elevation": None,
+        }
+
+        if not self._health_check_path.exists():
+            self._autonomy = defaults
+            return self._autonomy
+
+        try:
+            content = self._health_check_path.read_text(encoding="utf-8")
+            block = _extract_autonomy_block(content)
+            if block:
+                defaults.update(block)
+        except Exception:
+            pass  # fallback to defaults on any parse error
+
+        self._autonomy = defaults
+        return self._autonomy
+
+    @property
+    def current_level(self) -> int:
+        """Current trust level (0=observe, 1=propose, 2=pre-approve)."""
+        return int(self._load_autonomy().get("trust_level", 0))
+
+    def check(
+        self,
+        proposal: Any,  # ActionProposal — avoids circular import
+        approved_by: str,
+        action_config: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """Evaluate whether execution is permitted.
+
+        Args:
+            proposal:     ActionProposal object (reads .min_trust and .friction).
+            approved_by:  Actor string: "user:terminal" | "user:telegram" | "auto:L2"
+            action_config: Full action config dict from actions.yaml (needs
+                           "autonomy_floor" key). Defaults to {} if not provided.
+
+        Returns:
+            (True, "")                  if execution is permitted.
+            (False, "REASON: details")  if execution is blocked.
+        """
+        if action_config is None:
+            action_config = {}
+        proposal_min_trust: int = getattr(proposal, "min_trust", 0)
+        proposal_friction: str = getattr(proposal, "friction", "standard")
+        autonomy = self._load_autonomy()
+        current_trust = int(autonomy.get("trust_level", 0))
+        is_auto = approved_by.startswith(_AUTO_APPROVER_PREFIX)
+
+        # Rule 1 — AUTONOMY FLOOR: structural, non-bypassable.
+        if action_config.get("autonomy_floor", False) and is_auto:
+            return (
+                False,
+                "AUTONOMY_FLOOR: this action type always requires explicit human "
+                "approval. Autonomous approval ('auto:*') is not permitted.",
+            )
+
+        # Rule 2 — Trust level gate.
+        if current_trust < proposal_min_trust:
+            return (
+                False,
+                f"TRUST_LEVEL: current trust level {current_trust} is below "
+                f"the required minimum {proposal_min_trust} for this action.",
+            )
+
+        # Rule 3 — High-friction actions cannot be auto-approved even at L2.
+        if is_auto and proposal_friction == "high":
+            return (
+                False,
+                "HIGH_FRICTION: friction='high' actions cannot be auto-approved "
+                "at any trust level. Explicit human approval required.",
+            )
+
+        # Rule 4 — Trust Level 0 is observation-only; no execution allowed.
+        if current_trust == 0 and is_auto:
+            return (
+                False,
+                "OBSERVE_MODE: Trust Level 0 is observation-only. "
+                "All actions require explicit human approval.",
+            )
+
+        return True, ""
+
+    def evaluate_elevation(
+        self,
+        metrics_summary: dict[str, Any] | None = None,
+        days_at_level: int | None = None,
+    ) -> dict[str, Any]:
+        """Check if trust level should be elevated.
+
+        Args:
+            metrics_summary: Optional dict with acceptance_rate_90d etc.
+                             Defaults to reading from autonomy block.
+            days_at_level:   Optional override for days at current level.
+                             Defaults to reading from autonomy block.
+        """
+        autonomy = self._load_autonomy()
+        current = int(autonomy.get("trust_level", 0))
+        critical_fp = int(autonomy.get("critical_false_positives", 0))
+        if metrics_summary is None:
+            metrics_summary = dict(autonomy)
+        if days_at_level is None:
+            days_at_level = int(autonomy.get("days_at_level", 0))
+
+        if current == 0:
+            # L0 → L1 criteria (§6.3)
+            criteria_met = {
+                "days_at_level_30": days_at_level >= 30,
+                "zero_critical_false_positives": critical_fp == 0,
+                "acceptance_rate_na": True,  # not evaluated at L0
+            }
+            eligible = all(criteria_met.values())
+            blocker = None if eligible else (
+                _first_unmet(criteria_met, {
+                    "days_at_level_30": f"Need 30+ days at Level 0 (current: {days_at_level})",
+                    "zero_critical_false_positives": f"Critical false positives must be 0 (current: {critical_fp})",
+                })
+            )
+            return {
+                "eligible": eligible,
+                "current_level": 0,
+                "target_level": 1,
+                "criteria_met": criteria_met,
+                "blocker": blocker,
+            }
+
+        elif current == 1:
+            # L1 → L2 criteria (§6.3)
+            acceptance_rate = float(metrics_summary.get("acceptance_rate_90d", 0.0))
+            pre_approved = autonomy.get("pre_approved_categories", [])
+            criteria_met = {
+                "days_at_level_60": days_at_level >= 60,
+                "acceptance_rate_90": acceptance_rate >= 0.90,
+                "pre_approved_categories_set": len(pre_approved) > 0,
+                "zero_critical_false_positives": critical_fp == 0,
+            }
+            eligible = all(criteria_met.values())
+            blocker = None if eligible else (
+                _first_unmet(criteria_met, {
+                    "days_at_level_60": f"Need 60+ days at Level 1 (current: {days_at_level})",
+                    "acceptance_rate_90": f"Acceptance rate must be ≥0.90 (current: {acceptance_rate:.2f})",
+                    "pre_approved_categories_set": "Must have at least one pre-approved category",
+                    "zero_critical_false_positives": f"Critical false positives must be 0 (current: {critical_fp})",
+                })
+            )
+            return {
+                "eligible": eligible,
+                "current_level": 1,
+                "target_level": 2,
+                "criteria_met": criteria_met,
+                "blocker": blocker,
+            }
+
+        else:
+            return {
+                "eligible": False,
+                "current_level": current,
+                "target_level": current,
+                "criteria_met": {},
+                "blocker": "Already at maximum trust level (Level 2)",
+            }
+
+    def apply_demotion(self, reason: str = "") -> None:
+        """Immediately demote trust to Level 0 and log the incident.
+
+        Called by ActionExecutor when a critical failure occurs (§6.4):
+          - Financial loss confirmed by user feedback
+          - Wrong recipient on communication
+          - Critical false positive (immigration/health)
+
+        Updates the autonomy block in health-check.md atomically.
+        Invalidates internal cache.
+        """
+        content = ""
+        if self._health_check_path.exists():
+            content = self._health_check_path.read_text(encoding="utf-8")
+
+        now_str = datetime.now(timezone.utc).date().isoformat()
+
+        new_autonomy = {
+            "trust_level": 0,
+            "trust_level_since": now_str,
+            "days_at_level": 0,
+            "acceptance_rate_90d": 0.0,
+            "critical_false_positives": int(
+                self._load_autonomy().get("critical_false_positives", 0)
+            ) + 1,
+            "pre_approved_categories": [],
+            "last_demotion": now_str,
+            "last_elevation": self._load_autonomy().get("last_elevation"),
+        }
+
+        updated = _replace_autonomy_block(content, new_autonomy)
+        self._health_check_path.write_text(updated, encoding="utf-8")
+        self._autonomy = None  # invalidate cache
+
+    def update_autonomy_block(self, updates: dict[str, Any]) -> None:
+        """Merge updates into the autonomy block in health-check.md.
+
+        Used by ActionExecutor after each execution to update metrics.
+        """
+        content = ""
+        if self._health_check_path.exists():
+            content = self._health_check_path.read_text(encoding="utf-8")
+
+        current = self._load_autonomy()
+        current.update(updates)
+
+        updated = _replace_autonomy_block(content, current)
+        self._health_check_path.write_text(updated, encoding="utf-8")
+        self._autonomy = None  # invalidate cache
+
+
+# ---------------------------------------------------------------------------
+# Health-check.md autonomy block parser / writer
+# ---------------------------------------------------------------------------
+
+_AUTONOMY_YAML_BLOCK_RE = re.compile(
+    r"(```yaml\s*\nautonomy:.*?```|^autonomy:\s*\n(?:[ \t]+\S.*\n?)+)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def _extract_autonomy_block(content: str) -> dict[str, Any] | None:
+    """Extract the 'autonomy:' YAML block from health-check.md content."""
+    # Look for raw YAML block (not in a code fence)
+    pattern = re.compile(
+        r"^autonomy:\s*\n((?:[ \t]+.*\n?)*)",
+        re.MULTILINE,
+    )
+    m = pattern.search(content)
+    if not m:
+        return None
+
+    try:
+        import yaml  # PyYAML
+        block_text = "autonomy:\n" + m.group(1)
+        parsed = yaml.safe_load(block_text)
+        if isinstance(parsed, dict) and "autonomy" in parsed:
+            return parsed["autonomy"]
+    except Exception:
+        pass
+
+    return None
+
+
+def _replace_autonomy_block(content: str, autonomy: dict[str, Any]) -> str:
+    """Replace or append the 'autonomy:' block in health-check.md content."""
+    try:
+        import yaml  # PyYAML
+        # Serialise to YAML with 2-space indent
+        block_lines = yaml.dump(
+            {"autonomy": autonomy},
+            default_flow_style=False,
+            sort_keys=True,
+        )
+    except Exception:
+        # Fallback: minimal YAML serialisation
+        lines = ["autonomy:"]
+        for k, v in sorted(autonomy.items()):
+            if isinstance(v, list):
+                if v:
+                    lines.append(f"  {k}:")
+                    for item in v:
+                        lines.append(f"    - {item}")
+                else:
+                    lines.append(f"  {k}: []")
+            elif v is None:
+                lines.append(f"  {k}: null")
+            elif isinstance(v, bool):
+                lines.append(f"  {k}: {str(v).lower()}")
+            else:
+                lines.append(f"  {k}: {v}")
+        block_lines = "\n".join(lines) + "\n"
+
+    # Check if an autonomy block already exists
+    pattern = re.compile(
+        r"^autonomy:\s*\n((?:[ \t]+.*\n?)*)",
+        re.MULTILINE,
+    )
+    m = pattern.search(content)
+    if m:
+        # Replace existing block
+        return content[:m.start()] + block_lines + content[m.end():]
+    else:
+        # Append new block at end
+        sep = "\n" if content and not content.endswith("\n\n") else ""
+        return content + sep + "\n## Autonomy State\n\n" + block_lines
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _first_unmet(criteria_met: dict[str, bool], messages: dict[str, str]) -> str:
+    """Return the human-readable message for the first unmet criterion."""
+    for key, met in criteria_met.items():
+        if not met:
+            return messages.get(key, f"Criterion '{key}' not met")
+    return "Unknown blocker"

@@ -1255,6 +1255,83 @@ def check_profile_completeness() -> CheckResult:
     )
 
 
+def check_action_handlers() -> CheckResult:
+    """P1 (Step 0c): Run action handler health checks and expire stale queue entries.
+
+    Disabled handlers are excluded for the current session only (non-blocking).
+    Ref: specs/act.md §5.2 Step 0c
+    """
+    try:
+        import importlib
+        # Guard: only run if actions feature is enabled in artha_config.yaml
+        config_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
+        actions_enabled = False
+        if os.path.exists(config_path):
+            with open(config_path) as _f:
+                _content = _f.read()
+            # Quick YAML check without full parser dependency
+            actions_enabled = "actions:" in _content and "enabled: true" in _content
+
+        if not actions_enabled:
+            return CheckResult(
+                "action handlers", "P1", True,
+                "Action layer not enabled — skipping handler health checks",
+            )
+
+        # Import ActionExecutor
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from action_executor import ActionExecutor  # noqa: PLC0415
+
+        executor = ActionExecutor(Path(ARTHA_DIR))
+
+        # Sweep expired stale actions
+        expired_count = executor.expire_stale()
+
+        # Run handler health checks
+        health: dict[str, bool] = executor.run_health_checks()
+
+        failed = [k for k, v in health.items() if not v]
+        passed = [k for k, v in health.items() if v]
+
+        if not health:
+            return CheckResult(
+                "action handlers", "P1", True,
+                f"Action layer enabled, no handlers loaded{' | ' + str(expired_count) + ' stale actions expired' if expired_count else ''}",
+            )
+
+        if failed:
+            return CheckResult(
+                "action handlers", "P1", False,
+                (
+                    f"Action handlers: {len(passed)} ok, {len(failed)} degraded "
+                    f"({', '.join(failed)}) — those action types disabled this session"
+                    + (f" | {expired_count} stale actions expired" if expired_count else "")
+                ),
+                fix_hint="Check connector credentials for degraded handlers",
+            )
+
+        return CheckResult(
+            "action handlers", "P1", True,
+            (
+                f"All {len(passed)} action handlers healthy ✓"
+                + (f" | {expired_count} stale actions expired" if expired_count else "")
+            ),
+        )
+
+    except ImportError:
+        return CheckResult(
+            "action handlers", "P1", True,
+            "Action layer modules not installed — skipping (run: make install)",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "action handlers", "P1", False,
+            f"Action handler check failed: {exc}",
+            fix_hint="Review state/actions.db and action executor logs",
+        )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -1298,6 +1375,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
     checks.append(check_profile_completeness())
+
+    # ── P1 — Action handler health checks + expiry sweep (Step 0c) ───────
+    checks.append(check_action_handlers())
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())

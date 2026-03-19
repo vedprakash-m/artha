@@ -120,6 +120,40 @@ Skill output for `occasion_tracker` with imminent items (≤ 3 days) should be
 elevated to 🔴 CRITICAL if the person is in `core_family`, or 🟠 URGENT for
 `extended_family_india` and `best_friends` circles.
 
+### Step 12.5 — Compose action proposals from domain signals *(Action Layer)*
+
+**SKIP if** `actions.enabled: false` in `config/artha_config.yaml` → log `⏭️ Step 12.5 skipped — actions disabled`  
+**SKIP in read-only mode** → log `⏭️ Step 12.5 skipped — read-only mode`
+
+For each domain signal surfaced in Step 12 (P0/P1 alerts), run the action composer:
+
+```python
+from scripts.action_composer import ActionComposer
+from scripts.action_executor import ActionExecutor
+from pathlib import Path
+
+artha_dir = Path(".")
+composer = ActionComposer(artha_dir=artha_dir)
+executor = ActionExecutor(artha_dir)
+
+for signal in domain_signals:          # signals collected during Step 12
+    proposal = composer.compose(signal)
+    if proposal is not None:
+        try:
+            action_id = executor.propose_direct(proposal)
+            log(f"[action] queued {proposal.action_type} → {action_id[:8]}…")
+        except Exception as e:
+            log(f"[action] propose failed for {proposal.action_type}: {e}")
+```
+
+Workflow sequences (e.g., address_change, tax_prep) use `composer.compose_workflow(trigger, context)`.
+
+**Constraints (non-negotiable):**
+- Do NOT auto-execute anything — only propose to the queue
+- High-friction actions (immigration, estate) always get `friction: high`
+- PII guard fires at enqueue time; block silently if PII detected in params
+- Duplicate proposals for the same (action_type, domain) within 24h are silently dropped
+
 ### Step 13 — Propose write actions
 
 For each recommended action from domain processing:
@@ -136,6 +170,42 @@ If `briefing.email_enabled: true`:
 python scripts/gmail_send.py --briefing
 ```
 If `briefing.spouse_filtered: true`: generate filtered copy first.
+
+### Step 14.5 — Push pending action queue to Telegram *(Action Layer)*
+
+**SKIP if** `actions.enabled: false` → log `⏭️ Step 14.5 skipped — actions disabled`  
+**SKIP if** Telegram channel not configured → log `⏭️ Step 14.5 skipped — no Telegram channel`  
+**SKIP in read-only mode** → log `⏭️ Step 14.5 skipped — read-only mode`
+
+After assembling the briefing (Step 14), push any pending action items to the Telegram
+channel with inline approval keyboards.
+
+Each pending action item is sent as a separate Telegram message with:
+
+```
+⚡ ACTION PENDING
+Type: email_send | Domain: finance
+Proposed: Send payment confirmation to landlord
+
+[✅ Approve]  [❌ Reject]  [⏸ Defer]
+```
+
+Inline keyboard button data format:
+- Approve → `act:APPROVE:{action_id}`
+- Reject  → `act:REJECT:{action_id}`
+- Defer   → `act:DEFER:{action_id}`
+
+The `channel_listener.py` intercepts these callbacks and calls
+`executor.approve()` / `executor.reject()` / `executor.defer()`.
+
+**Rules:**
+- Only send `pending` and `pre_approved` actions (not already-approved or expired)
+- Cap at 10 items per session to avoid Telegram spam
+- High-friction items (`friction: high`) prepend `🔴 HIGH FRICTION —` to the message
+- `autonomy_floor: true` items always shown, never auto-processed
+- Previously-notified actions (in state/action_notified.json) are skipped
+
+Update `state/action_notified.json` with the action IDs of sent notifications.
 
 ### Step 15 — Push new items to Microsoft To Do
 
@@ -213,6 +283,32 @@ python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import 
 Compare today's extraction with yesterday's/last-catch-up state.
 Flag contradictions or reversals (e.g., status: approved → pending).
 Note uncertainty if extraction differs significantly.
+
+### Step 19.5 — Action layer summary *(Action Layer)*
+
+**SKIP if** `actions.enabled: false` → log `⏭️ Step 19.5 skipped — actions disabled`
+
+Append a one-line action layer summary to `state/audit.md`:
+
+```
+{date} | actions | queued: N | approved: N | executed: N | rejected: N | expired: N | pii_blocked: N
+```
+
+Also surface in the catch-up briefing footer (always, even if all zeros):
+
+```
+## ⚡ Action Layer
+- Queued this session: N
+- Approved / Executed: N / N
+- Rejected / Expired: N / N
+- PII blocks: N
+```
+
+If `executed > 0`, list each executed action with its undo window (if applicable):
+```
+  ✅ email_send → sent to landlord@example.com  [undo: 30s window closed]
+  ✅ reminder_create → "File taxes" due Apr 15  [not reversible]
+```
 
 ### Step 19b — Coaching nudge
 

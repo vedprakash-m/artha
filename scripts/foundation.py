@@ -231,6 +231,75 @@ def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
     return result.returncode == 0
 
 
+def age_encrypt_string(pubkey: str, plaintext: str) -> str:
+    """Encrypt an arbitrary string using age.
+
+    Writes plaintext to a temp file, encrypts via age, returns the
+    base64-encoded ciphertext string.  Both temp files are removed
+    in the ``finally`` block regardless of success or failure to
+    prevent key-material leakage on disk.
+
+    Raises:
+        RuntimeError: if age is not installed or encryption fails.
+    """
+    import base64
+    if not check_age_installed():
+        raise RuntimeError("age CLI not found on PATH; cannot encrypt string")
+
+    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".txt")
+    out_path = Path(in_path_str).with_suffix(".age")
+    try:
+        with os.fdopen(in_fd, "w", encoding="utf-8") as f:
+            f.write(plaintext)
+        ok = age_encrypt(pubkey, Path(in_path_str), out_path)
+        if not ok:
+            raise RuntimeError("age_encrypt_string: encryption failed")
+        return base64.b64encode(out_path.read_bytes()).decode("ascii")
+    finally:
+        try:
+            os.unlink(in_path_str)
+        except OSError:
+            pass
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def age_decrypt_string(privkey: str, ciphertext_b64: str) -> str:
+    """Decrypt a base64-encoded age ciphertext back to a plaintext string.
+
+    Writes the decoded bytes to a temp file, decrypts via age, reads the
+    plaintext, and removes both temp files in the ``finally`` block.
+
+    Raises:
+        RuntimeError: if age is not installed or decryption fails.
+    """
+    import base64
+    if not check_age_installed():
+        raise RuntimeError("age CLI not found on PATH; cannot decrypt string")
+
+    raw = base64.b64decode(ciphertext_b64)
+    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".age")
+    out_path = Path(in_path_str).with_suffix(".txt")
+    try:
+        with os.fdopen(in_fd, "wb") as f:
+            f.write(raw)
+        ok = age_decrypt(privkey, Path(in_path_str), out_path)
+        if not ok:
+            raise RuntimeError("age_decrypt_string: decryption failed")
+        return out_path.read_text(encoding="utf-8")
+    finally:
+        try:
+            os.unlink(in_path_str)
+        except OSError:
+            pass
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # Age file validation
 # ---------------------------------------------------------------------------
@@ -276,8 +345,10 @@ __all__ = [
     "log", "die",
     # Key management
     "get_private_key", "get_public_key",
-    # Encryption
+    # Encryption (file-based)
     "check_age_installed", "age_decrypt", "age_encrypt",
+    # Encryption (string-based wrappers — for action queue sensitive fields)
+    "age_encrypt_string", "age_decrypt_string",
     # Validation
     "is_valid_age_file",
 ]
