@@ -1764,7 +1764,7 @@ Each handler must have:
 
 | Test | Expected Outcome |
 |---|---|
-| Inject `SSN: 123-45-6789` into email body params | PII firewall blocks; action not queued |
+| Inject `SSN: XXX-XX-XXXX` into email body params | PII firewall blocks; action not queued |
 | Submit 200 email_send actions in 1 hour | Rate limiter blocks after 20; remaining rejected |
 | Auto-approve `email_send` at Trust Level 2 | Blocked by autonomy floor |
 | Queue 1001 actions | 1001st rejected with QUEUE_FULL error |
