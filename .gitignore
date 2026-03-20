@@ -23,6 +23,7 @@ config/prompt-overlays/*.md
 # --- State files (all user-generated) ---
 state/*.md
 state/*.md.age
+state/*.db          # SQLite databases (actions.db, etc.) — user data, not committed
 !state/.gitkeep
 !state/templates/
 
@@ -44,6 +45,7 @@ icloud_*.jsonl
 outlook_*.jsonl
 *_errors.txt
 *_err.txt
+test-write.txt          # filesystem write probe — never committed
 
 # --- Token and credential files ---
 .tokens/

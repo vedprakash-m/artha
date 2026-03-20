@@ -19,6 +19,8 @@ as a Python handler module in `scripts/connectors/`.
 | `canvas_lms` | education | Canvas LMS API | ✅ Active |
 | `onenote` | notes | Microsoft Graph OneNote | ✅ Active |
 | `apple_health` | health | Local Apple Health export | ⭕ Opt-in (disabled by default) |
+| `whatsapp_local` | messaging | Local WhatsApp Desktop DB | ⭕ Opt-in · Windows + macOS |
+| `imessage_local` | messaging | Local macOS Messages DB | ⭕ Opt-in · macOS only |
 
 ---
 
@@ -78,7 +80,7 @@ Add a block to `config/connectors.yaml`:
 ```yaml
 connectors:
   - name: my_source
-    type: <email|calendar|notes|education|custom>
+    type: <email|calendar|notes|education|messaging|custom>
     provider: <provider name>
     enabled: true
     auth:

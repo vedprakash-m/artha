@@ -26,6 +26,13 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from actions.base import ActionProposal, ActionResult
 
+# Module-level import so tests can patch actions.calendar_create.build_service
+try:
+    from google_auth import build_service, check_stored_credentials  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    build_service = None  # type: ignore[assignment]
+    check_stored_credentials = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Required parameters
@@ -96,7 +103,6 @@ def execute(proposal: ActionProposal) -> ActionResult:
     event_body = _build_event_body(params)
 
     try:
-        from google_auth import build_service  # noqa: PLC0415
         service = build_service("calendar", "v3")
 
         created = service.events().insert(
@@ -168,7 +174,6 @@ def build_reverse_proposal(
 def health_check() -> bool:
     """Verify Google Calendar credentials are available."""
     try:
-        from google_auth import check_stored_credentials  # noqa: PLC0415
         status = check_stored_credentials()
         # Calendar uses google_token_stored (same OAuth flow)
         return bool(

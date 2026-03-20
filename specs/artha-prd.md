@@ -1588,8 +1588,8 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 **Not in scope (by design):**
 - Work email (configured in user_profile.yaml) — work domain, not in scope
 - Teams, ADO, SharePoint, GitHub — work tools outside Artha's scope
-- WhatsApp inbound messages — no API access; outbound messaging only via URL scheme (human-gated, tech spec §7.4.4)
-- iMessage — privacy boundary; no API access
+- WhatsApp inbound messages — no public API; **local DB reading is implemented** for WhatsApp Desktop (macOS + Windows) via `whatsapp_local` connector (metadata only on Windows — message body is encrypted at rest)
+- iMessage — **local DB reading is implemented** for macOS via `imessage_local` connector (requires Full Disk Access grant); no remote API access
 - Proton Mail (unless Proton Bridge configured in Phase 2) — personal comms boundary; E2E encryption prevents standard forwarding
 
 ---

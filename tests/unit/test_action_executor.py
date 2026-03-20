@@ -140,7 +140,7 @@ class TestPropose:
             mock_h.validate.return_value = (False, "Missing required field 'to'")
             mock_handler.return_value = mock_h
 
-            with pytest.raises(ValueError, match="Validation"):
+            with pytest.raises(ValueError, match="Handler validation failed"):
                 executor.propose(
                     action_type="email_send",
                     domain="test",

@@ -87,15 +87,43 @@ class USCISStatusSkill(BaseSkill):
             "receipt_numbers": self.receipt_numbers
         }
 
+_TERMINAL_STATUSES = re.compile(
+    r"\b(approved|card\s+was\s+delivered|case\s+closed|granted|naturalized|"
+    r"permanently\s+resident|status:\s*approved|status:\s*closed|status:\s*done)\b",
+    re.IGNORECASE,
+)
+
 def get_skill(artha_dir: Path) -> USCISStatusSkill:
-    """Factory function to instantiate the skill with data from state files."""
+    """Factory function to instantiate the skill with data from state files.
+
+    Only includes receipt numbers where the surrounding context does NOT indicate
+    an approved/closed/terminal status. Approved cases are never queried — there
+    is no actionable information to retrieve once a case is approved.
+    """
     immigration_state = artha_dir / "state" / "immigration.md"
     receipts = []
-    
+
     if immigration_state.exists():
-        text = immigration_state.read_text()
-        # Regex to find receipt numbers: IOE, SRC, LIN, etc. followed by 10 digits
-        matches = re.findall(r"(?:IOE|SRC|LIN|EAC|WAC|NBC|MSC|ZLA)\d{10}", text)
-        receipts = list(set(matches)) # unique
-        
+        text = immigration_state.read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        receipt_re = re.compile(r"(?:IOE|SRC|LIN|EAC|WAC|NBC|MSC|ZLA)\d{10}")
+
+        # Two passes: first mark approved, then collect only those never marked approved
+        approved: set[str] = set()
+        found: set[str] = set()
+
+        for i, line in enumerate(lines):
+            for match in receipt_re.finditer(line):
+                receipt = match.group()
+                found.add(receipt)
+                context_start = max(0, i - 3)
+                context_end = min(len(lines), i + 4)
+                context = "\n".join(lines[context_start:context_end])
+                if _TERMINAL_STATUSES.search(context):
+                    approved.add(receipt)
+
+        # Only check receipts that were NEVER seen in an approved context
+        receipts = [r for r in found if r not in approved]
+
     return USCISStatusSkill(receipt_numbers=receipts)
