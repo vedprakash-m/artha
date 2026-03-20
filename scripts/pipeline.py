@@ -92,6 +92,9 @@ _HANDLER_MAP: dict[str, str] = {
     "connectors.ado_workitems": "connectors.ado_workitems",
     # Work domain connectors (opt-in — Wave 2)
     "connectors.outlookctl_bridge": "connectors.outlookctl_bridge",
+    # Messaging connectors (local DB — opt-in)
+    "connectors.whatsapp_local": "connectors.whatsapp_local",
+    "connectors.imessage_local": "connectors.imessage_local",
 }
 
 

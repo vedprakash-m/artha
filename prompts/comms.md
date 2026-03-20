@@ -18,6 +18,10 @@ An email routes to comms.md when:
 - Multiple domains involved with no clear primary
 - Email requires a response but doesn't fit a specific domain
 
+**Messaging records** (WhatsApp, iMessage) route here automatically via
+`source_routes` in routing.yaml. These are not emails — they have:
+`contact_name`, `phone`, `direction` (sent/received), `snippet`, `is_group`.
+
 ## Extraction Rules
 For each comms email, extract:
 1. **From**: who sent it?
@@ -25,6 +29,14 @@ For each comms email, extract:
 3. **Response needed?**: yes/no/optional
 4. **Deadline**: if response needed, is there a time constraint?
 5. **Route to domain?**: could this belong in another domain? note it.
+
+For each messaging record (WhatsApp/iMessage), extract:
+1. **Contact**: name + phone
+2. **Direction**: sent or received
+3. **Gist**: topic summary from snippet
+4. **Response needed?**: if received and last in thread — likely yes
+5. **Cross-domain signal?**: does the message content relate to insurance,
+   immigration, finance, kids, etc.? If so, note it for cross-domain routing.
 
 ## Alert Thresholds
 🟠 **URGENT**:
@@ -43,9 +55,11 @@ For each comms email, extract:
 ## State File Update Protocol
 Read `state/comms.md` first. Then:
 1. **Awaiting Response**: add items that the family sent and are waiting on a reply
-2. **Follow-Ups Needed**: add emails that require a response from the family
-3. **Unrouted**: add genuinely unclassifiable emails (note if a domain reclassification is needed)
-4. Archive: move to archive when response sent or no longer relevant (>7 days without action)
+2. **Follow-Ups Needed**: add emails/messages that require a response from the family
+3. **Messaging Summary**: for WhatsApp/iMessage records, update the messaging
+   activity section (new conversations, pending replies, group highlights)
+4. **Unrouted**: add genuinely unclassifiable emails (note if a domain reclassification is needed)
+5. Archive: move to archive when response sent or no longer relevant (>7 days without action)
 
 ## Anti-Patterns
 - DO NOT surface every unread email here — only those requiring action or response
@@ -57,5 +71,12 @@ Read `state/comms.md` first. Then:
 ```
 ### Comms (if any actionable items)
 • [Person]: [what they need / sent / awaiting] — [action]
+
+### 📱 Messaging (if WhatsApp/iMessage records present)
+• WhatsApp: [N] messages since last catch-up ([N] received, [N] sent)
+  - [Contact]: [snippet] — needs reply? [yes/no]
+  - [Group name]: [N] messages — highlights: [topic]
+• iMessage: [N] messages since last catch-up
+  - [Contact]: [snippet] — needs reply? [yes/no]
 ```
 Omit entirely if no actionable comms items. Do not pad with low-signal items.

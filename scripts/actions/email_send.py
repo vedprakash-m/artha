@@ -33,6 +33,13 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from actions.base import ActionProposal, ActionResult
 
+# Module-level import so tests can patch actions.email_send.build_service
+try:
+    from google_auth import build_service, check_stored_credentials  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    build_service = None  # type: ignore[assignment]
+    check_stored_credentials = None  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Required parameters
@@ -99,7 +106,6 @@ def dry_run(proposal: ActionProposal) -> ActionResult:
         )
 
     try:
-        from google_auth import build_service  # noqa: PLC0415
         service = build_service("gmail", "v1")
 
         # Build the MIME message
@@ -159,7 +165,6 @@ def execute(proposal: ActionProposal) -> ActionResult:
     draft_id = params.get("draft_id")
 
     try:
-        from google_auth import build_service  # noqa: PLC0415
         service = build_service("gmail", "v1")
 
         if draft_id:
@@ -245,7 +250,6 @@ def build_reverse_proposal(
 def health_check() -> bool:
     """Verify Gmail send credentials are available."""
     try:
-        from google_auth import check_stored_credentials  # noqa: PLC0415
         status = check_stored_credentials()
         return bool(status.get("gmail_token_stored", False))
     except Exception:
@@ -263,7 +267,6 @@ def _build_mime(
     params: dict[str, Any],
 ) -> MIMEMultipart:
     """Build a MIME multipart message from action parameters."""
-    from google_auth import build_service  # noqa: PLC0415
     service = build_service("gmail", "v1")
     profile = service.users().getProfile(userId="me").execute()
     from_addr = profile.get("emailAddress", "me")

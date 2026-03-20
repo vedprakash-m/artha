@@ -407,3 +407,12 @@ class WhatsAppLastContact(BaseSkill):
         total = data.get("total_chats", 0)
         lines.append(f"\n_Source: ChatStorage.sqlite snapshot {snap} · {total} chats scanned_")
         return "\n".join(lines)
+
+
+# ------------------------------------------------------------------
+# Factory function for skill_runner.py
+# ------------------------------------------------------------------
+
+def get_skill(artha_dir: Path) -> WhatsAppLastContact:
+    """Return a configured WhatsAppLastContact skill instance."""
+    return WhatsAppLastContact(artha_dir=artha_dir)

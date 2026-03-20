@@ -401,3 +401,70 @@ connectors:
       max_retries: 1
       base_delay: 0.0
       max_delay: 0.0
+
+  # ── Messaging — Local DB connectors (opt-in) ────────────────────────────
+  # These read from local SQLite databases (no network, no API keys).
+  # Platform-dependent: WhatsApp works on macOS + Windows; iMessage is macOS-only.
+
+  whatsapp_local:
+    type: messaging
+    provider: whatsapp
+    enabled: true
+    description: >
+      WhatsApp local ChatStorage.sqlite reader — extracts recent messages from
+      the WhatsApp Desktop app database. No API key needed. macOS + Windows.
+    auth:
+      method: none            # reads local SQLite DB — no auth required
+    fetch:
+      handler: "scripts/connectors/whatsapp_local.py"
+      default_max_results: 200
+      default_lookback: "48h"
+      include_groups: true
+      snippet_max_chars: 300
+    output:
+      format: jsonl
+      fields: [id, contact_name, phone, timestamp, date_iso, direction, snippet, source, group_name, is_group]
+      source_tag: "whatsapp"
+    health_check: true
+    mcp:
+      prefer_mcp: false       # local DB — no MCP
+    retry:
+      max_retries: 1
+      base_delay: 0.0
+      max_delay: 0.0
+
+  imessage_local:
+    type: messaging
+    provider: apple
+    enabled: true
+    description: >
+      iMessage / SMS local chat.db reader — extracts recent messages from
+      macOS Messages database. macOS ONLY. Requires Full Disk Access for the
+      terminal app (System Settings → Privacy & Security → Full Disk Access).
+    auth:
+      method: none            # reads local SQLite DB — no auth required
+    fetch:
+      handler: "scripts/connectors/imessage_local.py"
+      default_max_results: 200
+      default_lookback: "48h"   # one-time full sweep completed 2026-03-19; now incremental only
+      include_groups: true
+      snippet_max_chars: 300
+    one_time_sweep:
+      completed: true
+      completed_date: "2026-03-19"
+      oldest_message: "2016-05-05"
+      total_messages_in_db: 30363
+      total_messages_processed: 30146  # v2 decoder (all 3 NSString header variants); text column had only 143
+      decode_method: "attributedBody binary (NSAttributedString streamtyped, length-prefix UTF-8 scanning)"
+      state_files_updated: [digital.md, health-metrics.md, comms.md, finance.md, kids.md, contacts.md, home.md, community.md]
+    output:
+      format: jsonl
+      fields: [id, contact_name, phone, timestamp, date_iso, direction, snippet, source, group_name, is_group]
+      source_tag: "imessage"
+    health_check: true
+    mcp:
+      prefer_mcp: false       # local DB — no MCP
+    retry:
+      max_retries: 1
+      base_delay: 0.0
+      max_delay: 0.0

@@ -106,7 +106,14 @@ def _probe_filesystem_writable() -> tuple[bool, str]:
     try:
         _STATE_DIR.mkdir(parents=True, exist_ok=True)
         probe_path.write_text("probe", encoding="utf-8")
-        probe_path.unlink()
+        # Cleanup is best-effort — some mounts (e.g. Cowork VM FUSE mounts)
+        # allow writes but not deletes. A delete failure does NOT mean the
+        # filesystem is read-only; Artha's state updates use write_text on
+        # existing files, which works fine on such mounts.
+        try:
+            probe_path.unlink()
+        except (OSError, PermissionError):
+            pass
         return True, "writable"
     except (OSError, PermissionError) as exc:
         return False, f"read_only:{exc.__class__.__name__}"

@@ -97,7 +97,7 @@ python scripts/migrate.py             # write config/user_profile.yaml
 
 - **Morning briefings** with action items across 24 life domains (health, finance, goals, immigration, kids, home, and more)
 - **Action Layer** *(v1.3)* — Artha can now **act**, not just report. Propose, approve, and execute real actions — send emails, create calendar events, set reminders, draft WhatsApp messages — with a human-gated approval queue, full audit trail, and one-tap Telegram approval
-- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health
+- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health, **WhatsApp** (Windows/macOS local DB), **iMessage** (macOS local DB)
 - **Encrypted state** for sensitive domains with `age` — health, finance, immigration at rest
 - **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor, financial resilience
 - **Telegram bridge** — conversational interface from your phone (45+ command aliases, multi-LLM Q&A, inline action approvals)

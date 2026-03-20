@@ -49,14 +49,14 @@ from action_rate_limiter import ActionRateLimiter, RateLimitError
 # ---------------------------------------------------------------------------
 
 _HANDLER_MAP: dict[str, str] = {
-    "email_send":        "scripts.actions.email_send",
-    "email_reply":       "scripts.actions.email_reply",
-    "calendar_create":   "scripts.actions.calendar_create",
-    "calendar_modify":   "scripts.actions.calendar_modify",
-    "reminder_create":   "scripts.actions.reminder_create",
-    "whatsapp_send":     "scripts.actions.whatsapp_send",
-    "todo_sync":         "scripts.actions.todo_sync_action",
-    "instruction_sheet": "scripts.actions.instruction_sheet",
+    "email_send":        "actions.email_send",
+    "email_reply":       "actions.email_reply",
+    "calendar_create":   "actions.calendar_create",
+    "calendar_modify":   "actions.calendar_modify",
+    "reminder_create":   "actions.reminder_create",
+    "whatsapp_send":     "actions.whatsapp_send",
+    "todo_sync":         "actions.todo_sync_action",
+    "instruction_sheet": "actions.instruction_sheet",
 }
 
 # Default execution timeout per handler (seconds)

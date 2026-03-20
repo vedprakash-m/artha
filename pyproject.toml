@@ -35,13 +35,16 @@ skills = [
     "requests>=2.31.0",
     "beautifulsoup4>=4.12.0",
 ]
+messaging = [
+    "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chromium_reader.git",
+]
 channels = [
     # Optional: use python-telegram-bot>=21 for richer Telegram features.
     # The built-in urllib-based adapter (scripts/channels/telegram.py) requires
     # no additional dependencies.
     # "python-telegram-bot>=21.0",
 ]
-all = ["artha[google,microsoft,apple,skills,channels]"]
+all = ["artha[google,microsoft,apple,skills,channels,messaging]"]
 dev = [
     "pytest>=7.4.0",
     "pytest-mock>=3.11.0",

@@ -11,6 +11,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.1.0] — 2026-03-20
+
+### Added — Messaging Connectors (WhatsApp + iMessage)
+
+Artha's catch-up pipeline now includes local messaging data from WhatsApp Desktop and iMessage without any API keys or network access.
+
+**WhatsApp connector (`scripts/connectors/whatsapp_local.py`)**
+- **macOS**: reads `ChatStorage.sqlite` (full message text via CoreData timestamps)
+- **Windows**: reads Chromium IndexedDB (LevelDB) via `ccl_chromium_reader`. Message body is AES-encrypted at rest; connector surfaces metadata — sender, group, direction, message type, timestamp
+- Dual `_find_db()` paths, automatic platform detection
+- Status-broadcast filtering, deduplication by `rowId`, sorted by timestamp descending
+- Contact/group name resolution from IndexedDB stores (contacts, chats, group-metadata)
+- `health_check()` returns `True` on both platforms when local DB is reachable
+
+**iMessage connector (`scripts/connectors/imessage_local.py`)**
+- macOS-only; reads `~/Library/Messages/chat.db`
+- Handles nanosecond + second timestamp formats (Apple clock epoch conversion)
+- Graceful skip (0 records, no error) on non-macOS platforms
+- Requires Full Disk Access for the terminal app (System Settings → Privacy & Security)
+
+**Other changes**
+- `scripts/skills/whatsapp_last_contact.py` — added missing `get_skill()` factory (was causing `skill_runner.py` AttributeError)
+- `scripts/skills/uscis_status.py` — `get_skill()` now skips approved/closed receipt numbers using 7-line context window + `_TERMINAL_STATUSES` regex; avoids polling USCIS for resolved cases
+- `scripts/detect_environment.py` — filesystem write probe: `unlink()` is now best-effort (FUSE mounts on some VMs allow write but not delete)
+- `config/connectors.yaml` — `whatsapp_local` + `imessage_local` registrations
+- `config/routing.yaml` — `source_routes` section routing messaging sources to comms domain
+- `prompts/comms.md` — messaging extraction rules and briefing format template
+- `pyproject.toml` — new `messaging` optional dependency group (`ccl_chromium_reader`)
+- `.gitignore` — `state/*.db` (actions.db etc.) and `test-write.txt` excluded
+
+---
+
 ## [8.0.0] — 2026-03-19
 
 ### Added — Action Layer v1.3 (specs/act.md)
