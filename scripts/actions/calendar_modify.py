@@ -55,7 +55,10 @@ def validate(proposal: ActionProposal) -> tuple[bool, str]:
     params = proposal.parameters
 
     for field in _REQUIRED_PARAMS:
-        if not params.get(field):
+        val = params.get(field)
+        # Treat as missing if absent, None, or an empty string;
+        # but NOT if it's an empty dict — that case is handled explicitly below.
+        if field not in params or val is None or (isinstance(val, str) and not val):
             return False, f"Missing required parameter: '{field}'"
 
     updates = params.get("updates")
