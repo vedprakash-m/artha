@@ -11,6 +11,45 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.3.0] — 2026-03-21
+
+### Added — ACT-RELOADED: Sense–Reason–Act–Learn (E1–E16, specs/act-reloaded.md v1.3.0)
+
+Evolved Artha from a **read–reason–act** system to a **sense–reason–act–learn** system with 16 enhancements across 3 waves.
+
+**Wave 1 — New signal pipelines:**
+- **`scripts/email_signal_extractor.py`** — Deterministic Step 6.5 signal extraction from email body: 8 categories (RSVP, appointment, payment notice, form deadline, shipment arrival, security alert, renewal notice, school action needed). 6 new `_SIGNAL_ROUTING` entries in `action_composer.py`.
+- **`scripts/attachment_router.py`** — Filename-pattern-based attachment routing to domains (finance, health, immigration, kids, insurance, employment, home). `AttachmentSignal` dataclass. PII scrubbing from filenames. `to_domain_signals()` converter.
+- **`scripts/pattern_engine.py`** + **`config/patterns.yaml`** — Deterministic cross-domain pattern engine with 8 named patterns and 6 operators (`days_until_lte`, `lt/gt/eq`, `exists`, `has_item_within_days`, `contains`, `stale_days`). Replaces prose rules in Step 8. Cooldown-state isolation per `root_dir`.
+
+**Wave 2 — Intelligence loop:**
+- **`scripts/briefing_adapter.py`** — Adaptive briefing with `BriefingConfig` dataclass; 6 rules (R1–R6); 10-run cold-start gate; transparency footer.
+- **`scripts/nudge_daemon.py`** — Vault-watchdog bridge for proactive notifications: 5 nudge types; 3/day cap; marker-file dedup at `tmp/nudge_*.marker`; no vault access when session inactive.
+- **`channel_listener.py`** `/remember` command — Async knowledge capture: PII-guarded writes to `state/inbox.md`; 5/hour write rate limit; full-scope only; `CHANNEL_REMEMBER` audit event.
+
+**Wave 3 — Activation enhancements:**
+- **`scripts/self_model_writer.py`** — Memory→self-model pipeline; 3000-char bounded `state/self_model.md`.
+- **`scripts/decision_tracker.py`** — `capture_from_command()`, `persist_proposal()`, `_load_decisions()`.
+- **`scripts/relationship_pulse_view.py`** + **`state/relationships.md`** — View backing the existing `/relationships` command.
+- **`scripts/power_half_hour_view.py`** — Powers the `/power` command: top OI by impact×urgency, today's calendar, intention prompt.
+- **`scripts/retrospective_view.py`** — Monthly retrospective generator reading `summaries/` + state files.
+- **`scripts/coaching_engine.py`** — `select_nudge(goals, memory_facts, health_history, preferences)`; 4 strategy types; moved from Step 19 → Step 8.
+- **`scripts/skills/subscription_monitor.py`** extended — 4 new lifecycle detectors (trial_ending, cancellation_window, annual_review, duplicate_subscription); 5 new signal types.
+- **`scripts/actions/whatsapp_cloud_send.py`** — WhatsApp Cloud API Phase 2: `SUPPORTED_TEMPLATES` frozenset; `urllib`-based HTTP; `validate()` → `tuple[bool, str]`.
+- **`channel_push.py`** `_build_family_flash()` — Condensed family-scope Telegram digest.
+- **`scripts/cost_tracker.py`** + `/cost` command — Per-session API cost estimation.
+- **`state/inbox.md`** + **`state/relationships.md`** — New state files.
+- **`config/artha_config.yaml`** `enhancements.*` flags — Feature flag namespace for all 16 enhancements.
+
+### Fixed
+- **`scripts/pattern_engine.py`** `_load_yaml_file()` — Switched from `yaml.safe_load()` to `next(yaml.safe_load_all(), None)` to handle Markdown files with YAML frontmatter without raising `ComposerError`.
+- **`scripts/power_half_hour_view.py`** `_parse_open_items()` — Correct YAML list item extraction with `yaml.safe_load(block)[0]` instead of broken `re.sub` stripping.
+- **`scripts/cost_tracker.py`** `_load_pipeline_metrics()` — Handle list-formatted JSON output (wraps list in `{"runs": [...]}` dict).
+
+**Tests:** 1520 passed, 0 failures (5 skipped, 20 xfailed). +151 new tests across 16 new test files.
+
+---
+
 ## [8.2.0] — 2026-03-21
 
 ### Added — Home Assistant IoT Integration (ARTHA-IOT, PRD F7.4 + F12.5)

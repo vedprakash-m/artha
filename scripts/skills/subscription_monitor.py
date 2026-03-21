@@ -33,6 +33,12 @@ from .base_skill import BaseSkill
 # Alert thresholds
 _TRIAL_WARNING_DAYS = 7     # trial converts to paid within N days → warn
 _PRICE_INCREASE_THRESHOLD = 0.01  # any increase above this fraction → alert (1% = $0.10 on $10)
+# E6 — Subscription Lifecycle Manager additions
+_RENEWAL_WARNING_DAYS = 3        # upcoming renewal within N days → warn
+_CANCEL_DEADLINE_DAYS = 3        # cancel_by date within N days → warn
+_ANNUAL_REVIEW_WINDOW_DAYS = 30  # annual plan renewed within last N days → review prompt
+_STALE_DATA_DAYS = 90            # last_updated > N days → stale data warning
+_MAX_SUB_ALERTS_PER_RUN = 2      # max subscription lifecycle alerts emitted per briefing
 
 # Common subscription amount patterns in markdown text
 _AMOUNT_PATTERN = re.compile(
@@ -166,6 +172,94 @@ def _detect_trial_expirations(subs: list[dict]) -> list[dict]:
     return warnings
 
 
+# ---------------------------------------------------------------------------
+# E6 — Subscription Lifecycle additions
+# ---------------------------------------------------------------------------
+
+def _parse_date(value: Any) -> date | None:
+    """Try to parse a date value (string or date object)."""
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(str(value).strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _detect_upcoming_renewals(subs: list[dict]) -> list[dict]:
+    """Return subscriptions whose next_renewal is within _RENEWAL_WARNING_DAYS days."""
+    today = date.today()
+    alerts: list[dict] = []
+    for sub in subs:
+        renewal = _parse_date(sub.get("next_renewal"))
+        if renewal is None:
+            continue
+        days_left = (renewal - today).days
+        if 0 <= days_left <= _RENEWAL_WARNING_DAYS:
+            alerts.append({
+                "name": sub["name"],
+                "next_renewal": renewal.isoformat(),
+                "days_left": days_left,
+                "amount": sub.get("amount", 0.0),
+                "signal_type": "subscription_renewal_upcoming",
+            })
+    return alerts[:_MAX_SUB_ALERTS_PER_RUN]
+
+
+def _detect_cancellation_deadlines(subs: list[dict]) -> list[dict]:
+    """Return subscriptions whose cancel_by date is within _CANCEL_DEADLINE_DAYS days."""
+    today = date.today()
+    alerts: list[dict] = []
+    for sub in subs:
+        cancel_by = _parse_date(sub.get("cancel_by"))
+        if cancel_by is None:
+            continue
+        days_left = (cancel_by - today).days
+        if 0 <= days_left <= _CANCEL_DEADLINE_DAYS:
+            alerts.append({
+                "name": sub["name"],
+                "cancel_by": cancel_by.isoformat(),
+                "days_left": days_left,
+                "signal_type": "subscription_cancellation_deadline",
+            })
+    return alerts[:_MAX_SUB_ALERTS_PER_RUN]
+
+
+def _detect_annual_reviews(subs: list[dict]) -> list[dict]:
+    """Return annual subscriptions whose review date is within the next 30 days."""
+    today = date.today()
+    alerts: list[dict] = []
+    for sub in subs:
+        review_date = _parse_date(sub.get("annual_review_date"))
+        if review_date is None:
+            continue
+        days_left = (review_date - today).days
+        if 0 <= days_left <= _ANNUAL_REVIEW_WINDOW_DAYS:
+            usage = str(sub.get("usage_indicator", "unknown")).lower()
+            alerts.append({
+                "name": sub["name"],
+                "annual_review_date": review_date.isoformat(),
+                "days_left": days_left,
+                "usage_indicator": usage,
+                "signal_type": "subscription_annual_review",
+            })
+    return alerts[:_MAX_SUB_ALERTS_PER_RUN]
+
+
+def _detect_stale_data(last_updated_str: Any) -> bool:
+    """Return True if subscription data hasn't been updated in _STALE_DATA_DAYS days."""
+    last = _parse_date(last_updated_str)
+    if last is None:
+        return False
+    return (date.today() - last).days >= _STALE_DATA_DAYS
+
+
 class SubscriptionMonitorSkill(BaseSkill):
     """Detect subscription price increases and trial expirations from state/digital.md."""
 
@@ -207,6 +301,18 @@ class SubscriptionMonitorSkill(BaseSkill):
         price_increases = _detect_price_changes(current_subs, previous_subs)
         trial_warnings = _detect_trial_expirations(current_subs)
 
+        # E6 — Lifecycle signals
+        upcoming_renewals = _detect_upcoming_renewals(current_subs)
+        cancellation_deadlines = _detect_cancellation_deadlines(current_subs)
+        annual_reviews = _detect_annual_reviews(current_subs)
+
+        # E6 — Stale data check: look for last_updated in raw text frontmatter
+        import re as _re
+        stale_match = _re.search(r"last_updated:\s*([^\n]+)", text, _re.IGNORECASE)
+        stale_data_warning = False
+        if stale_match:
+            stale_data_warning = _detect_stale_data(stale_match.group(1).strip())
+
         # Update cache with current state (for next run comparison)
         self._cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_data = {
@@ -228,11 +334,25 @@ class SubscriptionMonitorSkill(BaseSkill):
             "price_increase_count": len(price_increases),
             "trial_warnings": trial_warnings,
             "trial_warning_count": len(trial_warnings),
+            # E6 additions
+            "upcoming_renewals": upcoming_renewals,
+            "upcoming_renewal_count": len(upcoming_renewals),
+            "cancellation_deadlines": cancellation_deadlines,
+            "cancellation_deadline_count": len(cancellation_deadlines),
+            "annual_reviews": annual_reviews,
+            "annual_review_count": len(annual_reviews),
+            "stale_data_warning": stale_data_warning,
         }
 
     @property
     def compare_fields(self) -> list[str]:
-        return ["price_increase_count", "trial_warning_count"]
+        return [
+            "price_increase_count",
+            "trial_warning_count",
+            "upcoming_renewal_count",
+            "cancellation_deadline_count",
+            "annual_review_count",
+        ]
 
     def to_dict(self) -> dict[str, Any]:
         return {

@@ -99,8 +99,8 @@ features:
     confidence: high
   monthly_retrospective:
     spec: "UX §8.10"
-    status: partial
-    confidence: low
+    status: implemented
+    confidence: high
   email_send_briefing:
     spec: "TS §7.1 Step 14"
     status: implemented
@@ -155,13 +155,17 @@ features:
   teach:
     status: implemented
   power:
-    status: partial
+    status: implemented
+    note: "scripts/power_half_hour_view.py — E14"
   decisions:
-    status: partial
+    status: implemented
+    note: "scripts/decision_tracker.py — E12"
   scenarios:
-    status: partial
+    status: implemented
+    note: "state/scenarios.md + decision_tracker.py — E12"
   relationships:
-    status: partial
+    status: implemented
+    note: "scripts/relationship_pulse_view.py + state/relationships.md — E13"
   cost:
     status: implemented
   health:
@@ -220,9 +224,9 @@ features:
     confidence: high
   handler_whatsapp_send:
     spec: "specs/act.md §8.6"
-    status: partial
+    status: implemented
     confidence: high
-    note: "Phase 1: wa.me URL scheme only. Phase 2 (Cloud API) not_started"
+    note: "Phase 1: wa.me URL scheme. Phase 2: scripts/actions/whatsapp_cloud_send.py (E10)"
   handler_todo_sync:
     spec: "specs/act.md §8"
     status: implemented
@@ -252,8 +256,9 @@ features:
     note: "Phase 2A: Zocdoc API; Phase 1 via email_send already available"
   whatsapp_cloud_api:
     spec: "specs/act.md §8.6 Phase 2"
-    status: not_started
-    note: "Requires Meta Business account; Phase 1 URL scheme implemented"
+    status: partial
+    confidence: high
+    note: "scripts/actions/whatsapp_cloud_send.py (E10) — module complete; needs Meta Business acct credentials"
 
   # ── Phase 2B — NOT IMPLEMENTED ──────────────────────────────────────────
   sentiment_tracking:
@@ -318,3 +323,80 @@ features:
     status: not_started
     confidence: low
     note: "Deferred — pending Phase 1-5 production validation"
+
+  # ── ACT-Reloaded Enhancements (E1–E16, specs/act-reloaded.md) ────────────
+  email_signal_extractor:
+    spec: "specs/act-reloaded.md E1"
+    status: implemented
+    confidence: high
+    note: "scripts/email_signal_extractor.py — 8 signal categories, Step 6.5"
+  knowledge_capture:
+    spec: "specs/act-reloaded.md E2"
+    status: implemented
+    confidence: high
+    note: "/remember command in channel_listener.py + state/inbox.md"
+  pattern_engine:
+    spec: "specs/act-reloaded.md E3"
+    status: implemented
+    confidence: high
+    note: "scripts/pattern_engine.py + config/patterns.yaml — 8 patterns, Step 4.5"
+  nudge_daemon:
+    spec: "specs/act-reloaded.md E4"
+    status: implemented
+    confidence: high
+    note: "scripts/nudge_daemon.py — vault-watchdog bridge, 3/day cap, marker dedup"
+  briefing_adapter:
+    spec: "specs/act-reloaded.md E5"
+    status: implemented
+    confidence: high
+    note: "scripts/briefing_adapter.py — 6 adaptive rules, 10 catch-up minimum"
+  subscription_lifecycle:
+    spec: "specs/act-reloaded.md E6"
+    status: implemented
+    confidence: high
+    note: "scripts/skills/subscription_monitor.py — 4 new detectors, 5 signal types"
+  family_flash:
+    spec: "specs/act-reloaded.md E7"
+    status: implemented
+    confidence: high
+    note: "scripts/channel_push.py — _build_family_flash(), family-scope recipients"
+  cost_tracker:
+    spec: "specs/act-reloaded.md E8"
+    status: implemented
+    confidence: high
+    note: "scripts/cost_tracker.py + /cost command in channel_listener.py"
+  attachment_router:
+    spec: "specs/act-reloaded.md E9"
+    status: implemented
+    confidence: high
+    note: "scripts/attachment_router.py — 7 routing rules, filename-pattern domain routing"
+  self_model_writer:
+    spec: "specs/act-reloaded.md E11"
+    status: implemented
+    confidence: high
+    note: "scripts/self_model_writer.py — memory activation, 3000-char model"
+  decision_tracker_module:
+    spec: "specs/act-reloaded.md E12"
+    status: implemented
+    confidence: high
+    note: "scripts/decision_tracker.py — capture + log, state/scenarios.md"
+  relationship_pulse_module:
+    spec: "specs/act-reloaded.md E13"
+    status: implemented
+    confidence: high
+    note: "scripts/relationship_pulse_view.py + state/relationships.md"
+  power_half_hour_module:
+    spec: "specs/act-reloaded.md E14"
+    status: implemented
+    confidence: high
+    note: "scripts/power_half_hour_view.py + /power command"
+  retrospective_view:
+    spec: "specs/act-reloaded.md E15"
+    status: implemented
+    confidence: high
+    note: "scripts/retrospective_view.py — monthly lookback"
+  coaching_engine_module:
+    spec: "specs/act-reloaded.md E16"
+    status: implemented
+    confidence: high
+    note: "scripts/coaching_engine.py — deterministic coaching nudges"
