@@ -277,7 +277,15 @@ def load_auth_context(connector_config: dict) -> dict:
             return {"provider": provider, "password": password}
 
     elif method == "api_key":
-        # Canvas and similar: key is per-item (e.g. per-child), loaded by handler
+        # Load the API key from the system credential store.
+        # Canvas loads per-child keys by calling load_api_key() directly;
+        # connectors that carry a credential_key (e.g. homeassistant) receive
+        # the actual key here so their fetch() can use auth_context["api_key"].
+        credential_key = auth_cfg.get("credential_key", "")
+        if credential_key:
+            api_key = load_api_key(credential_key)
+            return {"provider": provider, "method": "api_key", "api_key": api_key}
+        # No credential_key — connector manages its own per-item key loading (Canvas pattern)
         return {"provider": provider, "method": "api_key"}
 
     elif method == "az_cli":

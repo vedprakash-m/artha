@@ -264,3 +264,82 @@ maintenance_requests:
 • [Maintenance item]: [status] — [days since submitted if pending]
 • [Renter insurance]: [renewal info if relevant]
 ```
+
+---
+
+## Smart Home / IoT (ARTHA-IOT — Home Assistant Integration)
+
+> **Active when:** `scripts/connectors/homeassistant.py` enabled in `connectors.yaml`
+> and `config/user_profile.yaml → integrations.homeassistant.device_monitoring: true`.
+>
+> IoT state is machine-managed in `state/home_iot.md` (never merged into state/home.md).
+> The `home_device_monitor` skill emits `DomainSignal` objects directly — no LLM
+> inference on raw HA data.
+
+### When to Surface IoT Data in Briefings
+
+IoT data surfaces ONLY when there is an actionable signal.  Suppress entirely if
+all devices online and no anomalies.
+
+**Always surface (CRITICAL class):**
+- Any Ring doorbell/camera/sensor offline > 2 hours → 🔴 CRITICAL
+- Any smart lock or alarm panel offline        → 🔴 CRITICAL
+- Security device offline + travel mode active → 🔴 CRITICAL (security_travel_conflict)
+
+**Surface when present (MONITORED class):**
+- Smart lights/switches offline > 2h    → 🟠 URGENT
+- Brother printer toner/drum < 20%      → 🟡 STANDARD
+- HVAC or water heater offline          → 🟠 URGENT
+- Swim spa (Gecko) temp variance > 5°F  → 🟡 STANDARD
+
+**Energy anomalies (if energy_monitoring: true):**
+- Power usage > 30% above 7-day average → 🟡 STANDARD
+
+### IoT Briefing Format
+```
+### Smart Home
+🔴 CRITICAL: Ring [entity] offline for Xh — check security system
+🟠 ALERT: [device] offline for Xh
+🟡 NOTICE: Printer toner low (X%) — Brother [model]
+🟡 NOTICE: Energy spike detected (+X% above 7-day avg)
+```
+Omit section entirely if no active alerts.
+
+### IoT State Reference
+Read `state/home_iot.md` for current device status.  This file is written
+exclusively by `scripts/skills/home_device_monitor.py` — never hand-edit.
+Key fields:
+```yaml
+iot_devices:
+  last_sync: ISO-8601        # when connector last ran
+  total_entities: N
+  online: N
+  offline: N
+  critical_offline: []       # entity_ids of CRITICAL devices offline
+  supply_alerts: []          # supply-low events
+
+iot_energy:
+  current_power_w: N
+  daily_kwh: N
+  weekly_avg_kwh: N
+  spike_detected: true|false
+  spike_pct: N
+```
+
+### Signal-to-Action Routing (IoT domain)
+| Signal type              | Friction   | Trust | Explanation                         |
+|--------------------------|------------|-------|-------------------------------------|
+| `security_device_offline`| high       | 0     | Never auto-act; always propose      |
+| `security_travel_conflict`| high      | 0     | Never auto-act; always propose      |
+| `device_offline`         | standard   | 1     | Regular device; propose repair step |
+| `energy_anomaly`         | low        | 1     | Energy spike; low-friction info     |
+| `supply_low`             | low        | 1     | Printer/consumable; order reminder  |
+| `spa_maintenance`        | standard   | 1     | Gecko spa variance; check spa       |
+
+### Privacy Notes (IoT)
+- `device_tracker` entities: state collapsed to `home | not_home | unknown` only
+- No GPS coordinates, zone names, or movement history are stored
+- Presence tracking is **off by default** — requires explicit opt-in in
+  `config/user_profile.yaml → integrations.homeassistant.presence_tracking: true`
+- Camera, media_player, TTS, STT domains are **never fetched**
+

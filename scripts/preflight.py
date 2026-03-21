@@ -969,6 +969,91 @@ def check_ado_auth() -> CheckResult:
     )
 
 
+# ---------------------------------------------------------------------------
+# Home Assistant connectivity check (ARTHA-IOT Wave 1 — P1 non-blocking)
+# ---------------------------------------------------------------------------
+
+def check_ha_connectivity() -> CheckResult:
+    """P1 non-blocking: Verify HA is reachable and the token is valid.
+
+    Only runs if homeassistant.enabled is true in connectors.yaml.
+    Silently passes (skip message) if the connector is disabled.
+    Returns a warning (not failure) when off-LAN — normal for travel/work.
+    """
+    _name = "Home Assistant"
+
+    # Load connector config
+    _connectors_path = os.path.join(ARTHA_DIR, "config", "connectors.yaml")
+    if not os.path.exists(_connectors_path):
+        return CheckResult(_name, "P1", True, "connectors.yaml not found — skipped ✓")
+
+    try:
+        import yaml as _yaml
+        with open(_connectors_path, encoding="utf-8") as _f:
+            _cfg = _yaml.safe_load(_f) or {}
+        _ha = (_cfg.get("connectors") or {}).get("homeassistant") or {}
+    except Exception as exc:
+        return CheckResult(_name, "P1", True, f"Could not read connectors.yaml ({exc}) — skipped ✓")
+
+    if not _ha.get("enabled", False):
+        return CheckResult(_name, "P1", True, "HA connector not enabled — skipped ✓")
+
+    _ha_url = ((_ha.get("fetch") or {}).get("ha_url") or "").rstrip("/")
+    if not _ha_url:
+        return CheckResult(
+            _name, "P1", False,
+            "HA connector enabled but ha_url is empty",
+            fix_hint="Run: python scripts/setup_ha_token.py",
+        )
+
+    # Load token from keyring
+    try:
+        import keyring as _keyring
+        _token = _keyring.get_password("artha-ha-token", "artha") or ""
+    except Exception:
+        _token = ""
+
+    if not _token:
+        return CheckResult(
+            _name, "P1", False,
+            "HA token not found in system keyring",
+            fix_hint="Run: python scripts/setup_ha_token.py",
+        )
+
+    # Attempt health check via the connector's own health_check()
+    try:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from connectors.homeassistant import health_check as _ha_health  # type: ignore[import]
+        _fetch_cfg = _ha.get("fetch") or {}
+        _ok = _ha_health(
+            {"provider": "homeassistant", "method": "api_key", "api_key": _token},
+            **{k: v for k, v in _fetch_cfg.items() if k != "handler"},
+        )
+        if _ok:
+            return CheckResult(_name, "P1", True, f"HA reachable at {_ha_url} ✓")
+        return CheckResult(
+            _name, "P1", False,
+            f"HA health check returned False for {_ha_url}",
+            fix_hint=(
+                "Check HA is running and on home network. "
+                "Re-run token setup if needed: python scripts/setup_ha_token.py"
+            ),
+        )
+    except Exception as exc:
+        _msg = str(exc)
+        if "LAN gate" in _msg or "not reachable" in _msg or "Cannot connect" in _msg:
+            return CheckResult(
+                _name, "P1", True,
+                f"HA not on current network (off-LAN) — skipped ✓ ({_ha_url})",
+            )
+        return CheckResult(
+            _name, "P1", False,
+            f"HA check error: {_msg[:120]}",
+            fix_hint="Run: python scripts/pipeline.py --health --source homeassistant",
+        )
+
+
 
 
 # Minimal set of importable module names that must exist in the venv.
@@ -1381,6 +1466,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — Home Assistant (ARTHA-IOT Wave 1 — non-blocking) ────────────
+    checks.append(check_ha_connectivity())
 
     # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
     checks.append(check_ado_auth())

@@ -280,3 +280,166 @@ class TestPiiRedactionCalled:
 
         # PII guard must have been called at least once per recipient
         assert len(pii_calls) >= 1
+
+
+# ── push_pending_actions() ──────────────────────────────────────────────────
+
+class TestPushPendingActions:
+    """Tests for Step 14.5 — push pending actions to Telegram with inline buttons."""
+
+    def _make_proposal(self, action_type="email_send", domain="finance",
+                       title="Pay electric bill", friction="standard"):
+        from actions.base import ActionProposal
+        import uuid
+        return ActionProposal(
+            id=str(uuid.uuid4()),
+            action_type=action_type,
+            domain=domain,
+            title=title,
+            description="Test action description",
+            parameters={},
+            friction=friction,
+            min_trust=1,
+            sensitivity="standard",
+            reversible=False,
+            undo_window_sec=None,
+            expires_at=None,
+        )
+
+    def test_returns_zero_when_no_pending(self, tmp_path, monkeypatch):
+        """No pending actions → 0 messages sent, no errors."""
+        mock_executor = MagicMock()
+        mock_executor.pending.return_value = []
+        mock_ae_mod = MagicMock()
+        mock_ae_mod.ActionExecutor.return_value = mock_executor
+
+        with patch.dict("sys.modules", {"action_executor": mock_ae_mod}):
+            count = cp.push_pending_actions()
+        assert count == 0
+
+    def test_sends_to_telegram_with_inline_buttons(self, tmp_path, monkeypatch):
+        """Pending actions produce Telegram messages with approve/reject/defer buttons."""
+        import yaml
+        import lib.common as common
+
+        proposal = self._make_proposal()
+        mock_executor = MagicMock()
+        mock_executor.pending.return_value = [proposal]
+
+        cfg = {
+            "defaults": {"push_enabled": True},
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "adapter": "telegram",
+                    "auth": {"credential_key": "test-key"},
+                    "recipients": {
+                        "primary": {"id": "123", "push": True, "access_scope": "full"},
+                    },
+                    "features": {"push": True, "buttons": True},
+                }
+            },
+        }
+        (tmp_path / "config" / "channels.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
+
+        mock_adapter = MagicMock()
+        mock_adapter.send_message.return_value = True
+
+        mock_ae_mod = MagicMock()
+        mock_ae_mod.ActionExecutor.return_value = mock_executor
+
+        with patch.dict("sys.modules", {"action_executor": mock_ae_mod}), \
+             patch("channels.registry.create_adapter_from_config",
+                   return_value=mock_adapter):
+            count = cp.push_pending_actions()
+
+        assert count == 1
+        # Verify the message structure
+        call_args = mock_adapter.send_message.call_args[0][0]
+        assert "ACTION PENDING" in call_args.text
+        assert proposal.action_type in call_args.text
+        assert len(call_args.buttons) == 3
+        assert call_args.buttons[0]["command"].startswith(f"act:APPROVE:{proposal.id}")
+        assert call_args.buttons[1]["command"].startswith(f"act:REJECT:{proposal.id}")
+        assert call_args.buttons[2]["command"].startswith(f"act:DEFER:{proposal.id}")
+
+    def test_dry_run_does_not_send(self, tmp_path, monkeypatch):
+        """Dry run counts messages but doesn't call adapter."""
+        import yaml
+        import lib.common as common
+
+        proposal = self._make_proposal()
+        mock_executor = MagicMock()
+        mock_executor.pending.return_value = [proposal]
+
+        cfg = {
+            "defaults": {"push_enabled": True},
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "adapter": "telegram",
+                    "auth": {"credential_key": "test-key"},
+                    "recipients": {
+                        "primary": {"id": "123", "push": True, "access_scope": "full"},
+                    },
+                    "features": {"push": True},
+                }
+            },
+        }
+        (tmp_path / "config" / "channels.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
+
+        mock_adapter = MagicMock()
+
+        mock_ae_mod = MagicMock()
+        mock_ae_mod.ActionExecutor.return_value = mock_executor
+
+        with patch.dict("sys.modules", {"action_executor": mock_ae_mod}), \
+             patch("channels.registry.create_adapter_from_config",
+                   return_value=mock_adapter):
+            count = cp.push_pending_actions(dry_run=True)
+
+        assert count == 1
+        mock_adapter.send_message.assert_not_called()
+
+    def test_friction_badge_in_message(self, tmp_path, monkeypatch):
+        """High-friction proposals display 🔴 badge."""
+        import yaml
+        import lib.common as common
+
+        proposal = self._make_proposal(friction="high")
+        mock_executor = MagicMock()
+        mock_executor.pending.return_value = [proposal]
+
+        cfg = {
+            "defaults": {"push_enabled": True},
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "adapter": "telegram",
+                    "auth": {"credential_key": "test-key"},
+                    "recipients": {
+                        "primary": {"id": "123", "push": True, "access_scope": "full"},
+                    },
+                    "features": {"push": True},
+                }
+            },
+        }
+        (tmp_path / "config" / "channels.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
+
+        mock_adapter = MagicMock()
+        mock_adapter.send_message.return_value = True
+
+        mock_ae_mod = MagicMock()
+        mock_ae_mod.ActionExecutor.return_value = mock_executor
+
+        with patch.dict("sys.modules", {"action_executor": mock_ae_mod}), \
+             patch("channels.registry.create_adapter_from_config",
+                   return_value=mock_adapter):
+            cp.push_pending_actions()
+
+        msg = mock_adapter.send_message.call_args[0][0]
+        assert "🔴" in msg.text
+        assert "high" in msg.text

@@ -11,6 +11,43 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.2.0] — 2026-03-21
+
+### Added — Home Assistant IoT Integration (ARTHA-IOT, PRD F7.4 + F12.5)
+
+Full Wave 1 + Wave 2 implementation of the IoT/Home Assistant integration spec (`specs/iot.md` v1.4.0).
+
+**Wave 1 — Connector (read-only data ingestion):**
+- **`scripts/connectors/homeassistant.py`** (new, ~450 LOC) — HA REST API connector. Calls `GET /api/states`, applies hard-floor privacy filtering (`_EXCLUDED_DOMAINS`: camera, media_player, tts, stt, conversation, persistent_notification, update), strips PII attributes (ip_address, mac_address, entity_picture, access_token), sanitizes device_tracker entities to `home`/`not_home`/`unknown`. LAN self-gating via RFC 1918 IP detection + TCP reachability probe — raises `ConnectorOffLAN` (silent skip) when not on home network. Atomic cache write to `tmp/ha_entities.json` via `tempfile.mkstemp` + `os.replace()`.
+- **`scripts/setup_ha_token.py`** (new, ~340 LOC) — Interactive 7-step setup wizard: URL validation → token input (masked) → connectivity test → keyring storage → `connectors.yaml` update → `.nosync` creation → success summary. Atomic YAML write. Rollback instructions printed on every failure.
+- **`config/connectors.yaml`** — Added `homeassistant` connector block (`enabled: false`, `auth.method: api_key`, `auth.credential_key: artha-ha-token`, `requires_lan: true`).
+- **`scripts/preflight.py`** — Added `check_ha_connectivity()` P1 non-blocking preflight check. Handles off-LAN gracefully.
+- **`prompts/home.md`** — Added "Smart Home / IoT" section: activation conditions, briefing formats for CRITICAL/MONITORED/energy signals, signal-to-action routing table, privacy notes.
+
+**Wave 2 — Skill (deterministic alerting):**
+- **`scripts/skills/home_device_monitor.py`** (new, ~560 LOC) — Deterministic device health monitoring skill. Reads `tmp/ha_entities.json`, applies threshold checks: device offline >2h (`security_device_offline` for Ring/lock/alarm, `device_offline` for monitored), printer supply <20% (`supply_low`), swim spa temp variance >5°F (`spa_maintenance`), power spike >30% above weekly average (`energy_anomaly`). Constructs `DomainSignal` objects directly — bypasses LLM mediation for deterministic signals. Serializes via `dataclasses.asdict()`. Atomic `state/home_iot.md` write.
+
+**Framework wiring:**
+- **`scripts/pipeline.py`** — `"connectors.homeassistant"` added to `_HANDLER_MAP`.
+- **`scripts/skill_runner.py`** — `"home_device_monitor"` added to `_ALLOWED_SKILLS` frozenset.
+- **`scripts/action_composer.py`** — 6 IoT signal routing entries: `device_offline`, `security_device_offline`, `energy_anomaly`, `supply_low`, `spa_maintenance`, `security_travel_conflict`.
+- **`config/skills.yaml`** — `home_device_monitor` entry (`enabled: false`, `priority: P1`, `cadence: every_run`).
+- **`config/user_profile.yaml`** — `integrations.homeassistant` consent/preference flags section.
+
+**Auth fix (G1):**
+- **`scripts/lib/auth.py`** — Fixed `api_key` branch in `load_auth_context()`: now loads actual credential from keyring when `credential_key` is present. Canvas LMS (per-child key pattern) is unaffected.
+
+**Tests (126 new, 1369 total):**
+- `tests/unit/test_homeassistant_connector.py` — 36 tests (LAN detection, privacy, fetch, health_check, cache write, G1 regression)
+- `tests/unit/test_home_device_monitor.py` — 67 tests (classification, offline detection, all thresholds, serialization, state write, DomainSignal round-trip)
+- `tests/unit/test_setup_ha_token.py` — 23 tests (URL validation, connectivity, token storage, .nosync)
+
+**New spec:** `specs/iot.md` v1.4.0 — all gap resolutions documented (G1 auth, G2 ha_url ownership).
+
+> Feature gated behind `enabled: false` — no runtime impact until activated via `python scripts/setup_ha_token.py`.
+
+---
+
 ## [8.1.2] — 2026-03-21
 
 ### Fixed — Linux CI: `SystemExit` from keyring not caught in action key helpers
