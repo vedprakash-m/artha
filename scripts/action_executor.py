@@ -161,8 +161,8 @@ class ActionExecutor:
         # Determine if environment is read-only
         import detect_environment as _de  # noqa: PLC0415
         try:
-            env_info = _de.detect()
-            self._read_only = not env_info.get("filesystem_writable", True)
+            env_info = _de.detect(skip_network=True)
+            self._read_only = not env_info.capabilities.get("filesystem_writable", True)
         except Exception:
             self._read_only = False
 
@@ -187,7 +187,9 @@ class ActionExecutor:
                 sys.path.insert(0, str(self._artha_dir / "scripts"))
                 from foundation import get_public_key  # noqa: PLC0415
                 self._pubkey = get_public_key()
-            except Exception:
+            except (Exception, SystemExit):
+                # SystemExit raised by foundation.die() when key is unavailable
+                # (e.g. no age_recipient in user_profile.yaml). Treat as key absent.
                 pass
         return self._pubkey
 
@@ -788,7 +790,9 @@ class ActionExecutor:
             sys.path.insert(0, str(self._artha_dir / "scripts"))
             from foundation import get_private_key  # noqa: PLC0415
             return get_private_key()
-        except Exception:
+        except (Exception, SystemExit):
+            # SystemExit raised by foundation.die() when keyring is unavailable
+            # (e.g. Linux CI without a keyring backend). Treat as key absent.
             return None
 
     def close(self) -> None:

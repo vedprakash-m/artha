@@ -191,7 +191,8 @@ def _get_age_pubkey(artha_dir: Path) -> str | None:
             sys.path.insert(0, sys_path_insert)
         from foundation import get_public_key  # noqa: PLC0415
         return get_public_key()
-    except Exception:
+    except (Exception, SystemExit):
+        # SystemExit raised by foundation.die() when age_recipient is missing.
         return None
 
 
