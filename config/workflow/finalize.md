@@ -36,13 +36,36 @@ Log each: `⏭️ Step N skipped — read-only mode`
 
 **SKIP in read-only mode** → log `⏭️ Step 11c skipped — read-only mode`
 
-After the session summary is generated, extract durable facts for cross-session learning.
-`get_context_card()` in `session_summarizer.py` now automatically calls `fact_extractor`
-for catch-up commands — no manual invocation needed when using the Python harness.
+After the briefing is finalized (Step 20), run the deterministic memory pipeline.
+Step 20 provides the exact briefing path it wrote:
 
-For manual invocation (AI CLI context or fallback):
 ```bash
-python3 -c "
+python3 scripts/post_catchup_memory.py --briefing briefings/YYYY-MM-DD.md
+```
+
+Replace `YYYY-MM-DD.md` with the actual filename produced by Step 20. The
+`--briefing` flag is **required** — do not use `--discover` here (that is for
+bootstrap and manual re-processing only).
+
+The script automatically:
+1. Creates a session summary in `tmp/session_history_N.md` (for search/recovery)
+2. Extracts durable facts **directly from the briefing** (bypasses the lossy
+   SessionSummary round-trip — uses the full domain content)
+3. Persists new facts to `state/memory.md` (AR-1 capacity enforced,
+   domain sensitivity tiering applied)
+4. Updates `state/self_model.md` if ≥5 catch-up runs on record (AR-2)
+5. Appends a structured run record to `state/memory_pipeline_runs.jsonl`
+6. Prints: `[run_id] N facts persisted (M extracted), self-model [updated|unchanged]`
+
+**Failure is non-blocking** — catch-up completes regardless of errors.
+
+Config kill switch: set `harness.agentic.post_catchup_memory.enabled: false`
+in `config/artha_config.yaml` to disable the entire pipeline.
+
+If for any reason the script cannot be called (AI CLI context, read-only mode,
+or harness unavailable), fall back to the manual invocation:
+
+```python
 from pathlib import Path
 from scripts.fact_extractor import extract_facts_from_summary, persist_facts
 import glob
@@ -54,7 +77,6 @@ if summaries:
     print(f'Extracted {count} new facts to state/memory.md')
 else:
     print('No session summary found — skipping fact extraction')
-"
 ```
 
 After pipeline run, write calendar events to state/calendar.md:

@@ -148,6 +148,7 @@ class HomeDeviceMonitorSkill(BaseSkill):
             "energy_anomaly_count",
             "supply_low_count",
             "spa_maintenance_count",
+            "automation_failure_count",
         ]
 
     # ── pull() ──────────────────────────────────────────────────────────
@@ -184,6 +185,7 @@ class HomeDeviceMonitorSkill(BaseSkill):
           signals: list[DomainSignal]          — emitted signals
           offline_count: int                   — total monitored devices offline
           critical_offline_count: int          — CRITICAL devices offline
+          automation_failure_count: int        — broken or failed automations
           energy_anomaly_count: int
           supply_low_count: int
           spa_maintenance_count: int
@@ -200,6 +202,7 @@ class HomeDeviceMonitorSkill(BaseSkill):
 
         offline_count = 0
         critical_offline_count = 0
+        automation_failure_count = 0
         energy_anomaly_count = 0
         supply_low_count = 0
         spa_maintenance_count = 0
@@ -216,6 +219,26 @@ class HomeDeviceMonitorSkill(BaseSkill):
             domain: str = entity.get("domain", entity_id.split(".")[0] if "." in entity_id else "")
 
             classification = _classify_entity(entity_id)
+
+            # ── Automation Health ───────────────────────────────────────
+            if domain == "automation":
+                # Check for 'unavailable' (entity broken) or specific error markers
+                if _is_offline(state):
+                    automation_failure_count += 1
+                    signals.append(DomainSignal(
+                        signal_type="automation_failure",
+                        domain="home",
+                        entity=entity_id,
+                        urgency=2,
+                        impact=2,
+                        source="skill:home_device_monitor",
+                        metadata={
+                            "entity_id": entity_id,
+                            "friendly_name": attrs.get("friendly_name", entity_id),
+                            "reason": f"Automation entity is in '{state}' state",
+                        },
+                        detected_at=now_iso,
+                    ))
 
             # ── Offline detection ────────────────────────────────────────
             if classification in ("CRITICAL", "MONITORED") and _is_offline(state):
@@ -340,6 +363,7 @@ class HomeDeviceMonitorSkill(BaseSkill):
             "signals": signals,               # List[DomainSignal] — serialized in execute()
             "offline_count": offline_count,
             "critical_offline_count": critical_offline_count,
+            "automation_failure_count": automation_failure_count,
             "energy_anomaly_count": energy_anomaly_count,
             "supply_low_count": supply_low_count,
             "spa_maintenance_count": spa_maintenance_count,
@@ -413,6 +437,7 @@ class HomeDeviceMonitorSkill(BaseSkill):
             "signals": [],
             "offline_count": 0,
             "critical_offline_count": 0,
+            "automation_failure_count": 0,
             "energy_anomaly_count": 0,
             "supply_low_count": 0,
             "spa_maintenance_count": 0,
@@ -485,6 +510,11 @@ class HomeDeviceMonitorSkill(BaseSkill):
             for s in signals
             if s.signal_type == "security_device_offline"
         ]
+        automation_failures = [
+            s.metadata.get("friendly_name", s.entity)
+            for s in signals
+            if s.signal_type == "automation_failure"
+        ]
         supply_alerts = [
             {
                 "entity_id": s.metadata.get("entity_id", s.entity),
@@ -511,6 +541,7 @@ iot_devices:
   online: {parsed.get('entity_count', 0) - parsed.get('offline_count', 0)}
   offline: {parsed.get('offline_count', 0)}
   critical_offline: {json.dumps(critical_offline)}
+  automation_failures: {json.dumps(automation_failures)}
   supply_alerts: {json.dumps(supply_alerts)}
 
 ## Smart Home Energy
@@ -527,6 +558,7 @@ skill_run:
   total_signals: {parsed.get('total_signals', 0)}
   offline_count: {parsed.get('offline_count', 0)}
   critical_offline_count: {parsed.get('critical_offline_count', 0)}
+  automation_failure_count: {parsed.get('automation_failure_count', 0)}
   energy_anomaly_count: {parsed.get('energy_anomaly_count', 0)}
   supply_low_count: {parsed.get('supply_low_count', 0)}
   spa_maintenance_count: {parsed.get('spa_maintenance_count', 0)}

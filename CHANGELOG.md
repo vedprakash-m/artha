@@ -11,6 +11,47 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.4.0] — 2026-03-21
+
+### Added — Memory Pipeline Activation (MEM v1.3.0, specs/mem.md)
+
+Fixed 4 independent breaks that left Artha's 9-script memory subsystem (3,274 lines) fully coded but operationally inert — `state/memory.md` had `facts: []`, `state/self_model.md` was template-only, and `state/learned_procedures/` was empty after 10+ catch-ups.
+
+**Break 1 — Deterministic pipeline trigger (`scripts/post_catchup_memory.py`, new ~240 LOC):**
+- `run(briefing_path, artha_dir, dry_run) -> dict` — 5-step pipeline invoked deterministically from Step 11c
+- Extracts facts DIRECTLY from briefing (bypasses lossy `SessionSummary.to_markdown()` round-trip)
+- Steps: write session history (search/recovery) → extract facts → persist → update self-model → log to `state/memory_pipeline_runs.jsonl`
+- CLI: `--briefing PATH` (required), `--dry-run`, `--discover` (bootstrap/manual only), `--rebuild-self-model`
+- Config kill switch: `harness.agentic.post_catchup_memory.enabled` (default: true)
+
+**Break 2 — Dual-path briefing parser (`scripts/fact_extractor.py` extended):**
+- `_parse_briefing_md(content)` handles both Telegram (`━━` box-drawing delimiters) and Markdown (`## CRITICAL/URGENT/BY DOMAIN` headings)
+- `extract_facts_from_summary()` renamed `summary_path→input_path`; 3-branch format auto-detection
+- Previously returned 0 facts on any briefing file
+
+**Break 3 — Health-check run parser (`scripts/self_model_writer.py` extended):**
+- `_parse_catchup_runs_from_markdown(content)` reads `## Catch-Up Run History` freeform section
+- `SelfModelWriter.update()` tries YAML frontmatter first, falls back to markdown parser
+- Previously: `catch_up_runs = []` → `len < 5` gate → `update()` always returned `False`
+
+**Break 4 — Briefing-aware extraction signals (Phase 1b, `scripts/fact_extractor.py`):**
+- 4 new `_EXTRACTION_SIGNALS`: deadline (30d TTL), decision-pending (60d), `$N/mo` threshold (90d, finance), OI-NNN pattern (90d)
+- Previously: 0 `preference`-type facts across all briefings; Effective Strategies section permanently empty
+
+**Domain sensitivity tiering:**
+- `_HIGH_STAKES_DOMAINS = frozenset({"finance", "health", "immigration", "insurance", "legal"})`
+- `_apply_domain_sensitivity_ttl()` — caps TTL at 90d for non-correction/preference high-stakes facts
+
+**Bootstrap (`scripts/bootstrap_memory.py` + `scripts/bootstrap_seeds.yaml`, new):**
+- Batch-seeds `state/memory.md` from all historical briefings (single `persist_facts()` call — order-independent)
+- `bootstrap_seeds.yaml` — declarative procedure manifest; initial seed: `digital-onenote-parallel-fetch`
+
+**Wiring:** `config/workflow/finalize.md` Step 11c rewritten to deterministic script invocation; `config/artha_config.yaml` updated.
+
+**Validated state:** `state/memory.md` populated, `state/self_model.md` live, procedure seeded, 18/18 E2E checks pass, 1546 tests passing.
+
+---
+
 ## [8.3.0] — 2026-03-21
 
 ### Added — ACT-RELOADED: Sense–Reason–Act–Learn (E1–E16, specs/act-reloaded.md v1.3.0)
