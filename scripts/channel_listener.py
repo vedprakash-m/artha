@@ -1687,6 +1687,35 @@ def _save_briefing(text: str) -> Path:
 async def cmd_catchup(args: list[str], scope: str) -> tuple[str, str]:
     """Run a catch-up: fetch new data → LLM synthesis → briefing."""
 
+    # Bridge result ingestion: ingest any Windows-executed results before
+    # building the briefing, so the catch-up reflects latest action outcomes.
+    # Runs only when bridge is enabled and this machine is the proposer role.
+    # Spec: dual-setup.md §4.2 — "before briefing_adapter.py is invoked"
+    try:
+        import yaml as _br_yaml  # noqa: PLC0415
+        _br_cfg_path = _ARTHA_DIR / "config" / "artha_config.yaml"
+        if _br_cfg_path.exists():
+            with open(_br_cfg_path, encoding="utf-8") as _br_f:
+                _br_artha_cfg = _br_yaml.safe_load(_br_f) or {}
+            if _br_artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
+                from action_bridge import (  # noqa: PLC0415
+                    detect_role, get_bridge_dir, ingest_results, gc,
+                )
+                _br_ch_cfg_path = _ARTHA_DIR / "config" / "channels.yaml"
+                _br_ch_cfg: dict = {}
+                if _br_ch_cfg_path.exists():
+                    with open(_br_ch_cfg_path, encoding="utf-8") as _br_cf:
+                        _br_ch_cfg = _br_yaml.safe_load(_br_cf) or {}
+                if detect_role(_br_ch_cfg) == "proposer":
+                    _br_dir = get_bridge_dir(_ARTHA_DIR)
+                    from action_queue import ActionQueue as _BrAQ  # noqa: PLC0415
+                    _br_queue = _BrAQ(_ARTHA_DIR)
+                    ingest_results(_br_dir, _br_queue, _ARTHA_DIR)
+                    gc(_br_dir, _ARTHA_DIR)
+                    log.info("[bridge] Result ingestion complete (catch-up pre-step)")
+    except Exception as _br_exc:
+        log.warning("[bridge] catch-up result ingestion failed (non-fatal): %s", _br_exc)
+
     clis = _detect_all_llm_clis()
     if not clis:
         return "No LLM CLI available (install gemini, copilot, or claude).", "N/A"
@@ -2170,7 +2199,10 @@ async def cmd_remember(args: list[str], scope: str) -> tuple[str, str]:
     Rate-limited: 5 writes/hour.
     """
     import re as _re2
-    import fcntl as _fcntl2
+    try:
+        import fcntl as _fcntl2
+    except ImportError:  # Windows
+        _fcntl2 = None  # type: ignore[assignment]
 
     if scope not in ("full", "admin"):
         return "❌ /remember is available to full-scope users only.", "N/A"
@@ -2229,7 +2261,8 @@ async def cmd_remember(args: list[str], scope: str) -> tuple[str, str]:
 
     try:
         with open(inbox_path, "a", encoding="utf-8") as fh:
-            _fcntl2.flock(fh, _fcntl2.LOCK_EX)
+            if _fcntl2 is not None:
+                _fcntl2.flock(fh, _fcntl2.LOCK_EX)
             if not inbox_path.stat().st_size:
                 fh.write(existing)
             fh.write(entry)
@@ -2914,7 +2947,47 @@ async def run_listener(
 
     log.info("Polling on channels: %s (press Ctrl+C to stop)", list(adapters.keys()))
 
+    # Bridge setup — executor role only; no-op if bridge disabled
+    _bridge_active = False
+    _bridge_dir = None
+    _bridge_queue = None
+    _bridge_pubkey = None
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        _artha_cfg_path = _ARTHA_DIR / "config" / "artha_config.yaml"
+        if _artha_cfg_path.exists():
+            with open(_artha_cfg_path, encoding="utf-8") as _f:
+                _artha_cfg = _yaml.safe_load(_f) or {}
+            if _artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
+                from action_bridge import detect_role, get_bridge_dir  # noqa: PLC0415
+                _channels_cfg_path = _ARTHA_DIR / "config" / "channels.yaml"
+                _channels_cfg: dict = {}
+                if _channels_cfg_path.exists():
+                    with open(_channels_cfg_path, encoding="utf-8") as _f:
+                        _channels_cfg = _yaml.safe_load(_f) or {}
+                if detect_role(_channels_cfg) == "executor":
+                    from action_queue import ActionQueue as _AQ  # noqa: PLC0415
+                    _bridge_dir = get_bridge_dir(_ARTHA_DIR)
+                    _bridge_dir.mkdir(parents=True, exist_ok=True)
+                    (_bridge_dir / "proposals").mkdir(exist_ok=True)
+                    (_bridge_dir / "results").mkdir(exist_ok=True)
+                    _bridge_queue = _AQ(_ARTHA_DIR)
+                    _bridge_active = True
+                    log.info("[bridge] Executor mode active; polling %s", _bridge_dir)
+    except Exception as _bridge_init_exc:
+        log.warning("[bridge] Startup init failed (non-fatal): %s", _bridge_init_exc)
+
     while not shutdown.is_set():
+        # Bridge ingestion cycle (executor role only; no-op if bridge disabled)
+        if _bridge_active and _bridge_dir is not None and _bridge_queue is not None:
+            try:
+                from action_bridge import ingest_proposals, retry_outbox, gc  # noqa: PLC0415
+                ingest_proposals(_bridge_dir, _bridge_queue, _ARTHA_DIR)
+                retry_outbox(_bridge_dir, _bridge_queue, _ARTHA_DIR)
+                gc(_bridge_dir, _ARTHA_DIR)
+            except Exception as _bridge_exc:
+                log.warning("[bridge] ingestion cycle error (non-fatal): %s", _bridge_exc)
+
         # Poll all channels concurrently
         poll_tasks = [
             poll_with_resilience(adapter, ch)

@@ -1,9 +1,16 @@
 schema_version: '1.0'
+
+# run_on: Platform gating for multi-machine setups.
+# Values: all (default), darwin (macOS only), windows, linux, or a list [darwin, windows].
+# Maps to platform.system().lower(). Connectors not matching the current platform are
+# skipped silently by pipeline.py. Single-machine users should leave all values as 'all'.
+
 connectors:
   gmail:
     type: email
     provider: google
     enabled: true
+    run_on: all
     description: Gmail — primary personal email
     auth:
       method: oauth2
@@ -40,6 +47,7 @@ connectors:
     type: email
     provider: microsoft
     enabled: true
+    run_on: all
     description: Outlook / Microsoft 365 email
     auth:
       method: oauth2
@@ -77,6 +85,7 @@ connectors:
     type: email
     provider: imap
     enabled: false
+    run_on: all
     description: iCloud / Apple Mail (IMAP)
     auth:
       method: app_password
@@ -113,6 +122,7 @@ connectors:
     type: calendar
     provider: google
     enabled: true
+    run_on: all
     description: Google Calendar — personal + family
     auth:
       method: oauth2
@@ -144,6 +154,7 @@ connectors:
     type: calendar
     provider: microsoft
     enabled: true
+    run_on: all
     description: Outlook Calendar / Microsoft 365
     auth:
       method: oauth2
@@ -174,6 +185,7 @@ connectors:
     type: calendar
     provider: caldav
     enabled: false
+    run_on: all
     description: iCloud Calendar (CalDAV)
     auth:
       method: app_password
@@ -203,6 +215,7 @@ connectors:
     type: lms
     provider: canvas
     enabled: false
+    run_on: all
     description: Canvas LMS — school assignments and grades
     auth:
       method: api_key
@@ -221,6 +234,7 @@ connectors:
     type: notes
     provider: microsoft
     enabled: true
+    run_on: all
     description: Microsoft OneNote — work notes and notebooks
     auth:
       method: oauth2
@@ -243,6 +257,7 @@ connectors:
     type: feed
     provider: rss
     enabled: false
+    run_on: all
     description: RSS/Atom feed reader — stdlib-only, no auth required. Useful for
       USCIS updates, visa bulletins, domain-relevant news.
     auth:
@@ -259,6 +274,7 @@ connectors:
     type: multi
     provider: workiq
     enabled: true
+    run_on: all
     description: WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)
     auth:
       method: none
@@ -294,6 +310,7 @@ connectors:
     type: project_tracker
     provider: azure_devops
     enabled: true
+    run_on: all
     description: Azure DevOps — work items assigned to me
     auth:
       method: az_cli
@@ -336,6 +353,7 @@ connectors:
 
       '
     platform: windows
+    run_on: all
     auth:
       method: none
     fetch:
@@ -364,6 +382,7 @@ connectors:
     type: health
     provider: apple
     enabled: false
+    run_on: all
     description: "Apple Health XML export parser — local file only, no network access.\
       \ Export from iPhone: Health app → Profile → Export All Health Data. Place the\
       \ export.zip in any directory and run:\n  python scripts/pipeline.py --source\
@@ -398,6 +417,7 @@ connectors:
     type: messaging
     provider: whatsapp
     enabled: true
+    run_on: all
     description: 'WhatsApp local ChatStorage.sqlite reader — extracts recent messages
       from the WhatsApp Desktop app database. No API key needed. macOS + Windows.
 
@@ -435,6 +455,7 @@ connectors:
     type: messaging
     provider: apple
     enabled: true
+    run_on: all
     description: 'iMessage / SMS local chat.db reader — extracts recent messages from
       macOS Messages database. macOS ONLY. Requires Full Disk Access for the terminal
       app (System Settings → Privacy & Security → Full Disk Access).
@@ -490,6 +511,7 @@ connectors:
     type: iot
     provider: homeassistant
     enabled: true
+    run_on: all
     description: 'Home Assistant local smart home hub — reads device states, energy
       usage, and sensor data via the HA REST API. LAN-only: skipped silently when
       not on the home network. Requires a long-lived access token.
@@ -502,7 +524,7 @@ connectors:
       setup_script: scripts/setup_ha_token.py
     fetch:
       handler: scripts/connectors/homeassistant.py
-      ha_url: http://192.168.50.90:8123
+      ha_url: http://homeassistant.local:8123
       timeout_seconds: 10
       default_max_results: 500
       include_history: false

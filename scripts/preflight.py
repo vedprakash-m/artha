@@ -32,6 +32,7 @@ P1 checks (logged as warnings, do NOT block catch-up):
   16 pipeline.py --health -s icloud_email     — iCloud Mail IMAP live (app-specific password)
   17 pipeline.py --health -s icloud_calendar  — iCloud Calendar CalDAV live
   18 WorkIQ Calendar               — WorkIQ M365 detection + auth (Windows only, v2.2)
+  19 Bridge health                 — peer machine health + bridge dir writable (dual-setup.md)
 
 Ref: TS §3.8, TS §7.1 Step 0, T-1A.11.3, PRD §9.4 Step 0
 """
@@ -740,6 +741,89 @@ def check_msgraph_token() -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# Bridge health check (dual-setup.md — non-blocking P1)
+# ---------------------------------------------------------------------------
+
+def check_bridge_health() -> CheckResult:
+    """P1 non-blocking bridge health check.
+
+    Skipped silently if multi_machine.bridge_enabled is false.
+    When enabled:
+      - Verifies bridge directory exists and is writable
+      - Checks peer machine health file for staleness (default 48 h)
+
+    Ref: specs/dual-setup.md §5
+    """
+    import sys as _sys
+    if SCRIPTS_DIR not in _sys.path:
+        _sys.path.insert(0, SCRIPTS_DIR)
+
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        config_path = Path(ARTHA_DIR) / "config" / "artha_config.yaml"
+        if not config_path.exists():
+            return CheckResult("Bridge", "P1", True, "Bridge: config absent — skipped")
+        with open(config_path, encoding="utf-8") as _f:
+            artha_config = _yaml.safe_load(_f) or {}
+
+        mm = artha_config.get("multi_machine", {})
+        if not mm.get("bridge_enabled", False):
+            return CheckResult("Bridge", "P1", True, "Bridge: disabled (multi_machine.bridge_enabled=false)")
+
+        from action_bridge import (  # noqa: PLC0415
+            get_bridge_dir, detect_role, check_health_staleness, load_artha_config,
+        )
+        channels_path = Path(ARTHA_DIR) / "config" / "channels.yaml"
+        channels_config: dict = {}
+        if channels_path.exists():
+            with open(channels_path, encoding="utf-8") as _f:
+                channels_config = _yaml.safe_load(_f) or {}
+
+        role = detect_role(channels_config)
+        peer_role = "windows" if role == "proposer" else "mac"
+        bridge_dir = get_bridge_dir(Path(ARTHA_DIR))
+
+        # Check bridge directory accessible + writable
+        if not bridge_dir.exists():
+            try:
+                bridge_dir.mkdir(parents=True, exist_ok=True)
+                (bridge_dir / "proposals").mkdir(exist_ok=True)
+                (bridge_dir / "results").mkdir(exist_ok=True)
+            except OSError as exc:
+                return CheckResult(
+                    "Bridge", "P1", False,
+                    f"Bridge dir not writable: {exc}",
+                    fix_hint="Ensure OneDrive is syncing state/.action_bridge/",
+                )
+
+        stale_hours = int(mm.get("health_stale_hours", 48))
+        is_stale, elapsed_h = check_health_staleness(bridge_dir, peer_role, stale_hours)
+
+        if is_stale and elapsed_h == float("inf"):
+            return CheckResult(
+                "Bridge", "P1", False,
+                f"Bridge: peer machine ({peer_role}) has never written a health file",
+                fix_hint=f"Start Artha on the {peer_role} machine to initialise bridge",
+            )
+        if is_stale:
+            return CheckResult(
+                "Bridge", "P1", False,
+                f"Bridge: peer machine ({peer_role}) last seen {elapsed_h:.0f}h ago (threshold: {stale_hours}h)",
+                fix_hint=f"Ensure Artha is running on the {peer_role} machine",
+            )
+
+        return CheckResult(
+            "Bridge", "P1", True,
+            f"Bridge: OK — peer ({peer_role}) seen {elapsed_h:.1f}h ago",
+        )
+
+    except ImportError as exc:
+        return CheckResult("Bridge", "P1", False, f"Bridge module unavailable: {exc}",
+                           fix_hint="Ensure scripts/action_bridge.py is present")
+    except Exception as exc:
+        return CheckResult("Bridge", "P1", False, f"Bridge health check error: {exc}")
+
+
 # WorkIQ combined detection + auth check (v2.2 — T-2A.24.1)
 # ---------------------------------------------------------------------------
 
@@ -1466,6 +1550,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — Bridge health (dual-setup.md — non-blocking; skipped if disabled) ──
+    checks.append(check_bridge_health())
 
     # ── P1 — Home Assistant (ARTHA-IOT Wave 1 — non-blocking) ────────────
     checks.append(check_ha_connectivity())

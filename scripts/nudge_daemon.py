@@ -35,7 +35,11 @@ Ref: specs/act-reloaded.md Enhancement 4
 from __future__ import annotations
 
 import argparse
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+import socket
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -306,7 +310,8 @@ def _audit_log(artha_dir: Path, message: str) -> None:
     try:
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         with open(audit_path, "a", encoding="utf-8") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
+            if fcntl is not None:
+                fcntl.flock(fh, fcntl.LOCK_EX)
             fh.write(entry)
     except OSError:
         pass
@@ -365,12 +370,29 @@ def send_nudge(nudge: NudgeItem, channels_config: dict, artha_dir: Path) -> bool
 # Main check loop
 # ---------------------------------------------------------------------------
 
+def _verify_nudge_host(channels_config: dict) -> bool:
+    """Check this machine is the designated listener host.
+
+    Reads defaults.listener_host from channels.yaml.
+    Empty string = any host allowed (single-machine mode).
+    """
+    designated = channels_config.get("defaults", {}).get("listener_host", "").strip()
+    if not designated:
+        return True  # single-machine mode — run anywhere
+    return socket.gethostname().lower() == designated.lower()
+
+
 def run_check_once(artha_dir: Path) -> int:
     """Perform one nudge check cycle. Called by vault-watchdog bridge.
 
     Returns 0 always (daemon must not crash watchdog).
     """
     if not _load_flag("enhancements.nudge_daemon", default=True):
+        return 0
+
+    # Host gating: only run on the designated listener host
+    channels_config = _load_channels_config(artha_dir)
+    if not _verify_nudge_host(channels_config):
         return 0
 
     tmp_dir = artha_dir / "tmp"
@@ -390,7 +412,6 @@ def run_check_once(artha_dir: Path) -> int:
         if elapsed < timedelta(hours=_MIN_HOURS_BETWEEN_NUDGES):
             return 0
 
-    channels_config = _load_channels_config(artha_dir)
     nudges = check_nudges(artha_dir)
 
     for nudge in nudges:

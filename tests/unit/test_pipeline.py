@@ -106,6 +106,87 @@ class TestEnabledConnectors:
         assert len(result) == 1
 
 
+# ── Platform gating (run_on) ────────────────────────────────────────────────
+
+class TestPlatformGating:
+    """Test that run_on field gates connectors by platform."""
+
+    def _cfg(self, *connectors):
+        return {"connectors": {c["name"]: c for c in connectors}}
+
+    def _conn(self, name, run_on="all", enabled=True):
+        c = {"name": name, "type": "email", "enabled": enabled,
+             "fetch": {"handler": "connectors.google_email"}}
+        if run_on != "all":
+            c["run_on"] = run_on
+        return c
+
+    @patch("platform.system", return_value="Darwin")
+    def test_darwin_only_runs_on_mac(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("mac_only", run_on="darwin"))
+        assert len(_enabled_connectors(cfg, None)) == 1
+
+    @patch("platform.system", return_value="Windows")
+    def test_darwin_only_skipped_on_windows(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("mac_only", run_on="darwin"))
+        assert len(_enabled_connectors(cfg, None)) == 0
+
+    @patch("platform.system", return_value="Windows")
+    def test_windows_only_runs_on_windows(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("win_only", run_on="windows"))
+        assert len(_enabled_connectors(cfg, None)) == 1
+
+    @patch("platform.system", return_value="Darwin")
+    def test_windows_only_skipped_on_mac(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("win_only", run_on="windows"))
+        assert len(_enabled_connectors(cfg, None)) == 0
+
+    @patch("platform.system", return_value="Darwin")
+    def test_all_runs_everywhere(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("universal", run_on="all"))
+        assert len(_enabled_connectors(cfg, None)) == 1
+
+    @patch("platform.system", return_value="Darwin")
+    def test_missing_run_on_defaults_to_all(self, _mock):
+        from pipeline import _enabled_connectors
+        # No run_on field at all — must still be included
+        c = {"name": "legacy", "type": "email", "enabled": True,
+             "fetch": {"handler": "connectors.google_email"}}
+        cfg = {"connectors": {"legacy": c}}
+        assert len(_enabled_connectors(cfg, None)) == 1
+
+    @patch("platform.system", return_value="Darwin")
+    def test_list_run_on_match(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("multi", run_on=["darwin", "windows"]))
+        assert len(_enabled_connectors(cfg, None)) == 1
+
+    @patch("platform.system", return_value="Linux")
+    def test_list_run_on_no_match(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(self._conn("multi", run_on=["darwin", "windows"]))
+        assert len(_enabled_connectors(cfg, None)) == 0
+
+    @patch("platform.system", return_value="Darwin")
+    def test_mixed_connectors_filtered(self, _mock):
+        from pipeline import _enabled_connectors
+        cfg = self._cfg(
+            self._conn("gmail", run_on="all"),
+            self._conn("imessage", run_on="darwin"),
+            self._conn("workiq", run_on="windows"),
+        )
+        result = _enabled_connectors(cfg, None)
+        names = [c["name"] for c in result]
+        assert "gmail" in names
+        assert "imessage" in names
+        assert "workiq" not in names
+
+
 # ── _load_handler ────────────────────────────────────────────────────────────
 
 class TestLoadHandler:

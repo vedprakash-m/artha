@@ -15,6 +15,8 @@ config/channels.yaml
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
 state/.pending_pushes/
+# Bridge drop-files (ephemeral; synced via OneDrive, not Git)
+state/.action_bridge/
 # User-specific prompt extensions
 config/prompt-overlays/*.md
 # Keep the README
