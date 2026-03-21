@@ -1,506 +1,528 @@
----
-# config/connectors.yaml — Artha Declarative Connector Registry
-# Version: 1.0 | Updated: 2026-03-13
-#
-# Each connector declares a data source, its auth method, and a handler module.
-# pipeline.py reads this file and calls each enabled connector's fetch() method.
-#
-# To add a new source: add a YAML block here + optionally write a handler in
-# scripts/connectors/. No Python changes required for standard IMAP/CalDAV sources.
-#
-# Security: handler paths are validated — must be under scripts/connectors/.
-# Auth credentials always go through system keyring (never plaintext in this file).
-
-schema_version: "1.0"
-
+schema_version: '1.0'
 connectors:
-
-  # ── Email ────────────────────────────────────────────────────────────────
-
   gmail:
     type: email
     provider: google
     enabled: true
-    description: "Gmail — primary personal email"
+    description: Gmail — primary personal email
     auth:
       method: oauth2
-      token_file: ".tokens/gmail-token.json"
-      setup_script: "scripts/setup_google_oauth.py"
+      token_file: .tokens/gmail-token.json
+      setup_script: scripts/setup_google_oauth.py
       scopes:
-        - "https://www.googleapis.com/auth/gmail.readonly"
+      - https://www.googleapis.com/auth/gmail.readonly
     fetch:
-      handler: "scripts/connectors/google_email.py"
+      handler: scripts/connectors/google_email.py
       default_max_results: 200
-      default_lookback: "7d"
+      default_lookback: 7d
     output:
       format: jsonl
-      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
-      source_tag: ""
+      fields:
+      - id
+      - thread_id
+      - subject
+      - from
+      - to
+      - date_iso
+      - body
+      - labels
+      - snippet
+      source_tag: ''
     health_check: true
     mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source gmail"
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source gmail
     retry:
       max_retries: 3
       base_delay: 1.0
       max_delay: 30.0
-
   outlook_email:
     type: email
     provider: microsoft
-    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
-    description: "Outlook / Microsoft 365 email"
+    enabled: true
+    description: Outlook / Microsoft 365 email
     auth:
       method: oauth2
-      token_file: ".tokens/msgraph-token.json"
-      setup_script: "scripts/setup_msgraph_oauth.py"
+      token_file: .tokens/msgraph-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
       scopes:
-        - "Mail.Read"
-        - "Mail.ReadBasic"
+      - Mail.Read
+      - Mail.ReadBasic
     fetch:
-      handler: "scripts/connectors/msgraph_email.py"
+      handler: scripts/connectors/msgraph_email.py
       default_max_results: 200
-      default_lookback: "7d"
+      default_lookback: 7d
     output:
       format: jsonl
-      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
-      source_tag: "outlook"
+      fields:
+      - id
+      - thread_id
+      - subject
+      - from
+      - to
+      - date_iso
+      - body
+      - labels
+      - snippet
+      source_tag: outlook
     health_check: true
     mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source outlook_email"
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source outlook_email
     retry:
       max_retries: 3
       base_delay: 1.0
       max_delay: 30.0
-
   icloud_email:
     type: email
     provider: imap
-    enabled: false   # Enable after: python scripts/setup_icloud_auth.py
-    description: "iCloud / Apple Mail (IMAP)"
+    enabled: false
+    description: iCloud / Apple Mail (IMAP)
     auth:
       method: app_password
-      credential_key: "artha-icloud-password"
-      server: "imap.mail.me.com"
+      credential_key: artha-icloud-password
+      server: imap.mail.me.com
       port: 993
-      setup_script: "scripts/setup_icloud_auth.py"
+      setup_script: scripts/setup_icloud_auth.py
     fetch:
-      handler: "scripts/connectors/imap_email.py"
+      handler: scripts/connectors/imap_email.py
       default_max_results: 200
-      default_lookback: "7d"
+      default_lookback: 7d
     output:
       format: jsonl
-      fields: [id, thread_id, subject, from, to, date_iso, body, labels, snippet]
-      source_tag: "icloud"
+      fields:
+      - id
+      - thread_id
+      - subject
+      - from
+      - to
+      - date_iso
+      - body
+      - labels
+      - snippet
+      source_tag: icloud
     health_check: true
     mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source icloud_email"
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source icloud_email
     retry:
       max_retries: 2
       base_delay: 2.0
       max_delay: 30.0
-
-  # ── Calendar ──────────────────────────────────────────────────────────────
-
   google_calendar:
     type: calendar
     provider: google
     enabled: true
-    description: "Google Calendar — personal + family"
+    description: Google Calendar — personal + family
     auth:
       method: oauth2
-      token_file: ".tokens/gmail-token.json"
-      setup_script: "scripts/setup_google_oauth.py"
+      token_file: .tokens/gmail-token.json
+      setup_script: scripts/setup_google_oauth.py
       scopes:
-        - "https://www.googleapis.com/auth/calendar.readonly"
+      - https://www.googleapis.com/auth/calendar.readonly
     fetch:
-      handler: "scripts/connectors/google_calendar.py"
+      handler: scripts/connectors/google_calendar.py
       default_range_days: 7
-      # Calendar IDs are read from user_profile.yaml at runtime
-      calendars_from_profile: "integrations.google_calendar.calendar_ids"
+      calendars_from_profile: integrations.google_calendar.calendar_ids
     output:
       format: jsonl
-      fields: [id, calendar, summary, start, end, all_day, location, attendees]
-      source_tag: ""
-    health_check: true
-    mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source google_calendar"
-
-  outlook_calendar:
-    type: calendar
-    provider: microsoft
-    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
-    description: "Outlook Calendar / Microsoft 365"
-    auth:
-      method: oauth2
-      token_file: ".tokens/msgraph-token.json"
-      setup_script: "scripts/setup_msgraph_oauth.py"
-      scopes:
-        - "Calendars.Read"
-    fetch:
-      handler: "scripts/connectors/msgraph_calendar.py"
-      default_range_days: 7
-    output:
-      format: jsonl
-      fields: [id, calendar, summary, start, end, all_day, location, attendees]
-      source_tag: "outlook"
-    health_check: true
-    mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source outlook_calendar"
-
-  icloud_calendar:
-    type: calendar
-    provider: caldav
-    enabled: false   # Enable after: python scripts/setup_icloud_auth.py
-    description: "iCloud Calendar (CalDAV)"
-    auth:
-      method: app_password
-      credential_key: "artha-icloud-password"
-      server: "caldav.icloud.com"
-      setup_script: "scripts/setup_icloud_auth.py"
-    fetch:
-      handler: "scripts/connectors/caldav_calendar.py"
-      default_range_days: 7
-    output:
-      format: jsonl
-      fields: [id, calendar, summary, start, end, all_day, location, attendees]
-      source_tag: "icloud"
-    health_check: true
-    mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source icloud_calendar"
-
-  # ── Learning Management ───────────────────────────────────────────────────
-
-  canvas_lms:
-    type: lms
-    provider: canvas
-    enabled: false   # Enable if your child's school uses Canvas LMS
-    description: "Canvas LMS — school assignments and grades"
-    auth:
-      method: api_key
-      # API token keys are stored per-child in keyring; configured in user_profile.yaml
-      credential_key_from_profile: "children[].school.canvas_keychain_key"
-      setup_script: "scripts/canvas_fetch.py --setup"
-    fetch:
-      handler: "scripts/connectors/canvas_lms.py"
-    output:
-      format: direct_state_write
-      target: "state/kids.md"
-    health_check: true
-    mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source canvas_lms"
-
-  # ── Notes ─────────────────────────────────────────────────────────────────
-
-  onenote:
-    type: notes
-    provider: microsoft
-    enabled: true    # Enabled: MS Graph token authenticated (vedprakash.m@outlook.com)
-    description: "Microsoft OneNote — work notes and notebooks"
-    auth:
-      method: oauth2
-      token_file: ".tokens/msgraph-token.json"
-      setup_script: "scripts/setup_msgraph_oauth.py"
-      scopes:
-        - "Notes.Read"
-        - "Notes.ReadWrite"
-    fetch:
-      handler: "scripts/connectors/onenote.py"
-      include_personal: false
-    output:
-      format: direct_state_write
-      target: "state/onenote_progress.md"
-    health_check: true
-    mcp:
-      prefer_mcp: false  # PRIVACY: no official MCP — use direct API only
-      fallback: "scripts/pipeline.py --source onenote"
-
-  # ── Community Extension Examples (disabled by default) ───────────────────
-  #
-  # fastmail:
-  #   type: email
-  #   provider: imap
-  #   enabled: false
-  #   description: "Fastmail (IMAP)"
-  #   auth:
-  #     method: app_password
-  #     credential_key: "artha-fastmail-password"
-  #     server: "imap.fastmail.com"
-  #     port: 993
-  #   fetch:
-  #     handler: "scripts/connectors/imap_email.py"  # reuses iCloud IMAP handler
-  #     default_max_results: 200
-  #   output:
-  #     format: jsonl
-  #     source_tag: "fastmail"
-  #
-  # protonmail_bridge:
-  #   type: email
-  #   provider: imap
-  #   enabled: false
-  #   description: "ProtonMail (via Bridge at localhost:1143)"
-  #   auth:
-  #     method: app_password
-  #     credential_key: "artha-proton-bridge-password"
-  #     server: "127.0.0.1"
-  #     port: 1143
-  #   fetch:
-  #     handler: "scripts/connectors/imap_email.py"
-  #     default_max_results: 200
-  #   output:
-  #     format: jsonl
-  #     source_tag: "proton"
-
-  # ── RSS / Atom Feeds ──────────────────────────────────────────────────────
-
-  rss_feed:
-    type: feed
-    provider: rss
-    enabled: false          # set to true and configure feeds list below
-    description: "RSS/Atom feed reader — stdlib-only, no auth required. Useful for USCIS updates, visa bulletins, domain-relevant news."
-    auth:
-      method: none
-    fetch:
-      handler: "scripts/connectors/rss_feed.py"
-      timeout_seconds: 10
-      feeds:
-        # Add feed URLs here. Each entry: url, tag, domain (hint for routing).
-        # - url: "https://feeds.uscis.gov/updates/uscis-en.xml"
-        #   tag: "uscis_news"
-        #   domain: "immigration"
-        # - url: "https://travel.state.gov/content/travel/en/rss.xml"
-        #   tag: "state_dept"
-        #   domain: "travel"
-      default_max_results: 50
-    output:
-      format: jsonl
-      source_tag: "rss"
-
-  # ── Work Domains — M365 via WorkIQ (opt-in, disabled by default) ─────────
-  # Enable via: /bootstrap work
-  # Requires: Node.js + npx + WorkIQ M365 enterprise auth
-
-  workiq_bridge:
-    type: multi
-    provider: workiq
-    enabled: true           # Enabled: WorkIQ authenticated, work domains active
-    description: "WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)"
-    auth:
-      method: none          # WorkIQ manages its own M365 enterprise auth via npx
-    fetch:
-      handler: "scripts/connectors/workiq_bridge.py"
-      modes: [calendar, email, teams, people, documents]
-      default_lookback: "48h"
-      subprocess_timeout_seconds: 90
-      cache_file: "tmp/.workiq_cache.json"
-      cache_ttl:
-        calendar: 14400     # 4 hours
-        email: 3600         # 1 hour
-        teams: 7200         # 2 hours
-        people: 604800      # 7 days
-        documents: 14400    # 4 hours
-    output:
-      format: jsonl
-      source_tag: "workiq"
+      fields:
+      - id
+      - calendar
+      - summary
+      - start
+      - end
+      - all_day
+      - location
+      - attendees
+      source_tag: ''
     health_check: true
     mcp:
       prefer_mcp: false
-      fallback: "scripts/pipeline.py --source workiq_bridge"
+      fallback: scripts/pipeline.py --source google_calendar
+  outlook_calendar:
+    type: calendar
+    provider: microsoft
+    enabled: true
+    description: Outlook Calendar / Microsoft 365
+    auth:
+      method: oauth2
+      token_file: .tokens/msgraph-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
+      scopes:
+      - Calendars.Read
+    fetch:
+      handler: scripts/connectors/msgraph_calendar.py
+      default_range_days: 7
+    output:
+      format: jsonl
+      fields:
+      - id
+      - calendar
+      - summary
+      - start
+      - end
+      - all_day
+      - location
+      - attendees
+      source_tag: outlook
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source outlook_calendar
+  icloud_calendar:
+    type: calendar
+    provider: caldav
+    enabled: false
+    description: iCloud Calendar (CalDAV)
+    auth:
+      method: app_password
+      credential_key: artha-icloud-password
+      server: caldav.icloud.com
+      setup_script: scripts/setup_icloud_auth.py
+    fetch:
+      handler: scripts/connectors/caldav_calendar.py
+      default_range_days: 7
+    output:
+      format: jsonl
+      fields:
+      - id
+      - calendar
+      - summary
+      - start
+      - end
+      - all_day
+      - location
+      - attendees
+      source_tag: icloud
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source icloud_calendar
+  canvas_lms:
+    type: lms
+    provider: canvas
+    enabled: false
+    description: Canvas LMS — school assignments and grades
+    auth:
+      method: api_key
+      credential_key_from_profile: children[].school.canvas_keychain_key
+      setup_script: scripts/canvas_fetch.py --setup
+    fetch:
+      handler: scripts/connectors/canvas_lms.py
+    output:
+      format: direct_state_write
+      target: state/kids.md
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source canvas_lms
+  onenote:
+    type: notes
+    provider: microsoft
+    enabled: true
+    description: Microsoft OneNote — work notes and notebooks
+    auth:
+      method: oauth2
+      token_file: .tokens/msgraph-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
+      scopes:
+      - Notes.Read
+      - Notes.ReadWrite
+    fetch:
+      handler: scripts/connectors/onenote.py
+      include_personal: false
+    output:
+      format: direct_state_write
+      target: state/onenote_progress.md
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source onenote
+  rss_feed:
+    type: feed
+    provider: rss
+    enabled: false
+    description: RSS/Atom feed reader — stdlib-only, no auth required. Useful for
+      USCIS updates, visa bulletins, domain-relevant news.
+    auth:
+      method: none
+    fetch:
+      handler: scripts/connectors/rss_feed.py
+      timeout_seconds: 10
+      feeds: null
+      default_max_results: 50
+    output:
+      format: jsonl
+      source_tag: rss
+  workiq_bridge:
+    type: multi
+    provider: workiq
+    enabled: true
+    description: WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)
+    auth:
+      method: none
+    fetch:
+      handler: scripts/connectors/workiq_bridge.py
+      modes:
+      - calendar
+      - email
+      - teams
+      - people
+      - documents
+      default_lookback: 48h
+      subprocess_timeout_seconds: 90
+      cache_file: tmp/.workiq_cache.json
+      cache_ttl:
+        calendar: 14400
+        email: 3600
+        teams: 7200
+        people: 604800
+        documents: 14400
+    output:
+      format: jsonl
+      source_tag: workiq
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source workiq_bridge
     retry:
       max_retries: 1
       base_delay: 5.0
       max_delay: 30.0
-
   ado_workitems:
     type: project_tracker
     provider: azure_devops
-    enabled: true           # Enabled: az CLI authenticated, org=dev.azure.com/microsoft project=OS
-    description: "Azure DevOps — work items assigned to me"
+    enabled: true
+    description: Azure DevOps — work items assigned to me
     auth:
       method: az_cli
-      az_resource: "499b84ac-1321-427f-aa17-267ca6975798"
+      az_resource: 499b84ac-1321-427f-aa17-267ca6975798
       fallback_method: api_key
-      fallback_credential_key: "artha-ado-pat"
+      fallback_credential_key: artha-ado-pat
     fetch:
-      handler: "scripts/connectors/ado_workitems.py"
-      api_version: "7.1"
+      handler: scripts/connectors/ado_workitems.py
+      api_version: '7.1'
       default_max_results: 200
-      # org_url and project read from user_profile.yaml at runtime:
-      org_from_profile: "integrations.azure_devops.organization_url"
-      project_from_profile: "integrations.azure_devops.project"
+      org_from_profile: integrations.azure_devops.organization_url
+      project_from_profile: integrations.azure_devops.project
     output:
       format: jsonl
-      fields: [id, title, state, type, priority, target_date, changed_date, iteration_path]
-      source_tag: "ado"
+      fields:
+      - id
+      - title
+      - state
+      - type
+      - priority
+      - target_date
+      - changed_date
+      - iteration_path
+      source_tag: ado
     health_check: true
     mcp:
       prefer_mcp: false
-      fallback: "scripts/pipeline.py --source ado_workitems"
+      fallback: scripts/pipeline.py --source ado_workitems
     retry:
       max_retries: 2
       base_delay: 2.0
       max_delay: 30.0
-
-  # ── Apple Health Export (I-13: specs/improve.md) ──────────────────────────
-
   outlookctl_bridge:
     type: calendar_fallback
     provider: outlook
-    enabled: true           # Enabled: outlookctl installed at C:\Users\vemishra\AppData\Local\Programs\Python\Python313\Scripts\outlookctl.exe
-    description: >
-      Fast Outlook calendar fallback via outlookctl COM bridge.
-      Windows-only. Used for /status quick checks when WorkIQ cache is stale.
-      Latency: ~3s (vs WorkIQ ~60s). Attendee list not available (outlookctl 0.1.0 limitation).
+    enabled: true
+    description: 'Fast Outlook calendar fallback via outlookctl COM bridge. Windows-only.
+      Used for /status quick checks when WorkIQ cache is stale. Latency: ~3s (vs WorkIQ
+      ~60s). Attendee list not available (outlookctl 0.1.0 limitation).
+
+      '
     platform: windows
     auth:
       method: none
     fetch:
-      handler: "scripts/connectors/outlookctl_bridge.py"
+      handler: scripts/connectors/outlookctl_bridge.py
       lookahead_days: 2
     output:
       format: jsonl
-      fields: [uid, title, start, end, duration_min, is_all_day, is_online, location, is_recurring, organizer]
-      source_tag: "outlook"
+      fields:
+      - uid
+      - title
+      - start
+      - end
+      - duration_min
+      - is_all_day
+      - is_online
+      - location
+      - is_recurring
+      - organizer
+      source_tag: outlook
     health_check: true
     retry:
       max_retries: 1
       base_delay: 1.0
       max_delay: 5.0
-
   apple_health:
     type: health
     provider: apple
-    enabled: false          # opt-in: set to true and provide export ZIP path
-    description: >
-      Apple Health XML export parser — local file only, no network access.
-      Export from iPhone: Health app → Profile → Export All Health Data.
-      Place the export.zip in any directory and run:
-        python scripts/pipeline.py --source apple_health --file path/to/export.zip
-      Output goes to state/health.md (encrypted at rest).
+    enabled: false
+    description: "Apple Health XML export parser — local file only, no network access.\
+      \ Export from iPhone: Health app → Profile → Export All Health Data. Place the\
+      \ export.zip in any directory and run:\n  python scripts/pipeline.py --source\
+      \ apple_health --file path/to/export.zip\nOutput goes to state/health.md (encrypted\
+      \ at rest).\n"
     auth:
-      method: none            # no OAuth — purely local file parsing
+      method: none
     fetch:
-      handler: "scripts/connectors/apple_health.py"
+      handler: scripts/connectors/apple_health.py
       default_max_results: 10000
-      default_lookback: "365d"
-      # file: "/path/to/export.zip"   # override via --file flag or set here
+      default_lookback: 365d
     output:
       format: jsonl
-      fields: [source, type, type_short, value, unit, date_iso, device, id]
-      source_tag: "apple_health"
-    health_check: false       # no network endpoint to ping
+      fields:
+      - source
+      - type
+      - type_short
+      - value
+      - unit
+      - date_iso
+      - device
+      - id
+      source_tag: apple_health
+    health_check: false
     mcp:
-      prefer_mcp: false       # not applicable — local file connector
+      prefer_mcp: false
     retry:
       max_retries: 1
       base_delay: 0.0
       max_delay: 0.0
-
-  # ── Messaging — Local DB connectors (opt-in) ────────────────────────────
-  # These read from local SQLite databases (no network, no API keys).
-  # Platform-dependent: WhatsApp works on macOS + Windows; iMessage is macOS-only.
-
   whatsapp_local:
     type: messaging
     provider: whatsapp
     enabled: true
-    description: >
-      WhatsApp local ChatStorage.sqlite reader — extracts recent messages from
-      the WhatsApp Desktop app database. No API key needed. macOS + Windows.
+    description: 'WhatsApp local ChatStorage.sqlite reader — extracts recent messages
+      from the WhatsApp Desktop app database. No API key needed. macOS + Windows.
+
+      '
     auth:
-      method: none            # reads local SQLite DB — no auth required
+      method: none
     fetch:
-      handler: "scripts/connectors/whatsapp_local.py"
+      handler: scripts/connectors/whatsapp_local.py
       default_max_results: 200
-      default_lookback: "48h"
+      default_lookback: 48h
       include_groups: true
       snippet_max_chars: 300
     output:
       format: jsonl
-      fields: [id, contact_name, phone, timestamp, date_iso, direction, snippet, source, group_name, is_group]
-      source_tag: "whatsapp"
+      fields:
+      - id
+      - contact_name
+      - phone
+      - timestamp
+      - date_iso
+      - direction
+      - snippet
+      - source
+      - group_name
+      - is_group
+      source_tag: whatsapp
     health_check: true
     mcp:
-      prefer_mcp: false       # local DB — no MCP
+      prefer_mcp: false
     retry:
       max_retries: 1
       base_delay: 0.0
       max_delay: 0.0
-
   imessage_local:
     type: messaging
     provider: apple
     enabled: true
-    description: >
-      iMessage / SMS local chat.db reader — extracts recent messages from
-      macOS Messages database. macOS ONLY. Requires Full Disk Access for the
-      terminal app (System Settings → Privacy & Security → Full Disk Access).
+    description: 'iMessage / SMS local chat.db reader — extracts recent messages from
+      macOS Messages database. macOS ONLY. Requires Full Disk Access for the terminal
+      app (System Settings → Privacy & Security → Full Disk Access).
+
+      '
     auth:
-      method: none            # reads local SQLite DB — no auth required
+      method: none
     fetch:
-      handler: "scripts/connectors/imessage_local.py"
+      handler: scripts/connectors/imessage_local.py
       default_max_results: 200
-      default_lookback: "48h"   # one-time full sweep completed 2026-03-19; now incremental only
+      default_lookback: 48h
       include_groups: true
       snippet_max_chars: 300
     one_time_sweep:
       completed: true
-      completed_date: "2026-03-19"
-      oldest_message: "2016-05-05"
+      completed_date: '2026-03-19'
+      oldest_message: '2016-05-05'
       total_messages_in_db: 30363
-      total_messages_processed: 30146  # v2 decoder (all 3 NSString header variants); text column had only 143
-      decode_method: "attributedBody binary (NSAttributedString streamtyped, length-prefix UTF-8 scanning)"
-      state_files_updated: [digital.md, health-metrics.md, comms.md, finance.md, kids.md, contacts.md, home.md, community.md]
+      total_messages_processed: 30146
+      decode_method: attributedBody binary (NSAttributedString streamtyped, length-prefix
+        UTF-8 scanning)
+      state_files_updated:
+      - digital.md
+      - health-metrics.md
+      - comms.md
+      - finance.md
+      - kids.md
+      - contacts.md
+      - home.md
+      - community.md
     output:
       format: jsonl
-      fields: [id, contact_name, phone, timestamp, date_iso, direction, snippet, source, group_name, is_group]
-      source_tag: "imessage"
+      fields:
+      - id
+      - contact_name
+      - phone
+      - timestamp
+      - date_iso
+      - direction
+      - snippet
+      - source
+      - group_name
+      - is_group
+      source_tag: imessage
     health_check: true
     mcp:
-      prefer_mcp: false       # local DB — no MCP
+      prefer_mcp: false
     retry:
       max_retries: 1
       base_delay: 0.0
       max_delay: 0.0
-
-  # ── IoT — Home Assistant (LAN-only, opt-in) ─────────────────────────────
-
   homeassistant:
     type: iot
     provider: homeassistant
-    enabled: false          # Enable after: python scripts/setup_ha_token.py
-    description: >
-      Home Assistant local smart home hub — reads device states, energy usage,
-      and sensor data via the HA REST API. LAN-only: skipped silently when
+    enabled: true
+    description: 'Home Assistant local smart home hub — reads device states, energy
+      usage, and sensor data via the HA REST API. LAN-only: skipped silently when
       not on the home network. Requires a long-lived access token.
+
+      '
     requires_lan: true
     auth:
       method: api_key
-      credential_key: "artha-ha-token"
-      setup_script: "scripts/setup_ha_token.py"
+      credential_key: artha-ha-token
+      setup_script: scripts/setup_ha_token.py
     fetch:
-      handler: "scripts/connectors/homeassistant.py"
-      ha_url: ""                          # Set by setup_ha_token.py (e.g. http://192.168.1.123:8123)
+      handler: scripts/connectors/homeassistant.py
+      ha_url: http://192.168.50.90:8123
       timeout_seconds: 10
       default_max_results: 500
       include_history: false
-      exclude_domains: []                 # Additive on top of hard-floor _EXCLUDED_DOMAINS in connector
+      exclude_domains: []
       entity_allowlist: []
       entity_blocklist: []
     output:
       format: jsonl
-      fields: [entity_id, state, attributes, last_changed, domain, source]
-      source_tag: "homeassistant"
+      fields:
+      - entity_id
+      - state
+      - attributes
+      - last_changed
+      - domain
+      - source
+      source_tag: homeassistant
     health_check: true
     mcp:
-      prefer_mcp: false     # PRIVACY: local LAN API only — never cloud relay
-      fallback: "scripts/pipeline.py --source homeassistant"
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source homeassistant
     retry:
       max_retries: 2
       base_delay: 1.0

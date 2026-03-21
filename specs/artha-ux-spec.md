@@ -1,8 +1,8 @@
 # Artha — UX Specification
 
-> **Version**: 2.7.1 | **Status**: Draft | **Date**: March 2026
+> **Version**: 2.7.2 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.6, Tech Spec v3.9.6
+> **Implements**: PRD v7.0.7, Tech Spec v3.9.8
 
 | Version | Date | Summary |
 |---------|------|---------|
@@ -291,6 +291,29 @@ Domains are never presented alphabetically. They follow a consistent priority or
 10. **🛡️ PII GUARD** *(v1.4)*: Scan/redaction stats
 11. **🎯 CALIBRATION** *(v1.4)*: 2 post-briefing accuracy questions (skip-friendly)
 
+### 4.1a Smart Home Subsection (Home Domain) *(v8.2.0)*
+
+When the HA connector is active and on home LAN, the **Home** domain section includes an IoT subsection. Format:
+
+```
+### Home
+• [domain items as usual: utilities, mortgage, maintenance]
+
+• 🏠 Smart Home: [N] devices online, [M] offline
+  • 🔴 Ring Floodlight (front) offline since [time] — check power/WiFi
+  • 🟡 Brother printer: toner 40% (~500 pages remaining)
+• ♨️ Swim spa: 102°F (set: 104°F), pump running, no errors
+• ⚡ Energy: 45 kWh today (avg: 38 kWh) — +18% [within normal range]
+```
+
+When **off home LAN** (traveling, cowork VM, etc.):
+```
+• 🏠 Smart home data unavailable (not on home LAN)
+  Last sync: [time]. [N] devices reported online as of last sync.
+```
+
+**Promotion rule:** If any IoT signal is 🔴 Critical (security device offline) or 🟠 Urgent (energy spike, non-security device offline), the Home domain is promoted to the top of the 🔴/🟠 section regardless of its normal position in domain order.
+
 ### 4.2 Briefing Design Rules
 
 1. **Critical/Urgent → Top.** Always. No exceptions. Even if the rest of the briefing is empty.
@@ -397,6 +420,16 @@ Shopping domain may include purchase interval observations as 🔵 informational
   Info            🔵       Weekly goal summary                       In weekly summary only
                            Monthly financial snapshot                Not in daily briefing
                            Visa Bulletin published                   unless requested
+
+  IoT / Smart Home *(v8.2)*
+                  🔴       Security device (Ring camera, lock, alarm) offline >2h  Top of briefing (promotes Home domain)
+                           HA system itself unreachable >1h during monitoring     Action: check power/WiFi
+                           Swim spa error code present                            Action: check spa panel
+                  🟠       Non-security monitored device offline >2h              In Home domain section
+                           Energy consumption spike >30% above 7-day average      Action proposal queued
+                           Swim spa water temp deviation >5°F                    Informational + spa status
+                  🟡       Printer consumable (toner/drum) <20%                   In Home domain section
+                           Automation not triggered on expected schedule           Informational only
 
   Work Conflict   ⚠️/🔴    *(v1.5 — WorkIQ integration)*
                   🔴       Cross-domain (work↔personal)              Top of briefing (Impact=3)
