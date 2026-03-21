@@ -685,3 +685,62 @@ domains:
       orange: "Shared document modified by collaborator awaiting your review"
       yellow: "Document you own was edited by someone else in last 24h"
       blue: "Weekly digest of document activity"
+
+  # ── ACT-Reloaded domains (E2, E13) ──────────────────────────────────────
+  inbox:
+    label: "Inbox / Knowledge Capture"
+    description: "Quick-capture notes, reminders, and fleeting ideas added via /remember"
+    sensitivity: standard
+    always_load: false
+    phase: core
+    prompt_file: null
+    state_file: "state/inbox.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to capture quick notes and reminders via /remember?"
+    routing_keywords:
+      - remember
+      - note
+      - inbox
+      - capture
+      - jot down
+    alert_thresholds:
+      red: ""
+      orange: "More than 20 unreviewed inbox items"
+      yellow: "Inbox items older than 7 days not triaged"
+      blue: "New inbox items captured"
+
+  relationships:
+    label: "Relationships"
+    description: "Relationship health tracker — contact cadence, stale connections, nurturing"
+    sensitivity: elevated
+    always_load: false
+    phase: core
+    prompt_file: "prompts/social.md"
+    state_file: "state/relationships.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track relationship health and get nudges for overdue contact?"
+    routing_keywords:
+      - relationships
+      - relationship pulse
+      - contacts
+      - reach out
+      - stale contact
+      - friend
+      - family contact
+    alert_thresholds:
+      red: "Core relationship stale > 30 days"
+      orange: "3+ relationships past their cadence threshold"
+      yellow: "Relationship approaching stale threshold"
+      blue: "Relationship pulse updated"

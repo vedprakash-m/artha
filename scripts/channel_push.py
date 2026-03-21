@@ -148,6 +148,141 @@ def _get_latest_briefing() -> str | None:
         return None
 
 
+_FAMILY_ALLOWED_DOMAINS = frozenset(["kids", "home", "shopping", "social", "calendar"])
+
+
+def _build_family_flash(max_length: int = 600) -> str:
+    """Build a family-scoped flash summary for family-scope push recipients (E7).
+
+    Reads only standard-sensitivity state files:
+      - state/calendar.md      → today + tomorrow events
+      - state/open_items.md    → items in kids/home/shopping/social domains
+      - state/decisions.md     → decisions with visibility: shared
+
+    Returns a formatted family flash suitable for Telegram delivery.
+    Family flash NEVER includes: immigration, finance, estate, insurance,
+    employment, digital, health, or boundary domains.
+    """
+    import re as _re
+    from datetime import date
+
+    today = date.today()
+    day_str = today.strftime("%A, %b %-d") if os.name != "nt" else today.strftime("%A, %b %d")
+
+    sections: list[str] = [f"📋 Family Flash — {day_str}\n"]
+
+    # ── Calendar events (today + tomorrow) ──────────────────────────────────
+    cal_path = _STATE_DIR / "calendar.md"
+    cal_events: list[str] = []
+    if cal_path.exists():
+        try:
+            cal_text = cal_path.read_text(encoding="utf-8", errors="replace")
+            # Look for events with today/tomorrow markers or YYYY-MM-DD matching today/tomorrow
+            from datetime import timedelta
+            tomorrow = today + timedelta(days=1)
+            today_s = today.isoformat()
+            tomorrow_s = tomorrow.isoformat()
+            for line in cal_text.splitlines():
+                ll = line.lower()
+                if today_s in line or "today" in ll:
+                    event = line.strip().lstrip("-").strip()
+                    if event and len(event) > 4:
+                        cal_events.append(f"  • Today: {event[:80]}")
+                elif tomorrow_s in line or "tomorrow" in ll:
+                    event = line.strip().lstrip("-").strip()
+                    if event and len(event) > 4:
+                        cal_events.append(f"  • Tomorrow: {event[:80]}")
+        except OSError:
+            pass
+
+    if cal_events:
+        sections.append("📅 FAMILY CALENDAR")
+        sections.extend(cal_events[:4])
+        sections.append("")
+
+    # ── Shared tasks (kids/home/shopping/social domains) ─────────────────────
+    oi_path = _STATE_DIR / "open_items.md"
+    shared_tasks: list[str] = []
+    if oi_path.exists():
+        try:
+            import yaml as _yaml
+            oi_text = oi_path.read_text(encoding="utf-8", errors="replace")
+            # Parse YAML frontmatter items
+            lines = oi_text.splitlines()
+            fm_lines: list[str] = []
+            in_fm = False
+            dash_count = 0
+            for ln in lines:
+                if ln.strip() == "---":
+                    dash_count += 1
+                    if dash_count == 1:
+                        in_fm = True
+                        continue
+                    if dash_count == 2:
+                        break
+                elif in_fm:
+                    fm_lines.append(ln)
+            fm: dict = _yaml.safe_load("\n".join(fm_lines)) or {} if fm_lines else {}
+            items = fm.get("items", []) if isinstance(fm, dict) else []
+            for item in (items if isinstance(items, list) else []):
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status", "open")).lower() != "open":
+                    continue
+                item_domain = str(item.get("source_domain", "")).lower()
+                if item_domain not in _FAMILY_ALLOWED_DOMAINS:
+                    continue
+                oi_id = item.get("id", "?")
+                desc = str(item.get("description", ""))[:70]
+                dl = item.get("deadline", "")
+                dl_str = f" (due {dl})" if dl else ""
+                shared_tasks.append(f"  • {oi_id}: {desc}{dl_str}")
+        except Exception:  # noqa: BLE001
+            # Fallback: regex scan
+            for m in _re.finditer(
+                r"- id: (OI-\d+).*?source_domain: (kids|home|shopping|social).*?description: \"([^\"]+)\"",
+                oi_path.read_text(encoding="utf-8", errors="replace"),
+                _re.DOTALL,
+            ):
+                shared_tasks.append(f"  • {m.group(1)}: {m.group(3)[:60]}")
+
+    if shared_tasks:
+        sections.append("📝 SHARED TASKS")
+        sections.extend(shared_tasks[:5])
+        sections.append("")
+
+    # ── Shared decisions ─────────────────────────────────────────────────────
+    dec_path = _STATE_DIR / "decisions.md"
+    shared_decisions: list[str] = []
+    if dec_path.exists():
+        try:
+            dec_text = dec_path.read_text(encoding="utf-8", errors="replace")
+            # Look for decisions with visibility: shared in shared domains
+            blocks = _re.findall(
+                r"- id: (DEC-\d+).*?visibility: shared.*?title: \"([^\"]+)\"",
+                dec_text, _re.DOTALL
+            )
+            for dec_id, title in blocks[:3]:
+                shared_decisions.append(f"  • {dec_id}: {title[:60]}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    ask_ved = "[No shared decisions pending]"
+    if shared_decisions:
+        sections.append("💬 ASK VED")
+        sections.extend(shared_decisions)
+        sections.append("")
+    else:
+        sections.append("💬 ASK VED")
+        sections.append(f"  {ask_ved}")
+        sections.append("")
+
+    result = "\n".join(sections).strip()
+    if len(result) > max_length:
+        result = result[:max_length - 3] + "…"
+    return result
+
+
 def _build_flash_message(scope: str, max_length: int = 500) -> str:
     """Build a flash message for push delivery.
 
@@ -592,8 +727,11 @@ def run_push(dry_run: bool = False) -> int:
 
             scope = rec_cfg.get("access_scope", "standard")
 
-            # 1. Build flash message
-            flash_text = _build_flash_message(scope, max_push_length)
+            # 1. Build flash message — family scope gets dedicated family flash (E7)
+            if scope == "family":
+                flash_text = _build_family_flash(max_push_length)
+            else:
+                flash_text = _build_flash_message(scope, max_push_length)
 
             # 2. PII redaction — mandatory, no exceptions
             try:

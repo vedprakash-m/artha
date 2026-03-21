@@ -89,6 +89,38 @@ _SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
     "supply_low":                 {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
     "spa_maintenance":            {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
     "security_travel_conflict":   {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 0, "reversible": False, "undo_window_sec": None},
+
+    # E1 — Email Signal Extractor
+    "event_rsvp_needed":          {"action_type": "email_reply",           "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
+    "appointment_confirmed":      {"action_type": "calendar_create",       "friction": "low",      "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
+    "delivery_arriving":          {"action_type": "reminder_create",       "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
+    "security_alert":             {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "school_action_needed":       {"action_type": "email_reply",           "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
+    "form_deadline":              {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
+
+    # E12 — Decision Tracker
+    "decision_detected":          {"action_type": "decision_log_proposal", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+
+    # E6 — Subscription Lifecycle (extended)
+    "subscription_trial_ending":            {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
+    "subscription_renewal_upcoming":        {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
+    "subscription_cancellation_deadline":   {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "subscription_annual_review":           {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
+
+    # E3 — Pattern Engine signals
+    "goal_stale":                 {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
+    "relationship_stale":         {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
+    "health_alert":               {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "maintenance_due":            {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "insurance_renewal_due":      {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+
+    # E9 — Attachment Router
+    "document_financial":         {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "document_medical":           {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "document_immigration":       {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "document_school":            {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
+    "document_insurance":         {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "document_property":          {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
 }
 
 # Domains that always escalate friction to "high" (§10.3 rule 4)

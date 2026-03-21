@@ -1,0 +1,184 @@
+# config/patterns.yaml — Artha Pattern Engine Rules (E3)
+#
+# Each pattern document defines a trigger condition (evaluated deterministically
+# against state file snapshots) and an output signal emitted when the condition
+# fires.
+#
+# Operators supported by pattern_engine.py:
+#   days_until_lte: N   — field is a date string; true if (field - today).days <= N
+#   lt / gt / eq: N     — numeric comparison
+#   exists: true/false  — field is present and non-empty
+#   has_item_within_days: N — list field contains any item with a date within N days
+#   contains: "string"  — field string contains substring (case-insensitive)
+#   stale_days: N       — field is a date; true if (today - field).days >= N
+#
+# Frequency: evaluated every catch-up run (not continuous).
+# Cooldown: per-pattern last_fired timestamp prevents re-emission within cooldown_hours.
+# all_of conditions are ANDed together.
+#
+# Ref: specs/act-reloaded.md Enhancement 3
+
+schema_version: "1.0"
+updated_by: "bootstrap"
+
+patterns:
+  - id: "PAT-001"
+    name: "Upcoming visa or document deadline"
+    description: "Fires when an immigration deadline is within 60 days"
+    source_file: "state/immigration_tracker.md"
+    source_path: "next_deadline_date"
+    condition:
+      all_of:
+        - days_until_lte: 60
+    output_signal:
+      signal_type: "form_deadline"
+      domain: "immigration"
+      urgency: 3
+      impact: 3
+      entity_field: "document_type"
+      metadata:
+        priority_flag: true
+        sensitivity: "high"
+    cooldown_hours: 168   # 7 days
+    enabled: true
+
+  - id: "PAT-002"
+    name: "Health metric above threshold"
+    description: "Fires when resting_hr, weight, or sleep_avg crosses a threshold"
+    source_file: "state/health-check.md"
+    source_path: null   # evaluates multiple top-level fields
+    condition:
+      any_of:
+        - field: "resting_hr"
+          gt: 85
+        - field: "sleep_avg_hours"
+          lt: 6
+    output_signal:
+      signal_type: "health_alert"
+      domain: "health"
+      urgency: 2
+      impact: 2
+      entity_field: null
+      metadata:
+        sensor: true
+    cooldown_hours: 48
+    enabled: true
+
+  - id: "PAT-003"
+    name: "Goal milestone stale"
+    description: "Fires when a goal has had no progress update for 14+ days"
+    source_file: "state/goals.md"
+    source_path: "goals"         # list field
+    condition:
+      all_of:
+        - field: "last_updated"
+          stale_days: 14
+    output_signal:
+      signal_type: "goal_stale"
+      domain: "goals"
+      urgency: 1
+      impact: 2
+      entity_field: "title"
+      metadata: {}
+    cooldown_hours: 72
+    enabled: true
+
+  - id: "PAT-004"
+    name: "Open item overdue"
+    description: "Fires when an open item's deadline has passed"
+    source_file: "state/open_items.md"
+    source_path: "items"
+    condition:
+      all_of:
+        - field: "deadline"
+          days_until_lte: 0   # today or past
+        - field: "status"
+          eq: "open"
+    output_signal:
+      signal_type: "open_item_overdue"
+      domain: "comms"
+      urgency: 2
+      impact: 2
+      entity_field: "id"
+      metadata: {}
+    cooldown_hours: 24
+    enabled: true
+
+  - id: "PAT-005"
+    name: "Relationship contact overdue"
+    description: "Fires when an inner-circle contact has not been contacted within their cadence"
+    source_file: "state/relationships.md"
+    source_path: "contacts.inner_circle"
+    condition:
+      all_of:
+        - field: "last_contact"
+          stale_days: 30
+    output_signal:
+      signal_type: "relationship_stale"
+      domain: "social"
+      urgency: 1
+      impact: 2
+      entity_field: "name"
+      metadata: {}
+    cooldown_hours: 168   # 7 days
+    enabled: true
+
+  - id: "PAT-006"
+    name: "Subscription renewal approaching"
+    description: "Fires when a subscription renews within 14 days"
+    source_file: "state/subscriptions.md"
+    source_path: "subscriptions"
+    condition:
+      all_of:
+        - field: "renewal_date"
+          days_until_lte: 14
+        - field: "status"
+          eq: "active"
+    output_signal:
+      signal_type: "subscription_renewal_upcoming"
+      domain: "digital"
+      urgency: 1
+      impact: 1
+      entity_field: "service_name"
+      metadata:
+        sensitivity: "medium"
+    cooldown_hours: 72
+    enabled: true
+
+  - id: "PAT-007"
+    name: "Vehicle maintenance due"
+    description: "Fires when vehicle service is within 30 days or 500 miles overdue"
+    source_file: "state/vehicle_tracker.md"
+    source_path: "next_service_date"
+    condition:
+      all_of:
+        - days_until_lte: 30
+    output_signal:
+      signal_type: "maintenance_due"
+      domain: "vehicle"
+      urgency: 2
+      impact: 2
+      entity_field: "vehicle_name"
+      metadata: {}
+    cooldown_hours: 168
+    enabled: true
+
+  - id: "PAT-008"
+    name: "Insurance policy renewal"
+    description: "Fires when any insurance policy renews within 45 days"
+    source_file: "state/insurance_tracker.md"
+    source_path: "policies"
+    condition:
+      all_of:
+        - field: "renewal_date"
+          days_until_lte: 45
+    output_signal:
+      signal_type: "insurance_renewal_due"
+      domain: "insurance"
+      urgency: 2
+      impact: 2
+      entity_field: "policy_name"
+      metadata:
+        sensitivity: "medium"
+    cooldown_hours: 168
+    enabled: true

@@ -124,6 +124,16 @@ _COMMAND_ALIASES: dict[str, str] = {
     "items done":  "/items_done",
     "item done":   "/items_done",
     "done":        "/items_done",
+    # remember / inbox (knowledge capture — E2)
+    "remember":    "/remember",
+    "note":        "/remember",
+    "inbox":       "/remember",
+    # power half hour (E14)
+    "power":             "/power",
+    "power half hour":   "/power",
+    # relationships (E13)
+    "relationships":     "/relationships",
+    "relationship pulse":"/relationships",
     # help
     "help":        "/help",
     "h":           "/help",
@@ -135,6 +145,8 @@ _COMMAND_ALIASES: dict[str, str] = {
     "approve":     "/approve",
     "reject":      "/reject",
     "undo":        "/undo",
+    # cost telemetry (E8)
+    "cost":        "/cost",
 }
 
 ALLOWED_COMMANDS = frozenset(_COMMAND_ALIASES.values())
@@ -1473,6 +1485,30 @@ async def cmd_dashboard(args: list[str], scope: str) -> tuple[str, str]:
     return _apply_scope_filter(html, scope), "N/A"
 
 
+async def cmd_power(args: list[str], scope: str) -> tuple[str, str]:
+    """Return Power Half Hour view (E14 — power_half_hour_view.py)."""
+    try:
+        from power_half_hour_view import render_power_session  # noqa: PLC0415
+    except ImportError:
+        return "⚠️ power_half_hour_view module not found.", "N/A"
+
+    fmt_arg = args[0].lstrip("-") if args else "standard"
+    text, _ = render_power_session(fmt=fmt_arg)
+    return _apply_scope_filter(text, scope), "N/A"
+
+
+async def cmd_relationships(args: list[str], scope: str) -> tuple[str, str]:
+    """Return Relationship Pulse view (E13 — relationship_pulse_view.py)."""
+    try:
+        from relationship_pulse_view import render_relationships  # noqa: PLC0415
+    except ImportError:
+        return "⚠️ relationship_pulse_view module not found.", "N/A"
+
+    fmt_arg = args[0].lstrip("-") if args else "standard"
+    text, _ = render_relationships(fmt=fmt_arg)
+    return _apply_scope_filter(text, scope), "N/A"
+
+
 # ── Catch-up via Telegram ─────────────────────────────────────────────────────
 
 
@@ -2102,6 +2138,127 @@ async def cmd_items_done(args: list[str], scope: str) -> tuple[str, str]:
         return f"Failed to update: {exc}", "N/A"
 
 
+_REMEMBER_WRITE_RATE_LIMIT = 5   # max /remember writes per hour per sender
+_REMEMBER_MAX_UNTRIAGED = 50      # cap: oldest auto-expire after 7 days
+
+# In-memory write-rate tracker for /remember
+import collections as _col_mod
+_remember_write_times: dict[str, list[float]] = _col_mod.defaultdict(list)
+
+
+def _remember_rate_ok(key: str) -> bool:
+    """Return True if key has not exceeded _REMEMBER_WRITE_RATE_LIMIT per hour."""
+    import time as _time_mod
+    now = _time_mod.monotonic()
+    ts_list = _remember_write_times[key]
+    cutoff = now - 3600
+    while ts_list and ts_list[0] < cutoff:
+        ts_list.pop(0)
+    if len(ts_list) >= _REMEMBER_WRITE_RATE_LIMIT:
+        return False
+    ts_list.append(now)
+    return True
+
+
+async def cmd_remember(args: list[str], scope: str) -> tuple[str, str]:
+    """Capture a quick note into state/inbox.md for triage during next catch-up.
+
+    Usage: /remember <text>
+    Aliases: /note, /inbox
+
+    Only available to full-scope users. Applies PII guard pre-write.
+    Rate-limited: 5 writes/hour.
+    """
+    import re as _re2
+    import fcntl as _fcntl2
+
+    if scope not in ("full", "admin"):
+        return "❌ /remember is available to full-scope users only.", "N/A"
+
+    if not args:
+        return (
+            "Usage: /remember <text>\n"
+            "Example: /remember Pick up science project materials from Staples"
+        ), "N/A"
+
+    raw_text = " ".join(args).strip()[:500]
+    if not raw_text:
+        return "Need some text to note.", "N/A"
+
+    # PII guard
+    try:
+        from pii_guard import filter_text as _pii_filter  # type: ignore[import]
+        filtered_text, _pii_found = _pii_filter(raw_text)
+    except ImportError:
+        filtered_text = raw_text
+
+    # Write rate limit: 5/hour (global key — sender_id not available here)
+    if not _remember_rate_ok("_global"):
+        return "⛔ Write rate limit reached (5/hour). Try again later.", "N/A"
+
+    inbox_path = _STATE_DIR / "inbox.md"
+    existing = inbox_path.read_text(encoding="utf-8", errors="replace") if inbox_path.exists() else ""
+
+    # Untriaged cap
+    untriaged_count = len(_re2.findall(r"triaged:\s*false", existing))
+    if untriaged_count >= _REMEMBER_MAX_UNTRIAGED:
+        return (
+            f"⚠️ Inbox full ({_REMEMBER_MAX_UNTRIAGED} untriaged items). "
+            "Run /catch-up to triage first."
+        ), "N/A"
+
+    # Next INB-NNN id
+    numbers = [int(m.group(1)) for m in _re2.finditer(r"id:\s*INB-(\d+)", existing)]
+    next_num = max(numbers) + 1 if numbers else 1
+    inb_id = f"INB-{next_num:03d}"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    entry = (
+        f"\n- id: {inb_id}\n"
+        f"  text: \"{filtered_text}\"\n"
+        f"  source: telegram\n"
+        f"  timestamp: {ts}\n"
+        f"  triaged: false\n"
+        f"  routed_to: null\n"
+        f"  created_oi: null\n"
+    )
+
+    if not inbox_path.exists() or not existing.strip():
+        header = "---\ndomain: inbox\nsensitivity: standard\n---\n\n## Inbox Items\n"
+        existing = header
+
+    try:
+        with open(inbox_path, "a", encoding="utf-8") as fh:
+            _fcntl2.flock(fh, _fcntl2.LOCK_EX)
+            if not inbox_path.stat().st_size:
+                fh.write(existing)
+            fh.write(entry)
+        _audit_log("CHANNEL_REMEMBER", item_id=inb_id, text_preview=filtered_text[:60], scope=scope)
+        return (
+            f"📥 Noted: {inb_id}\n  {filtered_text[:80]}"
+            + ("\n  (Partial PII redaction applied)" if filtered_text != raw_text else "")
+        ), "N/A"
+    except OSError as exc:
+        return f"Failed to write inbox: {exc}", "N/A"
+
+
+async def cmd_cost(args: list[str], scope: str) -> tuple[str, str]:
+    """Show API cost telemetry estimate for the current session and rolling windows.
+
+    Usage: /cost
+    Output: Today / this week / this month estimates + breakdown + optimisation tip.
+    """
+    try:
+        from cost_tracker import CostTracker  # type: ignore[import]
+        tracker = CostTracker()
+        report = tracker.build_report()
+        return tracker.format_report(report), "N/A"
+    except ImportError:
+        return "cost_tracker module not available. Run: python scripts/cost_tracker.py", "N/A"
+    except Exception as exc:  # noqa: BLE001
+        return f"Cost estimation failed: {exc}", "N/A"
+
+
 async def cmd_queue(args: list[str], scope: str) -> tuple[str, str]:
     """Show pending action queue."""
     try:
@@ -2519,6 +2676,10 @@ async def process_message(
         "/diff": cmd_diff,
         "/items_add": cmd_items_add,
         "/items_done": cmd_items_done,
+        "/remember": cmd_remember,
+        "/cost": cmd_cost,
+        "/power": cmd_power,
+        "/relationships": cmd_relationships,
         "/help": cmd_help,
         # Action layer commands (§5.3)
         "/queue": cmd_queue,
