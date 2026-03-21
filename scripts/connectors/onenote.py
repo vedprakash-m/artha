@@ -15,6 +15,7 @@ import html
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Dict, Iterator, Optional
@@ -26,6 +27,7 @@ if _SCRIPTS_DIR not in sys.path:
 _MAX_PAGE_CHARS = 3_000
 _PAGE_LIST_SIZE = 100
 _SKIP_NOTEBOOKS = {"personal notebook"}
+_CONTENT_WORKERS = 5   # parallel page-content fetches (Graph API throttle-safe)
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,14 @@ def fetch(
     include_personal: bool = False,
     **kwargs: Any,
 ) -> Iterator[Dict[str, Any]]:
-    """Yield OneNote page records modified since *since*."""
+    """Yield OneNote page records modified since *since*.
+
+    Parallel strategy (3 stages):
+      1. List all sections across notebooks concurrently.
+      2. List pages (with modified_since filter) across sections concurrently.
+      3. Fetch page HTML content concurrently (up to _CONTENT_WORKERS threads).
+    This turns N×serial_content_latency into ~1×max_content_latency.
+    """
     access_token = auth_context.get("access_token", "")
     if not access_token:
         raise RuntimeError("[onenote] auth_context missing access_token")
@@ -193,48 +202,76 @@ def fetch(
         print("[onenote] No notebooks found", file=sys.stderr)
         return
 
-    count = 0
-    for notebook in notebooks:
-        nb_id = notebook["id"]
-        nb_name = notebook.get("displayName", "Unknown")
-        try:
-            sections = _list_sections(access_token, nb_id)
-        except Exception as exc:
-            print(f"[onenote] WARN: skipping notebook '{nb_name}': {exc}", file=sys.stderr)
-            continue
-        if section_filter:
-            s_filt = section_filter.lower()
-            sections = [s for s in sections if s_filt in s.get("displayName", "").lower()]
-        for section in sections:
-            sec_id = section["id"]
-            sec_name = section.get("displayName", "Unknown")
+    # ── Stage 1: list sections across all notebooks in parallel ────────────
+    nb_sections: list[tuple[dict, dict]] = []   # (notebook, section)
+    with ThreadPoolExecutor(max_workers=min(len(notebooks), 4)) as pool:
+        fut_to_nb = {pool.submit(_list_sections, access_token, nb["id"]): nb
+                     for nb in notebooks}
+        for fut in as_completed(fut_to_nb):
+            nb = fut_to_nb[fut]
+            nb_name = nb.get("displayName", "Unknown")
             try:
-                pages = _list_pages(access_token, sec_id, modified_since)
+                sections = fut.result()
+            except Exception as exc:
+                print(f"[onenote] WARN: skipping notebook '{nb_name}': {exc}", file=sys.stderr)
+                continue
+            if section_filter:
+                s_filt = section_filter.lower()
+                sections = [s for s in sections if s_filt in s.get("displayName", "").lower()]
+            nb_sections.extend((nb, s) for s in sections)
+
+    if not nb_sections:
+        return
+
+    # ── Stage 2: list pages across all sections in parallel ────────────────
+    pages_to_fetch: list[tuple[dict, dict, dict]] = []  # (notebook, section, page)
+    with ThreadPoolExecutor(max_workers=min(len(nb_sections), 8)) as pool:
+        fut_to_sec = {pool.submit(_list_pages, access_token, sec["id"], modified_since): (nb, sec)
+                      for nb, sec in nb_sections}
+        for fut in as_completed(fut_to_sec):
+            nb, sec = fut_to_sec[fut]
+            sec_name = sec.get("displayName", "Unknown")
+            try:
+                pages = fut.result()
             except Exception as exc:
                 print(f"[onenote] WARN: skipping section '{sec_name}': {exc}", file=sys.stderr)
                 continue
-            for page in pages:
-                if count >= max_results:
-                    return
-                page_id = page["id"]
-                page_title = page.get("title", "(no title)")
-                last_mod = page.get("lastModifiedDateTime", "")
-                try:
-                    raw_html = _fetch_page_content(access_token, page_id)
-                    content_text = _onenote_html_to_text(raw_html)
-                except Exception as exc:
-                    print(f"[onenote] WARN: skipping page '{page_title}': {exc}", file=sys.stderr)
-                    continue
-                record = {
-                    "notebook": nb_name,
-                    "section": sec_name,
-                    "page_title": page_title,
-                    "last_modified": last_mod,
-                    "content_text": content_text,
-                    "source": source_tag,
-                }
-                yield record
-                count += 1
+            pages_to_fetch.extend((nb, sec, page) for page in pages)
+
+    # Respect max_results cap before spawning content threads
+    pages_to_fetch = pages_to_fetch[:max_results]
+    if not pages_to_fetch:
+        return
+
+    print(f"[onenote] fetching content for {len(pages_to_fetch)} pages "
+          f"({_CONTENT_WORKERS} workers)", file=sys.stderr)
+
+    # ── Stage 3: fetch page content in parallel ─────────────────────────────
+    def _fetch_one(nb: dict, sec: dict, page: dict) -> Dict[str, Any]:
+        raw_html = _fetch_page_content(access_token, page["id"])
+        content_text = _onenote_html_to_text(raw_html)
+        return {
+            "notebook": nb.get("displayName", "Unknown"),
+            "section": sec.get("displayName", "Unknown"),
+            "page_title": page.get("title", "(no title)"),
+            "last_modified": page.get("lastModifiedDateTime", ""),
+            "content_text": content_text,
+            "source": source_tag,
+        }
+
+    records: list[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=_CONTENT_WORKERS) as pool:
+        fut_to_page = {pool.submit(_fetch_one, nb, sec, page): page
+                       for nb, sec, page in pages_to_fetch}
+        for fut in as_completed(fut_to_page):
+            page = fut_to_page[fut]
+            page_title = page.get("title", "(no title)")
+            try:
+                records.append(fut.result())
+            except Exception as exc:
+                print(f"[onenote] WARN: skipping page '{page_title}': {exc}", file=sys.stderr)
+
+    yield from records
 
 
 def health_check(auth_context: Dict[str, Any]) -> bool:
