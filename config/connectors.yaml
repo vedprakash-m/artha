@@ -47,7 +47,7 @@ connectors:
     type: email
     provider: microsoft
     enabled: true
-    run_on: all
+    run_on: windows
     description: Outlook / Microsoft 365 email
     auth:
       method: oauth2
@@ -154,7 +154,7 @@ connectors:
     type: calendar
     provider: microsoft
     enabled: true
-    run_on: all
+    run_on: windows
     description: Outlook Calendar / Microsoft 365
     auth:
       method: oauth2
@@ -234,7 +234,7 @@ connectors:
     type: notes
     provider: microsoft
     enabled: true
-    run_on: all
+    run_on: windows
     description: Microsoft OneNote — work notes and notebooks
     auth:
       method: oauth2
@@ -274,7 +274,7 @@ connectors:
     type: multi
     provider: workiq
     enabled: true
-    run_on: all
+    run_on: windows
     description: WorkIQ — corporate M365 data (calendar, email, Teams, people, docs)
     auth:
       method: none
@@ -310,7 +310,7 @@ connectors:
     type: project_tracker
     provider: azure_devops
     enabled: true
-    run_on: all
+    run_on: windows
     description: Azure DevOps — work items assigned to me
     auth:
       method: az_cli
