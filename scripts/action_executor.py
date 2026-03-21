@@ -338,6 +338,10 @@ class ActionExecutor:
             f"ACTION_PROPOSED | id:{proposal.id} | type:{action_type} | "
             f"domain:{domain} | title:{title!r} | friction:{friction}",
         )
+
+        # Bridge export (no-op if bridge disabled or role=executor)
+        self._enqueue_and_maybe_export(proposal)
+
         return proposal
 
     def approve(self, action_id: str, approved_by: str) -> ActionResult:
@@ -506,6 +510,9 @@ class ActionExecutor:
                 f"ACTION_RESULT_SAVE_FAILED | id:{action_id} | error:{e}",
             )
 
+        # 7b. Bridge result write (executor machine only; no-op if bridge disabled)
+        self._maybe_write_bridge_result(action_id, result)
+
         # 8. Audit trail
         _audit_log(
             self._artha_dir,
@@ -563,18 +570,8 @@ class ActionExecutor:
         except ValueError as e:
             raise ValueError(f"Cannot defer action {action_id}: {e}") from e
 
-        # Update expires_at to the defer time
-        from action_queue import _open_db  # noqa: PLC0415
-        db_path = self._artha_dir / "state" / "actions.db"
-        conn = _open_db(db_path)
-        try:
-            with conn:
-                conn.execute(
-                    "UPDATE actions SET expires_at = ? WHERE id = ?",
-                    (defer_time, action_id),
-                )
-        finally:
-            conn.close()
+        # Update expires_at to the defer time (via managed connection — no raw _open_db)
+        self._queue.update_defer_time(action_id, defer_time)
 
         _audit_log(
             self._artha_dir,
@@ -744,6 +741,10 @@ class ActionExecutor:
             f"ACTION_PROPOSED | id:{proposal.id} | type:{proposal.action_type} "
             f"| domain:{proposal.domain} | via:compose",
         )
+
+        # Bridge export (no-op if bridge disabled or role=executor)
+        self._enqueue_and_maybe_export(proposal)
+
         return proposal.id
 
     def expire_stale(self) -> int:
@@ -798,6 +799,110 @@ class ActionExecutor:
     def close(self) -> None:
         """Release resources."""
         self._queue.close()
+
+    # ------------------------------------------------------------------
+    # Bridge helpers (disabled no-ops when bridge not configured)
+    # ------------------------------------------------------------------
+
+    def _enqueue_and_maybe_export(self, proposal: "ActionProposal") -> None:
+        """Post-enqueue hook: export to bridge if enabled and role=proposer.
+
+        Silently no-ops if:
+        - multi_machine.bridge_enabled is false (default)
+        - role is 'executor' (Windows receives proposals, doesn't send them)
+        - action_bridge module unavailable
+        """
+        try:
+            import yaml  # noqa: PLC0415
+            config_path = self._artha_dir / "config" / "artha_config.yaml"
+            if not config_path.exists():
+                return
+            with open(config_path, encoding="utf-8") as f:
+                artha_config = yaml.safe_load(f) or {}
+
+            mm = artha_config.get("multi_machine", {})
+            if not mm.get("bridge_enabled", False):
+                return
+
+            # Detect role
+            sys.path.insert(0, str(self._artha_dir / "scripts"))
+            from action_bridge import detect_role, get_bridge_dir  # noqa: PLC0415
+            channels_path = self._artha_dir / "config" / "channels.yaml"
+            channels_config: dict = {}
+            if channels_path.exists():
+                with open(channels_path, encoding="utf-8") as f:
+                    channels_config = yaml.safe_load(f) or {}
+
+            role = detect_role(channels_config)
+            if role != "proposer":
+                return  # executor doesn't write proposals
+
+            bridge_dir = get_bridge_dir(self._artha_dir)
+            from action_bridge import write_proposal  # noqa: PLC0415
+            write_proposal(bridge_dir, proposal, pubkey=self._get_pubkey())
+            _audit_log(
+                self._artha_dir,
+                f"BRIDGE_PROPOSAL_WRITE | id:{proposal.id} | type:{proposal.action_type}",
+            )
+        except Exception as exc:
+            # Bridge export failures are non-fatal — action is already locally enqueued
+            _audit_log(
+                self._artha_dir,
+                f"BRIDGE_EXPORT_WARN | id:{proposal.id} | error:{exc}",
+            )
+
+    def _maybe_write_bridge_result(self, action_id: str, result: "ActionResult") -> None:
+        """Write a result to the bridge results/ dir and mark bridge_synced=1.
+
+        Called on the executor machine (Windows) after record_result().
+        Silently no-ops if bridge is disabled or role is not executor.
+        """
+        try:
+            import yaml  # noqa: PLC0415
+            config_path = self._artha_dir / "config" / "artha_config.yaml"
+            if not config_path.exists():
+                return
+            with open(config_path, encoding="utf-8") as f:
+                artha_config = yaml.safe_load(f) or {}
+
+            mm = artha_config.get("multi_machine", {})
+            if not mm.get("bridge_enabled", False):
+                return
+
+            # Only executor writes results
+            from action_bridge import detect_role, get_bridge_dir, write_result  # noqa: PLC0415
+            channels_path = self._artha_dir / "config" / "channels.yaml"
+            channels_config: dict = {}
+            if channels_path.exists():
+                with open(channels_path, encoding="utf-8") as f:
+                    channels_config = yaml.safe_load(f) or {}
+
+            role = detect_role(channels_config)
+            if role != "executor":
+                return  # proposer doesn't write results directly
+
+            # Only write for bridge-originated actions
+            raw = self._queue.get_raw(action_id)
+            if not raw or raw.get("origin") != "bridge":
+                return
+
+            bridge_dir = get_bridge_dir(self._artha_dir)
+            final_status = "succeeded" if result.status == "success" else "failed"
+            write_result(
+                bridge_dir,
+                action_id=action_id,
+                final_status=final_status,
+                result_message=result.message,
+                result_data=result.data,
+                pubkey=self._get_pubkey(),
+            )
+            self._queue.mark_bridge_synced(action_id)
+        except Exception as exc:
+            # Bridge write failures are non-fatal — result is already in local DB
+            _audit_log(
+                self._artha_dir,
+                f"BRIDGE_RESULT_WRITE_WARN | id:{action_id} | error:{exc}",
+            )
 
 
 # ---------------------------------------------------------------------------

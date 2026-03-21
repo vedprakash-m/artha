@@ -35,7 +35,10 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import shutil
 import sqlite3
+import sys
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -86,7 +89,10 @@ CREATE TABLE IF NOT EXISTS actions (
 
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
-    undo_window_sec   INTEGER
+    undo_window_sec   INTEGER,
+
+    bridge_synced     INTEGER NOT NULL DEFAULT 0,
+    origin            TEXT NOT NULL DEFAULT 'local'
 );
 
 CREATE INDEX IF NOT EXISTS idx_actions_status  ON actions(status);
@@ -147,7 +153,10 @@ CREATE TABLE IF NOT EXISTS actions_archive (
     linked_oi         TEXT,
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
-    undo_window_sec   INTEGER
+    undo_window_sec   INTEGER,
+
+    bridge_synced     INTEGER NOT NULL DEFAULT 0,
+    origin            TEXT NOT NULL DEFAULT 'local'
 );
 """
 
@@ -246,15 +255,106 @@ class ActionQueue:
 
     def __init__(self, artha_dir: Path) -> None:
         self._artha_dir = artha_dir
-        self._db_path = artha_dir / "state" / "actions.db"
+        self._db_path = self._resolve_db_path(artha_dir)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Backward-compat: auto-copy legacy DB from OneDrive-synced state/ to local path
+        legacy_path = artha_dir / "state" / "actions.db"
+        if (
+            not self._db_path.exists()
+            and self._db_path != legacy_path
+            and legacy_path.exists()
+        ):
+            shutil.copy2(str(legacy_path), str(self._db_path))
+
         self._conn = _open_db(self._db_path)
         self._init_schema()
 
+    @staticmethod
+    def _resolve_db_path(artha_dir: Path) -> Path:
+        """Return the local (non-OneDrive-synced) DB path.
+
+        Priority:
+          1. ARTHA_LOCAL_DB environment variable (absolute path override)
+          2. Real Artha dirs (config/artha_config.yaml present):
+             macOS:   ~/.artha-local/actions.db
+             Windows: %LOCALAPPDATA%\\Artha\\actions.db
+             Linux:   $XDG_DATA_HOME/artha/actions.db
+          3. Test / CI / unknown: artha_dir/state/actions.db (original path)
+
+        The config-existence check (priority 2) preserves backward compat:
+        test fixtures pass temp dirs (no config/artha_config.yaml) and get
+        the original relative path; production passes the real Artha root and
+        gets the platform-local path.
+        """
+        env_override = os.environ.get("ARTHA_LOCAL_DB", "").strip()
+        if env_override:
+            return Path(env_override)
+
+        # Apply platform-specific local path only for real Artha root directories
+        if (artha_dir / "config" / "artha_config.yaml").exists():
+            system = platform.system()
+            if system == "Darwin":
+                return Path.home() / ".artha-local" / "actions.db"
+            if system == "Windows":
+                local_app = os.environ.get(
+                    "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")
+                )
+                return Path(local_app) / "Artha" / "actions.db"
+            xdg = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+            return Path(xdg) / "artha" / "actions.db"
+
+        # Test dirs, CI, or unknown: use original relative path (backwards compat)
+        return artha_dir / "state" / "actions.db"
+
     def _init_schema(self) -> None:
-        """Create tables if they don't exist (idempotent)."""
+        """Create tables if they don't exist, then migrate schema if needed."""
         with self._conn:
             self._conn.executescript(_SCHEMA_SQL)
+        self._migrate_schema_if_needed()
+
+    def _migrate_schema_if_needed(self) -> None:
+        """Add bridge_synced and origin columns to existing DBs (idempotent).
+
+        Uses BEGIN IMMEDIATE to prevent concurrent migration race.
+        Adds columns to both actions and actions_archive tables.
+        """
+        cur = self._conn.execute("PRAGMA table_info(actions)")
+        existing_cols = {row[1] for row in cur.fetchall()}
+
+        migrations_actions = []
+        migrations_archive = []
+
+        if "bridge_synced" not in existing_cols:
+            migrations_actions.append(
+                "ALTER TABLE actions ADD COLUMN bridge_synced INTEGER NOT NULL DEFAULT 0"
+            )
+            migrations_archive.append(
+                "ALTER TABLE actions_archive ADD COLUMN bridge_synced INTEGER NOT NULL DEFAULT 0"
+            )
+        if "origin" not in existing_cols:
+            migrations_actions.append(
+                "ALTER TABLE actions ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'"
+            )
+            migrations_archive.append(
+                "ALTER TABLE actions_archive ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'"
+            )
+
+        if not migrations_actions:
+            return  # already up-to-date
+
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            for sql in migrations_actions + migrations_archive:
+                try:
+                    self._conn.execute(sql)
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column" not in str(exc).lower():
+                        raise
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         """Close the DB connection."""
@@ -301,8 +401,13 @@ class ActionQueue:
     def _should_encrypt(self, sensitivity: str) -> bool:
         return sensitivity in ("high", "critical")
 
-    def _proposal_to_row(self, proposal: ActionProposal, pubkey: str | None) -> tuple:
-        """Serialise an ActionProposal to a DB row tuple."""
+    def _proposal_to_row(
+        self,
+        proposal: ActionProposal,
+        pubkey: str | None,
+        origin: str = "local",
+    ) -> tuple:
+        """Serialise an ActionProposal to a DB row tuple (28 columns)."""
         now = self._now_utc()
         params_json = json.dumps(proposal.parameters)
         description = proposal.description or ""
@@ -338,6 +443,8 @@ class ActionQueue:
             1 if proposal.reversible else 0,
             None,                      # reverse_action_id
             proposal.undo_window_sec,
+            0,                         # bridge_synced
+            origin,                    # 'local' | 'bridge'
         )
 
     def _row_to_proposal(
@@ -414,7 +521,7 @@ class ActionQueue:
         with self._conn:
             self._conn.execute(
                 """INSERT INTO actions VALUES (
-                    ?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,  ?,?,?,  ?,?,?,?,  ?,?,?
+                    ?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,  ?,?,?,  ?,?,?,?,  ?,?,?,  ?,?
                 )""",
                 row,
             )
@@ -708,6 +815,162 @@ class ActionQueue:
             return self._db_path.stat().st_size < _DB_SIZE_CAP_BYTES
         except OSError:
             return True  # can't stat → assume ok
+
+    # ------------------------------------------------------------------
+    # Bridge API (multi-machine dual-setup support)
+    # ------------------------------------------------------------------
+
+    def ingest_remote(
+        self,
+        proposal: ActionProposal,
+        pubkey: str | None = None,
+    ) -> bool:
+        """Insert a proposal that originated on the remote machine.
+
+        Deduplication is strictly by UUID (action_id), NOT by
+        action_type+domain — the proposer has already applied its local
+        dedup rules; the executor must accept any UUID it hasn't seen.
+
+        Bypasses queue size guard (remote actions are pre-approved by the
+        proposer's local quota — they must flow through regardless).
+
+        Sets origin='bridge' to distinguish from locally-proposed actions.
+
+        Returns:
+            True  — proposal was newly inserted
+            False — already exists (duplicate UUID), no-op
+        """
+        existing = self._conn.execute(
+            "SELECT id FROM actions WHERE id = ?", (proposal.id,)
+        ).fetchone()
+        if existing:
+            return False  # idempotent: already ingested
+
+        row = self._proposal_to_row(proposal, pubkey, origin="bridge")
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO actions VALUES (
+                    ?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,  ?,?,?,  ?,?,?,?,  ?,?,?,  ?,?
+                )""",
+                row,
+            )
+            self._audit(
+                self._conn, proposal.id, "", "pending",
+                "system:bridge_ingest",
+            )
+        return True
+
+    def update_defer_time(self, action_id: str, defer_time: str) -> None:
+        """Update the defer time (expires_at) for a DEFERRED action.
+
+        Uses the managed connection — replaces the old raw _open_db() path
+        in action_executor.defer().
+
+        Args:
+            action_id:  UUID of the action to update
+            defer_time: ISO-8601 UTC timestamp string to set as new expires_at
+        """
+        with self._conn:
+            affected = self._conn.execute(
+                """UPDATE actions SET expires_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'deferred'""",
+                (defer_time, self._now_utc(), action_id),
+            ).rowcount
+        if affected == 0:
+            # Allow: may have transitioned out of deferred already; not fatal
+            pass
+
+    def apply_remote_result(
+        self,
+        action_id: str,
+        final_status: str,
+        result_message: str | None = None,
+        result_data: dict | None = None,
+        executed_at: str | None = None,
+    ) -> bool:
+        """Apply an execution result that arrived via the bridge (additive-only).
+
+        Invariant: NEVER overwrites non-null existing proposal fields.
+        Only fills in result fields that are currently NULL.
+
+        Directly UPDATEs status to the terminal value without going through
+        the state machine — this is intentional. The executor machine already
+        ran the action through the full lifecycle; the proposer machine never
+        executes it locally. The bridge result is authoritative.
+
+        Sets bridge_synced=1 on the updated row so the proposer knows the
+        result has been received (no outbox retry needed on this side).
+
+        Args:
+            action_id:     UUID of the local pending action
+            final_status:  'succeeded' | 'failed'
+            result_message: human text
+            result_data:   structured dict or None
+            executed_at:   ISO-8601 string or None (defaults to now)
+
+        Returns:
+            True  — action found and result applied
+            False — action not found (orphan result; caller should log WARN)
+        """
+        row = self._conn.execute(
+            "SELECT id, status FROM actions WHERE id = ?", (action_id,)
+        ).fetchone()
+        if not row:
+            return False
+
+        from_status = row["status"]
+        ts_executed = executed_at or self._now_utc()
+        result_data_json = json.dumps(result_data) if result_data else None
+
+        with self._conn:
+            # Bypass state machine — remote execution is authoritative
+            self._conn.execute(
+                """UPDATE actions SET
+                   status         = ?,
+                   result_status  = COALESCE(result_status, ?),
+                   result_message = COALESCE(result_message, ?),
+                   result_data    = COALESCE(result_data, ?),
+                   executed_at    = COALESCE(executed_at, ?),
+                   bridge_synced  = 1,
+                   updated_at     = ?
+                   WHERE id = ?""",
+                (
+                    final_status, final_status, result_message, result_data_json,
+                    ts_executed, self._now_utc(), action_id,
+                ),
+            )
+            self._audit(
+                self._conn, action_id, from_status, final_status,
+                "system:bridge_result",
+                context={"via": "bridge"},
+            )
+        return True
+
+    def mark_bridge_synced(self, action_id: str) -> None:
+        """Set bridge_synced=1 for an action (result has been written to bridge)."""
+        with self._conn:
+            self._conn.execute(
+                "UPDATE actions SET bridge_synced = 1, updated_at = ? WHERE id = ?",
+                (self._now_utc(), action_id),
+            )
+
+    def list_unsynced_results(self) -> list[dict[str, Any]]:
+        """Return terminal actions with bridge_synced=0 (pending outbox retry).
+
+        Used by bridge.retry_outbox() on the executor machine to find results
+        that need to be (re-)written to the bridge directory.
+
+        Returns list of raw dicts with id, status, result_message, result_data,
+        executed_at fields.
+        """
+        rows = self._conn.execute(
+            """SELECT id, status, result_message, result_data, executed_at
+               FROM actions
+               WHERE status IN ('succeeded', 'failed')
+               AND bridge_synced = 0
+               AND origin = 'bridge'""",
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

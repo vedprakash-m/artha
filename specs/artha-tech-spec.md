@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9.8 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.10.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.7
+> **Implements**: PRD v7.0.8
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -10,6 +10,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.10.0 | 2026-03 | **DUAL v1.3.0** multi-machine bridge: `scripts/action_bridge.py` (new) — `write_proposal(queue, artha_dir)` reads `ActionQueue.list_unsynced()`, encrypts with Fernet+Argon2, writes atomic JSON to `tmp/bridge/proposals/{uuid}.json.enc`; `ingest_proposals(bridge_dir, queue, artha_dir, pubkey=None) -> int` — reads proposal files on executor, decrypts, calls `queue.ingest_remote(proposal)`; `ingest_results(bridge_dir, queue, artha_dir) -> int` — reads result files on proposer, calls `queue.apply_remote_result()`; `retry_outbox(bridge_dir, queue, artha_dir)` — retries failed proposals; `gc(bridge_dir, artha_dir, ttl_days=7)` — prunes files beyond TTL; `detect_role(channels_config) -> 'proposer'|'executor'` — compares `listener_host` vs `socket.gethostname()`; `detect_conflicts(artha_dir) -> list[str]` — globs `state/` for OneDrive machine-suffix conflict copies; `is_bridge_enabled(artha_config) -> bool`; `class BridgeMetrics` (increment/record_latency/save, persisted to `tmp/bridge_metrics.json`); `_write_bridge_file()` / `_read_bridge_file()` — atomic tempfile→os.replace write + Fernet decrypt; `_get_privkey(artha_dir)` — Argon2id KDF from keyring `artha-bridge-key`; `_get_pubkey(artha_dir)` — optional RSA public key for asymmetric wrapping. Schema: `{version, action_id, type ('proposal'|'result'), payload, machine_id, timestamp, checksum}`. `scripts/action_queue.py` extended: `_resolve_db_path()` per-platform local DB (macOS `~/.artha-local/actions.db`, Windows `%LOCALAPPDATA%\Artha\actions.db`, env `ARTHA_LOCAL_DB`); `_migrate_schema_if_needed()` adds `bridge_synced INTEGER DEFAULT 0` + `origin TEXT`; `ingest_remote(proposal, pubkey=None)` UUID-dedup; `apply_remote_result(...)` additive-only (never overwrites existing non-null fields); `mark_bridge_synced(action_id)`; `list_unsynced_results() -> list[dict]`; `update_defer_time(action_id, defer_time)`. `scripts/channel_listener.py`: `cmd_catchup()` calls `ingest_results()` + `gc()` before `_detect_all_llm_clis()` (proposer-only, bridge-enabled guard); `run_listener()` poll loop calls `write_proposal()` + `ingest_proposals()` + `retry_outbox()` + `gc()` on executor. `scripts/pipeline.py`: `import platform`; `_enabled_connectors()` gates on `run_on` field vs `platform.system().lower()`; `list_connectors()` adds PLATFORM column. `config/connectors.yaml`: `run_on: all` on all 14 connectors (user-configurable to `darwin`/`windows`). `scripts/nudge_daemon.py`: `_verify_nudge_host(channels_config) -> bool` compares `defaults.listener_host` vs `socket.gethostname()` — returns False (skip run) on wrong machine; called at top of `run_check_once()`. `scripts/preflight.py`: P1 check added — verifies bridge directory readable, key in keyring, at least one bridge file can be written. `scripts/tests/unit/test_action_bridge.py` (new, 57 tests) + 10 platform gating tests in `test_pipeline.py`. 1586 total tests (all passing). |
 | v3.9.8 | 2026-03-21 | ACT-RELOADED technical implementation (E1–E16, specs/act-reloaded.md): **New modules:** `scripts/email_signal_extractor.py` (`EmailSignalExtractor.extract()` → `list[DomainSignal]`, 8 compiled `re.Pattern` rules, runs at Step 6.5; 6 new `_SIGNAL_ROUTING` entries added to `action_composer.py`); `scripts/pattern_engine.py` (`PatternEngine`, `_resolve_documents()`, `_load_yaml_file()` with `yaml.safe_load_all()` for frontmatter files, `_evaluate_operator()`, 6 operators, `_load_cooldown_state()` / `_save_cooldown_state()` with `state_file` isolation, `_is_on_cooldown()` with `timedelta` arithmetic; feature flag `enhancements.pattern_engine`); `scripts/nudge_daemon.py` (`NudgeItem` dataclass, `check_nudges()`, `send_nudge()`, marker-file dedup at `tmp/nudge_*.marker`, 3/day global cap, no vault access — locked domain patterns silently skipped); `scripts/briefing_adapter.py` (`BriefingConfig` dataclass, `BriefingAdapter.recommend()`, 6 rules `_r1_flash_override_ratio()` through `_r6_weekend_planner_skip()`, `_load_catch_up_runs()` YAML frontmatter parser, `_MIN_RUNS_FOR_ADAPTATION = 10`, `format_footer()`); `scripts/attachment_router.py` (`AttachmentRouter.route()` → `list[AttachmentSignal]`, `_ROUTING_RULES` list, `_filter_filename()` PII scrubber, `to_domain_signals()` accepts `attachment_signals` arg); `scripts/cost_tracker.py` (`CostTracker(health_path, metrics_path)`, `estimate_session_cost()`, `_load_pipeline_metrics()` handles list-format JSON); `scripts/self_model_writer.py` (`SelfModelWriter.generate_update()`, 5 memory fact types, 3000-char bounded output); `scripts/decision_tracker.py` (`DecisionTracker()`, `capture_from_command()`, `persist_proposal()`, `_load_decisions()`); `scripts/relationship_pulse_view.py` + `state/relationships.md`; `scripts/power_half_hour_view.py` (`PowerHalfHourView.render()`, YAML-block open item parser `_parse_open_items()`); `scripts/retrospective_view.py` (`RetrospectiveView.generate(state_dir, summaries_dir, month, health_check)`); `scripts/coaching_engine.py` (`CoachingEngine().select_nudge(goals, memory_facts, health_history, preferences)`, 4 strategy types); `scripts/actions/whatsapp_cloud_send.py` (`WhatsAppCloudHandler`, `SUPPORTED_TEMPLATES` frozenset, `urllib.request.urlopen` HTTP, `validate()` → `tuple[bool, str]`); **`scripts/skills/subscription_monitor.py`** extended: `SubscriptionMonitorSkill(artha_dir=)`, 4 new detector methods, 5 new signal types. `config/patterns.yaml` (schema v1.0, 8 patterns). Feature flag namespace `enhancements.*` in `config/artha_config.yaml`. `state/inbox.md` (knowledge capture inbox). `state/relationships.md` (relationship graph). 1520 tests (all passing). See §8.14. |
 | v3.9.7 | 2026-03 | Action handler bug fixes: `scripts/actions/__init__.py` + `scripts/action_executor.py` `_HANDLER_MAP` paths corrected from `scripts.actions.*` → `actions.*` (scripts/ is on sys.path; double-prefix caused `importlib.import_module` to load a separate module object, breaking all `patch("actions.X.build_service")` mocks and the security allowlist assertion); `scripts/actions/calendar_create.py`, `calendar_modify.py`, `email_send.py` — `build_service` and `check_stored_credentials` promoted from deferred local `from google_auth import ...` to module-level `try/except ImportError` imports (required for correct mock-patching); `calendar_modify.validate()` returns `"empty updates dict"` message when `updates={}` (was returning generic missing-parameter error); `tests/unit/test_action_executor.py` match string corrected to `"Handler validation failed"`. Spec §4.3 + handler.name example updated. 1229 tests (all passing). |
 | v3.9.6 | 2026-03 | Messaging connectors: `scripts/connectors/whatsapp_local.py` (dual-path — macOS reads `ChatStorage.sqlite` with full message text; Windows reads Chromium IndexedDB via `ccl_chromium_reader`, message metadata only as body is AES-encrypted at rest; dedup by `rowId`, status-broadcast filter, timestamp-sorted output; `_build_name_map()` resolves contacts/groups from IndexedDB stores 4/7/21; `health_check()` returns True on both platforms when DB reachable); `scripts/connectors/imessage_local.py` (macOS-only, reads `~/Library/Messages/chat.db`, handles ns + s timestamp formats, graceful skip on non-macOS); `scripts/skills/whatsapp_last_contact.py` `get_skill()` factory added (was missing, caused skill_runner.py failure); `scripts/skills/uscis_status.py` `get_skill()` upgraded to skip terminal-status receipts (`_TERMINAL_STATUSES` regex, 7-line context window, approved receipts excluded from query); `scripts/detect_environment.py` `_probe_filesystem_writable()` best-effort `unlink()` (FUSE mounts allow write but not delete); `config/connectors.yaml` `whatsapp_local` + `imessage_local` registrations; `config/routing.yaml` `source_routes` section; `prompts/comms.md` messaging record extraction rules + briefing format; `pyproject.toml` `messaging` optional dependency (`ccl_chromium_reader` from cclgroupltd GitHub); `.gitignore` `state/*.db` + `test-write.txt`; `scripts/pipeline.py` messaging connectors in `_HANDLER_MAP`. |
@@ -1012,6 +1013,89 @@ config/channels.example.yaml            — distributable template (no PII)
 **Preflight:** P1 checks — `check_channel_health()` in `preflight.py` verifies enabled channels are reachable. Non-blocking.
 
 **0 new mandatory dependencies.** Adapter SDKs installed on demand via `pip install artha[channels]`.
+
+---
+
+### 3.11 Multi-Machine Action Bridge (DUAL v1.3.0) *(v3.10.0)*
+
+**Purpose:** Synchronise action proposals and execution results between two machines that share an OneDrive folder — a Mac (proposer/enricher role) and a Windows machine (executor role). The Mac generates intelligence and proposes actions; the Windows machine (running 24/7 as the Telegram listener) executes them. The shared OneDrive serves as the transport medium.
+
+**Architecture:**
+
+```
+Mac (proposer)                     OneDrive                  Windows (executor)
+──────────────────────             ────────────              ────────────────────────
+ActionQueue (local DB)  ──write──▶ tmp/bridge/proposals/  ──read──▶ ActionQueue (local DB)
+                                                                    │  execute
+ActionQueue (local DB)  ◀──read── tmp/bridge/results/    ◀──write── result
+```
+
+**Key functions (`scripts/action_bridge.py`):**
+
+| Function | Runs on | Description |
+|---|---|---|
+| `write_proposal(queue, artha_dir)` | executor | Reads unsynced proposals from local DB, encrypts, writes to `tmp/bridge/proposals/{uuid}.json.enc` |
+| `ingest_proposals(bridge_dir, queue, artha_dir)` | executor | Reads incoming proposal files, decrypts, calls `queue.ingest_remote()` |
+| `ingest_results(bridge_dir, queue, artha_dir)` | proposer | Reads result files, decrypts, calls `queue.apply_remote_result()` (additive-only) |
+| `retry_outbox(bridge_dir, queue, artha_dir)` | executor | Retries proposals that failed to execute |
+| `write_result(action_id, status, message, data, artha_dir)` | executor | Encrypts result, writes to `tmp/bridge/results/{uuid}.json.enc` |
+| `gc(bridge_dir, artha_dir, ttl_days=7)` | both | Prunes bridge files older than TTL |
+| `detect_role(channels_config)` | both | Compares `listener_host` vs `socket.gethostname()` → `'executor'` or `'proposer'` |
+| `detect_conflicts(artha_dir)` | both | Globs `state/` for OneDrive machine-suffix conflict copies |
+| `is_bridge_enabled(artha_config)` | both | Reads `multi_machine.bridge_enabled` flag |
+
+**Encryption:** Fernet symmetric encryption. Key derivation: Argon2id KDF (`time_cost=2, memory_cost=65536, parallelism=1`) from passphrase stored in OS keyring under service `artha`, key `artha-bridge-key`. Falls back to env var `ARTHA_BRIDGE_KEY`. All bridge files are encrypted at rest; plaintext never written to OneDrive.
+
+**Atomic writes:** `_write_bridge_file()` uses `tempfile.NamedTemporaryFile(delete=False)` + `os.replace()` — crash-safe, no partial files visible to the other machine.
+
+**DB isolation:** Each machine has its own local `ActionQueue` SQLite DB:
+- macOS: `~/.artha-local/actions.db`
+- Windows: `%LOCALAPPDATA%\Artha\actions.db`
+- Override: `ARTHA_LOCAL_DB` env var
+
+The shared OneDrive folder is never used as a database. Only bridge files (proposals/results) pass through it.
+
+**Schema migration:** `_migrate_schema_if_needed()` adds `bridge_synced INTEGER DEFAULT 0` and `origin TEXT` columns to the existing `actions` table on first run. Idempotent.
+
+**`ActionQueue` extensions:**
+- `ingest_remote(proposal, pubkey=None)` — UUID-dedup ingestion (skips if `action_id` already in DB)
+- `apply_remote_result(action_id, ...)` — additive-only: only fills in result fields; never overwrites existing non-null proposal fields (`description`, `parameters`, `source_step`, `source_skill`, `linked_oi`)
+- `mark_bridge_synced(action_id)` — sets `bridge_synced = 1`
+- `list_unsynced_results()` — returns terminal actions with `bridge_synced = 0`
+- `update_defer_time(action_id, defer_time)` — updates `expires_at` for deferred actions
+
+**Configuration (`config/artha_config.yaml`):**
+```yaml
+multi_machine:
+  bridge_enabled: false        # set true on both machines to activate
+  bridge_dir: tmp/bridge       # relative to artha_dir
+  ttl_days: 7                  # gc retention
+```
+
+**Per-machine connector routing (`run_on:` field):**
+
+`config/connectors.yaml` each connector entry has a `run_on:` field (`darwin` / `windows` / `all`, default `all`). `_enabled_connectors()` in `pipeline.py` gates on `platform.system().lower()` — non-matching connectors are silently skipped. `list_connectors()` displays a PLATFORM column.
+
+Example override for a multi-machine setup:
+```yaml
+connectors:
+  imessage_local:
+    run_on: darwin           # only fetch on Mac
+  whatsapp_local:
+    run_on: windows          # only fetch on Windows
+  gmail:
+    run_on: all              # fetch on both (default)
+```
+
+**Nudge daemon host gating:** `_verify_nudge_host(channels_config)` in `nudge_daemon.py` compares `channels.yaml defaults.listener_host` vs `socket.gethostname()`. Returns `False` (skip) on mismatch — prevents duplicate nudges when daemon runs on multiple machines.
+
+**Preflight check:** P1 advisory — `check_bridge_health()` verifies bridge directory is readable/writable and `artha-bridge-key` is present in keyring. Non-blocking.
+
+**Metrics:** `class BridgeMetrics` — counters (`proposals_written`, `proposals_ingested`, `results_written`, `results_ingested`, `retries`, `gc_pruned`) + `record_latency()` method. Persisted to `tmp/bridge_metrics.json` via `save()`.
+
+**Security:** Only encrypted cipher-text traverses OneDrive. Bridge key lives in OS keyring, not in any tracked file. `channels.yaml` and `artha_config.yaml` (which contain `listener_host` and `bridge_enabled`) are gitignored.
+
+**Setup:** Set `multi_machine.bridge_enabled: true` in `config/artha_config.yaml`, add `artha-bridge-key` to keyring (`python -c "import keyring; keyring.set_password('artha','artha-bridge-key','<passphrase>')"`), configure `run_on:` for each connector, set `listener_host` in `config/channels.yaml`. Run preflight on both machines.
 
 ---
 

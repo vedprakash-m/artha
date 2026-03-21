@@ -35,6 +35,7 @@ import argparse
 import importlib
 import json
 import os
+import platform
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -143,12 +144,23 @@ def _enabled_connectors(
     cfg: dict[str, Any], source_filter: list[str] | None
 ) -> list[dict[str, Any]]:
     """Return list of connector configs that are enabled (and optionally filtered)."""
+    current_platform = platform.system().lower()  # "darwin", "windows", "linux"
     result = []
     for conn in _normalize_connectors(cfg):
         if not conn.get("enabled", True):
             continue
         if source_filter and conn["name"] not in source_filter:
             continue
+        run_on = conn.get("run_on", "all")
+        if run_on != "all":
+            allowed = [run_on] if isinstance(run_on, str) else run_on
+            if current_platform not in allowed:
+                print(
+                    f"[pipeline] SKIP {conn['name']} — "
+                    f"platform {current_platform} not in run_on: {run_on}",
+                    file=sys.stderr,
+                )
+                continue
         result.append(conn)
     return result
 
@@ -549,13 +561,16 @@ def list_connectors(cfg: dict[str, Any]) -> None:
         print("(no connectors configured)")
         return
     col_w = max(len(c["name"]) for c in connectors) + 2
-    print(f"{'NAME':<{col_w}} {'STATUS':<10} {'TYPE':<20} HANDLER")
-    print("-" * 80)
+    print(f"{'NAME':<{col_w}} {'STATUS':<10} {'PLATFORM':<10} {'TYPE':<20} HANDLER")
+    print("-" * 90)
     for conn in connectors:
         enabled = "enabled" if conn.get("enabled", True) else "disabled"
+        run_on = conn.get("run_on", "all")
+        if isinstance(run_on, list):
+            run_on = ",".join(run_on)
         ctype = conn.get("type", "")
         handler = conn.get("fetch", {}).get("handler", "(none)")
-        print(f"{conn['name']:<{col_w}} {enabled:<10} {ctype:<20} {handler}")
+        print(f"{conn['name']:<{col_w}} {enabled:<10} {run_on:<10} {ctype:<20} {handler}")
 
 
 # ---------------------------------------------------------------------------
