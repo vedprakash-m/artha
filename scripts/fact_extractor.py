@@ -219,7 +219,44 @@ _EXTRACTION_SIGNALS: list[tuple[re.Pattern, str, str, int | None, float]] = [
     # Schedule signals — 90 days
     (re.compile(r"\b(schedule|every (tuesday|wednesday|thursday|monday|friday|saturday|sunday)|at \d+\s*(am|pm)|weekly|biweekly)\b", re.I),
      "schedule", "calendar", 90, 0.75),
+    # ── Phase 1b: Briefing-aware signals ────────────────────────────────────
+    # Deadline proximity — 30-day TTL (time-sensitive, evict fast)
+    (re.compile(r"\b(deadline|due (by|before|date)|expires?|renewal|must (be )?complet)", re.I),
+     "pattern", "general", 30, 0.7),
+    # Decision pending — 60-day TTL
+    (re.compile(r"\b(decision needed|compare|comparison|choose between|side.by.side|quote[sd]?)", re.I),
+     "pattern", "general", 60, 0.7),
+    # Amount / quote received — threshold calibration — 90-day TTL
+    (re.compile(r"\$\d[\d,.]+/(mo|yr|6mo|year|month)", re.I),
+     "threshold", "finance", 90, 0.7),
+    # Repeated open item — pattern worth remembering — 90-day TTL
+    (re.compile(r"OI-\d{3}.*(?:updated|still open|overdue|\d+ days?)", re.I),
+     "pattern", "general", 90, 0.7),
 ]
+
+# ── Domain sensitivity tiering (Design Principle 8) ─────────────────────────
+# High-stakes facts receive a max 90-day TTL to prevent stale facts persisting.
+# Corrections and preferences are exempt (they represent durable user knowledge).
+_HIGH_STAKES_DOMAINS: frozenset[str] = frozenset(
+    {"finance", "health", "immigration", "insurance", "legal"}
+)
+_HIGH_STAKES_MAX_TTL: int = 90
+
+
+def _apply_domain_sensitivity_ttl(
+    fact_type: str, domain: str, ttl_days: int | None
+) -> int | None:
+    """Return an adjusted TTL respecting domain sensitivity tiering."""
+    if fact_type in ("correction", "preference"):
+        return ttl_days  # Protected — never shortened
+    if (
+        domain in _HIGH_STAKES_DOMAINS
+        and ttl_days is not None
+        and ttl_days > _HIGH_STAKES_MAX_TTL
+    ):
+        return _HIGH_STAKES_MAX_TTL
+    return ttl_days
+
 
 # Domain keywords for auto-tagging
 _DOMAIN_KEYWORDS: dict[str, list[str]] = {
@@ -251,7 +288,7 @@ def _make_id(fact_type: str, domain: str, statement: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parsing session summary markdown
+# Parsing session summary and briefing markdown
 # ---------------------------------------------------------------------------
 
 def _parse_summary_md(content: str) -> dict[str, Any]:
@@ -295,47 +332,160 @@ def _parse_summary_md(content: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Briefing parsers (Phase 1 dual-path support)
+# ---------------------------------------------------------------------------
+
+def _parse_briefing_md(content: str) -> dict[str, Any]:
+    """Parse an Artha briefing file into the same dict format as
+    ``_parse_summary_md``.
+
+    Handles two briefing formats:
+
+    * **Telegram** (``━━ 🔴 CRITICAL ━━`` box-drawing delimiters, 2026-03-13+)
+    * **Markdown** (``## CRITICAL`` / ``## 🔴 Critical`` headings, earlier and
+      ``-full`` variant briefings)
+
+    Mapping:
+    * ``key_findings``  ← CRITICAL + URGENT section items (highest urgency)
+    * ``open_threads``  ← BY DOMAIN + Standard section items (richer context)
+    """
+    result: dict[str, Any] = {
+        "key_findings": [],
+        "state_mutations": [],
+        "open_threads": [],
+        "command_executed": "/catch-up",
+        "timestamp": "",
+    }
+
+    # Extract timestamp from YAML frontmatter (Telegram briefings have this)
+    fm_match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+    if fm_match:
+        date_m = re.search(r"^date:\s*(.+)$", fm_match.group(1), re.MULTILINE)
+        if date_m:
+            result["timestamp"] = date_m.group(1).strip()
+
+    # Fall back to Markdown heading date (e.g. "Artha Briefing — March 18, 2026")
+    if not result["timestamp"]:
+        hdg = re.search(
+            r"(?:Artha Briefing|ARTHA)[^\n]*?(\d{4}-\d{2}-\d{2}|\w+ \d{1,2},\s*\d{4})",
+            content,
+        )
+        if hdg:
+            result["timestamp"] = hdg.group(1).strip()
+
+    lines = content.splitlines()
+    if "━━" in content:
+        _parse_telegram_sections(lines, result)
+    else:
+        _parse_markdown_sections(lines, result)
+
+    return result
+
+
+def _parse_telegram_sections(lines: list[str], result: dict[str, Any]) -> None:
+    """Populate *result* from a Telegram-format (``━━``) briefing."""
+    _CRITICAL_RE = re.compile(r"━━[^━]*(?:CRITICAL|OVERDUE)[^━]*━━")
+    _URGENT_RE   = re.compile(r"━━[^━]*URGENT[^━]*━━")
+    _DOMAIN_RE   = re.compile(r"━━[^━]*(?:BY DOMAIN|DOMAIN)[^━]*━━")
+    _BOX_RE      = re.compile(r"^━━")  # any other ━━ header ends current section
+
+    current: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if _CRITICAL_RE.search(stripped):
+            current = "key_findings"
+        elif _URGENT_RE.search(stripped):
+            current = "key_findings"
+        elif _DOMAIN_RE.search(stripped):
+            current = "open_threads"
+        elif _BOX_RE.match(stripped):
+            current = None  # any other ━━ section resets context
+        elif current is not None and stripped.startswith(("• ", "- ", "* ")):
+            item = stripped[2:].strip()
+            if item and item.lower() != "(none)":
+                result[current].append(item)
+
+
+def _parse_markdown_sections(lines: list[str], result: dict[str, Any]) -> None:
+    """Populate *result* from a Markdown-format (``## Heading``) briefing."""
+    _HIGH_RE = re.compile(r"^##\s+.*(OVERDUE|Critical|Urgent)", re.I)
+    _LOW_RE  = re.compile(r"^##\s+.*(Standard|BY DOMAIN)", re.I)
+    _H2_RE   = re.compile(r"^##\s+")
+    _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+
+    current: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if _HIGH_RE.match(stripped):
+            current = "key_findings"
+        elif _LOW_RE.match(stripped):
+            current = "open_threads"
+        elif _H2_RE.match(stripped):
+            current = None  # any other ## heading ends current section
+        elif current is not None and stripped.startswith(("- ", "* ", "• ")):
+            item = stripped[2:].strip()
+            item = _BOLD_RE.sub(r"\1", item)  # strip **bold** markers
+            if item:
+                result[current].append(item)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
 def extract_facts_from_summary(
-    summary_path: Path,
+    input_path: Path,
     artha_dir: Path,
 ) -> list[Fact]:
-    """Extract durable facts from a session summary file.
+    """Extract durable facts from a session summary or briefing file.
 
-    Reads the session summary (markdown), applies pattern matching on
-    ``key_findings``, ``state_mutations``, and ``open_threads``, and returns
-    a list of ``Fact`` objects for deduplication and persistence.
+    Auto-detects the input format and applies pattern-based extraction:
+
+    * ``tmp/session_history_*.md`` — session summary (``## Key Findings``)
+    * ``briefings/YYYY-MM-DD*.md`` — Telegram (``━━``) or Markdown briefings
 
     Args:
-        summary_path: Path to a ``tmp/session_history_*.md`` file.
+        input_path: Path to the input file (session summary or briefing).
         artha_dir: Artha project root (used for feature flag lookup).
 
     Returns:
         List of extracted ``Fact`` objects (may be empty when:
         - Feature flag disabled
-        - Summary file unreadable or empty
-        - No extraction signals found in the summary
+        - Input file unreadable or empty
+        - Format unrecognised
+        - No extraction signals found
         ).
     """
     if not _load_harness_flag("agentic.fact_extraction.enabled"):
         return []
 
-    if not summary_path.exists():
+    if not input_path.exists():
         return []
 
     try:
-        content = summary_path.read_text(encoding="utf-8", errors="replace")
+        content = input_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
 
     if not content.strip():
         return []
 
-    parsed = _parse_summary_md(content)
-    session_id = f"session-{parsed.get('timestamp', date.today().isoformat())}"
+    # Auto-detect format and route to the appropriate parser
+    if "## Key Findings" in content:
+        parsed = _parse_summary_md(content)
+        session_id = f"session-{parsed.get('timestamp', date.today().isoformat())}"
+    elif (
+        "━━" in content
+        or "## CRITICAL" in content
+        or "## URGENT" in content
+        or bool(re.search(r"^##\s+.*(critical|urgent|overdue)", content,
+                          re.MULTILINE | re.IGNORECASE))
+    ):
+        parsed = _parse_briefing_md(content)
+        session_id = f"briefing-{input_path.stem}"
+    else:
+        return []  # Unknown format — skip silently
 
     facts: list[Fact] = []
     all_lines = (
@@ -352,6 +502,8 @@ def extract_facts_from_summary(
                 if domain == "general" and domain_hint != "general":
                     domain = domain_hint
                 statement = _strip_pii(line.strip())
+                # Domain sensitivity tiering: cap TTL for high-stakes domains
+                effective_ttl = _apply_domain_sensitivity_ttl(fact_type, domain, ttl_days)
                 fact_id = _make_id(fact_type, domain, statement)
                 facts.append(Fact(
                     id=fact_id,
@@ -359,7 +511,7 @@ def extract_facts_from_summary(
                     domain=domain,
                     statement=statement,
                     source=session_id,
-                    ttl_days=ttl_days,
+                    ttl_days=effective_ttl,
                     confidence=confidence,
                 ))
                 break  # one signal per line is sufficient

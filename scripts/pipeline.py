@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import json
 import os
 import platform
@@ -504,11 +505,25 @@ def run_health_checks(
             results.append((name, False))
             continue
 
-        # Pass fetch-config keys (e.g. ha_url) as kwargs, same as fetch() does
+        # Pass fetch-config keys (e.g. ha_url) as kwargs, same as fetch() does.
+        # Filter to only kwargs the health_check() function actually accepts to
+        # avoid TypeError when fetch-only keys (default_max_results, etc.) are present.
         fetch_cfg = conn.get("fetch", {})
         extra_kwargs: dict[str, Any] = {
             k: v for k, v in fetch_cfg.items() if k not in ("handler", "max_results")
         }
+        try:
+            hc_sig = inspect.signature(handler.health_check)
+            hc_params = set(hc_sig.parameters)
+            # If the function accepts **kwargs, pass everything; otherwise filter
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in hc_sig.parameters.values()
+            )
+            if not has_var_keyword:
+                extra_kwargs = {k: v for k, v in extra_kwargs.items() if k in hc_params}
+        except (ValueError, TypeError):
+            pass  # introspection failed — pass kwargs as-is and let it fail naturally
 
         try:
             ok = handler.health_check(auth_ctx, **extra_kwargs)

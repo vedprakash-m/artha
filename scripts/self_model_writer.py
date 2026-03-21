@@ -120,6 +120,15 @@ class SelfModelWriter:
         # --- Load health check data ----------------------------------
         health_data = self._load_frontmatter(health_check_path)
         catchup_runs = health_data.get("catch_up_runs", []) if isinstance(health_data, dict) else []
+        # Phase 2 fix: fall back to Markdown-parsed run history when YAML
+        # frontmatter does not contain a structured catch_up_runs list
+        if not catchup_runs and health_check_path.exists():
+            try:
+                catchup_runs = _parse_catchup_runs_from_markdown(
+                    health_check_path.read_text(encoding="utf-8")
+                )
+            except Exception:  # noqa: BLE001
+                catchup_runs = []
         if len(catchup_runs) < _MIN_CATCHUP_RUNS:
             return False  # Not enough data yet
 
@@ -312,6 +321,57 @@ def _compute_skip_rate(runs: list[dict]) -> float:
         return 0.0
     skipped = sum(1 for r in recent if r.get("calibration_skipped", False))
     return skipped / len(recent)
+
+
+def _parse_catchup_runs_from_markdown(content: str) -> list[dict]:
+    """Parse catch-up run entries from the freeform Markdown history section.
+
+    Reads the ``## Catch-Up Run History`` section and returns a list of
+    minimal run dicts that satisfy the ``_MIN_CATCHUP_RUNS`` gate::
+
+        [{"timestamp": "YYYY-MM-DDT00:00:00Z", "briefing_format": "standard"}, ...]
+
+    Returns an empty list when the section is absent or unparseable.
+    Known limitation: ``calibration_skipped`` is always False for
+    markdown-parsed runs (field not recorded in freeform history).
+    """
+    history_match = re.search(r"## Catch-Up Run History", content)
+    if not history_match:
+        return []
+
+    # Slice to the section; stop at the next ## heading
+    section = content[history_match.end():]
+    next_h2 = re.search(r"\n## ", section)
+    if next_h2:
+        section = section[:next_h2.start()]
+
+    runs: list[dict] = []
+    current_run: dict | None = None
+
+    for line in section.splitlines():
+        stripped = line.strip()
+        h3 = re.match(r"^### (\d{4}-\d{2}-\w+)(?:\s+\(([^)]*)\))?", stripped)
+        if h3:
+            date_slug = h3.group(1)  # e.g. "2026-03-20b"
+            label = (h3.group(2) or "").lower()  # e.g. "standard catch-up"
+            # Extract ISO date (strip trailing letter suffixes like "b", "c")
+            date_m = re.match(r"(\d{4}-\d{2}-\d{2})", date_slug)
+            date_part = date_m.group(1) if date_m else date_slug[:10]
+            briefing_format = "flash" if "flash" in label else "standard"
+            current_run = {
+                "timestamp": f"{date_part}T00:00:00Z",
+                "briefing_format": briefing_format,
+                "calibration_skipped": False,  # not recorded in freeform history
+            }
+            runs.append(current_run)
+        elif current_run is not None and stripped.startswith("- mode:"):
+            # Override format from the explicit mode line if present
+            if "flash" in stripped:
+                current_run["briefing_format"] = "flash"
+            elif "standard" in stripped:
+                current_run["briefing_format"] = "standard"
+
+    return runs
 
 
 # ---------------------------------------------------------------------------
