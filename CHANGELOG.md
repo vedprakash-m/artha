@@ -11,6 +11,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.1.1] — 2026-03-20
+
+### Fixed — Action Handler Module Paths + Mock-patch Compatibility
+
+- **`scripts/actions/__init__.py` + `scripts/action_executor.py`** — `_HANDLER_MAP` paths corrected from `scripts.actions.*` to `actions.*`. Because `scripts/` is on `sys.path`, `importlib.import_module("scripts.actions.email_send")` loaded a *separate* module object from the `actions.email_send` the tests imported. This broke all `patch("actions.email_send.build_service", ...)` mocks and the security allowlist assertion (`v.startswith("actions.")`). Fixed. `specs/act.md §4.3` updated accordingly.
+- **`scripts/actions/calendar_create.py`, `calendar_modify.py`, `email_send.py`** — `build_service` and `check_stored_credentials` promoted from lazy (deferred `from google_auth import ...` inside functions) to module-level `try/except ImportError` imports. Required for test mock-patching to work correctly via `patch("actions.X.build_service", ...)`.
+- **`scripts/actions/calendar_modify.py`** — `validate()` now returns `"empty updates dict"` instead of the generic missing-parameter message when `updates={}`, matching test expectations (`assert "empty" in reason.lower()`).
+- **`tests/unit/test_action_executor.py`** — `test_propose_validation_failure_raises` match string updated from `"Validation"` to `"Handler validation failed"` to match the actual error message raised by `ActionExecutor.propose()`.
+
+---
+
 ## [8.1.0] — 2026-03-20
 
 ### Added — Messaging Connectors (WhatsApp + iMessage)

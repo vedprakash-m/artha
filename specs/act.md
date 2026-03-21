@@ -737,14 +737,14 @@ explicit allowlist — never arbitrary module paths:
 ```python
 # scripts/actions/__init__.py
 _HANDLER_MAP: dict[str, str] = {
-    "email_send":        "scripts.actions.email_send",
-    "email_reply":       "scripts.actions.email_reply",
-    "calendar_create":   "scripts.actions.calendar_create",
-    "calendar_modify":   "scripts.actions.calendar_modify",
-    "reminder_create":   "scripts.actions.reminder_create",
-    "whatsapp_send":     "scripts.actions.whatsapp_send",
-    "todo_sync":         "scripts.actions.todo_sync_action",
-    "instruction_sheet": "scripts.actions.instruction_sheet",
+    "email_send":        "actions.email_send",
+    "email_reply":       "actions.email_reply",
+    "calendar_create":   "actions.calendar_create",
+    "calendar_modify":   "actions.calendar_modify",
+    "reminder_create":   "actions.reminder_create",
+    "whatsapp_send":     "actions.whatsapp_send",
+    "todo_sync":         "actions.todo_sync_action",
+    "instruction_sheet": "actions.instruction_sheet",
 }
 ```
 
@@ -1849,7 +1849,7 @@ gated behind a feature flag (`harness.actions.tracing.enabled`).
 | `action.status_from` | string | `"pending"` |
 | `action.status_to` | string | `"approved"` |
 | `approval.channel` | string | `"telegram"` |
-| `handler.name` | string | `"scripts.actions.email_send"` |
+| `handler.name` | string | `"actions.email_send"` |
 | `handler.duration_ms` | float | `1250.0` |
 | `action.success` | bool | `true` |
 
