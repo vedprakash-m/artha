@@ -1,8 +1,8 @@
 # Artha — Technical Specification
 
-> **Version**: 3.9.7 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.9.8 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.6
+> **Implements**: PRD v7.0.7
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -473,16 +473,58 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 | Canvas LMS | REST API | Developer Token | `requests` | School grades/assignments (Phase 2 Blocked) |
 | OFX / FDX | Banking API | FI Credentials | `ofxtools` | Direct bank balance pull (Phase 2) |
 | Microsoft Graph | REST API | OAuth2 | `msal` | Outlook Email + MS To Do sync |
-| Home Assistant | Local API | LAN Token | `requests` | Smart home status (Phase 2) |
+| Home Assistant | Local REST API | LAN Token (keyring) | `requests` | Smart home status — **✅ LIVE (v8.2.0)** — 28 devices, 6 ecosystems. Connector: `scripts/connectors/homeassistant.py`. Skill: `scripts/skills/home_device_monitor.py`. Setup: `scripts/setup_ha_token.py`. LAN-gated (self-gating inside connector). Auth: `artha-ha-token` in macOS Keychain. Implements PRD F7.4, F12.5. |
 | Passport Expiry | `state/immigration.md` | vault-decrypted | stdlib | Alert at 180/90/60 days (Phase 1 — F15.66) |
 | Subscription Monitor | `state/digital.md` | none | stdlib | Price change + trial-to-paid detection (Phase 1 — F15.67) |
 | RSS Feeds | Public RSS/Atom URLs | None | `urllib` + `xml.etree` | Regulatory/news feeds (USCIS, etc.) — disabled by default (Phase 1 — F15.68) |
 | Financial Resilience | `state/finance.md` | vault-decrypted | stdlib | Burn rate, emergency runway, single-income stress (Phase 1 — F15.100) |
 | Apple Health | Local ZIP/XML export | None (local only) | `xml.etree.ElementTree.iterparse` | 16 HK quantity types, memory-efficient streaming parse, opt-in (Phase 1 — F15.111) |
 
-### 3.6 Claude Code Capabilities Utilization
+### 3.5b Home Assistant Connector Architecture *(v8.2.0 — ARTHA-IOT Waves 1+2)*
 
-Artha explicitly leverages Claude Code's native capabilities beyond basic MCP tools.
+**Overview:** HA is a universal adapter layer. One connector, one token, one local REST endpoint covers all 28 devices across 6 ecosystems (Ring, Apple, Amazon, Google, Sonos, Gecko) without separate per-ecosystem integrations.
+
+**Component map:**
+
+| Component | File | Role |
+|-----------|------|------|
+| Connector | `scripts/connectors/homeassistant.py` | Fetch entity states via `/api/states`. LAN-gated internally. Writes `tmp/ha_entities.json` as side-effect for skill. |
+| Skill | `scripts/skills/home_device_monitor.py` | Reads `tmp/ha_entities.json`. Deterministic threshold checks. Constructs `DomainSignal` objects directly (bypasses LLM mediation). |
+| Setup wizard | `scripts/setup_ha_token.py` | 7-step interactive wizard: validate URL, store token in keyring, update `connectors.yaml`, create `tmp/.nosync`. |
+| Preflight | `scripts/preflight.py` → `check_ha_connectivity()` | P1 non-blocking check. Warns if HA unreachable but does not halt catch-up. |
+| State file | `state/home_iot.md` | Machine-owned companion to `state/home.md`. Refreshed each catch-up. Never edited manually. |
+
+**Security & privacy model:**
+- Token stored in macOS Keychain only (`artha-ha-token`). Never in YAML, logs, or JSONL.
+- LAN-only by default (`requires_lan: true` in `connectors.yaml`). Connector self-gates in `fetch()` via TCP probe.
+- Hard-excluded domains (code-enforced, not configurable): `camera`, `media_player`, `tts`, `stt`, `conversation`, `persistent_notification`, `update`.
+- `device_tracker.*` entities stripped to `home`/`not_home`/`unknown` only — GPS coordinates never touch disk. Presence tracking opt-in via `user_profile.yaml → integrations.homeassistant.presence_tracking`.
+- Entity `friendly_name` values pass through PII guard before state write.
+- `tmp/ha_entities.json` is ephemeral (deleted Step 18). `tmp/.nosync` prevents OneDrive sync of the `tmp/` directory.
+
+**Signal routing (deterministic — no LLM in critical path):**
+
+| Signal Type | Trigger | Severity | Action Type |
+|-------------|---------|----------|-------------|
+| `security_device_offline` | Ring/lock/alarm offline >2h | 🔴 Critical | `instruction_sheet` (friction: high) |
+| `device_offline` | Monitored device offline >2h | 🟠 Urgent | `instruction_sheet` (friction: standard) |
+| `energy_anomaly` | Consumption >30% above 7-day avg | 🟠 Urgent | `instruction_sheet` (friction: low) |
+| `supply_low` | Printer toner/drum <20% | 🟡 Heads-up | `instruction_sheet` (friction: low) |
+| `spa_maintenance` | Spa temp deviation >5°F or error code | 🟠 Urgent | `instruction_sheet` (friction: standard) |
+
+**Data flow per catch-up:**
+1. `preflight.py` → `check_ha_connectivity()` (non-blocking)
+2. `pipeline.py` → `homeassistant.fetch()` → stdout JSONL + `tmp/ha_entities.json`
+3. `skill_runner.py` → `home_device_monitor.pull()` reads `tmp/ha_entities.json` → `parse()` → `DomainSignal` objects
+4. `skill_runner.py` → `_route_deterministic_signals()` → `ActionComposer.compose()` (Python, no AI)
+5. AI processes `state/home_iot.md` + `state/home.md` together during Step 7 (home domain)
+6. Cleanup: `tmp/ha_entities.json` deleted
+
+**Pipeline health check fix (v8.2.0):** `run_health_checks()` in `pipeline.py` now passes `fetch_cfg` kwargs (including `ha_url`) to `health_check()`, matching the same kwargs-passing pattern used in `run_fetch()`. Without this fix, health check returned `False` because `ha_url` was not passed.
+
+**Phase 2 (device control — future):** Gated behind 30-day read-only production period. Requires explicit user opt-in (`phase2_device_control: true`) and separate security review. Action handler skeleton: `scripts/actions/homeassistant_service.py`. Service allowlist enforced in code (not YAML). Security signal `security_travel_conflict` (cross-domain: travel planned + security camera offline) planned for Wave 3 correlator skill.
+
+### 3.6 Claude Code Capabilities Utilization's native capabilities beyond basic MCP tools.
 
 #### 3.6.1 Custom Slash Commands
 
@@ -1064,6 +1106,14 @@ Life-at-a-glance snapshot rebuilt each catch-up. Sections: Life Pulse (per-domai
 ### 4.13 Work Calendar State (`~/OneDrive/Artha/state/work-calendar.md`) *(v2.2)*
 
 Metadata-only — no meeting titles, attendees, or bodies. Sections: Last Fetch (platform, version, event count, minutes), Weekly Density (rolling 13-week, per-day count+minutes, conflict count), Conflict History (count-only, no details). Updated only from Windows catch-ups; Mac catch-ups leave unchanged. Stale check: if last_fetch >12h and different platform, show metadata summary; if >12h, ignore.
+
+### 4.14 Home IoT State (`~/OneDrive/Artha/state/home_iot.md`) *(v8.2.0)*
+
+**Machine-owned** — do not edit manually; overwritten each catch-up. Companion to `state/home.md` (human-authored). Sensitivity: **standard**, access: full. Read by AI alongside `state/home.md` during Step 7 home domain processing.
+
+Sections: `iot_devices` (last_sync, ha_version, total_entities, online, offline, critical_offline list, supply_alerts), `iot_energy` (last_updated, current_power_w, daily_kwh, weekly_avg_kwh, spike_detected, spike_pct, history — rolling 30-day daily totals). History truncated to last 30 entries each write to prevent unbounded growth.
+
+Privacy: No IP addresses stored. Device names pass through PII guard. Presence state (if opted in) stored as `home`/`not_home`/`unknown` only — never GPS or zone data.
 
 ---
 

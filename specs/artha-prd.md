@@ -1,8 +1,8 @@
 # Artha — Personal Intelligence OS
-## Product Requirements Document · v7.0.6
+## Product Requirements Document · v7.0.7
 
 **Author:** [Author]
-**Date:** March 15, 2026
+**Date:** March 21, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -540,7 +540,7 @@ Hey — quick check-in on your week:
 | F7.1 | **Utility Bill Calendar** — All utility bills (Metro Electric, Water, Sangamon County) parsed from email. Consolidated view, 5-day due date alerts. Metro Electric enrolled in autopay — confirm each month. | P0 |
 | F7.2 | **Mortgage Tracker** — Outstanding balance, monthly payment, interest rate, payoff date. Annual refinance check trigger. FICO trend connected. | P1 |
 | F7.3 | **Home Maintenance Scheduler** — Annual and seasonal maintenance calendar: HVAC filter (quarterly), gutter cleaning (fall), furnace service (fall), exterior painting (estimate cycle), smoke detectors (annual test). | P1 |
-| F7.4 | **Home Assistant Integration** — Read device status, energy usage, and automation logs from Home Assistant local API. Surface anomalies (device offline, unusual energy consumption) in daily briefing. | P1 |
+| F7.4 | **Home Assistant Integration** — Read device status, energy usage, and automation logs from Home Assistant local API. Surface anomalies (device offline, unusual energy consumption) in daily briefing. **✅ IMPLEMENTED v8.2.0** — Connector (`scripts/connectors/homeassistant.py`), skill (`scripts/skills/home_device_monitor.py`), 7-step setup wizard (`scripts/setup_ha_token.py`). LAN-only, token in macOS Keychain. Covers 28 devices across 6 ecosystems (Ring, Apple, Amazon, Google, Sonos, Gecko) via single HA REST API. Deterministic alerting: security device offline → 🔴, energy spike >30% → 🟠, supply <20% → 🟡. State stored in `state/home_iot.md`. | P1 |
 | F7.5 | **Energy Usage Tracker** — Track Metro Electric bills month-over-month. Alert on unusual spikes. Compare against local seasonal averages. | P2 |
 | F7.6 | **Home Value Signal** — Periodic Zillow/Redfin estimate for 62704 comparable sales. Not investment advice — context for net worth calculation in FR-3. | P2 |
 | F7.7 | **Service Provider Rolodex** — Maintain a curated list of trusted service providers (plumber, electrician, HVAC, landscaper) with last-used dates and notes. | P2 |
@@ -681,7 +681,7 @@ Hey — quick check-in on your week:
 | F12.2 | **Subscription Cost Dashboard** — Total monthly and annual cost of all subscriptions. Category breakdown. Year-over-year trend. | P2 |
 | F12.3 | **Account Security Monitor** — Parse security alert emails (Chase device login, Equifax credit alerts). Flag unusual activity. Equifax credit monitoring is already active — integrate alerts. | P1 |
 | F12.4 | **Domain & Hosting Tracker** — Track any personal domains or web hosting (if applicable) for renewal dates. | P2 |
-| F12.5 | **Home Assistant Health Monitor** — Track Home Assistant system uptime, device offline alerts, and automation failures. Surface in morning briefing if any critical device is offline. | P2 |
+| F12.5 | **Home Assistant Health Monitor** — Track Home Assistant system uptime, device offline alerts, and automation failures. Surface in morning briefing if any critical device is offline. **✅ IMPLEMENTED v8.2.0** — Preflight check (`check_ha_connectivity()` in `scripts/preflight.py`), pipeline health check (`--health --source homeassistant`), `home_device_monitor` skill with deterministic critical-device alerting. | P2 |
 | F12.6 | **Subscription ROI Tracker** *(v4.0)* — For each active subscription (from F12.1/F3.4), track usage signals and calculate a value-per-dollar score. Usage signals: email engagement (newsletter open/click patterns), login frequency (detected from authentication emails), content consumption (learning platform progress from F10.x). Categories: High ROI (used frequently, clear value), Medium ROI (periodic use), Low ROI (paying but rarely using), Zero ROI (no usage signals in 60+ days). Quarterly report: "You're paying $167/month across 12 subscriptions. 3 subscriptions ($42/month) show zero usage in 60 days: [list]. Cancel or justify?" Integrated into F3.4 subscription ledger and quarterly life scorecard (F15.44). | P1 |
 
 ---

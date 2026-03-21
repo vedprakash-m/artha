@@ -102,7 +102,7 @@ skills:
   # ── IoT / Home (ARTHA-IOT Wave 2) ───────────────────────────────────────
 
   home_device_monitor:
-    enabled: false          # Enable after homeassistant connector configured + tested
+    enabled: true
     priority: P1
     cadence: every_run
     execution_after: pipeline

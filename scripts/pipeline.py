@@ -492,8 +492,14 @@ def run_health_checks(
             results.append((name, False))
             continue
 
+        # Pass fetch-config keys (e.g. ha_url) as kwargs, same as fetch() does
+        fetch_cfg = conn.get("fetch", {})
+        extra_kwargs: dict[str, Any] = {
+            k: v for k, v in fetch_cfg.items() if k not in ("handler", "max_results")
+        }
+
         try:
-            ok = handler.health_check(auth_ctx)
+            ok = handler.health_check(auth_ctx, **extra_kwargs)
         except Exception as exc:
             print(f"[health] ERROR {name}: {exc}", file=sys.stderr)
             ok = False
