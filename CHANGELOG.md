@@ -11,6 +11,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
+## [8.1.2] — 2026-03-21
+
+### Fixed — Linux CI: `SystemExit` from keyring not caught in action key helpers
+
+- **`scripts/action_executor.py`** — `_get_privkey()` and `_get_pubkey()` now catch `(Exception, SystemExit)` instead of `Exception` alone. On Ubuntu CI (no D-Bus / no SecretService backend), `keyring.get_password()` raises `NoKeyringError`; `foundation.get_private_key()` caught that as `Exception` then called `die()` → `sys.exit(1)` → `SystemExit(1)`. Because `SystemExit` is a `BaseException` subclass (not an `Exception`), it escaped the existing guard and surfaced in pytest as 8 test failures with `"SystemExit: 1"`. Fixed by widening the guard.
+- **`scripts/action_queue.py`** — Same `(Exception, SystemExit)` guard applied to `_get_age_pubkey()`.
+- **`scripts/action_executor.py`** — `ActionExecutor.__init__`: `detect()` now called with `skip_network=True` to avoid 3 × 3 s TCP probes per fixture instantiation in tests. Fixed `env_info.get("filesystem_writable")` → `env_info.capabilities.get("filesystem_writable")` (`EnvironmentManifest` is a dataclass, not a dict).
+
+**CI impact**: `pytest (3.11)` and `pytest (3.12)` CI jobs had been failing since the Action Layer commit `0900fcc` (2026-03-19). All 4 intermediate commits (`0900fcc`, `fc0b5a5`, `d08f9ac`, `5aad9dd`) had red CI. All 8 CI jobs green as of `5a3ccf6`.
+
+---
+
 ## [8.1.1] — 2026-03-20
 
 ### Fixed — Action Handler Module Paths + Mock-patch Compatibility
