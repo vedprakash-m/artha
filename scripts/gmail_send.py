@@ -89,40 +89,116 @@ def _markdown_to_html(markdown_body: str) -> str:
         'padding: 20px; color: #222;">',
     ]
     in_list = False
+    in_table = False
 
-    for line in lines:
+    def _fmt(text: str) -> str:
+        """Apply inline formatting (bold, italic) to escaped HTML text."""
+        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        return text
+
+    def _table_cell(cell: str, tag: str = "td") -> str:
+        """Render a single table cell with inline formatting."""
+        content = _fmt(html_lib.escape(cell.strip()))
+        if tag == "th":
+            return (f'<th style="padding:6px 10px; border:1px solid #ddd; '
+                    f'background:#f0f0f0; font-weight:600; text-align:left;">{content}</th>')
+        return (f'<td style="padding:6px 10px; border:1px solid #ddd; '
+                f'text-align:left;">{content}</td>')
+
+    def _is_table_row(line: str) -> bool:
+        return bool(line.strip().startswith("|") and line.strip().endswith("|"))
+
+    def _is_separator_row(line: str) -> bool:
+        return bool(re.match(r"^\|[\s\-:|]+\|$", line.strip()))
+
+    def _parse_cells(line: str) -> list[str]:
+        """Split a pipe-delimited line into cell contents."""
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        return [c.strip() for c in stripped.split("|")]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         escaped = html_lib.escape(line)
 
-        # Dividers
-        if re.match(r"^━{3,}", line):
+        # ── Table detection ────────────────────────────────────────────
+        if _is_table_row(line):
+            if not in_table:
+                # Close any open list
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                # Check if next line is a separator (header row)
+                is_header = (i + 1 < len(lines) and _is_separator_row(lines[i + 1]))
+                html_lines.append(
+                    '<table style="border-collapse:collapse; margin:8px 0; '
+                    'font-size:13px; width:100%;">')
+                if is_header:
+                    cells = _parse_cells(line)
+                    html_lines.append("<thead><tr>")
+                    html_lines.extend(_table_cell(c, "th") for c in cells)
+                    html_lines.append("</tr></thead><tbody>")
+                    i += 2  # skip header + separator
+                    in_table = True
+                    continue
+                else:
+                    html_lines.append("<tbody>")
+                    in_table = True
+
+            if _is_separator_row(line):
+                # Separator row inside table — skip
+                i += 1
+                continue
+
+            cells = _parse_cells(line)
+            html_lines.append("<tr>")
+            html_lines.extend(_table_cell(c) for c in cells)
+            html_lines.append("</tr>")
+            i += 1
+            continue
+
+        # Close table if we were in one
+        if in_table:
+            html_lines.append("</tbody></table>")
+            in_table = False
+
+        # ── Dividers ───────────────────────────────────────────────────
+        if re.match(r"^━{3,}", line) or re.match(r"^-{3,}$", line.strip()):
             if in_list:
                 html_lines.append("</ul>")
                 in_list = False
             html_lines.append('<hr style="border: none; border-top: 2px solid #333; margin: 12px 0;">')
+            i += 1
             continue
 
-        # Section headers (## or ###)
+        # ── Section headers (## or ###) ────────────────────────────────
         m = re.match(r"^(#{2,3})\s+(.*)", line)
         if m:
             if in_list:
                 html_lines.append("</ul>")
                 in_list = False
             level = "2" if m.group(1) == "##" else "3"
-            text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", html_lib.escape(m.group(2)))
+            text = _fmt(html_lib.escape(m.group(2)))
             color = "#111" if level == "2" else "#444"
             html_lines.append(
                 f'<h{level} style="margin: 16px 0 4px; color: {color};">{text}</h{level}>'
             )
+            i += 1
             continue
 
-        # Bullet lines
-        bullet_match = re.match(r"^•\s+(.*)", line)
+        # ── Bullet lines (• or - ) ────────────────────────────────────
+        bullet_match = re.match(r"^[•\-]\s+(.*)", line)
         if bullet_match:
             if not in_list:
                 html_lines.append('<ul style="margin: 4px 0; padding-left: 20px;">')
                 in_list = True
-            text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", html_lib.escape(bullet_match.group(1)))
+            text = _fmt(html_lib.escape(bullet_match.group(1)))
             html_lines.append(f'<li style="margin: 2px 0;">{text}</li>')
+            i += 1
             continue
 
         # Close list if needed
@@ -133,18 +209,23 @@ def _markdown_to_html(markdown_body: str) -> str:
         # Empty line
         if not line.strip():
             html_lines.append("<br>")
+            i += 1
             continue
 
         # Code blocks (``` ... ```) — render in monospace
         if line.startswith("```"):
             html_lines.append('<pre style="background:#f5f5f5; padding:8px; '
                              'font-family:monospace; font-size:12px; border-radius:4px;">')
+            i += 1
             continue
 
         # Regular paragraph
-        text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", escaped)
+        text = _fmt(escaped)
         html_lines.append(f"<p style='margin: 4px 0;'>{text}</p>")
+        i += 1
 
+    if in_table:
+        html_lines.append("</tbody></table>")
     if in_list:
         html_lines.append("</ul>")
     html_lines.extend(["</div>", "</body></html>"])

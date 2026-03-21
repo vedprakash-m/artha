@@ -19,7 +19,7 @@ from actions.base import ActionProposal
 
 # Import pii_guard functions directly
 try:
-    from pii_guard import scan_text, _PATTERNS
+    from pii_guard import scan
     _PII_GUARD_AVAILABLE = True
 except ImportError:
     _PII_GUARD_AVAILABLE = False
@@ -65,37 +65,36 @@ def _make_proposal(
 @pytest.mark.skipif(not _PII_GUARD_AVAILABLE, reason="pii_guard module not available")
 class TestPiiDetection:
     def test_ssn_detected(self):
-        from pii_guard import scan_text
-        found = scan_text("Your SSN is 123-45-6789")
-        assert len(found) > 0
-        assert any("SSN" in f["type"] for f in found)
+        from pii_guard import scan
+        pii_found, found_types = scan("Your SSN is 123-45-6789")
+        assert pii_found
+        assert "SSN" in found_types
 
     def test_credit_card_detected(self):
-        from pii_guard import scan_text
-        found = scan_text("Card: 4111 1111 1111 1111 charged")
-        assert len(found) > 0
+        from pii_guard import scan
+        pii_found, found_types = scan("Card: 4111 1111 1111 1111 charged")
+        assert pii_found
+        assert len(found_types) > 0
 
     def test_clean_email_body_passes(self):
-        from pii_guard import scan_text
-        found = scan_text("Hi, please confirm our meeting on Thursday at 3pm.")
-        # Email addresses in the 'body' field are allowed for email actions
-        # but SSN/CC/etc. should not appear here
-        assert not any(f["type"] in ("SSN", "CC") for f in found)
+        from pii_guard import scan
+        pii_found, found_types = scan("Hi, please confirm our meeting on Thursday at 3pm.")
+        assert "SSN" not in found_types
+        assert "CC" not in found_types
 
     def test_email_address_not_pii_in_body(self):
         """Email address in body text should NOT be flagged as PII in action body."""
-        from pii_guard import scan_text
+        from pii_guard import scan
         text = "Please reply to support@example.com if you have questions."
-        found = scan_text(text)
-        # Email addresses in body fields are expected/allowlisted
-        # The test verifies that clean text with email addresses is handled gracefully
-        # (actual allowlist enforcement is in the executor's action-specific logic)
-        assert isinstance(found, list)
+        pii_found, found_types = scan(text)
+        # Email addresses are allowlisted in pii_guard and should not trigger
+        assert isinstance(found_types, dict)
 
     def test_passport_number_detected(self):
-        from pii_guard import scan_text
-        found = scan_text("Passport: A12345678")
-        assert len(found) > 0
+        from pii_guard import scan
+        pii_found, found_types = scan("Passport: A12345678")
+        assert pii_found
+        assert len(found_types) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -106,55 +105,56 @@ class TestPiiDetection:
 class TestActionParameterPiiScanning:
     def test_scan_proposal_parameters_finds_ssn(self):
         """PII in action parameters should be detected."""
-        from pii_guard import scan_text
+        from pii_guard import scan
         params = {
             "to": "a@example.com",
             "subject": "Your file",
             "body": "Your SSN 123-45-6789 has been processed",
         }
         # Simulate the executor's PII scan of all string parameter values
-        findings = []
+        findings: dict[str, dict[str, int]] = {}  # key -> {pii_type: count}
         for key, val in params.items():
             if isinstance(val, str):
-                found = scan_text(val)
-                if found:
-                    findings.extend([(key, f) for f in found])
+                pii_found, found_types = scan(val)
+                if pii_found:
+                    findings[key] = found_types
 
-        assert any(k == "body" for k, _ in findings)
-        assert any("SSN" in f["type"] for _, f in findings)
+        assert "body" in findings
+        assert "SSN" in findings["body"]
 
     def test_clean_email_parameters_pass(self):
         """Clean action parameters should not trigger PII warnings."""
-        from pii_guard import scan_text
+        from pii_guard import scan
         params = {
             "to": "teacher@school.edu",
             "subject": "Parent Conference Confirmation",
             "body": "Hi Mrs. Chen, Thursday at 3:30 works for us. See you then.",
         }
-        findings = []
+        findings: dict[str, dict[str, int]] = {}
         for key, val in params.items():
             if isinstance(val, str):
-                found = scan_text(val)
-                if found:
-                    findings.extend([(key, f) for f in found])
+                pii_found, found_types = scan(val)
+                if pii_found:
+                    findings[key] = found_types
 
         # No SSN/CC/passport/etc in this clean message
-        pii_types = {f["type"] for _, f in findings}
-        assert "SSN" not in pii_types
-        assert "CC" not in pii_types
+        all_types = set()
+        for ft in findings.values():
+            all_types.update(ft.keys())
+        assert "SSN" not in all_types
+        assert "CC" not in all_types
 
     def test_phone_number_in_whatsapp_to_field(self):
         """Phone numbers in WhatsApp 'to' field should be allowlisted."""
-        from pii_guard import scan_text
-        # The phone number is the EXPECTED content for a WhatsApp action
-        # The test verifies that the PII guard operates consistently
+        from pii_guard import scan
         params = {
             "phone_number": "+12025551234",
             "message": "Happy Birthday! Hope you have a wonderful day.",
         }
         # Message body should be clean
-        body_findings = scan_text(params["message"])
-        assert not any(f["type"] in ("SSN", "CC") for f in body_findings)
+        pii_found, found_types = scan(params["message"])
+        assert "SSN" not in found_types
+        assert "CC" not in found_types
 
 
 # ---------------------------------------------------------------------------
@@ -169,31 +169,29 @@ class TestBlockOnPii:
         if not _PII_GUARD_AVAILABLE:
             pytest.skip("pii_guard not available")
 
-        from pii_guard import scan_text
+        from pii_guard import scan
 
         body_with_ssn = "Your SSN is 123-45-6789"
-        found = scan_text(body_with_ssn)
+        pii_found, found_types = scan(body_with_ssn)
         # Verify detection (precondition for block)
-        assert len(found) > 0
+        assert pii_found
+        assert len(found_types) > 0
 
-        # The correct behavior is: executor raises a ValueError when PII found
-        # (not silently redact and proceed). We test this contract indirectly
-        # by verifying that the scanned values show the original text unmodified.
-        for finding in found:
-            # Original text preserved — never modified by scan_text
-            assert body_with_ssn  # text was not consumed
+        # The correct behavior is: executor blocks when PII found
+        # (not silently redact and proceed). scan() detects without modifying.
+        assert "SSN" in found_types
 
     def test_description_pii_should_be_scanned(self):
         """Proposal.description field should also be PII-scanned."""
         if not _PII_GUARD_AVAILABLE:
             pytest.skip("pii_guard not available")
 
-        from pii_guard import scan_text
+        from pii_guard import scan
 
         description = "Action for user with SSN 987-65-4321"
-        found = scan_text(description)
-        assert len(found) > 0
-        assert any("SSN" in f["type"] for f in found)
+        pii_found, found_types = scan(description)
+        assert pii_found
+        assert "SSN" in found_types
 
 
 # ---------------------------------------------------------------------------

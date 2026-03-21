@@ -468,3 +468,40 @@ connectors:
       max_retries: 1
       base_delay: 0.0
       max_delay: 0.0
+
+  # ── IoT — Home Assistant (LAN-only, opt-in) ─────────────────────────────
+
+  homeassistant:
+    type: iot
+    provider: homeassistant
+    enabled: false          # Enable after: python scripts/setup_ha_token.py
+    description: >
+      Home Assistant local smart home hub — reads device states, energy usage,
+      and sensor data via the HA REST API. LAN-only: skipped silently when
+      not on the home network. Requires a long-lived access token.
+    requires_lan: true
+    auth:
+      method: api_key
+      credential_key: "artha-ha-token"
+      setup_script: "scripts/setup_ha_token.py"
+    fetch:
+      handler: "scripts/connectors/homeassistant.py"
+      ha_url: ""                          # Set by setup_ha_token.py (e.g. http://192.168.1.123:8123)
+      timeout_seconds: 10
+      default_max_results: 500
+      include_history: false
+      exclude_domains: []                 # Additive on top of hard-floor _EXCLUDED_DOMAINS in connector
+      entity_allowlist: []
+      entity_blocklist: []
+    output:
+      format: jsonl
+      fields: [entity_id, state, attributes, last_changed, domain, source]
+      source_tag: "homeassistant"
+    health_check: true
+    mcp:
+      prefer_mcp: false     # PRIVACY: local LAN API only — never cloud relay
+      fallback: "scripts/pipeline.py --source homeassistant"
+    retry:
+      max_retries: 2
+      base_delay: 1.0
+      max_delay: 5.0

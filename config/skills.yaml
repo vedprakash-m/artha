@@ -99,3 +99,18 @@ skills:
     safety_critical: false
     description: "Track LWSD school events for Parth and Trisha. Alert 3 days ahead. Scans kids.md for grade alerts."
 
+  # ── IoT / Home (ARTHA-IOT Wave 2) ───────────────────────────────────────
+
+  home_device_monitor:
+    enabled: false          # Enable after homeassistant connector configured + tested
+    priority: P1
+    cadence: every_run
+    execution_after: pipeline
+    requires_vault: false
+    safety_critical: false
+    requires_connector: homeassistant
+    description: >
+      Monitor Home Assistant devices: Ring offline (CRITICAL), smart lights/switches
+      offline (MONITORED), energy anomalies >30%, printer supply <20%, spa temp
+      variance >5°F. Emits DomainSignals for ActionComposer routing.
+

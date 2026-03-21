@@ -406,6 +406,113 @@ def _audit_log(event_type: str, **kwargs: str | int | bool | None) -> None:
     log.debug("Audit: %s", entry)
 
 
+_FRICTION_BADGE = {"low": "🟢", "standard": "🟡", "high": "🔴"}
+
+
+def push_pending_actions(dry_run: bool = False) -> int:
+    """Push pending action proposals to Telegram with inline approval buttons.
+
+    Called by the catch-up workflow at Step 14.5.
+    Returns the number of action messages sent (0 if none pending).
+
+    Ref: config/workflow/finalize.md Step 14.5, specs/act.md §5.3
+    """
+    from channels.registry import (
+        load_channels_config,
+        iter_enabled_channels,
+        create_adapter_from_config,
+    )
+    from channels.base import ChannelMessage
+
+    # Load pending actions
+    try:
+        sys.path.insert(0, str(_ARTHA_DIR / "scripts"))
+        from action_executor import ActionExecutor
+        executor = ActionExecutor(_ARTHA_DIR)
+        pending = executor.pending()
+    except Exception as exc:
+        log.warning("Could not load pending actions: %s", exc)
+        return 0
+
+    if not pending:
+        log.info("No pending actions to push.")
+        return 0
+
+    # Find Telegram channels with push enabled
+    config = load_channels_config()
+    sent_count = 0
+
+    for channel_name, channel_cfg in iter_enabled_channels(config):
+        if channel_cfg.get("adapter") != "telegram":
+            continue
+        if not channel_cfg.get("features", {}).get("push", True):
+            continue
+
+        try:
+            adapter = create_adapter_from_config(channel_name, channel_cfg)
+        except Exception as exc:
+            log.warning("Channel %s: adapter load failed: %s", channel_name, exc)
+            continue
+
+        recipients = channel_cfg.get("recipients", {})
+        for rec_name, rec_cfg in recipients.items():
+            if not isinstance(rec_cfg, dict) or not rec_cfg.get("push", False):
+                continue
+            recipient_id = str(rec_cfg.get("id", "")).strip()
+            if not recipient_id:
+                continue
+
+            for proposal in pending:
+                badge = _FRICTION_BADGE.get(proposal.friction, "🟡")
+                text = (
+                    f"⚡ ACTION PENDING\n"
+                    f"Type: {proposal.action_type} | Domain: {proposal.domain}\n"
+                    f"Friction: {badge} {proposal.friction}\n\n"
+                    f"{proposal.title}\n"
+                )
+                if proposal.description:
+                    desc = proposal.description[:200]
+                    text += f"{desc}\n"
+
+                buttons = [
+                    {"label": "✅ Approve", "command": f"act:APPROVE:{proposal.id}"},
+                    {"label": "❌ Reject", "command": f"act:REJECT:{proposal.id}"},
+                    {"label": "⏸ Defer", "command": f"act:DEFER:{proposal.id}"},
+                ]
+
+                if dry_run:
+                    log.info(
+                        "[DRY-RUN] Would push action %s to %s/%s",
+                        proposal.id[:8], channel_name, rec_name,
+                    )
+                    sent_count += 1
+                    continue
+
+                msg = ChannelMessage(
+                    text=text,
+                    recipient_id=recipient_id,
+                    buttons=buttons,
+                )
+                success = adapter.send_message(msg)
+                if success:
+                    sent_count += 1
+                    _audit_log(
+                        "ACTION_PUSH",
+                        channel=channel_name,
+                        recipient=rec_name,
+                        action_id=proposal.id[:16],
+                        action_type=proposal.action_type,
+                    )
+                else:
+                    log.warning(
+                        "Failed to push action %s to %s/%s",
+                        proposal.id[:8], channel_name, rec_name,
+                    )
+
+    log.info("Pushed %d action message(s) to Telegram.", sent_count)
+    return sent_count
+
+
 def run_push(dry_run: bool = False) -> int:
     """Main push orchestrator. Returns 0 on success, 1 on config/fatal error.
 
@@ -605,12 +712,23 @@ def main() -> int:
                         help="Health check mode (for preflight.py)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would be sent without making API calls")
+    parser.add_argument("--push-actions", action="store_true",
+                        help="Push pending action proposals to Telegram (Step 14.5)")
     args = parser.parse_args()
 
     if args.health:
         ok, msg = health_check()
         print(f"channel_push: {msg}")
         return 0 if ok else 1
+
+    if args.push_actions:
+        try:
+            count = push_pending_actions(dry_run=args.dry_run)
+            print(f"channel_push: pushed {count} action(s)")
+            return 0
+        except Exception as exc:
+            log.error("push_pending_actions error (non-blocking): %s", exc)
+            return 0
 
     try:
         return run_push(dry_run=args.dry_run)

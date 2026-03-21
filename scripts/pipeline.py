@@ -95,6 +95,8 @@ _HANDLER_MAP: dict[str, str] = {
     # Messaging connectors (local DB — opt-in)
     "connectors.whatsapp_local": "connectors.whatsapp_local",
     "connectors.imessage_local": "connectors.imessage_local",
+    # IoT connector (LAN-only, opt-in — ARTHA-IOT Wave 1)
+    "connectors.homeassistant": "connectors.homeassistant",
 }
 
 

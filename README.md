@@ -71,6 +71,7 @@ rm ~/age-key.txt                                  # delete plaintext after verif
 python scripts/setup_google_oauth.py    # Gmail + Google Calendar
 python scripts/setup_msgraph_oauth.py   # Outlook + Calendar (optional)
 python scripts/setup_todo_lists.py      # Microsoft To Do (optional)
+python scripts/setup_ha_token.py        # Home Assistant IoT (optional, LAN only)
 ```
 
 See [docs/google-oauth-setup.md](docs/google-oauth-setup.md) for a walkthrough.
@@ -97,9 +98,10 @@ python scripts/migrate.py             # write config/user_profile.yaml
 
 - **Morning briefings** with action items across 24 life domains (health, finance, goals, immigration, kids, home, and more)
 - **Action Layer** *(v1.3)* — Artha can now **act**, not just report. Propose, approve, and execute real actions — send emails, create calendar events, set reminders, draft WhatsApp messages — with a human-gated approval queue, full audit trail, and one-tap Telegram approval
-- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health, **WhatsApp** (Windows/macOS local DB), **iMessage** (macOS local DB)
+- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health, **WhatsApp** (Windows/macOS local DB), **iMessage** (macOS local DB), **Home Assistant** (local LAN, opt-in)
+- **Smart Home / IoT** *(v8.2)* — Home Assistant integration: device offline alerts, energy anomaly detection, printer supply levels, swim spa monitoring. LAN-only, privacy-first (no camera/audio, no cloud relay). Activate with `python scripts/setup_ha_token.py`
 - **Encrypted state** for sensitive domains with `age` — health, finance, immigration at rest
-- **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor, financial resilience
+- **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription monitor, financial resilience, **home device monitor**
 - **Telegram bridge** — conversational interface from your phone (45+ command aliases, multi-LLM Q&A, inline action approvals)
 - **Household-aware** — adapts to single, couple, family, or roommate configurations; owner vs. renter
 - **Works everywhere** — macOS, Windows (`setup.ps1`), Linux; pure Python

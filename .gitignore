@@ -23,7 +23,10 @@ config/prompt-overlays/*.md
 # --- State files (all user-generated) ---
 state/*.md
 state/*.md.age
-state/*.db          # SQLite databases (actions.db, etc.) — user data, not committed
+# SQLite databases (actions.db, etc.) — user data, not committed
+state/*.db
+state/*.db-shm
+state/*.db-wal
 !state/.gitkeep
 !state/templates/
 

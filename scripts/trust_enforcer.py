@@ -73,7 +73,22 @@ class TrustEnforcer:
             content = self._health_check_path.read_text(encoding="utf-8")
             block = _extract_autonomy_block(content)
             if block:
+                has_since = "trust_level_since" in block
                 defaults.update(block)
+                # Compute days_at_level dynamically from trust_level_since
+                # when the autonomy block explicitly contains that field.
+                if has_since:
+                    since_str = defaults.get("trust_level_since", "")
+                    try:
+                        since_date = datetime.strptime(
+                            str(since_str), "%Y-%m-%d"
+                        ).date()
+                        today = datetime.now(timezone.utc).date()
+                        defaults["days_at_level"] = max(
+                            0, (today - since_date).days
+                        )
+                    except (ValueError, TypeError):
+                        pass  # keep whatever was parsed or default 0
         except Exception:
             pass  # fallback to defaults on any parse error
 

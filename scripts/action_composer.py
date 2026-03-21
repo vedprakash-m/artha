@@ -81,6 +81,14 @@ _SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
 
     # Generic calendar creation
     "event_invitation":       {"action_type": "calendar_create",   "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
+
+    # IoT / Home (ARTHA-IOT Wave 1+2)
+    "device_offline":             {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "security_device_offline":    {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 0, "reversible": False, "undo_window_sec": None},
+    "energy_anomaly":             {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "supply_low":                 {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "spa_maintenance":            {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "security_travel_conflict":   {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 0, "reversible": False, "undo_window_sec": None},
 }
 
 # Domains that always escalate friction to "high" (§10.3 rule 4)
