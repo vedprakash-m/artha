@@ -299,12 +299,35 @@ connectors:
     mcp:
       prefer_mcp: false
       fallback: scripts/pipeline.py --source canvas_lms
+  onenote_personal:
+    type: notes
+    provider: microsoft
+    enabled: true
+    run_on: all
+    description: Microsoft OneNote — personal notebooks (vedprakash.m@outlook.com)
+    auth:
+      method: oauth2
+      token_file: .tokens/msgraph-personal-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
+      scopes:
+      - Notes.Read
+      - Notes.ReadWrite
+    fetch:
+      handler: scripts/connectors/onenote.py
+      include_personal: true
+    output:
+      format: direct_state_write
+      target: state/onenote_personal_progress.md
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source onenote_personal
   onenote:
     type: notes
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Microsoft OneNote — work notes and notebooks
+    description: Microsoft OneNote — work notebooks ([email])
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
