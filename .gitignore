@@ -22,6 +22,9 @@ config/prompt-overlays/*.md
 # Keep the README
 !config/prompt-overlays/README.md
 
+# --- Local archive (personal specs, notes with PII — never committed) ---
+.archive/
+
 # --- State files (all user-generated) ---
 state/*.md
 state/*.md.age

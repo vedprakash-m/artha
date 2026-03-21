@@ -285,17 +285,109 @@ def _check_catchup_reminder(state_dir: Path) -> list[NudgeItem]:
     return []
 
 
+def _check_content_moments(artha_dir: Path) -> list[NudgeItem]:
+    """Emit content_moment nudge when a high-scoring PR Manager moment exists.
+
+    Priority: LOWEST (urgency=1). Only fires when nudge budget has headroom
+    after higher-priority types (goal_stale, relationship_stale, coaching) are processed.
+
+    Reads: tmp/content_moments.json (written by pr_manager.py --step8)
+    Gate: enhancements.pr_manager must be truthy in artha_config.yaml.
+    Cap: 1 per day (shared under global 3/day cap).
+
+    Ref: specs/pr-manager.md §6.2
+    """
+    # Check feature flag
+    config_path = artha_dir / "config" / "artha_config.yaml"
+    if not config_path.exists():
+        return []
+    try:
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        pr_flag = cfg.get("enhancements", {}).get("pr_manager", False)
+        if isinstance(pr_flag, dict):
+            enabled = bool(pr_flag.get("enabled", False))
+        else:
+            enabled = bool(pr_flag)
+        if not enabled:
+            return []
+    except Exception:  # noqa: BLE001
+        return []
+
+    # Read scored moments from cache (written by Step 8)
+    moments_file = artha_dir / "tmp" / "content_moments.json"
+    if not moments_file.exists():
+        return []
+
+    try:
+        import json
+        moments = json.loads(moments_file.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+
+    if not isinstance(moments, list) or not moments:
+        return []
+
+    # Only nudge for moments above daily threshold (score >= 0.8)
+    high_moments = [m for m in moments if m.get("above_daily_threshold", False)]
+    if not high_moments:
+        return []
+
+    # Check if cache is stale (> 24h old — only nudge on fresh data from catch-up)
+    try:
+        import os, time
+        mtime = moments_file.stat().st_mtime
+        age_hours = (time.time() - mtime) / 3600
+        if age_hours > 24:
+            return []
+    except Exception:  # noqa: BLE001
+        pass
+
+    top = high_moments[0]
+    label = str(top.get("label", "a cultural moment"))[:40]  # truncate for safety
+    # Sanitize: remove any PII-like patterns just in case
+    # (label comes from occasion_tracker — should be festival names only, but be safe)
+    label = label.replace("@", "").replace("http", "")
+    platforms = top.get("platforms", ["linkedin"])
+    platform = platforms[0] if platforms else "linkedin"
+
+    return [NudgeItem(
+        nudge_type="content_moment",
+        message=(
+            f"📣 Content moment: {label} (score {top.get('convergence_score', 0):.2f}). "
+            f"Draft a {platform} post? Use /pr draft {platform}"
+        ),
+        urgency=1,       # Lowest priority — yields to all other nudge types
+        domain="social",
+        entity_key=f"content_moment_{label[:20].replace(' ', '_')}",
+    )]
+
+
 def check_nudges(artha_dir: Path) -> list[NudgeItem]:
     """Lightweight state file scan for time-sensitive nudges.
 
     Only reads non-encrypted state files. Returns list of NudgeItem
-    sorted by urgency descending.
+    sorted by urgency descending (highest priority first).
+
+    Priority ordering (highest → lowest):
+      urgency=4: overdue_item         — direct obligation
+      urgency=3: today_deadline       — direct obligation (imminent)
+      urgency=2: (future: bill_due_today, imminent_event)
+      urgency=1: catchup_reminder, content_moment  — informational / nice-to-have
+      → content_moment is always LAST within urgency=1 tier
     """
     state_dir = artha_dir / "state"
     nudges: list[NudgeItem] = []
     nudges.extend(_check_open_items(state_dir))
     nudges.extend(_check_catchup_reminder(state_dir))
-    nudges.sort(key=lambda n: n.urgency, reverse=True)
+    # content_moment: lowest priority — only fires when budget headroom remains
+    nudges.extend(_check_content_moments(artha_dir))
+    # Stable sort: urgency descending, content_moment last within urgency=1
+    nudges.sort(
+        key=lambda n: (
+            -n.urgency,
+            1 if n.nudge_type == "content_moment" else 0,
+        )
+    )
     return nudges
 
 

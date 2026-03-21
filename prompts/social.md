@@ -444,3 +444,186 @@ profile with any new factual information revealed:
 - If you are uncertain about a fact (e.g., ambiguous pronoun reference), do not record it.
 - Sensitive health mentions: note the fact (e.g., "recovering from surgery") but omit
   diagnosis, treatment, or prognosis details — these belong in `state/health.md` (encrypted).
+
+---
+
+## PR Manager — Personal Narrative Engine
+
+> **Sub-feature of Social domain · Spec: specs/pr-manager.md PR-1 v1.2**
+> Active when `enhancements.pr_manager: true` in `config/artha_config.yaml`.
+> State file: `state/pr_manager.md`
+
+### Responsibility Boundary (§2.4)
+
+This domain (social.md) owns **private/direct messaging**:
+- WhatsApp individual greetings, email birthday wishes, visual cards for contacts.
+
+PR Manager owns **public/broadcast content**:
+- LinkedIn posts, Facebook wall posts, Instagram stories, WhatsApp Status updates.
+- WhatsApp group content (occasion-only, conservative defaults).
+
+**Deduplication rule:** When both social and PR Manager detect the same occasion,
+surface them as one merged section in the briefing:
+```
+### 🗓️ [Occasion] ([Date])
+📨 Private greetings: [N] contacts (social domain)
+📣 Public content: LinkedIn + Facebook drafts available → /pr draft linkedin
+```
+
+### PR Manager Commands
+
+When the user says `/pr` (or any variation), execute from `state/pr_manager.md`:
+
+| Command | What to do |
+|---------|-----------|
+| `/pr` | Show weekly content calendar. Run `python3 scripts/pr_manager.py --view` and display output. |
+| `/pr threads` | Show narrative thread progress. Run `python3 scripts/pr_manager.py --threads`. |
+| `/pr voice` | Display voice profile. Run `python3 scripts/pr_manager.py --voice`. |
+| `/pr moments` | List all scored moments from `tmp/content_moments.json` with scores. |
+| `/pr history` | Display Post History section from `state/pr_manager.md`. Phase 3+ only. |
+| `/pr draft <platform> [topic]` | Generate a post draft (see Content Composition below). |
+| `/pr draft <platform> --trending` | Draft with trend context (Phase 3+). |
+
+### Content Composition (/pr draft)
+
+When the user runs `/pr draft <platform> [topic]` or says "draft it" in response to a
+content opportunity:
+
+1. **Assemble context:** Run `python3 scripts/pr_manager.py --draft-context <platform> [--topic "topic"]`
+   and read the JSON output.
+2. **Gate 1 — Context sanitization:** The draft context already sanitizes PII. Do NOT include
+   in your generation prompt: financial data, immigration case details, health info, SSN/salary.
+3. **Generate 1 variant:** Using the voice_profile, platform_rules, privacy_gates, and
+   moment_context from the draft context JSON, generate exactly ONE post variant.
+4. **Gate 2 — PII scan:** Before presenting to user, mentally verify the draft contains no
+   phone numbers, email addresses, full names of minors, or financial figures.
+5. **Gate 3 — Present for review:** ALWAYS present draft for explicit human approval.
+   Never auto-post. Never assume approval.
+
+**Draft output format:**
+```
+━━ CONTENT PROPOSAL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Platform:    [Platform]
+Thread:      [NT-X] · [Thread Name]
+Moment:      [Moment label] × [Narrative angle]
+Score:       [score] ([moment type])
+Visual:      📸 Personal photo recommended / 🖼 AI visual available
+
+DRAFT:
+───────────────────────────────────────────────────
+[Post content here — DO NOT include headers or meta]
+───────────────────────────────────────────────────
+
+Audience:      [Audience description]
+Best posting:  [Optimal time + day PT]
+Hashtags:      [0-3 hashtags, or "none"]
+PII check:     ✅ Passed (Gate 1 context sanitization + Gate 2 scan)
+⚠️ EMPLOYER MENTION  ← (add only if Microsoft named in post)
+
+[approve — copy text above]  [edit]  [skip]  [try another variant → /pr draft <platform>]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### Voice Profile Rules (§5.1)
+
+Always adhere to these rules when generating content:
+
+**Language & Tone:**
+- English primary; Hindi transliteration for cultural/family content (NOT Devanagari)
+- Thoughtful-casual — warm and considered, NOT corporate jargon
+- First-person ("I"), not "we" unless family content
+
+**AVOID in all posts:**
+- Corporate buzzwords: synergy, leverage, pivot, scalable, actionable
+- Humble-bragging: "humbled to announce", "honored to share"
+- Engagement bait: "agree?" / "what do you think?" / "drop a comment"
+- Emoji overload: max 2–3 per post; 0–1 on LinkedIn thought pieces
+- Generic AI-speak: "in today's fast-paced world", "exciting times ahead"
+- Virtue signaling: show don't tell
+
+**Signature elements (INCLUDE):**
+- Cultural specificity: name the festival, briefly explain the tradition if non-obvious
+- Concrete detail: "4,000ft gain to [trail name]" not "went on a hike"
+- Earned perspective: insights rooted in lived experience, not abstract opinions
+- Graceful brevity: use fewer words than the topic seems to need
+- Generous attribution: credit people, name names, acknowledge others' contributions
+
+### Privacy & Safety Architecture (§7)
+
+**Children's privacy (non-negotiable):**
+- LinkedIn: NEVER name children — "my son" / "my daughter" only
+- Facebook (friends-only): first names OK, NEVER full name + school
+- Instagram (private): first names OK
+- WhatsApp Status: first names only
+- WhatsApp Family group: full names OK
+
+**Employer sensitivity:**
+- Never imply speaking for Microsoft
+- Never share internal project details, roadmaps, or internal culture
+- Never comment on MSFT stock
+- Add `⚠️ EMPLOYER MENTION` marker if post names Microsoft
+
+**Gemini trend research (§7.4):** Prompts must NEVER contain personal information:
+- ✅ SAFE: "What are trending topics on LinkedIn in tech this week?"
+- ❌ UNSAFE: "What should [name] at Microsoft post about?"
+
+### Narrative Threads (§3.3)
+
+Each post should advance at least one thread:
+
+| Thread | Focus | Best Platforms |
+|--------|-------|---------------|
+| NT-1: Thoughtful Technologist | Tech insights made human | LinkedIn, Facebook |
+| NT-2: Cultural Bridge-Builder | South Asian American identity | LinkedIn, FB, Instagram |
+| NT-3: PNW Explorer | Pacific Northwest outdoors | Instagram, FB, WA Hiking Group |
+| NT-4: Proud Dad | Family milestones (tasteful) | FB (friends-only), Instagram, WA Family |
+| NT-5: MBA Practitioner | MBA program applied in practice | LinkedIn |
+| NT-6: The Connector | Celebrating others' achievements | All platforms |
+
+### Briefing Contribution
+
+**Daily briefing** (only when a moment has convergence_score ≥ 0.8):
+Read `tmp/content_moments.json`. If exists and has moments with `above_daily_threshold: true`:
+```
+### 📣 Content Opportunity
+[Render top moment with score_emoji + label + score + thread + platforms]
+Say "draft it" or use /pr draft [platform]
+```
+
+**Weekly summary (Monday only):**
+Read `tmp/content_moments.json`. Run `python3 scripts/pr_manager.py --step8 --verbose` if
+content_moments.json is older than 6 hours OR doesn't exist. Then display:
+```
+### 📣 Content Calendar
+[Weekly calendar from pr_manager.py --view output]
+```
+
+**Goal linkage:** If `state/goals.md` contains goals related to personal brand, thought
+leadership, networking, or career — surface alignment note:
+```
+📣 Content opportunity aligned with goal "[goal name]"
+   Current cadence vs. goal target: [comparison]
+```
+
+### Anti-Spam Governor
+
+Before surfacing any content opportunity, check `state/pr_manager.md → Platform Metrics`:
+
+| Platform | Max/week | Min gap |
+|----------|----------|---------|
+| LinkedIn | 2 | 2 days |
+| Facebook | 2 | 1 day |
+| Instagram | 2 | 2 days |
+| WA Status | 3 | 0 days |
+
+If limits exceeded, suppress the content opportunity and note: "LinkedIn quota reached
+(2/week). Next opportunity: [date]."
+
+### Post Logging (Phase 3+)
+
+When user confirms a post is published (says "posted it", "done", "published"):
+1. Run: `python3 scripts/pr_manager.py --log-post <platform> "<topic>" <thread_id> <score>`
+2. Update `state/pr_manager.md → Platform Metrics` table (increment posts_30d, update last_post)
+3. Set 48h follow-up reminder: "Ask how the [platform] post about [topic] landed"
+4. After 48h: "Your [platform] post about [topic] — how did it land? [great / ok / wish I hadn't]"
+5. Record reception in Post History reception column

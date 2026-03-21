@@ -128,6 +128,35 @@ features:
     status: implemented
     confidence: high
 
+  # ── PR Manager ─────────────────────────────────────────────────────────
+  pr_manager:
+    spec: "specs/pr-manager.md PR-1 v1.2"
+    status: partial
+    confidence: high
+    phases_complete:
+      - "Phase 1: State file (state/pr_manager.md, §8.3 schema)"
+      - "Phase 1: Prompt extension (prompts/social.md § PR Manager)"
+      - "Phase 1: Bootstrap questions (config/bootstrap-interview.md)"
+      - "Phase 1: Feature flag (enhancements.pr_manager in artha_config.yaml)"
+      - "Phase 2: Moment detection engine (scripts/pr_manager.py MomentDetector)"
+      - "Phase 2: Convergence scoring (§4.2 deterministic algorithm)"
+      - "Phase 2: Derived snapshot writer (Step 8 hook)"
+      - "Phase 2: Pattern rules PAT-PR-001 + PAT-PR-002 (config/patterns.yaml)"
+      - "Phase 2: Content calendar rendering (briefing adapter contribution)"
+      - "Phase 3: Draft context assembler (--draft-context mode)"
+      - "Phase 3: Anti-spam governor (AntiSpamGovernor class)"
+      - "Phase 3: Post logging (--log-post mode)"
+    phases_remaining:
+      - "Phase 3: Activate via enhancements.pr_manager.compose: true + bootstrap"
+      - "Phase 3: Gemini Imagen visual generation integration"
+      - "Phase 3: Nudge daemon content_moment type"
+      - "Phase 4: Post feedback learning loop"
+      - "Phase 4: Style learning extraction"
+      - "Phase 4: Reception-weighted scoring"
+      - "Phase 5: Platform API posting (LinkedIn/Facebook/Instagram APIs)"
+    gate: "Activate with /bootstrap pr_manager"
+    activate_command: "Set enhancements.pr_manager: true in artha_config.yaml"
+
   # ── Commands ────────────────────────────────────────────────────────────
   catch_up:
     status: implemented
@@ -143,6 +172,9 @@ features:
     status: implemented
   bootstrap:
     status: implemented
+  pr:
+    status: partial
+    note: "Requires enhancements.pr_manager: true — activate via /bootstrap pr_manager"
   dashboard:
     status: implemented
   scorecard:
