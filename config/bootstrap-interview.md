@@ -182,3 +182,62 @@ If the user exits mid-interview:
 If the user says "catch me up" before completing setup:
 1. Run `python scripts/demo_catchup.py` — shows a complete sample briefing
 2. After demo: "That was a demo with sample data. Ready to set up your own? (yes/later)"
+
+---
+
+## PR Manager Bootstrap (`/bootstrap pr_manager`)
+
+Trigger: user runs `/bootstrap pr_manager` OR setup completes and user has social platforms.
+Ref: specs/pr-manager.md §14 — Pre-Bootstrap Questions
+
+Ask these 5 questions before activating `enhancements.pr_manager: true`.
+
+### PRQ1: Social media intent
+"Would you like Artha to help you craft social media posts — LinkedIn, Facebook, Instagram,
+WhatsApp Status? Or would you prefer to handle social media yourself?"
+→ Options: [yes, all platforms] [yes, LinkedIn only] [yes, festivals/occasions only] [no thanks]
+→ If 'no thanks': do NOT activate pr_manager. Confirm: "No problem — you can enable it later
+  with `/bootstrap pr_manager`."
+→ Maps to: `state/pr_manager.md → Voice Profile Overrides` (note: scope preference)
+
+### PRQ2: LinkedIn role
+"What role does LinkedIn play for you?
+  (a) Active thought leadership — I want to build a professional presence
+  (b) Light presence — I post occasionally when inspired
+  (c) Dormant — I rarely use it"
+→ If (a): prioritize NT-1 + NT-5 threads, set posting_limits.linkedin.max_per_week: 2
+→ If (b): default limits apply
+→ If (c): suppress LinkedIn-first content suggestions; Instagram/Facebook first
+→ Maps to: narrative thread priority in state/pr_manager.md
+
+### PRQ3: Family in posts
+"Are you comfortable with Artha referencing your family in posts?
+  (a) Yes — first names on private platforms, initials only on public (LinkedIn)
+  (b) Yes — first names on all platforms
+  (c) Prefer to keep family out of social media entirely"
+→ If (a) or (b): NT-4 (Proud Dad) thread is active
+→ If (c): NT-4 thread disabled; family never referenced in public posts
+→ Maps to: `state/pr_manager.md` Voice Profile Overrides (family reference rule)
+
+### PRQ4: Hindi language preference
+"When it comes to Hindi/cultural references in posts, do you prefer:
+  (a) Transliteration — Holi ki shubhkamnayein (recommended default)
+  (b) Devanagari script — होली की शुभकामनाएं
+  (c) English only"
+→ Maps to: voice_profile.hindi_style in pr_manager.md
+→ Default if skipped: transliteration
+
+### PRQ5: Topics to target or avoid
+"Any topics you specifically want to post about or specifically avoid?"
+→ Accept: free text
+→ Add to `state/pr_manager.md → Voice Profile Overrides` table
+→ Skip allowed: "We'll tune this over time based on what you like."
+
+### Post-Bootstrap Action
+After all 5 questions:
+1. Write bootstrap answers to `state/pr_manager.md → Voice Profile Overrides` section
+2. Set `enhancements.pr_manager: true` in `config/artha_config.yaml`
+3. Enable PAT-PR-001 and PAT-PR-002 in `config/patterns.yaml` (set `enabled: true`)
+4. Confirm: "PR Manager activated! During your next catch-up, I'll start surfacing
+   content opportunities. Use /pr anytime to see your content calendar."
+5. Run health check: `python3 scripts/pr_manager.py --check`

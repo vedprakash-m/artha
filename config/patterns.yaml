@@ -182,3 +182,49 @@ patterns:
         sensitivity: "medium"
     cooldown_hours: 168
     enabled: true
+
+  # ── PR Manager Patterns (specs/pr-manager.md §11) ───────────────────────
+
+  - id: "PAT-PR-001"
+    name: "LinkedIn posting gap"
+    description: "Fires when no LinkedIn post in 21+ days — prompts a content opportunity nudge"
+    source_file: "state/pr_manager.md"
+    source_path: "platform_metrics.linkedin.last_post"
+    condition:
+      all_of:
+        - stale_days: 21         # _value = last_post date scalar
+    output_signal:
+      signal_type: "content_stale"
+      domain: "social"
+      urgency: 1
+      impact: 1
+      entity_field: null
+      metadata:
+        platform: "linkedin"
+        suggestion: "Your LinkedIn has been quiet for 3+ weeks. Any professional insights worth sharing?"
+        pr_manager: true
+    cooldown_hours: 168          # 7 days — only one reminder per week
+    enabled: false               # Activated when enhancements.pr_manager: true (set in artha_config)
+
+  - id: "PAT-PR-002"
+    name: "Cultural moment approaching without content plan"
+    description: "Fires when a major occasion is within 5 days and no draft exists"
+    source_file: "state/pr_manager.md"
+    source_path: "derived_snapshot"
+    condition:
+      all_of:
+        - field: "next_occasion_date"
+          days_until_lte: 5
+        - field: "pending_draft_count"
+          eq: 0
+    output_signal:
+      signal_type: "content_moment_missed"
+      domain: "social"
+      urgency: 1
+      impact: 2
+      entity_field: null
+      metadata:
+        suggestion: "A cultural moment is approaching — consider a post? Use /pr draft linkedin"
+        pr_manager: true
+    cooldown_hours: 72           # Re-check after 3 days if still no draft
+    enabled: false               # Activated when enhancements.pr_manager: true

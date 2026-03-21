@@ -786,6 +786,11 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
 /diff            State changes since last catch-up            5 seconds   *(v1.4)*
                  Shows additions/removals/modifications
                  per domain. No email fetch.
+/pr              Content calendar — moments, threads, quota   5 seconds   *(v1.4)*
+                 Backed by scripts/pr_manager.py --view
+                 /pr threads   Narrative thread progress
+                 /pr voice     Active voice profile + learnings
+                 /pr draft linkedin [topic]   Generate draft (Phase 3)
 /catch-up flash  Flash briefing (≤30 sec reading time)        1 minute    *(v1.3)*
 /catch-up deep   Deep analysis with extended reasoning        5–8 minutes *(v1.3)*
 ```

@@ -410,3 +410,49 @@ Log session to `state/audit.md` as `POWER_HOUR | [timestamp] | items_handled: [N
 
 ---
 
+### `/pr` — PR Manager (Personal Narrative Engine)
+> **Requires:** `enhancements.pr_manager: true` (activate via `/bootstrap pr_manager`)
+> **Script:** `python3 scripts/pr_manager.py`
+
+**`/pr`** — Content calendar for this week. Shows scored moments + quota status.
+Run: `python3 scripts/pr_manager.py --view`
+```
+━━ 📣 PR MANAGER — CONTENT CALENDAR ━━━━━━━━━━━━━━━━━━━━━━━━━━
+Moment                     Platforms       Thread   Score
+────────────────────────────────────────────────────────
+🟠 Holi (Wed Mar 25)      LI + FB + WA    NT-2     0.92
+🟡 Q1 reflection          LinkedIn        NT-5     0.68
+Posts this week: 0/2 (LinkedIn) · 0/2 (FB) · 0/2 (IG)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**`/pr threads`** — Narrative thread progress: last post, post cadence, reception trend per thread.
+Run: `python3 scripts/pr_manager.py --threads`
+
+**`/pr voice`** — Display active voice profile: tone, language, AVOID list, signature elements, any user overrides.
+Run: `python3 scripts/pr_manager.py --voice`
+
+**`/pr moments`** — All detected moments with convergence scores (Phase 3+).
+Run: `python3 scripts/pr_manager.py --step8 --verbose` then display `tmp/content_moments.json`.
+
+**`/pr history`** — Post history (last 30 days). Read `state/pr_manager.md → Post History` section.
+
+**`/pr draft <platform>`** — Generate a draft for `<platform>` (linkedin, facebook, instagram, whatsapp_status).
+> **Requires:** `enhancements.pr_manager.compose: true` (Phase 3)
+1. Run: `python3 scripts/pr_manager.py --draft-context <platform>` → get JSON context
+2. Use context to generate 1 clean variant in-context
+3. Display in Content Proposal format (§9.2 of specs/pr-manager.md)
+4. Apply 3-gate PII firewall (context sanitization + pii_guard.py + human review)
+5. On approval: `python3 scripts/pr_manager.py --log-post <platform> "<topic>" <thread_id> <score>`
+
+**`/pr draft <platform> <topic>`** — Draft about a specific topic (e.g. `/pr draft linkedin "Holi 2026"`).
+
+**`/pr draft <platform> --trending`** — Fresh Gemini trend context bypass cache (Phase 3+, costs ~$0.02).
+
+**Platform shorthands:** `li` → `linkedin`, `fb` → `facebook`, `ig` → `instagram`, `wa` → `whatsapp_status`
+
+**Command gating:** Phase 1: `/pr`, `/pr threads`, `/pr voice` — require `enhancements.pr_manager: true`.
+Phase 3+: `/pr draft`, `/pr moments`, `/pr history` — additionally require `enhancements.pr_manager.compose: true`.
+
+---
+
