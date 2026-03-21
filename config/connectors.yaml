@@ -43,12 +43,50 @@ connectors:
       max_retries: 3
       base_delay: 1.0
       max_delay: 30.0
+  outlook_email_personal:
+    type: email
+    provider: microsoft
+    enabled: true
+    run_on: all
+    description: Outlook / Microsoft 365 email — personal account (vedprakash.m@outlook.com)
+    auth:
+      method: oauth2
+      token_file: .tokens/msgraph-personal-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
+      scopes:
+      - Mail.Read
+      - Mail.ReadBasic
+    fetch:
+      handler: scripts/connectors/msgraph_email.py
+      default_max_results: 200
+      default_lookback: 7d
+    output:
+      format: jsonl
+      fields:
+      - id
+      - thread_id
+      - subject
+      - from
+      - to
+      - date_iso
+      - body
+      - labels
+      - snippet
+      source_tag: outlook_personal
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source outlook_email_personal
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 30.0
   outlook_email:
     type: email
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Outlook / Microsoft 365 email
+    description: Outlook / Microsoft 365 email — work account ([email])
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -72,7 +110,7 @@ connectors:
       - body
       - labels
       - snippet
-      source_tag: outlook
+      source_tag: outlook_work
     health_check: true
     mcp:
       prefer_mcp: false
@@ -150,12 +188,43 @@ connectors:
     mcp:
       prefer_mcp: false
       fallback: scripts/pipeline.py --source google_calendar
+  outlook_calendar_personal:
+    type: calendar
+    provider: microsoft
+    enabled: true
+    run_on: all
+    description: Outlook Calendar — personal account (vedprakash.m@outlook.com)
+    auth:
+      method: oauth2
+      token_file: .tokens/msgraph-personal-token.json
+      setup_script: scripts/setup_msgraph_oauth.py
+      scopes:
+      - Calendars.Read
+    fetch:
+      handler: scripts/connectors/msgraph_calendar.py
+      default_range_days: 7
+    output:
+      format: jsonl
+      fields:
+      - id
+      - calendar
+      - summary
+      - start
+      - end
+      - all_day
+      - location
+      - attendees
+      source_tag: outlook_personal
+    health_check: true
+    mcp:
+      prefer_mcp: false
+      fallback: scripts/pipeline.py --source outlook_calendar_personal
   outlook_calendar:
     type: calendar
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Outlook Calendar / Microsoft 365
+    description: Outlook Calendar — work account ([email])
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -176,7 +245,7 @@ connectors:
       - all_day
       - location
       - attendees
-      source_tag: outlook
+      source_tag: outlook_work
     health_check: true
     mcp:
       prefer_mcp: false
