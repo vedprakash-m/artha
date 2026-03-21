@@ -139,7 +139,7 @@ def _get_privkey(artha_dir: Path) -> str | None:
         _ensure_scripts_on_path()
         from foundation import get_private_key  # noqa: PLC0415
         return get_private_key()
-    except Exception:
+    except (Exception, SystemExit):
         return None
 
 
