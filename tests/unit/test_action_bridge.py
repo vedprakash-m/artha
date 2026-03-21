@@ -462,7 +462,6 @@ class TestSchemaMigration:
         monkeypatch.setenv("ARTHA_LOCAL_DB", str(db_path))
         q = ActionQueue(tmp_artha)
         import sqlite3
-        import sqlite3
         cur = q._conn.execute("PRAGMA table_info(actions)")
         cols = [row[1] for row in cur.fetchall()]
         assert "bridge_synced" in cols
