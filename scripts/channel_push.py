@@ -238,13 +238,31 @@ def _build_family_flash(max_length: int = 600) -> str:
                 dl_str = f" (due {dl})" if dl else ""
                 shared_tasks.append(f"  • {oi_id}: {desc}{dl_str}")
         except Exception:  # noqa: BLE001
-            # Fallback: regex scan
+            # Fallback: regex scan (YAML-style id/source_domain/description)
             for m in _re.finditer(
                 r"- id: (OI-\d+).*?source_domain: (kids|home|shopping|social).*?description: \"([^\"]+)\"",
                 oi_path.read_text(encoding="utf-8", errors="replace"),
                 _re.DOTALL,
             ):
                 shared_tasks.append(f"  • {m.group(1)}: {m.group(3)[:60]}")
+
+        # Additional fallback: markdown table format
+        # | OI-001 | Title | domain | Due | Priority | open |
+        if not shared_tasks:
+            try:
+                oi_table_text = oi_path.read_text(encoding="utf-8", errors="replace")
+                for m in _re.finditer(
+                    r"^\|\s*(OI-\d+)\s*\|\s*([^|]+?)\s*\|\s*(kids|home|shopping|social)\s*\|[^|]*\|[^|]*\|\s*open\s*\|",
+                    oi_table_text,
+                    _re.IGNORECASE | _re.MULTILINE,
+                ):
+                    oi_id = m.group(1).strip()
+                    desc = m.group(2).strip()[:70]
+                    domain = m.group(3).strip().lower()
+                    if domain in _FAMILY_ALLOWED_DOMAINS:
+                        shared_tasks.append(f"  • {oi_id}: {desc}")
+            except Exception:  # noqa: BLE001
+                pass
 
     if shared_tasks:
         sections.append("📝 SHARED TASKS")
