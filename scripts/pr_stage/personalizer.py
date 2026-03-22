@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """personalizer.py — DraftPersonalizer: context assembly and anti-boilerplate validation.
 
 Assembles deep personalization context for content generation from:

@@ -68,7 +68,7 @@ jobs:
             fi
 
             echo "Scanning: $file"
-            if ! python scripts/pii_guard.py scan < "$file"; then
+            if ! python scripts/pii_guard.py scan "$file"; then
               echo "::error file=$file::PII detected in $file"
               FAIL=1
             fi

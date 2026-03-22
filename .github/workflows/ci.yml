@@ -121,7 +121,7 @@ jobs:
                 echo "Skipping (exempt): $f"
                 continue
               fi
-              if ! python scripts/pii_guard.py scan < "$f"; then
+              if ! python scripts/pii_guard.py scan "$f"; then
                 echo "::error file=$f::PII detected in $f"
                 FAIL=1
               fi

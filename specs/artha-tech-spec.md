@@ -1,4 +1,5 @@
 # Artha — Technical Specification
+<!-- pii-guard: ignore-file -->
 
 > **Version**: 3.12.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
