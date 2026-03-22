@@ -69,7 +69,22 @@ from foundation import (
     log, die,
     get_private_key, get_public_key,
     check_age_installed, age_decrypt, age_encrypt,
+    _normalize_sensitive_files,
 )
+
+
+def _iter_sensitive_files():
+    """Yield (domain, extension, plain_path, age_path) for each sensitive file.
+
+    Handles both the new tuple format and legacy plain-string format from
+    SENSITIVE_FILES.  This is the single canonical iteration helper — all
+    vault loops MUST use this instead of building paths directly.
+    """
+    state_dir = _config["STATE_DIR"]
+    for domain, ext in _normalize_sensitive_files(_config["SENSITIVE_FILES"]):
+        plain_file = state_dir / f"{domain}{ext}"
+        age_file   = state_dir / f"{domain}{ext}.age"
+        yield domain, ext, plain_file, age_file
 
 
 # ---------------------------------------------------------------------------
@@ -405,12 +420,10 @@ def _check_sync_fence() -> bool:
     """
     if not _is_cloud_synced():
         return True
-    state_dir = _config["STATE_DIR"]
     existing = []
-    for d in _config["SENSITIVE_FILES"]:
-        f = state_dir / f"{d}.md.age"
-        if f.exists():
-            existing.append((f, f.stat().st_mtime))
+    for _domain, _ext, _plain, age_f in _iter_sensitive_files():
+        if age_f.exists():
+            existing.append((age_f, age_f.stat().st_mtime))
     if not existing:
         return True
     time.sleep(2)
@@ -430,10 +443,8 @@ def _lockdown_plaintext() -> None:
     Prevents Spotlight indexing, cloud sync, and casual access while the user
     fixes the encrypt issue. Permissions are restored on next successful decrypt.
     """
-    state_dir = _config["STATE_DIR"]
     locked = 0
-    for domain in _config["SENSITIVE_FILES"]:
-        plain = state_dir / f"{domain}.md"
+    for _domain, _ext, plain, _age in _iter_sensitive_files():
         if plain.exists():
             try:
                 if os.name != "nt":
@@ -455,9 +466,7 @@ def _lockdown_plaintext() -> None:
 
 def _unlock_plaintext() -> None:
     """Restore read/write permissions on plaintext files (called at decrypt start)."""
-    state_dir = _config["STATE_DIR"]
-    for domain in _config["SENSITIVE_FILES"]:
-        plain = state_dir / f"{domain}.md"
+    for _domain, _ext, plain, _age in _iter_sensitive_files():
         if plain.exists():
             try:
                 if os.name != "nt":
@@ -516,15 +525,15 @@ def do_decrypt() -> None:
     errors = 0
     quarantined = 0
 
-    for domain in SENSITIVE_FILES:
-        age_file = STATE_DIR / f"{domain}.md.age"
-        plain_file = STATE_DIR / f"{domain}.md"
+    for domain, ext, plain_file, age_file in _iter_sensitive_files():
+        filename = f"{domain}{ext}"
+        age_filename = f"{domain}{ext}.age"
 
         if age_file.exists():
             # Pre-validation: detect corrupt stubs before wasting time on age CLI
             if not _is_valid_age_file(age_file):
                 size = age_file.stat().st_size
-                print(f"  ⚠ {domain}.md.age is corrupt (size={size}B, missing age header) — quarantining", file=sys.stderr)
+                print(f"  ⚠ {age_filename} is corrupt (size={size}B, missing age header) — quarantining", file=sys.stderr)
                 _quarantine_file(age_file, domain, f"invalid_age_file (size={size})")
                 quarantined += 1
                 continue
@@ -535,47 +544,51 @@ def do_decrypt() -> None:
                 bak = Path(str(plain_file) + ".bak")
                 shutil.copy2(str(plain_file), str(bak_tmp))
                 os.replace(str(bak_tmp), str(bak))
-                log(f"INTEGRITY_BACKUP | file: {domain}.md | layer: 1_pre_decrypt")
+                log(f"INTEGRITY_BACKUP | file: {filename} | layer: 1_pre_decrypt")
 
-            print(f"  Decrypting {domain}.md.age ...")
+            print(f"  Decrypting {age_filename} ...")
             # Atomic decrypt: write to temp file, validate, then rename
             tmp_plain = Path(str(plain_file) + ".tmp")
             if age_decrypt(privkey, age_file, tmp_plain):
                 # Post-decrypt validation: empty?
                 if not tmp_plain.exists() or tmp_plain.stat().st_size == 0:
-                    print(f"  ERROR: Decrypted {domain}.md is empty — restoring backup", file=sys.stderr)
+                    print(f"  ERROR: Decrypted {filename} is empty — restoring backup", file=sys.stderr)
                     tmp_plain.unlink(missing_ok=True)
                     _restore_bak(plain_file, domain, "empty_decrypt")
                     errors += 1
                     continue
 
                 # Post-decrypt validation: YAML frontmatter?
-                with open(tmp_plain, encoding="utf-8", errors="replace") as f:
-                    first_line = f.readline()
-                if not first_line.startswith("---"):
-                    print(f"  ERROR: Decrypted {domain}.md missing YAML frontmatter — restoring backup",
-                          file=sys.stderr)
-                    tmp_plain.unlink(missing_ok=True)
-                    _restore_bak(plain_file, domain, "invalid_yaml")
-                    errors += 1
-                    continue
+                # .md files start with '---'; .yaml files start with '#' or a YAML key.
+                # For .yaml files we just check non-empty (already checked above).
+                if ext == ".md":
+                    with open(tmp_plain, encoding="utf-8", errors="replace") as f:
+                        first_line = f.readline()
+                    if not first_line.startswith("---"):
+                        print(f"  ERROR: Decrypted {filename} missing YAML frontmatter — restoring backup",
+                              file=sys.stderr)
+                        tmp_plain.unlink(missing_ok=True)
+                        _restore_bak(plain_file, domain, "invalid_yaml")
+                        errors += 1
+                        continue
 
                 # Atomic rename: tmp -> final (POSIX-atomic on same filesystem)
                 os.replace(str(tmp_plain), str(plain_file))
 
-                # Bootstrap detection
-                text = plain_file.read_text(encoding="utf-8", errors="replace")
-                if "updated_by: bootstrap" in text:
-                    log(f"BOOTSTRAP_DETECTED | file: {domain}.md | note: placeholder data — run /bootstrap {domain}")
+                # Bootstrap detection (only relevant for .md state files)
+                if ext == ".md":
+                    text = plain_file.read_text(encoding="utf-8", errors="replace")
+                    if "updated_by: bootstrap" in text:
+                        log(f"BOOTSTRAP_DETECTED | file: {filename} | note: placeholder data — run /bootstrap {domain}")
 
-                log(f"DECRYPT_OK | file: {domain}.md")
+                log(f"DECRYPT_OK | file: {filename}")
             else:
                 tmp_plain.unlink(missing_ok=True)
-                print(f"  ERROR: Failed to decrypt {domain}.md.age", file=sys.stderr)
+                print(f"  ERROR: Failed to decrypt {age_filename}", file=sys.stderr)
                 _restore_bak(plain_file, domain, "decrypt_failed")
                 errors += 1
         elif plain_file.exists():
-            print(f"  {domain}.md already exists as plaintext (no .age file). Leaving as-is.")
+            print(f"  {filename} already exists as plaintext (no .age file). Leaving as-is.")
 
     if quarantined > 0:
         print(f"\n  ⚠ {quarantined} corrupt .age file(s) quarantined to state/.quarantine/")
@@ -633,9 +646,7 @@ def do_encrypt() -> None:
         pubkey = get_public_key()
     except SystemExit:
         # Public key missing — cannot encrypt. Do NOT remove lock file.
-        # This prevents the "one-way door" where decrypt works but encrypt
-        # silently fails, leaving plaintext exposed indefinitely.
-        plaintext_count = sum(1 for d in SENSITIVE_FILES if (STATE_DIR / f"{d}.md").exists())
+        plaintext_count = sum(1 for _, _, plain, _ in _iter_sensitive_files() if plain.exists())
         print(f"\n  CRITICAL: Cannot encrypt — age_recipient public key not configured.", file=sys.stderr)
         print(f"  {plaintext_count} sensitive file(s) remain in PLAINTEXT.", file=sys.stderr)
         print(f"  Fix: Set encryption.age_recipient in config/user_profile.yaml", file=sys.stderr)
@@ -646,20 +657,19 @@ def do_encrypt() -> None:
 
     errors = 0
     encrypted_count = 0
-    encrypted_domains: list[str] = []  # deferred cleanup list (#1)
+    encrypted_files: list[tuple[str, str, Path, Path]] = []  # deferred cleanup list (#1)
 
-    for domain in SENSITIVE_FILES:
-        plain_file = STATE_DIR / f"{domain}.md"
-        age_file = STATE_DIR / f"{domain}.md.age"
+    for domain, ext, plain_file, age_file in _iter_sensitive_files():
+        filename = f"{domain}{ext}"
 
         if plain_file.exists():
             # Layer 3: Net-Negative Write Guard (P0)
             if not is_integrity_safe(plain_file, age_file):
-                print(f"  ERROR: Integrity check failed for {domain}.md. Skipping encryption to prevent data loss.", file=sys.stderr)
+                print(f"  ERROR: Integrity check failed for {filename}. Skipping encryption to prevent data loss.", file=sys.stderr)
                 errors += 1
                 continue
 
-            print(f"  Encrypting {domain}.md ...")
+            print(f"  Encrypting {filename} ...")
             tmp_file = Path(str(age_file) + ".tmp")
             if age_encrypt(pubkey, plain_file, tmp_file):
                 # Post-encrypt verification: detect truncation from disk-full (#8)
@@ -670,21 +680,21 @@ def do_encrypt() -> None:
                     tmp_size = 0
                     plain_size = 1
                 if tmp_size < plain_size:
-                    print(f"  ERROR: {domain}.md.age appears truncated "
+                    print(f"  ERROR: {filename}.age appears truncated "
                           f"({tmp_size}B < {plain_size}B plaintext) — possible disk full",
                           file=sys.stderr)
-                    log(f"ENCRYPT_TRUNCATED | file: {domain}.md | age_size: {tmp_size} | plain_size: {plain_size}")
+                    log(f"ENCRYPT_TRUNCATED | file: {filename} | age_size: {tmp_size} | plain_size: {plain_size}")
                     tmp_file.unlink(missing_ok=True)
                     errors += 1
                     continue
 
                 shutil.move(str(tmp_file), str(age_file))
-                encrypted_domains.append(domain)
+                encrypted_files.append((domain, ext, plain_file, age_file))
                 encrypted_count += 1
-                log(f"ENCRYPT_OK | file: {domain}.md")
+                log(f"ENCRYPT_OK | file: {filename}")
             else:
                 tmp_file.unlink(missing_ok=True)
-                print(f"  ERROR: Failed to encrypt {domain}.md", file=sys.stderr)
+                print(f"  ERROR: Failed to encrypt {filename}", file=sys.stderr)
                 errors += 1
 
     if errors > 0:
@@ -692,21 +702,18 @@ def do_encrypt() -> None:
         die(f"{errors} file(s) failed to encrypt. CRITICAL: plaintext may remain on disk.")
 
     # Deferred cleanup: remove plaintext + .bak only after ALL encrypts verified (#1)
-    for domain in encrypted_domains:
-        plain_file = STATE_DIR / f"{domain}.md"
+    for domain, ext, plain_file, age_file in encrypted_files:
         plain_file.unlink(missing_ok=True)
         bak = Path(str(plain_file) + ".bak")
         bak.unlink(missing_ok=True)
 
-    # Clean up orphaned plaintext stubs: if .md exists alongside a valid .age,
-    # the .md is a leftover from a prior interrupted encrypt cycle.
-    for domain in SENSITIVE_FILES:
-        plain_file = STATE_DIR / f"{domain}.md"
-        age_file = STATE_DIR / f"{domain}.md.age"
+    # Clean up orphaned plaintext stubs leftover from interrupted encrypt cycles.
+    for domain, ext, plain_file, age_file in _iter_sensitive_files():
         if plain_file.exists() and age_file.exists() and _is_valid_age_file(age_file):
             plain_file.unlink()
-            log(f"ORPHAN_CLEANUP | file: {domain}.md | reason: plaintext_alongside_valid_age")
-            print(f"  Cleaned orphaned plaintext: {domain}.md")
+            filename = f"{domain}{ext}"
+            log(f"ORPHAN_CLEANUP | file: {filename} | reason: plaintext_alongside_valid_age")
+            print(f"  Cleaned orphaned plaintext: {filename}")
 
     # Remove lock file only after all files are safely encrypted
     LOCK_FILE.unlink(missing_ok=True)
@@ -746,15 +753,15 @@ def do_status() -> None:
 
     print()
     print("State files:")
-    for domain in SENSITIVE_FILES:
-        plain_file = STATE_DIR / f"{domain}.md"
-        age_file = STATE_DIR / f"{domain}.md.age"
+    for domain, ext, plain_file, age_file in _iter_sensitive_files():
+        filename = f"{domain}{ext}"
+        age_filename = f"{domain}{ext}.age"
         if plain_file.exists():
-            print(f"  [PLAINTEXT] {domain}.md  ⚠ NOT encrypted")
+            print(f"  [PLAINTEXT] {filename}  ⚠ NOT encrypted")
         elif age_file.exists():
-            print(f"  [ENCRYPTED] {domain}.md.age ✓")
+            print(f"  [ENCRYPTED] {age_filename} ✓")
         else:
-            print(f"  [MISSING]   {domain} — no .md or .age found")
+            print(f"  [MISSING]   {domain} — no {ext} or {ext}.age found")
 
     print()
     if check_age_installed():
@@ -811,16 +818,16 @@ def do_auto_lock() -> int:
     # Mtime guard: don't auto-lock if state files are being actively written (#4)
     _ACTIVE_WRITE_THRESHOLD = 60  # seconds
     now = time.time()
-    for domain in SENSITIVE_FILES:
-        md_path = STATE_DIR / f"{domain}.md"
-        if md_path.exists():
+    for domain, ext, plain_file, _age_file in _iter_sensitive_files():
+        filename = f"{domain}{ext}"
+        if plain_file.exists():
             try:
-                md_age = now - os.path.getmtime(md_path)
+                md_age = now - os.path.getmtime(plain_file)
             except OSError:
                 continue
             if md_age < _ACTIVE_WRITE_THRESHOLD:
-                print(f"vault.py auto-lock: {domain}.md modified {int(md_age)}s ago — deferring.")
-                log(f"AUTO_LOCK_DEFERRED | reason: active_write | file: {domain}.md | mod_age: {int(md_age)}s")
+                print(f"vault.py auto-lock: {filename} modified {int(md_age)}s ago — deferring.")
+                log(f"AUTO_LOCK_DEFERRED | reason: active_write | file: {filename} | mod_age: {int(md_age)}s")
                 # Refresh lock file mtime to extend the TTL
                 LOCK_FILE.touch()
                 return 0
@@ -900,7 +907,7 @@ def do_health() -> None:
         print("  Lock file:    ✓ absent (state encrypted)")
 
     # 6. Orphaned .bak files — soft warning only (cleanup concern, not corruption)
-    bak_count = sum(1 for d in SENSITIVE_FILES if (STATE_DIR / f"{d}.md.bak").exists())
+    bak_count = sum(1 for _, _, p, _ in _iter_sensitive_files() if Path(str(p) + ".bak").exists())
     if bak_count > 0:
         print(f"  Backup files: ⚠ {bak_count} orphaned .bak file(s) — run: python3 scripts/vault.py encrypt")
         soft_warn = True

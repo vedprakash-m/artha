@@ -456,3 +456,36 @@ Phase 3+: `/pr draft`, `/pr moments`, `/pr history` — additionally require `en
 
 ---
 
+### `/stage` — Content Stage (PR-2)
+
+> **Sub-feature of PR Manager (PR-2) · Spec: specs/pr-stage.md v1.3.0**
+> Active when `enhancements.pr_manager.stage: true` in `config/artha_config.yaml`.
+> State file: `state/gallery.yaml`
+
+**`/stage`** — List all active content cards (seed, drafting, staged, approved).
+Display: card ID, occasion, event date, status, days until event, platform draft summary.
+
+**`/stage preview <CARD-ID>`** — Show full card with draft content for all platforms.
+Display draft text, PII flags, approval status per platform.
+
+**`/stage approve <CARD-ID>`** — Mark card as approved; emit copy-ready content for each platform.
+Prints formatted post text, any visual prompt file paths.
+
+**`/stage draft <CARD-ID>`** — Manually trigger draft generation for a seed card.
+Requires: `enhancements.pr_manager.stage: true`. Phase 2: calls LLM with deep context.
+
+**`/stage posted <CARD-ID> <platform>`** — Log that a post has been published on `<platform>`.
+Updates platform draft status to posted; triggers archive when all platforms resolved.
+
+**`/stage dismiss <CARD-ID>`** — Archive a card without posting (user decided not to post).
+Card moves to `dismissed` state and is eventually archived to `gallery_memory.yaml`.
+
+**`/stage history [year]`** — Browse cross-year archived cards from `state/gallery_memory.yaml`. (Phase 4)
+
+**Command gating:** All `/stage` commands require `enhancements.pr_manager.stage: true`.
+Phase 1: `/stage` list is available (auto-populated from Step 8).
+Phase 2: `/stage preview`, `/stage draft`, `/stage approve`, `/stage posted`, `/stage dismiss`.
+Phase 4: `/stage history`.
+
+---
+

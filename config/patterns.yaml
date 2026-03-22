@@ -228,3 +228,29 @@ patterns:
         pr_manager: true
     cooldown_hours: 72           # Re-check after 3 days if still no draft
     enabled: true                # Activated with enhancements.pr_manager: true
+
+  - id: "PAT-PR-003"
+    name: "Staged content card not reviewed"
+    description: "Fires when a staged card has been sitting unreviewed for 3+ days"
+    source_file: "state/gallery.yaml"
+    source_path: "cards"
+    condition:
+      all_of:
+        - field: "status"
+          eq: "staged"
+        - field: "created_at"
+          stale_days: 3
+    output_signal:
+      signal_type: "content_staged_unreviewed"
+      domain: "social"
+      urgency: 1
+      impact: 1
+      entity_field: "occasion"
+      metadata:
+        suggestion: "You have staged content waiting for review → /stage"
+        pr_manager: true
+    cooldown_hours: 48
+    enabled: false      # Enabled when enhancements.pr_manager.stage: true
+    # Note: evaluates state/gallery.yaml during plaintext phase only (after vault
+    # decrypt). gallery.yaml MUST remain single-document YAML (no --- separators).
+    # Ref: specs/pr-stage.md §8.3

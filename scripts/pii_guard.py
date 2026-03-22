@@ -239,8 +239,99 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
         r"\1:[PII-FILTERED-TFN]",
         "TFN",
     ),
+    # ── Devanagari / Hindi script patterns ─────────────────────────────────
+    # Phone: 10 consecutive Devanagari digits (e.g. ९८७६५४३२१०)
+    (
+        re.compile(r"(?<![\u0966-\u096F])[\u0966-\u096F]{10}(?![\u0966-\u096F])"),
+        "[PII-FILTERED-PHONE]",
+        "PHONE",
+    ),
+    # Phone with keyword context (Hindi/English prefix)
+    (
+        re.compile(
+            r"(?:फ़ोन|फोन|मोबाइल|call|tel|ph(?:one)?)\s*[:#]?\s*[+0]?[\u0966-\u096F\s\-]{10,14}",
+            re.IGNORECASE,
+        ),
+        "[PII-FILTERED-PHONE]",
+        "PHONE",
+    ),
+    # Aadhaar in Devanagari digits (context-gated)
+    (
+        re.compile(
+            r"(?:आधार(?:\s*कार्ड)?|aadhar|aadhaar|UID)\s*[:#]?\s*[\u0966-\u096F]{4}[\s\-]?[\u0966-\u096F]{4}[\s\-]?[\u0966-\u096F]{4}",
+            re.IGNORECASE,
+        ),
+        "[PII-FILTERED-AADHAAR]",
+        "AADHAAR",
+    ),
+    # Known family names in Devanagari script — loaded dynamically at runtime
+    # from user_profile.yaml (§10.1, P0-3). See _build_deva_name_pattern()
+    # below. This placeholder entry is replaced at first scan() call.
+    # DO NOT hardcode real names here — user_profile.yaml is gitignored.
+    (
+        re.compile(r"(?!x)x"),  # Placeholder — never matches; replaced by _build_deva_name_pattern()
+        "[PII-FILTERED-NAME]",
+        "DEVA_NAME",
+    ),
+    # Hindi address locality keywords followed by a Devanagari token
+    (
+        re.compile(
+            r"(?:गली|मोहल्ला|नगर|कॉलोनी|कालोनी|सेक्टर|मकान|पता|गाँव|ग्राम)\s+[\u0900-\u097F]+",
+            re.IGNORECASE,
+        ),
+        "[PII-FILTERED-ADDR]",
+        "ADDR",
+    ),
 ]
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Language fence — flags content in non-Latin scripts pending i18n validation
+# (§10.1 Phase 0 safeguard; lifted after Phase 2 validation sign-off)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Matches any Devanagari character (U+0900–U+097F)
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runtime Devanagari name loader (§10.1, P0-3 — never hardcode real names)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DEVA_NAME_PATTERN: re.Pattern | None = None   # cached after first load
+_DEVA_NAME_LOADED: bool = False                # sentinel to skip retry if absent
+
+
+def _build_deva_name_pattern() -> re.Pattern | None:
+    """Build Devanagari name detection regex from user_profile.yaml.
+
+    Reads `pii_guard.known_devanagari_names` list from config/user_profile.yaml.
+    Result is cached in _DEVA_NAME_PATTERN for subsequent calls.
+
+    Returns None if the config is absent, empty, or unreadable.
+    """
+    global _DEVA_NAME_PATTERN, _DEVA_NAME_LOADED  # noqa: PLW0603
+    if _DEVA_NAME_LOADED:
+        return _DEVA_NAME_PATTERN
+
+    _DEVA_NAME_LOADED = True  # mark attempted even if we fail
+    try:
+        import yaml  # noqa: PLC0415
+        config_dir = Path(__file__).resolve().parent.parent / "config"
+        profile_path = config_dir / "user_profile.yaml"
+        if not profile_path.exists():
+            return None
+        with open(profile_path, encoding="utf-8") as fh:
+            profile = yaml.safe_load(fh) or {}
+        names: list[str] = (profile.get("pii_guard") or {}).get("known_devanagari_names") or []
+        if not names:
+            return None
+        escaped = [re.escape(n.strip()) for n in names if n.strip()]
+        if not escaped:
+            return None
+        _DEVA_NAME_PATTERN = re.compile(r"(?:" + "|".join(escaped) + r")")
+    except Exception:  # noqa: BLE001 — degrade gracefully
+        pass
+    return _DEVA_NAME_PATTERN
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Core filter function
@@ -253,6 +344,8 @@ def _apply_filter(text: str) -> tuple[str, dict[str, int]]:
         (filtered_text, found_types_dict)
         found_types_dict: {pii_type: count} — empty if no PII detected
     """
+    original_text = text  # preserved for language-fence check
+
     # Step 1: protect allowlisted patterns with reversible sentinels
     sentinels: list[str] = []
 
@@ -272,9 +365,22 @@ def _apply_filter(text: str) -> tuple[str, dict[str, int]]:
             found[pii_type] = found.get(pii_type, 0) + n
             text = new_text
 
+    # Step 2b: dynamic Devanagari name check (loaded from user_profile.yaml at runtime)
+    deva_name_re = _build_deva_name_pattern()
+    if deva_name_re is not None:
+        new_text, n = deva_name_re.subn("[PII-FILTERED-NAME]", text)
+        if n > 0:
+            found["DEVA_NAME"] = found.get("DEVA_NAME", 0) + n
+            text = new_text
+
     # Step 3: restore sentinels
     for idx, original in enumerate(sentinels):
         text = text.replace(f"__AL{idx}LA__", original)
+
+    # Step 4: language fence — flag any Devanagari content for human review
+    # until full i18n PII coverage is validated (§10.1, Phase 0 safeguard).
+    if _DEVANAGARI_RE.search(original_text):
+        found["PII_UNVERIFIED_SCRIPT"] = found.get("PII_UNVERIFIED_SCRIPT", 0) + 1
 
     return text, found
 
