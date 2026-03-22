@@ -157,6 +157,33 @@ features:
     gate: "Activate with /bootstrap pr_manager"
     activate_command: "Set enhancements.pr_manager: true in artha_config.yaml"
 
+  pr_stage:
+    spec: "specs/pr-stage.md PR-2 v1.3.0"
+    status: partial
+    confidence: high
+    phases_complete:
+      - "Phase 0: Vault YAML support — SENSITIVE_FILES refactored to (domain, ext) tuples"
+      - "Phase 0: .gitignore YAML coverage — state/*.yaml.age added"
+      - "Phase 0: PII guard i18n baseline — Devanagari digits, Hindi names, address keywords, language fence"
+      - "Phase 0: Vault manifest tests (tests/unit/test_vault_yaml.py)"
+      - "Phase 0: PII guard i18n tests (tests/unit/test_pii_guard_i18n.py)"
+      - "Phase 1: scripts/pr_stage/ package — domain.py, repository.py, service.py, telemetry.py, personalizer.py"
+      - "Phase 1: state/gallery.yaml + state/gallery_memory.yaml bootstrap"
+      - "Phase 1: Gallery vault manifest entries (gallery, gallery_memory)"
+      - "Phase 1: Config flag enhancements.pr_manager.stage: true"
+      - "Phase 1: pr_manager.py Step 8 ContentStage hook"
+      - "Phase 1: PAT-PR-003 pattern rule (config/patterns.yaml, disabled by default)"
+      - "Phase 1: 104 unit tests — test_stage_domain, test_stage_repository, test_stage_service"
+    phases_remaining:
+      - "Phase 2: DraftPersonalizer LLM integration (auto-draft at 7 days)"
+      - "Phase 2: Briefing injection (flash/standard/full formats)"
+      - "Phase 2: /stage command family (list, preview, approve, dismiss, posted)"
+      - "Phase 3: Visual pipeline — tmp/visual_prompts/*.txt generation"
+      - "Phase 4: Cross-year memory — GalleryMemory reception tracking, /stage history"
+      - "Phase 5: Platform API posting"
+    gate: "Activate with enhancements.pr_manager.stage: true in artha_config.yaml"
+    activate_command: "Set enhancements.pr_manager.stage: true"
+
   # ── Commands ────────────────────────────────────────────────────────────
   catch_up:
     status: implemented

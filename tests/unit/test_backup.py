@@ -687,8 +687,8 @@ class TestBackupRegistry:
         # No user_profile.yaml — only settings.md from fixture → fallback to SENSITIVE_FILES
         entries = backup.load_backup_registry()
         entry_names = {e["name"] for e in entries}
-        for name in foundation._config["SENSITIVE_FILES"]:
-            assert name in entry_names
+        for domain, _ext in foundation._normalize_sensitive_files(foundation._config["SENSITIVE_FILES"]):
+            assert domain in entry_names
         for e in entries:
             assert e["source_type"] == "state_encrypted"
 
@@ -700,8 +700,8 @@ class TestBackupRegistry:
         profile_path.write_text(_yaml.dump({"family": {"name": "Test"}}), encoding="utf-8")
         entries = backup.load_backup_registry()
         entry_names = {e["name"] for e in entries}
-        for name in foundation._config["SENSITIVE_FILES"]:
-            assert name in entry_names
+        for domain, _ext in foundation._normalize_sensitive_files(foundation._config["SENSITIVE_FILES"]):
+            assert domain in entry_names
 
     def test_all_31_state_files_present_in_full_registry(self, mock_backup_env):
         """A full registry with 31 state + 4 config entries is loaded correctly."""

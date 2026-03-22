@@ -83,3 +83,10 @@ select = [
 ]
 # Future: add "F401" (unused import) and "F841" (unused variable) once
 # pre-existing violations are cleaned up.
+
+# ---------------------------------------------------------------------------
+# Pytest configuration
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals"]

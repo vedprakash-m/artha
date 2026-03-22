@@ -28,6 +28,8 @@ config/prompt-overlays/*.md
 # --- State files (all user-generated) ---
 state/*.md
 state/*.md.age
+state/*.yaml
+state/*.yaml.age
 # SQLite databases (actions.db, etc.) — user data, not committed
 state/*.db
 state/*.db-shm
@@ -110,3 +112,4 @@ state/.preflight_write_test
 # --- OneDrive conflict copies ---
 *-CPC-vemis-DJD0M*
 ".git 2/"
+*.pre-*-bak

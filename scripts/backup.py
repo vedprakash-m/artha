@@ -61,6 +61,7 @@ except ImportError:  # pragma: no cover
 from foundation import (
     _config,
     SENSITIVE_FILES,
+    _normalize_sensitive_files,
     log, die,
     get_public_key, get_private_key,
     check_age_installed, age_encrypt, age_decrypt,
@@ -146,12 +147,12 @@ def load_backup_registry() -> list:
 
     if not entries:
         # Fallback: SENSITIVE_FILES list — all state_encrypted
-        for name in _config["SENSITIVE_FILES"]:
+        for domain, ext in _normalize_sensitive_files(_config["SENSITIVE_FILES"]):
             entries.append({
-                "name":         name,
+                "name":         domain,
                 "source_type":  "state_encrypted",
-                "source_path":  state_dir / f"{name}.md.age",
-                "restore_path": f"state/{name}.md.age",
+                "source_path":  state_dir / f"{domain}{ext}.age",
+                "restore_path": f"state/{domain}{ext}.age",
             })
 
     # Always include agent-learned procedures (AR-5, agentic-reloaded.md).

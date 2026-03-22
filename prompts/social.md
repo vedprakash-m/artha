@@ -627,3 +627,64 @@ When user confirms a post is published (says "posted it", "done", "published"):
 3. Set 48h follow-up reminder: "Ask how the [platform] post about [topic] landed"
 4. After 48h: "Your [platform] post about [topic] — how did it land? [great / ok / wish I hadn't]"
 5. Record reception in Post History reception column
+
+---
+
+## Content Stage — PR-2 Card Lifecycle
+
+> **Sub-feature of PR Manager (PR-2) · Spec: specs/pr-stage.md v1.3.0**
+> Active when `enhancements.pr_manager.stage: true` in `config/artha_config.yaml`.
+> State file: `state/gallery.yaml` (vault-encrypted at rest)
+
+### About Content Stage
+
+Content Stage is the persistence layer for PR Manager. Where `/pr` detects *moments* and
+*scores* them, `/stage` tracks *cards* — persistent objects that move through a lifecycle
+from seed → drafted → staged → approved → posted → archived.
+
+Cards are automatically created by Step 8 (pr_manager.py) when scored moments appear.
+Each card tracks platform-specific drafts, PII flags, and event timing.
+
+### `/stage` Commands
+
+When the user says `/stage` (or any variation), interact with `state/gallery.yaml`:
+
+| Command | Action |
+|---------|--------|
+| `/stage` | List all active cards. Show: card ID, occasion, event date, status, days until event, draft readiness. |
+| `/stage preview <ID>` | Show full card: draft content per platform, PII flags, approval status. |
+| `/stage approve <ID>` | Emit approval — print copy-ready content for each platform. |
+| `/stage draft <ID>` | Trigger draft generation for a seed card (Phase 2: LLM). |
+| `/stage posted <ID> <platform>` | Log post as published; update platform draft to posted. |
+| `/stage dismiss <ID>` | Archive card without posting (user declined). |
+| `/stage history [year]` | Browse cross-year gallery memory (Phase 4). |
+
+### Card Display Format
+
+When listing cards:
+```
+━━ 📋 CONTENT STAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Card            Occasion              Date       Status     Days
+────────────────────────────────────────────────────────────────
+CARD-2026-001  Ram Navami            Apr 6      🟡 STAGED    14
+CARD-2026-002  Ambedkar Jayanti      Apr 14     🌱 SEED      22
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2 active cards · 1 awaiting review (→ /stage preview CARD-2026-001)
+```
+
+### Briefing Contribution (Phase 2+)
+
+When `stage_pending_review > 0` in the derived snapshot, surface in briefing:
+- **Flash:** "N content cards staged — `/stage`"
+- **Standard:** Preview top-priority card (next event date)
+- **Full:** Show all staged cards with draft summaries
+
+### Privacy Rules for Content Stage
+
+When interacting with `/stage`:
+1. Never display raw `personalization` context (contains assembled memory facts)
+2. Draft content may be shown — it has passed Layer 1 PII gate
+3. Cards with `PII_UNVERIFIED_SCRIPT` flag require explicit user approval before staging
+4. Cards with `EMPLOYER_MENTION` flag should be highlighted with ⚠️ marker
+5. Children's names on LinkedIn/public platforms are blocked structurally — cards with
+   `NEEDS_HUMAN_TOUCH` flag for this reason must be reviewed before approval

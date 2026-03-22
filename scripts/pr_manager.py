@@ -88,6 +88,16 @@ def _compose_enabled(config: dict | None = None) -> bool:
     return False
 
 
+def _stage_enabled(config: dict | None = None) -> bool:
+    """Return True if Phase 2 stage feature is enabled (enhancements.pr_manager.stage)."""
+    cfg = config or _load_config()
+    enhancements = cfg.get("enhancements", {})
+    val = enhancements.get("pr_manager", False)
+    if isinstance(val, dict):
+        return bool(val.get("stage", False))
+    return False
+
+
 # ---------------------------------------------------------------------------
 # State file I/O
 # ---------------------------------------------------------------------------
@@ -526,6 +536,7 @@ def write_derived_snapshot(
     next_occasion_date: str | None,
     pending_draft_count: int,
     pr_state_path: Path | None = None,
+    stage_stats: dict | None = None,
 ) -> bool:
     """Atomically update the Derived Snapshot block in state/pr_manager.md.
 
@@ -543,26 +554,34 @@ def write_derived_snapshot(
     except OSError:
         return False
 
-    # Update YAML frontmatter derived_snapshot block
-    # Using targeted regex to replace just the derived_snapshot section in frontmatter
-    fm_pattern = re.compile(
-        r"(derived_snapshot:\s*\n)"
-        r"([ \t]+next_occasion_date:.*\n)"
-        r"([ \t]+pending_draft_count:.*\n)"
-        r"([ \t]+last_scan_at:.*\n?)",
-        re.MULTILINE,
+    # Build the new derived_snapshot YAML block (all indented lines)
+    ss = stage_stats or {}
+    stage_block = (
+        "  stage_stats:\n"
+        f"    cards_active: {ss.get('cards_active', 0)}\n"
+        f"    pending_review: {ss.get('pending_review', 0)}\n"
+        f"    pii_failures_total: {ss.get('pii_failures_total', 0)}\n"
+        f"    auto_draft_failures: {ss.get('auto_draft_failures', 0)}\n"
+        f"    last_step8_ms: {ss.get('last_step8_ms', 'null')}\n"
     )
     new_fm_block = (
         "derived_snapshot:\n"
         f"  next_occasion_date: {occ_date}\n"
         f"  pending_draft_count: {pending_draft_count}\n"
         f"  last_scan_at: {today_str}\n"
+        + stage_block
+    )
+
+    # Update YAML frontmatter derived_snapshot block.
+    # Match derived_snapshot: followed by ALL indented lines (captures stage_stats too).
+    fm_pattern = re.compile(
+        r"derived_snapshot:\n([ \t]+[^\n]*\n)*",
+        re.MULTILINE,
     )
     if fm_pattern.search(content):
         content = fm_pattern.sub(new_fm_block, content)
     else:
-        # Frontmatter block not found — append before closing ---
-        # This is a safety fallback: state file may be fresh
+        # Frontmatter block not found — use literal fallback replacement
         content = content.replace(
             "derived_snapshot:\n  next_occasion_date: null\n"
             "  pending_draft_count: 0\n  last_scan_at: null",
@@ -1408,6 +1427,45 @@ def run_step8(
     # Save to cache
     _save_scored_moments(unique_moments)
 
+    # Content Stage integration (Phase 2, PR-2) — §8.4
+    _stage_pending = 0
+    _stage_stats: dict = {}
+    if _stage_enabled(config):
+        try:
+            from pr_stage.service import ContentStage  # noqa: PLC0415
+            _stage = ContentStage(
+                _STATE_DIR / "gallery.yaml",
+                _STATE_DIR / "gallery_memory.yaml",
+                state_dir=_STATE_DIR,
+            )
+            _new_cards    = _stage.process_moments(unique_moments)
+            _auto_drafted = _stage.auto_draft_pending()
+            _expired      = _stage.sweep_expired()
+            _stage_pending = (
+                _stage.count_by_status("staged")
+                + _stage.count_by_status("approved")
+            )
+            _metrics = _stage.get_metrics()
+            _stage_stats = {
+                "cards_active": sum(
+                    _stage.count_by_status(s)
+                    for s in ("seed", "drafting", "staged", "approved")
+                ),
+                "pending_review": _stage_pending,
+                "pii_failures":   _metrics.get("stage_pii_failures_total", 0),
+                "auto_draft_failures": _metrics.get("auto_draft_failures", 0),
+            }
+            if verbose:
+                print(
+                    f"[pr_manager] Content Stage: {len(_new_cards)} new cards, "
+                    f"{len(_auto_drafted)} auto-drafted, "
+                    f"{len(_expired)} archived, "
+                    f"{_stage_pending} staged/approved"
+                )
+        except Exception as e:  # noqa: BLE001
+            if verbose:
+                print(f"[pr_manager] Warning: Content Stage failed: {e}")
+
     # Compute derived snapshot values
     next_occasion_date = None
     for m in unique_moments:
@@ -1415,10 +1473,10 @@ def run_step8(
             next_occasion_date = m.event_date
             break
 
-    pending_count = _count_pending_drafts(_read_pr_body())
+    pending_count = _count_pending_drafts(_read_pr_body()) + _stage_pending
 
     # Write derived snapshot
-    ok = write_derived_snapshot(next_occasion_date, pending_count)
+    ok = write_derived_snapshot(next_occasion_date, pending_count, stage_stats=_stage_stats)
     if verbose:
         print(
             f"[pr_manager] Derived snapshot written: "

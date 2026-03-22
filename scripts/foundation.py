@@ -75,18 +75,23 @@ def _init_config() -> None:
         "CONFIG_DIR":   artha_dir / "config",
         "AUDIT_LOG":    artha_dir / "state" / "audit.md",
         "LOCK_FILE":    artha_dir / ".artha-decrypted",
-        # 10 entries — skills_cache removed (never existed on disk; see bkp-rst.md §2.3)
+        # 12 entries — (domain, extension) tuples.
+        # Legacy plain strings are auto-coerced to (domain, ".md") by
+        # _normalize_sensitive_files() for backward compatibility.
+        # gallery and gallery_memory use ".yaml" (PR-2 §4.3 / §12 Phase 0).
         "SENSITIVE_FILES": [
-            "immigration",
-            "finance",
-            "insurance",
-            "estate",
-            "health",
-            "audit",
-            "vehicle",
-            "contacts",
-            "occasions",
-            "transactions",
+            ("immigration", ".md"),
+            ("finance", ".md"),
+            ("insurance", ".md"),
+            ("estate", ".md"),
+            ("health", ".md"),
+            ("audit", ".md"),
+            ("vehicle", ".md"),
+            ("contacts", ".md"),
+            ("occasions", ".md"),
+            ("transactions", ".md"),
+            ("gallery", ".yaml"),
+            ("gallery_memory", ".yaml"),
         ],
         "KC_SERVICE":      "age-key",
         "KC_ACCOUNT":      "artha",
@@ -96,6 +101,25 @@ def _init_config() -> None:
 
 
 _init_config()
+
+
+def _normalize_sensitive_files(entries: list) -> list[tuple[str, str]]:
+    """Coerce SENSITIVE_FILES entries to (domain, extension) tuples.
+
+    Accepts both the new tuple format and legacy plain strings (which are
+    coerced to ``(domain, ".md")`` for backward compatibility).
+    Allows test fixtures and external code to pass either format safely.
+    """
+    result = []
+    for entry in entries:
+        if isinstance(entry, tuple) and len(entry) == 2:
+            result.append(entry)
+        elif isinstance(entry, str):
+            result.append((entry, ".md"))
+        else:
+            raise ValueError(f"SENSITIVE_FILES entry must be str or (str, str) tuple, got: {entry!r}")
+    return result
+
 
 # ---------------------------------------------------------------------------
 # Module-level aliases — frozen at import time.
