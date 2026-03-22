@@ -72,6 +72,10 @@ class TestNonMacOSFallback:
     def test_fetch_import_error_yields_nothing(self):
         """fetch yields nothing when pyobjc is not installed (ImportError)."""
         import connectors.apple_reminders as ar
+        if not hasattr(ar, "_get_event_store"):
+            # On non-macOS the entire macOS code block is skipped at import time;
+            # the stub fetch() already returns [] — that's the fallback under test.
+            pytest.skip("macOS-only: _get_event_store not available on this platform")
         with patch.object(ar, "_IS_MACOS", True):
             with patch("connectors.apple_reminders._get_event_store", side_effect=ImportError("no pyobjc")):
                 records = list(ar.fetch(max_results=10))
