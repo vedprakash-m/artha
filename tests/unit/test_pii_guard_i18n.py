@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """Phase 0 PII guard i18n tests — Devanagari/Hindi script detection.
 
 Verifies that pii_guard.py correctly flags:

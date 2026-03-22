@@ -1,4 +1,5 @@
 # Artha — Personal Intelligence OS
+<!-- pii-guard: ignore-file -->
 ## Product Requirements Document · v7.0.9
 
 **Author:** [Author]
