@@ -279,6 +279,66 @@ Push deduplication marker: `state/.channel_push_marker_YYYY-MM-DD.json` (12-hour
 
 ---
 
-## Discord & Slack (Roadmap)
+## Discord & Slack
 
-Discord and Slack adapters are planned for a future release. Adapter stubs are in `scripts/channels/`. Track progress in `specs/conversational-bridge.md §14`.
+Both Discord and Slack are fully implemented as channel adapters (CONNECT v1.0.0).
+
+### Slack
+
+**Setup:** `python scripts/setup_slack.py`
+
+Slack is configured via two tokens stored in the system keyring:
+- **Bot token** (`xoxb-…`): `artha-slack-bot-token` — for sending messages and reading channel history
+- **App token** (`xapp-…`): `artha-slack-app-token` — for Socket Mode interactive commands (Layer 2)
+
+Required OAuth scopes (bot):
+`chat:write`, `files:write`, `channels:history`, `channels:read`, `groups:history`, `im:history`, `users:read`
+
+Required OAuth scopes (app): `connections:write`
+
+**Capabilities:**
+- Layer 1 (Push): `send_message` via `chat.postMessage`, `send_document` via `files.upload`
+- Layer 2 (Interactive): Socket Mode WebSocket, parses slash commands, enforces sender whitelist
+- Slack connector (`scripts/connectors/slack.py`): ingest workspace messages as Artha records
+
+**Config (`config/channels.yaml`):**
+```yaml
+slack:
+  enabled: false  # Set to true after setup
+  credential_key: artha-slack-bot-token
+  app_credential_key: artha-slack-app-token
+  channels: ["#artha"]
+  sender_whitelist: []  # User IDs; empty = any whitelisted workspace member
+```
+
+**Action:** `slack_send` — posts messages via `chat.postMessage` (requires human approval)
+
+---
+
+### Discord
+
+**Setup:** `python scripts/setup_discord.py`
+
+Discord uses a single bot token stored in the system keyring as `artha-discord-bot-token`.
+
+**Create a bot:**
+1. [Discord Developer Portal](https://discord.com/developers/applications) → New Application
+2. Bot tab → Add Bot → Reset Token → Copy
+3. Enable: **Message Content Intent**, **Server Members Intent**
+4. OAuth2 → Bot → Permissions: Read Messages, Send Messages, Attach Files
+5. Invite bot to your server via generated URL
+
+**Capabilities:**
+- Layer 1 (Push): `send_message` via `channels/{id}/messages`, chunking for >2000 char messages
+- Layer 2 (Interactive): Gateway WebSocket (`wss://gateway.discord.gg`), `MESSAGE_CREATE` events, slash command dispatch
+- Gateway intents: `GUILD_MESSAGES` (512) + `DIRECT_MESSAGES` (4096) + `MESSAGE_CONTENT` (32768)
+
+**Config (`config/channels.yaml`):**
+```yaml
+discord:
+  enabled: false  # Set to true after setup
+  credential_key: artha-discord-bot-token
+  channel_id: ""  # Replace with your channel's Snowflake ID
+  sender_whitelist: []  # Discord User IDs; empty = allow any
+```
+

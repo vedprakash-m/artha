@@ -44,6 +44,8 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "whatsapp_last_contact",
     # ARTHA-IOT Wave 2 — Home Assistant device monitor
     "home_device_monitor",
+    # CONNECT Phase 2 — Mental health utilization tracker
+    "mental_health_utilization",
 })
 
 # Timeout for individual skill execution (seconds)

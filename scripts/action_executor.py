@@ -57,6 +57,11 @@ _HANDLER_MAP: dict[str, str] = {
     "whatsapp_send":     "actions.whatsapp_send",
     "todo_sync":         "actions.todo_sync_action",
     "instruction_sheet": "actions.instruction_sheet",
+    # CONNECT Phase 1
+    "slack_send":        "actions.slack_send",
+    # CONNECT Phase 3 — Task manager sync
+    "todoist_sync":         "actions.todoist_sync",
+    "apple_reminders_sync": "actions.apple_reminders_sync",
 }
 
 # Default execution timeout per handler (seconds)

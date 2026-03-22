@@ -21,6 +21,10 @@ as a Python handler module in `scripts/connectors/`.
 | `apple_health` | health | Local Apple Health export | ⭕ Opt-in (disabled by default) |
 | `whatsapp_local` | messaging | Local WhatsApp Desktop DB | ⭕ Opt-in · Windows + macOS |
 | `imessage_local` | messaging | Local macOS Messages DB | ⭕ Opt-in · macOS only |
+| `slack` | messaging | Slack Web API + Socket Mode | ⭕ Opt-in — run `setup_slack.py` |
+| `todoist` | task_manager | Todoist REST API v2 | ⭕ Opt-in — run `setup_todoist.py` |
+| `apple_reminders` | task_manager | Apple Reminders (EventKit) | ⭕ Opt-in · macOS only |
+| `plaid` | financial | Plaid (aggregated only) | ⭕ Opt-in — run `setup_plaid.py` |
 
 ---
 

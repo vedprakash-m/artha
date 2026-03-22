@@ -192,3 +192,83 @@ When `apple_health` connector output is available in the JSONL stream:
 
 **Privacy note:** `state/health.md.age` is encrypted. Lab result details must never
 appear in plain state files, briefings sent to unencrypted channels, or audit logs.
+
+---
+
+## Mental Health & Behavioral Wellness
+> **CONNECT §5.1** — Extension of the health domain. Activated by `connect.domains.mental_health_extension: true` in `config/artha_config.yaml`. Default: `false`. Consent-by-notification model — see §5.1 of specs/connect.md.
+
+### Purpose
+Track therapy appointments, psychiatric medications, EAP utilization,
+and behavioral health signals. Artha NEVER interprets clinical content —
+it tracks logistics (appointments, refills, insurance) only.
+
+### Sender Signatures (route here — merge with main health signatures)
+- `*@betterhelp.com`, `*@talkspace.com`, `*@cerebral.com`
+- `*@springhealth.com`, `*@lyrahealth.com`, `*@ginger.io`
+- `*@headspace.com`, `*@calm.com` (meditation/mindfulness platforms)
+- `*@mdlive.com`, `*@teladoc.com` (telehealth — behavioral)
+- Subject: therapy, therapist, counseling, counselor, behavioral health
+- Subject: EAP, employee assistance, mental health, psychiatry
+- Subject: meditation, mindfulness session, wellness coaching
+
+### Extraction Rules
+1. **Person**: who is this for? (any family member)
+2. **Type**: therapy_appointment | psychiatric_medication | eap_session | meditation_subscription | behavioral_telehealth
+3. **Date/time**: appointment date, next session, prescription refill
+4. **Provider**: first name + last initial only (NEVER full credentials)
+5. **Action**: schedule, cancel, refill, review coverage
+6. **Insurance**: does this route through behavioral health benefits? (separate from medical benefits for many plans)
+
+### Alert Thresholds
+🟠 **URGENT**:
+- Therapy appointment tomorrow — confirm
+- Psychiatric medication refill overdue
+- EAP session limit approaching (e.g., 8/10 sessions used)
+
+🟡 **STANDARD**:
+- Therapy appointment in next 7 days
+- Meditation subscription renewal upcoming
+- EAP annual reset reminder (typically Jan 1)
+
+### Behavioral Signal Detection (cross-domain — NOT clinical)
+Artha detects behavioral PATTERNS, never diagnoses. These signals enrich
+the coaching engine and compound alert system:
+
+| Signal | Source Domains | Compound Alert |
+|--------|---------------|----------------|
+| Sleep disruption trend | wellness (wearable), calendar (late events) | Stress compound |
+| Exercise frequency drop | wellness, goals | Energy compound |
+| Social contact decline | social, comms, relationships | Isolation compound |
+| Work boundary violations increase | boundary, slack, calendar | Overwork compound |
+| Therapy cancellation pattern | health (this section) | Care gap alert |
+
+These compound alerts surface in the coaching engine (E16) as nudges, NOT as clinical assessments. Language: "You've cancelled 2 therapy sessions this month and your exercise dropped to 1x/week. Want me to protect a self-care block on your calendar?" — NEVER: "You may be experiencing depression."
+
+### Strict Boundaries
+- NEVER store diagnosis codes, clinical notes, or treatment plans
+- NEVER infer mental health conditions from behavioral signals
+- NEVER include mental health appointment details in family flash digest
+- NEVER surface mental health in PR Manager or social domain
+- Mental health entries in state file use generic labels: "Behavioral health appointment" — not "CBT session for anxiety"
+- PII for mental health providers follows same rules as medical: first name + last initial, facility name OK, credentials NEVER
+
+### State File Addition — `state/health.md.age` → `## Behavioral Health`
+```markdown
+## Behavioral Health
+### Appointments
+| Person | Provider | Type | Next Appointment | Frequency | Notes |
+|--------|----------|------|-----------------|-----------|-------|
+
+### Medications (Psychiatric)
+| Person | Medication | Dosage | Prescriber | Refill Due | Pharmacy |
+|--------|-----------|--------|------------|-----------|----------|
+
+### EAP / Benefits
+| Benefit | Provider | Sessions Used | Session Limit | Resets |
+|---------|----------|--------------|--------------|--------|
+
+### Wellness Subscriptions
+| Service | Status | Renewal Date | Monthly Cost |
+|---------|--------|-------------|-------------|
+```

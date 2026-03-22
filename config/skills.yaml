@@ -114,3 +114,16 @@ skills:
       offline (MONITORED), energy anomalies >30%, printer supply <20%, spa temp
       variance >5°F. Emits DomainSignals for ActionComposer routing.
 
+  # ── CONNECT v1.0.0 Phase 2 Skills ───────────────────────────────────────
+
+  mental_health_utilization:
+    enabled: true
+    priority: P1
+    cadence: weekly
+    requires_vault: true
+    safety_critical: false
+    description: >
+      Track EAP session utilization and therapy appointment patterns.
+      Alerts when session limits are approaching or appointments have been
+      consistently cancelled. Never accesses or interprets clinical content.
+

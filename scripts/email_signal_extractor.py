@@ -161,7 +161,26 @@ _SIGNAL_PATTERNS: list[tuple[list[re.Pattern], str, str, int, int]] = [
         ],
         "school_action_needed", "kids", 2, 2,
     ),
+    # 9. Slack action item (CONNECT §4.3) — matches Slack message records
+    #    where source == "slack" (and any email containing TODO/ACTION phrases)
+    (
+        [
+            re.compile(r"\bTODO\b", re.I),
+            re.compile(r"\bACTION(?:\s+ITEM)?:\B", re.I),
+            re.compile(r"\bFOLLOW[\s\-]?UP\b", re.I),
+            re.compile(r"@\w+\s+please\b", re.I),
+        ],
+        "slack_action_item", "open_items", 2, 2,
+    ),
 ]
+
+# Slack after-hours pattern constants (CONNECT §4.3)
+# Note: after_hours detection is timestamp-driven (not regex); signals are
+# emitted by pipeline.py when a Slack record's ts falls outside
+# user_profile.yaml → work_hours.start / work_hours.end.
+# The regex-free pattern below is a named sentinel for auditing.
+_SLACK_AFTER_HOURS_SIGNAL_TYPE = "slack_after_hours"
+_SLACK_AFTER_HOURS_DOMAIN = "boundary"
 
 # Regex to extract a plausible deadline date from text
 _DATE_RE = re.compile(

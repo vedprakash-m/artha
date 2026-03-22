@@ -175,6 +175,69 @@ actions:
     autonomy_floor: true         # ALWAYS requires human approval
     description: "Send WhatsApp message (Phase 1: URL scheme; Phase 2: Cloud API)"
 
+  slack_send:
+    handler: "scripts/actions/slack_send.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false             # no retry for sent messages
+    reversible: false        # Slack messages cannot be recalled via API
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
+    pii_check: true
+    pii_allowlist:
+      - "channel"
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Send message to a Slack channel or user via chat.postMessage"
+
+  # ── CONNECT Phase 3 — Task Manager Sync ──────────────────────────────────
+
+  todoist_sync:
+    handler: "scripts/actions/todoist_sync.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: false        # Task creation in Todoist cannot be auto-reversed
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: true
+    pii_allowlist:
+      - "title"
+      - "description"
+      - "project"
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Create a task in Todoist (single-writer: Artha writes once, Todoist owns)"
+
+  apple_reminders_sync:
+    handler: "scripts/actions/apple_reminders_sync.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: false
+    run_on: darwin           # macOS only
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: true
+    pii_allowlist:
+      - "title"
+      - "notes"
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Create a reminder in Apple Reminders via EventKit (macOS only, single-writer)"
+
   # ── Content Generation ───────────────────────────────────────────────────
 
   instruction_sheet:
