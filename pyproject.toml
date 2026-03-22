@@ -30,6 +30,8 @@ microsoft = [
 apple = [
     "caldav>=1.3.0",
     "vobject>=0.9.6",
+    # Apple Reminders via EventKit (macOS only — CONNECT Phase 3)
+    "pyobjc-framework-EventKit>=9.0; sys_platform=='darwin'",
 ]
 skills = [
     "requests>=2.31.0",
@@ -39,6 +41,9 @@ messaging = [
     "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chromium_reader.git",
 ]
 channels = [
+    # websockets>=12.0 is required for Slack Socket Mode and Discord Gateway.
+    # Install with: pip install 'artha[channels]'
+    "websockets>=12.0",
     # Optional: use python-telegram-bot>=21 for richer Telegram features.
     # The built-in urllib-based adapter (scripts/channels/telegram.py) requires
     # no additional dependencies.

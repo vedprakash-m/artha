@@ -126,6 +126,21 @@ domains:
       - clinic
       - diagnosis
       - medication
+      # Mental health / behavioral wellness (CONNECT §5.1)
+      - therapy
+      - therapist
+      - counseling
+      - counselor
+      - behavioral health
+      - psychiatry
+      - psychiatric
+      - EAP
+      - employee assistance program
+      - mental health
+      - BetterHelp
+      - Talkspace
+      - Spring Health
+      - Lyra
     alert_thresholds:
       red: "Prescription runs out in <7 days, missed appointment"
       orange: "Appointment in <48 hours, prescription due for refill"
@@ -463,6 +478,30 @@ domains:
       - condition: "family.care_recipients is non-empty"
         field: "family.care_recipients"
         operator: "non_empty"
+    routing_keywords:
+      - caregiver
+      - caregiving
+      - elder care
+      - aging parent
+      - assisted living
+      - nursing home
+      - skilled nursing
+      - home health
+      - Medicare
+      - Medicaid
+      - adult day care
+      - hospice
+      - respite care
+      - power of attorney elder
+      - guardianship
+      - memory care
+      - dementia
+      - Alzheimer
+    alert_thresholds:
+      red: "Medication missed >48h, emergency contact needed"
+      orange: "Appointment tomorrow, medication refill <7 days, POA renewal due"
+      yellow: "Communication gap >5 days, annual care plan review"
+      blue: "Care plan update received, new facility communication"
 
   business:
     label: "Side Business / Freelance"
@@ -481,6 +520,30 @@ domains:
       - condition: "domains.business.entity_name is set"
         field: "domains.business.entity_name"
         operator: "truthy"
+    routing_keywords:
+      - invoice
+      - payout
+      - earnings
+      - 1099
+      - contractor
+      - freelance
+      - client payment
+      - Stripe
+      - PayPal
+      - Square
+      - Shopify
+      - Etsy
+      - Upwork
+      - Fiverr
+      - QuickBooks
+      - FreshBooks
+      - quarterly estimated tax
+      - self-employed
+    alert_thresholds:
+      red: "1099-K threshold crossed, quarterly tax due in <3 days"
+      orange: "Invoice unpaid >30 days, quarterly estimated tax due <14 days"
+      yellow: "New client payment received, platform payout processed"
+      blue: "Monthly revenue summary available"
 
   wellness:
     label: "Fitness & Wellness"
@@ -496,6 +559,27 @@ domains:
     requires_connectors: []
     optional_connectors: [apple_health, strava, garmin]
     auto_enable_when: []
+    routing_keywords:
+      - fitness
+      - workout
+      - exercise
+      - gym
+      - yoga
+      - steps
+      - calories
+      - sleep
+      - nutrition
+      - weight
+      - BMI
+      - Peloton
+      - ClassPass
+      - Strava
+      - Garmin
+      - Fitbit
+    alert_thresholds:
+      orange: "Exercise goal behind by >2 sessions this week"
+      yellow: "No activity logged in 3+ days, gym membership renewal"
+      blue: "New personal record, streak milestone"
 
   community:
     label: "Community & Volunteering"
@@ -511,6 +595,26 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+    routing_keywords:
+      - volunteer
+      - donation
+      - contribution
+      - tax receipt
+      - community service
+      - PTA
+      - temple
+      - church
+      - mosque
+      - synagogue
+      - gurdwara
+      - GoFundMe
+      - donorbox
+      - charitable
+      - nonprofit
+    alert_thresholds:
+      orange: "Membership renewal due <30 days, volunteer commitment tomorrow"
+      yellow: "Donation receipt received (log for tax), community event this week"
+      blue: "Annual giving summary available, volunteer hours milestone"
 
   # ── Work Domains (opt-in, disabled by default) ─────────────────────────────
   # Requires: WorkIQ (M365 calendar/email/Teams/people) and/or Azure CLI (ADO)

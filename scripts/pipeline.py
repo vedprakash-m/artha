@@ -99,6 +99,13 @@ _HANDLER_MAP: dict[str, str] = {
     "connectors.imessage_local": "connectors.imessage_local",
     # IoT connector (LAN-only, opt-in — ARTHA-IOT Wave 1)
     "connectors.homeassistant": "connectors.homeassistant",
+    # Messaging connectors (cloud API — opt-in — CONNECT Phase 1)
+    "connectors.slack": "connectors.slack",
+    # Task manager connectors (opt-in — CONNECT Phase 3)
+    "connectors.todoist": "connectors.todoist",
+    "connectors.apple_reminders": "connectors.apple_reminders",
+    # Financial connectors (opt-in — CONNECT Phase 5)
+    "connectors.plaid_connector": "connectors.plaid_connector",
 }
 
 

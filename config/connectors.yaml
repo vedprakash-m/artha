@@ -641,3 +641,163 @@ connectors:
       max_retries: 2
       base_delay: 1.0
       max_delay: 5.0
+
+  # ── CONNECT Phase 1 (Slack P0) ───────────────────────────────────────────
+  # ── CONNECT Phase 3 (Task Managers) ─────────────────────────────────────
+  todoist:
+    type: task_manager
+    provider: todoist
+    enabled: false           # Enable via: python scripts/setup_todoist.py
+    run_on: all
+    description: >
+      Todoist REST API v2 — reads active + completed tasks for open item tracking.
+      Single-writer sync: Artha creates tasks once; Todoist owns thereafter.
+      Run scripts/setup_todoist.py to configure.
+    auth:
+      method: keyring
+      credential_key: artha-todoist
+      setup_script: scripts/setup_todoist.py
+    fetch:
+      handler: scripts/connectors/todoist.py
+      default_max_results: 100
+      default_lookback: 7d
+      # project_filter: []   # Optional: restrict to specific project names
+    output:
+      format: jsonl
+      fields:
+        - id
+        - content
+        - description
+        - project_name
+        - labels
+        - priority
+        - due_date
+        - due_string
+        - is_completed
+        - completed_at
+        - created_at
+        - source
+        - section_name
+        - parent_id
+        - url
+      source_tag: todoist
+    health_check: true
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 30.0
+
+  apple_reminders:
+    type: task_manager
+    provider: apple
+    enabled: false           # macOS only — requires pyobjc-framework-EventKit
+    run_on: darwin
+    description: >
+      Apple Reminders via macOS EventKit — reads reminders for open item tracking.
+      Single-writer sync: Artha creates reminders once; Reminders app owns thereafter.
+      Requires: pip install 'artha[apple]'
+    auth:
+      method: system_permission    # No token — uses macOS TCC permission dialog
+      setup_script: null
+    fetch:
+      handler: scripts/connectors/apple_reminders.py
+      default_max_results: 200
+      default_lookback: 30d
+      # list_filter: []    # Optional: restrict to specific list names
+    output:
+      format: jsonl
+      fields:
+        - id
+        - title
+        - notes
+        - list_name
+        - due_date
+        - is_completed
+        - completed_at
+        - created_at
+        - priority
+        - source
+      source_tag: apple_reminders
+    health_check: true
+    retry:
+      max_retries: 1
+      base_delay: 0.0
+      max_delay: 0.0
+
+  # ── CONNECT Phase 5 (Financial) ──────────────────────────────────────────
+  plaid:
+    type: financial
+    provider: plaid
+    enabled: false           # Enable via: python scripts/setup_plaid.py
+    run_on: all
+    description: >
+      Plaid financial data connector — fetches AGGREGATED transaction summaries only.
+      PRIVACY: Raw transaction data is NEVER stored. Only category-level
+      spend summaries persist. Run scripts/setup_plaid.py to configure.
+    auth:
+      method: keyring
+      credential_key: artha-plaid-access-token
+      setup_script: scripts/setup_plaid.py
+    fetch:
+      handler: scripts/connectors/plaid_connector.py
+      default_max_results: 500
+      default_lookback: 30d
+      environment: sandbox     # Change to production after setup
+    output:
+      format: jsonl
+      fields:
+        - category
+        - merchant_group
+        - month
+        - transaction_count
+        - total_amount
+        - currency
+        - source
+      source_tag: plaid
+    health_check: true
+    retry:
+      max_retries: 3
+      base_delay: 1.5
+      max_delay: 30.0
+
+  # ── CONNECT Phase 1 (Slack P0) ───────────────────────────────────────────
+  slack:
+    type: messaging
+    provider: slack
+    enabled: false           # Enable via: python scripts/setup_slack.py
+    run_on: all
+    description: 'Slack workspace message ingestion — reads recent messages from
+      configured channels via the Web API. Requires a bot token with
+      channels:history, channels:read scopes. Run scripts/setup_slack.py to configure.
+
+      '
+    auth:
+      method: keyring
+      credential_key: artha-slack-bot-token
+      setup_script: scripts/setup_slack.py
+    fetch:
+      handler: scripts/connectors/slack.py
+      default_max_results: 100
+      default_lookback: 24h
+      channels: []            # e.g. ["#general", "#engineering"]
+      workspace_slug: ''      # e.g. mycompany (for deep-link URLs)
+      include_replies: false
+    output:
+      format: jsonl
+      fields:
+      - id
+      - title
+      - body
+      - author
+      - ts
+      - url
+      - source
+      - channel
+      - thread_ts
+      - reactions
+      source_tag: slack
+    health_check: true
+    retry:
+      max_retries: 3
+      base_delay: 1.0
+      max_delay: 30.0

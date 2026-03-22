@@ -432,3 +432,105 @@ features:
     status: implemented
     confidence: high
     note: "scripts/coaching_engine.py — deterministic coaching nudges"
+
+  # ── CONNECT v1.0.0 ───────────────────────────────────────────────────────
+  # Phase 1: Slack P0
+  connect_slack_connector:
+    spec: "specs/connect.md §7"
+    status: implemented
+    confidence: high
+    note: "scripts/connectors/slack.py — Web API ingest + Socket Mode"
+  connect_slack_channel:
+    spec: "specs/connect.md §7.4-7.5"
+    status: implemented
+    confidence: high
+    note: "scripts/channels/slack.py — Layer 1 push + Layer 2 Socket Mode"
+  connect_slack_action:
+    spec: "specs/connect.md §7.5"
+    status: implemented
+    confidence: high
+    note: "scripts/actions/slack_send.py — chat.postMessage ActionHandler"
+  connect_slack_setup:
+    spec: "specs/connect.md §7.1"
+    status: implemented
+    confidence: high
+    note: "scripts/setup_slack.py — interactive setup wizard + keyring"
+
+  # Phase 2: Domain Prompts
+  connect_domain_caregiving:
+    spec: "specs/connect.md §5.2"
+    status: implemented
+    confidence: high
+    note: "prompts/caregiving.md — elder care domain prompt"
+  connect_domain_wellness:
+    spec: "specs/connect.md §5.3"
+    status: implemented
+    confidence: high
+    note: "prompts/wellness.md — fitness & wellness domain prompt"
+  connect_domain_community:
+    spec: "specs/connect.md §5.4"
+    status: implemented
+    confidence: high
+    note: "prompts/community.md — community & volunteering domain prompt"
+  connect_domain_business:
+    spec: "specs/connect.md §5.5"
+    status: implemented
+    confidence: high
+    note: "prompts/business.md — side business/freelance domain prompt"
+  connect_mental_health_extension:
+    spec: "specs/connect.md §5.1"
+    status: implemented
+    confidence: high
+    note: "prompts/health.md extended + scripts/skills/mental_health_utilization.py"
+
+  # Phase 3: Task Managers
+  connect_todoist_connector:
+    spec: "specs/connect.md §6.1"
+    status: implemented
+    confidence: high
+    note: "scripts/connectors/todoist.py — Todoist REST API v2 connector"
+  connect_todoist_sync_action:
+    spec: "specs/connect.md §6.1"
+    status: implemented
+    confidence: high
+    note: "scripts/actions/todoist_sync.py — single-writer create action"
+  connect_todoist_setup:
+    spec: "specs/connect.md §6.1"
+    status: implemented
+    confidence: high
+    note: "scripts/setup_todoist.py — interactive setup wizard"
+  connect_apple_reminders_connector:
+    spec: "specs/connect.md §6.2"
+    status: implemented
+    confidence: high
+    note: "scripts/connectors/apple_reminders.py — EventKit macOS connector"
+  connect_apple_reminders_sync_action:
+    spec: "specs/connect.md §6.2"
+    status: implemented
+    confidence: high
+    note: "scripts/actions/apple_reminders_sync.py — single-writer macOS action"
+
+  # Phase 4: Discord
+  connect_discord_channel:
+    spec: "specs/connect.md §8"
+    status: implemented
+    confidence: high
+    note: "scripts/channels/discord.py — REST + Gateway WebSocket adapter"
+  connect_discord_setup:
+    spec: "specs/connect.md §8.1"
+    status: implemented
+    confidence: high
+    note: "scripts/setup_discord.py — interactive bot setup wizard"
+
+  # Phase 5: Plaid
+  connect_plaid_connector:
+    spec: "specs/connect.md §9"
+    status: implemented
+    confidence: high
+    note: "scripts/connectors/plaid_connector.py — aggregated summaries only (never raw)"
+  connect_plaid_setup:
+    spec: "specs/connect.md §9"
+    status: implemented
+    confidence: high
+    note: "scripts/setup_plaid.py — Plaid Link OAuth flow + keyring storage"
+

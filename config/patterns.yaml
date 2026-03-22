@@ -204,7 +204,7 @@ patterns:
         suggestion: "Your LinkedIn has been quiet for 3+ weeks. Any professional insights worth sharing?"
         pr_manager: true
     cooldown_hours: 168          # 7 days — only one reminder per week
-    enabled: false               # Activated when enhancements.pr_manager: true (set in artha_config)
+    enabled: true                # Activated with enhancements.pr_manager: true
 
   - id: "PAT-PR-002"
     name: "Cultural moment approaching without content plan"
@@ -227,4 +227,4 @@ patterns:
         suggestion: "A cultural moment is approaching — consider a post? Use /pr draft linkedin"
         pr_manager: true
     cooldown_hours: 72           # Re-check after 3 days if still no draft
-    enabled: false               # Activated when enhancements.pr_manager: true
+    enabled: true                # Activated with enhancements.pr_manager: true

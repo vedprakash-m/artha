@@ -71,6 +71,12 @@ _IMPORTANT_SENDER_DOMAINS: frozenset[str] = frozenset({
     # Insurance / healthcare
     "anthem.com", "cigna.com", "aetna.com", "unitedhealthgroup.com",
     "bluecross.com", "regence.com", "premera.com",
+    # Mental health / behavioral wellness (CONNECT §5.1)
+    "betterhelp.com", "talkspace.com", "cerebral.com",
+    "springhealth.com", "lyrahealth.com", "ginger.io",
+    "headspace.com", "calm.com", "mdlive.com", "teladoc.com",
+    # Caregiving / elder care (CONNECT §5.2)
+    "medicare.gov", "caringbridge.org",
     # Employer / HR
     "microsoft.com", "workday.com", "adp.com", "paychex.com",
     # Legal / immigration law firms
