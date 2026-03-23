@@ -50,6 +50,11 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "ai_trend_radar",
 })
 
+# Short-name aliases (e.g. Claude passes "radar" → resolves to "ai_trend_radar")
+_SKILL_ALIASES: dict[str, str] = {
+    "radar": "ai_trend_radar",
+}
+
 # Timeout for individual skill execution (seconds)
 _SKILL_TIMEOUT = 30
 
@@ -124,6 +129,7 @@ def get_delta(skill_name: str, current_data: Any, prev_cache: Dict[str, Any], co
 
 def run_skill(skill_name: str, artha_dir: Path) -> Dict[str, Any]:
     """Dynamically load and execute a skill."""
+    skill_name = _SKILL_ALIASES.get(skill_name, skill_name)
     if skill_name not in _ALLOWED_SKILLS:
         # Check for user-contributed plugin
         plugin_path = Path.home() / ".artha-plugins" / "skills" / f"{skill_name}.py"
