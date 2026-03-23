@@ -70,8 +70,10 @@ _PAT_HOWTO = re.compile(
     re.IGNORECASE,
 )
 _PAT_MODEL = re.compile(
-    r"\b(gpt-?\d|claude[\s-]\d|gemini\s?\d|llama[\s-]\d|qwen[\s-]?\d|mistral"
-    r"|o\d-model|gpt-5|claude-4)\b",
+    # Versioned forms first, then bare company/model names (for newsletter subject matching)
+    r"\b(gpt-?\d|gpt-5|gpt-4|claude(?:[\s-]\d)?|gemini(?:\s?\d)?|llama[\s-]\d"
+    r"|qwen[\s-]?\d|mistral|deepseek|perplexity|openai|anthropic|xai|grok"
+    r"|o\d-model|o1|o3)\b",
     re.IGNORECASE,
 )
 _PAT_GITHUB = re.compile(r"github\.com/[\w\-]+/[\w\-]+", re.IGNORECASE)
@@ -550,6 +552,9 @@ class AITrendRadarSkill(BaseSkill):
                 sig.relevance_score *= _CROSS_WEEK_DEMOTION_FACTOR
 
             # Warm-start timeliness penalty (§4.3)
+            # Store pre-penalty score for surface threshold check — penalty is
+            # for ranking/ordering only, not for filtering during warm-start.
+            pre_penalty_score = sig.relevance_score
             if is_warm_start and sig.detected_at:
                 try:
                     detected_date = date.fromisoformat(sig.detected_at[:10])
@@ -560,7 +565,14 @@ class AITrendRadarSkill(BaseSkill):
                     pass
 
             sig.relevance_score = max(0.0, min(1.0, sig.relevance_score))
-            if sig.relevance_score >= surface_threshold:
+            check_score = pre_penalty_score if is_warm_start else sig.relevance_score
+            # During warm-start, use a lower threshold (historical subjects score lower)
+            ws_surface_threshold = config.get(
+                "warm_start_surface_threshold",
+                surface_threshold * _WARM_START_TIMELINESS_PENALTY,
+            )
+            effective_threshold = ws_surface_threshold if is_warm_start else surface_threshold
+            if check_score >= effective_threshold:
                 final_signals.append(sig)
 
         # Sort by relevance descending, cap at max_signals
