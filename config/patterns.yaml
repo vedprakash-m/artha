@@ -254,3 +254,26 @@ patterns:
     # Note: evaluates state/gallery.yaml during plaintext phase only (after vault
     # decrypt). gallery.yaml MUST remain single-document YAML (no --- separators).
     # Ref: specs/pr-stage.md §8.3
+
+  - id: "PAT-PR-004"
+    name: "Stale AI Trend Radar"
+    description: "Fires when the AI Trend Radar has not run successfully in 14+ days,
+      or has never run. Reminds user to check connector and RSS feed health."
+    source_file: "tmp/ai_trend_metrics.json"
+    source_path: "last_run_at"
+    condition:
+      all_of:
+        - stale_days: 14
+    output_signal:
+      signal_type: "content_stale"
+      domain: "social"
+      urgency: 1
+      impact: 1
+      entity_field: null
+      metadata:
+        feature: "ai_trend_radar"
+        suggestion: "AI Trend Radar hasn't run in 14+ days. Check RSS connector
+          health and newsletter senders in artha_config.yaml."
+        pr_manager: true
+    cooldown_hours: 168   # 7 days — only one reminder per week
+    enabled: true         # Active whenever enhancements.pr_manager.ai_trend_radar.enabled: true

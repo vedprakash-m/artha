@@ -363,6 +363,104 @@ class BriefingAdapter:
 
 
 # ---------------------------------------------------------------------------
+# AI Trend Radar briefing section (C9 — PR-3)
+# ---------------------------------------------------------------------------
+
+_CATEGORY_EMOJI: dict[str, str] = {
+    "tool_release":     "🛠",
+    "technique":        "💡",
+    "model_release":    "🤖",
+    "tutorial":         "📖",
+    "framework_update": "🔧",
+    "research":         "🔬",
+}
+
+
+def render_radar_section(
+    signals_file: "Path | str | None" = None,
+    *,
+    max_items: int = 5,
+    artha_dir: "Path | None" = None,
+) -> str:
+    """Render Markdown briefing section from tmp/ai_trend_signals.json.
+
+    Returns empty string if the signals file is missing or contains no signals.
+    Designed to be injected into the catch-up briefing between §Step7 and §Step9.
+
+    Args:
+        signals_file: Override path to the signals JSON (default: tmp/ai_trend_signals.json).
+        max_items:    Maximum number of signals to render (default: 5).
+        artha_dir:    Workspace root (used when signals_file is None).
+    """
+    import json
+    from pathlib import Path as _Path
+
+    if signals_file is None:
+        base = _Path(artha_dir) if artha_dir else _Path(__file__).parent.parent
+        signals_file = base / "tmp" / "ai_trend_signals.json"
+
+    signals_path = _Path(signals_file)
+    if not signals_path.exists():
+        return ""
+
+    try:
+        data = json.loads(signals_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    signals = data.get("signals") or []
+    if not signals:
+        return ""
+
+    week_end = data.get("week_end", "")
+    lines = ["## 🧠 AI Radar — This Week's Signals"]
+    if week_end:
+        lines[0] += f" _(week of {week_end})_"
+    lines.append("")
+
+    try_badge_shown = False
+    for i, sig in enumerate(signals[:max_items], start=1):
+        topic = sig.get("topic", "Unknown topic")
+        category = sig.get("category", "technique")
+        emoji = _CATEGORY_EMOJI.get(category, "📡")
+        summary = sig.get("summary", "")[:160]
+        sources = sig.get("sources") or []
+        seen_in = sig.get("seen_in", len(sources))
+        score = sig.get("relevance_score", 0.0)
+        try_worthy = sig.get("try_worthy", False)
+        topic_match = sig.get("topic_match")
+
+        # Header line
+        source_badge = f"_{seen_in} source{'s' if seen_in != 1 else ''}_" if seen_in > 1 else ""
+        try_badge = " ✅ try-worthy" if try_worthy else ""
+        topic_badge = f" [_{topic_match}_]" if topic_match else ""
+        header = f"{i}. {emoji} **{topic}**{topic_badge}{try_badge}"
+        if source_badge:
+            header += f" — {source_badge}"
+        lines.append(header)
+
+        # Summary line
+        if summary:
+            lines.append(f"   > {summary}")
+
+        # URL hint
+        url = sig.get("best_source_url", "")
+        if url and url.startswith("https://"):
+            lines.append(f"   🔗 {url}")
+
+        lines.append("")
+        if try_worthy:
+            try_badge_shown = True
+
+    # Footer hint
+    if try_badge_shown:
+        lines.append("_✅ = try-worthy: add to experiments with `/try <topic>`_")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Standalone entry point
 # ---------------------------------------------------------------------------
 

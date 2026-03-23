@@ -75,10 +75,11 @@ def _init_config() -> None:
         "CONFIG_DIR":   artha_dir / "config",
         "AUDIT_LOG":    artha_dir / "state" / "audit.md",
         "LOCK_FILE":    artha_dir / ".artha-decrypted",
-        # 12 entries — (domain, extension) tuples.
+        # 10 entries — (domain, extension) tuples.
         # Legacy plain strings are auto-coerced to (domain, ".md") by
         # _normalize_sensitive_files() for backward compatibility.
-        # gallery and gallery_memory use ".yaml" (PR-2 §4.3 / §12 Phase 0).
+        # gallery + gallery_memory are NOT vaulted — they contain public
+        # social-media drafts, not PII or financial data.
         "SENSITIVE_FILES": [
             ("immigration", ".md"),
             ("finance", ".md"),
@@ -90,8 +91,6 @@ def _init_config() -> None:
             ("contacts", ".md"),
             ("occasions", ".md"),
             ("transactions", ".md"),
-            ("gallery", ".yaml"),
-            ("gallery_memory", ".yaml"),
         ],
         "KC_SERVICE":      "age-key",
         "KC_ACCOUNT":      "artha",

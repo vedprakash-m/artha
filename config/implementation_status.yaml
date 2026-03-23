@@ -184,6 +184,32 @@ features:
     gate: "Activate with enhancements.pr_manager.stage: true in artha_config.yaml"
     activate_command: "Set enhancements.pr_manager.stage: true"
 
+  ai_trend_radar:
+    spec: "specs/ai-posts.md PR-3 v1.0.6"
+    status: implemented
+    confidence: high
+    phases_complete:
+      - "Phase 1: AITrendRadarSkill (scripts/skills/ai_trend_radar.py)"
+      - "Phase 1: State file template (state/ai_trend_radar.md)"
+      - "Phase 1: Skill registration (config/skills.yaml)"
+      - "Phase 1: New moment type ai_experiment_complete (scripts/pr_manager.py)"
+      - "Phase 1: RSS connector enabled with 7 AI feeds (config/connectors.yaml)"
+      - "Phase 1: Newsletter sender filter (config/artha_config.yaml ai_trend_radar block)"
+      - "Phase 1: PAT-PR-004 stale radar pattern (config/patterns.yaml)"
+      - "Phase 1: Unit tests (tests/unit/test_ai_trend_radar.py)"
+      - "Phase 2: Platform exclude field on ContentCard"
+      - "Phase 2: Festival platform exclusion (linkedin removed from cultural_festival)"
+      - "Phase 2: Radar briefing section (scripts/briefing_adapter.py)"
+      - "Phase 2: Register B-Practitioner voice sub-register (state/pr_manager.md)"
+      - "Phase 2: LinkedIn data_quality fix (state/pr_manager.md + pr_manager.py)"
+      - "Phase 2: Seed card for e2e verification (state/gallery.yaml)"
+      - "Phase 2: Telegram /radar + /try + /skip commands (scripts/channel_listener.py)"
+    phases_remaining:
+      - "Phase 3: Activation (warm-start + first live run)"
+      - "Phase 4 (v1.1): Auto-keyword expansion from experiment notes"
+    gate: "Set enhancements.pr_manager.ai_trend_radar.enabled: true"
+    activate_command: "Follow §13.2 Phase 3 procedure in specs/ai-posts.md"
+
   # ── Commands ────────────────────────────────────────────────────────────
   catch_up:
     status: implemented
