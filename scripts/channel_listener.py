@@ -2434,7 +2434,6 @@ async def cmd_radar(args: list[str], scope: str) -> tuple[str, str]:
       /radar topic add <name>  — add a topic to the Interest Graph
       /radar topic rm <name>   — remove a topic from the Interest Graph
     """
-    import json  # noqa: PLC0415
     from pathlib import Path as _Path  # noqa: PLC0415
 
     artha_dir = _Path(__file__).parent.parent
