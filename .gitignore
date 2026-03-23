@@ -40,6 +40,9 @@ state/*.db-wal
 # --- GFS backup snapshots (ZIP-per-day, stored at project root) ---
 backups/
 
+# --- Ved Dev Kit (personal framework, prompt history — not synced) ---
+ved-dev-kit/
+
 # --- Briefing and summary archives ---
 briefings/
 summaries/
@@ -108,6 +111,9 @@ config/Artha.md
 .artha-op-lock
 *.bak
 state/.preflight_write_test
+state/*.lock
+state/*.yaml.age.*
+state/*.md.age.*
 
 # --- OneDrive conflict copies ---
 *-CPC-vemis-DJD0M*

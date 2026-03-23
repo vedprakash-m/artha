@@ -118,6 +118,19 @@ skills:
 
   mental_health_utilization:
     enabled: true
+
+  # ── AI Trend Radar (specs/ai-posts.md PR-3) ───────────────────────────
+
+  ai_trend_radar:
+    enabled: true
+    priority: P2
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    description: >
+      Distill AI signals from newsletter emails and RSS feeds.
+      Applies Topic Interest Graph boost scoring. Outputs ranked
+      signals to tmp/ai_trend_signals.json for briefing + Telegram.
     priority: P1
     cadence: weekly
     requires_vault: true

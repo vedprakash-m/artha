@@ -190,6 +190,7 @@ def _days_ago(v: Any) -> int | None:
 _MOMENT_WEIGHTS: dict[str, float] = {
     "cultural_festival": 0.9,
     "life_milestone": 0.85,
+    "ai_experiment_complete": 0.85,
     "trending_tech": 0.8,
     "trending_education": 0.8,
     "career_milestone": 0.75,
@@ -207,25 +208,27 @@ _MOMENT_WEIGHTS: dict[str, float] = {
 
 # Default moment_thread_map (§4.2.1) — overridden by state/pr_manager.md YAML block
 _DEFAULT_MOMENT_THREAD_MAP: dict[str, list[tuple[str, float]]] = {
-    "cultural_festival":   [("NT-2", 1.0), ("NT-6", 0.5)],
-    "birthday_family":     [("NT-4", 1.0), ("NT-6", 0.7)],
-    "birthday_friend":     [("NT-6", 1.0)],
-    "hiking_event":        [("NT-3", 1.0)],
-    "career_milestone":    [("NT-1", 0.9), ("NT-5", 0.8)],
-    "goal_milestone":      [("NT-1", 0.7), ("NT-5", 0.6)],
-    "trending_tech":       [("NT-1", 0.9)],
-    "trending_education":  [("NT-1", 0.8), ("NT-5", 0.6)],
-    "school_milestone":    [("NT-4", 0.9)],
-    "seasonal_rhythm":     [("NT-2", 0.7), ("NT-3", 0.5)],
-    "friend_life_event":   [("NT-6", 1.0)],
-    "local_weather_outdoor": [("NT-3", 0.8)],
-    "immigration_milestone": [("NT-2", 0.7)],
-    "mba_anniversary":     [("NT-5", 0.9)],
-    "life_milestone":      [("NT-4", 0.85), ("NT-2", 0.5)],
+    "cultural_festival":      [("NT-2", 1.0), ("NT-6", 0.5)],
+    "birthday_family":        [("NT-4", 1.0), ("NT-6", 0.7)],
+    "birthday_friend":        [("NT-6", 1.0)],
+    "hiking_event":           [("NT-3", 1.0)],
+    "career_milestone":       [("NT-1", 0.9), ("NT-5", 0.8)],
+    "goal_milestone":         [("NT-1", 0.7), ("NT-5", 0.6)],
+    "trending_tech":          [("NT-1", 0.9)],
+    "trending_education":     [("NT-1", 0.8), ("NT-5", 0.6)],
+    "school_milestone":       [("NT-4", 0.9)],
+    "seasonal_rhythm":        [("NT-2", 0.7), ("NT-3", 0.5)],
+    "friend_life_event":      [("NT-6", 1.0)],
+    "local_weather_outdoor":  [("NT-3", 0.8)],
+    "immigration_milestone":  [("NT-2", 0.7)],
+    "mba_anniversary":        [("NT-5", 0.9)],
+    "life_milestone":         [("NT-4", 0.85), ("NT-2", 0.5)],
+    "ai_experiment_complete": [("NT-1", 1.0), ("NT-5", 0.5)],
 }
 
 # Timeliness decay (§4.2): days_offset → timeliness_factor
-# day-of=0 → 1.0, day+1 → 0.7, day+2 → 0.5, day+3 → 0.3, day+4–6 → 0.2, day+7 → 0.0
+# day-of=0 → 1.0, day+1 → 0.7, day+2 → 0.5, day+3 → 0.3, day+4–6 → 0.2,
+# day+7–13 → 0.1 (content-prep window, aligns with SEED_WINDOW_DAYS=14), day+14+ → 0.0
 def _timeliness(days_until_event: int) -> float:
     if days_until_event < 0:
         return 0.0  # past
@@ -234,26 +237,29 @@ def _timeliness(days_until_event: int) -> float:
         return table[days_until_event]
     if days_until_event <= 6:
         return 0.2
+    if days_until_event <= 13:
+        return 0.1  # prep-window: content stage seeding but not yet urgent
     return 0.0
 
 
 # Platform map per moment type — what platforms are relevant
 _MOMENT_PLATFORMS: dict[str, list[str]] = {
-    "cultural_festival":   ["linkedin", "facebook", "whatsapp_status"],
-    "birthday_family":     ["facebook", "whatsapp_status"],
-    "birthday_friend":     ["facebook"],
-    "hiking_event":        ["instagram", "whatsapp_group"],
-    "career_milestone":    ["linkedin"],
-    "goal_milestone":      ["linkedin", "facebook"],
-    "trending_tech":       ["linkedin"],
-    "trending_education":  ["linkedin"],
-    "school_milestone":    ["facebook"],
-    "seasonal_rhythm":     ["facebook", "instagram"],
-    "friend_life_event":   ["facebook"],
-    "local_weather_outdoor": ["instagram", "whatsapp_group"],
-    "immigration_milestone": ["facebook"],
-    "mba_anniversary":     ["linkedin"],
-    "life_milestone":      ["facebook", "instagram"],
+    "cultural_festival":      ["facebook", "whatsapp_status"],  # C12: linkedin excluded (festival ≠ professional)
+    "birthday_family":        ["facebook", "whatsapp_status"],
+    "birthday_friend":        ["facebook"],
+    "hiking_event":           ["instagram", "whatsapp_group"],
+    "career_milestone":       ["linkedin"],
+    "goal_milestone":         ["linkedin", "facebook"],
+    "trending_tech":          ["linkedin"],
+    "trending_education":     ["linkedin"],
+    "school_milestone":       ["facebook"],
+    "seasonal_rhythm":        ["facebook", "instagram"],
+    "friend_life_event":      ["facebook"],
+    "local_weather_outdoor":  ["instagram", "whatsapp_group"],
+    "immigration_milestone":  ["facebook"],
+    "mba_anniversary":        ["linkedin"],
+    "life_milestone":         ["facebook", "instagram"],
+    "ai_experiment_complete": ["linkedin"],
 }
 
 # Occasions from occasion_tracker that map to moment types
@@ -1397,6 +1403,34 @@ def run_step8(
         except Exception as e:  # noqa: BLE001
             if verbose:
                 print(f"[pr_manager] Warning: could not load occasions: {e}")
+
+    # Fallback: read occasion_tracker results from skills_cache.json if explicit
+    # output file is absent (skill_runner writes cache; bridge handles the file write
+    # going forward, but this fallback handles the first catch-up after the wiring).
+    if not all_moments and not occ_path.exists():
+        _skills_cache_path = _TMP_DIR / "skills_cache.json"
+        if _skills_cache_path.exists():
+            try:
+                _cache = json.loads(_skills_cache_path.read_text(encoding="utf-8"))
+                _oc_data = (
+                    _cache.get("occasion_tracker", {})
+                    .get("current", {})
+                    .get("data", {})
+                )
+                _cache_occasions: list[dict] = (
+                    _oc_data.get("upcoming", []) if isinstance(_oc_data, dict) else []
+                )
+                if _cache_occasions:
+                    scored = detector.score_occasions(_cache_occasions)
+                    all_moments.extend(scored)
+                    if verbose:
+                        print(
+                            f"[pr_manager] Scored {len(scored)} occasions from "
+                            "skills_cache.json (occasion_tracker fallback)"
+                        )
+            except Exception as e:  # noqa: BLE001
+                if verbose:
+                    print(f"[pr_manager] Warning: could not load occasions from skills cache: {e}")
 
     # Load trends (Monday only or if explicitly provided)
     t_path = trends_file or _TREND_SCAN_FILE

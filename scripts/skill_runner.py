@@ -217,11 +217,33 @@ def main():
     with open(CACHE_FILE, "w") as f:
         json.dump(new_cache, f, indent=2)
 
+    # Bridge: write tmp/occasion_tracker_output.json for pr_manager --step8
+    _write_occasion_tracker_output(new_cache)
+
     # Write timing metrics to tmp/skills_metrics.json
     _write_skills_metrics(skill_timing, total_elapsed)
     
     logging.info(f"Skill execution complete. Cache updated at {CACHE_FILE}")
     sys.exit(exit_code)
+
+
+def _write_occasion_tracker_output(cache: Dict[str, Any]) -> None:
+    """Write tmp/occasion_tracker_output.json from cached skill results.
+
+    Bridges the occasion_tracker skill output to the format expected by
+    pr_manager.run_step8() / MomentDetector.score_occasions().
+    Only written when the skill returned at least one upcoming occasion.
+    """
+    oc_data = cache.get("occasion_tracker", {}).get("current", {}).get("data", {})
+    upcoming = oc_data.get("upcoming", []) if isinstance(oc_data, dict) else []
+    if not upcoming:
+        return
+    output_path = ARTHA_DIR / "tmp" / "occasion_tracker_output.json"
+    try:
+        output_path.write_text(json.dumps(upcoming, indent=2), encoding="utf-8")
+        logging.info(f"Wrote {len(upcoming)} occasion(s) to {output_path.name}")
+    except Exception as e:
+        logging.warning(f"Could not write occasion_tracker_output.json: {e}")
 
 
 def _write_skills_metrics(timing: Dict[str, float], total_elapsed: float) -> None:

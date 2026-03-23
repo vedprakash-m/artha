@@ -1527,7 +1527,29 @@ Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the too
 When the user invokes any slash command, read `config/commands.md` for the full command
 reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
 `/domain`, `/domains`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
-`/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`.
+`/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`,
+`/pr`, `/stage`.
+
+**`/pr` — PR Manager:** Run `python3 scripts/pr_manager.py --view` (or `--threads` / `--voice`
+for subcommands). Requires `enhancements.pr_manager: true`. See `prompts/social.md §PR Manager Commands`
+and `config/commands.md §/pr` for full behavior.
+
+**`/stage` — Content Stage (PR-2):** Requires `enhancements.pr_manager.stage: true` in
+`config/artha_config.yaml`. State file: `state/gallery.yaml`.
+
+- `/stage` or `/stage list` — List all active cards (seed, drafting, staged, approved).
+  Load `state/gallery.yaml`, filter cards where `status ∈ {seed, drafting, staged, approved}`,
+  and format per `prompts/social.md §Card Display Format`.
+- `/stage preview <ID>` — Show full card: occasion, event date, status, platform drafts, PII flags.
+- `/stage approve <ID>` — Mark card approved; emit copy-ready content per platform.
+  Call: `python3 -c "import sys; sys.path.insert(0,'scripts'); from pr_stage.service import ContentStage; from pathlib import Path; s=ContentStage(Path('state/gallery.yaml'),Path('state/gallery_memory.yaml')); ..."`
+  or read the YAML directly and confirm to the user, then update `state/gallery.yaml` status field.
+- `/stage draft <ID>` — Phase 2: trigger LLM draft generation. Currently shows placeholder draft text from the card.
+- `/stage posted <ID> <platform>` — Log post as published; update platform draft status.
+- `/stage dismiss <ID>` — Archive card without posting.
+- `/stage history [year]` — Phase 4 only: browse `state/gallery_memory.yaml`.
+
+Full behavior and display formats: `prompts/social.md §Content Stage` and `config/commands.md §/stage`.
 ---
 
 ## §6 Multi-LLM Routing

@@ -161,7 +161,7 @@ connectors:
     provider: google
     enabled: true
     run_on: all
-    description: Google Calendar — personal + family
+    description: Google Calendar — holidays, Indian holidays, contact birthdays. Not used for scheduling (slots not blocked).
     auth:
       method: oauth2
       token_file: .tokens/gmail-token.json
@@ -224,7 +224,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Outlook Calendar — work account ([email])
+    description: Outlook Calendar — work account ([email]). PRIMARY calendar for scheduling.
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -255,7 +255,7 @@ connectors:
     provider: caldav
     enabled: false
     run_on: all
-    description: iCloud Calendar (CalDAV)
+    description: iCloud Family Calendar (CalDAV) — family events shared via iCloud; visible to all family iPhones
     auth:
       method: app_password
       credential_key: artha-icloud-password
@@ -348,17 +348,38 @@ connectors:
   rss_feed:
     type: feed
     provider: rss
-    enabled: false
+    enabled: true
     run_on: all
-    description: RSS/Atom feed reader — stdlib-only, no auth required. Useful for
-      USCIS updates, visa bulletins, domain-relevant news.
+    description: RSS/Atom feed reader — stdlib-only, no auth required. Powers AI
+      Trend Radar (PR-3) plus any other domain-relevant feeds.
     auth:
       method: none
     fetch:
       handler: scripts/connectors/rss_feed.py
       timeout_seconds: 10
-      feeds: null
       default_max_results: 50
+      feeds:
+        - url: "https://openai.com/blog/rss.xml"
+          tag: "openai_blog"
+          domain: "digital"
+        - url: "https://simonwillison.net/atom/everything/"
+          tag: "simon_willison"
+          domain: "digital"
+        - url: "https://huggingface.co/blog/feed.xml"
+          tag: "huggingface_blog"
+          domain: "digital"
+        - url: "https://blog.google/technology/ai/rss/"
+          tag: "google_ai"
+          domain: "digital"
+        - url: "https://www.anthropic.com/research/rss.xml"
+          tag: "anthropic"
+          domain: "digital"
+        - url: "https://www.microsoft.com/en-us/research/feed/"
+          tag: "msresearch"
+          domain: "digital"
+        - url: "https://hnrss.org/newest?q=AI+LLM+GPT"
+          tag: "hn_ai"
+          domain: "digital"
     output:
       format: jsonl
       source_tag: rss

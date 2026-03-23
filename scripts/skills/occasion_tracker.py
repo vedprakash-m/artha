@@ -45,17 +45,38 @@ _HINDI_RELATIONS = {"sister", "brother", "bhai", "didi"}
 
 
 def _parse_date_flexible(date_str: str) -> date | None:
-    """Parse ISO-8601 (YYYY-MM-DD) dates. Returns None on failure."""
+    """Parse dates in multiple formats: YYYY-MM-DD, M/D/YYYY, MM/DD/YYYY, M/D.
+
+    Returns None on failure. For M/D (no year), returns the current year.
+    """
     if not date_str:
         return None
     date_str = date_str.strip()
+
     # ISO format YYYY-MM-DD
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
+    m = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})$", date_str)
     if m:
         try:
             return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         except ValueError:
             return None
+
+    # US format M/D/YYYY or MM/DD/YYYY
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})$", date_str)
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return None
+
+    # Short format M/D or MM/DD (no year — assume current year)
+    m = re.match(r"(\d{1,2})/(\d{1,2})$", date_str)
+    if m:
+        try:
+            return date(date.today().year, int(m.group(1)), int(m.group(2)))
+        except ValueError:
+            return None
+
     return None
 
 

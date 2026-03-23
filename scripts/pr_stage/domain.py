@@ -152,6 +152,7 @@ class ContentCard:
     alt_threads: list[str] = field(default_factory=list)
     convergence_score: float = 0.0
     flags: list[str] = field(default_factory=list)
+    platform_exclude: list[str] = field(default_factory=list)  # platforms to skip for this card
 
     # Personalization context (populated by DraftPersonalizer)
     personalization: dict[str, Any] = field(default_factory=dict)
@@ -216,6 +217,7 @@ class ContentCard:
             "alt_threads":        list(self.alt_threads),
             "convergence_score":  self.convergence_score,
             "flags":              list(self.flags),
+            "platform_exclude":   list(self.platform_exclude),
             "personalization":    dict(self.personalization),
             "drafts":             {k: v.to_dict() for k, v in self.drafts.items()},
             "visual":             dict(self.visual),
@@ -249,6 +251,7 @@ class ContentCard:
             alt_threads=list(d.get("alt_threads") or []),
             convergence_score=float(d.get("convergence_score", 0.0)),
             flags=list(d.get("flags") or []),
+            platform_exclude=list(d.get("platform_exclude") or []),
             personalization=dict(d.get("personalization") or {}),
             drafts=drafts,
             visual=dict(d.get("visual") or {}),

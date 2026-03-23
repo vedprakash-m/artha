@@ -67,10 +67,13 @@ class ScoredMoment:
     convergence_score: float = 0.0
     primary_thread: str = ""
     alt_threads: list[str] = None  # type: ignore[assignment]
+    platform_exclude: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self):
         if self.alt_threads is None:
             self.alt_threads = []
+        if self.platform_exclude is None:
+            self.platform_exclude = []
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,7 +133,26 @@ class ContentStage:
 
     # ── Public catch-up API ───────────────────────────────────────────────
 
-    def process_moments(self, moments: list[ScoredMoment]) -> list[ContentCard]:
+    @staticmethod
+    def _adapt_moment(moment: Any) -> ScoredMoment:
+        """Adapt a PR-1 ScoredMoment (label/moment_type/str date) to PR-2 format."""
+        occasion = getattr(moment, "occasion", None) or getattr(moment, "label", "")
+        occasion_type = getattr(moment, "occasion_type", None) or getattr(moment, "moment_type", "")
+        raw_date = getattr(moment, "event_date", None)
+        if isinstance(raw_date, str):
+            raw_date = date.fromisoformat(raw_date)
+        return ScoredMoment(
+            occasion=occasion,
+            occasion_type=occasion_type,
+            event_date=raw_date,
+            days_until=moment.days_until,
+            convergence_score=getattr(moment, "convergence_score", 0.0),
+            primary_thread=getattr(moment, "primary_thread", ""),
+            alt_threads=list(getattr(moment, "alt_threads", []) or []),
+            platform_exclude=list(getattr(moment, "platform_exclude", []) or []),
+        )
+
+    def process_moments(self, moments: list) -> list[ContentCard]:
         """Create seed cards for new moments within SEED_WINDOW_DAYS (§5.2).
 
         Uses lazy loading (load_minimal) for deduplication check — does not
@@ -157,6 +179,7 @@ class ContentStage:
         ]
 
         for moment in moments:
+            moment = self._adapt_moment(moment)
             if moment.days_until > SEED_WINDOW_DAYS:
                 continue
 
@@ -193,6 +216,7 @@ class ContentStage:
                 primary_thread=moment.primary_thread,
                 alt_threads=list(moment.alt_threads),
                 convergence_score=moment.convergence_score,
+                platform_exclude=list(moment.platform_exclude),
             )
             self._gallery.upsert(card)
             existing_minimal.append(card)  # Update local dedup list
