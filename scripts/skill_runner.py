@@ -46,6 +46,8 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "home_device_monitor",
     # CONNECT Phase 2 — Mental health utilization tracker
     "mental_health_utilization",
+    # PR-3 — AI Trend Radar
+    "ai_trend_radar",
 })
 
 # Timeout for individual skill execution (seconds)
