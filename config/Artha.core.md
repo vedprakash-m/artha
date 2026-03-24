@@ -1528,7 +1528,7 @@ When the user invokes any slash command, read `config/commands.md` for the full 
 reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
 `/domain`, `/domains`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
 `/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`,
-`/pr`, `/stage`.
+`/pr`, `/stage`, `/radar`.
 
 **`/pr` — PR Manager:** Run `python3 scripts/pr_manager.py --view` (or `--threads` / `--voice`
 for subcommands). Requires `enhancements.pr_manager: true`. See `prompts/social.md §PR Manager Commands`

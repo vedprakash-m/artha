@@ -489,3 +489,43 @@ Phase 4: `/stage history`.
 
 ---
 
+### `/radar` — AI Trend Radar (PR-3)
+
+> **Requires:** `enhancements.pr_manager.ai_trend_radar: true` (activate via `/bootstrap ai_trend_radar`)
+> **State file:** `state/ai_trend_radar.md`
+> **Signal output:** `tmp/ai_trend_signals.json`
+
+**`/radar`** — Display current AI trend signals.
+1. Read `tmp/ai_trend_signals.json`.
+2. If `signal_count == 0` or file absent: show "No signals yet — run the skill to pull fresh signals."
+3. Otherwise display in table format:
+```
+━━ 📡 AI TREND RADAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Generated: <generated_at>  |  <signal_count> signals
+
+ #  Score   Category        Topic
+──────────────────────────────────────────────────────────────
+ 1  0.20  [technique]     How to Do AI-Assisted Engineering
+ 2  0.15  [model_release] GPT-5 launches...
+...
+Topics of interest: Claude Tools, MCP Servers, Agentic Workflows
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+4. Flag any signal where `try_worthy: true` with a `⚡ TRY` badge.
+5. Show current topics from `state/ai_trend_radar.md → topics_of_interest`.
+
+**`/radar topic list`** — Show all topics in the Interest Graph (from `state/ai_trend_radar.md → topics_of_interest`).
+
+**`/radar topic add <name>`** — Add a new topic to the Interest Graph.
+1. Prompt for keywords (comma-separated) if not provided.
+2. Append to `state/ai_trend_radar.md → topics_of_interest` with today's date, `boost: 0.3`, `source: manual`.
+3. Confirm: "Added topic '<name>' to radar Interest Graph."
+
+**`/radar topic remove <name>`** — Remove a topic from the Interest Graph.
+1. Find entry in `state/ai_trend_radar.md → topics_of_interest` matching the name (case-insensitive).
+2. Remove and confirm: "Removed topic '<name>' from radar Interest Graph."
+
+**`/radar run`** — Pull fresh signals (calls `artha_run_skills("ai_trend_radar")` via MCP if available, or instructs user to run `python3 -c "from pathlib import Path; from scripts.skills.ai_trend_radar import get_skill; get_skill(Path('.')).pull()"`).
+
+---
+
