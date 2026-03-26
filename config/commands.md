@@ -491,13 +491,12 @@ Phase 4: `/stage history`.
 
 ### `/radar` — AI Trend Radar (PR-3)
 
-> **Requires:** `enhancements.pr_manager.ai_trend_radar: true` (activate via `/bootstrap ai_trend_radar`)
 > **State file:** `state/ai_trend_radar.md`
 > **Signal output:** `tmp/ai_trend_signals.json`
 
 **`/radar`** — Display current AI trend signals.
 1. Read `tmp/ai_trend_signals.json`.
-2. If `signal_count == 0` or file absent: show "No signals yet — run the skill to pull fresh signals."
+2. If file absent or `signal_count == 0`: run `/radar run` inline to pull fresh signals first.
 3. Otherwise display in table format:
 ```
 ━━ 📡 AI TREND RADAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -529,3 +528,97 @@ Topics of interest: Claude Tools, MCP Servers, Agentic Workflows
 
 ---
 
+# ── Work OS Commands (specs/work.md §5.2) ────────────────────────────────
+# Namespace: /work
+# Surface: work domains only (state/work/*), never personal state
+# Bridge reads: state/bridge/personal_schedule_mask.json ONLY
+# See specs/work.md for full specification
+
+## `/work` — Full Work Briefing
+Reads all work domains. Produces a structured briefing: meeting count, comms needing response, sprint health, boundary score, recommended next move.
+- Reads pre-computed state only (§3.8). Never invokes connectors inline.
+- Includes data freshness footer: "Last refresh: [timestamp] ([age])".
+- If state is older than staleness threshold, emits warning.
+
+## `/work pulse` — 30-Second Status Snapshot
+Reads `state/work/work-summary.md` only. Meeting hours today, top comms item, boundary score.
+
+## `/work prep` — Meeting Preparation
+Reads work-calendar, work-people, work-notes. Shows next 2-4 hours of meetings sorted by readiness score (lowest first). Includes attendee context, open threads, preparation gaps, carry-forward items from recurring meetings.
+
+## `/work sprint` — Delivery Health
+Reads work-projects. Sprint status, blockers, aging items, dependency risk, Delivery Feasibility Score (commitments vs. calendar capacity).
+
+## `/work return [window]` — Absence Recovery
+Reads work-calendar, work-comms, work-projects, work-notes. Context recovery after PTO/travel/sick. Shows what changed, what is waiting, what is resolved, who needs response first.
+
+## `/work connect` — Review Evidence Assembly
+Reads work-career, work-projects, work-comms, work-calendar. Surfaces accomplishments and evidence mapped to review goals.
+
+## `/work people <name>` — Person Lookup
+Reads work-people. Org context, collaboration history, meeting frequency, communication patterns.
+
+## `/work docs` — Recent Work Artifacts
+Reads work-notes. Recently active documents, Loop pages, shared artifacts.
+
+## `/work bootstrap` — Guided Setup
+Two modes:
+1. **Cold-start interview** (`setup_completed: false`): 12 questions including PII keyword seeding (§15.5).
+2. **Warm-start import** (`/work bootstrap import`): historical data ingestion.
+
+## `/work health` — Connector & Policy Health
+Work-specific diagnostics: connector status, token freshness, cache age, redact_keywords validation, provider availability, bridge schema health.
+
+## `/work notes [meeting-id]` — Post-Meeting Capture
+Reads work-calendar, work-people, work-notes. Prompts for decisions and action items. Generates follow-up package.
+
+## `/work decide <context>` — Decision Support
+Reads work-career, work-projects, work-people, work-notes, work-decisions. Phase 3.
+
+## `/work live <meeting-id>` — Live Meeting Assist
+Reads work-calendar, work-people, work-notes, work-projects. Phase 2.
+
+## `/work connect-prep` — Connect Cycle Preparation
+Reads work-performance, work-career, work-projects, work-people. Goal progress, evidence summary, manager pivot log.
+- `--skip` — skip-level optimized narrative
+- `--calibration` — third-person calibration defense brief (§7.6)
+- `--final` — full rewards season packet
+- `--narrative` — impact-framed Connect narrative
+
+## `/work sources [query]` — Data Source Lookup
+Reads work-sources. Browse or search the curated data source registry.
+
+## `/work sources add <url> [context]` — Register Data Source
+Writes to work-sources. Registers a new dashboard/query/report with context.
+
+## `/work newsletter [period]` — Newsletter Draft
+Reads work-projects, work-career, work-decisions, work-performance. Phase 2.
+
+## `/work deck [topic]` — LT Deck Content
+Reads work-projects, work-career, work-sources, work-performance. Phase 2.
+
+## `/work memo [period]` — Status Memo
+Reads work-projects, work-decisions, work-performance. Via Narrative Engine.
+- `--weekly` — auto-drafted weekly status memo (Phase 1)
+- `--decision <id>` — decision memo from work-decisions (Phase 3)
+- `--escalation <context>` — escalation note with options framing (Phase 3)
+
+## `/work talking-points <topic>` — Talking Points
+Reads work-calendar, work-projects, work-people, work-performance. Phase 3.
+
+## `/work refresh` — Live Connector Refresh
+Executes full Work Operating Loop (§8.5) with live network I/O. Reports per-provider freshness afterward. This is the only command that invokes connectors inline.
+
+## `/work promo-case` — Promotion Readiness Assessment
+Reads work-project-journeys, work-performance, work-people (visibility events), work-career. Outputs: promotion thesis (auto-generated from scope arc), evidence density per goal (★1–5), visibility events from L-N+ stakeholders, readiness signal, evidence gaps. Phase 3.
+
+## `/work promo-case --narrative` — Full Promotion Narrative
+Generates `state/work/work-promo-narrative.md` — promotion-grade document with thesis, before/after transformation, scope expansion arc, milestone evidence with artifact citations, manager/peer voice, visibility events. Human-review draft only — never submitted autonomously. Phase 3.
+
+## `/work journey [project]` — Project Timeline View
+Reads work-project-journeys. Shows long-running program timeline: milestones, evidence citations, scope expansion arc, before/after state. `[project]` filters to a single program or shows all. Phase 3.
+
+## `/work remember <text>` — Instant Micro-Capture
+Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]` marker and timestamp. Processed by work-learn on next refresh cycle (fact extraction, keyword linking, org-calendar detection for `org-calendar:` prefix). Input is PII-scanned before write. Phase 2.
+
+---
