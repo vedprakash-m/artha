@@ -45,8 +45,9 @@ Immediately discard emails matching:
 - Subject: "unsubscribe", "20% off", "sale ends", "limited time offer", "flash sale"
 - Header: `List-Unsubscribe:` present AND sender is not a trusted domain
 
-Trusted domains (never suppress): USCIS, IRS, HDFC, Chase, Fragomen, Microsoft HR,
-medical insurance providers, government agencies.
+Trusted domains (never suppress): USCIS, IRS, financial institutions, your employer,
+your immigration attorney, medical insurance providers, government agencies.
+(Configure personal domains in `artha_config.yaml` → `email_classifier.whitelist_domains`.)
 
 **5b — PII scan:**
 ```bash

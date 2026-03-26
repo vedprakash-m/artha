@@ -118,6 +118,14 @@ skills:
 
   mental_health_utilization:
     enabled: true
+    priority: P1
+    cadence: weekly
+    requires_vault: true
+    safety_critical: false
+    description: >
+      Track EAP session utilization and therapy appointment patterns.
+      Alerts when session limits are approaching or appointments have been
+      consistently cancelled. Never accesses or interprets clinical content.
 
   # ── AI Trend Radar (specs/ai-posts.md PR-3) ───────────────────────────
 
@@ -131,12 +139,151 @@ skills:
       Distill AI signals from newsletter emails and RSS feeds.
       Applies Topic Interest Graph boost scoring. Outputs ranked
       signals to tmp/ai_trend_signals.json for briefing + Telegram.
+
+# ==========================================================================
+# Work OS Skills (§22) — registered in Phase 0 (Step 0C.3)
+# All work skills write to state/work/ only; never read personal state.
+# command_namespace: work scopes them to the work surface.
+# ==========================================================================
+
+  # P0 — Background Connector Refresh (§8.7, §22) ────────────────────────
+
+  work_background_refresh:
+    class: "scripts.skills.work_background_refresh.WorkBackgroundRefreshSkill"
+    enabled: true
+    priority: P0
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: all
+    command_namespace: work
+    description: >
+      Pull-triggered work connector refresh — runs all available providers and updates
+      state/work/ atomically (§8.7). This is the P0 work skill: all read-path
+      /work commands depend on the state files it keeps fresh.
+      Triggered as a post-commit stage of /catch-up (when work.refresh.run_on_catchup: true)
+      + on-demand via /work refresh. No daemon, no scheduler — pure pull model (§3.9).
+
+  # P1 — Core operational skills ─────────────────────────────────────────
+
+  work_meeting_prep:
+    class: "scripts.skills.work_meeting_prep.WorkMeetingPrepSkill"
+    enabled: false
+    priority: P1
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Autonomous prep card generation for the next N upcoming meetings.
+      Reads work-calendar and work-people state; writes prep cards to
+      state/work/work-calendar.md meeting sections. Phase 1 implementation.
+
+  work_connect_prep:
+    class: "scripts.skills.work_connect_prep.WorkConnectPrepSkill"
+    enabled: false
     priority: P1
     cadence: weekly
-    requires_vault: true
+    requires_vault: false
     safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems, workiq_bridge]
     description: >
-      Track EAP session utilization and therapy appointment patterns.
-      Alerts when session limits are approaching or appointments have been
-      consistently cancelled. Never accesses or interprets clinical content.
+      Connect cycle goal tracking, evidence collection, and submission draft
+      generation (§7.6). Matches work-career evidence to Connect goals.
+      Generates calibration defense brief on --calibration flag.
+
+  # P2 — Operational intelligence skills ─────────────────────────────────
+
+  work_sprint_report:
+    class: "scripts.skills.work_sprint_report.WorkSprintReportSkill"
+    enabled: false
+    priority: P2
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems]
+    description: >
+      Auto-generate sprint status summary including Delivery Feasibility Score
+      (§11.5). Writes to state/work/work-projects.md sprint section.
+
+  work_comms_digest:
+    class: "scripts.skills.work_comms_digest.WorkCommsDigestSkill"
+    enabled: false
+    priority: P2
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Daily work comms digest without full catch-up overhead.
+      Writes digest section to state/work/work-comms.md.
+
+  work_boundary_check:
+    class: "scripts.skills.work_boundary_check.WorkBoundaryCheckSkill"
+    enabled: false
+    priority: P2
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    run_on: all
+    command_namespace: work
+    description: >
+      Weekly work-life boundary audit. Computes boundary_score and
+      focus_availability_score. Updates work_load_pulse.json bridge
+      artifact for personal surface consumption (§9.3).
+
+  # P3 — Content production and enrichment skills ─────────────────────────
+
+  work_source_capture:
+    class: "scripts.skills.work_source_capture.WorkSourceCaptureSkill"
+    enabled: false
+    priority: P3
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Auto-detect and propose data source URLs found in meeting notes
+      and email metadata. Requires user confirmation before writing to
+      state/work/work-sources.md. Phase 2 auto-capture implementation.
+
+  work_newsletter_digest:
+    class: "scripts.skills.work_newsletter_digest.WorkNewsletterDigestSkill"
+    enabled: false
+    priority: P2
+    cadence: on-demand
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems]
+    description: >
+      Assembles newsletter draft from sprint data, decisions, and
+      accomplishments via the Narrative Engine (§7.8). Output is always
+      a draft for human review — never sent automatically.
+
+  work_lt_deck_assist:
+    class: "scripts.skills.work_lt_deck_assist.WorkLtDeckAssistSkill"
+    enabled: false
+    priority: P2
+    cadence: on-demand
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems, workiq_bridge]
+    description: >
+      Generates structured deck content from projects, career evidence, and
+      data sources via the Narrative Engine (§7.8). Outputs Markdown sections
+      ready to paste into a deck — not PowerPoint files.
 

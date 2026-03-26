@@ -13,9 +13,9 @@ Ref: specs/deep-agents.md Phase 5
 """
 from __future__ import annotations
 
-from schemas.briefing import AlertItem, BriefingOutput, DomainSummary, FlashBriefingOutput
-from schemas.domain_index import DomainIndexCard, DomainIndexEntry
-from schemas.session import SessionSummarySchema
+from .briefing import AlertItem, BriefingOutput, DomainSummary, FlashBriefingOutput
+from .domain_index import DomainIndexCard, DomainIndexEntry
+from .session import SessionSummarySchema
 
 __all__ = [
     "AlertItem",

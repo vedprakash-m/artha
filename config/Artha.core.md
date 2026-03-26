@@ -322,7 +322,7 @@ if workiq_ready and work_comms_enabled:
                   "Format as one line per message: SENDER | CHANNEL_OR_DM | MESSAGE_PREVIEW | NEEDS_ACTION(yes/no)"
 
     # Run email and Teams queries; results route to work-comms domain (prompts/work-comms.md)
-    # Apply redact_keywords to all subjects/previews before writing to state/work-comms.md
+    # Apply redact_keywords to all subjects/previews before writing to state/work/work-comms.md
     # Pre-filter: suppress no-reply@, RSVP, automated pipeline notifications
 ```
 
@@ -372,7 +372,7 @@ WorkIQ failures are always non-blocking — personal data is fetched regardless.
 - If WorkIQ `ask_work_iq` fails:
   - Auth expired: briefing footer "⚠️ Work calendar unavailable — WorkIQ auth expired (npx workiq logout && retry on Windows)"
   - Parse failure (0 events from non-empty response): retry once with explicit format. If still fails: "⚠️ Work calendar unavailable — format change detected"
-  - On Mac: silent. No error, no warning. If stale `state/work-calendar.md` exists (<12h): "💼 [N] work meetings detected via Windows laptop (titles unavailable on this device)"
+  - On Mac: silent. No error, no warning. If stale `state/work/work-calendar.md` exists (<12h): "💼 [N] work meetings detected via Windows laptop (titles unavailable on this device)"
 
 ### Step 4b — Tiered Context Loading
 After all fetch scripts complete, load domain state files according to their activity tier. This reduces context window consumption by skipping dormant domains.
@@ -825,7 +825,7 @@ Events with `"merged": true` (from Step 4 dedup) are EXCLUDED from conflict dete
 **8p — Update work-calendar.md (v2.2):**
 If WorkIQ data was fetched this session:
 ```
-# Write count+duration metadata ONLY to state/work-calendar.md
+# Write count+duration metadata ONLY to state/work/work-calendar.md
 # NO titles, attendees, organizers, or links.
 today:
   date: {today}

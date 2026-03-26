@@ -19,7 +19,12 @@ execute the corresponding workflow from `config/Artha.md`.
 | `/status` | `artha status` | Quick health check — no email fetch (§5) |
 | `/goals` | `show goals`, `goal pulse` | Goal scorecard (§5) |
 | `/goals sprint new` | | Create a new goal sprint |
+| `/goals leading` | | Goal scorecard with leading indicators |
 | `/domain <name>` | `deep dive on <name>` | Deep-dive into a single domain (§5) |
+| `/domains` | `show domains` | List all domains with enable/disable status |
+| `/domains enable <name>` | | Enable a domain |
+| `/domains disable <name>` | | Disable a domain |
+| `/domains info <name>` | | Show full domain details |
 | `/items` | `show open items`, `open items` | Display all open action items (§5) |
 | `/items add` | | Interactively add a new open item |
 | `/items done OI-NNN` | | Mark an open item as done |
@@ -28,8 +33,15 @@ execute the corresponding workflow from `config/Artha.md`.
 | `/scorecard` | `life scorecard` | 7-dimension life quality assessment |
 | `/cost` | | Monthly API cost estimate |
 | `/health` | `system health` | System integrity check |
+| `/eval` | | Catch-up evaluation report (full) |
+| `/eval perf` | | Performance trends only |
+| `/eval accuracy` | | Accuracy only (acceptance rate, signal:noise) |
+| `/eval freshness` | | Domain staleness and OAuth health |
 | `/bootstrap` | | Guided state file population |
 | `/bootstrap <domain>` | | Bootstrap a specific domain |
+| `/bootstrap quick` | | Rapid setup — top 3–5 fields per domain |
+| `/bootstrap validate` | | Validation-only report — no file modifications |
+| `/bootstrap integration` | | Guided setup for a new data integration |
 | `/decisions` | `show decisions` | View active decision log |
 | `/scenarios` | `show scenarios` | View/run scenario analyses |
 | `/relationships` | `relationship pulse` | Relationship graph overview |
@@ -44,6 +56,19 @@ execute the corresponding workflow from `config/Artha.md`.
 | `/radar topic list` | | List Interest Graph topics |
 | `/radar topic remove <name>` | | Remove topic from Interest Graph |
 | `/radar run` | | Pull fresh signals from newsletter backlog |
+| `/pr` | `content calendar` | PR Manager — content calendar for this week |
+| `/pr threads` | | Narrative thread progress |
+| `/pr voice` | | Active voice profile display |
+| `/pr moments` | | All detected moments with convergence scores |
+| `/pr history` | | Post history (last 30 days) |
+| `/pr draft <platform>` | | Generate draft for a platform (li, fb, ig, wa) |
+| `/stage` | `show stage` | List all active content cards |
+| `/stage preview <CARD-ID>` | | Show full card with draft content |
+| `/stage approve <CARD-ID>` | | Mark card approved; emit copy-ready content |
+| `/stage draft <CARD-ID>` | | Trigger draft generation for a seed card |
+| `/stage posted <CARD-ID> <platform>` | | Log a post as published |
+| `/stage dismiss <CARD-ID>` | | Archive a card without posting |
+| `/stage history [year]` | | Browse cross-year archived cards |
 | `/work` | `work briefing` | Full work-only briefing (specs/work.md §5) |
 | `/work pulse` | | 30-second work status snapshot |
 | `/work prep` | | Meeting preparation with readiness scoring |

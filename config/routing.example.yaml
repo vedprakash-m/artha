@@ -223,7 +223,7 @@ user_routes:
   # Immigration attorney domain (routes to immigration.md)
   # Source: user_profile.yaml → domains.immigration.attorney_domain
   immigration_attorney_domain: ""
-    # example: "fragomen.com"
+    # example: "your-immigration-attorney.com"
 
   # Healthcare provider domains beyond the universal ones
   # Source: user_profile.yaml → domains.health.providers

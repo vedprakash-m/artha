@@ -35,7 +35,7 @@ For each document, extract:
 6. **Context** — which project or work stream this belongs to (infer from title if possible)
 
 ## Rolling 7-Day Log Design
-`state/work-notes.md` stores the last 7 days of document activity.
+`state/work/work-notes.md` stores the last 7 days of document activity.
 - Deduplicate: if same document appears multiple times, keep only most recent entry
 - Evict entries older than 7 days on each refresh
 - Trim to max 30 entries if list grows very large
@@ -54,7 +54,7 @@ For each document, extract:
 🔵 LOW: Weekly digest of doc activity — no items requiring action
 
 ## State File Update Protocol
-Read `state/work-notes.md` first, then:
+Read `state/work/work-notes.md` first, then:
 1. Run WorkIQ documents query for last 7 days
 2. Merge with existing state: update modified dates, add new docs
 3. Evict entries older than 7 days

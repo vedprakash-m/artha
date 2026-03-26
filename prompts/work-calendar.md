@@ -51,7 +51,7 @@ After merging Google Calendar and WorkIQ events:
 - Past events (ended >1h ago) → omit from today's briefing section
 
 ## State File Update Protocol
-Read `state/work-calendar.md` first. Then update:
+Read `state/work/work-calendar.md` first. Then update:
 1. **Today's Meetings** — table with time, title, organizer, location, Teams flag
 2. **This Week** — per-day summary row (date, meeting count, hours blocked, conflicts)
 3. **Patterns** — rolling stats: avg meetings/day, focus block availability

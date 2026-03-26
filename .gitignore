@@ -25,11 +25,17 @@ config/prompt-overlays/*.md
 # --- Local archive (personal specs, notes with PII — never committed) ---
 .archive/
 
-# --- State files (all user-generated) ---
+# --- State files (all user-generated, ALL subdirectories) ---
 state/*.md
 state/*.md.age
 state/*.yaml
 state/*.yaml.age
+# Work OS state — personal work data (never committed)
+state/work/
+# Bridge artifacts — aggregate signals with potential PII (never committed)
+state/bridge/
+# Eval files — test evaluation data
+state/work/eval/
 # SQLite databases (actions.db, etc.) — user data, not committed
 state/*.db
 state/*.db-shm
@@ -58,7 +64,17 @@ icloud_*.jsonl
 outlook_*.jsonl
 *_errors.txt
 *_err.txt
-test-write.txt          # filesystem write probe — never committed
+# filesystem write probe
+test-write.txt
+# test runner output artifact
+test_out.txt
+# Work OS test artifacts — generated output, not source
+tests/work/_pytest_results.txt
+# Scratch test runner scripts (local dev tools, not part of public repo)
+run_tests.ps1
+run_tests.py
+run_tests2.py
+scripts/_run_tests_internal.py
 
 # --- Token and credential files ---
 .tokens/

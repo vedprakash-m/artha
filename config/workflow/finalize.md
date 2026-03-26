@@ -125,6 +125,29 @@ Then extract the working procedure:
 2. Format: trigger, steps, pitfalls, verification (≤ 1,500 chars)
 3. **Threshold**: only create when genuinely non-obvious. Simple tasks don't qualify.
 
+### Step 11d — Work State Refresh (post-memory-pipeline)
+
+**SKIP when** `work.enabled` is `false` in `config/user_profile.yaml`.
+**SKIP when** `work.refresh.run_on_catchup` is `false` in `config/user_profile.yaml`.
+**SKIP in read-only mode** → log `⏭️ Step 11d skipped — read-only mode`
+
+After Step 11c completes (or is skipped), trigger a work state re-evaluation:
+
+```bash
+python scripts/post_work_refresh.py --quiet
+```
+
+The script re-runs the Work OS read loop to refresh learned-state metrics
+(career_velocity, meeting_quality, days_since_bootstrap) without invoking any
+live connectors.  Output appended to `state/work/eval/work-refresh-log.jsonl`.
+
+**Failure is non-blocking** — catch-up completes regardless of errors.
+
+Config kill-switch: set `work.refresh.run_on_catchup: false` in
+`config/user_profile.yaml` to disable.
+
+---
+
 ### Step 12 — Surface active alerts
 
 Scan all processed domains for P0/P1 alerts.

@@ -629,7 +629,7 @@ domains:
     always_load: false          # On-signal only (Mon-Fri when workiq enabled)
     phase: phase_work
     prompt_file: "prompts/work-calendar.md"
-    state_file: "state/work-calendar.md"
+    state_file: "state/work/work-calendar.md"
     requires_vault: false
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
@@ -658,6 +658,7 @@ domains:
       orange: "Double-booked slot today, meeting with skip-level or VP+"
       yellow: "3+ hours of back-to-back meetings, no lunch break"
       blue: "Meeting cancelled, new recurring meeting added"
+    command_namespace: work
 
   work-comms:
     label: "Work Communications"
@@ -666,7 +667,7 @@ domains:
     always_load: false
     phase: phase_work
     prompt_file: "prompts/work-comms.md"
-    state_file: "state/work-comms.md"
+    state_file: "state/work/work-comms.md"
     requires_vault: false
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
@@ -691,6 +692,7 @@ domains:
       orange: "Manager email unanswered >12h, cross-team request >24h"
       yellow: "5+ unacknowledged threads, Teams DM with action request"
       blue: "FYI-only threads, automated notifications filtered"
+    command_namespace: work
 
   work-projects:
     label: "Work Projects"
@@ -699,7 +701,7 @@ domains:
     always_load: false
     phase: phase_work
     prompt_file: "prompts/work-projects.md"
-    state_file: "state/work-projects.md"
+    state_file: "state/work/work-projects.md"
     requires_vault: false
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
@@ -731,6 +733,7 @@ domains:
       orange: "Sprint ends in <3 days with active items, new P2 bug"
       yellow: "Work item state changed, new items assigned to me"
       blue: "Item completed, PR merged, sprint started"
+    command_namespace: work
   work-people:
     label: "Work People"
     description: "Meeting prep context: org chart, roles, collaboration history"
@@ -738,7 +741,7 @@ domains:
     always_load: false
     phase: phase_work
     prompt_file: "prompts/work-people.md"
-    state_file: "state/work-people.md"
+    state_file: "state/work/work-people.md"
     requires_vault: false
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
@@ -756,6 +759,7 @@ domains:
       orange: "First meeting with someone new today — no prior interaction on record"
       yellow: "Org change detected (manager change, team restructure)"
       blue: "Collaboration summary updated for recurring 1:1"
+    command_namespace: work
 
   work-notes:
     label: "Work Notes"
@@ -764,7 +768,7 @@ domains:
     always_load: false
     phase: phase_work
     prompt_file: "prompts/work-notes.md"
-    state_file: "state/work-notes.md"
+    state_file: "state/work/work-notes.md"
     requires_vault: false
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
@@ -789,6 +793,195 @@ domains:
       orange: "Shared document modified by collaborator awaiting your review"
       yellow: "Document you own was edited by someone else in last 24h"
       blue: "Weekly digest of document activity"
+    command_namespace: work
+
+  work-boundary:
+    label: "Work Boundary"
+    description: "After-hours creep detection, focus erosion tracking, meeting overload, work-life balance scoring"
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-boundary.md"
+    state_file: "state/work/work-boundary.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to track your work-life boundary health?"
+    routing_keywords:
+      - after hours
+      - overtime
+      - work-life balance
+      - burnout
+      - focus time
+      - meeting overload
+    alert_thresholds:
+      red: "After-hours work 3+ consecutive weeks increasing, boundary score <0.3"
+      orange: "Meeting load >6h/day for 3+ days this week, no focus blocks"
+      yellow: "After-hours email or Teams activity detected"
+      blue: "Weekly boundary score update"
+    command_namespace: work
+
+  work-career:
+    label: "Work Career Evidence"
+    description: "Continuous evidence capture for review cycles, accomplishment memory, impact tracking"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-career.md"
+    state_file: "state/work/work-career.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge, ado_workitems]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to capture career evidence from your work activity?"
+    routing_keywords:
+      - accomplishment
+      - shipped
+      - impact
+      - review
+      - promo
+      - evidence
+      - recognition
+    alert_thresholds:
+      red: ""
+      orange: "Review cycle deadline in <2 weeks, evidence gaps detected"
+      yellow: "New career evidence captured from meeting or project completion"
+      blue: "Monthly evidence summary available"
+    command_namespace: work
+
+  work-performance:
+    label: "Work Performance & Connect OS"
+    description: "Connect goals, manager 1:1 pivot tracking, commitment ledger, stakeholder influence map, narrative assembly"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-performance.md"
+    state_file: "state/work/work-performance.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge, ado_workitems]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to track your Connect goals and manager operating rhythm?"
+      - "What is your current review cycle? (H1/H2, annual, quarterly)"
+    routing_keywords:
+      - connect
+      - goals
+      - 1:1
+      - manager
+      - calibration
+      - rewards
+      - performance
+    alert_thresholds:
+      red: "Connect submission deadline in <1 week with evidence gaps"
+      orange: "Manager 1:1 approaching with unresolved commitments"
+      yellow: "New evidence auto-captured for Connect goal"
+      blue: "Weekly Connect goal progress summary"
+    command_namespace: work
+
+  work-sources:
+    label: "Work Data Sources"
+    description: "Curated registry of dashboard links, Kusto queries, Power BI reports, and data portals"
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-sources.md"
+    state_file: "state/work/work-sources.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to index and search your frequently used dashboards and data sources?"
+    routing_keywords:
+      - dashboard
+      - kusto
+      - power bi
+      - data source
+      - portal
+      - report
+    alert_thresholds:
+      red: ""
+      orange: ""
+      yellow: "New data source auto-captured from meeting or email"
+      blue: "Data source registry updated"
+    command_namespace: work
+
+  work-project-journeys:
+    label: "Work Project Journeys"
+    description: "Long-running program timelines with milestone evidence, scope arcs, and ADO/IcM/doc provenance. Canonical source for /work promo-case and Connect narrative."
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-project-journeys.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    routing_keywords:
+      - journey
+      - project timeline
+      - milestone
+      - scope arc
+      - promo case
+    alert_thresholds:
+      red: ""
+      orange: ""
+      yellow: "New milestone evidence appended to project journey"
+      blue: "Project journey updated"
+    command_namespace: work
+
+  work-org-calendar:
+    label: "Work Org Calendar"
+    description: "Org-level milestone dates — Connect deadlines, rewards season, fiscal year close, headcount planning, promo nomination windows. 30-day lookahead alerts surfaced in /work briefing."
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-org-calendar.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    routing_keywords:
+      - connect deadline
+      - rewards season
+      - fiscal year
+      - headcount
+      - promo nomination
+      - org calendar
+    alert_thresholds:
+      red: "Org milestone within 7 days"
+      orange: "Org milestone within 14 days"
+      yellow: "Org milestone within 30 days"
+      blue: "Org calendar updated"
+    command_namespace: work
 
   # ── ACT-Reloaded domains (E2, E13) ──────────────────────────────────────
   inbox:
