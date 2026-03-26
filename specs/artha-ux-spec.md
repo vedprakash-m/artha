@@ -1,13 +1,14 @@
 # Artha — UX Specification
 
-> **Version**: 3.0 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.1 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v4.2, Tech Spec v3.7
+> **Implements**: PRD v7.1.0, Tech Spec v3.13.0
 
 | Version | Date | Summary |
 |---------|------|---------|
 | v2.7.3 | 2026-03 | **DUAL v1.3.0 UX** — Multi-machine setup is transparent to the user; all action proposal and execution flows are unchanged at the UX layer. On the Mac (proposer): bridge result ingestion runs silently before each catch-up briefing — executed actions appear in the briefing with their outcome status as if executed locally. On Windows (executor): action proposals arrive via OneDrive-synced bridge files; the `channel_listener.py` executor poll loop picks them up and executes automatically or queues for approval — same Telegram approval UX as single-machine mode. **Per-machine connectors:** connectors that are not applicable to the current machine are silently skipped during pipeline fetch (no user-visible error); `list_connectors` command shows a PLATFORM column. **Preflight advisory:** a P1 bridge health check surfaces if the bridge key is missing or the bridge directory is not accessible — shown as `⚠️ [ADVISORY] bridge: key not found` (non-blocking, catch-up proceeds). **Nudge daemon:** silently skips execution on any machine that is not the designated listener host — no user-visible behavior change. (implements PRD v7.0.8, Tech Spec v3.10.0, specs/dual-setup.md) |
-| v3.0 | 2026-03 | **Work OS UX (§23)** — `/work` command family (daily briefing, sprint, prep, people, health, refresh, warm-start); daily work briefing format (calendar load, commitment tracker, project summary, boundary score, connector health footer); meeting prep card format (readiness score, open threads, key people, prep actions); degraded mode UX (transparent connector status, stale-data labeling, remediation in `/work health`); warm-start onboarding prompt and completion confirmation. Hard separation: no work content in personal briefing. (implements PRD v4.2 FR-19, Tech Spec v3.7 §19, specs/work.md v1.7.0) |
+| v3.1 | 2026-03 | **Work OS v2.7.0 UX expansion** — Command palette expanded from 7 to 28 commands; §23.7 Narrative Engine UX (10 template picker, weekly memo format, calibration brief); §23.8 Promotion OS UX (/work promo-case output, evidence density); §23.9 Connect Cycle UX (evidence assembly, GAP flags, calibration brief); §23.10 Quick Capture + Decision Support UX (/work remember, D-NNN format); §23.11 Bootstrap Interview UX (12-question flow); §23.12 Learning & Adaptive Behavior UX. (implements PRD v7.1.0 FR-19 FW-11–FW-17, Tech Spec v3.13.0 §19) |
+| v3.0 | 2026-03 | **Work OS UX (§23)** — `/work` command family (daily briefing, sprint, prep, people, health, refresh, warm-start); daily work briefing format (calendar load, commitment tracker, project summary, boundary score, connector health footer); meeting prep card format (readiness score, open threads, key people, prep actions); degraded mode UX (transparent connector status, stale-data labeling, remediation in `/work health`); warm-start onboarding prompt and completion confirmation. Hard separation: no work content in personal briefing. (implements PRD v4.2 FR-19, Tech Spec v3.7 §19) |
 | v2.9 | 2026-03 | **PR-3 AI Trend Radar UX** — Telegram `/radar` command shows top-scored AI signals (title, category emoji, relevance score, source, try-worthy badge `★ TRY`); `/try <signal_id>` marks a signal for experimentation (creates `ai_experiment_complete` content moment when marked done); `/skip <signal_id>` dismisses a signal from the radar surface. Briefing injection: `render_radar_section()` in `scripts/briefing_adapter.py` surfaces up to 5 signals in the content section with topic-match tags and URL links. PAT-PR-004 stale-radar pattern alerts when `tmp/ai_trend_metrics.json` is older than 14 days — surfaces as urgency-1 social domain nudge. Warm-start: first-run signals scored with 30-day timeliness penalty to prevent stale data from flooding the surface. All three commands require `enhancements.pr_manager.ai_trend_radar.enabled: true` (set by `/bootstrap pr_manager`). (implements Tech Spec v3.13.0, specs/ai-posts.md PR-3 v1.0.6) |
 | v2.8 | 2026-03 | **PR-2 Content Stage UX** — `/stage` command family for card lifecycle management: card list view (ID, occasion, event date, status, days-until, draft readiness indicator), preview format (full draft per platform, PII flags inline), approve flow (copy-ready output per platform), dismiss/posted actions. Gallery files are plaintext YAML (not vaulted) — `/stage` commands work without vault decrypt. Briefing injection (Phase 2+): flash shows card count "N staged", standard shows top-card preview. PAT-PR-003 pattern alert ("staged content not reviewed in 3+ days") surfaces as social domain urgency-1 nudge. Content Stage privacy rules: PII_UNVERIFIED_SCRIPT cards require explicit approval; EMPLOYER_MENTION cards show ⚠️; children's names blocked on LinkedIn/public platforms. (implements Tech Spec v3.12.1, specs/pr-stage.md PR-2 v1.3.0 Phase 0+1) |
 | v2.7.2 | 2026-03-21 | ACT-RELOADED UX — sense-reason-act-learn capabilities: **Proactive nudges** (between-session push notifications via vault-watchdog bridge — 5 nudge types: overdue item, today deadline, imminent event, catch-up reminder, bill due; 3/day cap; generic text only — no encrypted domain data in nudges); **Adaptive briefing** (after 10 catch-ups, `BriefingAdapter` silently adjusts format/coaching/calibration based on historical behavior — R1 flash if user consistently uses flash, R4 disables coaching if always dismissed; transparency footer appended showing what adapted and why); **`/remember` inbox** (send quick notes to Artha via Telegram; items triaged at next catch-up in Step 7b extension; PII-scanned pre-write; 5 writes/hour; `state/inbox.md` visible in briefing as `📥 [N] inbox items`); **Email signal extraction** (Step 6.5 deterministic signals now appear in action queue — RSVP deadlines, appointment confirmations, payment notices, shipment arrivals, security alerts fire `ActionProposal` objects automatically; no more relying on AI to notice these in Step 8); **Cross-domain pattern alerts** (deterministic patterns from `config/patterns.yaml` surface in Step 8 before AI reasoning — visa deadline + travel conflict, goal stale, bill cluster, etc.; each pattern shows matched conditions + entity); **`/power` command** (power half-hour view: top 3 OI by impact × urgency, today's calendar, 2-line intention statement — zero-overhead 30-min action session); **`/relationships` command** (relationship graph with circle health scores, stale contact flags, upcoming occasions cross-referenced); **Monthly retrospective** (auto-generated when `generate_monthly_retro: true` fires in Step 3; reads summaries/ + state/ for lookback); **Family flash digest** (family-scope Telegram recipients get condensed shared-visibility briefing via `_build_family_flash()`); **Coaching nudge** (deterministic `CoachingEngine` selects nudge in Step 8 — moves from Step 19 prompt to early action layer; 4 strategies: accountability, momentum, insight, challenge; respects `max_per_week` preference). **Attachment routing** (PDF/doc filenames classified to domains in briefing — finance, health, immigration, kids, insurance, employment signals). Zero new setup steps for all features. (implements PRD v7.0.6/v7.0.7, Tech Spec v3.9.8) |
@@ -1729,7 +1730,7 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 
 ---
 
-*Artha UX Spec v2.0 — End of Document*
+*Artha UX Spec v3.1 — End of Document*
 
 *"The best interface is the one you forget you're using. Artha speaks when it matters, is silent when it doesn't, and always tells you where you stand — in under 3 minutes."*
 
@@ -1737,19 +1738,47 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 
 ## 23. Work OS — Interaction Design
 
-> **Full specification:** `specs/work.md` v1.7.0. This section documents the UX patterns for the Work Intelligence OS (PRD FR-19). The Work OS is a separate surface — separate vault, separate connectors, separate slash command namespace. No work content appears in personal briefings beyond the scalar boundary score.
+> This section documents the UX patterns for the Work Intelligence OS (PRD FR-19, Tech Spec §19). The Work OS is a separate surface — separate vault, separate connectors, separate slash command namespace. No work content appears in personal briefings beyond the scalar boundary score. Full implementation: 25-command read-path CLI (`work_reader.py`), 9 Work OS scripts, 20 domain state files, 883 tests.
 
 ### 23.1 Command Palette
 
-| Command | What it does |
-|---|---|
-| `/work` | Daily work briefing — calendar load, prep status, commitment summary, boundary signal |
-| `/work sprint` | Sprint-focused view — ADO work items, active commitments, blockers |
-| `/work prep <title>` | On-demand meeting prep card for a named meeting |
-| `/work people` | People graph summary — top collaborators by tier and recency |
-| `/work health` | Work connector health — per-connector status, degraded fallbacks active, audit log tail |
-| `/work refresh` | Re-run fetch + enrich stages to pull latest connector data |
-| `/work warm-start` | Run or re-run the historical import from scrape data |
+| Command | Category | What it does |
+|---|---|---|
+| `/work` | Core | Daily work briefing — calendar load, prep status, commitment summary, boundary signal |
+| `/work pulse` | Core | 30-second work status snapshot — boundary score, overdue items, next meeting |
+| `/work sprint` | Core | Sprint-focused view — ADO work items, active commitments, blockers |
+| `/work prep <title>` | Meeting | On-demand meeting prep card for a named meeting (readiness score, open threads, key people) |
+| `/work live <id>` | Meeting | Live meeting assist — active action capture, decision tracking during a meeting |
+| `/work mark-preread <id>` | Meeting | Mark a meeting as pre-read; updates readiness score |
+| `/work notes [id]` | Capture | Post-meeting action capture — parses transcript/notes into D-NNN/OI-NNN items |
+| `/work remember <text>` | Capture | Instant micro-capture — appended to work-notes with timestamp |
+| `/work decide <context>` | Capture | Structured decision support — records D-NNN decision with context, options, outcome |
+| `/work connect-prep` | Career | Connect cycle evidence assembly — goal alignment, key contributions, GAP flags |
+| `/work connect-prep --calibration` | Career | Calibration defense brief — rating justification with evidence density |
+| `/work promo-case` | Career | Promotion readiness assessment — scope arc, evidence density stars, visibility events |
+| `/work promo-case --narrative` | Career | Full promotion narrative Markdown draft |
+| `/work career` | Career | Career timeline with roles, key projects, growth arc |
+| `/work journey [project]` | Career | Project timeline with milestone evidence and scope arc |
+| `/work memo` | Content | Status memo via Narrative Engine (escalation_memo or decision_memo template) |
+| `/work memo --weekly` | Content | Auto-drafted weekly status (weekly_memo template) |
+| `/work newsletter [period]` | Content | Team newsletter draft (newsletter template) |
+| `/work deck [topic]` | Content | LT deck content assembly (deck template) |
+| `/work talking-points <topic>` | Content | Meeting-ready talking points (talking_points template) |
+| `/work people [query]` | Org | People graph — top collaborators by tier, recency, org context |
+| `/work graph` | Org | Full org relationship graph — tier distribution, collaboration strength |
+| `/work projects` | Org | Project portfolio view — meetings-per-project, ADO items, status |
+| `/work sources [query]` | Org | Data source registry lookup |
+| `/work sources add <url>` | Org | Register a new data source with context |
+| `/work return [window]` | Intel | Absence recovery — summarizes what changed while away (default 3d, e.g. `4d`) |
+| `/work boundary` | Intel | Boundary intelligence report — load trends, after-hours patterns, recommendations |
+| `/work connect` | Intel | Review-cycle evidence by goal area |
+| `/work incidents` | Intel | ICM/incident timeline — on-call history, resolution evidence |
+| `/work repos` | Intel | Repository activity — commit velocity, PR cadence |
+| `/work day` | Intel | Day-ahead schedule synthesis — conflicts, prep gaps, boundary forecast |
+| `/work health` | System | Work connector health — per-connector status, degraded fallbacks, audit log tail |
+| `/work refresh` | System | Explicit live connector refresh — re-run fetch + enrich stages |
+| `/work bootstrap` | System | Guided 12-question setup interview to populate state/work/ |
+| `/work warm-start` | System | Run or re-run historical import from scrape data |
 
 ### 23.2 Daily Work Briefing Format
 
@@ -1808,7 +1837,7 @@ Triggered via `/work prep <title>` or automatically at briefing time for top-pri
 
 ### 23.4 Degraded Mode UX
 
-Work OS follows the **no-blocking-failure** principle (§8.4 of specs/work.md). When connectors fail, the briefing still runs with visible status:
+Work OS follows the **no-blocking-failure** principle (Tech Spec §19.4). When connectors fail, the briefing still runs with visible status:
 
 ```
 ⚠ Work OS — Degraded Mode
@@ -1866,8 +1895,208 @@ After warm-start completion, the briefing transitions from "bootstrapping" to fu
 
 ---
 
+### 23.7 Narrative Engine UX
+
+Triggered via `/work memo`, `/work memo --weekly`, `/work newsletter`, `/work deck`, `/work talking-points`, `/work connect-prep`, and `/work promo-case --narrative`.
+
+**Template picker** (when ambiguous):
+```
+Select a template:
+  1. weekly_memo      — Weekly status update
+  2. talking_points   — Meeting-ready talking points
+  3. boundary_report  — Boundary intelligence summary
+  4. connect_summary  — Review-cycle evidence
+  5. newsletter       — Team newsletter
+  6. deck             — LT deck content
+  7. calibration_brief — Calibration defense
+  8. connect_evidence  — Goal-area evidence blocks
+  9. escalation_memo  — Escalation memo
+ 10. decision_memo    — Decision record memo
+```
+
+**Weekly memo output format:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WEEKLY STATUS — Week of Mar 24, 2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏆 KEY WINS
+  • Platform Alpha: signoff doc delivered (Mar 22)
+  • DeployFlow: requirements review complete
+
+🚧 IN PROGRESS
+  • Platform Beta: LT deck content assembly (60%)
+  • Platform-A-DD: scope arc documentation
+
+⚠ BLOCKERS / RISKS
+  • Deployment slides dependency on Alex M. approval
+
+📋 NEXT WEEK
+  • [auto-synthesized from ADO items + calendar load]
+```
+
+**Calibration brief format:**
+```
+━━━━ CALIBRATION BRIEF ━━━━
+Rating Justification: [LEVEL]
+
+Evidence Density: ★★★★☆ (4/5)
+
+Key Contributions:
+  [1] Platform Alpha — scope: team-wide, outcome: shipped
+  [2] Connect cycle evidence — 4 goal areas covered
+
+GAP Flags:
+  ⚠ Visibility: 0 cross-org speaking events last quarter
+  ⚠ Leadership: no direct report feedback entries
+```
+
+---
+
+### 23.8 Promotion OS UX
+
+Triggered via `/work promo-case` and `/work promo-case --narrative`.
+
+**Readiness assessment format:**
+```
+━━━━ PROMOTION READINESS ━━━━
+
+Scope Arc:     ★★★★☆  (4/5)  Individual → Team → Multi-team
+Evidence:      ★★★☆☆  (3/5)  12 contribution events on file
+Visibility:    ★★☆☆☆  (2/5)  Limited cross-org events
+Impact:        ★★★★☆  (4/5)  Shipped 2 major milestones
+
+Overall:       ★★★☆☆  (3.25/5)  Not yet ready
+
+Top gaps to close:
+  1. Add 2+ cross-org visibility events (talks, reviews, demos)
+  2. Collect peer feedback entries (currently 0)
+  3. Document scope expansion arc in work-career.md
+
+Run `/work promo-case --narrative` for full Markdown draft.
+```
+
+---
+
+### 23.9 Connect Cycle UX
+
+Triggered via `/work connect-prep` and `/work connect-prep --calibration`.
+
+**Evidence assembly format:**
+```
+━━━━ CONNECT CYCLE PREP ━━━━
+
+  Goal Area Coverage:
+    🟢 Impact       ████████░░  80%  (8 events)
+    🟡 Velocity     █████░░░░░  50%  (5 events)
+    🔴 Leadership   ██░░░░░░░░  20%  (2 events)
+    🟢 Collaboration ███████░░░  70%  (7 events)
+
+  GAP Flags:
+    ⚠ Leadership evidence sparse — add 2+ events before review
+    ⚠ No stretch project documented
+
+  Key evidence blocks ready:
+    → Platform Alpha delivery (Mar 2026) — scope: org-wide
+    → DeployFlow requirements (Feb 2026) — team impact
+    → [+6 more]
+```
+
+---
+
+### 23.10 Quick Capture + Decision Support UX
+
+**`/work remember <text>`** — Inline micro-capture:
+```
+✓ Captured → work-notes.md
+  [2026-03-24 10:42] Platform Alpha signoff blocked on legal review
+  (run `/work notes` to promote to structured item)
+```
+
+**`/work decide <context>`** — Decision record:
+```
+━━━━ DECISION RECORD ━━━━
+ID: D-042
+Context: <text provided>
+
+Options considered:
+  A. [user fills]
+  B. [user fills]
+
+Outcome: [pending]
+→ Saved to state/work/work-decisions.md
+→ Referenced as D-042 in work-notes.md
+```
+
+**D-NNN / OI-NNN ID format rules:**
+- `D-NNN` — Decision record (3-digit zero-padded, sequential)
+- `OI-NNN` — Open item (3-digit zero-padded, sequential)
+- Both formats are cross-referenced between work-notes.md, work-decisions.md, work-open-items.md
+- IDs survive across sessions — never reused
+
+---
+
+### 23.11 Bootstrap Interview UX
+
+Triggered via `/work bootstrap`. Walks through a 12-question interview to populate `state/work/` files from scratch.
+
+**Flow format:**
+```
+━━━━ WORK OS BOOTSTRAP ━━━━
+This interview takes ~5 minutes and sets up your work intelligence base.
+
+[1/12] What is your current role/title?
+> [user input]
+
+[2/12] Who is your manager? (first name, last name or alias)
+> [user input]
+
+... (questions 3–12 covering: org context, top 3 projects,
+     key stakeholders, current sprint/milestone, career goals,
+     connect cycle timeline, ADO org/project, time zone,
+     working hours, after-hours boundary preference)
+
+─────────────────────────────────────────────
+✓ Bootstrap complete (12/12 questions answered)
+
+Files written:
+  state/work/work-career.md        ✓
+  state/work/work-people.md        ✓
+  state/work/work-projects.md      ✓
+  state/work/work-boundary.md      ✓
+  state/work/work-summary.md       ✓
+
+Run `/work` to see your first briefing.
+```
+
+**Design rules:**
+- Each answer immediately written atomically; partial bootstrap is safe to resume
+- `--dry-run` flag previews what would be written without touching state files
+- If a state file already exists, bootstrap asks: `Overwrite existing [file]? (y/N)`
+
+---
+
+### 23.12 Learning & Adaptive Behavior UX
+
+Work OS adapts over time through three phases:
+
+| Phase | Trigger | UX Effect |
+|---|---|---|
+| **Calibration** | First 10 briefings | Baseline metrics collected silently; no visible change |
+| **Prediction** | After 10 briefings | `/work pulse` shows trend arrows (↑ ↓ →) for boundary score, meeting load, commitment completion |
+| **Anticipation** | After 30 briefings | Proactive alerts surface: "Meeting load spike predicted Thursday" · "Commitment cluster forming Mar 27" |
+
+**`state/work/work-learned.md`** stores learned patterns:
+- Typical meeting load by day-of-week
+- Recurring commitment patterns (pre-meeting prep time, signoff timing)
+- Boundary score trend line
+- Calibration predictions and accuracy delta
+
+**Transparency rule:** All predictions show their basis: `(based on 12 similar weeks)`. If prediction accuracy drops below 60%, the system silently recalibrates — no user-visible disruption.
+
+---
+
 **Cross-references:**
-- PRD v5.9: §6 (Interaction Modes), §7 (FR-1 through FR-18 + F15.100–F15.118), §8 (Goal Intelligence), §9 (Architecture), §10 (Autonomy Framework), §11 (Relationship Intelligence), §12.6 (Privacy Surface), Phase 2A–B (Canvas, Apple Health)
-- PRD v4.2: FR-19 Work Intelligence OS
-- Tech Spec v3.7: §19 Work OS Technical Architecture, `specs/work.md` v1.7.0
+- PRD v7.1.0: FR-19 Work Intelligence OS (FW-1–FW-17), Phase 2C
+- Tech Spec v3.13.0: §19 Work OS Technical Architecture (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage)
 - Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)

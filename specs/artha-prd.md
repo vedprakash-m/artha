@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.1.0 | 2026-03 | **Work OS v2.7.0 — Phases 2–5 complete:** `scripts/work_bootstrap.py` (12-question guided setup interview, cold-start path); `scripts/work_notes.py` (post-meeting notes capture, D-NNN/OI-NNN IDs); `scripts/work_reader.py` (25-command read-path CLI, <2s from cached state); `scripts/work_domain_writers.py` (atomic writers for all 11 domain state files); `scripts/narrative_engine.py` (10 narrative templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo); `scripts/post_work_refresh.py` (post-refresh summarization); `scripts/kusto_runner.py` (KQL bridge, Microsoft Enhanced tier); `scripts/skills/work_background_refresh.py` (pull-triggered background refresh); `.github/workflows/work-tests.yml` (CI matrix Python 3.11/3.12/3.13 + prompt-lint gate); Work OS state directory expanded to 20 files; FW-11 through FW-17 implemented (Post-Meeting Notes, Guided Bootstrap, Narrative Engine, Connect Cycle, Promotion OS, Decision Support, Org Calendar); 883 tests in `tests/work/`. See FR-19, Tech Spec §19, UX Spec §23. |
 | v7.0.11 | 2026-03 | **PR-3 AI Trend Radar** (specs/ai-posts.md PR-3 v1.0.6): `scripts/skills/ai_trend_radar.py` — `AITrendRadarSkill` 5-stage pipeline (INGEST→DISTILL→SURFACE→TRY→DRAFT); `AISignal` dataclass with SHA-256 stable IDs; 9-rule relevance scoring (keyword hit +2.0, multi-source bonus +0.15, employer safety gate −5.0 block, title+body hit +0.5, multi-topic boost); `_detect_category()` ordered (model→framework→tool→tutorial→technique→research); `_apply_topic_boost()` max-wins; `_emit_experiment_moments()` GAP-2 guard; warm-start lifecycle via `state/ai_trend_radar.md` frontmatter. `scripts/pr_manager.py` — `ai_experiment_complete` moment type (weight 0.85, NT-1/1.0 + NT-5/0.5 threads, LinkedIn-only); `cultural_festival` platform list excludes `linkedin`. `platform_exclude: list[str]` field on `ContentCard` (pr_stage/domain.py + service.py). `state/pr_manager.md` — `register_b_practitioner` voice sub-register. RSS connector enabled with 7 AI feeds (openai_blog, simon_willison, huggingface_blog, google_ai, anthropic, msresearch, hn_ai). `config/artha_config.yaml` — `enhancements.pr_manager.ai_trend_radar` block (13 newsletter senders, relevance_keywords, try_worthy_threshold: 0.7, surface_threshold: 0.35, max_signals_per_week: 10). PAT-PR-004 stale-radar pattern (stale_days: 14). `config/skills.yaml` — ai_trend_radar P2 weekly. `state/gallery.yaml` — CARD-SEED-RADAR seed (occasion_type: ai_experiment_complete). `scripts/briefing_adapter.py` — `render_radar_section()`. Telegram `/radar`/`/try`/`/skip` commands in `channel_listener.py`. 52 new tests (1974 total passing). See F11.12. |
 | v7.0.10 | 2026-03 | **PR-2 Content Stage fixes + vault policy change:** gallery files (`state/gallery.yaml`, `state/gallery_memory.yaml`) removed from vault encryption — public social-media drafts do not require PII-level protection; vault lockout was preventing `/stage list` from reading cards between sessions. `scripts/skills/occasion_tracker.py` `_parse_date_flexible()` expanded to handle `M/D/YYYY`, `MM/DD/YYYY`, `M/D` formats (all dates in `state/occasions.md` use US date notation). `scripts/pr_stage/service.py` `ContentStage._adapt_moment()` bridges PR-1→PR-2 `ScoredMoment` field names. 16 Indian festivals 2026–2027 seeded in `state/occasions.md`. 1922 tests (all passing). See F11.12. |
 | v7.0.9 | 2026-03-21 | **MEM v1.3.0** — Memory Pipeline Activation (specs/mem.md): fixed 4 independent breaks that left Artha's 9-script memory subsystem operational-but-silent. **Break 2 — parser mismatch:** `scripts/fact_extractor.py` — `_parse_briefing_md(content)` handles both Telegram (`━━` box-drawing) and Markdown (`## CRITICAL/URGENT/BY DOMAIN`) briefing formats; `extract_facts_from_summary()` renamed `summary_path→input_path`, auto-detects format via 3-branch routing. **Phase 1b — briefing-aware signals:** 4 new `_EXTRACTION_SIGNALS` — deadline (30d TTL), decision-pending (60d TTL), `$N/mo` threshold (90d TTL, finance), OI-NNN open-item pattern (90d TTL). **Domain sensitivity tiering (Design Principle 8):** `_HIGH_STAKES_DOMAINS = {finance, health, immigration, insurance, legal}` + `_apply_domain_sensitivity_ttl()` — caps TTL at 90d for non-correction/preference facts. **Break 3 — health-check format mismatch:** `scripts/self_model_writer.py` — `_parse_catchup_runs_from_markdown(content)` reads `## Catch-Up Run History` freeform section; `update()` tries YAML frontmatter first, falls back to markdown parser. **Break 1 — LLM never fires session summarizer:** `scripts/post_catchup_memory.py` (new, ~240 LOC) — deterministic orchestrator; `run(briefing_path, artha_dir, dry_run)` extracts facts DIRECTLY from briefing (bypasses lossy SessionSummary round-trip), persists via `persist_facts()`, updates `SelfModelWriter`, appends JSON record to `state/memory_pipeline_runs.jsonl`; CLI: `--briefing PATH` (required), `--dry-run`, `--discover`, `--rebuild-self-model`; config flag `harness.agentic.post_catchup_memory.enabled`. **Break 4 — low signal yield:** addressed by Phase 1b signals above. **Bootstrap:** `scripts/bootstrap_memory.py` (new, ~80 LOC) — batch-seeds all historical briefings (collect ALL facts first, single `persist_facts()` call → AR-1 consolidation fires once, order-independent); `scripts/bootstrap_seeds.yaml` — declarative procedure manifest; Step 11c in `config/workflow/finalize.md` rewritten to `python3 scripts/post_catchup_memory.py --briefing briefings/YYYY-MM-DD.md`. Validated outcome: `state/memory.md` populated, `state/self_model.md` live (Domain Confidence + Known Blind Spots), procedure seeded. 18/18 E2E checks pass. 1546 tests (all passing). See F15.136. |
@@ -729,11 +730,11 @@ Hey — quick check-in on your week:
 
 ### FR-14 · Work-Life Boundary Guardian
 
-> **⚠ Superseded by Work OS hard separation model (specs/work.md §9)**
+> **⚠ Superseded by Work OS hard separation model (Tech Spec §19.1)**
 >
 > FR-14's original design assumed the personal surface would infer boundary
 > signals from timestamp patterns in the personal email/calendar sync. The
-> Work OS (specs/work.md v1.6+) replaces this with an explicit two-artifact
+> Work OS (FR-19, Tech Spec §19) replaces this with an explicit two-artifact
 > bridge protocol: the personal surface still never reads raw work data, but
 > the work surface now maintains its own isolated state (`state/work/`), a
 > separate vault key (`work`), and communicates boundary health only via the
@@ -1012,14 +1013,12 @@ Hey — quick check-in on your week:
 
 ### FR-19 · Work Intelligence OS
 
-> **Full specification:** `specs/work.md` (v1.7.0). This entry summarises the functional scope for PRD completeness; the work spec is the canonical source of truth for all Work OS design decisions, data models, and implementation rules.
-
 **Priority:** P1 (Windows-first)
-**Summary:** A fully isolated, privacy-hardened intelligence layer for professional work — separate vault key, separate state directory, separate surface. Connects MS Graph / ADO / WorkIQ to synthesise daily work briefings, surface commitments, track career evidence, and provide meeting intelligence — all under the hard separation model (§9 of specs/work.md).
+**Summary:** A fully isolated, privacy-hardened intelligence layer for professional work — separate vault key, separate state directory, separate surface. Connects MS Graph / ADO / WorkIQ to synthesise daily work briefings, surface commitments, track career evidence, and provide meeting intelligence — under the hard separation model (no raw work data in personal briefing; only the numeric boundary score crosses the surface).
 
-**Data sources:** MS Graph (Calendar, Mail — work account), Azure DevOps (work items), WorkIQ MCP (Windows), Outlook COM bridge (Windows), 81+ weeks of warm-start scrape data.
+**Data sources:** MS Graph (Calendar, Mail — work account), Azure DevOps (work items), WorkIQ MCP (Windows), Outlook COM bridge (Windows), 81+ weeks of warm-start scrape data, Kusto/ICM (Microsoft Enhanced tier).
 
-**Architecture:** 7-stage processing loop (`scripts/work_loop.py`), canonical object layer (`scripts/schemas/work_objects.py` — 6 dataclasses), connector error protocol (`scripts/schemas/work_connector_protocol.py`), bridge schema validators (`scripts/schemas/bridge_schemas.py`), warm-start processor (`scripts/work_warm_start.py`), isolated state in `state/work/`, bridge output to `state/bridge/` for personal surface consumption.
+**Architecture:** 7-stage processing loop (`scripts/work_loop.py`), canonical object layer (`scripts/schemas/work_objects.py` — 6 dataclasses), connector error protocol (`scripts/schemas/work_connector_protocol.py`), bridge schema validators (`scripts/schemas/bridge_schemas.py`), warm-start processor (`scripts/work_warm_start.py`), guided bootstrap interview (`scripts/work_bootstrap.py`), post-meeting notes capture (`scripts/work_notes.py`), 25-command read-path CLI (`scripts/work_reader.py`), domain state writers (`scripts/work_domain_writers.py`), narrative templates (`scripts/narrative_engine.py`), post-refresh processor (`scripts/post_work_refresh.py`); isolated state in `state/work/` (20 files); bridge output to `state/bridge/` for personal surface consumption; 3 agent tiers (`artha-work.md`, `artha-work-enterprise.md`, `artha-work-msft.md`); 883 tests in `tests/work/`.
 
 **Core features:**
 
@@ -1032,9 +1031,16 @@ Hey — quick check-in on your week:
 | FW-5 | **People Graph** — Relationship map of colleagues, managers, skip-levels, and key stakeholders. Scored by interaction frequency. Warm-started from 81 weeks of scrape history. Stored in `state/work/work-people.md`. | P1 |
 | FW-6 | **Warm-Start Import** — One-command population of all work state files from historical work-scrape data. Extracts people graph, project timeline, career evidence, and recurring meetings from 18 months of weekly scrape files. | P0 (one-time) |
 | FW-7 | **Boundary Bridge** — Publishes `work_load_pulse.json` to `state/bridge/` — a schema-validated, PII-free summary (boundary score, meeting count, commitment counts). The personal Artha surface consumes only this artifact; raw work data never crosses the surface boundary. | P0 |
-| FW-8 | **Work Health & Degraded Mode** — Connector failure protocol per §8.4 of specs/work.md: every connector failure has a defined fallback, a user-facing status signal, and a remediation. No single connector failure blocks the workflow. Audit log at `state/work/work-audit.md`. | P0 |
+| FW-8 | **Work Health & Degraded Mode** — Connector failure protocol: every connector failure has a defined fallback, a user-facing status signal, and a remediation. No single connector failure blocks the workflow. Audit log at `state/work/work-audit.md`. | P0 |
 | FW-9 | **Project Tracker** — Active project map with meeting frequency, key stakeholders, status, and timeline signals. Auto-updated from meeting and ADO data. `state/work/work-projects.md`. | P1 |
 | FW-10 | **Work Source Catalog** — Registry of key dashboards, Kusto queries, SharePoint sites, and portals — with "what question does this answer" annotations. `state/work/work-sources.md`. | P2 |
+| FW-11 | **Post-Meeting Notes Capture** — Structured capture of meeting decisions, open items, and context after any meeting. Generates D-NNN (decision) and OI-NNN (open item) IDs. CLI: `python scripts/work_notes.py`. `state/work/work-notes.md`. | P1 |
+| FW-12 | **Guided Bootstrap Interview** — 12-question CLI interview to populate all work domain state files from scratch — no scrape archive required. Covers org structure, stakeholders, projects, goals, and career arc. CLI: `python scripts/work_bootstrap.py`. | P0 (one-time) |
+| FW-13 | **Narrative Engine** — 10 narrative templates for status communication: weekly memo, talking points, boundary report, connect summary, newsletter draft, LT deck outline, calibration brief, connect evidence, escalation memo, decision memo. CLI: `python scripts/narrative_engine.py`. | P1 |
+| FW-14 | **Connect Cycle Intelligence** — Evidence assembly for performance reviews: keyword matching against career evidence, evidence density ratings (★–★★★★★), GAP analysis, manager-voice calibration brief. CLI: `/work connect-prep` and `/work connect-prep --calibration`. | P1 |
+| FW-15 | **Promotion OS** — Evidence-backed promotion readiness assessment and narrative generation. Scope arc analysis, project journey timeline, visibility event inventory, readiness score. CLI: `/work promo-case` (assessment) and `/work promo-case --narrative` (Markdown draft). `state/work/work-project-journeys.md`. | P2 |
+| FW-16 | **Decision Support** — Structured decision-making with D-NNN / OI-NNN identifiers. Decision registry, open item tracking, recurrence drift detection. CLI: `/work decide <context>`. `state/work/work-decisions.md`, `state/work/work-open-items.md`. | P1 |
+| FW-17 | **Org Calendar** — Tracks key org dates: Connect deadlines, rewards season, fiscal year close, all-hands cadence. 30-day lookahead alerts appear in `/work` briefing. `state/work/work-org-calendar.md`. | P1 |
 
 ---
 
@@ -1644,12 +1650,12 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 **Phase 2 data upgrade path:** Financial institutions (Chase, Fidelity, Vanguard, Wells Fargo) will upgrade from email parsing to Plaid API integration (read-only) in Phase 2. This provides real-time balance and transaction data, enabling the "net worth on demand" target.
 
 **Not in scope for personal surface (by design):**
-- Work email on the personal surface — work data is handled exclusively by the Work OS (FR-19, specs/work.md)
+- Work email on the personal surface — work data is handled exclusively by the Work OS (FR-19; see Tech Spec §19)
 - WhatsApp inbound messages — no public API; **local DB reading is implemented** for WhatsApp Desktop (macOS + Windows) via `whatsapp_local` connector (metadata only on Windows — message body is encrypted at rest)
 - iMessage — **local DB reading is implemented** for macOS via `imessage_local` connector (requires Full Disk Access grant); no remote API access
 - Proton Mail (unless Proton Bridge configured in Phase 2) — personal comms boundary; E2E encryption prevents standard forwarding
 
-> **Work OS data sources** (Teams, ADO, MS Graph work calendar, SharePoint) are consumed exclusively by the Work OS (FR-19) via `scripts/work_loop.py`. No work data reaches the personal surface. See §10 of specs/work.md for the Work OS connector specification.
+> **Work OS data sources** (Teams, ADO, MS Graph work calendar, SharePoint) are consumed exclusively by the Work OS (FR-19) via `scripts/work_loop.py`. No work data reaches the personal surface. See Tech Spec §19.4 for the Work OS connector protocol.
 
 ---
 
@@ -1809,21 +1815,29 @@ Goal Engine (FR-13: conversational creation, metric wiring, weekly scorecard, co
 
 ---
 
-### Phase 2C — Work Intelligence OS *(implemented v1.7.0)*
-*Objective: Isolated work intelligence layer — daily work briefing, meeting prep, commitment tracking, career evidence, and people graph. Hard separation from personal surface.*
+### Phase 2C — Work Intelligence OS *(v2.7.0 — all phases complete)*
+*Objective: Isolated work intelligence layer — daily work briefing, meeting prep, commitment tracking, career evidence, people graph, narrative engine, connect cycle intelligence, promotion OS, and decision support. Hard separation from personal surface.*
 
-**Status: Implemented.** Full specification in `specs/work.md` v1.7.0.
+**Status: Implemented** (v2.7.0, Phases 1–5 complete). See Tech Spec §19 for full technical architecture; see UX Spec §23 for interaction design.
 
 **Key deliverables (completed):**
-- `scripts/work_loop.py` — 7-stage processing loop (fetch → enrich → filter → infer → score → write → bridge)
-- `scripts/work_warm_start.py` — historical import processor (81-week scrape corpus)
+- `scripts/work_loop.py` — 7-stage processing loop (fetch → enrich → filter → infer → score → write → bridge); `--mode read` (fast cached reads) and `--mode refresh` (full connector refresh)
+- `scripts/work_warm_start.py` — historical import processor (81-week scrape corpus; ScrapeParser + WarmStartAggregator)
+- `scripts/work_bootstrap.py` — guided 12-question setup interview for cold-starts (no scrape archive required)
+- `scripts/work_notes.py` — post-meeting notes capture with D-NNN / OI-NNN sequenced IDs
+- `scripts/work_reader.py` — 25-command read-path CLI (<2s from cached state)
+- `scripts/work_domain_writers.py` — atomic writers for all 11 work domain state files
+- `scripts/narrative_engine.py` — 10 narrative templates (weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo)
+- `scripts/post_work_refresh.py` — post-refresh summarization (mirrors post_catchup_memory.py pattern)
+- `scripts/kusto_runner.py` — KQL query execution bridge (Microsoft Enhanced tier)
 - `scripts/schemas/work_objects.py` — 6 canonical dataclasses (WorkMeeting, WorkDecision, WorkCommitment, WorkStakeholder, WorkArtifact, WorkSource)
-- `scripts/schemas/work_connector_protocol.py` — §8.4 connector error protocol with PROTOCOL table
-- `scripts/schemas/bridge_schemas.py` — schema-validated bridge artifacts (WorkLoadPulse, BridgeArtifact, BridgeManifest)
-- `config/agents/` — 3 AI agent configurations (work_briefing_agent.md, work_enrich_agent.md, meeting_prep_agent.md)
-- `state/work/` — 6 domain state files (work-people, work-projects, work-calendar, work-career, work-sources, work-summary)
-- `state/bridge/work_load_pulse.json` — boundary bridge artifact consumed by personal surface
-- 166 tests passing across 3 test suites (test_work_objects, test_connector_protocol, test_work_warm_start)
+- `scripts/schemas/work_connector_protocol.py` — connector error protocol with PROTOCOL table and defined fallback per connector
+- `scripts/schemas/bridge_schemas.py` — schema-validated bridge artifacts (WorkLoadPulse, BridgeArtifact, BridgeManifest); alert isolation enforcement
+- `config/agents/artha-work.md`, `artha-work-enterprise.md`, `artha-work-msft.md` — 3 agent tiers (baseline M365 / corporate ADO / Microsoft Enhanced)
+- `state/work/` — 20 domain state files covering all 11 Work OS domains plus bridge artifacts
+- `state/bridge/work_load_pulse.json` + `state/bridge/work_context.json` — boundary bridge artifacts
+- `.github/workflows/work-tests.yml` — CI matrix (Python 3.11/3.12/3.13) + prompt-lint gate
+- 883 tests passing across 12 test suites in `tests/work/`
 
 ---
 

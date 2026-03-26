@@ -3829,7 +3829,7 @@ See `specs/artha-prd.md` §13 for the detailed phased roadmap plus effort estima
 - **Phase 1C** (Weeks 6–8): Goal Engine, finance expansion, conversation memory, Claude.ai Project.
 - **Phase 2A**: 18 intelligence amplification workstreams (Data Integrity Guard P0, Bootstrap P0, then Pattern/Signal/Compression/Context/OAuth/Volume/Scorecard P1). v4.0 additions: Briefing Intelligence, Scheduling, Goal Expansion, Conversational Intelligence, Family & Cultural.
 - **Phase 2B**: Canvas LMS API, Apple Health, Tax Season, Subscription ROI.
-- **Phase 2C (implemented):** Work Intelligence OS — see §19 and `specs/work.md` v1.7.0.
+- **Phase 2C (implemented):** Work Intelligence OS — see §19 (Tech Spec) for full technical architecture.
 - **Phase 3**: Estate, WhatsApp Bridge, Emergency Contact Wallet Card.
 
 ## 16. Open Design Decisions
@@ -3892,9 +3892,7 @@ The PII Guard test suite includes:
 
 ## 19. Work OS — Technical Architecture
 
-> **Full specification:** `specs/work.md` v2.1.0. This section documents the implementation architecture for the personal-surface tech spec record. All design rules, privacy guarantees, and workflow details are in the work spec.
->
-> **Status:** Phase 1 complete. Phase 2 NE templates (newsletter, deck) implemented. All 4 Phase 1 implementation gaps identified and closed in work.md v2.1.0. Current test count: ~541 in `tests/work/`.
+> **Status:** Phases 1–5 complete (v2.7.0). 883 tests in `tests/work/` (12 test files). All design rules, privacy guarantees, workflow details, and interaction patterns are documented in this spec (§19) and UX Spec §23.
 
 ### 19.1 Hard Separation Model
 
@@ -3992,9 +3990,23 @@ After a successful import, sets `config/user_profile.yaml → work.bootstrap.imp
 | `state/work/work-calendar.md` | Recurring meeting patterns and calendar norms | 1.0 |
 | `state/work/work-career.md` | Career evidence events log | 1.0 |
 | `state/work/work-sources.md` | Data source / dashboard catalog | 1.0 |
-| `state/work/work-summary.md` | Aggregate warm-start summary | 1.0 |
+| `state/work/work-summary.md` | Aggregate warm-start / refresh summary | 1.0 |
 | `state/work/work-audit.md` | Connector failure audit log (append-only) | — |
-| `state/bridge/work_load_pulse.json` | Personal-surface boundary artifact | 1 |
+| `state/work/work-comms.md` | Communication patterns, email threads, key decisions via email | 1.0 |
+| `state/work/work-boundary.md` | Work-life boundary state: hours, after-hours patterns, boundary score | 1.0 |
+| `state/work/work-performance.md` | Performance signals, manager feedback, peer recognition | 1.0 |
+| `state/work/work-notes.md` | Post-meeting decisions (D-NNN) and open items (OI-NNN) | 1.0 |
+| `state/work/work-decisions.md` | Decision registry with outcomes and recurrence tracking | 1.0 |
+| `state/work/work-open-items.md` | Open item tracker with OI-NNN IDs, owners, deadlines | 1.0 |
+| `state/work/work-project-journeys.md` | Project timeline with milestone evidence and scope arc | 1.0 |
+| `state/work/work-org-calendar.md` | Org dates: Connect deadlines, fiscal year, all-hands cadence | 1.0 |
+| `state/work/work-promo-narrative.md` | Promotion readiness narrative and evidence inventory | 1.0 |
+| `state/work/work-incidents.md` | ICM incident history (Microsoft Enhanced tier) | 1.0 |
+| `state/work/work-repos.md` | Repository contribution signals (Microsoft Enhanced tier) | 1.0 |
+| `state/work/work-learned.md` | Learning model: calibration/prediction/anticipation phases | 1.0 |
+| `state/work/work-kusto-catalog.md` | KQL query catalog with "what question" annotations | — |
+| `state/bridge/work_load_pulse.json` | Personal-surface boundary artifact (WorkLoadPulse schema v1) | 1 |
+| `state/bridge/work_context.json` | Rich work context bridge artifact (BridgeArtifact schema) | 1 |
 
 All files use YAML frontmatter with `schema_version`, `encrypted`, and `last_updated`. `work-people.md` and `work-career.md` carry `encrypted: true` (handled by the `work` vault key).
 
@@ -4011,19 +4023,21 @@ Tier selection happens in `_check_agency_available()` at preflight: probes `agen
 
 | Test file | Tests | What it validates |
 |---|---|---|
-| `tests/work/test_work_objects.py` | 29 | All 6 dataclasses, enums, serialization, cross-object consistency |
-| `tests/work/test_connector_protocol.py` | 31 | PROTOCOL table structure, get_protocol(), user_signal_for(), log_connector_failure() |
-| `tests/work/test_work_warm_start.py` | 33 | Parser (both formats), aggregator, state writers, atomic write, dry-run, full run |
-| `tests/work/test_bridge_enforcement.py` | ~67 | Bridge schema enforcement, PII rejection, cross-surface access control (§9.8), alert isolation (§9.6) |
-| `tests/work/test_domain_writers.py` | 40 | Domain state writers: calendar, comms, projects, boundary, career, sources |
-| `tests/work/test_narrative_engine.py` | ~64 | NE templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck |
-| `tests/work/test_work_reader.py` | ~115 | Read-path commands: /work, pulse, sprint, health, return, connect, people, docs, sources, prep |
-| `tests/work/test_work_notes.py` | 42 | Post-meeting capture, decision IDs (D-NNN), open item IDs (OI-NNN) |
-| `tests/work/test_work_bootstrap.py` | 41 | Bootstrap interview, 12 questions, dry-run, atomic writes, completion flag |
-| `tests/work/test_work_loop.py` | 26 | WorkLoop CLI (main()), run_read_loop/run_refresh_loop, _update_learned_state (§8.8) |
-| **Total** | **~541** | |
+| `tests/work/test_work_objects.py` | 48 | All 6 dataclasses, enums, serialization, cross-object consistency |
+| `tests/work/test_connector_protocol.py` | 33 | PROTOCOL table structure, get_protocol(), user_signal_for(), log_connector_failure() |
+| `tests/work/test_work_warm_start.py` | 122 | ScrapeParser (both formats), WarmStartAggregator, state writers, atomic write, dry-run, full run |
+| `tests/work/test_bridge_enforcement.py` | 73 | Bridge schema enforcement, PII rejection, cross-surface access control (§9.8), alert isolation (§9.6) |
+| `tests/work/test_domain_writers.py` | 52 | Domain state writers: calendar, comms, projects, boundary, career, sources, notes, decisions, open-items |
+| `tests/work/test_narrative_engine.py` | 127 | NE templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo |
+| `tests/work/test_work_reader.py` | 225 | Read-path commands: /work, pulse, sprint, health, return, connect, connect-prep, people, docs, sources, prep, live, newsletter, deck, memo, talking-points, promo-case, promo-narrative, journey, day, decide, graph, preread, incidents, repos |
+| `tests/work/test_work_notes.py` | 39 | Post-meeting capture, decision IDs (D-NNN), open item IDs (OI-NNN), /work remember micro-capture |
+| `tests/work/test_work_bootstrap.py` | 60 | Bootstrap interview, 12 questions, dry-run, atomic writes, completion flag, cold-start path |
+| `tests/work/test_work_loop.py` | 30 | WorkLoop CLI (main()), run_read_loop/run_refresh_loop, _update_learned_state, ADO org from config |
+| `tests/work/test_post_work_refresh.py` | 15 | Post-refresh summarization, session history writer, run log appender |
+| `tests/work/test_phase4_phase5.py` | 59 | Degraded mode reporting, prompt linter, phase 4/5 scaffolding (incidents/repos), /work graph, pre-read tracking |
+| **Total** | **883** | |
 
-**Note:** `tests/unit/test_bridge_schemas.py` (55 tests) covers the older `BridgeSchema` API that predates the work.md v1.7.0 redesign. `tests/work/test_bridge_enforcement.py` covers the current `bridge_schemas.py` implementation.
+**Note:** `tests/unit/test_bridge_schemas.py` (55 tests) covers the older `BridgeSchema` API that predates the v1.7.0 redesign. `tests/work/test_bridge_enforcement.py` covers the current `bridge_schemas.py` implementation.
 
 ---
 
@@ -4035,6 +4049,7 @@ Tier selection happens in `_check_agency_available()` at preflight: probes `agen
 
 | Version | Changes |
 |---------|---------|
+| v3.8–v3.9 | **Work OS Phases 2–5** (PRD FR-19 FW-11–FW-17, v2.7.0): `scripts/work_bootstrap.py` (12-question guided setup interview, atomic writes, dry-run); `scripts/work_notes.py` (post-meeting capture, D-NNN/OI-NNN IDs, `/work remember` micro-capture); `scripts/work_reader.py` (25-command read-path CLI: work, pulse, sprint, health, return, connect, connect-prep, people, docs, sources, prep, live, newsletter, deck, memo, talking-points, promo-case, promo-narrative, journey, day, decide, graph, preread, incidents, repos); `scripts/work_domain_writers.py` (atomic writers for 11 domain files: calendar, comms, projects, boundary, career, sources, notes, decisions, open-items, people, performance); `scripts/narrative_engine.py` (10 Jinja2 templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo); `scripts/post_work_refresh.py` (session history writer, run log appender); `scripts/kusto_runner.py` (KQL bridge, ADO/Kusto query runner); `config/agents/` expanded to 3 tiers (artha-work.md baseline, artha-work-enterprise.md corporate ADO, artha-work-msft.md Microsoft Enhanced); `state/work/` expanded 6→20 domain files; `.github/workflows/work-tests.yml` CI matrix; 883 tests in `tests/work/` (12 test files); `specs/work.md` archived to `.archive/specs/work.md` — PRD/Tech/UX specs now canonical. §19.7 state files expanded 8→22 rows; §19.9 test coverage updated ~541→883. |
 | v3.7 | Work Intelligence OS (Phase 2C — PRD FR-19, specs/work.md v1.7.0): `scripts/work_loop.py` (7-stage loop: fetch → enrich → filter → infer → score → write → bridge); `scripts/work_warm_start.py` (§15 warm-start processor — ScrapeParser, WarmStartAggregator, 6 state file writers, atomic write, dry-run mode); `scripts/schemas/work_objects.py` (6 canonical dataclasses: WorkMeeting, WorkDecision, WorkCommitment, WorkStakeholder, WorkArtifact, WorkSource; 5 enums: ObjectStatus, CommitmentStatus, DecisionOutcome, StakeholderRecency, plus shared types); `scripts/schemas/work_connector_protocol.py` (ConnectorFailureMode enum, ConnectorProtocolEntry frozen dataclass, PROTOCOL table, get_protocol(), user_signal_for(), log_connector_failure() — §8.4 connector error protocol); `scripts/schemas/bridge_schemas.py` (WorkLoadPulse, BridgeArtifact, BridgeManifest validators + 55 bridge enforcement tests); `config/agents/` (work_briefing_agent.md, work_enrich_agent.md, meeting_prep_agent.md); `state/work/` directory with 6 domain files; `state/bridge/work_load_pulse.json` boundary artifact; 166 new tests in `tests/work/` (test_work_objects.py — 29, test_connector_protocol.py — 31, test_work_warm_start.py — 33, test_bridge_schemas.py — previously 55); §19 Work OS Technical Architecture section added to this spec. PRD bumped to v4.2. UX Spec §23 Work OS Interaction Design added. |
 | v3.6 | Deep Agents Option B — Core Harness Patterns (PRD F15.114–F15.118): `scripts/context_offloader.py` (`offload_artifact`, builtin summary fns, `OFFLOADED_FILES`/`OFFLOADED_GLOB_PATTERNS`); `scripts/domain_index.py` (`build_domain_index`, `get_prompt_load_list`, `_domain_status` ACTIVE/STALE/ARCHIVE); `scripts/session_summarizer.py` (`SessionSummary` Pydantic v2 + dataclass fallback, `estimate_context_pct`, `should_summarize_now`, `get_context_card`); `scripts/middleware/` package — `StateMiddleware` Protocol + `compose_middleware()`, `PiiMiddleware`, `WriteGuardMiddleware`, `WriteVerifyMiddleware`, `AuditMiddleware`, `RateLimiterMiddleware`; `scripts/schemas/` package — `BriefingOutput`, `AlertItem`, `DomainSummary`, `FlashBriefingOutput`, `SessionSummarySchema`, `DomainIndexCard`. `config/Artha.md` + `config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements.txt. 698 tests (+157 from 541). |
 | v3.5 | Intelligence expansion + platform parity (PRD F15.100–113): `scripts/skills/financial_resilience.py` (`FinancialResilienceSkill` — burn rate, emergency runway, single-income stress; regex parsers for `state/finance.md`; cadence weekly, requires_vault); gig income routing keywords added to `domain_registry.yaml` (Stripe, PayPal, Venmo, Upwork, Fiverr, Etsy, DoorDash, Uber, 1099-K/NEC); `prompts/shopping.md` purchase interval observation; `prompts/social.md` structured contact profiles (9-field) + pre-meeting context injection + passive fact extraction; `prompts/estate.md` digital estate inventory (5 tables); `config/actions.yaml` `cancel_subscription` + `dispute_charge` instruction-sheet actions; `prompts/digital.md` subscription action proposals; `setup.ps1` Windows onboarding parity script; `artha.py --doctor` 11-point diagnostic (`do_doctor()`); `scripts/connectors/apple_health.py` (iterparse streaming, 16 HK types, ZIP+XML, opt-in); `prompts/health.md` longitudinal lab results; `passport_expiry` + `subscription_monitor` added to `_ALLOWED_SKILLS` frozenset. 541 tests (+56 from 485 baseline). |
