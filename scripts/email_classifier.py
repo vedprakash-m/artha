@@ -77,10 +77,11 @@ _IMPORTANT_SENDER_DOMAINS: frozenset[str] = frozenset({
     "headspace.com", "calm.com", "mdlive.com", "teladoc.com",
     # Caregiving / elder care (CONNECT §5.2)
     "medicare.gov", "caringbridge.org",
-    # Employer / HR
-    "microsoft.com", "workday.com", "adp.com", "paychex.com",
-    # Legal / immigration law firms
-    "fragomen.com",
+    # HR platforms (employer-agnostic SaaS tools)
+    "workday.com", "adp.com", "paychex.com", "bamboohr.com",
+    # NOTE: Add your employer domain and immigration attorney domain in
+    # artha_config.yaml under email_classifier.whitelist_domains — those are
+    # personal and should not be committed to the public repo.
     # Utilities / essential services
     "usps.com", "ups.com", "fedex.com",
 })

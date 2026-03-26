@@ -76,6 +76,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-16: Insurance & Risk Management
    - FR-17: Vehicle Management
    - FR-18: Estate Planning & Legal Readiness
+   - FR-19: Work Intelligence OS
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -584,7 +585,7 @@ Hey — quick check-in on your week:
 | F8.5 | **Upcoming Week Briefing** — Every Sunday, Artha loads the week's calendar and surfaces the 5 most complex logistics items that need coordination in advance. | P1 |
 | F8.8 | **Work Calendar Merge** *(v4.1)* — Integrate M365 corporate calendar via WorkIQ MCP as 7th data source. Merge with personal calendars using field-enrichment dedup (summary from personal, Teams link from work). Tag work-only events with 💼 prefix. Platform-gated: Windows only; Mac catch-ups show personal calendar + stale metadata footer. | P1 |
 | F8.9 | **Cross-Domain Conflict Detection** *(v4.1)* — Detect work↔personal event overlaps (±15 min). Score cross-domain conflicts at Impact=3 (lifestyle trade-off) vs. internal work conflicts at Impact=1 (self-resolvable). Deduplicated events excluded from conflict detection. | P1 |
-| F8.10 | **Duration-Based Meeting Load** *(v4.1)* — Analyze daily meeting burden by total minutes (not count). Triggers: >300 min → "Heavy load"; largest focus gap <60 min → "Context switching fatigue"; <120 min → "Light day, good for deep work." Persist count+duration metadata to `state/work-calendar.md` (13-week rolling window). | P1 |
+| F8.10 | **Duration-Based Meeting Load** *(v4.1)* — Analyze daily meeting burden by total minutes (not count). Triggers: >300 min → "Heavy load"; largest focus gap <60 min → "Context switching fatigue"; <120 min → "Light day, good for deep work." Persist count+duration metadata to `state/work/work-calendar.md` (13-week rolling window). | P1 |
 | F8.11 | **Partial Redaction Engine** *(v4.1)* — Before work meeting titles transit to Claude API, redact sensitive codenames locally via configurable keyword list in `config/settings.md`. Only matched substrings are replaced (e.g., "Project Cobalt Review" → "[REDACTED] Review"), preserving meeting-type context for trigger classification. | P0 |
 | F8.12 | **Teams Meeting Join Actions** *(v4.1)* — If a Teams meeting starts within 15 minutes of catch-up, surface a low-friction join action: "→ Join [Meeting] (Teams) [Y/n]". Opens Teams link on approval. | P2 |
 | F8.13 | **Meeting-Triggered Employment OIs** *(v4.1)* — Critical meeting types (Interview, Performance Review, Calibration) auto-create Employment domain Open Items for prep. Temporal filter: future-dated only (no stale OIs in digest mode). Configurable trigger list in `config/settings.md`. | P1 |
@@ -727,6 +728,22 @@ Hey — quick check-in on your week:
 ---
 
 ### FR-14 · Work-Life Boundary Guardian
+
+> **⚠ Superseded by Work OS hard separation model (specs/work.md §9)**
+>
+> FR-14's original design assumed the personal surface would infer boundary
+> signals from timestamp patterns in the personal email/calendar sync. The
+> Work OS (specs/work.md v1.6+) replaces this with an explicit two-artifact
+> bridge protocol: the personal surface still never reads raw work data, but
+> the work surface now maintains its own isolated state (`state/work/`), a
+> separate vault key (`work`), and communicates boundary health only via the
+> schema-validated `state/bridge/work_load_pulse.json` artifact. All boundary
+> enforcement logic (scoring, after-hours thresholds, alerts) lives in
+> `prompts/work-boundary.md` on the work surface. The personal catch-up
+> consumes only the scalar `boundary_score` [0.0–1.0] from the bridge pulse —
+> no meeting names, no attendees, no project or message content cross the
+> surface. The F14.1–F14.3 feature IDs remain valid as implementation targets
+> but are owned by the Work OS, not the personal catch-up workflow.
 
 **Priority:** P1
 **Summary:** Detect when work is encroaching on personal time and surface that signal to Artha without exposing work content.
@@ -990,6 +1007,34 @@ Hey — quick check-in on your week:
 | F18.6 | **Attorney & Legal Provider Rolodex** — Track estate planning attorney, tax CPA, immigration attorney ([immigration attorney]), and any other legal contacts with last engagement date and notes. | P2 |
 | F18.7 | **Guardianship & Minor Children Planning** — Explicitly track: Who is the designated guardian for Arjun and Ananya if both parents are incapacitated? Is this documented? Does the guardian know? When do the children age out (18)? | P1 |
 | F18.8 | **Emergency Contact Wallet Card** *(v4.0)* — Generate a printable/digital emergency contact card for each family member. Contents: name, emergency contacts (2–3 prioritized), primary care physician, insurance policy number, blood type (if known), allergies, current medications, immigration status (generic — e.g., "valid work authorization" without sensitive details), attorney contact, and location of the Emergency Access Guide (F18.5). Output formats: PDF (printable wallet card), Apple Wallet pass, or plain text for phone lock screen. Auto-regenerated when any source data changes. Each family member gets a personalized card. | P1 |
+
+---
+
+### FR-19 · Work Intelligence OS
+
+> **Full specification:** `specs/work.md` (v1.7.0). This entry summarises the functional scope for PRD completeness; the work spec is the canonical source of truth for all Work OS design decisions, data models, and implementation rules.
+
+**Priority:** P1 (Windows-first)
+**Summary:** A fully isolated, privacy-hardened intelligence layer for professional work — separate vault key, separate state directory, separate surface. Connects MS Graph / ADO / WorkIQ to synthesise daily work briefings, surface commitments, track career evidence, and provide meeting intelligence — all under the hard separation model (§9 of specs/work.md).
+
+**Data sources:** MS Graph (Calendar, Mail — work account), Azure DevOps (work items), WorkIQ MCP (Windows), Outlook COM bridge (Windows), 81+ weeks of warm-start scrape data.
+
+**Architecture:** 7-stage processing loop (`scripts/work_loop.py`), canonical object layer (`scripts/schemas/work_objects.py` — 6 dataclasses), connector error protocol (`scripts/schemas/work_connector_protocol.py`), bridge schema validators (`scripts/schemas/bridge_schemas.py`), warm-start processor (`scripts/work_warm_start.py`), isolated state in `state/work/`, bridge output to `state/bridge/` for personal surface consumption.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FW-1 | **Daily Work Briefing** — Morning summary of calendar load, meeting prep readiness, active commitments, and ADO work item deltas. Delivered via `/work` command. Format: `work-summary.md` → briefing synthesis. | P0 |
+| FW-2 | **Meeting Intelligence** — Per-meeting prep score (0–100), attendee graph, open threads from prior instances, recurrence detection, and Teams join links. Powered by WorkIQ MCP (Windows) or MS Graph calendar (cross-platform fallback). | P1 |
+| FW-3 | **Commitment Tracker** — Automated extraction and tracking of commitments from meeting context and ADO items. Surfaces overdue commitments in daily briefing. | P1 |
+| FW-4 | **Career Evidence Log** — Structured capture of high-signal career moments: LT presentations, newsletter sends, program ownership milestones, and recognition events. Maintains `state/work/work-career.md`. | P1 |
+| FW-5 | **People Graph** — Relationship map of colleagues, managers, skip-levels, and key stakeholders. Scored by interaction frequency. Warm-started from 81 weeks of scrape history. Stored in `state/work/work-people.md`. | P1 |
+| FW-6 | **Warm-Start Import** — One-command population of all work state files from historical work-scrape data. Extracts people graph, project timeline, career evidence, and recurring meetings from 18 months of weekly scrape files. | P0 (one-time) |
+| FW-7 | **Boundary Bridge** — Publishes `work_load_pulse.json` to `state/bridge/` — a schema-validated, PII-free summary (boundary score, meeting count, commitment counts). The personal Artha surface consumes only this artifact; raw work data never crosses the surface boundary. | P0 |
+| FW-8 | **Work Health & Degraded Mode** — Connector failure protocol per §8.4 of specs/work.md: every connector failure has a defined fallback, a user-facing status signal, and a remediation. No single connector failure blocks the workflow. Audit log at `state/work/work-audit.md`. | P0 |
+| FW-9 | **Project Tracker** — Active project map with meeting frequency, key stakeholders, status, and timeline signals. Auto-updated from meeting and ADO data. `state/work/work-projects.md`. | P1 |
+| FW-10 | **Work Source Catalog** — Registry of key dashboards, Kusto queries, SharePoint sites, and portals — with "what question does this answer" annotations. `state/work/work-sources.md`. | P2 |
 
 ---
 
@@ -1598,12 +1643,13 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 
 **Phase 2 data upgrade path:** Financial institutions (Chase, Fidelity, Vanguard, Wells Fargo) will upgrade from email parsing to Plaid API integration (read-only) in Phase 2. This provides real-time balance and transaction data, enabling the "net worth on demand" target.
 
-**Not in scope (by design):**
-- Work email (configured in user_profile.yaml) — work domain, not in scope
-- Teams, ADO, SharePoint, GitHub — work tools outside Artha's scope
+**Not in scope for personal surface (by design):**
+- Work email on the personal surface — work data is handled exclusively by the Work OS (FR-19, specs/work.md)
 - WhatsApp inbound messages — no public API; **local DB reading is implemented** for WhatsApp Desktop (macOS + Windows) via `whatsapp_local` connector (metadata only on Windows — message body is encrypted at rest)
 - iMessage — **local DB reading is implemented** for macOS via `imessage_local` connector (requires Full Disk Access grant); no remote API access
 - Proton Mail (unless Proton Bridge configured in Phase 2) — personal comms boundary; E2E encryption prevents standard forwarding
+
+> **Work OS data sources** (Teams, ADO, MS Graph work calendar, SharePoint) are consumed exclusively by the Work OS (FR-19) via `scripts/work_loop.py`. No work data reaches the personal surface. See §10 of specs/work.md for the Work OS connector specification.
 
 ---
 
@@ -1759,7 +1805,25 @@ Goal Engine (FR-13: conversational creation, metric wiring, weekly scorecard, co
 - **Family access model:** Tiered access for Priya (shared domains), Arjun (academic view), Ananya (age-appropriate view) — via separate Claude.ai Projects with filtered state
 - **State volume check:** If state files exceed 150K tokens total, introduce SQLite for historical data
 
-**Phase 2B success criteria:** All 17 domains covered, ≥10 goals with auto-metrics + conflict detection + forecasting, Priya active on shared domains, all insurance/vehicles registered with alerts, ≤3 helper scripts. v4.0 additions: Canvas LMS API, Apple Health integration, subscription ROI, tax season workflow.
+**Phase 2B success criteria:** All 17 personal domains covered, ≥10 goals with auto-metrics + conflict detection + forecasting, Priya active on shared domains, all insurance/vehicles registered with alerts, ≤3 helper scripts. v4.0 additions: Canvas LMS API, Apple Health integration, subscription ROI, tax season workflow.
+
+---
+
+### Phase 2C — Work Intelligence OS *(implemented v1.7.0)*
+*Objective: Isolated work intelligence layer — daily work briefing, meeting prep, commitment tracking, career evidence, and people graph. Hard separation from personal surface.*
+
+**Status: Implemented.** Full specification in `specs/work.md` v1.7.0.
+
+**Key deliverables (completed):**
+- `scripts/work_loop.py` — 7-stage processing loop (fetch → enrich → filter → infer → score → write → bridge)
+- `scripts/work_warm_start.py` — historical import processor (81-week scrape corpus)
+- `scripts/schemas/work_objects.py` — 6 canonical dataclasses (WorkMeeting, WorkDecision, WorkCommitment, WorkStakeholder, WorkArtifact, WorkSource)
+- `scripts/schemas/work_connector_protocol.py` — §8.4 connector error protocol with PROTOCOL table
+- `scripts/schemas/bridge_schemas.py` — schema-validated bridge artifacts (WorkLoadPulse, BridgeArtifact, BridgeManifest)
+- `config/agents/` — 3 AI agent configurations (work_briefing_agent.md, work_enrich_agent.md, meeting_prep_agent.md)
+- `state/work/` — 6 domain state files (work-people, work-projects, work-calendar, work-career, work-sources, work-summary)
+- `state/bridge/work_load_pulse.json` — boundary bridge artifact consumed by personal surface
+- 166 tests passing across 3 test suites (test_work_objects, test_connector_protocol, test_work_warm_start)
 
 ---
 
@@ -1925,7 +1989,7 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 
 ---
 
-*Artha PRD v4.1 — End of Document*
+*Artha PRD v4.2 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

@@ -38,7 +38,7 @@ Count items per state:
 - **Done this sprint**: Resolved/Closed in current iteration
 
 ## State File Update Protocol
-Read `state/work-projects.md` first. Then update:
+Read `state/work/work-projects.md` first. Then update:
 1. **Active Sprint** — sprint name and end date
 2. **My Work Items** — full table sorted by (priority ASC, target_date ASC)
 3. **Overdue** — items with target_date < today and state not Resolved/Closed

@@ -85,6 +85,19 @@ and what it implies:
 | Finance × Home | Property tax, utility anomalies, maintenance costs |
 | Employment × Finance | Payroll changes, benefits enrollment, RSU vesting |
 | Goals × [All Domains] | Which goals made progress? Which are stalled? |
+| Work-Calendar × Personal Schedule Mask | Detect hard conflicts between work meetings and personal busy blocks |
+| Work-Calendar × Goals | Deep work preservation — do meetings leave room for goal progress? |
+| Work-Calendar × Health | Appointment collision risk between work schedule and health appointments |
+| Work-Calendar × Travel | Timezone and transit feasibility for work meetings during travel |
+| Work-Projects × Work-Calendar | Sprint feasibility in calendar reality — enough non-meeting hours for sprint work? |
+| Work-Comms × Employment | Escalation and review-cycle relevance of work communications |
+| Work-Boundary × Wellness | Burnout and recovery risk — work load patterns affecting wellness |
+| Work-Career × Goals | Career progress against declared goals |
+| Work-Performance × Work-Calendar | Detect manager 1:1s for Connect pivot capture |
+| Work-Performance × Work-Projects | Auto-collect delivery evidence for Connect goals |
+| Work-Performance × Work-People | Collaboration breadth evidence for Connect review |
+| Work-Commitments × Work-Calendar | **Delivery Feasibility** — open commitments vs. available calendar capacity |
+| Work-Sources × Work-Projects | Link data sources to active project decisions |
 
 For each pair: "Connection found: [description]" or "No connection."
 

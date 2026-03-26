@@ -587,3 +587,388 @@ features:
     confidence: high
     note: "scripts/setup_plaid.py — Plaid Link OAuth flow + keyring storage"
 
+  # ── Work OS (specs/work.md v2.3.0, §19 Phase 0–2) ───────────────────────
+  #
+  # Scripts: work_reader.py, work_loop.py, work_domain_writers.py,
+  #          narrative_engine.py, work_notes.py, work_bootstrap.py,
+  #          post_work_refresh.py
+  # Schemas: scripts/schemas/bridge_schemas.py, work_objects.py,
+  #          work_connector_protocol.py
+  # Agents:  config/agents/artha-work.md, artha-work-enterprise.md,
+  #          artha-work-msft.md
+  # State:   state/work/*.md (13 domain files + 2 eval files + 2 bridge artifacts)
+  # Tests:   tests/work/ (601+ tests, 10 test files)
+
+  # Phase 0 — Infrastructure (14/16 complete)
+  work_os_phase0_bridge_schemas:
+    spec: "specs/work.md §19 Phase 0B"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/bridge_schemas.py — BridgeArtifact v1.1 with phase/advisory; validate_bridge_artifact(); validate_alert_isolation()"
+  work_os_phase0_work_objects:
+    spec: "specs/work.md §19 Phase 0B"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/work_objects.py — Meeting, Decision, Commitment, Stakeholder (VisibilityEvent), Artifact, Source canonical objects"
+  work_os_phase0_connector_protocol:
+    spec: "specs/work.md §19 Phase 0B"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/work_connector_protocol.py — ConnectorResult error protocol"
+  work_os_phase0_domain_registry:
+    spec: "specs/work.md §19 Phase 0A"
+    status: implemented
+    confidence: high
+    note: "config/domain_registry.yaml — 11/11 work domains registered (including work-project-journeys and work-org-calendar)"
+  work_os_phase0_commands:
+    spec: "specs/work.md §19 Phase 0A"
+    status: implemented
+    confidence: high
+    note: "config/commands.md — 24 /work commands registered; config/actions.yaml — 11 work actions; config/workflow/reason.md — 13 work reasoning pairs"
+  work_os_phase0_work_loop:
+    spec: "specs/work.md §19 Phase 0C"
+    status: implemented
+    confidence: high
+    note: "scripts/work_loop.py — 7-stage WorkLoop (preflight→fetch→process→reason→finalize→audit→learn); CLI --mode read|refresh; _update_learned_state() with learning_phase calibration/prediction/anticipation"
+  work_os_phase0_agent_configs:
+    spec: "specs/work.md §19 Phase 0D"
+    status: implemented
+    confidence: high
+    note: "config/agents/artha-work.md, artha-work-enterprise.md, artha-work-msft.md — Agency-compliant YAML"
+  work_os_phase0_enforcement_tests:
+    spec: "specs/work.md §19 Phase 0D"
+    status: implemented
+    confidence: high
+    note: "tests/work/test_bridge_enforcement.py — 55+12=67 tests including alert isolation enforcement"
+  work_os_phase0_post_refresh:
+    spec: "specs/work.md §3.9"
+    status: implemented
+    confidence: high
+    note: "scripts/post_work_refresh.py — non-blocking post-catch-up trigger (READ mode, consistent with pull-triggered pre-computation §3.9)"
+
+  # Phase 1 — Read-Path Commands (12/14 complete; gate requires sources-add + connect-prep)
+  work_os_work_cmd:
+    spec: "specs/work.md §5.2, §19 Phase 1"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_work() — full work briefing with WorkBriefingConfig WB-1/3/6 adaptive rules"
+  work_os_pulse_cmd:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_pulse() — 30-second snapshot"
+  work_os_prep_cmd:
+    spec: "specs/work.md §7.9, §19 Phase 1"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_prep() — meeting readiness scoring with carry-forward, staleness gaps, open items"
+  work_os_sprint_cmd:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_sprint() — delivery feasibility score, blocked items"
+  work_os_health_cmd:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_health() — connector + policy health diagnostics"
+  work_os_return_cmd:
+    spec: "specs/work.md §2.2, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_return(window) — absence recovery with 1d/1w/etc. windows"
+  work_os_connect_cmd:
+    spec: "specs/work.md §7.6, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_connect() — evidence assembly for review cycle"
+  work_os_connect_prep_cmd:
+    spec: "specs/work.md §7.6, §5.2, §19 Phase 1 item 10"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_connect_prep(mode) — Connect cycle narrative; delegates to NarrativeEngine.generate_connect_summary(); unblocks Phase 1 gate"
+  work_os_people_cmd:
+    spec: "specs/work.md §11, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_people(query) — collaboration graph person lookup"
+  work_os_docs_cmd:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_docs() — recent work artifacts from work-notes"
+  work_os_sources_cmd:
+    spec: "specs/work.md §7.7, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_sources(query) — data source registry lookup with query filter"
+  work_os_sources_add_cmd:
+    spec: "specs/work.md §7.7, §5.2, §19 Phase 1 item 9"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_sources_add(url, context) — atomic append to work-sources.md Manually Registered table; unblocks Phase 1 gate"
+  work_os_notes_cmd:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_notes.py NotesCapture + NotesWriter — JSON CLI; appends to work-notes.md, work-decisions.md (D-NNN), work-open-items.md (OI-NNN)"
+  work_os_bootstrap_cmd:
+    spec: "specs/work.md §15, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_bootstrap.py — 13-question guided interview; --answers, --import-file, --dry-run; atomic YAML writes"
+  work_os_refresh_cmd:
+    spec: "specs/work.md §3.8, §21.1"
+    status: implemented
+    confidence: high
+    note: "scripts/work_loop.py main(argv) — CLI: python scripts/work_loop.py --mode refresh|read"
+  work_os_alert_isolation:
+    spec: "specs/work.md §9.6"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/bridge_schemas.py validate_alert_isolation() — semantic enforcement of work→personal bridge (aggregate numeric only)"
+  work_os_learning_calibration:
+    spec: "specs/work.md §8.8"
+    status: implemented
+    confidence: high
+    note: "scripts/work_loop.py _update_learned_state() — atomically updates work-learned.md with days_since_bootstrap, learning_phase, refresh_runs, career_velocity, meeting_quality_signals"
+
+  # Phase 1 Gate Status
+  work_os_phase1_gate:
+    spec: "specs/work.md §19 Phase 1 gate"
+    status: implemented
+    confidence: high
+    note: "PASSED: both gate items implemented — cmd_sources_add() (item 9) and cmd_connect_prep() (item 10). Users can operate Work OS without touching /domain work-*."
+
+  # Phase 2 — Narrative Engine + Advanced Workflows (15/26 complete)
+  work_os_narrative_engine:
+    spec: "specs/work.md §7.10, §19 Phase 2"
+    status: implemented
+    confidence: high
+    note: "scripts/narrative_engine.py — weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck templates; CLI --template"
+  work_os_newsletter_cmd:
+    spec: "specs/work.md §7.8, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_newsletter(period) — team newsletter draft via NE.generate_newsletter()"
+  work_os_deck_cmd:
+    spec: "specs/work.md §7.8, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_deck(topic) — LT deck content via NE.generate_deck()"
+  work_os_memo_cmd:
+    spec: "specs/work.md §7.10, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_memo(period, weekly) — status memo via NE.generate_weekly_memo()"
+  work_os_talking_points_cmd:
+    spec: "specs/work.md §7.10, §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py cmd_talking_points(topic) — talking points via NE.generate_talking_points()"
+  work_os_remember_cmd:
+    spec: "specs/work.md §5.2 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/work_notes.py cmd_remember() — instant micro-capture with [quick-capture] marker appended to work-notes.md"
+  work_os_career_velocity:
+    spec: "specs/work.md §8.8 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/work_loop.py _stage_learn() — career_velocity model detects scope contraction and strategic starvation"
+  work_os_meeting_quality:
+    spec: "specs/work.md §8.8 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/work_loop.py _stage_learn() — meeting_quality_signals computed from boundary and calendar data"
+  work_os_org_calendar_bootstrap:
+    spec: "specs/work.md §14 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/work_bootstrap.py Q13 + _write_org_calendar() — org-level dates (Connect deadlines, rewards season, fiscal calendar)"
+  work_os_briefing_config:
+    spec: "specs/work.md §8.9 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/work_reader.py WorkBriefingConfig — WB-1 (flash mode), WB-3 (sprint deadline approaching), WB-6 (all-clear); _build_briefing_config() factory"
+  work_os_bridge_v11:
+    spec: "specs/work.md §9.3 v2.3.0"
+    status: implemented
+    confidence: high
+    note: "scripts/schemas/bridge_schemas.py work_load_pulse.json v1.1 with phase and advisory semantic fields for cross-surface coordination"
+  work_os_domain_writers:
+    spec: "specs/work.md §19 Phase 1"
+    status: partial
+    confidence: high
+    note: "scripts/work_domain_writers.py — 4/9+ writers implemented (calendar, comms, projects, boundary); people, career, performance, sources, project-journeys writers pending Phase 2/3"
+  work_os_manager_commitment_ledger:
+    spec: "specs/work.md §7.6, §19 Phase 2 item 18"
+    status: implemented
+    confidence: high
+    note: "state/work/work-performance.md Manager Commitment Ledger section; populated via /work bootstrap and /work notes"
+
+  # Phase 2 Remaining items — visibility events, project journeys wiring, 60-day predictions
+  work_os_project_journey_writer:
+    spec: "specs/work.md §11.1, §19 Phase 2 item 23"
+    status: implemented
+    confidence: high
+    note: "append_project_journey() wired in work_loop._write_domain_files_from_connector_data() for closed P0/P1 ADO items (priority<=2, state in {closed,done,completed})"
+  work_os_visibility_event_writer:
+    spec: "specs/work.md §8.6, §19 Phase 2 item 20"
+    status: implemented
+    confidence: high
+    note: "append_visibility_event() in work_domain_writers.py; wired in work_loop for high-importance emails (event_type=replied) and large meetings >=30 attendees with review/planning/roadmap titles (event_type=presented_about); append-only immutable"
+  work_os_prediction_models_60d:
+    spec: "specs/work.md §8.8, §19 Phase 2 item 17"
+    status: implemented
+    confidence: high
+    note: "prediction_prep_notes_30d, prediction_action_required, prediction_sprint_velocity signals computed in _update_learned_state() and written atomically to work-learned.md frontmatter"
+  work_os_outcome_metrics:
+    spec: "specs/work.md §16.5, §19 Phase 2 item 15"
+    status: implemented
+    confidence: high
+    note: "_collect_eval_metrics() in work_reader.py counts decisions_total/open, open_items_total, refresh_runs, days_since_bootstrap, visibility_events; wired into cmd_health() 'Operational metrics' section (v2.6.0). Also: 60-day prediction signals (prep notes, action-required, sprint velocity) feed work-learned.md frontmatter via _update_learned_state() in work_loop.py"
+
+  # Phase 3 — Promotion OS, Journey, WB-4/5, /day — implemented
+  work_os_phase3_promo_case:
+    spec: "specs/work.md §7.11, §19 Phase 3 item 16"
+    status: implemented
+    confidence: high
+    note: "generate_promo_case(narrative=False) in narrative_engine.py; cmd_promo_case() in work_reader.py; scope arc, evidence density stars, visibility events table, readiness signal, next actions"
+  work_os_phase3_promo_narrative:
+    spec: "specs/work.md §7.11, §19 Phase 3 item 17"
+    status: implemented
+    confidence: high
+    note: "generate_promo_case(narrative=True) writes full promotion narrative to state/work/work-promo-narrative.md atomically; DRAFT disclaimer; includes Before/After table, manager voice, evidence gaps"
+  work_os_phase3_journey_cmd:
+    spec: "specs/work.md §5.2, §7.11, §19 Phase 3 item 18"
+    status: implemented
+    confidence: high
+    note: "cmd_journey(project='') in work_reader.py; all-projects table with milestone counts; per-project timeline filter; graceful on missing file"
+  work_os_phase3_wb4_wb5:
+    spec: "specs/work.md §8.9, §19 Phase 3 item 19"
+    status: implemented
+    confidence: high
+    note: "connect_season_alert + promo_season_alert in WorkBriefingConfig; _read_org_calendar_milestones() parses work-org-calendar.md; WB-4/5 alert logic in _build_briefing_config()"
+  work_os_phase3_day_cmd:
+    spec: "specs/work.md §5.4, §19 Phase 3 item 20"
+    status: implemented
+    confidence: high
+    note: "cmd_day() in work_reader.py; reads ONLY state/bridge/work_load_pulse.json for work data per §5.4 hard separation; stale detection; meeting hours, boundary score, focus%, phase advisory"
+  work_os_phase3_decide_cmd:
+    spec: "specs/work.md §7.5, §19 Phase 3 item 6"
+    status: implemented
+    confidence: high
+    note: "cmd_decide() in work_reader.py; reads work-decisions/projects/career/notes/people; surfaces related past decisions + project context; 6-question decision frame; allocates D-NNN ID; logs skeleton entry atomically to work-decisions.md via _ensure_decisions_header() + _append_to_file()"
+  work_os_phase3_calibration_brief:
+    spec: "specs/work.md §7.6, §19 Phase 3 item 9"
+    status: implemented
+    confidence: high
+    note: "generate_calibration_brief() in narrative_engine.py; cmd_connect_prep(mode='calibration') in work_reader.py; third-person format; auto-thesis from journeys; Impact Summary table; Evidence Density stars per goal with THIN gap flag; Cross-Team Visibility; Manager Talking Points from career recognition; Readiness Signal"
+  work_os_phase3_influence_map:
+    spec: "specs/work.md §7.6, §19 Phase 3 item 10"
+    status: implemented
+    confidence: high
+    note: "_build_influence_map() in work_reader.py; aggregates visibility events from work-people.md by stakeholder; counts + most-recent date; staleness flag (>90 days); evidence gap recommendations for stale stakeholders; integrated into cmd_connect_prep() standard mode output; fixed naive-datetime timezone bug"
+  work_os_phase3_escalation_decision_memos:
+    spec: "specs/work.md §7.10, §19 Phase 3 item 12"
+    status: implemented
+    confidence: high
+    note: "generate_escalation_memo() + generate_decision_memo() in narrative_engine.py; cmd_memo(escalation_context=...) and cmd_memo(decision_id=...) sub-modes in work_reader.py; escalation reads blocked items + stakeholders; decision memo looks up D-NNN by ID; both include DRAFT disclaimers"
+  work_os_phase3_anticipation_models:
+    spec: "specs/work.md §8.8, §19 Phase 3 item 14"
+    status: implemented
+    confidence: high
+    note: "_update_learned_state() in work_loop.py; adds anticipation_prep_themes (top keywords from work-notes), anticipation_commitment_risk (overdue OI-NNN open items count), anticipation_narrative_themes (dominant categories from work-decisions); gated by phase == 'anticipation' (60+ days from bootstrap)"
+  work_os_phase3_auto_refresh_stale:
+    spec: "specs/work.md §8.7, §19 Phase 3 item 15"
+    status: implemented
+    confidence: high
+    note: "cmd_work() in work_reader.py; reads profile['work']['refresh']['auto_refresh_on_stale']; when True and >=2 key domains stale, outputs AUTO-REFRESH ADVISORY with stale domain list and /work refresh suggestion; opt-in default=false"
+
+  # Phase 3 — Items 7, 8, 11, 13 — implemented v2.5.0
+  work_os_phase3_bootstrap_import_markdown:
+    spec: "specs/work.md §15.2-§15.3, §19 Phase 3 item 7"
+    status: implemented
+    confidence: high
+    note: "_bootstrap_from_markdown() in work_bootstrap.py; routes .md narrative files: milestone table rows -> work-project-journeys.md ## Imported Milestones; visibility events table -> work-people.md ## Visibility Events; manager quote lines -> work-performance.md ## Imported Manager Signals; idempotent (stem check); dry-run mode; sets work.bootstrap.import_completed: true; paths computed dynamically from _REPO_ROOT for testability; 11 tests in TestBootstrapMarkdownImport"
+  work_os_phase3_connect_auto_evidence:
+    spec: "specs/work.md §7.6, §19 Phase 3 item 8"
+    status: implemented
+    confidence: high
+    note: "generate_connect_summary() replaced in narrative_engine.py; reads ### Goal N: sections from work-performance.md; falls back to profile goals; keyword-matches | **date** | milestone rows from work-project-journeys.md; shows Evidence Density stars (★★★/★★☆/★☆☆/☆☆☆), top-5 matched milestones per goal, ⚠ GAP flag for zero-match goals, Evidence Gaps aggregation section; connect_period from FM shown in output; 9 tests in TestConnectAutoEvidence"
+  work_os_phase3_decision_drift:
+    spec: "specs/work.md §7.9, §19 Phase 3 item 11"
+    status: implemented
+    confidence: high
+    note: "_detect_decision_drift(meeting_title, decisions_body) in work_reader.py; parses D-NNN table rows for OPEN decisions matching meeting title keywords (stop-word filtered); flags open >14d (Pending) or >42d (drift); scans historical deferral patterns (count >=3); results capped at 3; wired into cmd_prep() for recurring meetings with ⚡ icon; 11 tests in TestDetectDecisionDrift"
+  work_os_phase3_newsletter_deck_customization:
+    spec: "specs/work.md §7.8, §19 Phase 3 item 13"
+    status: implemented
+    confidence: high
+    note: "generate_newsletter() in narrative_engine.py: reads work.newsletter.{tone,template,sections} from profile; tone=concise (shorter header + brief DRAFT); template=leadership (ExecutiveSummary+Asks) / team_morale (Shoutouts); user sections: list overrides order. generate_deck(): reads work.deck.{template,audience}; template=risk_review (Dependencies) / program_status (KeyDecisions) / exec_brief (KeyResults, 4 sections) / standard; audience=exec (Strategic Direction label); template name shown in header for non-standard; 10+9 tests in TestNewsletterCustomization+TestDeckPersonalization"
+  work_os_phase3_orphan_advisory:
+    spec: "specs/work.md §8.5, work_reader.py cmd_health()"
+    status: implemented
+    confidence: high
+    note: "cmd_health() in work_reader.py; _KNOWN_WORK_DOMAINS set (15 canonical domains); scans state/work/*.md for domain: keys not in known set; outputs ⚠ Orphan state files advisory with /work bootstrap import migration suggestion; fixes orphan files like alpha-ramp-deep-context.md; 5 tests in TestHealthOrphanAdvisory"
+
+  # Phase 2.7 + Phase 4 — implemented v2.6.0
+  work_os_live_cmd:
+    spec: "specs/work.md §7.4, §19 Phase 2 item 7"
+    status: implemented
+    confidence: high
+    note: "cmd_live() in work_reader.py; fuzzy meeting lookup — exact substring score=100, keyword overlap up to 80; 5 context sections: meeting header (attendee count + recency), attendee context (work-people), open decisions (work-decisions), carry-forward items (work-notes), project context (work-projects); fall-through usage prompt when no match; wired into dispatch ('live') + argparse (--meeting-id); 11 tests in TestCmdLive; v2.6.0"
+  work_os_phase4_state_schema_validation:
+    spec: "specs/work.md §19 Phase 4 item 4"
+    status: implemented
+    confidence: high
+    note: "_WORK_STATE_SCHEMA dict (13 domain files, required frontmatter keys per domain) + _validate_work_state_schema() in work_reader.py; wired into cmd_health() as 'State schema' section; reports pass/fail per domain; v2.6.0"
+  work_os_phase4_eval_metrics:
+    spec: "specs/work.md §16.2, §16.5, §19 Phase 4 item 1"
+    status: implemented
+    confidence: high
+    note: "_collect_eval_metrics() in work_reader.py; collects decisions_total, decisions_open, open_items_total, refresh_runs (from work-learned.md), days_since_bootstrap, visibility_events (from work-people.md); wired into cmd_health() as 'Operational metrics' section; v2.6.0"
+  work_os_phase4_per_stage_latency:
+    spec: "specs/work.md §8.5, §19 Phase 4 item 3"
+    status: implemented
+    confidence: high
+    note: "run() in work_loop.py uses time.monotonic() per stage in for-loop over [('preflight', fn), ...]; _stage_audit(elapsed_sec, stage_timings) logs stages=preflight:Xs,fetch:Xs,... to work-audit.md; v2.6.0"
+
+  # Phase 4 items 2/5/6 + Phase 5 items 3/4/7/8 — implemented v2.7.0
+  work_os_phase4_degraded_mode_reporting:
+    spec: "specs/work.md §6.4, §6.5, §19 Phase 4 item 2"
+    status: implemented
+    confidence: high
+    note: "_assess_provider_tier(graph_ok, ado_ok, workiq_ok, agency_ok) returns 4-tier string; _build_degraded_mode_report() returns list[str] with per-command degradation callouts + remediation steps; inserted into cmd_health() as 'Provider coverage:' section; uninitialized ado_ok/agency_ok/workiq_ok bug fixed; 13 tests in TestAssessProviderTier + TestBuildDegradedModeReport + TestHealthProviderCoverage; v2.7.0"
+  work_os_phase4_prompt_linter:
+    spec: "specs/work.md §19 Phase 4 item 5"
+    status: implemented
+    confidence: high
+    note: "scripts/tools/prompt_linter.py; lint_file() + lint_all() check work-*.md prompts for: stale root-level paths (state/work-*.md), non-canonical references, un-substituted <PLACEHOLDER> tokens, missing YAML frontmatter separators; exit 0 on pass / 1 on fail; 6 tests in TestPromptLinter; v2.7.0"
+  work_os_phase4_ci_enforcement:
+    spec: "specs/work.md §9.8, §19 Phase 4 item 6"
+    status: implemented
+    confidence: high
+    note: ".github/workflows/work-tests.yml; triggers on push/PR to main/dev for work OS files; 2 jobs: work-tests (matrix Python 3.11/3.12/3.13, pytest tests/work/, fail-fast=false) + prompt-lint (Python 3.12, runs prompt_linter.py); v2.7.0"
+  work_os_phase5_es_chat_signal_hierarchy:
+    spec: "specs/work.md §11.1, §23.2 Phase 5 item 3"
+    status: implemented
+    confidence: high
+    note: "_SENIORITY_RANK dict (cvp/partner=5, vp=4, director=3, manager=2, ic=1); _seniority_tier(text) returns (rank, label); _EXEC_TIER_KEYWORDS list; _extract_exec_visibility_signals(comms_body, people_body) cross-refs work-people.md seniority map against work-comms.md table rows for Director+ senders; returns signal strings; 9 tests in TestSeniorityTier + TestExtractExecVisibilitySignals; v2.7.0"
+  work_os_phase5_incidents_repos_scaffold:
+    spec: "specs/work.md §23.2 Phase 5 item 4"
+    status: implemented
+    confidence: high
+    note: "cmd_incidents() + cmd_repos() in work_reader.py; graceful degradation when state files missing (Agency ICM/Bluebird MCP setup instructions); renders body[:40 lines] when files populated; stale detection; state/work/work-incidents.md + state/work/work-repos.md scaffold templates with full schema comments; wired into dispatch ('incidents','repos') + argparse choices; 8 tests in TestCmdIncidents + TestCmdRepos; v2.7.0"
+  work_os_phase5_work_graph:
+    spec: "specs/work.md §7, §8.6 Phase 5 item 7"
+    status: implemented
+    confidence: high
+    note: "cmd_graph() in work_reader.py; reads work-people.md ### sections; extracts tier/trajectory/last_interaction/visibility_count via regex; groups by _TIER_NAMES rank (descending); renders _TRAJ_ICON ↑→↓◌ per trajectory; network summary (total/warming/cooling/vis_events); graceful fallback for empty/missing state; wired into dispatch ('graph') + argparse choices; 6 tests in TestCmdGraph; v2.7.0"
+  work_os_phase5_preread_tracking:
+    spec: "specs/work.md §7.9 Phase 5 item 8"
+    status: implemented
+    confidence: high
+    note: "_PREREAD_SECTION='## Pre-Read Log'; _load_preread_markers() parses Pre-Read Log table from work-notes.md returning {meeting_lower: timestamp}; cmd_mark_preread(meeting_id) appends | meeting | timestamp | 0 | row to Pre-Read Log in work-notes.md (creates section+table if absent); --preread-id argparse arg; 6 tests in TestPrereadTracking; v2.7.0"
+

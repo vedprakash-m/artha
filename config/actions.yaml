@@ -394,3 +394,150 @@ actions:
       reason: "{reason}"
     pii_check: false
     audit: true
+
+  # ── Work OS Actions (specs/work.md §13) ──────────────────────────────────
+  # command_namespace: work — all actions below are work-surface only.
+  # These follow the same action registry pattern as personal actions.
+
+  work_meeting_prep_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate meeting prep cards with attendee context, open threads,
+      preparation gaps, and readiness scoring. Read-safe artifact generation.
+    pii_check: true
+    audit: true
+
+  work_focus_block_propose:
+    type: calendar_proposal
+    enabled: true
+    handler: null
+    requires_approval: true
+    friction: standard
+    command_namespace: work
+    description: >
+      Propose a focus block on the calendar to protect deep work time.
+      Requires explicit user approval before any calendar modification.
+    pii_check: false
+    audit: true
+
+  work_item_comment:
+    type: ado_write
+    enabled: false
+    handler: null
+    requires_approval: true
+    friction: high
+    command_namespace: work
+    description: >
+      Add a comment to an Azure DevOps work item. Disabled by default.
+      Requires explicit enablement and approval for each invocation.
+    pii_check: true
+    audit: true
+
+  work_followup_draft:
+    type: draft_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate a draft follow-up message after a meeting or comms thread.
+      Draft only — never sends. User reviews and sends manually.
+    pii_check: true
+    audit: true
+
+  work_boundary_acknowledge:
+    type: alert_disposition
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Acknowledge or dismiss a work boundary alert. Feeds back into
+      threshold tuning for future alert relevance.
+    pii_check: false
+    audit: true
+
+  work_open_item_sync:
+    type: state_sync
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Sync work-derived tasks into work open items state file.
+      Reads from meeting notes, sprint items, and commitments.
+    pii_check: false
+    audit: true
+
+  work_meeting_notes_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate post-meeting summary with decisions, commitments,
+      unresolved items, and follow-up actions. Read-safe generation.
+    pii_check: true
+    audit: true
+
+  work_connect_evidence_capture:
+    type: evidence_collection
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Auto-collect Connect goal evidence from meetings, chats, and project
+      completions. Maps evidence to declared goals.
+    pii_check: true
+    audit: true
+
+  work_source_capture:
+    type: registry_update
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Extract and register data source URLs from meetings and email.
+      Proposes sources for user confirmation before registration.
+    pii_check: false
+    audit: true
+
+  work_newsletter_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Assemble newsletter draft from sprint data, decisions, and accomplishments
+      via Narrative Engine. Draft only — never sends.
+    pii_check: true
+    audit: true
+
+  work_deck_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Assemble structured deck content from projects, career evidence, and data
+      sources via Narrative Engine. Draft only.
+    pii_check: true
+    audit: true

@@ -48,7 +48,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: all
-    description: Outlook / Microsoft 365 email — personal account (vedprakash.m@outlook.com)
+    description: Outlook / Microsoft 365 email — personal account (your.personal@example.com)
     auth:
       method: oauth2
       token_file: .tokens/msgraph-personal-token.json
@@ -86,7 +86,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Outlook / Microsoft 365 email — work account ([email])
+    description: Outlook / Microsoft 365 email — work account (you@yourcompany.com)
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -193,7 +193,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: all
-    description: Outlook Calendar — personal account (vedprakash.m@outlook.com)
+    description: Outlook Calendar — personal account (your.personal@example.com)
     auth:
       method: oauth2
       token_file: .tokens/msgraph-personal-token.json
@@ -224,7 +224,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Outlook Calendar — work account ([email]). PRIMARY calendar for scheduling.
+    description: Outlook Calendar — work account (you@yourcompany.com). PRIMARY calendar for scheduling.
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -304,7 +304,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: all
-    description: Microsoft OneNote — personal notebooks (vedprakash.m@outlook.com)
+    description: Microsoft OneNote — personal notebooks (your.personal@example.com)
     auth:
       method: oauth2
       token_file: .tokens/msgraph-personal-token.json
@@ -327,7 +327,7 @@ connectors:
     provider: microsoft
     enabled: true
     run_on: windows
-    description: Microsoft OneNote — work notebooks ([email])
+    description: Microsoft OneNote — work notebooks (you@yourcompany.com)
     auth:
       method: oauth2
       token_file: .tokens/msgraph-token.json
@@ -413,7 +413,8 @@ connectors:
       source_tag: workiq
     health_check: true
     mcp:
-      prefer_mcp: false
+      prefer_mcp: true   # §21.1: Agency MCP is primary on Windows
+      server: workiq      # agency mcp workiq
       fallback: scripts/pipeline.py --source workiq_bridge
     retry:
       max_retries: 1
@@ -450,7 +451,8 @@ connectors:
       source_tag: ado
     health_check: true
     mcp:
-      prefer_mcp: false
+      prefer_mcp: true   # §21.1: Agency MCP is primary on Windows
+      server: ado          # agency mcp ado
       fallback: scripts/pipeline.py --source ado_workitems
     retry:
       max_retries: 2
@@ -466,7 +468,7 @@ connectors:
 
       '
     platform: windows
-    run_on: all
+    run_on: windows
     auth:
       method: none
     fetch:
@@ -785,24 +787,36 @@ connectors:
   slack:
     type: messaging
     provider: slack
-    enabled: false           # Enable via: python scripts/setup_slack.py
+    enabled: true            # MCP-sourced — no bot token required
     run_on: all
-    description: 'Slack workspace message ingestion — reads recent messages from
-      configured channels via the Web API. Requires a bot token with
-      channels:history, channels:read scopes. Run scripts/setup_slack.py to configure.
+    description: 'Slack workspace message ingestion via Claude MCP (claude.ai Slack
+      integration). No bot token needed — reads channels the user is a member of.
+      Bot connector (setup_slack.py) remains unused; MCP is preferred.
 
+      Workspace: UW Foster HMBA alumni network.
       '
     auth:
-      method: keyring
-      credential_key: artha-slack-bot-token
-      setup_script: scripts/setup_slack.py
+      method: mcp             # Claude.ai Slack MCP — auth handled by Claude
+      credential_key: ''      # not used in MCP mode
+      setup_script: scripts/setup_slack.py   # kept for bot fallback if needed
     fetch:
-      handler: scripts/connectors/slack.py
-      default_max_results: 100
-      default_lookback: 24h
-      channels: []            # e.g. ["#general", "#engineering"]
-      workspace_slug: ''      # e.g. mycompany (for deep-link URLs)
+      handler: mcp            # use mcp__claude_ai_Slack__* tools
+      default_max_results: 50
+      default_lookback: 7d
+      channels:
+        - '#general'          # CCU8WMHKL — workspace announcements
+        - '#c5'               # C05CM79QQAK — HMBA cohort 5 (your cohort)
+        - '#c5-alumni-planning-group'  # C06P1D2V7PY — C5 alumni events
+        - '#jobpostings'      # CF8F2QCM9 — job opportunities
+        - '#seattle-events'   # CD50UTJUT — local Seattle events
+        - '#random'           # CCTM6127K — general discussion
+      workspace_slug: ''      # not needed in MCP mode
       include_replies: false
+      routing:
+        default_domain: comms   # Foster MBA = alumni/social, routes to comms.md
+        overrides:
+          '#jobpostings': employment
+          '#jobsearching': employment
     output:
       format: jsonl
       fields:
@@ -816,8 +830,12 @@ connectors:
       - channel
       - thread_ts
       - reactions
-      source_tag: slack
-    health_check: true
+      source_tag: slack_foster_mba
+    health_check: false      # MCP health not checkable via pipeline preflight
+    mcp:
+      prefer_mcp: true
+      tool_prefix: mcp__claude_ai_Slack__slack
+      fallback: disabled      # no bot fallback configured
     retry:
       max_retries: 3
       base_delay: 1.0

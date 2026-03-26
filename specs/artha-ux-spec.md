@@ -1,12 +1,13 @@
 # Artha — UX Specification
 
-> **Version**: 2.9 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.0 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.0.11, Tech Spec v3.13.0
+> **Implements**: PRD v4.2, Tech Spec v3.7
 
 | Version | Date | Summary |
 |---------|------|---------|
 | v2.7.3 | 2026-03 | **DUAL v1.3.0 UX** — Multi-machine setup is transparent to the user; all action proposal and execution flows are unchanged at the UX layer. On the Mac (proposer): bridge result ingestion runs silently before each catch-up briefing — executed actions appear in the briefing with their outcome status as if executed locally. On Windows (executor): action proposals arrive via OneDrive-synced bridge files; the `channel_listener.py` executor poll loop picks them up and executes automatically or queues for approval — same Telegram approval UX as single-machine mode. **Per-machine connectors:** connectors that are not applicable to the current machine are silently skipped during pipeline fetch (no user-visible error); `list_connectors` command shows a PLATFORM column. **Preflight advisory:** a P1 bridge health check surfaces if the bridge key is missing or the bridge directory is not accessible — shown as `⚠️ [ADVISORY] bridge: key not found` (non-blocking, catch-up proceeds). **Nudge daemon:** silently skips execution on any machine that is not the designated listener host — no user-visible behavior change. (implements PRD v7.0.8, Tech Spec v3.10.0, specs/dual-setup.md) |
+| v3.0 | 2026-03 | **Work OS UX (§23)** — `/work` command family (daily briefing, sprint, prep, people, health, refresh, warm-start); daily work briefing format (calendar load, commitment tracker, project summary, boundary score, connector health footer); meeting prep card format (readiness score, open threads, key people, prep actions); degraded mode UX (transparent connector status, stale-data labeling, remediation in `/work health`); warm-start onboarding prompt and completion confirmation. Hard separation: no work content in personal briefing. (implements PRD v4.2 FR-19, Tech Spec v3.7 §19, specs/work.md v1.7.0) |
 | v2.9 | 2026-03 | **PR-3 AI Trend Radar UX** — Telegram `/radar` command shows top-scored AI signals (title, category emoji, relevance score, source, try-worthy badge `★ TRY`); `/try <signal_id>` marks a signal for experimentation (creates `ai_experiment_complete` content moment when marked done); `/skip <signal_id>` dismisses a signal from the radar surface. Briefing injection: `render_radar_section()` in `scripts/briefing_adapter.py` surfaces up to 5 signals in the content section with topic-match tags and URL links. PAT-PR-004 stale-radar pattern alerts when `tmp/ai_trend_metrics.json` is older than 14 days — surfaces as urgency-1 social domain nudge. Warm-start: first-run signals scored with 30-day timeliness penalty to prevent stale data from flooding the surface. All three commands require `enhancements.pr_manager.ai_trend_radar.enabled: true` (set by `/bootstrap pr_manager`). (implements Tech Spec v3.13.0, specs/ai-posts.md PR-3 v1.0.6) |
 | v2.8 | 2026-03 | **PR-2 Content Stage UX** — `/stage` command family for card lifecycle management: card list view (ID, occasion, event date, status, days-until, draft readiness indicator), preview format (full draft per platform, PII flags inline), approve flow (copy-ready output per platform), dismiss/posted actions. Gallery files are plaintext YAML (not vaulted) — `/stage` commands work without vault decrypt. Briefing injection (Phase 2+): flash shows card count "N staged", standard shows top-card preview. PAT-PR-003 pattern alert ("staged content not reviewed in 3+ days") surfaces as social domain urgency-1 nudge. Content Stage privacy rules: PII_UNVERIFIED_SCRIPT cards require explicit approval; EMPLOYER_MENTION cards show ⚠️; children's names blocked on LinkedIn/public platforms. (implements Tech Spec v3.12.1, specs/pr-stage.md PR-2 v1.3.0 Phase 0+1) |
 | v2.7.2 | 2026-03-21 | ACT-RELOADED UX — sense-reason-act-learn capabilities: **Proactive nudges** (between-session push notifications via vault-watchdog bridge — 5 nudge types: overdue item, today deadline, imminent event, catch-up reminder, bill due; 3/day cap; generic text only — no encrypted domain data in nudges); **Adaptive briefing** (after 10 catch-ups, `BriefingAdapter` silently adjusts format/coaching/calibration based on historical behavior — R1 flash if user consistently uses flash, R4 disables coaching if always dismissed; transparency footer appended showing what adapted and why); **`/remember` inbox** (send quick notes to Artha via Telegram; items triaged at next catch-up in Step 7b extension; PII-scanned pre-write; 5 writes/hour; `state/inbox.md` visible in briefing as `📥 [N] inbox items`); **Email signal extraction** (Step 6.5 deterministic signals now appear in action queue — RSVP deadlines, appointment confirmations, payment notices, shipment arrivals, security alerts fire `ActionProposal` objects automatically; no more relying on AI to notice these in Step 8); **Cross-domain pattern alerts** (deterministic patterns from `config/patterns.yaml` surface in Step 8 before AI reasoning — visa deadline + travel conflict, goal stale, bill cluster, etc.; each pattern shows matched conditions + entity); **`/power` command** (power half-hour view: top 3 OI by impact × urgency, today's calendar, 2-line intention statement — zero-overhead 30-min action session); **`/relationships` command** (relationship graph with circle health scores, stale contact flags, upcoming occasions cross-referenced); **Monthly retrospective** (auto-generated when `generate_monthly_retro: true` fires in Step 3; reads summaries/ + state/ for lookback); **Family flash digest** (family-scope Telegram recipients get condensed shared-visibility briefing via `_build_family_flash()`); **Coaching nudge** (deterministic `CoachingEngine` selects nudge in Step 8 — moves from Step 19 prompt to early action layer; 4 strategies: accountability, momentum, insight, challenge; respects `max_per_week` preference). **Attachment routing** (PDF/doc filenames classified to domains in briefing — finance, health, immigration, kids, insurance, employment signals). Zero new setup steps for all features. (implements PRD v7.0.6/v7.0.7, Tech Spec v3.9.8) |
@@ -59,6 +60,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 20. [Channel Bridge — Mobile Output Design](#20-channel-bridge--mobile-output-design)
 21. [Structured Contact Profiles & Pre-Meeting Context UX](#21-structured-contact-profiles--pre-meeting-context-ux)
 22. [UX Gaps & Design Decisions](#22-ux-gaps--design-decisions)
+23. [Work OS — Interaction Design](#23-work-os--interaction-design)
 
 ---
 
@@ -1733,6 +1735,139 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 
 ---
 
+## 23. Work OS — Interaction Design
+
+> **Full specification:** `specs/work.md` v1.7.0. This section documents the UX patterns for the Work Intelligence OS (PRD FR-19). The Work OS is a separate surface — separate vault, separate connectors, separate slash command namespace. No work content appears in personal briefings beyond the scalar boundary score.
+
+### 23.1 Command Palette
+
+| Command | What it does |
+|---|---|
+| `/work` | Daily work briefing — calendar load, prep status, commitment summary, boundary signal |
+| `/work sprint` | Sprint-focused view — ADO work items, active commitments, blockers |
+| `/work prep <title>` | On-demand meeting prep card for a named meeting |
+| `/work people` | People graph summary — top collaborators by tier and recency |
+| `/work health` | Work connector health — per-connector status, degraded fallbacks active, audit log tail |
+| `/work refresh` | Re-run fetch + enrich stages to pull latest connector data |
+| `/work warm-start` | Run or re-run the historical import from scrape data |
+
+### 23.2 Daily Work Briefing Format
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WORK BRIEFING — Mon Mar 24, 2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📅 CALENDAR  8 meetings today · 4h 45m meeting load
+  🟩 Platform Alpha Weekly  10:35 AM  (recurring · 80% ready)
+  ⬜ LT Review Dry Run  2:00 PM  (8 ppl · prep needed)
+  [+6 more]
+
+📋 COMMITMENTS  3 open · 1 overdue
+  🔴 Platform Alpha signoff doc → Alex M.  due Mar 22 (2d over)
+  🟡 Update deployment slides → Jane K.  due Mar 26
+  ⬜ DeployFlow requirements review  due Apr 1
+
+🎯 PROJECTS  Platform Alpha · Platform Beta · Platform-A-DD
+  Platform Alpha: 4 meetings this week · ADO 12 items
+
+🛡 BOUNDARY  Score 0.72 / 1.0  (Moderate load)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Connectors: workiq_bridge ✓ · ado_workitems ✓ · msgraph_calendar ✓
+```
+
+**Format rules:**
+- Calendar section: show next 2 high-priority meetings explicitly, then `[+N more]`
+- Commitment section: 🔴 for overdue, 🟡 for due within 3 days, ⬜ for future
+- Projects section: top 3 by meeting frequency this week
+- Boundary score: sourced from `state/bridge/work_load_pulse.json`
+- Connector health line: always rendered — proves data is fresh
+
+### 23.3 Meeting Prep Card Format
+
+Triggered via `/work prep <title>` or automatically at briefing time for top-priority meetings:
+
+```
+📋 MEETING PREP
+  Platform Alpha Weekly — Mon 10:35 AM (recurring, instance #80)
+  Organizer: you · 10 attendees
+
+  Readiness: 72/100 ⚠ Below threshold
+
+  Open threads from last week:
+  - "Will you be updating the deployment slides?" (from Alex M.)
+  - Platform Alpha blocker — status update needed
+
+  Key people: Alex Morgan (mgr) · Jane Kim (skip) · Sam Rodriguez
+  
+  Prep suggested:
+  → Update deployment slides before 10:35 AM
+  → Reply to Alex M. re: slides status
+```
+
+### 23.4 Degraded Mode UX
+
+Work OS follows the **no-blocking-failure** principle (§8.4 of specs/work.md). When connectors fail, the briefing still runs with visible status:
+
+```
+⚠ Work OS — Degraded Mode
+
+  workiq_bridge: ⚠ unavailable — using cached calendar (8h old)
+  ado_workitems: ✓ current
+  msgraph_calendar: ✓ current
+
+  [Briefing follows with cached WorkIQ data]
+```
+
+**Design rules:**
+- Degraded mode is always transparent — the connector status footer never disappears
+- Stale data is explicitly labeled with age: `(cached, 8h old)`
+- Remediation text is surfaced in `/work health`, not in the main briefing (keeps briefing readable)
+- If ALL connectors are down, show: `⚠ Work OS offline — showing last known state from [timestamp]`
+
+### 23.5 Warm-Start UX
+
+First-run onboarding automatically detects `work.bootstrap.import_completed: false` and prompts:
+
+```
+Work OS: No historical data found. 
+
+  To bootstrap your people graph, projects, and career evidence from
+  your work-scrape archive, run:
+
+    python scripts/work_warm_start.py --scrape-dir <path> --dry-run
+  
+  This will show a preview before writing. Once confirmed:
+    python scripts/work_warm_start.py --scrape-dir <path>
+  
+  See docs/work-warm-start.md for details.
+```
+
+After warm-start completion, the briefing transitions from "bootstrapping" to full mode:
+```
+✓ Work OS warm-start complete
+  Imported 81 weeks · 284 people · 12 projects · 47 career events
+  
+  Top relationships: Alex Morgan (tier-0) · Jane Kim (tier-0) · Sam Rodriguez (tier-1)
+  Recurring meetings detected: Platform-A-DD Daily Standup (60×) · Platform Alpha Weekly (80×) · [+4 more]
+```
+
+### 23.6 UX Design Rules (Work Surface)
+
+| Rule | Rationale |
+|---|---|
+| Work content never leaks to personal briefing | Hard separation — `work_load_pulse.json` contains only scalar score + counts |
+| Connector health is always visible | User must know when data is stale — no silent degradation |
+| Names are unredacted on the work surface | Personal surface strips names; work surface shows real names (user's own data) |
+| Meeting titles use title-case, never ALL CAPS | Same terminal typography as personal surface |
+| All outputs fit in 80-column terminal | Work surface follows UX-6 terminal-native typography |
+| Prep cards are on-demand, not auto-surfaced | Avoids information overload; user pulls prep when needed |
+
+---
+
 **Cross-references:**
 - PRD v5.9: §6 (Interaction Modes), §7 (FR-1 through FR-18 + F15.100–F15.118), §8 (Goal Intelligence), §9 (Architecture), §10 (Autonomy Framework), §11 (Relationship Intelligence), §12.6 (Privacy Surface), Phase 2A–B (Canvas, Apple Health)
+- PRD v4.2: FR-19 Work Intelligence OS
+- Tech Spec v3.7: §19 Work OS Technical Architecture, `specs/work.md` v1.7.0
 - Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)

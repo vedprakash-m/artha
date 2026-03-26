@@ -46,7 +46,7 @@ Classify as action-required if ANY of:
 🔵 LOW: FYI threads (suppressed by default — count only); automated notifications
 
 ## State File Update Protocol
-Read `state/work-comms.md` first. Then update:
+Read `state/work/work-comms.md` first. Then update:
 1. **Action Required** — rows sorted by priority desc, then age desc
 2. **Pending** — threads where user has replied and awaits others' response
 3. **Summary** — counts: new email / new Teams / action items / pending

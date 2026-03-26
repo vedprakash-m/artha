@@ -1,0 +1,70 @@
+name: Work OS Tests
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "scripts/work_reader.py"
+      - "scripts/work_loop.py"
+      - "scripts/work_warm_start.py"
+      - "scripts/tools/prompt_linter.py"
+      - "prompts/work-*.md"
+      - "tests/work/**"
+      - "config/domain_registry.yaml"
+      - "pyproject.toml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/work_reader.py"
+      - "scripts/work_loop.py"
+      - "scripts/work_warm_start.py"
+      - "scripts/tools/prompt_linter.py"
+      - "prompts/work-*.md"
+      - "tests/work/**"
+      - "config/domain_registry.yaml"
+      - "pyproject.toml"
+
+jobs:
+  work-tests:
+    name: Work OS unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev] 2>/dev/null || pip install pytest pytest-timeout pyyaml
+
+      - name: Run Work OS tests
+        run: |
+          python -m pytest tests/work/ -v --timeout=30 --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  prompt-lint:
+    name: Prompt linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run prompt linter
+        run: python scripts/tools/prompt_linter.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}

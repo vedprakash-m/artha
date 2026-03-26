@@ -569,6 +569,13 @@ Two modes:
 ## `/work health` — Connector & Policy Health
 Work-specific diagnostics: connector status, token freshness, cache age, redact_keywords validation, provider availability, bridge schema health.
 
+**Golden Query health** (added as sub-check):
+- Count queries by confidence tier (HIGH / MEDIUM / LOW)
+- Flag queries with `Validated: Pending` — these have never been live-tested
+- Flag queries last validated >90 days ago
+- Report any recent runtime errors from `state/work/query-errors.log`
+- Show gap coverage: addressable vs blocked question count
+
 ## `/work notes [meeting-id]` — Post-Meeting Capture
 Reads work-calendar, work-people, work-notes. Prompts for decisions and action items. Generates follow-up package.
 
@@ -608,6 +615,22 @@ Reads work-calendar, work-projects, work-people, work-performance. Phase 3.
 
 ## `/work refresh` — Live Connector Refresh
 Executes full Work Operating Loop (§8.5) with live network I/O. Reports per-provider freshness afterward. This is the only command that invokes connectors inline.
+
+## `/work query <question>` — Golden Query (Kusto Data)
+Matches `<question>` to the Golden Query Registry (`state/work/golden-queries.md`).
+If a match is found, executes validated KQL via `scripts/kusto_runner.py` and returns
+the answer with a **Data Card** showing: query used, source cluster/db, data freshness,
+confidence level, caveats. If no match, composes ad-hoc KQL from `work-kusto-catalog.md`.
+- `--query-id GQ-NNN` — run a specific golden query by ID
+- `--list` — list all registered golden queries
+- `--audit` — show confidence breakdown, pending validations, stale queries
+- Every response includes a Data Card footer for full transparency
+- Requires corpnet/VPN for Kusto cluster access
+- Phase: Active (registry-based, extensible)
+
+**Learning behavior:** When an ad-hoc query (not from registry) successfully answers a
+question, flag it as a golden query candidate. If the same pattern is used 2+ times,
+prompt to formalize it into the registry.
 
 ## `/work promo-case` — Promotion Readiness Assessment
 Reads work-project-journeys, work-performance, work-people (visibility events), work-career. Outputs: promotion thesis (auto-generated from scope arc), evidence density per goal (★1–5), visibility events from L-N+ stakeholders, readiness signal, evidence gaps. Phase 3.

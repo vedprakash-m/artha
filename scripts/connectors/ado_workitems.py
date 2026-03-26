@@ -135,14 +135,23 @@ def _get_headers(auth_context: dict) -> dict:
 # ADO REST API helpers
 # ---------------------------------------------------------------------------
 
-def _wiql_query(org_url: str, project: str, headers: dict) -> list[int]:
-    """Run a WIQL query and return a list of work item IDs assigned to @Me."""
+def _wiql_query(org_url: str, project: str, headers: dict, since: str = "") -> list[int]:
+    """Run a WIQL query and return a list of work item IDs assigned to @Me.
+
+    If *since* is a non-empty ISO-8601 date string (e.g. '2026-03-01'),
+    only items changed on or after that date are returned.
+    """
     wiql_url = f"{org_url}/{project}/_apis/wit/wiql?api-version={ADO_API_VERSION}"
+    where_clauses = [
+        "[System.AssignedTo] = @Me",
+        "[System.State] NOT IN ('Closed', 'Resolved', 'Done', 'Removed')",
+    ]
+    if since:
+        where_clauses.append(f"[System.ChangedDate] >= '{since}'")
     wiql = {
         "query": (
             "SELECT [System.Id] FROM WorkItems "
-            "WHERE [System.AssignedTo] = @Me "
-            "AND [System.State] NOT IN ('Closed', 'Resolved', 'Done', 'Removed') "
+            "WHERE " + " AND ".join(where_clauses) + " "
             "ORDER BY [System.ChangedDate] DESC"
         )
     }
@@ -227,7 +236,7 @@ def fetch(
         return
 
     try:
-        item_ids = _wiql_query(org_url, project, headers)
+        item_ids = _wiql_query(org_url, project, headers, since=since)
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "?"
         if status == 401:
