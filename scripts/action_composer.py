@@ -133,6 +133,36 @@ _FRICTION_NAMES = ["low", "standard", "high"]
 # Default action proposal expiry (hours to auto-expire if not acted on)
 _DEFAULT_EXPIRY_HOURS = 72
 
+# Known-valid action types for routing table validation (Phase 6 §10.2.3)
+_ALLOWED_ACTION_TYPES: frozenset[str] = frozenset({
+    "email_send", "email_reply", "calendar_create", "calendar_modify",
+    "reminder_create", "whatsapp_send", "todo_sync", "instruction_sheet",
+    "slack_send", "todoist_sync", "apple_reminders_sync",
+    "decision_log_proposal",
+})
+
+
+def _validate_routing_table() -> None:
+    """Verify every action_type in _SIGNAL_ROUTING exists in _ALLOWED_ACTION_TYPES.
+
+    Called once at import time — catches typos at startup rather than at
+    signal-fire time.  Emits a warning to stderr for any unknown action types
+    but does NOT raise, to avoid breaking imports during development.
+    """
+    unknown = {
+        row["action_type"]
+        for row in _SIGNAL_ROUTING.values()
+        if row.get("action_type") not in _ALLOWED_ACTION_TYPES
+    }
+    if unknown:
+        import sys as _sys
+        _sys.stderr.write(
+            f"[WARNING] _SIGNAL_ROUTING references unknown action_type(s): {sorted(unknown)}\n"
+        )
+
+
+_validate_routing_table()
+
 
 # ---------------------------------------------------------------------------
 # ActionComposer class
