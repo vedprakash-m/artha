@@ -112,6 +112,8 @@ _FALLBACK_HANDLER_MAP: Final[dict[str, str]] = {
     "connectors.apple_reminders": "connectors.apple_reminders",
     # Financial connectors (opt-in — CONNECT Phase 5)
     "connectors.plaid_connector": "connectors.plaid_connector",
+    # Feed connectors (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.rss_feed": "connectors.rss_feed",
 }
 
 # Security allowlist — only these module paths may ever be loaded dynamically.
@@ -138,7 +140,19 @@ def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
                 continue
             if not cfg.get("enabled", True):
                 continue
-            module = cfg.get("module", f"connectors.{name}")
+            # Prefer explicit 'module' field; fall back to deriving stem from
+            # fetch.handler path ("scripts/connectors/google_email.py" → "connectors.google_email")
+            # before using the YAML key as a last resort ("connectors.gmail" would be wrong
+            # when the module file is named differently, e.g. google_email.py).
+            if "module" in cfg:
+                module = cfg["module"]
+            else:
+                handler_path = cfg.get("fetch", {}).get("handler", "")
+                if "/" in handler_path:
+                    stem = Path(handler_path).stem  # "google_email"
+                    module = f"connectors.{stem}"
+                else:
+                    module = f"connectors.{name}"
             if module not in _ALLOWED_MODULES:
                 print(
                     f"[SECURITY] module {module!r} not in allowlist, skipping {name!r}",
