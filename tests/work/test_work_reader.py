@@ -110,12 +110,14 @@ def _stale_fm() -> dict:
 def _inject_state_dir(state_dir: Path) -> None:
     """Point work_reader module at the temp state dir.
 
-    Phase 3: also patch work.helpers since _freshness_footer reads from
-    its own module-level _WORK_STATE_DIR after Phase 3 decomposition.
+    Phase 3: also patch work.helpers and work.briefing since helper functions
+    read from their own module-level _WORK_STATE_DIR after Phase 3 decomposition.
     """
     work_reader._WORK_STATE_DIR = state_dir
     import work.helpers  # noqa: PLC0415
     work.helpers._WORK_STATE_DIR = state_dir
+    import work.briefing  # noqa: PLC0415
+    work.briefing._WORK_STATE_DIR = state_dir
 
 
 # ---------------------------------------------------------------------------
@@ -1581,12 +1583,16 @@ class TestCmdDay:
         (bridge_dir / "work_load_pulse.json").write_text(
             _json.dumps(pulse_data), encoding="utf-8"
         )
-        # Monkeypatch _REPO_ROOT in work_reader to point to tmp_path
+        # Monkeypatch _REPO_ROOT in work_reader and work.briefing to point to tmp_path
         import work_reader as wr
+        import work.briefing as _wb  # noqa: PLC0415
         self._orig_repo = wr._REPO_ROOT
+        self._orig_briefing_repo = _wb._REPO_ROOT
         wr._REPO_ROOT = tmp_path
+        _wb._REPO_ROOT = tmp_path
         yield
         wr._REPO_ROOT = self._orig_repo
+        _wb._REPO_ROOT = self._orig_briefing_repo
 
     def test_day_has_header(self, work_dir, tmp_path):
         out = cmd_day()
