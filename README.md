@@ -143,6 +143,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 | [Backup & Restore](docs/backup.md) | GFS snapshots, cold-start restore |
 | [Security & Privacy](docs/security.md) | Threat model, encryption, PII defense |
 | [Domains](docs/domains.md) | 24 life domains explained |
+| [Work OS](docs/work-os.md) | Professional intelligence layer — briefings, meeting prep, career evidence |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
 | [Contributing](CONTRIBUTING.md) | Dev setup, testing, code style |
 | [Changelog](CHANGELOG.md) | Version history |
