@@ -108,8 +108,14 @@ def _stale_fm() -> dict:
 
 
 def _inject_state_dir(state_dir: Path) -> None:
-    """Point work_reader module at the temp state dir."""
+    """Point work_reader module at the temp state dir.
+
+    Phase 3: also patch work.helpers since _freshness_footer reads from
+    its own module-level _WORK_STATE_DIR after Phase 3 decomposition.
+    """
     work_reader._WORK_STATE_DIR = state_dir
+    import work.helpers  # noqa: PLC0415
+    work.helpers._WORK_STATE_DIR = state_dir
 
 
 # ---------------------------------------------------------------------------
