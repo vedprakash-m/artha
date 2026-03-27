@@ -553,6 +553,12 @@ def run_health_checks(
             continue
         name = conn["name"]
         health_check_cfg = conn.get("health_check")
+
+        # Explicitly disabled: health_check: false in YAML
+        if health_check_cfg is False:
+            print(f"[health] SKIP {name} — health_check disabled", file=sys.stderr)
+            continue
+
         handler_path = (
             (health_check_cfg.get("handler") if isinstance(health_check_cfg, dict) else None)
             or conn.get("fetch", {}).get("handler", "")

@@ -327,6 +327,29 @@ class TestRunHealthChecks:
         captured = capsys.readouterr()
         assert "connectors healthy" in captured.err
 
+    @patch("pipeline._load_handler")
+    def test_health_check_false_skips_connector(self, mock_handler, capsys):
+        """health_check: false must skip the connector without attempting to load its handler.
+
+        Regression test for: when health_check=False (bool), the code previously fell
+        through to fetch.handler ('mcp'), which is not a Python module, causing a
+        security allowlist error and exit 1.
+        """
+        from pipeline import run_health_checks
+
+        cfg = {"connectors": {"slack": {
+            "enabled": True,
+            "run_on": "all",
+            "fetch": {"handler": "mcp"},  # not a real Python module
+            "health_check": False,
+        }}}
+
+        result = run_health_checks(cfg)
+        assert result == 0
+        mock_handler.assert_not_called()
+        captured = capsys.readouterr()
+        assert "SKIP slack" in captured.err
+
 
 # ── Subprocess smoke test ────────────────────────────────────────────────────
 # These tests run pipeline.py as a *subprocess* — the exact invocation path

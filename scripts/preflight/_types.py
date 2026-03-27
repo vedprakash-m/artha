@@ -9,10 +9,10 @@ ARTHA_DIR   = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__
 SCRIPTS_DIR = os.path.join(ARTHA_DIR, "scripts")
 STATE_DIR   = os.path.join(ARTHA_DIR, "state")
 TOKEN_DIR   = os.path.join(ARTHA_DIR, ".tokens")
-LOCK_FILE   = os.path.join(ARTHA_DIR, ".artha-decrypted")
+LOCK_FILE          = os.path.join(ARTHA_DIR, ".artha-decrypted")
 WORKIQ_CACHE_FILE  = os.path.join(ARTHA_DIR, "tmp", ".workiq_cache.json")
 
-TOKEN_EXPIRY_WARN_SECONDS = 300  # warn within 5 min of expiry
+TOKEN_EXPIRY_WARN_SECONDS = 300  # Warn when token expires within 5 minutes
 
 _SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
 
