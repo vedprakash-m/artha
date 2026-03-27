@@ -11,7 +11,57 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ---
 
-## [8.4.0] — 2026-03-21
+## [8.5.0] — 2026-03-27
+
+### Changed — PAY-DEBT v1.0: Structural Integrity Plan (specs/pay-debt.md)
+
+Eliminated three 1,800–3,500-line god files, added structured observability, hardened registries, schemas, and the PII guard pipeline. All 2,886 baseline tests preserved; ~328 new tests added.
+
+**Phase 1 — Foundation Hardening (TD-5, TD-10, TD-11)**
+- `foundation.py`: added `get_config()` accessor — safe alternative to module-level aliases frozen at import time
+- `scripts/health_check_updater.py` (new): extracted `update_channel_health_md()` from `lib/common.py`; deprecated stub re-export kept for backward compatibility
+- `middleware/audit_middleware.py`: replaced silent `except OSError: pass` with `print("[WARN] audit write failed: ...", file=sys.stderr)` — audit trail gaps now visible
+
+**Phase 2 — Observability Layer (TD-4)**
+- `scripts/lib/logger.py` (new, ~120 LOC): structured JSONL logger with daily rotation, 30-day pruning, PII-safe design, and trace_id/correlation_id support
+- Integrated into `pipeline.py` (connector.fetch events), `action_executor.py` (action.executed events), and `channel_listener.py` (command.received/completed events)
+- Log sink: `~/.artha-local/logs/artha.YYYY-MM-DD.log.jsonl` (machine-local, never cloud-synced)
+
+**Phase 3 — Work OS Restructure (TD-2) ★ HIGHEST PRIORITY**
+- `scripts/work_reader.py`: reduced from 3,146 LOC to ~313 LOC facade + `main()`
+- Decomposed into 8 focused submodules under `scripts/work/`: `helpers`, `briefing`, `meetings`, `health`, `decisions`, `discovery`, `career`, `narrative`
+- All 284 existing work reader tests preserved via strangler-fig facade
+- `scripts/narrative_engine.py`: removed 6 duplicate helper functions; now imports from `work.helpers`
+
+**Phase 4 — Channel Listener Restructure (TD-1)**
+- `scripts/channel_listener.py`: reduced from 3,543 LOC to ~592 LOC entry point
+- Decomposed into 8 focused submodules under `scripts/channel/`: `router`, `handlers`, `catchup`, `llm_bridge`, `security`, `formatters`, `state_readers`, `stage`
+- Old `test_channel_listener.py` (24 tests) retained in parallel until behavioral parity confirmed
+
+**Phase 5 — Preflight Restructure (TD-1)**
+- `scripts/preflight.py` (1,848 LOC) → `scripts/preflight/` package
+- Decomposed into 5 category modules: `vault_checks`, `oauth_checks`, `api_checks`, `state_checks`, `integration_checks`
+- `config/Artha.core.md` Step 0 updated from `python3 scripts/preflight.py` to `python3 -m preflight`
+- ⚠️ **Breaking change:** If you call `python3 scripts/preflight.py` directly in custom scripts, update to `python3 -m preflight`
+
+**Phase 6 — Registry Consolidation (TD-3)**
+- `pipeline.py`: `_HANDLER_MAP` now derived from `connectors.yaml` at startup via `_derive_handler_map()`; `_FALLBACK_HANDLER_MAP` + `_ALLOWED_MODULES` frozenset provide fail-degraded safety + security gate
+- `action_executor.py`: same pattern for `_derive_action_map(connectors.yaml)`
+- `action_composer.py`: added `_validate_routing_table()` — catches unknown action_type at import time, not signal-fire time
+- `connectors.rss_feed` added to `_ALLOWED_MODULES` (feed connector was deployed but missing from security allowlist)
+- Handler map derivation fixed: reads `fetch.handler` path stem instead of falling back to YAML connector name (resolves gmail → google_email mismatch)
+
+**Phase 7 — Hardening (TD-7, TD-8)**
+- `scripts/lib/state_schema.py` (new, ~80 LOC): lightweight required-field validator for state file frontmatter
+- `middleware/write_guard.py`: `before_write()` now calls `validate_frontmatter()` — blocks writes missing required fields in registered schemas
+- `action_executor.py`: PII check now calls `pii_guard.scan()` in-process instead of `subprocess.Popen`; saves ~100ms per action invocation
+
+### Fixed
+- `_derive_handler_map` false SECURITY warnings for legitimate connectors (7 → 0) with real `connectors.yaml`
+- `connectors.rss_feed` was enabled in `connectors.yaml` and the script existed, but absent from `_ALLOWED_MODULES` — would have caused runtime rejection
+- Unused `from pathlib import Path` import removed from `health_check_updater.py`
+
+
 
 ### Added — Memory Pipeline Activation (MEM v1.3.0, specs/mem.md)
 
