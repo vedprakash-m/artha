@@ -171,6 +171,25 @@ Rebuild `state/dashboard.md` with current data from all domains.
 Retrieve from pii_guard.py output for briefing footer:
 `{emails_scanned: N, redactions_applied: N}`
 
+**8-A-6 — PR Manager: Content Card Seeding + Inline Drafts (skip if `enhancements.pr_manager: false`):**
+
+Run moment detection: `python3 scripts/pr_manager.py --step8`
+This seeds content cards into `state/gallery.yaml` from scored moments (`occasion_tracker` skill output).
+
+**Inline draft generation (LLM-driven catch-up rule):**
+During an LLM-driven catch-up, you ARE the draft engine. For every card seeded or
+already in `seed` status with `days_until ≤ 7`:
+1. Read the card's occasion, event_date, primary_thread, and voice profile from `state/pr_manager.md`
+2. Generate platform-appropriate draft content per `prompts/social.md §Voice & Tone`
+3. Write draft body into each platform entry in the card's `drafts:` block
+4. Set `draft_status: staged` and `status: staged` (not `seed`)
+5. Apply all PII rules from `prompts/social.md §Privacy Rules for Content Stage`
+
+Do NOT leave cards in `seed` status with empty `body` fields — that creates unnecessary
+friction requiring the user to run `/stage draft` separately.
+
+Cards with `days_until > 7` may remain `seed` (no rush to draft).
+
 **Output: `[ACT]` block** confirms validation passed. Validated findings flow into Step 9 (briefing synthesis).
 
 **Checkpoint (Step 8 complete):** After OODA Act phase, write:

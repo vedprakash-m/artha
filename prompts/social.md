@@ -645,6 +645,13 @@ from seed → drafted → staged → approved → posted → archived.
 Cards are automatically created by Step 8 (pr_manager.py) when scored moments appear.
 Each card tracks platform-specific drafts, PII flags, and event timing.
 
+**Inline Draft Rule (LLM-driven catch-up):** When you seed a card during catch-up
+(or encounter an existing `seed` card within 7 days of its event), generate draft
+content immediately using the voice profile and occasion context. Write the draft
+into the card's `drafts:` entries, set `draft_status: staged`, and advance the card
+to `status: staged`. Do NOT leave cards with empty `body` fields — the user expects
+`/stage` to show ready-to-review content after a catch-up, not empty placeholders.
+
 ### `/stage` Commands
 
 When the user says `/stage` (or any variation), interact with `state/gallery.yaml`:

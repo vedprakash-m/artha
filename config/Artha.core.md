@@ -1544,7 +1544,7 @@ and `config/commands.md §/pr` for full behavior.
 - `/stage approve <ID>` — Mark card approved; emit copy-ready content per platform.
   Call: `python3 -c "import sys; sys.path.insert(0,'scripts'); from pr_stage.service import ContentStage; from pathlib import Path; s=ContentStage(Path('state/gallery.yaml'),Path('state/gallery_memory.yaml')); ..."`
   or read the YAML directly and confirm to the user, then update `state/gallery.yaml` status field.
-- `/stage draft <ID>` — Phase 2: trigger LLM draft generation. Currently shows placeholder draft text from the card.
+- `/stage draft <ID>` — Generate draft content for a seed card. During LLM-driven catch-up, drafts are generated inline at Step 8-A-6 (cards should arrive pre-drafted). Use this command only for cards that were missed or need re-drafting.
 - `/stage posted <ID> <platform>` — Log post as published; update platform draft status.
 - `/stage dismiss <ID>` — Archive card without posting.
 - `/stage history [year]` — Phase 4 only: browse `state/gallery_memory.yaml`.
