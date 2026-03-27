@@ -362,8 +362,6 @@ class TestCrossSurfaceAccess:
 # "Work alerts and personal alerts must never co-mingle"
 # ===========================================================================
 
-from schemas.bridge_schemas import validate_alert_isolation  # type: ignore
-
 
 class TestAlertIsolation:
 
