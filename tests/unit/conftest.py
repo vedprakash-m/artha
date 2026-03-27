@@ -20,7 +20,7 @@ import pii_guard  # noqa: E402
 
 # Unicode escapes used intentionally — avoids triggering the pii_guard language
 # fence on this source file while keeping the values human-readable in comments.
-# \u0935\u0947\u0926 = "ved" in Devanagari script (the name in i18n test strings)
+# \u0935\u0947\u0926 = Devanagari script test string (used in i18n PII detection tests)
 _CI_DEVA_TEST_NAMES = ["\u0935\u0947\u0926"]
 
 

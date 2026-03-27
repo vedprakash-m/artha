@@ -286,7 +286,7 @@ class TestAggregator:
         agg = self._build_agg(tmp_path)
         assert len(agg.people) > 0
 
-    def test_ved_not_in_people_graph(self, tmp_path):
+    def test_self_not_in_people_graph(self, tmp_path):
         agg = self._build_agg(tmp_path)
         for name in agg.people:
             assert not _is_self(name), f"ACE appeared in people graph: {name}"
@@ -1560,7 +1560,7 @@ class TestRound3Parsers:
         week = parser.parse_file(f)
         assert not any(n.lower() == "others" for n in week.chat_people)
 
-    def test_chat_people_excludes_ved(self, tmp_path):
+    def test_chat_people_excludes_self(self, tmp_path):
         """ACE himself should never appear as a chat person."""
         f = self._make_week_file(tmp_path, "2024", "10-w1", CHAT_PARTICIPANTS_WEEK)
         parser = ScrapeParser()
@@ -1584,7 +1584,7 @@ class TestRound3Parsers:
         assert any("Casey" in n or "Hinchliff" in n for n in week.chat_people)
         assert any("Michael" in n or "Narayan" in n for n in week.chat_people)
 
-    def test_chat_people_quoted_excludes_ved(self, tmp_path):
+    def test_chat_people_quoted_excludes_self(self, tmp_path):
         """'Alex Chen' in quoted format should be filtered out."""
         f = self._make_week_file(tmp_path, "2024", "10-w4", CHAT_QUOTED_WEEK)
         parser = ScrapeParser()
@@ -1647,11 +1647,11 @@ class TestRound3AggregatorChatPeople:
         # direct_chat_count * 2.0 per interaction
         assert alex.relationship_score > 0
 
-    def test_ved_not_in_people_from_chat(self, tmp_path):
+    def test_self_not_in_people_from_chat(self, tmp_path):
         agg = self._build_chat_agg(tmp_path)
         # Alex Chen appears in quoted format but must be filtered
-        ved_entries = [k for k in agg.people if _is_self(k)]
-        assert len(ved_entries) == 0, f"ACE found in people graph via chat: {ved_entries}"
+        self_entries = [k for k in agg.people if _is_self(k)]
+        assert len(self_entries) == 0, f"ACE found in people graph via chat: {self_entries}"
 
     def test_key_themes_numbered_coverage_in_aggregator(self, tmp_path):
         """Numbered-list Key Themes should now appear in key_theme_titles."""
