@@ -118,18 +118,6 @@ def _inject_state_dir(state_dir: Path) -> None:
     work.helpers._WORK_STATE_DIR = state_dir
     import work.briefing  # noqa: PLC0415
     work.briefing._WORK_STATE_DIR = state_dir
-    import work.health  # noqa: PLC0415
-    work.health._WORK_STATE_DIR = state_dir
-    import work.decisions  # noqa: PLC0415
-    work.decisions._WORK_STATE_DIR = state_dir
-    import work.discovery  # noqa: PLC0415
-    work.discovery._WORK_STATE_DIR = state_dir
-    import work.meetings  # noqa: PLC0415
-    work.meetings._WORK_STATE_DIR = state_dir
-    import work.career  # noqa: PLC0415
-    work.career._WORK_STATE_DIR = state_dir
-    import work.narrative  # noqa: PLC0415
-    work.narrative._WORK_STATE_DIR = state_dir
 
 
 # ---------------------------------------------------------------------------
