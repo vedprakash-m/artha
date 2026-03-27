@@ -40,7 +40,7 @@ When running in a read-only or sandboxed environment (detected via `python3 scri
 
 1. **Detect:** Run `python3 scripts/detect_environment.py` BEFORE `preflight.py`.
    Parse the JSON output. If `capabilities.filesystem_writable: false`, enter read-only mode.
-2. **Gate:** Run `python3 scripts/preflight.py --advisory` instead of strict preflight.
+2. **Gate:** Run `python3 -m preflight --advisory` instead of strict preflight.
    Log all advisory results in the **briefing header** (not footer).
 3. **Label:** Begin briefing with:
    `⚠️ READ-ONLY MODE — no state files updated this session`
@@ -132,7 +132,7 @@ Execute the following 21-step sequence exactly. Do not skip steps. If a step fai
 **This step runs BEFORE any data is touched. A failed P0 gate = no catch-up.**
 **P0 blocks only for missing capabilities or active session collisions — not for cleanup state from a previous crash (stale locks and orphaned `.bak` files are auto-resolved and never block).**
 ```bash
-python3 scripts/preflight.py
+python3 -m preflight
 ```
 - Exit 0 = all P0 checks pass → proceed
 - Exit 1 = at least one P0 check failed → halt with error: `⛔ Pre-flight failed: [check] — [error]. Fix before retrying.`
