@@ -56,6 +56,9 @@ class WriteGuardMiddleware:
     ) -> str | None:
         """Check field-count delta and block the write if loss exceeds threshold.
 
+        Also validates required frontmatter fields via state_schema if the
+        proposed content loses any required field (Phase 7 hardening).
+
         Returns:
             ``proposed_content`` if the write is safe, or ``None`` to block.
         """
@@ -63,12 +66,14 @@ class WriteGuardMiddleware:
         if "updated_by: bootstrap" in (current_content or ""):
             return proposed_content
 
-        # No existing content — always allow (new file creation)
+        # No existing content — run schema check and allow new file creation
         if not current_content or not current_content.strip():
+            self._check_schema(domain, proposed_content)
             return proposed_content
 
         current_fields = _count_yaml_fields(current_content)
         if current_fields == 0:
+            self._check_schema(domain, proposed_content)
             return proposed_content  # Can't calculate loss — pass through
 
         proposed_fields = _count_yaml_fields(proposed_content)
@@ -88,7 +93,52 @@ class WriteGuardMiddleware:
             )
             return None  # Block the write
 
+        # Schema check — block if required frontmatter fields are missing
+        if self._check_schema(domain, proposed_content) is False:
+            return None
+
         return proposed_content
+
+    def _check_schema(self, domain: str, content: str) -> bool:
+        """Validate frontmatter of proposed content against registered schema.
+
+        Returns True if valid (or no schema registered), False if blocked.
+        Emits a warning to stderr when required fields are missing.
+        """
+        try:
+            import re as _re
+            from pathlib import Path as _Path
+            import sys as _sys2
+            _lib = _Path(__file__).resolve().parents[1] / "lib"
+            if str(_lib) not in _sys2.path:
+                _sys2.path.insert(0, str(_lib))
+            from state_schema import validate_frontmatter  # type: ignore[import]
+        except ImportError:
+            return True  # Schema module unavailable — pass through
+
+        # Parse frontmatter between --- markers
+        fm_match = _re.search(r"^---\s*\n(.*?)\n---", content, _re.DOTALL | _re.MULTILINE)
+        if not fm_match:
+            return True  # No frontmatter — nothing to validate
+
+        try:
+            import yaml as _yaml
+            frontmatter = _yaml.safe_load(fm_match.group(1)) or {}
+        except Exception:
+            return True  # Unparseable frontmatter — pass through
+
+        # Use the domain basename as filename (e.g. "health" → "health.md")
+        filename = domain if domain.endswith(".md") else f"{domain}.md"
+        missing = validate_frontmatter(filename, frontmatter)
+        if missing:
+            print(
+                f"[write_guard] ⛔ SCHEMA VALIDATION FAILED — {domain}\n"
+                f"  Missing required frontmatter fields: {missing}\n"
+                f"  Add these fields before writing.",
+                file=sys.stderr,
+            )
+            return False
+        return True
 
     def after_write(self, domain: str, file_path: Path) -> None:
         pass  # Write guard is a before-write concern only
