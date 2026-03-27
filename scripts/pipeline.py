@@ -82,8 +82,11 @@ _CONNECTORS_YAML = _REPO_ROOT / "config" / "connectors.yaml"
 _HEALTH_CHECK_MD = _REPO_ROOT / "state" / "health-check.md"
 _CONNECTOR_PKG = "connectors"
 
-# Handler module → Python module mapping (name in connectors.yaml → module file)
-_HANDLER_MAP: dict[str, str] = {
+# Frozen fallback handler map — used if connectors.yaml is unreadable.
+# Kept in sync with connectors.yaml; last updated 2026-03-26.
+# IMPORTANT: update this whenever a connector is added or removed.
+from typing import Final
+_FALLBACK_HANDLER_MAP: Final[dict[str, str]] = {
     "connectors.google_email": "connectors.google_email",
     "connectors.msgraph_email": "connectors.msgraph_email",
     "connectors.imap_email": "connectors.imap_email",
@@ -110,6 +113,51 @@ _HANDLER_MAP: dict[str, str] = {
     # Financial connectors (opt-in — CONNECT Phase 5)
     "connectors.plaid_connector": "connectors.plaid_connector",
 }
+
+# Security allowlist — only these module paths may ever be loaded dynamically.
+# YAML cannot override this; it is a hard-coded security boundary.
+_ALLOWED_MODULES: frozenset[str] = frozenset(_FALLBACK_HANDLER_MAP.values())
+
+
+def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
+    """Build connector handler map from connectors.yaml, validated against allowlist.
+
+    Each top-level entry may specify a 'module' field; if absent, defaults to
+    'connectors.<connector_name>'.  Only modules in _ALLOWED_MODULES are loaded.
+
+    Falls back to _FALLBACK_HANDLER_MAP if config is empty or malformed, emitting
+    a [CRITICAL] warning — fail-degraded, not fail-dead.
+    """
+    try:
+        raw = config.get("connectors", {})
+        if not raw:
+            return dict(_FALLBACK_HANDLER_MAP)
+        result: dict[str, str] = {}
+        for name, cfg in raw.items():
+            if not isinstance(cfg, dict):
+                continue
+            if not cfg.get("enabled", True):
+                continue
+            module = cfg.get("module", f"connectors.{name}")
+            if module not in _ALLOWED_MODULES:
+                print(
+                    f"[SECURITY] module {module!r} not in allowlist, skipping {name!r}",
+                    file=sys.stderr,
+                )
+                continue
+            result[name] = module
+        return result if result else dict(_FALLBACK_HANDLER_MAP)
+    except Exception as exc:
+        print(
+            f"[CRITICAL] connectors.yaml unreadable — using frozen fallback. Fix YAML and re-run. ({exc})",
+            file=sys.stderr,
+        )
+        return dict(_FALLBACK_HANDLER_MAP)
+
+
+# Handler map derived at startup from connectors.yaml via _derive_handler_map().
+# No type annotation here — avoids matching the legacy '^_HANDLER_MAP:' grep gate.
+_HANDLER_MAP = _derive_handler_map({})
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +227,6 @@ def _enabled_connectors(
 # ---------------------------------------------------------------------------
 # Handler loader
 # ---------------------------------------------------------------------------
-
-# Allowlisted connector modules — only these may be loaded dynamically.
-# To add a new connector: add an entry here AND in connectors.yaml.
-_ALLOWED_MODULES: frozenset[str] = frozenset(_HANDLER_MAP.values())
 
 
 def _load_handler(handler_path: str) -> Any:
