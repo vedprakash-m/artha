@@ -67,7 +67,20 @@ Documentation = "https://github.com/vedprakash-m/artha/tree/main/docs"
 
 [tool.setuptools]
 py-modules = ["artha"]
-packages = ["scripts", "scripts.lib", "scripts.skills", "scripts.connectors", "scripts.actions", "scripts.channels", "scripts.middleware", "scripts.schemas"]
+packages = [
+    "scripts",
+    "scripts.lib",
+    "scripts.skills",
+    "scripts.connectors",
+    "scripts.actions",
+    "scripts.channels",
+    "scripts.middleware",
+    "scripts.schemas",
+    # PAY-DEBT v1.0 decomposed subpackages (Phases 3–5)
+    "scripts.work",
+    "scripts.channel",
+    "scripts.preflight",
+]
 
 # ---------------------------------------------------------------------------
 # Ruff — lightweight linter catching bugs that py_compile misses
