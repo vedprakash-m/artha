@@ -160,41 +160,62 @@ def _pii_scan_params(
     This is a BLOCK-only check — we never redact action parameters.
     Unlike state file writes (where PII is redacted), outbound actions
     with PII must be reviewed by the user before any data leaves.
+
+    Phase 7: uses pii_guard.scan() in-process instead of subprocess, saving
+    ~100 ms per action proposal.
     """
     try:
-        import subprocess
-        import shutil
+        from pii_guard import scan as _scan  # type: ignore[import]
 
-        pii_guard_path = Path(__file__).parent / "pii_guard.py"
-        if not pii_guard_path.exists():
-            return True, []  # guard not available — pass through (logged separately)
-
-        # Scan each non-allowlisted string parameter
         findings: list[str] = []
         for key, value in parameters.items():
             if key in pii_allowlist:
-                continue  # skip allowlisted fields (e.g. "to", "phone_number")
+                continue
             if not isinstance(value, str) or not value.strip():
                 continue
 
-            result = subprocess.run(
-                [sys.executable, str(pii_guard_path), "scan"],
-                input=value,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                # PII_FOUND:<types> on stderr
-                line = result.stderr.strip()
-                if line.startswith("PII_FOUND:"):
-                    types = line[len("PII_FOUND:"):].strip()
-                    findings.append(f"field='{key}' types={types}")
+            pii_found, pii_types = _scan(value)
+            if pii_found:
+                types_str = ", ".join(sorted(pii_types.keys())) if pii_types else "unknown"
+                findings.append(f"field='{key}' types={types_str}")
 
         return len(findings) == 0, findings
 
+    except ImportError:
+        # pii_guard not available — fall back to subprocess for CLI check
+        try:
+            import subprocess
+
+            pii_guard_path = Path(__file__).parent / "pii_guard.py"
+            if not pii_guard_path.exists():
+                return True, []
+
+            findings_sub: list[str] = []
+            for key, value in parameters.items():
+                if key in pii_allowlist:
+                    continue
+                if not isinstance(value, str) or not value.strip():
+                    continue
+
+                result = subprocess.run(
+                    [sys.executable, str(pii_guard_path), "scan"],
+                    input=value,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode != 0:
+                    line = result.stderr.strip()
+                    if line.startswith("PII_FOUND:"):
+                        types = line[len("PII_FOUND:"):].strip()
+                        findings_sub.append(f"field='{key}' types={types}")
+
+            return len(findings_sub) == 0, findings_sub
+
+        except Exception as e:
+            return False, [f"PII scanner error: {e}"]
+
     except Exception as e:
-        # PII scanner error is not a pass — block conservatively
         return False, [f"PII scanner error: {e}"]
 
 
