@@ -14,6 +14,7 @@ Ref: specs/deep-agents.md Phase 4 | Artha.core.md Step 17
 """
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -84,5 +85,5 @@ class AuditMiddleware:
         try:
             with open(self._audit_log, "a", encoding="utf-8") as f:
                 f.write(line)
-        except OSError:
-            pass
+        except OSError as exc:
+            print(f"[WARN] audit write failed: {exc}", file=sys.stderr)
