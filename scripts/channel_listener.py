@@ -61,6 +61,15 @@ _STATE_DIR = _ARTHA_DIR / "state"
 _BRIEFINGS_DIR = _ARTHA_DIR / "briefings"
 _AUDIT_LOG = _STATE_DIR / "audit.md"
 
+try:
+    from lib.logger import get_logger as _get_logger
+    _chlog = _get_logger("channel")
+except Exception:  # pragma: no cover
+    class _NoOpChannelLogger:  # type: ignore[no-redef]
+        def info(self, *a, **k): pass
+        def error(self, *a, **k): pass
+    _chlog = _NoOpChannelLogger()  # type: ignore[assignment]
+
 # Anti-replay: reject messages older than this
 _MAX_MESSAGE_AGE_SECONDS = 5 * 60  # 5 minutes
 
@@ -2910,6 +2919,8 @@ async def process_message(
       8. PII redaction
       9. Staleness indicator
     """
+    _t0_msg = time.monotonic()
+    _chlog.info("command.received", channel=channel_name, command=getattr(msg, "command", "unknown"))
     channel_cfg = config.get("channels", {}).get(channel_name, {})
     recipients = channel_cfg.get("recipients", {})
 
@@ -3114,6 +3125,12 @@ async def process_message(
         chunks=len(chunks),
         pii_filtered=bool(pii_found),
         command=msg.command,
+    )
+    _chlog.info(
+        "command.completed",
+        channel=channel_name,
+        command=getattr(msg, "command", "unknown"),
+        ms=round((time.monotonic() - _t0_msg) * 1000),
     )
 
 

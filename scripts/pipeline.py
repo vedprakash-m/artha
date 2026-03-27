@@ -69,7 +69,10 @@ except ImportError:
     sys.exit(2)
 
 from lib.auth import load_auth_context  # type: ignore[import]
+from lib.logger import get_logger  # type: ignore[import]
 from lib.retry import with_retry  # type: ignore[import]
+
+_log = get_logger("pipeline")
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +361,7 @@ def run_pipeline(
             if err:
                 print(f"[pipeline] ERROR {name}: {err}", file=sys.stderr)
                 error_count += 1
+                _log.error("connector.fetch", connector=name, records=0, ms=round(elapsed * 1000), error=err)
             else:
                 # Flush buffered lines to stdout (sequential to prevent interleave)
                 # Apply email marketing classifier inline if available
@@ -365,6 +369,7 @@ def run_pipeline(
                 for line in classified_lines:
                     print(line)
                 total_records += len(classified_lines)
+                _log.info("connector.fetch", connector=name, records=len(classified_lines), ms=round(elapsed * 1000), error=None)
                 if verbose:
                     print(
                         f"[pipeline] ✓ {name}: {len(classified_lines)} records in {elapsed:.1f}s",

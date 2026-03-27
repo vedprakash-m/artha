@@ -43,6 +43,24 @@ from action_queue import ActionQueue
 from trust_enforcer import TrustEnforcer
 from action_rate_limiter import ActionRateLimiter, RateLimitError
 
+try:
+    from lib.logger import get_logger as _get_logger
+    _aelog = _get_logger("action_executor")
+except Exception:  # pragma: no cover
+    class _NoOpLogger:  # type: ignore[no-redef]
+        def info(self, *a, **k): pass
+        def error(self, *a, **k): pass
+    _aelog = _NoOpLogger()  # type: ignore[assignment]
+
+try:
+    from lib.logger import get_logger as _get_logger
+    _log = _get_logger("action_executor")
+except Exception:  # pragma: no cover
+    class _NoOpLogger:  # type: ignore[no-redef]
+        def info(self, *a, **k): pass
+        def error(self, *a, **k): pass
+    _log = _NoOpLogger()  # type: ignore[assignment]
+
 
 # ---------------------------------------------------------------------------
 # Handler allowlist (§4.3 — never load arbitrary module paths)
@@ -532,6 +550,13 @@ class ActionExecutor:
             domain=proposal.domain,
             user_decision="approved",
             execution_result=result.status,
+        )
+
+        _aelog.info(
+            "action.executed",
+            action_type=proposal.action_type,
+            domain=proposal.domain,
+            result=result.status,
         )
 
         return result
