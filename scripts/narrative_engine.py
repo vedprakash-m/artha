@@ -44,89 +44,17 @@ _WORK_STATE_DIR = _REPO_ROOT / "state" / "work"
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — imported from work.helpers (Phase 3 TD-2 dedup, D12)
 # ---------------------------------------------------------------------------
 
-def _parse_dt(dt_str: str) -> Optional[datetime]:
-    if not dt_str:
-        return None
-    try:
-        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-    except (ValueError, TypeError):
-        return None
+# Ensure scripts/ is on sys.path so bare `from work.helpers` resolves.
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
-
-def _age_str(dt: Optional[datetime]) -> str:
-    if not dt:
-        return "unknown"
-    delta = datetime.now(timezone.utc) - dt
-    hours = delta.total_seconds() / 3600
-    if hours < 1:
-        return f"{int(delta.total_seconds() / 60)}m ago"
-    if hours < 24:
-        return f"{int(hours)}h ago"
-    return f"{int(hours / 24)}d ago"
-
-
-def _read_frontmatter(path: Path) -> dict[str, Any]:
-    """Read YAML frontmatter from a Markdown state file."""
-    if not path.exists():
-        return {}
-    try:
-        import yaml  # type: ignore[import]
-        text = path.read_text(encoding="utf-8")
-        if text.startswith("---"):
-            end = text.find("---", 3)
-            if end > 0:
-                return yaml.safe_load(text[3:end]) or {}
-    except Exception:
-        pass
-    return {}
-
-
-def _read_body(path: Path) -> str:
-    """Read Markdown body (after frontmatter) from a state file."""
-    if not path.exists():
-        return ""
-    try:
-        text = path.read_text(encoding="utf-8")
-        if text.startswith("---"):
-            end = text.find("---", 3)
-            if end > 0:
-                return text[end + 3:].strip()
-        return text.strip()
-    except Exception:
-        return ""
-
-
-def _extract_section(body: str, heading: str) -> str:
-    """Extract content under a specific ## heading until next ## heading."""
-    lines = body.split("\n")
-    capture = False
-    result = []
-    target = heading.strip("# ").lower()
-    for line in lines:
-        if line.startswith("## "):
-            section_name = line.strip("# ").lower()
-            if target in section_name:
-                capture = True
-                continue
-            elif capture:
-                break  # next section found
-        elif capture:
-            result.append(line)
-    return "\n".join(result).strip()
-
-
-def _load_profile() -> dict[str, Any]:
-    """Load user profile work section."""
-    try:
-        import yaml  # type: ignore[import]
-        path = _REPO_ROOT / "config" / "user_profile.yaml"
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        return data.get("work", {})
-    except Exception:
-        return {}
+from work.helpers import (  # noqa: E402
+    _parse_dt, _age_str, _read_frontmatter, _read_body,
+    _extract_section, _load_profile,
+)
 
 
 # ---------------------------------------------------------------------------
