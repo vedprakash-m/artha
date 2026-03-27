@@ -122,8 +122,27 @@ def _normalize_sensitive_files(entries: list) -> list[tuple[str, str]]:
 
 # ---------------------------------------------------------------------------
 # Module-level aliases — frozen at import time.
+# ---------------------------------------------------------------------------
+# Config accessor — always use this inside function bodies.
+# ---------------------------------------------------------------------------
+
+def get_config() -> dict[str, Any]:
+    """Return the mutable config dict.
+
+    Always use this inside function bodies instead of module-level aliases.
+    The module-level aliases (ARTHA_DIR, STATE_DIR, etc.) are frozen at
+    import time. Inside functions, call ``get_config()["STATE_DIR"]`` to
+    get the current (possibly test-patched) value.
+
+    Returns the same mutable dict that test fixtures patch via
+    ``monkeypatch.setitem(foundation._config, ...)``.
+    """
+    return _config
+
+
+# ---------------------------------------------------------------------------
 # Provided for backward-compatible external usage ONLY.
-# NEVER use these inside function bodies — use _config["KEY"] instead.
+# NEVER use these inside function bodies — use get_config()["KEY"] instead.
 # ---------------------------------------------------------------------------
 ARTHA_DIR        = _config["ARTHA_DIR"]
 STATE_DIR        = _config["STATE_DIR"]
