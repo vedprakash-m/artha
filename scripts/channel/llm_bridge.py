@@ -151,7 +151,6 @@ def _detect_llm_cli() -> tuple[str, list[str]] | None:
 
     Preference order: claude (sonnet), gemini (flash), copilot (sonnet).
     """
-    import shutil
     # Claude Code — fastest, cleanest output
     claude = shutil.which("claude")
     if claude:
@@ -171,7 +170,6 @@ def _detect_llm_cli() -> tuple[str, list[str]] | None:
 
 def _detect_all_llm_clis() -> list[tuple[str, str, list[str]]]:
     """Return all available CLIs as (name, executable, base_args)."""
-    import shutil
     clis: list[tuple[str, str, list[str]]] = []
     claude = shutil.which("claude")
     if claude:

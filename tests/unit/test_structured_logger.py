@@ -175,7 +175,7 @@ def test_get_logger_singleton(tmp_path):
 # T2-11: AuditMiddleware emits structured log on OSError
 # ---------------------------------------------------------------------------
 def test_audit_middleware_emits_structured_on_oserror(tmp_path, capsys):
-    import importlib.util, sys
+    import importlib.util
 
     spec = importlib.util.spec_from_file_location(
         "am_phase2", "scripts/middleware/audit_middleware.py"

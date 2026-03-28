@@ -114,7 +114,6 @@ class TestReadBody:
 class TestFreshnessFooter:
     def _write_domain(self, state_dir: Path, domain: str) -> None:
         """Write a state file with last_updated so _freshness_footer can pick it up."""
-        from datetime import datetime, timedelta, timezone
         ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         p = state_dir / f"{domain}.md"
         p.write_text(f"---\nlast_updated: {ts}\n---\n\nBody.\n", encoding="utf-8")
