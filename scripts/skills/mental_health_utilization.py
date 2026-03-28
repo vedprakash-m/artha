@@ -41,12 +41,8 @@ log = logging.getLogger(__name__)
 
 def _mental_health_enabled() -> bool:
     try:
-        import yaml  # noqa: PLC0415
-        cfg_path = _ARTHA_DIR / "config" / "artha_config.yaml"
-        if not cfg_path.exists():
-            return False
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
         return bool(cfg.get("connect", {}).get("domains", {}).get("mental_health_extension", False))
     except Exception:
         return False

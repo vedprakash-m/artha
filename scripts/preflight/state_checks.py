@@ -140,7 +140,7 @@ def check_open_items(auto_fix: bool = False) -> CheckResult:
             fix_hint="Run: python scripts/preflight.py --fix  (auto-creates from template)",
         )
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             f.read(100)
         return CheckResult("open_items.md", "P1", True, "open_items.md accessible ✓")
     except OSError as exc:
@@ -188,9 +188,8 @@ def check_profile_completeness() -> CheckResult:
         )
 
     try:
-        import yaml  # type: ignore
-        with open(profile_path, encoding="utf-8") as f:
-            profile = yaml.safe_load(f) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        profile = load_config("user_profile", str(Path(ARTHA_DIR) / "config"))
     except Exception as exc:
         return CheckResult(
             "user_profile completeness", "P1", False,

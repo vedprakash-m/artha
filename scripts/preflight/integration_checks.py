@@ -1,6 +1,7 @@
 """preflight/integration_checks.py — Third-party integration health (bridge, WorkIQ, ADO, HA, channel)."""
 from __future__ import annotations
 
+import json
 import os
 import sys
 import subprocess
@@ -8,7 +9,8 @@ import time
 from pathlib import Path
 
 from preflight._types import (
-    ARTHA_DIR, SCRIPTS_DIR, STATE_DIR, WORKIQ_CACHE_FILE, _SUBPROCESS_ENV, _rel, CheckResult, _REQUIRED_DEPS,
+    ARTHA_DIR, SCRIPTS_DIR, STATE_DIR, WORKIQ_CACHE_FILE, WORKIQ_CACHE_MAX_AGE, WORKIQ_VERSION_PIN,
+    _SUBPROCESS_ENV, _rel, CheckResult, _REQUIRED_DEPS,
 )
 
 def check_bridge_health() -> CheckResult:
@@ -26,12 +28,8 @@ def check_bridge_health() -> CheckResult:
         _sys.path.insert(0, SCRIPTS_DIR)
 
     try:
-        import yaml as _yaml  # noqa: PLC0415
-        config_path = Path(ARTHA_DIR) / "config" / "artha_config.yaml"
-        if not config_path.exists():
-            return CheckResult("Bridge", "P1", True, "Bridge: config absent — skipped")
-        with open(config_path, encoding="utf-8") as _f:
-            artha_config = _yaml.safe_load(_f) or {}
+        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
+        artha_config = _load_config("artha_config")
 
         mm = artha_config.get("multi_machine", {})
         if not mm.get("bridge_enabled", False):
@@ -40,11 +38,7 @@ def check_bridge_health() -> CheckResult:
         from action_bridge import (  # noqa: PLC0415
             get_bridge_dir, detect_role, check_health_staleness, load_artha_config,
         )
-        channels_path = Path(ARTHA_DIR) / "config" / "channels.yaml"
-        channels_config: dict = {}
-        if channels_path.exists():
-            with open(channels_path, encoding="utf-8") as _f:
-                channels_config = _yaml.safe_load(_f) or {}
+        channels_config: dict = _load_config("channels")
 
         role = detect_role(channels_config)
         peer_role = "windows" if role == "proposer" else "mac"
@@ -242,14 +236,11 @@ def check_ado_auth() -> CheckResult:
         _sys = sys
         if SCRIPTS_DIR not in _sys.path:
             _sys.path.insert(0, SCRIPTS_DIR)
-        import yaml as _yaml
-        _profile_path = os.path.join(ARTHA_DIR, "config", "user_profile.yaml")
-        if os.path.exists(_profile_path):
-            with open(_profile_path, encoding="utf-8") as _f:
-                _profile = _yaml.safe_load(_f) or {}
-            _ado = (_profile.get("integrations") or {}).get("azure_devops") or {}
-            ado_enabled = bool(_ado.get("enabled", False))
-            ado_org = str(_ado.get("organization_url", "")).strip()
+        from lib.config_loader import load_config as _lc  # noqa: PLC0415
+        _profile = _lc("user_profile", str(Path(ARTHA_DIR) / "config"))
+        _ado = (_profile.get("integrations") or {}).get("azure_devops") or {}
+        ado_enabled = bool(_ado.get("enabled", False))
+        ado_org = str(_ado.get("organization_url", "")).strip()
     except Exception:
         pass
 
@@ -328,9 +319,8 @@ def check_ha_connectivity() -> CheckResult:
         return CheckResult(_name, "P1", True, "connectors.yaml not found — skipped ✓")
 
     try:
-        import yaml as _yaml
-        with open(_connectors_path, encoding="utf-8") as _f:
-            _cfg = _yaml.safe_load(_f) or {}
+        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
+        _cfg = _load_config("connectors")
         _ha = (_cfg.get("connectors") or {}).get("homeassistant") or {}
     except Exception as exc:
         return CheckResult(_name, "P1", True, f"Could not read connectors.yaml ({exc}) — skipped ✓")
@@ -453,9 +443,8 @@ def check_channel_config() -> CheckResult:
         )
 
     try:
-        import yaml as _yaml
-        with open(config_path, encoding="utf-8") as _f:
-            cfg = _yaml.safe_load(_f) or {}
+        from lib.config_loader import load_config as _lc2  # noqa: PLC0415
+        cfg = _lc2("channels", str(Path(ARTHA_DIR) / "config"))
     except Exception as exc:
         return CheckResult(
             "channel config", "P1", False,

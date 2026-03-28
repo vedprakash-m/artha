@@ -1,5 +1,6 @@
-import pytest
 import os
+os.environ.setdefault("ARTHA_NO_REEXEC", "1")  # Prevent venv re-exec during tests
+import pytest
 import shutil
 import sys
 import tempfile
@@ -35,3 +36,20 @@ def temp_artha_dir():
         (tmp_path / "state" / "audit.md").write_text("# Audit Log\n")
         
         yield tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_cache():
+    """Invalidate config_loader cache after every test.
+
+    Prevents config cache bleed between tests when test fixtures
+    write different config values to temp directories.
+
+    Ref: specs/pay-debt-reloaded.md §4.3 WS-2-C step 3
+    """
+    yield
+    try:
+        from lib.config_loader import invalidate
+        invalidate()
+    except ImportError:
+        pass

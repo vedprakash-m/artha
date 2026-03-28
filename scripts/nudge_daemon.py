@@ -298,11 +298,9 @@ def _check_content_moments(artha_dir: Path) -> list[NudgeItem]:
     Ref: specs/pr-manager.md §6.2
     """
     # Check feature flag
-    config_path = artha_dir / "config" / "artha_config.yaml"
-    if not config_path.exists():
-        return []
     try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config", str(artha_dir / "config"))
         pr_flag = cfg.get("enhancements", {}).get("pr_manager", False)
         if isinstance(pr_flag, dict):
             enabled = bool(pr_flag.get("enabled", False))
@@ -414,12 +412,10 @@ def _audit_log(artha_dir: Path, message: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _load_channels_config(artha_dir: Path) -> dict:
-    path = artha_dir / "config" / "channels.yaml"
-    if not path.exists():
-        return {}
     try:
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (yaml.YAMLError, OSError):
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("channels")
+    except Exception:
         return {}
 
 

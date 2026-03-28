@@ -292,6 +292,141 @@ def _load_handler(handler_path: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Low-level connector fetch (module-level; used by run_pipeline + fetch_single)
+# ---------------------------------------------------------------------------
+
+def _fetch_one(
+    name: str,
+    handler: Any,
+    auth_ctx: dict,
+    fetch_cfg: dict,
+    retry_cfg: dict,
+    *,
+    since: str,
+) -> tuple[str, list[str], float, str | None]:
+    """Fetch one connector; return (name, jsonl_lines, elapsed_sec, error).
+
+    Extracted from run_pipeline() inner scope so it can be reused by
+    fetch_single() for callers that need direct per-connector access.
+    """
+    t0 = time.monotonic()
+    extra_kwargs: dict[str, Any] = {}
+    for key, val in fetch_cfg.items():
+        if key not in ("handler", "max_results"):
+            extra_kwargs[key] = val
+    max_results = fetch_cfg.get("max_results", 200)
+    max_retries = retry_cfg.get("max_attempts", 3)
+    base_delay = retry_cfg.get("base_delay_seconds", 1.0)
+    backoff_mult = retry_cfg.get("backoff_multiplier", 2.0)
+    max_delay = retry_cfg.get("max_delay_seconds", 30.0)
+
+    lines: list[str] = []
+
+    def _do_fetch() -> int:
+        count = 0
+        for record in handler.fetch(
+            since=since,
+            max_results=max_results,
+            auth_context=auth_ctx,
+            source_tag=name,
+            **extra_kwargs,
+        ):
+            lines.append(json.dumps(record, ensure_ascii=False, default=str))
+            count += 1
+        return count
+
+    try:
+        with_retry(
+            _do_fetch,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            backoff_mult=backoff_mult,
+            max_delay=max_delay,
+            context=f"pipeline.{name}",
+            label=name,
+        )
+        elapsed = time.monotonic() - t0
+        return (name, lines, elapsed, None)
+    except Exception as exc:
+        elapsed = time.monotonic() - t0
+        return (name, lines, elapsed, str(exc))
+
+
+def fetch_single(
+    connector_name: str,
+    cfg: dict[str, Any],
+    *,
+    auth_ctx: dict | None = None,
+    verbose: bool = False,
+    since: str | None = None,
+    **extra_fetch: Any,
+) -> tuple[list[str], float, str | None]:
+    """Fetch a single named connector; returns (lines, elapsed_sec, error).
+
+    Routes through the security allowlist (_load_handler) and retry logic,
+    making it safe for callers outside pipeline.py (e.g. work_loop.py) to
+    trigger a fetch without bypassing core pipeline security controls.
+
+    Args:
+        connector_name: Key name in the connectors config (e.g. "msgraph_calendar").
+        cfg:            Full connectors config dict (from load_connectors_config()).
+        auth_ctx:       Pre-loaded auth context dict.  If None, loads from config.
+        verbose:        Emit per-connector stderr progress messages.
+        since:          ISO-8601 timestamp lower bound.  Defaults to 48 h ago.
+        **extra_fetch:  Additional fetch parameters that override connector config
+                        (e.g. max_results=50, window_days=7, folders=["inbox"]).
+
+    Returns:
+        (lines, elapsed_sec, error) — error is None on success.
+    """
+    if since is None:
+        since = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    # Locate connector config entry
+    all_conns = _normalize_connectors(cfg)
+    conn_cfg: dict[str, Any] | None = next(
+        (c for c in all_conns if c.get("name") == connector_name), None
+    )
+    if conn_cfg is None:
+        return ([], 0.0, f"connector '{connector_name}' not found in config")
+
+    handler_path = conn_cfg.get("fetch", {}).get("handler", "")
+    if not handler_path:
+        # Derive from connector name
+        handler_path = f"connectors.{connector_name}"
+
+    try:
+        handler = _load_handler(handler_path)
+    except ImportError as exc:
+        return ([], 0.0, str(exc))
+
+    resolved_auth = auth_ctx
+    if resolved_auth is None:
+        try:
+            resolved_auth = load_auth_context(conn_cfg)
+        except Exception as exc:
+            return ([], 0.0, f"auth error: {exc}")
+
+    # Build fetch and retry configs, applying caller overrides
+    base_fetch_cfg = dict(conn_cfg.get("fetch", {}))
+    base_fetch_cfg.update(extra_fetch)
+    retry_cfg = conn_cfg.get("retry", {})
+
+    _name, lines, elapsed, error = _fetch_one(
+        connector_name, handler, resolved_auth, base_fetch_cfg, retry_cfg, since=since
+    )
+    if verbose:
+        status = "✓" if error is None else "✗"
+        print(
+            f"[pipeline] {status} {connector_name}: {len(lines)} records in {elapsed:.1f}s",
+            file=sys.stderr,
+        )
+    return (lines, elapsed, error)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline run
 # ---------------------------------------------------------------------------
 
@@ -352,57 +487,11 @@ def run_pipeline(
     if not work_items:
         return 3 if error_count > 0 else 0
 
-    def _fetch_connector(
-        name: str, handler: Any, auth_ctx: dict, fetch_cfg: dict, retry_cfg: dict
-    ) -> tuple[str, list[str], float, str | None]:
-        """Fetch one connector; return (name, jsonl_lines, elapsed_sec, error)."""
-        t0 = time.monotonic()
-        extra_kwargs: dict[str, Any] = {}
-        for key, val in fetch_cfg.items():
-            if key not in ("handler", "max_results"):
-                extra_kwargs[key] = val
-        max_results = fetch_cfg.get("max_results", 200)
-        max_retries = retry_cfg.get("max_attempts", 3)
-        base_delay = retry_cfg.get("base_delay_seconds", 1.0)
-        backoff_mult = retry_cfg.get("backoff_multiplier", 2.0)
-        max_delay = retry_cfg.get("max_delay_seconds", 30.0)
-
-        lines: list[str] = []
-
-        def _do_fetch() -> int:
-            count = 0
-            for record in handler.fetch(
-                since=since,
-                max_results=max_results,
-                auth_context=auth_ctx,
-                source_tag=name,
-                **extra_kwargs,
-            ):
-                lines.append(json.dumps(record, ensure_ascii=False, default=str))
-                count += 1
-            return count
-
-        try:
-            with_retry(
-                _do_fetch,
-                max_retries=max_retries,
-                base_delay=base_delay,
-                backoff_mult=backoff_mult,
-                max_delay=max_delay,
-                context=f"pipeline.{name}",
-                label=name,
-            )
-            elapsed = time.monotonic() - t0
-            return (name, lines, elapsed, None)
-        except Exception as exc:
-            elapsed = time.monotonic() - t0
-            return (name, lines, elapsed, str(exc))
-
-    # Run all connectors in parallel
+    # Run all connectors in parallel using module-level _fetch_one()
     max_workers = min(len(work_items), 8)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_fetch_connector, name, handler, auth, fcfg, rcfg): name
+            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since): name
             for name, handler, auth, fcfg, rcfg in work_items
         }
         for future in as_completed(futures):

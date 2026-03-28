@@ -229,13 +229,11 @@ class KustoRunner:
             try:
                 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
                 from azure.identity import DefaultAzureCredential
-            except ImportError:
-                print(
-                    "ERROR: azure-kusto-data not installed.\n"
-                    "Run: pip install azure-kusto-data azure-identity",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
+            except ImportError as exc:
+                raise ImportError(
+                    "azure-kusto-data not installed. "
+                    "Run: pip install azure-kusto-data azure-identity"
+                ) from exc
 
             cred = DefaultAzureCredential()
             kcsb = KustoConnectionStringBuilder.with_azure_token_credential(
@@ -355,6 +353,55 @@ class KustoRunner:
         )
 
         return rows, card
+
+
+# ---------------------------------------------------------------------------
+# Batch Refresh API (for work_loop.py integration)
+# ---------------------------------------------------------------------------
+
+# Default set of golden queries to run during /work refresh
+REFRESH_QUERY_IDS = [
+    "GQ-001",  # Fleet size (clusters/tenants/DCs/nodes)
+    "GQ-002",  # Fleet by generation
+    "GQ-010",  # Deployment throughput (7d)
+    "GQ-012",  # Deployment velocity P50/P75/P90
+    "GQ-050",  # Active Sev 0-2 incidents
+    "GQ-051",  # Incident volume by severity (trend)
+]
+
+
+def run_refresh_set(
+    query_ids: list[str] | None = None,
+    registry_path: str | None = None,
+    timeout_per_query: int = 15,
+) -> dict[str, dict]:
+    """
+    Run a batch of golden queries and return structured results.
+
+    Returns dict keyed by query ID:
+        {"GQ-001": {"rows": [...], "card": DataCard, "error": None}, ...}
+
+    Used by work_loop.py to populate xpf-program-structure.md metrics.
+    Each query failure is isolated — other queries still run.
+    """
+    ids = query_ids or REFRESH_QUERY_IDS
+    reg = registry_path or str(_GOLDEN_REGISTRY)
+    registry = parse_registry(reg)
+    runner = KustoRunner()
+    results: dict[str, dict] = {}
+
+    for qid in ids:
+        query = registry.get(qid)
+        if not query:
+            results[qid] = {"rows": [], "card": None, "error": f"Not found in registry"}
+            continue
+        try:
+            rows, card = runner.run_golden_query(query)
+            results[qid] = {"rows": rows, "card": card, "error": None}
+        except Exception as exc:
+            results[qid] = {"rows": [], "card": None, "error": str(exc)[:200]}
+
+    return results
 
 
 # ---------------------------------------------------------------------------

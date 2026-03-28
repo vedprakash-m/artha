@@ -111,7 +111,8 @@ def _encrypt_field(value: str, pubkey: str | None) -> str:
         _ensure_scripts_on_path()
         from action_queue import _encrypt_field as _aq_enc  # noqa: PLC0415
         return _aq_enc(value, pubkey)
-    except Exception:
+    except Exception as exc:
+        log.warning("encrypt_field_failed error=%s", exc)
         return value
 
 
@@ -123,7 +124,8 @@ def _decrypt_field(value: str, privkey: str | None) -> str:
         _ensure_scripts_on_path()
         from action_queue import _decrypt_field as _aq_dec  # noqa: PLC0415
         return _aq_dec(value, privkey)
-    except Exception:
+    except Exception as exc:
+        log.warning("decrypt_field_failed error=%s", exc)
         return value
 
 
@@ -139,7 +141,8 @@ def _get_privkey(artha_dir: Path) -> str | None:
         _ensure_scripts_on_path()
         from foundation import get_private_key  # noqa: PLC0415
         return get_private_key()
-    except (Exception, SystemExit):
+    except (Exception, SystemExit) as exc:
+        log.warning("get_privkey_failed error=%s", exc)
         return None
 
 
@@ -174,7 +177,8 @@ class BridgeMetrics:
             try:
                 with open(self._path, encoding="utf-8") as f:
                     return json.load(f)
-            except Exception:
+            except Exception as exc:
+                log.warning("bridge_metrics_load_failed path=%s error=%s", self._path, exc)
                 pass
         return {c: 0 for c in self._COUNTERS}
 
@@ -191,7 +195,8 @@ class BridgeMetrics:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             _write_bridge_file(self._path, self._data)
-        except Exception:
+        except Exception as exc:
+            log.warning("bridge_metrics_save_failed path=%s error=%s", self._path, exc)
             pass  # metrics are best-effort; never crash on metric write failure
 
 
@@ -253,7 +258,8 @@ def check_health_staleness(
             last_seen = last_seen.replace(tzinfo=timezone.utc)
         elapsed_h = (datetime.now(timezone.utc) - last_seen).total_seconds() / 3600
         return elapsed_h >= stale_hours, round(elapsed_h, 1)
-    except Exception:
+    except Exception as exc:
+        log.warning("check_health_staleness_failed peer=%s error=%s", peer_role, exc)
         return True, float("inf")
 
 
@@ -434,7 +440,8 @@ def ingest_proposals(
 
         try:
             parameters = json.loads(params_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            log.warning("bridge_proposal_params_parse_failed action_id=%s error=%s", action_id[:12], exc)
             parameters = {}
 
         # ── Build ActionProposal ────────────────────────────────────────
@@ -544,8 +551,8 @@ def ingest_results(
         if result_data_raw:
             try:
                 result_data = json.loads(result_data_raw)
-            except json.JSONDecodeError:
-                result_data = None
+            except json.JSONDecodeError as exc:
+                log.warning("bridge_result_data_parse_failed action_id=%s error=%s", action_id[:12], exc)
 
         executed_at = data.get("executed_at")
 
@@ -677,7 +684,8 @@ def gc(
                 if mtime < cutoff:
                     f.unlink(missing_ok=True)
                     deleted += 1
-            except OSError:
+            except OSError as exc:
+                log.warning("bridge_gc_stat_failed file=%s error=%s", f.name, exc)
                 pass
 
     if deleted > 0:
@@ -720,14 +728,11 @@ def get_bridge_dir(artha_dir: Path) -> Path:
 
 def load_artha_config(artha_dir: Path) -> dict:
     """Load config/artha_config.yaml (best-effort; returns empty dict on failure)."""
-    config_path = artha_dir / "config" / "artha_config.yaml"
-    if not config_path.exists():
-        return {}
     try:
-        import yaml  # noqa: PLC0415
-        with open(config_path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    except Exception:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("artha_config", str(artha_dir / "config"))
+    except Exception as exc:
+        log.debug("load_artha_config_failed error=%s", exc)
         return {}
 
 

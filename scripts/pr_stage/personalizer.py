@@ -481,13 +481,9 @@ class DraftPersonalizer:
 
     def _load_employer_keywords(self, config_dir: Path) -> list[str]:
         """Load employer keywords from user_profile.yaml (§10.3 — never hardcode)."""
-        profile_path = config_dir / "user_profile.yaml"
-        if not profile_path.exists():
-            return []
         try:
-            import yaml  # noqa: PLC0415 — lazy import to avoid top-level dep
-            with open(profile_path, encoding="utf-8") as fh:
-                profile = yaml.safe_load(fh) or {}
+            from lib.config_loader import load_config  # noqa: PLC0415
+            profile = load_config("user_profile")
             # Preferred path: employment.current.keywords (spec §10.3)
             employ = profile.get("employment", {}) or {}
             keywords = (employ.get("current") or {}).get("keywords", [])
@@ -507,13 +503,9 @@ class DraftPersonalizer:
 
     def _load_children_names(self, config_dir: Path) -> set[str]:
         """Load children's names from user_profile.yaml (§10.2 — never hardcode PII)."""
-        profile_path = config_dir / "user_profile.yaml"
-        if not profile_path.exists():
-            return set()
         try:
-            import yaml  # noqa: PLC0415
-            with open(profile_path, encoding="utf-8") as fh:
-                profile = yaml.safe_load(fh) or {}
+            from lib.config_loader import load_config  # noqa: PLC0415
+            profile = load_config("user_profile")
             names: set[str] = set()
             # Try family.children (actual user_profile.yaml shape)
             children = (profile.get("family") or {}).get("children") or []

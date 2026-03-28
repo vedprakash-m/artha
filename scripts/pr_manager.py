@@ -48,23 +48,25 @@ _TMP_DIR = _ROOT_DIR / "tmp"
 _CONFIG_DIR = _ROOT_DIR / "config"
 
 _PR_STATE_FILE = _STATE_DIR / "pr_manager.md"
-_ARTHA_CONFIG_FILE = _CONFIG_DIR / "artha_config.yaml"
 _CONTENT_MOMENTS_FILE = _TMP_DIR / "content_moments.json"
 _TREND_SCAN_FILE = _TMP_DIR / "trend_scan.json"
 
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import logging
+_log = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # Feature flag helpers
 # ---------------------------------------------------------------------------
 
 def _load_config() -> dict:
-    if not _ARTHA_CONFIG_FILE.exists():
-        return {}
     try:
-        return yaml.safe_load(_ARTHA_CONFIG_FILE.read_text(encoding="utf-8")) or {}
-    except Exception:  # noqa: BLE001
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("artha_config")
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("config_load_failed error=%s", exc)
         return {}
 
 
@@ -108,7 +110,8 @@ def _parse_frontmatter(path: Path) -> dict:
         return {}
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        _log.warning("parse_frontmatter_read_failed path=%s error=%s", path, exc)
         return {}
     lines = text.splitlines()
     fm_lines: list[str] = []
@@ -128,7 +131,8 @@ def _parse_frontmatter(path: Path) -> dict:
         return {}
     try:
         return yaml.safe_load("\n".join(fm_lines)) or {}
-    except yaml.YAMLError:
+    except yaml.YAMLError as exc:
+        _log.warning("frontmatter_yaml_parse_failed path=%s error=%s", path, exc)
         return {}
 
 
@@ -142,7 +146,8 @@ def _read_pr_body() -> str:
         return ""
     try:
         return _PR_STATE_FILE.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        _log.warning("read_pr_body_failed error=%s", exc)
         return ""
 
 
@@ -557,7 +562,8 @@ def write_derived_snapshot(
 
     try:
         content = path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        _log.warning("write_derived_snapshot_read_failed path=%s error=%s", path, exc)
         return False
 
     # Build the new derived_snapshot YAML block (all indented lines)
@@ -634,16 +640,19 @@ def write_derived_snapshot(
         with open(tmp, "w", encoding="utf-8") as fh:
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("flock_failed_snapshot path=%s error=%s", tmp, exc)
                 pass
             fh.write(content)
         import os
         os.replace(tmp, path)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("atomic_write_snapshot_failed path=%s error=%s", path, exc)
         try:
             tmp.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001
+        except Exception as unlink_exc:  # noqa: BLE001
+            _log.warning("snapshot_tmp_unlink_failed path=%s error=%s", tmp, unlink_exc)
             pass
         return False
 
@@ -1296,7 +1305,8 @@ def log_post(
 
     try:
         content = _PR_STATE_FILE.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
+        _log.warning("log_post_read_failed error=%s", exc)
         return False
 
     # Append row to Post History section (Phase 3+ section)
@@ -1322,15 +1332,18 @@ def log_post(
         with open(tmp, "w", encoding="utf-8") as fh:
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("flock_failed_post_log path=%s error=%s", tmp, exc)
                 pass
             fh.write(content)
         os.replace(tmp, _PR_STATE_FILE)
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("atomic_write_post_log_failed error=%s", exc)
         try:
             tmp.unlink(missing_ok=True)
-        except Exception:  # noqa: BLE001
+        except Exception as unlink_exc:  # noqa: BLE001
+            _log.warning("post_log_tmp_unlink_failed path=%s error=%s", tmp, unlink_exc)
             pass
         return False
 

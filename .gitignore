@@ -108,6 +108,12 @@ docs/cross-platform-git-setup.md
 *conflicted*
 .DS_Store
 
+# --- Spec working files (only main specs committed: PRD, Tech, UX) ---
+specs/*.md
+!specs/artha-prd.md
+!specs/artha-tech-spec.md
+!specs/artha-ux-spec.md
+
 # --- IDE settings ---
 .vscode/
 

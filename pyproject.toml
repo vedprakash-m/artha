@@ -13,18 +13,18 @@ dependencies = [
     "pyyaml>=6.0.1",
     "keyring>=25.0.0",
     "jsonschema>=4.20.0",
-    "pydantic>=2.0.0",
+    "pydantic>=2.5,<3.0",
 ]
 
 [project.optional-dependencies]
 google = [
-    "google-api-python-client>=2.100.0",
-    "google-auth>=2.23.0",
+    "google-api-python-client>=2.100,<3.0",
+    "google-auth>=2.23,<3.0",
     "google-auth-oauthlib>=1.1.0",
     "google-auth-httplib2>=0.1.1",
 ]
 microsoft = [
-    "msal>=1.28.0",
+    "msal>=1.28,<2.0",
     "requests>=2.31.0",
 ]
 apple = [
@@ -80,6 +80,7 @@ packages = [
     "scripts.work",
     "scripts.channel",
     "scripts.preflight",
+    "scripts.narrative",
 ]
 
 # ---------------------------------------------------------------------------
@@ -103,3 +104,22 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals"]
+
+# ---------------------------------------------------------------------------
+# Mypy — strict type checking for narrative/ subpackage
+# ---------------------------------------------------------------------------
+[tool.mypy]
+mypy_path = "scripts"
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+warn_return_any = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "narrative.*"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true

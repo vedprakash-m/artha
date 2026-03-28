@@ -239,12 +239,8 @@ def classify_email(record: dict, custom_whitelist: list[str] | None = None) -> d
 def _load_custom_whitelist() -> list[str]:
     """Load custom whitelist from artha_config.yaml if present."""
     try:
-        import yaml  # type: ignore[import]
-        cfg_path = _REPO_ROOT / "config" / "artha_config.yaml"
-        if not cfg_path.exists():
-            return []
-        with cfg_path.open(encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
         return cfg.get("email_classifier", {}).get("whitelist_domains", [])
     except Exception:
         return []

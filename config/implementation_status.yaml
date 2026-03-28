@@ -656,12 +656,12 @@ features:
     spec: "specs/work.md §5.2"
     status: implemented
     confidence: high
-    note: "scripts/work_reader.py cmd_pulse() — 30-second snapshot"
+    note: "scripts/work/briefing.py cmd_pulse() — 30-second snapshot: meetings, comms, boundary, DFS, program health (R/Y/G from xpf-program-structure.md)"
   work_os_prep_cmd:
     spec: "specs/work.md §7.9, §19 Phase 1"
     status: implemented
     confidence: high
-    note: "scripts/work_reader.py cmd_prep() — meeting readiness scoring with carry-forward, staleness gaps, open items"
+    note: "scripts/work/meetings.py cmd_prep() — meeting readiness scoring with carry-forward, staleness gaps, open items, XPF program context injection for relevant meetings"
   work_os_sprint_cmd:
     spec: "specs/work.md §5.2"
     status: implemented
@@ -686,7 +686,7 @@ features:
     spec: "specs/work.md §7.6, §5.2, §19 Phase 1 item 10"
     status: implemented
     confidence: high
-    note: "scripts/work_reader.py cmd_connect_prep(mode) — Connect cycle narrative; delegates to NarrativeEngine.generate_connect_summary(); unblocks Phase 1 gate"
+    note: "scripts/work/career.py cmd_connect_prep(mode) — Connect cycle narrative with auto-evidence matching from journeys + Kusto-validated quantitative evidence; delegates to NarrativeEngine.generate_connect_summary()"
   work_os_people_cmd:
     spec: "specs/work.md §11, §5.2"
     status: implemented
@@ -712,6 +712,12 @@ features:
     status: implemented
     confidence: high
     note: "scripts/work_notes.py NotesCapture + NotesWriter — JSON CLI; appends to work-notes.md, work-decisions.md (D-NNN), work-open-items.md (OI-NNN)"
+  work_os_notes_command:
+    spec: "specs/work.md §5.2"
+    status: implemented
+    file: scripts/work/discovery.py
+    confidence: high
+    note: "/work notes [meeting-id] — reads work-notes.md, supports meeting search, WorkIQ hint; cmd_notes() wired into work_reader.py dispatch table"
   work_os_bootstrap_cmd:
     spec: "specs/work.md §15, §5.2"
     status: implemented
@@ -750,12 +756,12 @@ features:
     spec: "specs/work.md §7.8, §5.2"
     status: implemented
     confidence: high
-    note: "scripts/work_reader.py cmd_newsletter(period) — team newsletter draft via NE.generate_newsletter()"
+    note: "scripts/work/narrative.py cmd_newsletter(period) — team newsletter with Program Health section (per-WS signals, red metrics, risk posture from xpf-program-structure.md); via NE.generate_newsletter()"
   work_os_deck_cmd:
     spec: "specs/work.md §7.8, §5.2"
     status: implemented
     confidence: high
-    note: "scripts/work_reader.py cmd_deck(topic) — LT deck content via NE.generate_deck()"
+    note: "scripts/work/narrative.py cmd_deck(topic) — LT deck with program metrics in exec summary, per-WS status in Data & Metrics, red metrics in Risks; via NE.generate_deck()"
   work_os_memo_cmd:
     spec: "specs/work.md §7.10, §5.2"
     status: implemented
@@ -798,9 +804,14 @@ features:
     note: "scripts/schemas/bridge_schemas.py work_load_pulse.json v1.1 with phase and advisory semantic fields for cross-surface coordination"
   work_os_domain_writers:
     spec: "specs/work.md §19 Phase 1"
-    status: partial
+    status: implemented
     confidence: high
-    note: "scripts/work_domain_writers.py — 4/9+ writers implemented (calendar, comms, projects, boundary); people, career, performance, sources, project-journeys writers pending Phase 2/3"
+    note: "scripts/work_domain_writers.py — 7 full writers (calendar, comms, projects, boundary, kusto_metrics, career_evidence, source_registry) + 3 appenders (project_journeys, visibility_events, career_evidence); all used by work_loop.py _stage_process"
+  work_os_kusto_integration:
+    spec: "specs/work.md §19"
+    status: implemented
+    confidence: high
+    note: "Kusto golden query pipeline: kusto_runner.run_refresh_set() API → work_loop._run_kusto_metrics() provider → write_kusto_metrics_state() domain writer. Updates xpf-program-structure.md metrics in-place during /work refresh. 73 golden queries, 31 validated. 12 PF queries fixed with cross-cluster join (IsPF_TODO → ClusterName join, TIMESTAMP → AutoGen_TimeStamp). Feeds newsletter, deck, pulse, prep, connect-prep."
   work_os_manager_commitment_ledger:
     spec: "specs/work.md §7.6, §19 Phase 2 item 18"
     status: implemented

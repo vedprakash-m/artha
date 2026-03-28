@@ -49,10 +49,9 @@ def _run_id() -> str:
 def _is_enabled(artha_dir: Path) -> bool:
     """Check work.refresh.run_on_catchup in user_profile.yaml (default: true)."""
     try:
-        import yaml  # noqa: PLC0415
-        profile = yaml.safe_load(
-            (artha_dir / "config" / "user_profile.yaml").read_text(encoding="utf-8")
-        ) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        config_dir = str(artha_dir / "config")
+        profile = load_config("user_profile", _config_dir=config_dir)
         work_section = profile.get("work") or {}
         refresh_section = work_section.get("refresh") or {}
         return bool(refresh_section.get("run_on_catchup", True))

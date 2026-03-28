@@ -43,7 +43,6 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 _HEALTH_CHECK_FILE = _ROOT_DIR / "state" / "health-check.md"
 _METRICS_FILE = _ROOT_DIR / "tmp" / "pipeline_metrics.json"
-_CONFIG_FILE = _ROOT_DIR / "config" / "artha_config.yaml"
 
 # ---------------------------------------------------------------------------
 # Default pricing/estimation constants
@@ -76,14 +75,13 @@ _DEFAULT_COST_MODEL: dict[str, Any] = {
 def _load_cost_model() -> dict[str, Any]:
     """Load cost model overrides from artha_config.yaml (best-effort)."""
     model = dict(_DEFAULT_COST_MODEL)
-    if not _CONFIG_FILE.exists():
-        return model
     try:
-        cfg = yaml.safe_load(_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
         overrides = cfg.get("cost_model", {})
         if isinstance(overrides, dict):
             model.update(overrides)
-    except (yaml.YAMLError, OSError):
+    except Exception:
         pass
     return model
 

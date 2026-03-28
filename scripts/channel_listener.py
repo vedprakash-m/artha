@@ -146,7 +146,8 @@ async def process_message(
         if age_sec > _MAX_MESSAGE_AGE_SECONDS:
             log.debug("Stale message from %s (%.0fs old)", msg.sender_id, age_sec)
             return
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as exc:
+        log.warning("timestamp_parse_failed sender=%s error=%s", msg.sender_id, exc)
         pass  # Can't parse timestamp — allow message through
 
     # 4. Rate limiting
@@ -336,7 +337,8 @@ async def run_listener(
             try:
                 adapter.delete_webhook()
                 adapter.flush_pending_updates()
-            except AttributeError:
+            except AttributeError as exc:
+                log.warning("layer2_startup_helper_missing ch=%s error=%s", ch, exc)
                 pass  # Adapter doesn't implement Layer 2 startup helpers
             except Exception as exc:
                 log.warning("[%s] Session claim failed (non-fatal): %s", ch, exc)
@@ -376,19 +378,12 @@ async def run_listener(
     _bridge_queue = None
     _bridge_pubkey = None
     try:
-        import yaml as _yaml  # noqa: PLC0415
-        _artha_cfg_path = _ARTHA_DIR / "config" / "artha_config.yaml"
-        if _artha_cfg_path.exists():
-            with open(_artha_cfg_path, encoding="utf-8") as _f:
-                _artha_cfg = _yaml.safe_load(_f) or {}
-            if _artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
-                from action_bridge import detect_role, get_bridge_dir  # noqa: PLC0415
-                _channels_cfg_path = _ARTHA_DIR / "config" / "channels.yaml"
-                _channels_cfg: dict = {}
-                if _channels_cfg_path.exists():
-                    with open(_channels_cfg_path, encoding="utf-8") as _f:
-                        _channels_cfg = _yaml.safe_load(_f) or {}
-                if detect_role(_channels_cfg) == "executor":
+        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
+        _artha_cfg = _load_config("artha_config")
+        if _artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
+            from action_bridge import detect_role, get_bridge_dir  # noqa: PLC0415
+            _channels_cfg: dict = _load_config("channels")
+            if detect_role(_channels_cfg) == "executor":
                     from action_queue import ActionQueue as _AQ  # noqa: PLC0415
                     _bridge_dir = get_bridge_dir(_ARTHA_DIR)
                     _bridge_dir.mkdir(parents=True, exist_ok=True)

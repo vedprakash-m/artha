@@ -228,21 +228,14 @@ async def cmd_catchup(args: list[str], scope: str) -> tuple[str, str]:
     # Runs only when bridge is enabled and this machine is the proposer role.
     # Spec: dual-setup.md §4.2 — "before briefing_adapter.py is invoked"
     try:
-        import yaml as _br_yaml  # noqa: PLC0415
-        _br_cfg_path = _ARTHA_DIR / "config" / "artha_config.yaml"
-        if _br_cfg_path.exists():
-            with open(_br_cfg_path, encoding="utf-8") as _br_f:
-                _br_artha_cfg = _br_yaml.safe_load(_br_f) or {}
-            if _br_artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
-                from action_bridge import (  # noqa: PLC0415
-                    detect_role, get_bridge_dir, ingest_results, gc,
-                )
-                _br_ch_cfg_path = _ARTHA_DIR / "config" / "channels.yaml"
-                _br_ch_cfg: dict = {}
-                if _br_ch_cfg_path.exists():
-                    with open(_br_ch_cfg_path, encoding="utf-8") as _br_cf:
-                        _br_ch_cfg = _br_yaml.safe_load(_br_cf) or {}
-                if detect_role(_br_ch_cfg) == "proposer":
+        from lib.config_loader import load_config as _br_load_config  # noqa: PLC0415
+        _br_artha_cfg = _br_load_config("artha_config")
+        if _br_artha_cfg.get("multi_machine", {}).get("bridge_enabled", False):
+            from action_bridge import (  # noqa: PLC0415
+                detect_role, get_bridge_dir, ingest_results, gc,
+            )
+            _br_ch_cfg: dict = _br_load_config("channels")
+            if detect_role(_br_ch_cfg) == "proposer":
                     _br_dir = get_bridge_dir(_ARTHA_DIR)
                     from action_queue import ActionQueue as _BrAQ  # noqa: PLC0415
                     _br_queue = _BrAQ(_ARTHA_DIR)

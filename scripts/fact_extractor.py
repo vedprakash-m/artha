@@ -632,9 +632,8 @@ def _rebuild_frontmatter(content: str, updated_data: dict[str, Any]) -> str:
 def _load_harness_config() -> dict:
     """Load harness section from artha_config.yaml (silent on failure)."""
     try:
-        import yaml as _yaml  # local import to avoid circular on partial installs
-        cfg_path = Path(__file__).resolve().parents[1] / "config" / "artha_config.yaml"
-        raw = _yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        raw = load_config("artha_config")
         return raw.get("harness", {})
     except Exception:
         return {}

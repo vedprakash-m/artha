@@ -315,13 +315,8 @@ def _build_deva_name_pattern() -> re.Pattern | None:
 
     _DEVA_NAME_LOADED = True  # mark attempted even if we fail
     try:
-        import yaml  # noqa: PLC0415
-        config_dir = Path(__file__).resolve().parent.parent / "config"
-        profile_path = config_dir / "user_profile.yaml"
-        if not profile_path.exists():
-            return None
-        with open(profile_path, encoding="utf-8") as fh:
-            profile = yaml.safe_load(fh) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        profile = load_config("user_profile")
         names: list[str] = (profile.get("pii_guard") or {}).get("known_devanagari_names") or []
         if not names:
             return None
