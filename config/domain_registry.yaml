@@ -983,6 +983,81 @@ domains:
       blue: "Org calendar updated"
     command_namespace: work
 
+  work-products:
+    label: "Work Product Knowledge"
+    description: "Durable product/technology knowledge base — architecture, components, dependencies, team ownership. Survives project completion. Index + per-product deep files."
+    sensitivity: standard
+    always_load: false           # Trigger-loaded: only when meeting/query references a product
+    phase: phase_work
+    prompt_file: "prompts/work-products.md"
+    state_file: "state/work/work-products.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "What products does your team own or contribute to? (one per line)"
+      - "What is the primary architecture layer? (data plane, control plane, offering, platform)"
+    routing_keywords:
+      - product
+      - architecture
+      - data plane
+      - control plane
+      - offering
+      - platform
+      - component
+      - dependency
+      - tech stack
+      - service
+      - system design
+    alert_thresholds:
+      red: ""
+      orange: "Product architecture change detected in meeting notes or design review"
+      yellow: "New product dependency discovered from cross-team interaction"
+      blue: "Product knowledge updated from meeting context"
+    command_namespace: work
+
+  work-incidents:
+    label: "Work Incidents"
+    description: "IcM incident tracking — active incidents, severity trends, MTTR, recurring monitors. Data from Kusto golden queries GQ-050–GQ-057 via icmcluster.kusto.windows.net."
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-incidents.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions: []
+    routing_keywords:
+      - incident
+      - IcM
+      - sev 0
+      - sev 1
+      - sev 2
+      - outage
+      - livesite
+      - on-call
+      - MTTR
+      - repair
+    alert_thresholds:
+      red: "New Sev 0/1 incident on XPF fleet"
+      orange: "Active Sev 2 incident age >7 days; MTTR regression"
+      yellow: "New incident created on XPF-related tenant"
+      blue: "Weekly incident summary updated"
+    command_namespace: work
+
   # ── ACT-Reloaded domains (E2, E13) ──────────────────────────────────────
   inbox:
     label: "Inbox / Knowledge Capture"

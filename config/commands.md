@@ -641,6 +641,14 @@ Generates `state/work/work-promo-narrative.md` — promotion-grade document with
 ## `/work journey [project]` — Project Timeline View
 Reads work-project-journeys. Shows long-running program timeline: milestones, evidence citations, scope expansion arc, before/after state. `[project]` filters to a single program or shows all. Phase 3.
 
+## `/work products` — Product Knowledge Index
+Lists all products in the taxonomy tree with: name, layer (data-plane/control-plane/offering),
+status, owning team, and active projects. Reads `state/work/work-products.md`.
+- `/work products <name>` — show deep product knowledge file (`state/work/products/<slug>.md`)
+- `/work products add <name>` — interactively create a new product entry (index + deep file)
+- Trigger-loaded: not fetched on every briefing; loaded when meeting prep or query references a product
+- Phase: Active
+
 ## `/work remember <text>` — Instant Micro-Capture
 Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]` marker and timestamp. Processed by work-learn on next refresh cycle (fact extraction, keyword linking, org-calendar detection for `org-calendar:` prefix). Input is PII-scanned before write. Phase 2.
 
