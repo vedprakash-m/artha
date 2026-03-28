@@ -70,6 +70,9 @@ _ENCRYPTED_DOMAINS: frozenset[str] = frozenset({
 # Only connector modules from the connectors package are allowed (§3.9.6)
 _CONNECTOR_PKG = "connectors"
 
+import logging
+_log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Rate limiting — stdlib token-bucket implementation (§3.9 hardening)
@@ -126,7 +129,8 @@ def _audit(tool: str, params: dict[str, Any], status: str) -> None:
     try:
         with open(_AUDIT_LOG, "a", encoding="utf-8") as fh:
             fh.write(entry)
-    except OSError:
+    except OSError as exc:
+        _log.warning("audit_write_failed error=%s", exc)
         pass  # audit log not writable; don't crash the server
 
 
@@ -248,7 +252,8 @@ def _fetch_in_memory(
         try:
             handler = _load_handler(handler_path)
             auth_ctx = load_auth_context(conn)
-        except Exception:
+        except Exception as exc:
+            _log.warning("connector_load_failed name=%s error=%s", name, exc)
             continue
 
         fetch_cfg = conn.get("fetch", {})
@@ -279,7 +284,8 @@ def _fetch_in_memory(
                 label=name,
             )
             records.extend(batch)
-        except Exception:
+        except Exception as exc:
+            _log.warning("connector_fetch_failed name=%s error=%s", name, exc)
             continue
 
     return records
@@ -575,7 +581,8 @@ def artha_write_state(
                     "existing_bytes": existing_len,
                     "new_bytes": new_len,
                 })
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            _log.warning("write_guard_skipped_new_file domain=%s error=%s", clean, exc)
             pass  # new domain file — no guard needed
 
         encrypted = _write_state_file(clean, content)

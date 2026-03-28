@@ -303,9 +303,8 @@ class AITrendRadarSkill(BaseSkill):
     def _load_config(self) -> dict:
         """Load ai_trend_radar config block from artha_config.yaml."""
         try:
-            import yaml
-            cfg_path = self._artha_dir / "config" / "artha_config.yaml"
-            raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+            from lib.config_loader import load_config  # noqa: PLC0415
+            raw = load_config("artha_config")
             return (
                 raw.get("enhancements", {})
                    .get("pr_manager", {})
@@ -318,11 +317,8 @@ class AITrendRadarSkill(BaseSkill):
     def _load_employer_blocked_terms(self) -> frozenset:
         """Load employer blocked terms from user_profile.yaml (never hardcoded, DP-6)."""
         try:
-            import yaml
-            profile_path = self._artha_dir / "config" / "user_profile.yaml"
-            if not profile_path.exists():
-                return frozenset()
-            raw = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+            from lib.config_loader import load_config  # noqa: PLC0415
+            raw = load_config("user_profile", str(self._artha_dir / "config"))
             terms = raw.get("employment", {}).get("confidential_terms", []) or []
             return frozenset(t.lower() for t in terms if t)
         except Exception:
@@ -789,8 +785,8 @@ class AITrendRadarSkill(BaseSkill):
     def _get_configured_feed_tags(self, connectors_path: Path) -> set[str]:
         """Extract configured RSS feed tags from connectors.yaml."""
         try:
-            import yaml
-            data = yaml.safe_load(connectors_path.read_text(encoding="utf-8"))
+            from lib.config_loader import load_config  # noqa: PLC0415
+            data = load_config("connectors", str(connectors_path.parent))
             feeds = (
                 data.get("rss_feed", {})
                 .get("fetch", {})

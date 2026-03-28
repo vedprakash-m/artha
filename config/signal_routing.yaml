@@ -1,0 +1,358 @@
+# Signal routing table — maps signal_type to action metadata.
+# Used by action_composer.py to convert DomainSignal → ActionProposal.
+# Fallback: hardcoded _FALLBACK_SIGNAL_ROUTING dict in action_composer.py.
+#
+# Fields per entry:
+#   action_type:     The action to compose (must be in _ALLOWED_ACTION_TYPES)
+#   friction:        User friction level: low | standard | high
+#   min_trust:       Minimum trust level required to auto-execute (0–2)
+#   reversible:      Whether the action can be undone
+#   undo_window_sec: Seconds to undo (null if irreversible)
+#
+# Ref: specs/pay-debt-reloaded.md §7 WS-7
+
+# Finance
+bill_due:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+property_tax_due:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+subscription_renewal:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+medical_bill_high:
+  action_type: email_send
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Calendar
+calendar_conflict:
+  action_type: calendar_modify
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 300
+
+appointment_needed:
+  action_type: email_send
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Email
+email_needs_reply:
+  action_type: email_reply
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Social
+birthday_approaching:
+  action_type: whatsapp_send
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+birthday_in_7d:
+  action_type: whatsapp_send
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+life_event_detected:
+  action_type: email_send
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Kids
+missing_assignment:
+  action_type: email_send
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+school_event_rsvp:
+  action_type: email_reply
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Immigration
+immigration_deadline:
+  action_type: email_send
+  friction: high
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+# Health
+prescription_refill:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+# Vehicle
+vehicle_recall:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+# Insurance
+insurance_renewal:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+# Open Items
+open_item_aging:
+  action_type: reminder_create
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+open_item_overdue:
+  action_type: reminder_create
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+# Generic calendar creation
+event_invitation:
+  action_type: calendar_create
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 300
+
+# IoT / Home (ARTHA-IOT Wave 1+2)
+device_offline:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+security_device_offline:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+energy_anomaly:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+supply_low:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+spa_maintenance:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+security_travel_conflict:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+# E1 — Email Signal Extractor
+event_rsvp_needed:
+  action_type: email_reply
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+appointment_confirmed:
+  action_type: calendar_create
+  friction: low
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 300
+
+delivery_arriving:
+  action_type: reminder_create
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+security_alert:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+school_action_needed:
+  action_type: email_reply
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+
+form_deadline:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+# E12 — Decision Tracker
+decision_detected:
+  action_type: decision_log_proposal
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+# E6 — Subscription Lifecycle (extended)
+subscription_trial_ending:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+subscription_renewal_upcoming:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+subscription_cancellation_deadline:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+subscription_annual_review:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 2
+  reversible: false
+  undo_window_sec: null
+
+# E3 — Pattern Engine signals
+goal_stale:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+relationship_stale:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+health_alert:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+maintenance_due:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+insurance_renewal_due:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+# E9 — Attachment Router
+document_financial:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+document_medical:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+document_immigration:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+document_school:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+document_insurance:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+document_property:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null

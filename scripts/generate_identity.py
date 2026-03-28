@@ -50,12 +50,6 @@ _KNOWN_TZ_PREFIXES = (
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_profile() -> dict:
-    try:
-        import yaml  # type: ignore
-    except ImportError:
-        _error("PyYAML not installed. Run: pip install pyyaml")
-        sys.exit(1)
-
     if not _PROFILE_PATH.exists():
         _error(
             f"Profile not found at {_PROFILE_PATH}\n"
@@ -64,8 +58,11 @@ def _load_profile() -> dict:
         )
         sys.exit(1)
 
-    with _PROFILE_PATH.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("user_profile", str(_PROFILE_PATH.parent))
+    except Exception:
+        return {}
 
 
 def _get(profile: dict, key_path: str, default: Any = None) -> Any:

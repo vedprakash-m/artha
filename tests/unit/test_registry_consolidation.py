@@ -108,7 +108,7 @@ def test_t6_5_validate_routing_table_warns_on_unknown(monkeypatch):
     import action_composer as ac
 
     # Inject a bad route into a temporary copy of the routing table
-    bad_routing = dict(ac._SIGNAL_ROUTING)
+    bad_routing = dict(ac._FALLBACK_SIGNAL_ROUTING)
     bad_routing["test_bad_signal"] = {
         "action_type": "completely_unknown_type",
         "friction": "low",
@@ -122,7 +122,7 @@ def test_t6_5_validate_routing_table_warns_on_unknown(monkeypatch):
     def _fake_write(msg: str) -> None:
         captured_warnings.append(msg)
 
-    monkeypatch.setattr(ac, "_SIGNAL_ROUTING", bad_routing)
+    monkeypatch.setattr(ac, "_FALLBACK_SIGNAL_ROUTING", bad_routing)
     stderr_buf = io.StringIO()
     monkeypatch.setattr(sys, "stderr", stderr_buf)
 
@@ -142,7 +142,7 @@ def test_t6_6_validate_routing_table_passes_valid(capsys):
     import action_composer as ac
 
     # Ensure all routes use valid action types
-    all_action_types = {row.get("action_type") for row in ac._SIGNAL_ROUTING.values()}
+    all_action_types = {row.get("action_type") for row in ac._FALLBACK_SIGNAL_ROUTING.values()}
     # They should all be in _ALLOWED_ACTION_TYPES
     unknown = all_action_types - ac._ALLOWED_ACTION_TYPES
     # If there are unknown ones, they should only be from production data we haven't

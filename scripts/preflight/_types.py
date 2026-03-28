@@ -10,7 +10,9 @@ SCRIPTS_DIR = os.path.join(ARTHA_DIR, "scripts")
 STATE_DIR   = os.path.join(ARTHA_DIR, "state")
 TOKEN_DIR   = os.path.join(ARTHA_DIR, ".tokens")
 LOCK_FILE          = os.path.join(ARTHA_DIR, ".artha-decrypted")
-WORKIQ_CACHE_FILE  = os.path.join(ARTHA_DIR, "tmp", ".workiq_cache.json")
+WORKIQ_CACHE_FILE   = os.path.join(ARTHA_DIR, "tmp", ".workiq_cache.json")
+WORKIQ_VERSION_PIN  = "latest"
+WORKIQ_CACHE_MAX_AGE = 86400  # 24 hours
 
 TOKEN_EXPIRY_WARN_SECONDS = 300  # Warn when token expires within 5 minutes
 

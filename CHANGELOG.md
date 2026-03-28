@@ -9,6 +9,38 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Kusto Live Data Pipeline (Tier 1)
+- `scripts/kusto_runner.py`: `run_refresh_set()` batch API — runs curated golden queries (GQ-001, 002, 010, 012, 050, 051) and returns structured results for pipeline consumption
+- `scripts/work_loop.py`: Kusto provider integration — `_check_kusto_available()` in preflight, `_run_kusto_metrics()` in fetch stage, wired into `_write_domain_files_from_connector_data()`
+- `scripts/work_domain_writers.py`: `write_kusto_metrics_state()` — in-place regex update of xpf-program-structure.md metric values (M01 fleet size, M04/M05 velocity, M06 throughput, M20 incidents) with Kusto-live timestamps
+- `ProviderAvailability.kusto` field added to work loop data model
+
+### Added — PF Join Pattern & Testing (Tier 3)
+- PF cross-cluster join pattern for 12 Env_Machines golden queries (GQ-021, 024, 041, 060, 062–066, 068, 091, 121) — `let PF_Clusters = cluster('xdeployment...').database('Deployment').TenantCatalogSnapshot | where IsPF == true | distinct ClusterName` then `| where AutoGen_Cluster in (PF_Clusters)`
+- 55 new tests: `test_kusto_metrics_writer` (19), `test_program_metrics` (10), `test_pulse_health` (5), `test_meeting_context` (12), `test_kusto_refresh_set` (9) — total suite now 1,060 passing
+- `/work notes [meeting-id]` command wired into `work_reader.py` dispatch — reads `work-notes.md`, supports meeting-id search, suggests WorkIQ for missing notes
+- XPF staleness advisory in data freshness footer — `_xpf_staleness_hours()` and `_xpf_staleness_advisory()` in `scripts/work/helpers.py`; surfaces when `xpf-program-structure.md` is >18h stale (PULL > PUSH pattern)
+- WorkIQ lookup hint in `/work people` when person not found locally
+
+### Changed — Program-Aware Narrative Output (Tier 2)
+- `scripts/narrative_engine.py`: `_load_program_metrics()` parser — extracts signal summary, risk posture, per-workstream signals, and red metrics from xpf-program-structure.md
+- `scripts/narrative_engine.py`: `generate_newsletter()` — new `program_metrics` section with per-WS status, top red risks, risk posture; enriched `executive_summary` with program posture
+- `scripts/narrative_engine.py`: `generate_deck()` — exec summary shows program risk, `_section_metrics` renders per-WS status, `_section_risks` surfaces red metrics
+- `scripts/narrative_engine.py`: `generate_connect_summary()` — new "Quantitative Evidence (Kusto-validated)" section with green metrics as wins
+- `scripts/narrative_engine.py`: `_extract_ws_metrics()` helper for per-workstream metric extraction by signal filter
+- `scripts/work/briefing.py`: `cmd_pulse()` — new program health one-liner: `MEDIUM (R:7 Y:24 G:7)`
+- `scripts/work/meetings.py`: `cmd_prep()` — XPF program context injection for meetings matching XPF keywords (risk posture + workstream metrics)
+- Freshness footer now includes xpf-program-structure.md timestamp across all narrative outputs
+
+### Fixed
+- `.vscode/mcp.json`: deduplicated `kusto-xdataanalytics` key (renamed second to `kusto-xdataanalytics-cogs`)
+- `scripts/work_domain_writers.py`: cross-platform date formatting (replaced `%-m/%-d` with `f"{now.month}/{now.day}"` for Windows compatibility)
+- 12 golden queries: `IsPF_TODO_NEEDS_JOIN` → cross-cluster PF join via ClusterName (validated live — GQ-060 confirmed)
+- 12 golden queries: `TIMESTAMP` → `AutoGen_TimeStamp` for all Env_Machines table queries
+
+### Updated — Specs & Status
+- `config/implementation_status.yaml`: added `work_os_kusto_integration` entry; updated `work_os_domain_writers` from partial→implemented (7 writers + 3 appenders); updated notes for pulse/prep/newsletter/deck/connect-prep commands to reflect program metrics integration
+
 ---
 
 ## [8.5.0] — 2026-03-27

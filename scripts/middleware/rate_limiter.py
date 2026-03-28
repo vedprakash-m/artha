@@ -103,14 +103,9 @@ class RateLimiter:
     def _load_config(self) -> None:
         """Load rate limit settings from config/connectors.yaml."""
         try:
-            import yaml  # noqa: PLC0415
+            from lib.config_loader import load_config  # noqa: PLC0415
 
-            cfg_path = self._artha_dir / "config" / "connectors.yaml"
-            if not cfg_path.exists():
-                self._init_defaults()
-                return
-            with open(cfg_path, encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
+            cfg = load_config("connectors", str(self._artha_dir / "config"))
             connectors: list[dict[str, Any]] = cfg.get("connectors", [])
             for connector in connectors:
                 name = connector.get("name", connector.get("id", ""))

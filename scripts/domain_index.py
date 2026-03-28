@@ -236,15 +236,11 @@ def should_load_prompt(domain: str, index_data: dict[str, dict], command: str) -
 
     # Force-load list overrides everything
     try:
-        import yaml  # noqa: PLC0415
-
-        cfg_path = ARTHA_DIR / "config" / "artha_config.yaml"
-        if cfg_path.exists():
-            with open(cfg_path, encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            force_list = cfg.get("harness", {}).get("progressive_disclosure", {}).get("force_load", [])
-            if domain in (force_list or []):
-                return True
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
+        force_list = cfg.get("harness", {}).get("progressive_disclosure", {}).get("force_load", [])
+        if domain in (force_list or []):
+            return True
     except Exception:  # noqa: BLE001
         pass
 

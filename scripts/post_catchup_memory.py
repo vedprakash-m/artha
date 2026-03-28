@@ -51,10 +51,8 @@ def _run_id() -> str:
 def _is_enabled(artha_dir: Path) -> bool:
     """Check config flag harness.agentic.post_catchup_memory.enabled."""
     try:
-        import yaml  # noqa: PLC0415
-        cfg = yaml.safe_load(
-            (artha_dir / "config" / "artha_config.yaml").read_text(encoding="utf-8")
-        ) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
         return bool(
             cfg.get("harness", {})
             .get("agentic", {})

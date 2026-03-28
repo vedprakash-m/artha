@@ -72,21 +72,11 @@ def load_channels_config() -> dict[str, Any]:
         "channels": {},
     }
 
-    from lib.common import CONFIG_DIR
-    channels_file = CONFIG_DIR / "channels.yaml"
-
-    if not channels_file.exists():
-        return _SAFE_DEFAULT
-
     try:
-        import yaml
-    except ImportError:
-        return _SAFE_DEFAULT  # pyyaml not installed — channels unavailable
-
-    try:
-        with open(channels_file, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return data if isinstance(data, dict) else _SAFE_DEFAULT
+        from lib.common import CONFIG_DIR  # noqa: PLC0415
+        from lib.config_loader import load_config  # noqa: PLC0415
+        data = load_config("channels", str(CONFIG_DIR))
+        return data if isinstance(data, dict) and data else _SAFE_DEFAULT
     except Exception:
         return _SAFE_DEFAULT
 

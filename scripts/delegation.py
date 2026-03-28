@@ -187,9 +187,8 @@ def _compress_context(text: str, max_chars: int = _MAX_CONTEXT_CHARS) -> str:
 def _load_harness_flag(path: str, default: Any = True) -> Any:
     """Read a dotted harness config path from artha_config.yaml."""
     try:
-        import yaml
-        cfg_path = Path(__file__).resolve().parents[1] / "config" / "artha_config.yaml"
-        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        from lib.config_loader import load_config  # noqa: PLC0415
+        raw = load_config("artha_config")
         node: Any = raw.get("harness", {})
         for key in path.split("."):
             if not isinstance(node, dict):

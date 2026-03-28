@@ -40,7 +40,7 @@ from actions.base import ActionProposal, DomainSignal
 # Friction values: "low" | "standard" | "high"
 # min_trust: 0=observe(never auto), 1=propose, 2=pre-approve
 
-_SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
+_FALLBACK_SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
     # Finance
     "bill_due":               {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
     "property_tax_due":       {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
@@ -143,7 +143,7 @@ _ALLOWED_ACTION_TYPES: frozenset[str] = frozenset({
 
 
 def _validate_routing_table() -> None:
-    """Verify every action_type in _SIGNAL_ROUTING exists in _ALLOWED_ACTION_TYPES.
+    """Verify every action_type in _FALLBACK_SIGNAL_ROUTING exists in _ALLOWED_ACTION_TYPES.
 
     Called once at import time — catches typos at startup rather than at
     signal-fire time.  Emits a warning to stderr for any unknown action types
@@ -151,17 +151,32 @@ def _validate_routing_table() -> None:
     """
     unknown = {
         row["action_type"]
-        for row in _SIGNAL_ROUTING.values()
+        for row in _FALLBACK_SIGNAL_ROUTING.values()
         if row.get("action_type") not in _ALLOWED_ACTION_TYPES
     }
     if unknown:
         import sys as _sys
         _sys.stderr.write(
-            f"[WARNING] _SIGNAL_ROUTING references unknown action_type(s): {sorted(unknown)}\n"
+            f"[WARNING] _FALLBACK_SIGNAL_ROUTING references unknown action_type(s): {sorted(unknown)}\n"
         )
 
 
 _validate_routing_table()
+
+
+def _load_signal_routing() -> dict[str, dict]:
+    """Load signal routing from config/signal_routing.yaml.  Falls back to hardcoded dict.
+
+    Ref: specs/pay-debt-reloaded.md §7 WS-7
+    """
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        routing = load_config("signal_routing")
+        if routing:
+            return routing
+    except Exception:
+        pass
+    return _FALLBACK_SIGNAL_ROUTING
 
 
 # ---------------------------------------------------------------------------
@@ -202,14 +217,11 @@ class ActionComposer:
 
         # Auto-load from artha_dir if no explicit config provided
         if raw is None and artha_dir is not None:
-            actions_yaml = artha_dir / "config" / "actions.yaml"
-            if actions_yaml.exists():
-                try:
-                    import yaml  # PyYAML
-                    with open(actions_yaml, encoding="utf-8") as fh:
-                        raw = yaml.safe_load(fh)
-                except Exception:
-                    raw = None
+            try:
+                from lib.config_loader import load_config  # noqa: PLC0415
+                raw = load_config("actions", str(artha_dir / "config")) or None
+            except Exception:
+                raw = None
 
         if raw and isinstance(raw, dict):
             actions_section = raw.get("actions", {})
@@ -245,7 +257,7 @@ class ActionComposer:
             raise ValueError("DomainSignal.signal_type must not be empty")
 
         # Find routing entry
-        route = _SIGNAL_ROUTING.get(signal.signal_type)
+        route = _load_signal_routing().get(signal.signal_type)
         if route is None:
             return None
 

@@ -17,7 +17,14 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+
 import pytest
+
+# decision_tracker imports fcntl for file locking; stub it on Windows
+if sys.platform == "win32" and "fcntl" not in sys.modules:
+    from unittest.mock import MagicMock
+    sys.modules["fcntl"] = MagicMock()
 
 from decision_tracker import DecisionTracker
 

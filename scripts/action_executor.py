@@ -231,7 +231,8 @@ def _audit_log(artha_dir: Path, entry: str) -> None:
         line = f"[{ts}] {entry}\n"
         with open(audit_path, "a", encoding="utf-8") as f:
             f.write(line)
-    except Exception:
+    except Exception as exc:
+        _log.warning("audit_log_write_failed error=%s", exc)
         pass  # audit log failure is non-fatal (DB is source of truth)
 
 
@@ -264,7 +265,8 @@ class ActionExecutor:
         try:
             env_info = _de.detect(skip_network=True)
             self._read_only = not env_info.capabilities.get("filesystem_writable", True)
-        except Exception:
+        except Exception as exc:
+            _log.warning("detect_environment_failed error=%s", exc)
             self._read_only = False
 
         self._queue = ActionQueue(artha_dir)
@@ -288,7 +290,8 @@ class ActionExecutor:
                 sys.path.insert(0, str(self._artha_dir / "scripts"))
                 from foundation import get_public_key  # noqa: PLC0415
                 self._pubkey = get_public_key()
-            except (Exception, SystemExit):
+            except (Exception, SystemExit) as exc:
+                _log.warning("get_pubkey_failed error=%s", exc)
                 # SystemExit raised by foundation.die() when key is unavailable
                 # (e.g. no age_recipient in user_profile.yaml). Treat as key absent.
                 pass
@@ -739,7 +742,8 @@ class ActionExecutor:
         if raw.get("result_data"):
             try:
                 result_data = json.loads(raw["result_data"])
-            except Exception:
+            except Exception as exc:
+                _log.warning("undo_result_data_parse_failed action_id=%s error=%s", action_id, exc)
                 pass
 
         undo_deadline = result_data.get("undo_deadline")
@@ -1087,7 +1091,8 @@ def _load_action_configs(artha_dir: Path) -> dict[str, Any]:
         with open(actions_yaml, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return data.get("actions", {}) if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as exc:
+        _log.warning("load_action_configs_failed error=%s", exc)
         return {}
 
 

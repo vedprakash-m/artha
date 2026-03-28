@@ -55,20 +55,21 @@ def _validate_against_schema(data: dict) -> list[str]:
 @lru_cache(maxsize=1)
 def load_profile() -> dict:
     """Load user_profile.yaml. Returns empty dict if file does not exist."""
-    if not _PROFILE_PATH.exists():
-        return {}
     try:
-        import yaml  # noqa: PLC0415 — imported here so stdlib-only scripts can still import the module header
-    except ImportError:
-        # yaml not available (pre-venv context). Return empty — caller should
-        # handle gracefully or the script will re-exec inside the venv first.
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("user_profile", str(_PROFILE_PATH.parent))
+    except Exception:
+        # pre-venv context or yaml unavailable — return empty dict
         return {}
-    with open(_PROFILE_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
 
 
 def reload_profile() -> dict:
     """Clear cache and reload from disk. Call after profile edits (e.g., /bootstrap)."""
+    try:
+        from lib.config_loader import invalidate  # noqa: PLC0415
+        invalidate()
+    except Exception:
+        pass
     load_profile.cache_clear()
     return load_profile()
 
@@ -159,14 +160,11 @@ def domain_registry() -> dict:
     (e.g., first-run before bootstrap). Result is cached for the process lifetime;
     call domain_registry.cache_clear() after editing the registry on disk.
     """
-    if not _REGISTRY_PATH.exists():
-        return {}
     try:
-        import yaml  # noqa: PLC0415
-    except ImportError:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        return load_config("domain_registry")
+    except Exception:
         return {}
-    with open(_REGISTRY_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
 
 
 def available_domains(*, household_type: str | None = None) -> list[dict]:

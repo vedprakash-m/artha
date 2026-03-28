@@ -58,7 +58,7 @@ Use `--dry-run` to preview what would be written without committing.
 /work refresh
 ```
 
-Fetches fresh data from all configured providers (ADO, WorkIQ, ICM, Graph/M365) and writes state files to `state/work/`. Takes up to 60 seconds. Everything after this is instant.
+Fetches fresh data from all configured providers (ADO, WorkIQ, ICM, Graph/M365, **Kusto golden queries**) and writes state files to `state/work/`. Kusto queries auto-update fleet size, deployment velocity, incident counts, and other XPF program metrics in `xpf-program-structure.md`. Takes up to 60 seconds. Everything after this is instant.
 
 > **Tip:** If you run `/catch-up` in the morning, Work OS refresh happens automatically as a post-catch-up stage — no need to run it separately.
 
@@ -74,11 +74,12 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 
 | Command | What it shows |
 |---------|---------------|
-| `/work pulse` | 30-second status snapshot (sprint + top items) |
+| `/work pulse` | 30-second snapshot — meetings, comms, boundary, program health (risk posture + R/Y/G) |
 | `/work sprint` | Delivery health, burndown, blockers |
-| `/work prep` | Today's meetings with readiness scoring |
+| `/work prep` | Today's meetings with readiness scoring + XPF program context |
 | `/work comms` | Email/Teams signals, exec visibility |
-| `/work people <name>` | Person lookup — org context, collaboration history |
+| `/work people <name>` | Person lookup — org context, collaboration history; WorkIQ hint when not found locally |
+| `/work notes [meeting-id]` | Post-meeting captures, weekly summaries; meeting-id search; WorkIQ fallback |
 | `/work projects` | All active projects and their state |
 | `/work sources` | Registered data sources |
 | `/work docs` | Recent work artifacts |
@@ -94,7 +95,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 /work prep
 ```
 
-Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords.
+Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords. For XPF-related meetings, also injects program context: risk posture and relevant workstream metrics (red/green).
 
 ### During a Meeting (Live Assist)
 
@@ -110,7 +111,7 @@ Surfaces attendee context, open decisions, carry-forward items, and project cont
 /work notes <meeting-id>
 ```
 
-Captures decisions (D-NNN IDs), action items (OI-NNN IDs), and notes. Appends atomically to `state/work/work-notes.md`.
+Captures decisions (D-NNN IDs), action items (OI-NNN IDs), and notes. Appends atomically to `state/work/work-notes.md`. Supports meeting-id search to filter entries. If no local notes are found, suggests WorkIQ for transcript lookup.
 
 For quick capture without structure:
 
@@ -128,7 +129,7 @@ For quick capture without structure:
 /work connect-prep
 ```
 
-Assembles evidence for your review cycle: matched milestones, scope expansion arc, visibility events, manager voice quotes, and evidence gaps.
+Assembles evidence for your review cycle: matched milestones, scope expansion arc, visibility events, manager voice quotes, evidence gaps, and **Kusto-validated quantitative evidence** (green metrics as wins, program scale and risk posture).
 
 ```
 /work connect-prep --calibration
@@ -194,7 +195,7 @@ Interactive Narrative Engine — choose template: `weekly_memo`, `talking_points
 /work newsletter [period]
 ```
 
-Drafts a team newsletter from sprint + decision + career data (e.g., `--period "last 2 weeks"`).
+Drafts a team newsletter from sprint + decision + career data. Includes a **Program Health** section with risk posture, per-workstream signal status, and top red metrics — all sourced from Kusto-validated `xpf-program-structure.md`.
 
 ### LT Deck
 
@@ -202,7 +203,7 @@ Drafts a team newsletter from sprint + decision + career data (e.g., `--period "
 /work deck [topic]
 ```
 
-Scaffolds an LT deck content outline for the given topic.
+Scaffolds an LT deck content outline for the given topic. Executive summary includes program risk posture and signal counts. Data & Metrics section shows per-workstream status with top metrics. Risks section surfaces the top red metrics from the program structure.
 
 ---
 
@@ -261,6 +262,8 @@ Each domain has a state file in `state/work/` that is updated on refresh:
 | `work-sources` | work-sources.md | Registered data source registry |
 | `work-project-journeys` | work-project-journeys.md | Long-running program timelines with milestone provenance |
 | `work-org-calendar` | work-org-calendar.md | Org dates: Connect deadlines, fiscal events, rewards season |
+| `xpf-program-structure` | xpf-program-structure.md | XPF program metrics (42 metrics, 12 workstreams, signal summary) — Kusto-validated |
+| `golden-queries` | golden-queries.md | 73 golden Kusto queries for program metrics — schema-validated KQL |
 
 ---
 
@@ -272,7 +275,7 @@ Work OS ships three agent definitions for use with the Agency CLI:
 |------|------|----------|
 | `artha-work` | `config/agents/artha-work.md` | Any M365 user (Graph baseline) |
 | `artha-work-enterprise` | `config/agents/artha-work-enterprise.md` | M365 + Azure DevOps |
-| `artha-work-msft` | `config/agents/artha-work-msft.md` | Microsoft employees (ADO + WorkIQ + ICM + Bluebird) |
+| `artha-work-msft` | `config/agents/artha-work-msft.md` | Microsoft employees (ADO + WorkIQ + ICM + Bluebird + Kusto) |
 
 The correct tier is automatically selected based on your `user_profile.yaml` provider config.
 

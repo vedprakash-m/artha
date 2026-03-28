@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 3.1 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.2 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.1.0, Tech Spec v3.13.0
+> **Implements**: PRD v7.2.0, Tech Spec v3.14.0
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.2 | 2026-03 | **PAY-DEBT-RELOADED v2.0 + PAY-DEBT v1.0 — Zero UX-visible changes:** WS-1 through WS-9-B are entirely infrastructure, test-quality, and architectural hardening improvements with no impact on any user-facing surface. PAY-DEBT v1.0 god-file decompositions (TD-1–TD-5) restructured internal modules; PAY-DEBT-RELOADED v2.0 hardened config loading, narrative rendering, DAG execution, and concurrency guarantees. All 28 `/work *` commands, all Telegram slash commands, all briefing section formats (flash/standard/deep), all onboarding flows, and all `/stage` card lifecycle views are unchanged. Architectural health improved from ~5/10 (pre-PAY-DEBT v1.0) to 9.0/10 (post-PAY-DEBT-RELOADED v2.0); test suite expanded to 3,429 total tests with full coverage of `post_work_refresh`, `config_loader`, `narrative/` package, `work_loop` DAG paths, and channel security concurrency. (implements PRD v7.2.0, Tech Spec v3.14.0; see `specs/pay-debt-reloaded.md` and `specs/pay-debt.md`, archived to `.archive/`) |
 | v2.7.3 | 2026-03 | **DUAL v1.3.0 UX** — Multi-machine setup is transparent to the user; all action proposal and execution flows are unchanged at the UX layer. On the Mac (proposer): bridge result ingestion runs silently before each catch-up briefing — executed actions appear in the briefing with their outcome status as if executed locally. On Windows (executor): action proposals arrive via OneDrive-synced bridge files; the `channel_listener.py` executor poll loop picks them up and executes automatically or queues for approval — same Telegram approval UX as single-machine mode. **Per-machine connectors:** connectors that are not applicable to the current machine are silently skipped during pipeline fetch (no user-visible error); `list_connectors` command shows a PLATFORM column. **Preflight advisory:** a P1 bridge health check surfaces if the bridge key is missing or the bridge directory is not accessible — shown as `⚠️ [ADVISORY] bridge: key not found` (non-blocking, catch-up proceeds). **Nudge daemon:** silently skips execution on any machine that is not the designated listener host — no user-visible behavior change. (implements PRD v7.0.8, Tech Spec v3.10.0, specs/dual-setup.md) |
 | v3.1 | 2026-03 | **Work OS v2.7.0 UX expansion** — Command palette expanded from 7 to 28 commands; §23.7 Narrative Engine UX (10 template picker, weekly memo format, calibration brief); §23.8 Promotion OS UX (/work promo-case output, evidence density); §23.9 Connect Cycle UX (evidence assembly, GAP flags, calibration brief); §23.10 Quick Capture + Decision Support UX (/work remember, D-NNN format); §23.11 Bootstrap Interview UX (12-question flow); §23.12 Learning & Adaptive Behavior UX. (implements PRD v7.1.0 FR-19 FW-11–FW-17, Tech Spec v3.13.0 §19) |
 | v3.0 | 2026-03 | **Work OS UX (§23)** — `/work` command family (daily briefing, sprint, prep, people, health, refresh, warm-start); daily work briefing format (calendar load, commitment tracker, project summary, boundary score, connector health footer); meeting prep card format (readiness score, open threads, key people, prep actions); degraded mode UX (transparent connector status, stale-data labeling, remediation in `/work health`); warm-start onboarding prompt and completion confirmation. Hard separation: no work content in personal briefing. (implements PRD v4.2 FR-19, Tech Spec v3.7 §19) |
@@ -1745,15 +1746,15 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | Command | Category | What it does |
 |---|---|---|
 | `/work` | Core | Daily work briefing — calendar load, prep status, commitment summary, boundary signal |
-| `/work pulse` | Core | 30-second work status snapshot — boundary score, overdue items, next meeting |
+| `/work pulse` | Core | 30-second work status snapshot — meetings, comms, boundary score, DFS, program health (risk posture + R/Y/G signal counts from Kusto-validated metrics) |
 | `/work sprint` | Core | Sprint-focused view — ADO work items, active commitments, blockers |
-| `/work prep <title>` | Meeting | On-demand meeting prep card for a named meeting (readiness score, open threads, key people) |
+| `/work prep <title>` | Meeting | On-demand meeting prep card for a named meeting (readiness score, open threads, key people, XPF program context for relevant meetings) |
 | `/work live <id>` | Meeting | Live meeting assist — active action capture, decision tracking during a meeting |
 | `/work mark-preread <id>` | Meeting | Mark a meeting as pre-read; updates readiness score |
-| `/work notes [id]` | Capture | Post-meeting action capture — parses transcript/notes into D-NNN/OI-NNN items |
+| `/work notes [id]` | Capture | Post-meeting captures, weekly summaries; meeting-id search; WorkIQ fallback for transcripts |
 | `/work remember <text>` | Capture | Instant micro-capture — appended to work-notes with timestamp |
 | `/work decide <context>` | Capture | Structured decision support — records D-NNN decision with context, options, outcome |
-| `/work connect-prep` | Career | Connect cycle evidence assembly — goal alignment, key contributions, GAP flags |
+| `/work connect-prep` | Career | Connect cycle evidence assembly — goal alignment, key contributions, GAP flags, Kusto-validated quantitative evidence |
 | `/work connect-prep --calibration` | Career | Calibration defense brief — rating justification with evidence density |
 | `/work promo-case` | Career | Promotion readiness assessment — scope arc, evidence density stars, visibility events |
 | `/work promo-case --narrative` | Career | Full promotion narrative Markdown draft |
@@ -1761,10 +1762,10 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | `/work journey [project]` | Career | Project timeline with milestone evidence and scope arc |
 | `/work memo` | Content | Status memo via Narrative Engine (escalation_memo or decision_memo template) |
 | `/work memo --weekly` | Content | Auto-drafted weekly status (weekly_memo template) |
-| `/work newsletter [period]` | Content | Team newsletter draft (newsletter template) |
-| `/work deck [topic]` | Content | LT deck content assembly (deck template) |
+| `/work newsletter [period]` | Content | Team newsletter draft with Program Health section (per-workstream signals, risk posture, red metrics from Kusto) |
+| `/work deck [topic]` | Content | LT deck content assembly with program metrics in exec summary, per-WS status in metrics, red items in risks |
 | `/work talking-points <topic>` | Content | Meeting-ready talking points (talking_points template) |
-| `/work people [query]` | Org | People graph — top collaborators by tier, recency, org context |
+| `/work people [query]` | Org | People graph — top collaborators by tier, recency, org context; WorkIQ hint when person not found locally |
 | `/work graph` | Org | Full org relationship graph — tier distribution, collaboration strength |
 | `/work projects` | Org | Project portfolio view — meetings-per-project, ADO items, status |
 | `/work sources [query]` | Org | Data source registry lookup |

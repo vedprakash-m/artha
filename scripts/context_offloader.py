@@ -108,13 +108,9 @@ def load_harness_flag(feature_path: str, default: bool = True) -> bool:
         bool: the configured value, or ``default`` on any error
     """
     try:
-        import yaml  # noqa: PLC0415
+        from lib.config_loader import load_config  # noqa: PLC0415
 
-        config_path = ARTHA_DIR / "config" / "artha_config.yaml"
-        if not config_path.exists():
-            return default
-        with open(config_path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        cfg = load_config("artha_config")
         harness = cfg.get("harness", {})
         parts = feature_path.split(".")
         cur: Any = harness

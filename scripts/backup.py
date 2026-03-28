@@ -108,13 +108,12 @@ def load_backup_registry() -> list:
     artha_dir  = _config["ARTHA_DIR"]
 
     backup_cfg = None
-    if _yaml is not None:
-        try:
-            profile_path = config_dir / "user_profile.yaml"
-            profile      = _yaml.safe_load(profile_path.read_text(encoding="utf-8"))
-            backup_cfg   = (profile or {}).get("backup")
-        except Exception:
-            backup_cfg = None
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        profile = load_config("user_profile")
+        backup_cfg = profile.get("backup")
+    except Exception:
+        backup_cfg = None
 
     entries: list = []
 

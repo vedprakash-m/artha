@@ -241,13 +241,9 @@ def load_threshold_pct() -> float:
     Returns the configured percentage (0–100); defaults to 70.
     """
     try:
-        import yaml  # noqa: PLC0415
+        from lib.config_loader import load_config  # noqa: PLC0415
 
-        cfg_path = ARTHA_DIR / "config" / "artha_config.yaml"
-        if not cfg_path.exists():
-            return 70.0
-        with open(cfg_path, encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        cfg = load_config("artha_config")
         val = (
             cfg.get("harness", {})
             .get("session_summarization", {})

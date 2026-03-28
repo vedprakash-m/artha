@@ -58,21 +58,18 @@ _STATIC_SENSITIVE = [
 
 def _load_sensitive_domains() -> list[str]:
     """Load sensitive domain list from domain_registry.yaml (preferred) or static fallback."""
-    registry_path = _ARTHA_DIR / "config" / "domain_registry.yaml"
-    if registry_path.exists():
-        try:
-            import yaml  # type: ignore[import]
-            with open(registry_path, encoding="utf-8") as f:
-                reg = yaml.safe_load(f) or {}
-            sensitive = [
-                name
-                for name, cfg in reg.get("domains", {}).items()
-                if isinstance(cfg, dict) and cfg.get("sensitivity") in ("high", "critical")
-            ]
-            if sensitive:
-                return sensitive
-        except Exception:
-            pass  # Fall through to static list
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        reg = load_config("domain_registry")
+        sensitive = [
+            name
+            for name, cfg in reg.get("domains", {}).items()
+            if isinstance(cfg, dict) and cfg.get("sensitivity") in ("high", "critical")
+        ]
+        if sensitive:
+            return sensitive
+    except Exception:
+        pass  # Fall through to static list
     return _STATIC_SENSITIVE
 
 

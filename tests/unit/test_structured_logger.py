@@ -126,26 +126,21 @@ def test_prune_old_logs_preserves_recent_files(tmp_path):
 # ---------------------------------------------------------------------------
 # T2-8: Logger falls back to stderr if logs dir is unwritable
 # ---------------------------------------------------------------------------
-def test_logger_falls_back_to_stderr_if_unwritable(tmp_path, capsys):
+def test_logger_falls_back_to_stderr_if_unwritable(tmp_path, capsys, monkeypatch):
+    import lib.logger as _logger_mod
     from lib.logger import _JsonlHandler, StructuredLogger
-    import logging
 
-    # Create a handler pointing at a path that can't be created
-    unwritable_dir = tmp_path / "no_permission" / "deep" / "path"
-    # Make the parent read-only
-    no_perm_parent = tmp_path / "no_permission"
-    no_perm_parent.mkdir()
-    import os
-    try:
-        os.chmod(no_perm_parent, 0o444)
-        handler = _JsonlHandler(unwritable_dir)
-        log = StructuredLogger("stderr_test", handler)
-        log.info("fallback.test")
+    # Simulate unwritable dir by patching _ensure_log_dir to return False.
+    # os.chmod(0o444) is unreliable on Windows (doesn't block subdirectory creation).
+    monkeypatch.setattr(_logger_mod, "_ensure_log_dir", lambda _dir: False)
 
-        captured = capsys.readouterr()
-        assert "[STRUCTURED]" in captured.err
-    finally:
-        os.chmod(no_perm_parent, 0o755)
+    unwritable_dir = tmp_path / "simulated_unwritable"
+    handler = _JsonlHandler(unwritable_dir)
+    log = StructuredLogger("stderr_test", handler)
+    log.info("fallback.test")
+
+    captured = capsys.readouterr()
+    assert "[STRUCTURED]" in captured.err
 
 
 # ---------------------------------------------------------------------------

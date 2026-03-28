@@ -144,7 +144,8 @@ def _get_latest_briefing() -> str | None:
         return None
     try:
         return briefing_files[0].read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as exc:
+        log.warning("briefing_read_failed error=%s", exc)
         return None
 
 
@@ -192,7 +193,8 @@ def _build_family_flash(max_length: int = 600) -> str:
                     event = line.strip().lstrip("-").strip()
                     if event and len(event) > 4:
                         cal_events.append(f"  • Tomorrow: {event[:80]}")
-        except OSError:
+        except OSError as exc:
+            log.warning("family_flash_calendar_read_failed error=%s", exc)
             pass
 
     if cal_events:
@@ -237,7 +239,8 @@ def _build_family_flash(max_length: int = 600) -> str:
                 dl = item.get("deadline", "")
                 dl_str = f" (due {dl})" if dl else ""
                 shared_tasks.append(f"  • {oi_id}: {desc}{dl_str}")
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("family_flash_oi_parse_failed error=%s", exc)
             # Fallback: regex scan (YAML-style id/source_domain/description)
             for m in _re.finditer(
                 r"- id: (OI-\d+).*?source_domain: (kids|home|shopping|social).*?description: \"([^\"]+)\"",
@@ -261,7 +264,8 @@ def _build_family_flash(max_length: int = 600) -> str:
                     domain = m.group(3).strip().lower()
                     if domain in _FAMILY_ALLOWED_DOMAINS:
                         shared_tasks.append(f"  • {oi_id}: {desc}")
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
+                log.warning("family_flash_oi_table_failed error=%s", exc)
                 pass
 
     if shared_tasks:
@@ -282,7 +286,8 @@ def _build_family_flash(max_length: int = 600) -> str:
             )
             for dec_id, title in blocks[:3]:
                 shared_decisions.append(f"  • {dec_id}: {title[:60]}")
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("family_flash_decisions_failed error=%s", exc)
             pass
 
     ask_ved = "[No shared decisions pending]"
@@ -394,7 +399,8 @@ def _check_push_marker() -> tuple[bool, str, str, str]:
             if age_hours < _PUSH_DEDUP_HOURS:
                 return True, f"pushed {age_hours:.1f}h ago from {marker_host}", marker_host, pushed_at_str
             return False, f"stale marker ({age_hours:.1f}h old, threshold={_PUSH_DEDUP_HOURS}h)", "", ""
-    except (json.JSONDecodeError, ValueError, OSError):
+    except (json.JSONDecodeError, ValueError, OSError) as exc:
+        log.warning("push_marker_read_failed error=%s", exc)
         pass
 
     return False, "marker unreadable — proceeding", "", ""
@@ -422,7 +428,8 @@ def _write_push_marker(channels_pushed: list[str]) -> None:
     for ch in channels_pushed:
         try:
             update_channel_health_md(ch, healthy=True, last_push=pushed_at, push_count_today=1)
-        except Exception:
+        except Exception as exc:
+            log.warning("channel_health_update_failed ch=%s error=%s", ch, exc)
             pass  # Non-critical
 
 
@@ -434,7 +441,8 @@ def _cleanup_old_markers() -> None:
             age_days = (now.timestamp() - marker_file.stat().st_mtime) / 86400
             if age_days > _MARKER_MAX_DAYS:
                 marker_file.unlink()
-        except OSError:
+        except OSError as exc:
+            log.warning("cleanup_marker_stat_failed file=%s error=%s", marker_file.name, exc)
             pass
 
 
@@ -487,7 +495,8 @@ def _send_pending_pushes(
     for pf in sorted(_PENDING_PUSHES_DIR.glob(f"{channel_name}_*.json")):
         try:
             data = json.loads(pf.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            log.warning("pending_push_read_failed file=%s error=%s", pf.name, exc)
             pf.unlink(missing_ok=True)
             continue
 
@@ -495,7 +504,8 @@ def _send_pending_pushes(
         try:
             created = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
             age_hours = (now - created).total_seconds() / 3600
-        except ValueError:
+        except ValueError as exc:
+            log.warning("pending_push_age_parse_failed file=%s error=%s", pf.name, exc)
             age_hours = 999
 
         if age_hours > _PENDING_MAX_HOURS:
@@ -554,7 +564,8 @@ def _audit_log(event_type: str, **kwargs: str | int | bool | None) -> None:
         _AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(_AUDIT_LOG, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
-    except OSError:
+    except OSError as exc:
+        log.warning("audit_log_write_failed error=%s", exc)
         pass  # Audit log not writable — don't crash
     log.debug("Audit: %s", entry)
 
