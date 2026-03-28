@@ -54,6 +54,7 @@ dev = [
     "pytest>=7.4.0",
     "pytest-mock>=3.11.0",
     "pytest-snapshot>=0.9.0",
+    "pytest-timeout>=2.1.0",
     "datadiff>=2.2.0",
     "anyio[trio]>=4.0.0",
 ]

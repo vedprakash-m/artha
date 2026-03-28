@@ -1770,6 +1770,12 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | `/work projects` | Org | Project portfolio view — meetings-per-project, ADO items, status |
 | `/work sources [query]` | Org | Data source registry lookup |
 | `/work sources add <url>` | Org | Register a new data source with context |
+| `/work products` | Org | Product knowledge index — taxonomy, layers, active projects |
+| `/work products <name>` | Org | Deep product knowledge — architecture, components, dependencies, teams |
+| `/work products add <name>` | Org | Interactively create new product entry (index + deep file) |
+| `/work reflect` | Intel | Reflection Loop — auto-detect due horizon, sweep + synthesize + draft |
+| `/work reflect weekly` | Intel | Force weekly reflection with accomplishments, carry-forwards, reconciliation |
+| `/work reflect --status` | Intel | Show last close times and which horizons are due |
 | `/work return [window]` | Intel | Absence recovery — summarizes what changed while away (default 3d, e.g. `4d`) |
 | `/work boundary` | Intel | Boundary intelligence report — load trends, after-hours patterns, recommendations |
 | `/work connect` | Intel | Review-cycle evidence by goal area |

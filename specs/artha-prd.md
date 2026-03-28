@@ -1043,6 +1043,8 @@ Hey — quick check-in on your week:
 | FW-15 | **Promotion OS** — Evidence-backed promotion readiness assessment and narrative generation. Scope arc analysis, project journey timeline, visibility event inventory, readiness score. CLI: `/work promo-case` (assessment) and `/work promo-case --narrative` (Markdown draft). `state/work/work-project-journeys.md`. | P2 |
 | FW-16 | **Decision Support** — Structured decision-making with D-NNN / OI-NNN identifiers. Decision registry, open item tracking, recurrence drift detection. CLI: `/work decide <context>`. `state/work/work-decisions.md`, `state/work/work-open-items.md`. | P1 |
 | FW-17 | **Org Calendar** — Tracks key org dates: Connect deadlines, rewards season, fiscal year close, all-hands cadence. 30-day lookahead alerts appear in `/work` briefing. `state/work/work-org-calendar.md`. | P1 |
+| FW-18 | **Product Knowledge Base** — Durable product/technology knowledge that persists across projects. Index file (`state/work/work-products.md`) with taxonomy tree + per-product deep files (`state/work/products/*.md`). Captures: architecture, components, dependencies, team ownership, data sources. Trigger-loaded for meeting prep context injection. 6-month staleness (vs 2-week for projects). CLI: `/work products`, `/work products <name>`, `/work products add <name>`. See `specs/work-products.md`. | P2 |
+| FW-19 | **Reflection Loop** — Multi-horizon planning & review engine (daily/weekly/monthly/quarterly/yearly). Sweep → extract → score → reconcile → synthesize → draft pipeline. Three-tier persistence (live/archive/compacted). Backfill from 82-week work-scrape corpus. CLI: `/work reflect`. See `specs/reflection-loop.md`. | P1 |
 
 ---
 
