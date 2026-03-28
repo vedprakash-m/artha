@@ -232,7 +232,7 @@ def _audit_log(artha_dir: Path, entry: str) -> None:
         with open(audit_path, "a", encoding="utf-8") as f:
             f.write(line)
     except Exception as exc:
-        _log.warning("audit_log_write_failed error=%s", exc)
+        _log.warning(f"audit_log_write_failed error={exc}")
         pass  # audit log failure is non-fatal (DB is source of truth)
 
 
@@ -266,7 +266,7 @@ class ActionExecutor:
             env_info = _de.detect(skip_network=True)
             self._read_only = not env_info.capabilities.get("filesystem_writable", True)
         except Exception as exc:
-            _log.warning("detect_environment_failed error=%s", exc)
+            _log.warning(f"detect_environment_failed error={exc}")
             self._read_only = False
 
         self._queue = ActionQueue(artha_dir)
@@ -291,7 +291,7 @@ class ActionExecutor:
                 from foundation import get_public_key  # noqa: PLC0415
                 self._pubkey = get_public_key()
             except (Exception, SystemExit) as exc:
-                _log.warning("get_pubkey_failed error=%s", exc)
+                _log.warning(f"get_pubkey_failed error={exc}")
                 # SystemExit raised by foundation.die() when key is unavailable
                 # (e.g. no age_recipient in user_profile.yaml). Treat as key absent.
                 pass
@@ -743,7 +743,7 @@ class ActionExecutor:
             try:
                 result_data = json.loads(raw["result_data"])
             except Exception as exc:
-                _log.warning("undo_result_data_parse_failed action_id=%s error=%s", action_id, exc)
+                _log.warning(f"undo_result_data_parse_failed action_id={action_id} error={exc}")
                 pass
 
         undo_deadline = result_data.get("undo_deadline")
@@ -1092,7 +1092,7 @@ def _load_action_configs(artha_dir: Path) -> dict[str, Any]:
             data = yaml.safe_load(f)
         return data.get("actions", {}) if isinstance(data, dict) else {}
     except Exception as exc:
-        _log.warning("load_action_configs_failed error=%s", exc)
+        _log.warning(f"load_action_configs_failed error={exc}")
         return {}
 
 
