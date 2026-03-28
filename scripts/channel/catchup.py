@@ -57,8 +57,6 @@ _CATCHUP_TIMEOUT_SEC = 300  # catch-up pipeline + LLM synthesis can take longer
 
 async def _run_pipeline(since_iso: str) -> tuple[str, int]:
     """Run pipeline.py to fetch new emails/calendar. Return (jsonl_output, record_count)."""
-    import asyncio
-
     pipeline_script = _ARTHA_DIR / "scripts" / "pipeline.py"
     python = sys.executable
 

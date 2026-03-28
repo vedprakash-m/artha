@@ -2,6 +2,7 @@
 from __future__ import annotations
 import html
 import re
+from datetime import datetime
 
 # Section headers that are noise on a phone screen — skip entirely
 _SKIP_SECTION_PATTERNS = (
@@ -71,9 +72,6 @@ def _filter_noise_bullets(lines: list[str]) -> list[str]:
     any following table rows.  Standalone bold labels referencing dates
     >1 year old are auto-skipped.
     """
-    import re
-    from datetime import datetime
-
     current_year = datetime.now().year
 
     def _label_is_noise(label: str) -> bool:
@@ -129,8 +127,6 @@ def _clean_for_telegram(text: str) -> str:
     Strips: YAML frontmatter, file-header comments, markdown formatting,
     code fences, pipe tables, horizontal rules, and excess blank lines.
     """
-    import re
-
     # 1. Strip YAML frontmatter
     text = _strip_frontmatter(text)
 
