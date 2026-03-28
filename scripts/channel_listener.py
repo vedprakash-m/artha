@@ -245,7 +245,7 @@ async def process_message(
         stale_prefix = "⚠️ " if _parse_age_to_hours(staleness) > 12 else ""
         response = response + f"\n\n{stale_prefix}Last updated: {staleness} ago"
     elif staleness == "never":
-        response = response + "\n\n⚠️ No catch-up has run yet"
+        response = response + "\n\nLast updated: never (no catch-up has run yet)"
 
     # 7b. Determine output format — HTML commands skip markdown cleanup
     _html_commands = {"/dashboard"}
