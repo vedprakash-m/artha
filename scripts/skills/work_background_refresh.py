@@ -27,7 +27,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from scripts.skills.base_skill import BaseSkill  # type: ignore
+from skills.base_skill import BaseSkill  # type: ignore
 
 log = logging.getLogger("artha.skills.work_background_refresh")
 
