@@ -47,7 +47,7 @@ For each person, extract:
 - `is_manager: true` flag enables 1:1 gap detection (>14 days → alert) per §7.6
 
 Note: `state/work/work-people.md` is the single canonical file — used by both Work OS and personal catch-up.
-  The former `state/work-people.md` (state/ root) has been removed.
+  The former root-level state file (state/ root) has been removed.
 
 ## Meeting Prep Format
 When triggered by work-calendar for a specific meeting:
