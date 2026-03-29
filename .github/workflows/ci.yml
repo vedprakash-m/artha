@@ -113,7 +113,7 @@ jobs:
           FAIL=0
           # Files exempt from PII scan (contain intentional test patterns)
           EXEMPT="specs/supercharge-reloaded.md"
-          for f in specs/*.md config/Artha.core.md config/connectors.yaml config/actions.yaml; do
+          for f in specs/*.md config/Artha.core.md config/actions.yaml; do
             if [ -f "$f" ]; then
               skip=false
               for ex in $EXEMPT; do [ "$f" = "$ex" ] && skip=true; done
@@ -148,11 +148,17 @@ jobs:
       - name: Validate connectors.yaml parses
         run: |
           python -c "
-          import yaml
-          with open('config/connectors.yaml') as f:
+          import yaml, os
+          path = 'config/connectors.yaml'
+          if not os.path.exists(path):
+              path = 'config/channels.example.yaml'
+              if not os.path.exists(path):
+                  print('connectors.yaml not in repo (gitignored — user-specific config). Skipping.')
+                  raise SystemExit(0)
+          with open(path) as f:
               cfg = yaml.safe_load(f)
-          names = list(cfg.get('connectors', {}).keys())
-          print(f'connectors.yaml: {len(names)} connectors — {names}')
+          names = list((cfg or {}).get('connectors', cfg or {}).keys())
+          print(f'{path}: {len(names)} entries — {names}')
           "
       - name: Validate actions.yaml parses
         run: |
