@@ -670,25 +670,57 @@ def main(argv: list[str] | None = None) -> int:
     # Auto-detect
     if not _is_configured():
         print()
-        print(f"{_BOLD}┌─────────────────────────────────────────────────────────────────┐{_RST}")
-        print(f"{_BOLD}│  👋  Welcome to Artha — Personal Intelligence OS                │{_RST}")
-        print(f"{_BOLD}│                                                                 │{_RST}")
-        print(f"{_BOLD}│  No profile found yet.  Let's show you what Artha does first.  │{_RST}")
-        print(f"{_BOLD}└─────────────────────────────────────────────────────────────────┘{_RST}")
+        print(f"Welcome to Artha. Let me show you what I can do.")
         print()
         do_demo()
         print()
-        print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
-        print(f"{_BOLD}  Ready to set this up for YOUR life?{_RST}")
-        print(f"{_BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{_RST}")
+        print(f"{_DIM}That was a demo. Want to set up your real data?{_RST}")
+        print(f"Just tell me your name and email to get started.")
         print()
-        answer = input("  Start guided setup now? [yes/no]: ").strip().lower()
-        if answer in ("yes", "y"):
-            do_setup()
-        else:
+        try:
+            raw = input("  Name and email (e.g. Vandana, vandana@gmail.com): ").strip()
+        except (KeyboardInterrupt, EOFError):
             print()
             print(f"  Run {_BOLD}'python artha.py --setup'{_RST} whenever you're ready.")
-            print(f"  Or run {_BOLD}'bash setup.sh'{_RST} for the automated quick-start.")
+            return 0
+        if not raw:
+            print()
+            print(f"  Run {_BOLD}'python artha.py --setup'{_RST} whenever you're ready.")
+            return 0
+        # Parse "Name, email" or "Name email" or just email
+        import re as _re2
+        parts = _re2.split(r"[,\s]+", raw, maxsplit=1)
+        if len(parts) == 2 and "@" in parts[1]:
+            name, email = parts[0].strip(), parts[1].strip()
+        elif "@" in raw:
+            email = raw.strip()
+            name = email.split("@")[0].replace(".", " ").title()
+        else:
+            name, email = raw.strip(), ""
+        if not email or "@" not in email:
+            email = _prompt("  Your email address")
+        if not name:
+            name = _prompt("  Your name")
+        # Infer timezone from system; fall back to ET
+        import time as _time
+        try:
+            tz_offset = -_time.timezone // 3600
+            _tz_by_offset = {-5: "ET", -6: "CT", -7: "MT", -8: "PT", 5: "IST"}
+            raw_tz = _tz_by_offset.get(tz_offset, "ET")
+        except Exception:
+            raw_tz = "ET"
+        tz = _resolve_timezone(raw_tz)
+        _write_profile_from_wizard(name, email, tz, "single", [])
+        print(f"\n  {_GREEN}✓{_RST}  Profile created for {name} ({email})")
+        rc = subprocess.call(
+            [sys.executable, str(_SCRIPTS / "generate_identity.py")],
+            cwd=str(_ROOT),
+        )
+        if rc == 0:
+            print(f"  {_GREEN}✓{_RST}  Artha configured — open your AI CLI and say: {_BOLD}catch me up{_RST}")
+        else:
+            print(f"  {_YELLOW}!{_RST}  Run 'python scripts/generate_identity.py' to finish setup.")
+        print(f"\n  Optional: connect Gmail/Calendar with: python scripts/setup_google_oauth.py\n")
         return 0
 
     # Configured path: show welcome only — no auto-preflight (avoids cognitive whiplash

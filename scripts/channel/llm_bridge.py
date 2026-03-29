@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -43,6 +44,220 @@ _QUESTION_DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "social": ["social", "friend", "family", "contact", "birthday", "reunion"],
     "learning": ["learn", "course", "book", "study", "certification"],
 }
+
+# Domains that require vault decryption — blocked on bridge/Telegram path.
+_ENCRYPTED_DOMAINS: frozenset[str] = frozenset({
+    "finance", "immigration", "health", "insurance", "estate",
+    "vehicle", "caregiving",
+})
+
+# Intents that touch encrypted domains (used for bridge-path restriction).
+_INTENT_ENCRYPTED_DOMAINS: dict[str, list[str]] = {
+    "immigration-query": ["immigration"],
+}
+
+_INTENT_PATTERNS: dict[str, list[str]] = {
+    # Core seven
+    "brief": [
+        r"catch me up", r"morning briefing", r"sitrep",
+        r"what did i miss", r"brief me",
+    ],
+    "work": [
+        r"work briefing", r"what'?s happening at work",
+        r"work update", r"work catch.?up",
+    ],
+    "items": [
+        r"what'?s open", r"open items", r"show.*items",
+        r"what'?s overdue", r"what'?s due",
+    ],
+    "goals": [
+        r"how are my goals", r"goal pulse", r"show.*goals",
+        r"goal progress",
+    ],
+    "status": [
+        r"how'?s everything", r"quick status", r"artha status",
+    ],
+    # High-value sub-commands
+    "work-prep": [
+        r"prep me for", r"prepare for my meeting",
+        r"meeting prep", r"ready for my",
+        r"what should i know before",
+    ],
+    "work-sprint": [
+        r"sprint health", r"delivery health", r"how'?s the sprint",
+    ],
+    "work-connect-prep": [
+        r"prepare for.*connect", r"connect review",
+        r"review prep", r"calibration",
+    ],
+    "content-draft": [
+        r"write a.*post", r"draft.*linkedin", r"draft.*post",
+        r"write.*linkedin",
+    ],
+    "items-done": [
+        r"mark.*done", r"complete.*item", r"finished.*item",
+        r"done with",
+    ],
+    "items-quick": [
+        r"anything quick", r"quick wins", r"what can i knock out",
+        r"5.?min.*tasks?",
+    ],
+    # Starter set: immigration; expand health/finance patterns once validated.
+    "immigration-query": [
+        r"visa status", r"immigration", r"\bead\b",
+        r"green card", r"priority date",
+    ],
+    "teach": [
+        r"explain\b", r"teach me", r"what is.*\?",
+        r"what does.*mean",
+    ],
+    "dashboard": [
+        r"show.*everything", r"full.*dashboard", r"life dashboard",
+        r"big picture",
+    ],
+    "radar": [
+        r"what'?s new in ai", r"ai trends?", r"show radar",
+        r"ai news",
+    ],
+}
+
+
+# ── _classify_intent ────────────────────────────────────────────
+
+def _classify_intent(question: str) -> str | None:
+    """Return the first matching intent key for a question, or None."""
+    q = question.lower().strip()
+    for intent, patterns in _INTENT_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, q):
+                return intent
+    return None
+
+
+# ── _fuzzy_resolve_item ─────────────────────────────────────────
+
+def _fuzzy_resolve_item(description: str, items_text: str) -> str | None:
+    """Find the best matching OI-NNN for a natural language description.
+
+    Scores each item by word overlap with the description.
+    Returns the OI-NNN when a single clear winner exists (score ≥ 2 and
+    strictly greater than second-best), or None if ambiguous.
+    """
+    desc_words = {w for w in description.lower().split() if len(w) > 3}
+    if not desc_words:
+        return None
+
+    best_id: str | None = None
+    best_score = 0
+    second_best_score = 0
+
+    for m in re.finditer(
+        r'- id:\s*(OI-\d+)(.*?)(?=\n- id:\s*OI-|\Z)', items_text, re.DOTALL
+    ):
+        item_id = m.group(1)
+        item_body = m.group(2).lower()
+        score = sum(1 for w in desc_words if w in item_body)
+        if score > best_score:
+            second_best_score = best_score
+            best_score = score
+            best_id = item_id
+        elif score > second_best_score:
+            second_best_score = score
+
+    if best_score >= 2 and best_score > second_best_score:
+        return best_id
+    return None
+
+
+# ── _gather_intent_context ──────────────────────────────────────
+
+def _gather_intent_context(
+    intent: str,
+    max_chars: int = _CATCHUP_MAX_CONTEXT_CHARS,
+) -> str:
+    """Gather structured context files for a classified intent.
+
+    Returns richer, pipeline-equivalent context instead of the generic
+    keyword domain detection used by the fallback path.
+    """
+    sections: list[str] = []
+
+    def _read_safe(path: Path) -> str:
+        try:
+            return _strip_frontmatter(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
+
+    if intent in ("brief", "dashboard", "status"):
+        for fname in ("goals.md", "open_items.md", "calendar.md"):
+            sf = _STATE_DIR / fname
+            if sf.exists():
+                sections.append(f"[{fname}]\n{_read_safe(sf)}")
+        work_dir = _STATE_DIR / "work"
+        for fname in ("work_status.md", "work_projects.md"):
+            sf = work_dir / fname
+            if sf.exists():
+                sections.append(f"[work/{fname}]\n{_read_safe(sf)}")
+
+    elif intent in ("work", "work-prep", "work-sprint", "work-connect-prep"):
+        work_dir = _STATE_DIR / "work"
+        work_files: dict[str, list[Path]] = {
+            "work": list(work_dir.glob("*.md")) if work_dir.exists() else [],
+            "work-prep": [
+                work_dir / "work_calendar.md", work_dir / "work_people.md",
+                work_dir / "work_comms.md", work_dir / "work_notes.md",
+            ],
+            "work-sprint": [
+                work_dir / "work_projects.md", work_dir / "work_goals.md",
+                work_dir / "work_performance.md",
+            ],
+            "work-connect-prep": [
+                work_dir / "work_goals.md", work_dir / "work_performance.md",
+                work_dir / "work_comms.md", work_dir / "work_calendar.md",
+            ],
+        }
+        for sf in work_files.get(intent, []):
+            if sf.exists():
+                sections.append(f"[{sf.name}]\n{_read_safe(sf)}")
+
+    elif intent in ("items", "items-quick", "items-done"):
+        oi_content, _ = _read_state_file("open_items")
+        if oi_content:
+            sections.append(f"[open_items.md]\n{oi_content}")
+
+    elif intent == "goals":
+        goals_content, _ = _read_state_file("goals")
+        if goals_content:
+            sections.append(f"[goals.md]\n{goals_content}")
+
+    elif intent == "immigration-query":
+        pfile = _PROMPTS_DIR / "immigration.md"
+        if pfile.exists():
+            sections.append(f"[prompts/immigration.md]\n{_read_safe(pfile)}")
+        state_content, _ = _read_state_file("immigration")
+        if state_content:
+            sections.append(f"[state/immigration.md]\n{state_content}")
+
+    elif intent == "content-draft":
+        pr_content, _ = _read_state_file("pr_manager")
+        if pr_content:
+            sections.append(f"[state/pr_manager.md]\n{pr_content}")
+        gallery_file = _STATE_DIR / "gallery.yaml"
+        if gallery_file.exists():
+            sections.append(f"[state/gallery.yaml]\n{_read_safe(gallery_file)}")
+
+    elif intent == "radar":
+        for fname in ("ai_trend_radar.md", "digital.md"):
+            sf = _STATE_DIR / fname
+            if sf.exists():
+                sections.append(f"[state/{fname}]\n{_read_safe(sf)}")
+
+    # intent == "teach" → no state files needed; LLM uses its knowledge directly.
+
+    context = "\n\n".join(sections)
+    if len(context) > max_chars:
+        context = context[:max_chars] + "\n…[context truncated]"
+    return context
 
 
 
@@ -412,10 +627,11 @@ async def _ask_llm_ensemble(question: str, context: str) -> str:
 
 # ── cmd_ask ─────────────────────────────────────────────────────
 
-async def cmd_ask(question: str, scope: str) -> tuple[str, str]:
+async def cmd_ask(question: str, scope: str, *, is_bridge: bool = True) -> tuple[str, str]:
     """Context-aware Q&A — routes free-form questions to LLM with Artha context.
 
     Prefix with 'aa' (or 'ask all') to run ensemble mode (all CLIs in parallel).
+    Set is_bridge=False when called from the primary CLI to allow encrypted-domain access.
     """
     if not question.strip():
         return "Send me a question and I'll answer using your Artha data.", "N/A"
@@ -429,15 +645,35 @@ async def cmd_ask(question: str, scope: str) -> tuple[str, str]:
             ensemble = True
             break
 
-    # Detect relevant domains and gather context
-    domains = _detect_domains(q)
-    context = _gather_context(domains)
+    # Intent classification — runs before keyword domain detection.
+    intent = _classify_intent(q)
 
-    log.info("[ask] question=%r domains=%s context_chars=%d ensemble=%s",
-             q[:80], domains, len(context), ensemble)
+    # Bridge path: block access to encrypted domains for security.
+    if intent and is_bridge:
+        blocked_domains = _INTENT_ENCRYPTED_DOMAINS.get(intent, [])
+        if blocked_domains:
+            domain_list = ", ".join(blocked_domains)
+            return (
+                f"That domain ({domain_list}) contains sensitive data. "
+                "For security, I can only access it from your terminal session. "
+                "Open your CLI and ask again there.",
+                "N/A",
+            )
 
-    _audit_log("CHANNEL_ASK", question=q[:100], domains=",".join(domains),
-               context_chars=len(context), ensemble=ensemble)
+    if intent:
+        context = _gather_intent_context(intent)
+        log.info("[ask] intent=%r question=%r context_chars=%d ensemble=%s",
+                 intent, q[:80], len(context), ensemble)
+        _audit_log("CHANNEL_ASK", question=q[:100], intent=intent,
+                   context_chars=len(context), ensemble=ensemble)
+    else:
+        # Fallback: keyword domain detection (existing path).
+        domains = _detect_domains(q)
+        context = _gather_context(domains)
+        log.info("[ask] question=%r domains=%s context_chars=%d ensemble=%s",
+                 q[:80], domains, len(context), ensemble)
+        _audit_log("CHANNEL_ASK", question=q[:100], domains=",".join(domains),
+                   context_chars=len(context), ensemble=ensemble)
 
     # Call LLM(s)
     if ensemble:
