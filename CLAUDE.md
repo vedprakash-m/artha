@@ -3,16 +3,28 @@
 Read `config/Artha.md` now and follow all instructions within it before
 responding to any message.
 
-## Core Routing (fallback if Artha.md not loaded)
-If you cannot read Artha.md, use this minimal routing:
-- `brief` → Run `python scripts/pipeline.py`, read state files, produce briefing
-- `work` → Read all files in `state/work/`, produce work briefing
-- `items` → Read `state/open_items.md`, display action items
-- `goals` → Read `state/goals.md`, display goal progress
-- `domain <name>` → Read `prompts/<name>.md` + `state/<name>.md`, produce deep dive
-- `content` → Read `state/pr_manager.md` + `state/gallery.yaml`, show content calendar
-- `guide` → Show the seven commands above with brief descriptions
-- `health` → Run `python scripts/preflight.py`, display system status
+> **IMPORTANT — Claude Code:** The user types Artha commands as plain text
+> (e.g. `brief`, `work`, `items`) — **without** a leading `/` slash.
+> Claude Code reserves `/` for its own built-ins (`/compact`, `/help`, etc.).
+> Always treat bare words like `brief` as Artha commands using the routing
+> table below.
+
+## Core Routing
+When the user's message matches any pattern below, execute the corresponding action.
+Do NOT require a `/` prefix — bare words are the primary invocation form.
+
+| User says (examples) | Route to | Action |
+|---------------------|----------|--------|
+| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python scripts/pipeline.py`, read state files, produce briefing |
+| `work`, `what's happening at work`, `work briefing` | **work** | Read all files in `state/work/`, produce work briefing |
+| `items`, `what's open`, `what's overdue`, `action items` | **items** | Read `state/open_items.md`, display action items |
+| `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** | Read `state/goals.md`, display goal progress |
+| `domain <X>`, `tell me about <X>`, `<X> status` | **domain** | Read `prompts/<X>.md` + `state/<X>.md`, produce deep dive |
+| `content`, `what should I post`, `draft a post` | **content** | Read `state/pr_manager.md` + `state/gallery.yaml`, show content calendar |
+| `guide`, `what can you do`, `show commands` | **guide** | Show the seven commands above with brief descriptions |
+| `health`, `system status`, `is everything OK` | **health** | Run `python scripts/preflight.py`, display system status |
+
+For full command reference with sub-commands, read `config/commands.md`.
 
 ## What I Do
 
@@ -21,33 +33,15 @@ immigration, health, kids, goals, career, content — so nothing falls
 through the cracks. I pull data from your email, calendar, and connected
 services, then synthesize it into actionable intelligence.
 
-**Talk to me naturally, or use these commands (leading `/` is optional):**
+**Talk to me naturally — you never need to memorize commands:**
 
-### The Essentials
-| Command | What it does |
-|---------|-------------|
-| `brief` | Morning briefing — alerts, calendar, domains, goals, action items |
-| `work` | Work briefing — meetings, sprint, career, people, open threads |
-| `items` | Your action items across every life domain |
-| `goals` | Goal progress, sprints, leading indicators |
-| `domain <name>` | Deep dive — finance, immigration, health, kids, or any of 20 domains |
-| `content` | Content creation — moments, drafts, publishing pipeline |
-| `guide` | Discover everything else I can do |
-
-### Intent Detection Rules
-When a user message arrives, match it against these patterns (case-insensitive).
-A leading `/` is optional — `brief` and `/brief` are the same command.
-
-| Pattern | Route to |
-|---------|----------|
-| `brief`, `catch me up`, `morning briefing`, `SITREP`, `what did I miss` | **brief** pipeline |
-| `work`, `what's happening at work`, `work briefing` | **work** pipeline |
-| `items`, `what's open`, `what's overdue`, `action items` | **items** display |
-| `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** display |
-| `domain <X>`, `tell me about <X>`, `<X> status` (where X is a domain name) | **domain** deep dive |
-| `content`, `what should I post`, `content calendar`, `draft a post` | **content** pipeline |
-| `guide`, `what can you do`, `help me`, `show commands` | **guide** display |
-| `health`, `system status`, `is everything OK` | **health** check |
+- "Catch me up" → full briefing
+- "What's my visa status?" → immigration deep dive
+- "Prep me for my 2pm" → work meeting preparation
+- "Mark the tax return done" → resolves and completes the item
+- "Write a LinkedIn post about Holi" → content draft with your voice
+- "How are my goals?" → progress check
+- "What should I work on today?" → prioritized action synthesis
 
 ### Quick Reference (say `guide` for the full list)
 - **Briefing variants:** "flash briefing", "deep briefing", "show dashboard"
@@ -66,7 +60,8 @@ A leading `/` is optional — `brief` and `/brief` are the same command.
 - `/compact` shrinks context when nearing 200K token limit.
 - Vault hooks (pre/post) auto-encrypt between sessions.
 - Colon syntax (`work:`, `content:`) fully supported — Claude reliably reads Artha.md.
-- Commands work with or without `/` prefix. Type `brief` or `/brief`.
+- **Do NOT use `/` prefix for Artha commands** — type `brief` not `/brief`.
+  Claude's own built-ins: `/compact`, `/help`, `/clear`, `/cost`, `/doctor`.
 
 These are NOT built-in CLI commands — they are Artha workflow triggers
 defined in `config/Artha.md`. Execute them exactly as documented in that file.
