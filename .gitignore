@@ -28,6 +28,7 @@ config/prompt-overlays/*.md
 # --- Local archive (personal specs, notes with PII — never committed) ---
 .archive/
 knowledge/
+ar/
 
 # --- Specs directory — only canonical specs are committed ---
 # All specs/ files are ignored by default; only the 3 canonical specs are
@@ -122,12 +123,6 @@ docs/cross-platform-git-setup.md
 # --- OneDrive artifacts ---
 *conflicted*
 .DS_Store
-
-# --- Spec working files (only main specs committed: PRD, Tech, UX) ---
-specs/*.md
-!specs/artha-prd.md
-!specs/artha-tech-spec.md
-!specs/artha-ux-spec.md
 
 # --- IDE settings ---
 .vscode/

@@ -1615,6 +1615,118 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 | Home Assistant | Local API (LAN only) | Device status, energy | Pull on catch-up (if Mac on LAN) |
 | Fidelity | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Balance, transaction alerts | Via email batch |
 | Chase | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Balance, transaction alerts | Via email batch |
+
+---
+
+## 16. UI/UX Simplification Relaunch (v5.1)
+
+*Source: `specs/ui-reloaded.md` — implemented March 2026. This section supersedes older interaction-model notes in §5 where they conflict.*
+
+### 16.1 The Seven Commands
+
+Artha exposes **seven deterministic commands** that cover 95% of daily use, backed by NL understanding for everything else. The user learns seven words; the system understands thousands.
+
+| # | Command | What the user says | What happens |
+|---|---------|-------------------|-------------|
+| 1 | **`/brief`** | "catch me up" | 21-step pipeline. Personal life briefing across all domains. |
+| 2 | **`/work`** | "what's happening at work?" | Work OS briefing. Meetings, sprint, career evidence, people, threads. |
+| 3 | **`/items`** | "what's open?" | Cross-domain action queue. Every overdue, due-soon, and open item. |
+| 4 | **`/goals`** | "how are my goals?" | Goal progress across all life areas. Sprints, leading indicators, coaching. |
+| 5 | **`/domain`** | "tell me about my finances" | Deep dive into any one of 20 life domains. |
+| 6 | **`/content`** | "what should I post?" | Content creation pipeline — moments, drafts, staging, publishing. Unified from `/pr` + `/stage`. |
+| 7 | **`/guide`** | "what can you do?" | Contextual command discovery. Shows relevant commands based on current state. |
+
+**`/health`** exists as a utility command (the 8th surface) for system diagnostics — connector health, signal quality, cost, privacy. It is not one of the seven life-surface commands because it illuminates Artha itself, not any area of the user's life.
+
+**Colon syntax** for sub-command discovery: append `:` with no argument to any command to list its sub-commands (`/work:`, `/brief:`, `/content:`, etc.). Confirmed on Claude Code; NL fallback ("or just say what you want") is the cross-CLI interface.
+
+### 16.2 Command Consolidations
+
+| Absorbed command | Into | How |
+|-----------------|------|-----|
+| `/catch-up flash` | `/brief` | Auto-selects flash when <4h since last |
+| `/catch-up deep` | `/brief` | "deep briefing" or "the full picture" triggers deep format |
+| `/catch-up standard` | `/brief` | Legacy; `/brief everything` or "show everything" |
+| `/goals leading` | `/goals` | Leading indicators shown by default |
+| `/pr *` (6 commands) | `/content` | Direct namespace rename |
+| `/stage *` (7 commands) | `/content` | Direct namespace rename |
+| `/eval *`, `/diff *`, `/cost`, `/privacy` | `/health` | System diagnostics consolidated |
+| `/decisions`, `/scenarios` | `/domain decisions` | Decisions is a domain |
+
+### 16.3 Headline Briefing Format (New Default)
+
+The briefing gains a new default format — **headline** — replacing `standard` as the default for 4–48h gaps. The standard format becomes "show everything" (accessible via `/brief everything`).
+
+**Format selection:**
+
+| Gap / Context | Format |
+|---|---|
+| < 4 hours | flash (unchanged — max 8 lines) |
+| 4–48 hours | **headline** (NEW — 5–15 lines, critical/urgent only) |
+| > 48 hours | digest (unchanged) |
+| Monday | weekly (headline + week-ahead) |
+| User says "deep" | deep (full analysis + coaching) |
+| User says "everything" | standard (full 250-line) |
+
+**Headline format rules (10):** Only critical 🔴 and urgent 🟠 items appear. Empty domains are invisible. ONE THING is the opening line. Calendar is one line. Items and goals are summary stats. Relationships are one line. Developer metrics removed (live in `/health`). Machine IDs hidden (resolved by description). Dates are human. Drill-down prompt always present.
+
+### 16.4 `/content` Namespace Unification
+
+One namespace replaces two:
+
+| Old | New |
+|-----|-----|
+| `/pr draft <platform>` | `/content draft <platform> [topic]` |
+| `/stage approve <CARD-ID>` | `/content approve <topic>` — fuzzy match by topic |
+| `/stage posted <CARD-ID> <platform>` | `/content posted <topic> <platform>` |
+| `/stage dismiss <CARD-ID>` | `/content dismiss <topic>` |
+| `/pr voice` | `/content voice` |
+| `/pr history` | `/content history` |
+
+Fuzzy matching: `/content approve holi` searches active cards for "holi" in title/topic. Single match proceeds; zero or multiple triggers disambiguation. Machine IDs still accepted for precision.
+
+### 16.5 `/health` Consolidation
+
+`/health` becomes the single "is everything OK?" command with sections: Connections, Domain Health, Quality (7-day), Cost, Privacy, State Changes. Old commands (`/eval`, `/cost`, `/privacy`, `/diff`) become aliases to `/health <section>`. No Python code changes — prompt-only.
+
+### 16.6 Zero-Friction First Run
+
+**New first-run path:** Demo briefing (zero config) → name + email → archetype auto-detected → first real briefing. Setup is conversational ("just tell me your name and email"), not a 12-question wizard.
+
+**User Archetype Model:** Artha infers configuration from one of six archetypes:
+
+| Archetype | Domains | Connectors | Work OS |
+|---|---|---|---|
+| Solo | 12 core | Gmail or Outlook | Off |
+| Couple | 15 domains + social | Gmail + shared calendar | Off |
+| Family | 20 domains + kids + school | All personal + Canvas LMS | Off |
+| Professional | 12 core + work | Gmail + Outlook | On (universal) |
+| Enterprise | 12 core + work | All + MCP servers | On (corporate) |
+| Microsoft | All domains + work | All + WorkIQ + ADO + ICM | On (MSFT tier) |
+
+**Preflight changes:** Gmail OAuth, Calendar OAuth, and Gmail API move from P0 (blocking) to P1 (warn + skip). Vault and PII guard remain P0. Encryption is automatic and invisible — user never sees "age", "keypair", or "keyring."
+
+### 16.7 Command Lifecycle Policy
+
+Commands graduate through phases before appearing in `/guide`:
+
+| Phase | Criteria |
+|---|---|
+| Experimental (internal) | Implemented, not in `/guide` |
+| Beta | In `/guide` with "(beta)" label; error rate <15% |
+| Graduated | >30 days in production, <5% error rate; appears in `/guide` unlabeled |
+| Deprecated | Marked in `/guide`; aliased to replacement; removed after 30 days |
+
+### 16.8 Success Metrics (v5.1)
+
+| Metric | Target |
+|---|---|
+| Commands needed to get value | ≤ 2 (7-command surface) |
+| First value time (new user) | < 90 seconds |
+| Briefing format comprehension | >80% users understand "say 'show everything'" |
+| Bridge path quality parity | >90% of primary CLI intents handled correctly on bridge |
+| NL routing accuracy | >95% of recognized intents route to correct pipeline |
+| Preflight GO rate | >90% on first run without manual intervention |
 | Wells Fargo | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Mortgage, FICO score | Via email batch |
 | Vanguard | Email parsing (LLM-based) — *direct financial API deferred (see §13 note)* | Statement alerts, balances | Via email batch |
 | Metro Electric | Email parsing (LLM-based) | Bill amount, due date | Via email batch |

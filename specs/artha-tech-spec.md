@@ -3443,6 +3443,138 @@ When adding a new MCP server (e.g., Outlook MCP, Plaid, Home Assistant):
 ☐ 4. Test connection: verify tool availability in Claude Code session
 ☐ 5. Update pii_guard.sh if the new data source introduces new PII patterns
 ☐ 6. Update affected domain prompts — add extraction rules for new data format
+
+---
+
+## 20. v5.1 Technical Implementation
+
+*Source: `specs/ui-reloaded.md` Parts VI–VIII — implemented March 2026.*
+
+### 20.1 Intent Router — Bridge Path Parity (Part VI)
+
+The bridge path (`cmd_ask()` in `scripts/channel/llm_bridge.py`) gains an intent classification layer so it invokes the same structured pipelines as slash commands. **~145 new lines, no new dependencies.**
+
+**Architecture:**
+
+```python
+# scripts/channel/llm_bridge.py additions
+
+_INTENT_PATTERNS: dict[str, list[str]] = {
+    "brief": [r"catch me up", r"morning briefing", r"sitrep", r"what did i miss", r"brief me"],
+    "work": [r"work briefing", r"what'?s happening at work", r"work update", r"work catch.?up"],
+    "items": [r"what'?s open", r"open items", r"show.*items", r"what'?s overdue", r"what'?s due"],
+    "goals": [r"how are my goals", r"goal pulse", r"show.*goals", r"goal progress"],
+    "status": [r"how'?s everything", r"quick status", r"artha status"],
+    "work-prep": [r"prep me for", r"prepare for my meeting", r"meeting prep", r"ready for my", r"what should i know before"],
+    "work-sprint": [r"sprint health", r"delivery health", r"how'?s the sprint"],
+    "work-connect-prep": [r"prepare for.*connect", r"connect review", r"review prep", r"calibration"],
+    "content-draft": [r"write a.*post", r"draft.*linkedin", r"draft.*post", r"write.*linkedin"],
+    "items-done": [r"mark.*done", r"complete.*item", r"finished.*item", r"done with"],
+    "items-quick": [r"anything quick", r"quick wins", r"what can i knock out", r"5.?min.*tasks?"],
+    "immigration-query": [r"visa status", r"immigration", r"ead", r"green card", r"priority date"],
+    "teach": [r"explain\b", r"teach me", r"what is.*\?", r"what does.*mean"],
+    "dashboard": [r"show.*everything", r"full.*dashboard", r"life dashboard", r"big picture"],
+    "radar": [r"what'?s new in ai", r"ai trends?", r"show radar", r"ai news"],
+}
+
+def _classify_intent(message: str) -> str | None:
+    """Return the first matching intent key, or None if no match."""
+    msg = message.lower()
+    for intent, patterns in _INTENT_PATTERNS.items():
+        if any(re.search(p, msg) for p in patterns):
+            return intent
+    return None
+
+def _fuzzy_resolve_item(description: str, items_text: str) -> str | None:
+    """Find the best matching OI-NNN for a natural language description."""
+    # Parse items_text for OI-NNN lines
+    # Score each by word overlap with description
+    # Return OI-NNN if single strong match, None if ambiguous
+```
+
+**Intent → context mapping:**
+
+| Intent | State files loaded | Pipeline equivalent |
+|---|---|---|
+| `brief` | All always-load state files (80K budget) | `/brief` |
+| `work` | All `state/work/*` files | `/work` |
+| `work-prep` | work-calendar + work-people + work-comms + work-notes | `/work prep` |
+| `work-sprint` | work-projects + work-goals + work-performance | `/work sprint` |
+| `items` | open_items.md only | `/items` |
+| `goals` | goals.md only | `/goals` |
+| `content-draft` | pr_manager.md + gallery.yaml + voice profile | `/content draft` |
+| `immigration-query` | prompts/immigration.md + state/immigration.md | `/domain immigration` |
+| `dashboard` | All always-load state files + domain summaries | `/brief everything` |
+| `teach` | No state files — LLM uses Artha.md knowledge | NL direct |
+
+**Security boundary — bridge path restriction:** Auto-decrypt for encrypted domains is **disabled on the bridge path** (Telegram, async). When a bridge request references a sensitive domain (finance, immigration, health, insurance, estate, vehicle, caregiving), Artha responds: *"That domain contains sensitive data. For security, I can only access it from your terminal session."* Non-encrypted domains (calendar, comms, goals, items, non-sensitive work files) are loaded normally.
+
+### 20.2 Auto-Vault Module (Part VII)
+
+New module: `scripts/lib/auto_vault.py` (~80 lines)
+
+```python
+"""Transparent encryption setup — user never sees this."""
+
+def ensure_encryption_ready() -> bool:
+    """
+    Check if encryption is configured. If not, set it up silently.
+    Returns True if encryption is available, False if it cannot be set up
+    (in which case state files remain unencrypted with a logged warning).
+    """
+    # 1. Check if age binary is installed
+    # 2. Check if keypair exists in keyring
+    # 3. If not: generate keypair, store in keyring, write public to profile
+    # 4. If age not installed: log warning, return False
+    # 5. If keyring unavailable: log warning, return False
+```
+
+Called by `vault.py` before any encrypt/decrypt operation. Encrypted domains (finance, immigration, health, insurance, estate, vehicle, caregiving) remain blocked if encryption cannot be set up — they never fall back to plaintext.
+
+### 20.3 Error Messages Module (Part VIII)
+
+New module: `scripts/lib/error_messages.py` (~60 lines)
+
+A mapping from internal error codes to user-facing messages with zero implementation internals exposed:
+
+| Internal error | User sees |
+|---|---|
+| `gmail_401_expired` | "I couldn't reach your Gmail. Say 'reconnect Gmail' to fix it." |
+| `outlook_401_expired` | "Your Outlook connection expired. Say 'reconnect Outlook' to fix it." |
+| `vault_no_key` | "Your data vault needs a quick fix. Say 'fix encryption' and I'll walk you through it." |
+| `vault_stale_lock` | *(auto-cleared silently)* |
+| `connector_timeout` | "One of your data sources took too long to respond. I continued with available data." |
+| `python_traceback` | "Something unexpected happened. I logged the details and continued with available data." |
+
+**Self-healing token refresh** (Step 4 of catch-up pipeline): attempt token refresh on 401/403 before surfacing any error. Increment `consecutive_failure_count`; surface fix instruction only after 3 consecutive failures or 7-day first-failure bound. Silent skip on first failure.
+
+### 20.4 Preflight Severity Changes (Part VII)
+
+Three checks downgraded from P0 (blocking) to P1 (warn + skip):
+
+| Check | Before | After | Effect |
+|---|---|---|---|
+| Gmail OAuth token | P0 | P1 | Briefing runs without Gmail data |
+| Calendar OAuth token | P0 | P1 | Briefing runs without calendar events |
+| Gmail API health | P0 | P1 | Briefing runs without Gmail data |
+
+**Remaining P0 checks (unchanged):** keyring backend, vault health (if encrypted files exist), PII guard, state directory writable, vault lock state.
+
+### 20.5 Context Budget Management
+
+The bridge path uses an 80K character budget for full-briefing context loads:
+- Always-load state files loaded first (goals, open_items, summaries)
+- Domain state files loaded in priority order until budget is reached
+- Encrypted domains skipped on bridge path regardless of budget
+
+### 20.6 Cross-CLI Instruction File Design
+
+The instruction files (CLAUDE.md, GEMINI.md, AGENTS.md) follow three rules:
+1. **Self-sufficiency:** fallback routing skeleton works without Artha.md loaded
+2. **No built-in collisions:** `/brief`, `/guide`, `/health` are collision-free on Claude Code, Gemini CLI, and VS Code Copilot
+3. **Token economy:** AGENTS.md target ≤30 lines (Copilot injects it twice); CLAUDE.md/GEMINI.md ≤40 lines
+
+Known CLI reserved command collisions: Claude Code (`/compact`, `/help`); Gemini CLI (`/help`, `/memory`, `/model`); VS Code Copilot (`/fix`, `/explain`, `/tests`, `/doc`, `/new`, `/clear`, `/help`).
 ☐ 7. Add to registry.md MCP Servers table
 ☐ 8. Update CLAUDE.md catch-up workflow if the MCP adds a new fetch step
 ☐ 9. Canary run: verify data flows correctly through catch-up

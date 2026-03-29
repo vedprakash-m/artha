@@ -561,7 +561,7 @@ def check_open_items(auto_fix: bool = False) -> CheckResult:
             fix_hint="Run: python scripts/preflight.py --fix  (auto-creates from template)",
         )
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             f.read(100)
         return CheckResult("open_items.md", "P1", True, "open_items.md accessible ✓")
     except OSError as exc:
@@ -1448,7 +1448,7 @@ def check_action_handlers() -> CheckResult:
         config_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
         actions_enabled = False
         if os.path.exists(config_path):
-            with open(config_path) as _f:
+            with open(config_path, encoding="utf-8") as _f:
                 _content = _f.read()
             # Quick YAML check without full parser dependency
             actions_enabled = "actions:" in _content and "enabled: true" in _content

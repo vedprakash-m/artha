@@ -301,7 +301,7 @@ def analyze_skills() -> dict[str, Any]:
         if last_val and isinstance(last_val, str) and len(last_val) >= 10:
             try:
                 dt = datetime.fromisoformat(last_val.replace("Z", "+00:00"))
-                last_val_display = dt.strftime("%-m/%-d")
+                last_val_display = f"{dt.month}/{dt.day}"
             except ValueError:
                 last_val_display = last_val[:10]
         else:
