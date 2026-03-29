@@ -72,6 +72,14 @@ from foundation import (
     _normalize_sensitive_files,
 )
 
+# Transparent first-run encryption setup (Part VII — auto_vault).
+# Graceful fallback if lib not importable during bootstrapping.
+try:
+    from lib.auto_vault import ensure_encryption_ready as _ensure_encryption_ready
+except ImportError:
+    def _ensure_encryption_ready() -> bool:  # type: ignore[misc]
+        return True
+
 
 def _iter_sensitive_files():
     """Yield (domain, extension, plain_path, age_path) for each sensitive file.
@@ -502,6 +510,7 @@ def do_decrypt() -> None:
     Corrupt .age files (invalid header / tiny stubs) are quarantined and
     skipped — they do not block decryption of healthy files.
     """
+    _ensure_encryption_ready()  # transparent first-run setup (Part VII)
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
@@ -637,6 +646,7 @@ def do_encrypt() -> None:
       - Plaintext deletion is deferred until ALL encrypts succeed (#1)
       - On failure, remaining plaintext is locked down (permissions removed) (#9)
     """
+    _ensure_encryption_ready()  # transparent first-run setup (Part VII)
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
