@@ -252,6 +252,28 @@ def _write_profile_from_wizard(
         "  age_recipient: \"\"   # paste your age1... key here after: age-keygen",
     ]
 
+    archetype = {
+        "single": "Solo",
+        "couple": "Couple",
+        "family": "Family",
+    }.get(household, "Solo")
+    if email_type == "outlook" and household == "single":
+        # single + Outlook more likely Professional tier
+        archetype = "Professional"
+
+    lines += [
+        "",
+        "setup:",
+        f"  archetype: \"{archetype}\"",
+        "  completeness: 0.15   # rises as you connect integrations",
+        "  next_suggested: \"connect your email\"",
+        "  completed_steps:",
+        "    - name_email",
+        "  remaining_steps:",
+        "    - gmail_oauth",
+        "    - encryption",
+    ]
+
     _USER_PROFILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

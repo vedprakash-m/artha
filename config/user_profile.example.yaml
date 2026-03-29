@@ -227,6 +227,23 @@ capabilities:
   calendar_mcp: true
   gemini_cli: false
   copilot_cli: false
+
+# ─── Setup Staircase ──────────────────────────────────────────────────────────
+# Tracks setup progress across sessions. Auto-updated by Artha as you configure
+# each integration. Drives contextual suggestions in /guide and briefings.
+setup:
+  archetype: family          # Solo | Couple | Family | Professional | Enterprise | Microsoft
+  completeness: 0.65         # 0.0 → 1.0, auto-calculated from completed_steps
+  next_suggested: "connect Google Calendar"
+  completed_steps:
+    - name_email              # Step 1 — always present after wizard
+    - gmail_oauth             # Optional — Gmail connected
+    - household_type          # Inferred from wizard answer
+  remaining_steps:
+    - google_calendar
+    - outlook_personal
+    - encryption
+    - kids_school
   vault_encryption: true
   email_briefings: true
   weekly_summary: true
