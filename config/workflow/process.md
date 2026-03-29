@@ -88,6 +88,8 @@ Emails may route to multiple domains.
 **Tier A (always-load):** `calendar`, `comms`, `goals`, `finance`, `immigration`, `health`
 **Tier B (lazy-load):** All other enabled domains — load ONLY if at least one email was routed here in Step 6.
 
+**Skill cache location:** Skills results are now persisted at `state/skills_cache.json` (not `tmp/`). This file is synced via OneDrive and survives Step 18 cleanup. The cache carries per-skill health counters (`health.classification`, `health.consecutive_zero`, etc.) used by R7 cadence reduction and `/eval skills`.
+
 ### Step 7 — Process domains (IN PARALLEL where possible)
 
 **Skip all domain writes in read-only mode** → log `⏭️ Step 7 skipped — read-only mode`
@@ -115,9 +117,74 @@ h. Collect briefing contribution (1–5 bullets per domain)
 1. Read `state/open_items.md`
 2. For each actionable item (🔴 or 🟠 rated, or `action_required: true`):
    - Deduplicate: if same description + deadline + status: open → update `last_seen` only
-   - New item: append with schema `OI-NNN`, date_added, source_domain, description, deadline, priority, status: open
+   - New item: append with schema `OI-NNN`, date_added, source_domain, description, deadline, priority, status: open, **`origin: system`**
 3. Use sequential OI-NNN ids (read current max, increment by 1)
 4. Write complete file atomically
+
+### Step 7c — Open Items Staleness Validation (MANDATORY)
+
+**Before surfacing ANY open item in the briefing, verify it is still open.**
+
+This step prevents stale/completed items from cluttering the briefing. Without it,
+items that were resolved days ago keep appearing as "open" because the state file
+was never updated.
+
+**Validation protocol:**
+1. Read ALL items with `status: open` from `state/work/work-open-items.md`
+2. For items older than 3 days (`date_added` or `last_seen` > 3d ago):
+   - Ask WorkIQ: *"Has this item been resolved? [item description]"*
+   - OR check: did the user close this in a subsequent session?
+   - OR check: does the evidence trail show completion (email sent, meeting held, PR merged)?
+3. **Classify each item:**
+   - ✅ **DONE** — evidence of completion found → mark `status: done`, add `completed_date`
+   - ⏳ **STILL OPEN** — no evidence of completion → keep `status: open`
+   - ❓ **STALE/UNCERTAIN** — item is >7 days old with no activity signal →
+     mark `status: stale`, show as: `❓ [STALE] [description] — may be outdated, verify`
+4. **Briefing display rules:**
+   - Only show items with status `open` or `stale` (with stale marker)
+   - DONE items move to `## Completed` section (not deleted — audit trail)
+   - Show count: "30 items checked: 12 still open, 15 done, 3 stale"
+
+**WorkIQ budget:** Max 5 validation queries per catch-up session. Prioritize:
+oldest items first, then items with `ASAP` due dates.
+
+### Step 7d — Open Items Ownership Validation (MANDATORY)
+
+**Before surfacing ANY open item as YOUR action, verify YOU are the actual owner.**
+
+This is the #1 source of false alerts: Artha treats "you're in the meeting/thread"
+as "it's your action item." Many items belong to teammates who are driving them.
+
+**Ownership check protocol:**
+1. For each item with `status: open`, check the `Owner` field in `work-open-items.md`
+2. If Owner = Ved → surface as your action
+3. If Owner = someone else → reclassify as:
+   `👀 [WATCHING] [description] — DRI: [owner], you are informed`
+4. If Owner = Ved but the ask was directed at someone else (check original thread) →
+   reclassify per the actual ball-holder
+
+**Known ownership delegations (learned from user corrections):**
+- **[Networking DRI]** — DRI for ALL networking/VNet topics: LSO, kRDMA, RDMA
+  connectivity, NMAgent watchdog, Hypernet VNet Service Tags, IPv6 decisions
+- **[Program DRI]** — DRI for program structure, execution & reporting
+- **[Buildout DRI]** — DRI for buildout requirements, one-pager
+
+**Display rules:**
+- YOUR actions: show in 🔴/🟡 sections with full detail
+- WATCHING items: show in a separate `👀 Tracking (not your action)` section
+- Count: "12 items: 5 YOUR actions, 7 watching"
+
+**Why this matters:** Surfacing other people's action items as yours creates false
+urgency, wastes triage time, and erodes trust. The user should never have to say
+"that's not my action."
+
+**Why this matters:** Without validation, the open items list grows monotonically —
+items are added but never removed, creating a "wall of stale tasks" that erodes
+trust in the briefing. The user should never have to say "that's already done."
+
+**`items_surfaced` counter:** Start a running count of P0/P1/P2 alerts generated during Steps 7–7b. Increment by 1 for each alert added to the briefing buffer. Pass this count to `health_check_writer.py --items-surfaced` at Step 16. (Counter continues in Step 8 — see `reason.md`.)
+
+**Note:** `origin: system` marks auto-extracted OIs. User-requested OIs get `origin: user` at Step 19. `source_domain:` continues to record which domain the item came from (e.g., `source_domain: finance`). The two fields answer different questions: `origin` = who created it, `source_domain` = where it came from.
 
 ## Error handling
 - PII detection on unresolvable content = skip that email, log to audit.md

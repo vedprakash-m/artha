@@ -42,6 +42,9 @@ state/*.md
 state/*.md.age
 state/*.yaml
 state/*.yaml.age
+# JSON runtime state (skills cache, catch-up run history — personal data, not committed)
+state/*.json
+state/*.json.age
 # Work OS state — personal work data (never committed)
 state/work/
 # Bridge artifacts — aggregate signals with potential PII (never committed)

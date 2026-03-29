@@ -106,6 +106,38 @@ trends, accuracy metrics, signal:noise ratio, and data freshness. Flags:
 - `/eval perf` — performance only (connector/skill/phase timing trends)
 - `/eval accuracy` — accuracy only (acceptance rate, signal:noise)
 - `/eval freshness` — domain staleness and OAuth health
+- `/eval skills` — skill health table (runs `python3 scripts/eval_runner.py --skills`)
+
+### `/eval skills`
+Run `python3 scripts/eval_runner.py --skills`. Reads `state/skills_cache.json` and renders
+the Skill Health table: classification (broken / degraded / stable / healthy / warming_up),
+success rate, zero-value rate, last value timestamp, wall-clock timing, and cadence status
+(with reduction suggestion if consecutive_zero ≥ 10). Broken and degraded skills sort to
+the top. Use this to decide whether to disable or cadence-reduce a skill via R7.
+
+### `/eval effectiveness`
+Claude-rendered summary (no Python required). Steps:
+1. Read `state/catch_up_runs.yaml` (last 10 entries)
+2. Read `state/skills_cache.json` — count broken and degraded skills
+3. Render the Effectiveness table and trend narrative:
+
+```markdown
+## Artha Effectiveness — Last 10 Catch-ups
+
+| Date | Format | Engagement | User OIs | Corrections | Items Surfaced | Skills Broken |
+|------|--------|-----------|----------|-------------|----------------|---------------|
+| 3/27 | std    | 0.33      | 1        | 0           | 3              | 2             |
+
+**Trends:**
+- Mean engagement rate: 0.33 (target: 0.25–0.50) ✅
+- R2 compression: NOT ACTIVE (need N more runs with engagement_rate)
+
+**Recommendations:**
+- [list any broken/degraded/stable skills with suggestions]
+```
+
+Note: entries where `engagement_rate` is `null` (no alerts generated that session) are
+displayed as `—` in the Engagement column and excluded from the mean calculation.
 
 ### `/items`
 Display all open action items from `state/open_items.md`. Groups:

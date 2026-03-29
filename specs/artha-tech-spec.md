@@ -2243,7 +2243,7 @@ No actual PII values are logged — only the type, source email ID, and action t
 
 **Failure mode:** If `pii_guard.py` fails (script error, regex timeout), the catch-up **halts** — it does not proceed with unfiltered content. Artha.md instructs: "If pii_guard.py exits with non-zero status, stop the catch-up and report the error. Do not process unfiltered emails."
 
-### 8.9 Data Fidelity Skills *(v4.0)*
+### 8.9 Data Fidelity Skills *(v5.0)*
 
 Targeted Python scripts that pull high-fidelity data from institutional portals or official APIs.
 
@@ -2255,9 +2255,11 @@ Targeted Python scripts that pull high-fidelity data from institutional portals 
 - **Dynamic Loader:** Use `importlib` (module-level import including `importlib.util`) to load modules from `scripts/skills/`. If a module is missing, log a warning and continue. *(v3.8 — importlib.util scope fix)*
 - **Aggregation:** Aggregate results into a standard JSON format.
 - **Change Detection:** Compare `current` fetch results against `previous` state in `state/skills_cache.json`.
-- **Cache Persistence:** Write results to `state/skills_cache.json` (encrypted).
+- **Cache Persistence:** Write results to `state/skills_cache.json` (encrypted) using `atomic_write_json()` (fcntl.flock + tempfile + os.replace — crash-safe). *(v5.0 — SKILLS-RELOADED)*
+- **Health Tracking:** After each skill run, calls `update_health_counters()` and `classify_health()` from `scripts/lib/skill_health.py` to update per-skill health counters. *(v5.0 — SKILLS-RELOADED)*
+- **Adaptive Cadence (R7):** `should_run()` extended — if `health.consecutive_zero >= 10` and priority != P0, effective cadence is reduced one tier (`_CADENCE_REDUCTION` dict: `every_run → daily`, `daily → weekly`). R7 skips logged to `health.r7_skips`. *(v5.0 — SKILLS-RELOADED)*
 - **Fail-safe Logic:**
-    - **P0 (Immigration):** Halt catch-up on logical/parse errors. If status changes, alert P0 and continue catch-up. Transient errors warn and continue.
+    - **P0 (Immigration):** Halt catch-up on logical/parse errors. If status changes, alert P0 and continue catch-up. Transient errors warn and continue. P0 skills exempt from R7.
     - **P1/P2:** Log warning and continue catch-up.
 
 **2. Skill Registry (`config/skills.yaml`)**
@@ -2267,18 +2269,37 @@ skills:
     enabled: true
     priority: P0
     cadence: every_run
+    class: background         # goal-bearing | operational | background
   visa_bulletin:
     enabled: true
     priority: P0
     cadence: weekly
+    class: goal-bearing
+    goal_refs: [G-IMM-001]    # links to state/goals.md (requires goals-reloaded v6.3)
   king_county_tax:
     enabled: true
     priority: P1
     cadence: daily
+    class: background
+    zero_value_fields: ["tax_amount"]  # per-skill zero-value detection override
   noaa_weather:
     enabled: true
     priority: P1
+    cadence: every_run
+    class: operational
     trigger_keywords: ["hike", "summit", "trail", "peak"]
+  bill_due_tracker:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: goal-bearing
+    goal_refs: [G-FIN-001]
+  mental_health_utilization:
+    enabled: false            # disabled by R7 — re-enable when needed
+    priority: P2
+    cadence: daily
+    class: background
+    suppress_zero_prompt: false
 ```
 
 **3. Skill Base Class (`scripts/skills/base_skill.py`)**
@@ -2292,19 +2313,78 @@ skills:
 - **USCIS Status:** Checks `https://egov.uscis.gov/csol-api/case-statuses/{receipt}`. HTTP 403 returns `{"blocked": True, "error": "...IP-blocked...check at egov.uscis.gov"}` — distinguishable from transient failures. Other non-200 responses truncate `response.text` to 500 chars. *(v3.8 — F15.127)*
 - **NHTSA Recalls:** Prefers `/recalls/recallsByVIN/{vin}` with make/model fallback.
 
-**5. Centralized Cache (`state/skills_cache.json`)**
-- **Schema:** 
+**5. Centralized Cache (`state/skills_cache.json`)** *(v5.0 — schema extended)*
+- **Schema:**
   ```json
   {
     "uscis_status": {
-      "last_run": "...",
-      "current": { ... },
-      "previous": { ... },
-      "changed": true
+      "last_run": "2026-03-26T17:00:00Z",
+      "current": {"name": "uscis_status", "status": "success", "data": {}},
+      "previous": null,
+      "changed": false,
+      "health": {
+        "total_runs": 25,
+        "success_count": 25,
+        "failure_count": 0,
+        "zero_value_count": 25,
+        "last_success": "2026-03-26",
+        "last_failure": null,
+        "last_nonzero_value": null,
+        "consecutive_zero": 25,
+        "consecutive_stable": 0,
+        "last_wall_clock_ms": 45,
+        "r7_skips": 3,
+        "last_r7_prompt": null,
+        "maturity": "trusted",
+        "classification": "degraded"
+      }
     }
   }
   ```
+- **Classification rules:**
+  - `warming_up`: `total_runs < 5` — no adaptive rules fire
+  - `healthy`: success_rate ≥ 80% AND had nonzero value in last 10 runs
+  - `degraded`: success_rate ≥ 80% BUT `consecutive_zero >= 10`
+  - `broken`: success_rate < 50% over last 10 runs
+  - `disabled`: `enabled: false` in `config/skills.yaml`
+- **Maturity tiers:** `warming_up` (< 5 runs), `measuring` (5–14 runs, R7 cadence reduction eligible), `trusted` (≥ 15 runs, full adaptive behavior)
+- **Recovery:** Degraded/broken skills self-heal on non-zero runs; original cadence restored automatically.
 - **Security:** Encrypted via `vault.py`. Decrypted before Skill Runner, re-encrypted after catch-up.
+
+**6. Shared Health Library (`scripts/lib/skill_health.py`)** *(v5.0 — new)*
+
+Pure-function library importable by both `skill_runner.py` and the MCP `artha_run_skills` handler. Ensures health counters are updated identically for both execution paths.
+
+Public API:
+```python
+def is_zero_value(skill_name: str, result: dict, prev_result: dict | None,
+                  skills_config: dict) -> bool: ...
+def is_stable_value(result: dict, prev_result: dict | None) -> bool: ...
+def update_health_counters(cache_entry: dict, is_zero: bool,
+                           is_stable: bool) -> dict: ...
+def classify_health(health: dict) -> str: ...
+def atomic_write_json(path: Path, data: dict) -> None: ...
+    # fcntl.flock + tempfile + os.replace. POSIX-only (macOS/Linux).
+```
+
+`_CADENCE_REDUCTION = {"every_run": "daily", "daily": "weekly"}` — used by both `skill_runner.py` R7 logic and MCP handler.
+
+**7. Engagement Rate & Run History (`state/catch_up_runs.yaml`)** *(v5.0 — new)*
+
+Every catch-up appends one entry. Read by `briefing_adapter.py` for R2 and R8 rule evaluation. Written by `health_check_writer.py` (same lock/atomic pattern):
+```yaml
+- timestamp: "2026-03-27T09:00:00Z"
+  engagement_rate: 0.33     # null when items_surfaced == 0
+  user_ois: 1
+  system_ois: 3
+  items_surfaced: 6
+  correction_count: 1
+  briefing_format: standard
+  email_count: 30
+  domains_processed: [kids, finance, calendar]
+```
+
+Retention: last 100 entries (~77 days). `briefing_adapter.py` `_load_catch_up_runs()` reads this file directly (reads `r.get("engagement_rate", r.get("signal_noise"))` for backward compatibility with any legacy entries).
 
 ### 8.7 Outbound PII Wrapper for External CLIs
 
@@ -2656,8 +2736,25 @@ Replaces the AI instruction-only Step 16 write with a deterministic script.
 - **YAML upsert**: `_update_frontmatter()` adds/updates keys without destroying unrecognized fields.
 - **Bootstrap stub detection**: replaces `# Content\nsome: value` stubs with template content.
 - **Log rotation**: moves `## Connector health —` blocks older than 7 days to `tmp/connector_health_log.md` (append-only archive), keeping `health-check.md` ≤ ~100 lines.
+- **Run history**: `_append_catch_up_run()` appends one structured entry to `state/catch_up_runs.yaml` atomically (same lock + tempfile + os.replace). Retains last 100 entries. *(v5.0 — SKILLS-RELOADED)*
+- **Skill management flags**: `--disable-skill` sets `enabled: false` in `config/skills.yaml` with comment; `--suppress-skill-prompt` sets `suppress_zero_prompt: true`. Both actions logged to `state/audit.md`. *(v5.0 — SKILLS-RELOADED)*
 
-CLI: `python3 scripts/health_check_writer.py --last-catch-up ISO --email-count N --domains-processed a,b,c --mode normal|degraded|offline|read-only`
+CLI: `python3 scripts/health_check_writer.py --last-catch-up ISO --email-count N --domains-processed a,b,c --mode normal|degraded|offline|read-only --briefing-format standard|flash|deep --engagement-rate FLOAT --user-ois N --system-ois N --items-surfaced N --correction-count N [--disable-skill SKILL_NAME] [--suppress-skill-prompt SKILL_NAME]`
+
+| Flag | Notes |
+|------|-------|
+| `--last-catch-up` | ISO 8601 timestamp (existing) |
+| `--email-count` | Count of emails processed (existing) |
+| `--domains-processed` | Comma-separated domain list (existing) |
+| `--mode` | System health mode: `normal\|degraded\|offline\|read-only` (existing) |
+| `--briefing-format` | Briefing format this run: `standard\|flash\|deep` *(new v5.0)* |
+| `--engagement-rate` | Float 0.0–1.0; omit or pass empty string when `items_surfaced == 0` *(new v5.0)* |
+| `--user-ois` | OIs created by the user (`origin: user`) during this catch-up *(new v5.0)* |
+| `--system-ois` | OIs auto-extracted by Step 7b (`origin: system`) *(new v5.0)* |
+| `--items-surfaced` | Count of P0/P1/P2 alerts generated during domain processing *(new v5.0)* |
+| `--correction-count` | User corrections captured at Step 19 calibration *(new v5.0)* |
+| `--disable-skill` | Skill name to disable in `config/skills.yaml` (R7 user response "yes") *(new v5.0)* |
+| `--suppress-skill-prompt` | Skill name to suppress R7 disable prompt (R7 user response "keep") *(new v5.0)* |
 
 ---
 

@@ -266,23 +266,45 @@ Sync `state/open_items.md` → Microsoft To Do lists.
 
 **SKIP in read-only mode** → log `⏭️ Step 16 skipped — read-only mode`
 
-Call the script to atomically update `state/health-check.md` frontmatter and
-rotate connector health logs older than 7 days to `tmp/connector_health_log.md`:
+Call the script to atomically update `state/health-check.md` frontmatter, append to `state/catch_up_runs.yaml`, and rotate connector health logs older than 7 days to `tmp/connector_health_log.md`:
 
 ```bash
 python3 scripts/health_check_writer.py \
     --last-catch-up "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --email-count N \
     --domains-processed domain1,domain2 \
-    --mode normal
+    --mode normal \
+    --briefing-format standard \
+    --engagement-rate 0.33 \
+    --user-ois 1 \
+    --system-ois 3 \
+    --items-surfaced 6 \
+    --correction-count 0
 ```
 
-Replace `N` with the actual email count and the comma-separated list with
-domains processed this session.  `--mode` is one of: `normal`, `degraded`,
-`offline`, `read-only`.
+Replace all values with the actuals from this session:
+- `N`: actual email count from Step 4
+- `domain1,domain2`: comma-separated list of domains processed
+- `--mode`: one of `normal`, `degraded`, `offline`, `read-only`
+- `--briefing-format`: one of `standard`, `flash`, `deep` (selected by `briefing_adapter.py` at Step 15)
+- `--engagement-rate`: compute as `(user_ois + correction_count) / items_surfaced` (or omit if `items_surfaced == 0`; stored as `null` in that case)
+- `--user-ois`: count of OIs added by user during or after the briefing (origin: user)
+- `--system-ois`: count of OIs auto-extracted in Step 7b (origin: system)
+- `--items-surfaced`: running counter from Steps 7–8 (P0/P1/P2 alerts generated)
+- `--correction-count`: number of user corrections observed in Step 19 calibration
 
-The script is idempotent — safe to call multiple times; each call increments
-`catch_up_count` by 1 and replaces bootstrap stubs with the proper schema.
+**R7 user-response forwarding:** If during the briefing the user responded to a R7 disable prompt:
+- User says "yes" (disable skill): append `--disable-skill <skill_name>` to the `health_check_writer.py` call
+- User says "keep" (suppress future prompts): append `--suppress-skill-prompt <skill_name>` to the call
+- Both are logged to `state/audit.md` automatically by the script
+
+**Skill Health display:** After Connector Health section in the briefing, if `state/skills_cache.json` exists and any skill has `classification: broken` or `classification: degraded`, run:
+```bash
+python3 scripts/eval_runner.py --skills
+```
+and show the Skill Health table inline. Skills with `classification: warming_up` (fewer than 5 runs) are excluded from the table unless `--verbose` is passed.
+
+The script is idempotent — safe to call multiple times; each call increments `catch_up_count` by 1 and replaces bootstrap stubs with the proper schema.
 
 In read-only mode: embed session metadata in briefing footer instead:
 ```
@@ -328,6 +350,10 @@ python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import 
 Compare today's extraction with yesterday's/last-catch-up state.
 Flag contradictions or reversals (e.g., status: approved → pending).
 Note uncertainty if extraction differs significantly.
+
+**Correction tracking:** Each time the user corrects a finding ("that's wrong", "ignore X", "actually it's...") during or after the briefing, increment the `correction_count` by 1. Pass the total at Step 16 via `--correction-count`.
+
+**User-requested OIs:** If the user asks to add an open item during or after the briefing ("add a reminder", "track this"), create it with `origin: user` in the OI schema and increment `--user-ois` for Step 16.
 
 ### Step 19.5 — Action layer summary *(Action Layer)*
 

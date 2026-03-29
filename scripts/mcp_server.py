@@ -499,14 +499,66 @@ def artha_run_skills(skill_name: str | None = None) -> str:
             load_cache,
             should_run,
             run_skill,
+            CACHE_FILE as _SR_CACHE_FILE,
         )
 
+        # Import shared health-tracking library (non-blocking if unavailable)
+        try:
+            from scripts.lib.skill_health import (
+                is_zero_value as _mcp_is_zero,
+                is_stable_value as _mcp_is_stable,
+                update_health_counters as _mcp_update_health,
+                atomic_write_json as _mcp_write_json,
+            )
+            _health_available = True
+        except ImportError:
+            _health_available = False
+
         config = load_config()
-        cache = load_cache()
+        cache = load_cache()  # reads state/skills_cache.json (migrated path)
+
+        import time as _time
+
+        def _run_and_update_health(name: str, cfg: dict, existing_cache: dict) -> Any:
+            """Run a skill and update health counters in the persistent cache."""
+            prev_entry = existing_cache.get(name, {})
+            t0 = _time.monotonic()
+            res = run_skill(name, _REPO_ROOT)
+            wall_ms = round((_time.monotonic() - t0) * 1000)
+
+            # Update cache entry with health counters
+            base_entry = {
+                "last_run": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+                "current": res,
+                "previous": prev_entry.get("current"),
+                "changed": True,
+            }
+            if "health" in prev_entry:
+                base_entry["health"] = prev_entry["health"]
+
+            if _health_available:
+                try:
+                    zero = _mcp_is_zero(name, res, prev_entry.get("current"), config)
+                    stable = _mcp_is_stable(res, prev_entry.get("current"))
+                    base_entry = _mcp_update_health(base_entry, zero, stable, wall_ms)
+                except Exception:
+                    pass
+
+            # Persist updated cache atomically
+            updated_cache = dict(existing_cache)
+            updated_cache[name] = base_entry
+            try:
+                if _health_available:
+                    _mcp_write_json(_SR_CACHE_FILE, updated_cache)
+                else:
+                    _SR_CACHE_FILE.write_text(__import__('json').dumps(updated_cache, indent=2))
+            except Exception:
+                pass
+
+            return res
 
         if skill_name:
-            # Run a single named skill regardless of cadence
-            result = run_skill(skill_name, _REPO_ROOT)
+            result = _run_and_update_health(skill_name, config, cache)
             _audit("artha_run_skills", params, f"ok:{skill_name}={result.get('status')}")
             return json.dumps({skill_name: result}, ensure_ascii=False, default=str)
 
@@ -517,7 +569,9 @@ def artha_run_skills(skill_name: str | None = None) -> str:
         ]
         results: dict[str, Any] = {}
         for name in due:
-            results[name] = run_skill(name, _REPO_ROOT)
+            results[name] = _run_and_update_health(name, config, cache)
+            # Reload cache so each skill sees the updated health counters from prior skills
+            cache = load_cache()
 
         _audit("artha_run_skills", params, f"ok:{len(results)}_skills")
         return json.dumps(results, ensure_ascii=False, default=str)

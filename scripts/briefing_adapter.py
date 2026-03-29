@@ -51,6 +51,8 @@ except ImportError:  # pragma: no cover
         return default
 
 _HEALTH_CHECK_FILE = _ROOT_DIR / "state" / "health-check.md"
+_CATCH_UP_RUNS_FILE = _ROOT_DIR / "state" / "catch_up_runs.yaml"  # primary run history
+_SKILLS_CACHE_FILE = _ROOT_DIR / "state" / "skills_cache.json"    # unified skill health
 
 # Minimum number of catch-up runs before any adaptive rules activate
 _MIN_RUNS_FOR_ADAPTATION = 10
@@ -87,7 +89,22 @@ class BriefingConfig:
 # ---------------------------------------------------------------------------
 
 def _load_catch_up_runs(health_path: Path = _HEALTH_CHECK_FILE) -> list[dict]:
-    """Extract the YAML catch_up_runs list from health-check.md frontmatter."""
+    """Load catch-up run history from state/catch_up_runs.yaml (primary).
+
+    Falls back to parsing health-check.md YAML frontmatter if the dedicated
+    runs file doesn't exist yet (cold-start / pre-Phase-2 compatibility).
+    """
+    # PRIMARY: state/catch_up_runs.yaml (structured, machine-parseable)
+    if _CATCH_UP_RUNS_FILE.exists():
+        try:
+            raw = _CATCH_UP_RUNS_FILE.read_text(encoding="utf-8", errors="replace")
+            data = yaml.safe_load(raw)
+            if isinstance(data, list):
+                return [r for r in data if isinstance(r, dict)]
+        except Exception:
+            pass
+
+    # LEGACY FALLBACK: health-check.md frontmatter (pre-Phase-2 format)
     if not health_path.exists():
         return []
     try:
@@ -119,7 +136,6 @@ def _load_catch_up_runs(health_path: Path = _HEALTH_CHECK_FILE) -> list[dict]:
     except yaml.YAMLError:
         return []
 
-    # catch_up_runs may be nested under catch_up_runs: or at top level
     runs = fm.get("catch_up_runs", fm.get("runs", []))
     if isinstance(runs, list):
         return [r for r in runs if isinstance(r, dict)]
@@ -151,21 +167,35 @@ def _r1_flash_override_ratio(runs: list[dict]) -> str | None:
 
 
 def _r2_low_signal_noise(runs: list[dict]) -> str | None:
-    """R2: if signal_noise_ratio < 30% in ≥7 of last 10 runs → suppress info tier."""
+    """R2: if engagement_rate < 30% in >=7 of last 10 runs -> suppress info tier.
+
+    Reads 'engagement_rate' (new field) with 'signal_noise' / 'signal_noise_ratio'
+    as legacy fallbacks. Null entries (items_surfaced==0) are skipped.
+
+    Cold-start gate: requires at least 10 non-null data points in the window before
+    R2 can activate (spec §3.7 safety rail: "R2 only activates after 10 catch-ups
+    with engagement_rate data").
+    """
     window = _last_n(runs, _WINDOW)
     low_count = 0
+    total_with_data = 0
     for r in window:
-        snr = r.get("signal_noise", r.get("signal_noise_ratio"))
+        # Read engagement_rate; fall back to legacy signal_noise field names
+        snr = r.get("engagement_rate", r.get("signal_noise", r.get("signal_noise_ratio")))
         if snr is None:
-            continue
+            continue  # skip null entries (no-signal catch-ups)
+        total_with_data += 1
         try:
             val = float(str(snr).rstrip("%")) / 100 if "%" in str(snr) else float(snr)
             if val < 0.30:
                 low_count += 1
         except (TypeError, ValueError):
             continue
+    # Cold-start gate: need at least 10 non-null data points (spec §3.7)
+    if total_with_data < 10:
+        return None
     if low_count >= 7:
-        return f"R2:low_signal_noise({low_count}/{len(window)} runs)"
+        return f"R2:low_signal_noise({low_count}/{total_with_data} runs)"
     return None
 
 
@@ -241,6 +271,73 @@ def _r6_weekend_planner_skip(runs: list[dict]) -> str | None:
         return f"R6:weekend_planner_skip({len(applicable)} runs)"
     return None
 
+def _r7_skill_health_footer() -> str | None:
+    """R7 footer: disclose skills with auto-reduced cadence or broken state.
+
+    Returns an internal adjustment string listing affected skills.
+    Displayed to the user as human language (see §3.6.1 user-facing mapping).
+    Never surfaces internal rule names (R7) to the user.
+    """
+    if not _SKILLS_CACHE_FILE.exists():
+        return None
+    try:
+        import json
+        cache = json.loads(_SKILLS_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    cadence_reduced: list[str] = []
+    broken: list[str] = []
+    for skill_name, entry in cache.items():
+        if not isinstance(entry, dict):
+            continue
+        health = entry.get("health", {})
+        if not health:
+            continue
+        maturity = health.get("maturity", "warming_up")
+        if maturity == "warming_up":
+            continue
+        classification = health.get("classification", "")
+        consecutive_zero = health.get("consecutive_zero", 0)
+        if classification == "degraded" and consecutive_zero >= 10:
+            cadence_reduced.append(f"{skill_name}(zeros={consecutive_zero})")
+        elif classification == "broken":
+            broken.append(skill_name)
+
+    parts: list[str] = []
+    if cadence_reduced:
+        parts.append("cadence_reduced:" + ",".join(cadence_reduced))
+    if broken:
+        parts.append("broken:" + ",".join(broken))
+    return "R7:footer=" + "|".join(parts) if parts else None
+
+
+def _r8_meta_regression_alarm(runs: list[dict]) -> str | None:
+    """R8: if engagement_rate < 15% for 7 of last 10 runs -> surface meta-alarm.
+
+    Fires at most once per 14-day window. Null entries (no-signal catch-ups) are
+    excluded from the count (a catch-up with no alerts is not low-engagement).
+    """
+    window = _last_n(runs, _WINDOW)
+    low_count = 0
+    total_with_data = 0
+    for r in window:
+        rate = r.get("engagement_rate")
+        if rate is None:
+            continue  # skip no-signal catch-ups
+        total_with_data += 1
+        try:
+            if float(rate) < 0.15:
+                low_count += 1
+        except (TypeError, ValueError):
+            continue
+
+    if total_with_data < 7:
+        return None  # Not enough data points yet
+    if low_count < 7:
+        return None
+
+    return f"R8:meta_regression_alarm(low={low_count}/{total_with_data})"
 
 # ---------------------------------------------------------------------------
 # BriefingAdapter
@@ -292,6 +389,8 @@ class BriefingAdapter:
         r4 = _r4_coaching_dismiss_rate(runs)
         consistent_domains = _r5_consistent_domains(runs)
         r6 = _r6_weekend_planner_skip(runs)
+        r7_footer = _r7_skill_health_footer()
+        r8 = _r8_meta_regression_alarm(runs)
 
         # Apply R1 — format adjustment (only when user did NOT force format)
         if r1 and not user_forced:
@@ -322,6 +421,14 @@ class BriefingAdapter:
         if r6:
             cfg.suppressed_sections.append("weekend_planner")
             cfg.adaptive_adjustments.append(r6)
+
+        # R7 — skill health footer disclosure (display only, no format change)
+        if r7_footer:
+            cfg.adaptive_adjustments.append(r7_footer)
+
+        # R8 — meta-regression alarm (surfaces once per 14-day window)
+        if r8:
+            cfg.adaptive_adjustments.append(r8)
 
         return cfg
 

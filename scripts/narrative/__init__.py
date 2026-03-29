@@ -64,6 +64,23 @@ class NarrativeEngine(NarrativeEngineBase):
         from .memo import generate_decision_memo
         return generate_decision_memo(self, decision_id)
 
+    # Reflection Loop templates (FW-19)
+    def generate_daily_close(self) -> str:
+        from .reflect import generate_daily_close
+        return generate_daily_close(self)
+
+    def generate_weekly_reflection(self) -> str:
+        from .reflect import generate_weekly_reflection
+        return generate_weekly_reflection(self)
+
+    def generate_monthly_retro(self) -> str:
+        from .reflect import generate_monthly_retro
+        return generate_monthly_retro(self)
+
+    def generate_quarterly_review(self) -> str:
+        from .reflect import generate_quarterly_review
+        return generate_quarterly_review(self)
+
 
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(
@@ -75,6 +92,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             "weekly_memo", "talking_points", "boundary_report", "connect_summary",
             "newsletter", "deck", "promo_case", "promo_narrative",
             "calibration_brief", "escalation_memo", "decision_memo",
+            "daily_close", "weekly_reflection", "monthly_retro", "quarterly_review",
         ],
         required=True,
         help="Narrative template to generate",
@@ -143,6 +161,14 @@ def main(argv: Optional[list[str]] = None) -> None:
         result = engine.generate_escalation_memo(context=args.context)
     elif args.template == "decision_memo":
         result = engine.generate_decision_memo(decision_id=args.decision_id)
+    elif args.template == "daily_close":
+        result = engine.generate_daily_close()
+    elif args.template == "weekly_reflection":
+        result = engine.generate_weekly_reflection()
+    elif args.template == "monthly_retro":
+        result = engine.generate_monthly_retro()
+    elif args.template == "quarterly_review":
+        result = engine.generate_quarterly_review()
     else:
         result = "Unknown template"
 

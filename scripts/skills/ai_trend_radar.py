@@ -53,6 +53,7 @@ _SCORE_HOWTO = 0.20               # how-to, tip, tutorial
 _SCORE_MODEL_RELEASE = 0.15       # GPT, Claude, Gemini, Llama, Qwen
 _SCORE_OPEN_SOURCE = 0.10         # GitHub-linked project
 _SCORE_MULTI_SOURCE = 0.10        # seen_in >= 2
+_SCORE_TOPIC_MATCH = 0.25         # Interest Graph topic match (user-configured = high intent)
 _PENALTY_ACADEMIC = -0.20         # research paper only
 _PENALTY_ENTERPRISE = -0.10       # enterprise-only
 _PENALTY_HARDWARE = -0.10         # hardware/datacenter/policy
@@ -90,6 +91,22 @@ _PAT_HARDWARE = re.compile(
     r"|compliance|legislation)\b",
     re.IGNORECASE,
 )
+_PAT_OPINION = re.compile(
+    r"\b(quoting|says\b|argues|claims|thinks|believes|contends|reckons"
+    r"|commentary|in my view|perspective|thoughts on|my take|hot take"
+    r"|essay|musing|reflection|rant|thread|lot of fun)\b",
+    re.IGNORECASE,
+)
+_PENALTY_OPINION = -0.15           # opinion-only (no artifact evidence)
+
+# Hands-on artifact evidence — used to gate topic bonus on opinion content
+def _has_artifact_evidence(text: str) -> bool:
+    """True if the text contains concrete hands-on signals (install, howto, GitHub)."""
+    return bool(
+        _PAT_TRYABLE.search(text)
+        or _PAT_HOWTO.search(text)
+        or _PAT_GITHUB.search(text)
+    )
 
 # Category detection
 _PAT_CAT_TOOL = re.compile(
@@ -189,16 +206,26 @@ def _score_signal(text: str) -> float:
         score += _PENALTY_ENTERPRISE
     if _PAT_HARDWARE.search(text):
         score += _PENALTY_HARDWARE
+    # Opinion penalty: only applied when no hands-on artifact evidence exists
+    if _PAT_OPINION.search(text) and not _has_artifact_evidence(text):
+        score += _PENALTY_OPINION
     return score
 
 
 def _is_try_worthy(signal: AISignal, try_worthy_threshold: float) -> bool:
     if signal.relevance_score < try_worthy_threshold:
         return False
+    # Inherently hands-on categories — auto-qualify
+    if signal.category in ("tool_release", "tutorial", "framework_update"):
+        return True
+    # "technique" requires hands-on evidence in topic+summary (not just opinions)
+    if signal.category == "technique":
+        text = f"{signal.topic} {signal.summary}"
+        return _has_artifact_evidence(text)
+    # Research needs a linked artifact (GitHub)
     if signal.category == "research":
-        # Research is only try-worthy if there's a linked artifact (GitHub)
         return bool(_PAT_GITHUB.search(signal.summary))
-    return signal.category in ("tool_release", "technique", "tutorial", "framework_update")
+    return False
 
 
 def _apply_topic_boost(
@@ -508,6 +535,11 @@ class AITrendRadarSkill(BaseSkill):
             else:
                 base_score = _score_signal(text_for_scoring)
                 boost, topic_match = _apply_topic_boost(text_for_scoring, topics)
+                # Topic match bonus only applies when the signal has hands-on
+                # evidence — prevents opinion pieces from riding topic keywords
+                # into try-worthy territory.
+                has_artifact = _has_artifact_evidence(text_for_scoring)
+                topic_match_bonus = _SCORE_TOPIC_MATCH if (topic_match and has_artifact) else 0.0
 
                 signal = AISignal(
                     id=sig_id,
@@ -517,7 +549,7 @@ class AITrendRadarSkill(BaseSkill):
                     best_source_url=url,
                     summary=_extract_summary(item),
                     detected_at=detected,
-                    relevance_score=base_score + boost,
+                    relevance_score=base_score + boost + topic_match_bonus,
                     try_worthy=False,  # computed after merge
                     seen_in=1,
                     topic_match=topic_match,

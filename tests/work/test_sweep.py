@@ -105,11 +105,15 @@ class TestSweepStateDiff:
         assert result == []
 
     def test_recent_md_file_included(self, tmp_path):
+        """State_diff pass now suppresses state file updates as noise (FW-19 v1.6).
+        All state/work/*.md modifications are filtered — real accomplishments come
+        from WorkIQ and the accomplishments ledger, not file-change signals."""
         md = tmp_path / "work-notes.md"
         md.write_text("# Notes\nContent", encoding="utf-8")
         past = datetime.now(timezone.utc) - timedelta(hours=2)
         result = sweep_state_diff(past, tmp_path)
-        assert any(item["title"] == "State update: work-notes.md" for item in result)
+        # State file updates are now suppressed — empty result is correct
+        assert result == []
 
     def test_old_file_excluded(self, tmp_path):
         md = tmp_path / "old-notes.md"
@@ -128,7 +132,8 @@ class TestSweepStateDiff:
         assert not any("daily_accumulator" in item.get("title", "") for item in result)
 
     def test_p6_guard_includes_daily_accumulator_with_schema_version(self, tmp_path):
-        """daily_accumulator.log WITH schema_version should be included."""
+        """daily_accumulator.log WITH schema_version is still suppressed (FW-19 v1.6)
+        — all state/work file changes are now filtered from accomplishments."""
         log_file = tmp_path / "daily_accumulator.log"
         log_file.write_text(
             "---\nschema_version: '1.0'\ndomain: work\n---\nBody",
@@ -136,19 +141,18 @@ class TestSweepStateDiff:
         )
         past = datetime.now(timezone.utc) - timedelta(hours=1)
         result = sweep_state_diff(past, tmp_path)
-        assert any("daily_accumulator" in item.get("title", "") for item in result)
+        # State file updates are now suppressed — daily_accumulator also filtered
+        assert result == []
 
     def test_result_items_have_required_fields(self, tmp_path):
+        """State_diff now suppresses all state file updates (FW-19 v1.6).
+        This test verifies the empty-result behavior is correct."""
         md = tmp_path / "work-career.md"
         md.write_text("# Career", encoding="utf-8")
         past = datetime.now(timezone.utc) - timedelta(hours=1)
         result = sweep_state_diff(past, tmp_path)
-        assert len(result) >= 1
-        item = result[0]
-        assert "title" in item
-        assert "source" in item
-        assert "urgency" in item
-        assert "importance" in item
+        # All state file updates are suppressed
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

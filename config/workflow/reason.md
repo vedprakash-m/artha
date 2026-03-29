@@ -66,6 +66,15 @@ Collect ALL signals from the completed domain processing:
 **Read `state/self_model.md`** (if non-empty): apply domain confidence calibration and
 double-check domains listed under "Known Blind Spots" before asserting conclusions.
 
+**Staleness Filter (MANDATORY — applies to ALL surfaced items):**
+Before including ANY item (open item, action, follow-up, carry-forward) in the
+OBSERVE evidence base, verify it is still current:
+- Items from `work-open-items.md` → validated in Step 7c (use those results)
+- Items from WorkIQ sweep → apply Thread Closure Validation (prompts/work-comms.md §Pass 2)
+- Items from `work-accomplishments.md` with status OPEN → check if still open
+- **Never surface an item as "action required" without evidence it is still pending.**
+- If uncertain: mark as `❓ [UNVERIFIED]` and include in a separate section
+
 **Output: `[OBSERVE]` block** with structured signal inventory and applied corrections from memory.
 
 ---
@@ -209,6 +218,8 @@ friction requiring the user to run `/stage draft` separately.
 Cards with `days_until > 7` may remain `seed` (no rush to draft).
 
 **Output: `[ACT]` block** confirms validation passed. Validated findings flow into Step 9 (briefing synthesis).
+
+**`items_surfaced` counter (continued from Step 7b):** Continue incrementing the running count as each P0/P1/P2 alert is added to the briefing buffer during Step 8 reasoning. The final count at Step 8 end is the `items_surfaced` value passed to `health_check_writer.py --items-surfaced` at Step 16.
 
 **Checkpoint (Step 8 complete):** After OODA Act phase, write:
 ```bash
