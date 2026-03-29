@@ -661,11 +661,11 @@ Topics of interest: Claude Tools, MCP Servers, Agentic Workflows
 
 ---
 
-# ── Work OS Commands (specs/work.md §5.2) ────────────────────────────────
+# ── Work OS Commands ──────────────────────────────────────────────────────
 # Namespace: /work
 # Surface: work domains only (state/work/*), never personal state
 # Bridge reads: state/bridge/personal_schedule_mask.json ONLY
-# See specs/work.md for full specification
+# Implementation: scripts/work_loop.py, scripts/work_reader.py
 
 ## `/work` — Full Work Briefing
 Reads all work domains. Produces a structured briefing: meeting count, comms needing response, sprint health, boundary score, recommended next move.

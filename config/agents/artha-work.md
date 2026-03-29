@@ -6,7 +6,7 @@ description: >
   boundary protection, and career evidence.
   Tier: universal — any Microsoft 365 user (Graph baseline, no MCP servers).
 version: "0.1.0"
-spec: specs/work.md
+# spec: .archive/specs/work.md (historical — merged into implementation)
 tier: universal
 audience: Any M365 user
 mcp-servers: {}

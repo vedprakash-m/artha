@@ -26,7 +26,7 @@ tools:
   - edit
   - search
 ---
-<!-- Agency metadata: version=0.1.0, spec=specs/work.md, tier=msft, audience=Microsoft employee -->
+<!-- Agency metadata: version=0.1.0, spec=.archive/specs/work.md (historical), tier=msft, audience=Microsoft employee -->
 <!-- Agency tools (not VS Code built-ins): bash, write, workiq/*, bluebird/* are granted via Agency runtime -->
 <!-- Deferred MCPs (uncomment when available via agency mcp list): ado, icm -->
 

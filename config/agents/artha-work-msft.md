@@ -6,7 +6,7 @@ description: >
   boundary protection, and career evidence.
   Tier: Microsoft employee — M365 + ADO + WorkIQ + ICM + Bluebird.
 version: "0.1.0"
-spec: specs/work.md
+# spec: .archive/specs/work.md (historical — merged into implementation)
 tier: msft
 audience: Microsoft employee
 mcp-servers:

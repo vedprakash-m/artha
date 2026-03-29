@@ -10,7 +10,7 @@ tools:
   - read
   - search
 ---
-<!-- Agency metadata: version=0.1.0, spec=specs/work.md, tier=enterprise, audience=Corporate M365 user with Azure DevOps -->
+<!-- Agency metadata: version=0.1.0, spec=.archive/specs/work.md (historical), tier=enterprise, audience=Corporate M365 user with Azure DevOps -->
 <!-- Agency tools (not VS Code built-ins): bash is granted via Agency runtime -->
 <!-- Deferred MCPs (uncomment when available via agency mcp list): ado -->
 

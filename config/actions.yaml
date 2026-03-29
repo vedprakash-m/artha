@@ -395,7 +395,7 @@ actions:
     pii_check: false
     audit: true
 
-  # ── Work OS Actions (specs/work.md §13) ──────────────────────────────────
+  # ── Work OS Actions ──────────────────────────────────────────────────────
   # command_namespace: work — all actions below are work-surface only.
   # These follow the same action registry pattern as personal actions.
 
