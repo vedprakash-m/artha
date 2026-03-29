@@ -54,6 +54,8 @@ _SCORE_MODEL_RELEASE = 0.15       # GPT, Claude, Gemini, Llama, Qwen
 _SCORE_OPEN_SOURCE = 0.10         # GitHub-linked project
 _SCORE_MULTI_SOURCE = 0.10        # seen_in >= 2
 _SCORE_TOPIC_MATCH = 0.25         # Interest Graph topic match (user-configured = high intent)
+_SCORE_COMMUNITY_HIGH = 0.15      # HN score>100, dev.to reactions>50, GitHub stars>500
+_SCORE_COMMUNITY_MED = 0.05       # HN score>50, dev.to reactions>20, GitHub stars>100
 _PENALTY_ACADEMIC = -0.20         # research paper only
 _PENALTY_ENTERPRISE = -0.10       # enterprise-only
 _PENALTY_HARDWARE = -0.10         # hardware/datacenter/policy
@@ -435,7 +437,7 @@ class AITrendRadarSkill(BaseSkill):
     def _is_relevant_item(
         self, record: dict, newsletter_senders: set, relevance_keywords: list
     ) -> bool:
-        """True if this pipeline record is an AI-relevant newsletter or RSS item."""
+        """True if this pipeline record is an AI-relevant newsletter, RSS, or API discovery item."""
         source = record.get("source", "").lower()
         from_addr = record.get("from", "").lower()
         marketing_cat = record.get("marketing_category", "").lower()
@@ -445,9 +447,15 @@ class AITrendRadarSkill(BaseSkill):
             marketing_cat == "newsletter"
             or any(sender in from_addr for sender in newsletter_senders)
         )
+        # API discovery items are pre-filtered for AI relevance by the connector
+        is_api_discovery = source == "api_discovery"
 
-        if not (is_rss or is_newsletter):
+        if not (is_rss or is_newsletter or is_api_discovery):
             return False
+
+        # API discovery items already passed AI keyword filtering at source
+        if is_api_discovery:
+            return True
 
         # AI relevance gate
         text = " ".join(filter(None, [
@@ -541,6 +549,15 @@ class AITrendRadarSkill(BaseSkill):
                 has_artifact = _has_artifact_evidence(text_for_scoring)
                 topic_match_bonus = _SCORE_TOPIC_MATCH if (topic_match and has_artifact) else 0.0
 
+                # Community validation bonus (HN score, dev.to reactions, GH stars)
+                community = item.get("community_score", 0)
+                if community >= 100:
+                    community_bonus = _SCORE_COMMUNITY_HIGH
+                elif community >= 30:
+                    community_bonus = _SCORE_COMMUNITY_MED
+                else:
+                    community_bonus = 0.0
+
                 signal = AISignal(
                     id=sig_id,
                     topic=topic[:120],
@@ -549,7 +566,7 @@ class AITrendRadarSkill(BaseSkill):
                     best_source_url=url,
                     summary=_extract_summary(item),
                     detected_at=detected,
-                    relevance_score=base_score + boost + topic_match_bonus,
+                    relevance_score=base_score + boost + topic_match_bonus + community_bonus,
                     try_worthy=False,  # computed after merge
                     seen_in=1,
                     topic_match=topic_match,
