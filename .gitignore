@@ -11,6 +11,9 @@ config/routing.yaml
 config/Artha.identity.md
 # Channel bridge live config — contains recipient IDs (PII)
 config/channels.yaml
+# User-specific connector config — contains credential key names and token paths
+config/connectors.yaml
+config/connectors.yaml.bak
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
@@ -24,6 +27,15 @@ config/prompt-overlays/*.md
 
 # --- Local archive (personal specs, notes with PII — never committed) ---
 .archive/
+knowledge/
+
+# --- Specs directory — only canonical specs are committed ---
+# All specs/ files are ignored by default; only the 3 canonical specs are
+# whitelisted below. Working/draft specs stay local.
+specs/*
+!specs/artha-prd.md
+!specs/artha-tech-spec.md
+!specs/artha-ux-spec.md
 
 # --- State files (all user-generated, ALL subdirectories) ---
 state/*.md

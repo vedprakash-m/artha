@@ -689,7 +689,19 @@ def check_msgraph_token() -> CheckResult:
         checks_to_return: list[CheckResult] = []
 
         if secs_left < 0:
-            expired_msg = f"Token expired {int(-secs_left/60)}m ago"
+            # Token expired — try silent refresh FIRST before alarming the user
+            try:
+                from setup_msgraph_oauth import ensure_valid_token  # type: ignore[import]
+                refreshed = ensure_valid_token(warn_seconds=60)
+                if refreshed and refreshed.get("access_token"):
+                    new_expiry = refreshed.get("expiry", "")
+                    return CheckResult(
+                        "Microsoft Graph token", "P1", True,
+                        f"Token was expired but auto-refreshed successfully ✓ (new expiry: {new_expiry})",
+                    )
+            except Exception:
+                pass  # silent refresh failed — fall through to manual reauth message
+            expired_msg = f"Token expired {int(-secs_left/60)}m ago (silent refresh failed)"
         else:
             expired_msg = f"Token expires in {int(secs_left/60)}m"
 

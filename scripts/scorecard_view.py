@@ -40,10 +40,19 @@ _GOALS_FILE = _STATE_DIR / "goals.md"
 _METRICS_FILE = _STATE_DIR / "health-metrics.md"
 _OPEN_ITEMS_FILE = _STATE_DIR / "open_items.md"
 
+try:
+    from work.reflect_reader import ReflectReader as _ReflectReader
+    _REFLECT_READER_AVAILABLE = True
+except ImportError:
+    _ReflectReader = None  # type: ignore[assignment,misc]
+    _REFLECT_READER_AVAILABLE = False
+
+_WORK_STATE_DIR = _ARTHA_DIR / "state" / "work"
+
 _STATUS_ICONS = {
-    "on_track": "🟢", "in_progress": "🟢", "at_risk": "🟡",
-    "urgent": "🟠", "critical": "🔴", "not_started": "⬜",
-    "done": "✅", "paused": "⏸",
+    "on_track": "\U0001f7e2", "in_progress": "\U0001f7e2", "at_risk": "\U0001f7e1",
+    "urgent": "\U0001f7e0", "critical": "\U0001f534", "not_started": "\u2b1c",
+    "done": "\u2705", "paused": "\u23f8",
 }
 
 _SCORE_ICONS = ["🔴", "🟠", "🟡", "🟢", "✅"]  # 1–5
@@ -223,6 +232,30 @@ def _extract_health_signal(metrics_content: str) -> tuple[float, str]:
     return score, note
 
 
+def _fetch_reflection_history(n: int = 4) -> list:
+    """Fetch recent weekly reflection history via ReflectReader."""
+    if not _REFLECT_READER_AVAILABLE:
+        return []
+    try:
+        return _ReflectReader(_WORK_STATE_DIR).get_weekly_history(last_n=n)  # type: ignore[misc]
+    except Exception:
+        return []
+
+
+def _compute_reflection_score(history: list) -> tuple[float, str]:
+    """Score Work Reflection health 1-5 from weekly summary list."""
+    if not history:
+        return 2.0, "no reflection data"
+    scored = [s for s in history if getattr(s, "focus_score", None) is not None]
+    if not scored:
+        return 3.0, f"{len(history)} week(s) tracked (unscored)"
+    avg = sum(s.focus_score for s in scored) / len(scored)
+    score = 1.0 + avg * 4.0
+    score = max(1.0, min(5.0, score))
+    note = f"{len(history)} week(s) \u00b7 avg focus {avg:.0%}"
+    return score, note
+
+
 def _score_to_icon(score: float) -> str:
     idx = min(int(score) - 1, 4)
     return _SCORE_ICONS[max(0, idx)]
@@ -282,8 +315,13 @@ def _format_standard(dimensions: list[tuple], runs: list[dict], goals: list[dict
     return "\n".join(lines)
 
 
-def _format_digest(dimensions: list[tuple], runs: list[dict], goals: list[dict]) -> str:
-    """Digest: standard + trend analysis + full goal list."""
+def _format_digest(
+    dimensions: list[tuple],
+    runs: list[dict],
+    goals: list[dict],
+    reflect_history: list | None = None,
+) -> str:
+    """Digest: standard + trend analysis + full goal list + reflection trend."""
     standard = _format_standard(dimensions, runs, goals)
     lines = [standard, "\n---\n", "### Full Goal Status"]
     for g in sorted(goals, key=lambda x: (
@@ -310,6 +348,19 @@ def _format_digest(dimensions: list[tuple], runs: list[dict], goals: list[dict])
             pressure = r.get("context_pressure", "?")
             mode = r.get("session_mode", "normal")
             lines.append(f"| {ts} | {emails} | {alerts} | {pressure} | {mode} |")
+
+    # Reflection trend table (Sprint 2 integration)
+    if reflect_history:
+        lines += ["", "### Work Reflection Trend"]
+        lines.append("| Week | Theme | Carry-Forward | Focus Score |")
+        lines.append("|------|-------|---------------|-------------|")
+        for snap in reflect_history[:8]:
+            week = getattr(snap, "week_key", "?")
+            theme = str(getattr(snap, "primary_theme", "") or "")[:35]
+            cf = getattr(snap, "carry_forward_count", "?")
+            fs = getattr(snap, "focus_score", None)
+            fs_str = f"{fs:.0%}" if fs is not None else "\u2014"
+            lines.append(f"| {week} | {theme} | {cf} | {fs_str} |")
 
     lines.append(f"\n_Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_")
     return "\n".join(lines)
@@ -348,18 +399,22 @@ def main() -> int:
     cadence_score = min(5.0, max(1.0, len(runs) * 1.2)) if runs else 1.0
     cadence_note = f"{len(runs)} session(s) this week"
 
+    reflect_history = _fetch_reflection_history(n=4)
+    reflect_score, reflect_note = _compute_reflection_score(reflect_history)
+
     dimensions = [
         ("System Health", system_score, system_note, "health-check.md"),
         ("Goals Progress", goals_score, goals_note, "goals.md"),
         ("Action Backlog", items_score, items_note, "open_items.md"),
         ("Physical Health", health_score, health_note, "health-metrics.md"),
         ("Engagement Cadence", cadence_score, cadence_note, "catch-up frequency"),
+        ("Work Reflection", reflect_score, reflect_note, "state/work/"),
     ]
 
     if args.format == "flash":
         print(_format_flash(dimensions))
     elif args.format == "digest":
-        print(_format_digest(dimensions, runs, goals))
+        print(_format_digest(dimensions, runs, goals, reflect_history=reflect_history))
     else:
         print(_format_standard(dimensions, runs, goals))
     return 0

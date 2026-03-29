@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 3.2 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.4 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.2.0, Tech Spec v3.14.0
+> **Implements**: PRD v7.4.0, Tech Spec v3.16.0
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.3 | 2026-03 | **FW-19 Reflection Loop UX (§23.14):** `/work reflect` command family UX — horizon auto-detection prompt, weekly reflection output format, carry-forward table with age/priority/due columns, reconciliation view (planned vs actual with ✅/⏭/❌/🆕 status), scoring visibility (raw scores for first 4 weeks then labels only), `--status` Markdown table, `--tune` pairwise calibration session (15 comparisons), `--backfill` progress display, `--audit` log viewer. Command table expanded: `/work reflect`, `/work reflect weekly`, `/work reflect monthly`, `/work reflect quarterly`, `/work reflect --status`, `/work reflect --tune`, `/work reflect --backfill`, `/work reflect --audit`. Draft deliverables staged via `/stage` system (not inline). Friday briefing footer shows reflection due status. (implements PRD v7.4.0 FW-19, Tech Spec v3.16.0 §19.11) |
 | v3.2 | 2026-03 | **PAY-DEBT-RELOADED v2.0 + PAY-DEBT v1.0 — Zero UX-visible changes:** WS-1 through WS-9-B are entirely infrastructure, test-quality, and architectural hardening improvements with no impact on any user-facing surface. PAY-DEBT v1.0 god-file decompositions (TD-1–TD-5) restructured internal modules; PAY-DEBT-RELOADED v2.0 hardened config loading, narrative rendering, DAG execution, and concurrency guarantees. All 28 `/work *` commands, all Telegram slash commands, all briefing section formats (flash/standard/deep), all onboarding flows, and all `/stage` card lifecycle views are unchanged. Architectural health improved from ~5/10 (pre-PAY-DEBT v1.0) to 9.0/10 (post-PAY-DEBT-RELOADED v2.0); test suite expanded to 3,429 total tests with full coverage of `post_work_refresh`, `config_loader`, `narrative/` package, `work_loop` DAG paths, and channel security concurrency. (implements PRD v7.2.0, Tech Spec v3.14.0; see `specs/pay-debt-reloaded.md` and `specs/pay-debt.md`, archived to `.archive/`) |
 | v2.7.3 | 2026-03 | **DUAL v1.3.0 UX** — Multi-machine setup is transparent to the user; all action proposal and execution flows are unchanged at the UX layer. On the Mac (proposer): bridge result ingestion runs silently before each catch-up briefing — executed actions appear in the briefing with their outcome status as if executed locally. On Windows (executor): action proposals arrive via OneDrive-synced bridge files; the `channel_listener.py` executor poll loop picks them up and executes automatically or queues for approval — same Telegram approval UX as single-machine mode. **Per-machine connectors:** connectors that are not applicable to the current machine are silently skipped during pipeline fetch (no user-visible error); `list_connectors` command shows a PLATFORM column. **Preflight advisory:** a P1 bridge health check surfaces if the bridge key is missing or the bridge directory is not accessible — shown as `⚠️ [ADVISORY] bridge: key not found` (non-blocking, catch-up proceeds). **Nudge daemon:** silently skips execution on any machine that is not the designated listener host — no user-visible behavior change. (implements PRD v7.0.8, Tech Spec v3.10.0, specs/dual-setup.md) |
 | v3.1 | 2026-03 | **Work OS v2.7.0 UX expansion** — Command palette expanded from 7 to 28 commands; §23.7 Narrative Engine UX (10 template picker, weekly memo format, calibration brief); §23.8 Promotion OS UX (/work promo-case output, evidence density); §23.9 Connect Cycle UX (evidence assembly, GAP flags, calibration brief); §23.10 Quick Capture + Decision Support UX (/work remember, D-NNN format); §23.11 Bootstrap Interview UX (12-question flow); §23.12 Learning & Adaptive Behavior UX. (implements PRD v7.1.0 FR-19 FW-11–FW-17, Tech Spec v3.13.0 §19) |
@@ -1774,8 +1775,14 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | `/work products <name>` | Org | Deep product knowledge — architecture, components, dependencies, teams |
 | `/work products add <name>` | Org | Interactively create new product entry (index + deep file) |
 | `/work reflect` | Intel | Reflection Loop — auto-detect due horizon, sweep + synthesize + draft |
+| `/work reflect daily` | Intel | Force daily close — day's accomplishments + carry-forward |
 | `/work reflect weekly` | Intel | Force weekly reflection with accomplishments, carry-forwards, reconciliation |
+| `/work reflect monthly` | Intel | Force monthly retrospective aggregating weekly reflections |
+| `/work reflect quarterly` | Intel | Force quarterly review aggregating monthly retros |
 | `/work reflect --status` | Intel | Show last close times and which horizons are due |
+| `/work reflect --tune` | Intel | Interactive scoring calibration — 15 pairwise comparisons |
+| `/work reflect --backfill` | Intel | Backfill from 82-week work-scrape corpus |
+| `/work reflect --audit [N]` | Intel | Show last N audit log entries (default: 20) |
 | `/work return [window]` | Intel | Absence recovery — summarizes what changed while away (default 3d, e.g. `4d`) |
 | `/work boundary` | Intel | Boundary intelligence report — load trends, after-hours patterns, recommendations |
 | `/work connect` | Intel | Review-cycle evidence by goal area |
@@ -2101,9 +2108,248 @@ Work OS adapts over time through three phases:
 
 **Transparency rule:** All predictions show their basis: `(based on 12 similar weeks)`. If prediction accuracy drops below 60%, the system silently recalibrates — no user-visible disruption.
 
+### 23.13 Product Knowledge Domain UX
+
+Product Knowledge Domain (FW-18) adds three commands to the Work OS surface and injects product context into meeting prep cards.
+
+#### `/work products` — Index View
+
+Displays all tracked products from `work-products.md`:
+
+```
+### Product Knowledge Index
+Products tracked: 4 | Last updated: YYYY-MM-DD
+
+| Product    | Layer         | Team           | Active Projects | Status |
+|------------|---------------|----------------|-----------------|--------|
+| EngineA    | data-plane    | Core Team      | Project-Alpha   | active |
+| ServiceB   | control-plane | Platform Team  | Project-Alpha   | active |
+| Offering-C | offering      | Services Team  | —               | active |
+| Platform-D | platform      | Infra Team     | Project-Beta    | active |
+```
+
+Graceful degradation: if `work-products.md` is absent, shows: `Product index not found. Run \`/work products add <name>\` to create your first entry, or add products during \`/work bootstrap\`.`
+
+#### `/work products <name>` — Deep Knowledge Card
+
+```
+### EngineA — Product Knowledge
+Layer: data-plane | Team: Core Team | Status: active
+Last updated: YYYY-MM-DD
+
+Architecture:
+  [2–3 sentence description from the Architecture Overview section]
+
+Components: 5 tracked | Dependencies: 2 upstream, 3 downstream
+Active Projects: Project-Alpha, Project-Beta
+
+Recent Knowledge:
+  YYYY-MM-DD: [entry from Knowledge Log] [from: design review]
+  YYYY-MM-DD: [entry from Knowledge Log] [from: team standup]
+```
+
+If the deep file for the named product does not exist: `Deep file not found for 'EngineA'. Run \`/work products add EngineA\` to create it.`
+
+#### `/work products add <name>` — Interactive Creation Flow
+
+Guided creation of a new product entry:
+
+```
+Creating new product entry: EngineA
+
+> Architecture layer (e.g., data-plane, control-plane, offering, platform): data-plane
+> Team that owns this product: Core Team
+> One-sentence architecture summary: [user input]
+> Active projects referencing this product (comma-separated, or leave blank):
+> Routing keywords for meeting title matching (comma-separated):
+
+✓ Index updated: state/work/work-products.md
+✓ Deep file created: state/work/products/enginea.md
+  Fill in Components, Dependencies, and Teams sections for full context.
+```
+
+Two artifacts written atomically:
+1. `work-products.md` index — new row with 3-line summary + deep file pointer
+2. `state/work/products/<slug>.md` deep file — pre-populated from answers + empty section scaffolding
+
+#### Meeting Prep Context Injection
+
+When `/work prep` runs for a meeting whose title matches a product routing keyword, product context is injected into the prep card:
+
+```
+### Meeting Prep: Team Sync — EngineA Architecture Review
+Readiness: 72/100 | Attendees: 4
+
+📦 Product Context (EngineA)
+  Layer: data-plane | Team: Core Team
+  [Architecture summary sentence from deep file]
+  Components: 5 | Recent: YYYY-MM-DD: [latest Knowledge Log entry]
+
+Open threads: 2 | Key people: [from work-people.md]
+Prep actions: Review architecture overview before meeting
+```
+
+Context injection is limited to 4 lines. If multiple products match the meeting title, the highest-confidence match (most routing keywords hit) is selected. If no product index exists, the prior single-product context logic is used as a fallback.
+
+#### Staleness Indicators
+
+Product files surface staleness warnings at the 6-month threshold (vs. 2-week for projects):
+
+```
+⚠️ EngineA knowledge is 7 months old. Run `/work products add EngineA` to update.
+```
+
+Staleness warnings appear in deep knowledge card output and in `/work health`.
+
+---
+
+### 23.14 Reflection Loop UX (FW-19 v1.5.0)
+
+Triggered via `/work reflect`, `/work reflect weekly`, `/work reflect monthly`, `/work reflect quarterly`, `/work reflect --status`, `/work reflect --tune`, `/work reflect --backfill`, `/work reflect --audit`.
+
+#### Horizon Auto-Detection Prompt
+
+When the user runs `/work reflect` (no horizon specified), the system checks what's due:
+
+```
+Reflection status:
+  Daily close:    8h since last close ✓ (due)
+  Weekly review:  6d since last close ✓ (due — Thu/Fri)
+  Monthly retro:  28d since last close ✓ (due)
+
+→ Weekly review is due. Run it now? [Y/n]
+```
+
+If nothing is due: `All horizons current. Next weekly due: Fri Mar 27.`
+
+#### Weekly Reflection Output Format
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WEEKLY REFLECTION — Week 13 (Mar 24-28, 2026)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🏆 ACCOMPLISHMENTS (14 items · 3 HIGH, 7 MEDIUM, 4 LOW)
+
+  By Goal:
+  G2: Fleet Automation (+5 items, +23% progress)
+    HIGH  Kusto live data pipeline — GQ-001/010/012/050 auto-refresh
+    HIGH  Fleet source migration — xdataanalytics (90 clusters)
+    MED   Dashboard widget for cluster health
+    ...
+
+  G3: Work OS (+2 items)
+    MED   /work notes command + WorkIQ enrichment
+    LOW   Test coverage expansion
+
+🔄 RECONCILIATION (Planned vs Actual)
+  ✅ Fix PF queries — done (all 12)
+  ✅ Test coverage for new code — done (55 tests)
+  ⏭ Expand refresh clusters — deferred to W14
+  🆕 Fleet migration — unplanned (emerged from LT review)
+
+⏭ CARRY FORWARD (3 items)
+  ┌────────────────────┬──────┬──────────┬─────┐
+  │ Item               │ Pri  │ Due      │ Age │
+  ├────────────────────┼──────┼──────────┼─────┤
+  │ Validate 11 PF qry │ HIGH │ W14-Mon  │ new │
+  │ LT deck fleet nums │ MED  │ W14-Wed  │ new │
+  │ Connect-prep refr  │ HIGH │ Apr 4    │ new │
+  └────────────────────┴──────┴──────────┴─────┘
+
+📝 DRAFT STAGED
+  Card: CARD-W13-MEMO-001 (weekly_memo)
+  Use `/stage preview CARD-W13-MEMO-001` to review
+```
+
+#### Carry-Forward Staleness
+
+Items carried forward 2+ weeks are flagged:
+
+```
+  ⚠ [STALE] Review parking lot scope — carried 3 weeks, 2 cycles
+    → Will move to Parking Lot at next monthly retro unless resolved
+```
+
+#### `/work reflect --status` Output
+
+```
+━━━━ REFLECTION STATUS ━━━━
+
+| Horizon   | Last Close          | Due In  | Status     |
+|-----------|---------------------|---------|------------|
+| Daily     | Today 17:00 UTC     | 6h      | ✓ current  |
+| Weekly    | Fri Mar 21 17:30    | now     | ⚡ due     |
+| Monthly   | Feb 28 18:00        | 3d      | ⚡ due     |
+| Quarterly | Dec 31 17:00        | Apr     | ✓ current  |
+
+Active carry-forwards: 3 (0 stale)
+Reflection files: 82 weeks in history
+```
+
+#### `/work reflect --tune` Calibration Session
+
+Presents 15 pairwise comparisons:
+
+```
+━━━━ SCORING CALIBRATION ━━━━
+Comparison 1/15 (adjacent-rank):
+
+  A: Kusto pipeline integration [HIGH|TEAM|G2] — score: 1.06
+  B: Newsletter auto-draft [MED|SELF|G3]      — score: 0.55
+
+  Is A actually more impactful than B? [Y/n/skip]
+```
+
+After 15 comparisons: suggested weight adjustments displayed with before/after score distributions.
+
+#### Backfill Progress Display
+
+```
+━━━━ BACKFILL — Phase 1a ━━━━
+Parsing work-scrape corpus...
+
+  [████████████████████░░░░] 68/82 files (83%)
+  Current: 2025/07-w2.md (format: B-mid)
+  Extracted: 847 accomplishments, 312 meetings, 94 decisions
+
+  ✓ 2024-W34 → reflections/weekly/2024-W34.md
+  ✓ 2024-W35 → reflections/weekly/2024-W35.md
+  ...
+```
+
+#### Friday Briefing Reflection Footer
+
+When weekly reflection is due, the daily briefing footer includes:
+
+```
+───────────────────────────────────────
+📋 REFLECTION DUE
+  Weekly review due — 3 unreconciled carry-forward items
+  Run: /work reflect weekly
+───────────────────────────────────────
+```
+
+#### Re-Run Behavior
+
+| Scenario | UX |
+|---|---|
+| Daily close already done today | Prompt: "Daily close exists. Append new items or overwrite?" Default: append |
+| Weekly already done this week | Prompt: "W13 reflection exists. Re-generate?" Default: skip (show existing) |
+| `--force` flag | Bypass duplicate check, overwrite silently |
+
+#### Design Rules (Reflection Surface)
+
+| Rule | Rationale |
+|---|---|
+| Raw scores shown for first 4 weeks | Build calibration intuition before relying on labels |
+| Draft deliverables go through `/stage` | Consistent review lifecycle; PII guard before share |
+| Reflection never auto-runs | PULL contract — user triggers, system suggests |
+| Carry-forward dedup by ID | Re-runs never duplicate items |
+
 ---
 
 **Cross-references:**
-- PRD v7.1.0: FR-19 Work Intelligence OS (FW-1–FW-17), Phase 2C
-- Tech Spec v3.13.0: §19 Work OS Technical Architecture (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage)
+- PRD v7.4.0: FR-19 Work Intelligence OS (FW-1–FW-19), Phase 2C; PRD v7.3.0: FW-18 Product Knowledge Domain; PRD v7.4.0: FW-19 Reflection Loop v1.5.0
+- Tech Spec v3.16.0: §19 Work OS Technical Architecture (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage, §19.10 Product Knowledge Domain, §19.11 Reflection Loop)
 - Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)

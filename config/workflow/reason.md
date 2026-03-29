@@ -146,6 +146,12 @@ Select the **ONE THING** — the single highest-scoring item that is:
 - Are there any claims not grounded in observed data? ← REMOVE THESE
 - Does the ONE THING pass the "so what?" test?
 - Any domain that had activity but produced zero alerts — re-examine.
+- **Thread Closure Check (work-comms):** For EVERY Teams/email thread surfaced as
+  "action required", verify the user has not already responded. Use WorkIQ to check
+  the latest message in the thread. If the user already replied, reclassify as
+  RESOLVED and move to the "Threads Resolved" section. See `prompts/work-comms.md`
+  §Thread Closure Validation for the full two-pass protocol. **Do NOT surface
+  already-responded threads as action items — this is a trust-critical rule.**
 
 If validation fails for an item: cycle back to ORIENT for that item.
 Maximum cycles: 2. After 2 cycles, proceed with best-effort output.

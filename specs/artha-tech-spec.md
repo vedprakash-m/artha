@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.14.0 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.16.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.2.0
+> **Implements**: PRD v7.4.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,7 +11,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.15.0 | 2026-03 | **Work OS FW-18 Product Knowledge + FW-19 Reflection Loop (specs):** **Product Knowledge Domain** (specs/work-products.md v1.0.0): New first-class Work OS domain for durable product/technology knowledge. `config/domain_registry.yaml` — `work-products` entry (trigger-loaded, 6-month staleness, routing_keywords: product/architecture/data-plane/control-plane/offering/platform). `prompts/work-products.md` — extraction contract (schema, triggers, routing, staleness, cross-domain triggers). `state/templates/work-products.md` — bootstrap template. `state/work/products/` directory for per-product deep files. `config/implementation_status.yaml` — `work_products` entry. `config/commands.md` — `/work products` family. PRD FW-18 registered. UX Spec §23.1 updated. **Reflection Loop** (specs/reflection-loop.md v1.2.0): Multi-horizon planning & review engine spec — sweep→extract→score→reconcile→synthesize→draft pipeline, three-tier persistence (live/archive/compacted), backfill strategy for 82-week work-scrape corpus, impact scoring with org-sensitivity confidence gates, carry-forward hard-decay policy, `/stage` integration for draft deliverables. PRD FW-19 registered. |
+| v3.16.0 | 2026-03 | **FW-19 Reflection Loop v1.5.0 — Full Implementation:** 8-step pipeline (detect→sweep→extract→score→reconcile→synthesize→draft→persist) implemented across 8 new modules. `scripts/work/reflect.py` (~400 LOC, pipeline orchestrator: `cmd_reflect()`, `_detect_horizons()`, `_execute_reflection()`, `_persist_reflection()`), `scripts/work/sweep.py` (~200 LOC, 5-pass data collection: WorkIQ, state diff, Kusto, calendar, goal/KPI), `scripts/work/scoring.py` (~150 LOC, additive impact model with configurable weights), `scripts/work/reconcile.py` (~200 LOC, two-pass: deterministic ID match + injectable LLM semantic match), `scripts/work/reflect_reader.py` (~120 LOC, typed `ReflectReader` facade: `get_current_reflection()`, `get_weekly_history()`, `get_goal_trend()`), `scripts/work/compaction_manifest.py` (idempotent multi-file compaction with crash-recovery manifest), `scripts/work/reflection_key.py` (`ReflectionKey` frozen dataclass for retry-safe artifact identification), `scripts/narrative/reflect.py` (4 horizon templates). Infrastructure: `write_state_atomic()` in `scripts/work/helpers.py` (Sprint 0, `os.replace()` cross-platform), UUID+timestamp concurrency guard (§3.1.2), `CompactionManifest` crash-recovery (§3.1.4), `ReflectionKey` idempotency (§3.1.5). Backfill: `scripts/backfill/scrape_parser.py` (4-format family parser), `scripts/backfill/cross_reference.py`, `scripts/backfill/backfill_runner.py`. State files: `state/work/reflect-current.md` (Tier 1), `state/work/reflections/` (Tier 2), `state/work/reflect-history.md` (Tier 3). Config: `enhancements.work_os.reflect` scoring block in `config/artha_config.yaml`. Commands: `/work reflect [daily|weekly|monthly|quarterly]`, `--status`, `--tune`, `--backfill`, `--backfill-review`, `--compact`, `--force`, `--audit`. 1,375 work tests passing. `specs/reflection-loop.md` archived to `.archive/specs/reflection-loop.md`. §19.11 Reflection Loop technical architecture added. UX Spec §23.14 added. |
+| v3.15.0 | 2026-03 | **Work OS FW-18 Product Knowledge + FW-19 Reflection Loop (specs):** **Product Knowledge Domain** (specs/work-products.md v1.0.0): New first-class Work OS domain for durable product/technology knowledge. `config/domain_registry.yaml` — `work-products` entry (trigger-loaded, 6-month staleness, routing_keywords: product/architecture/data-plane/control-plane/offering/platform). `prompts/work-products.md` — extraction contract (schema, triggers, routing, staleness, cross-domain triggers). `state/templates/work-products.md` — bootstrap template. `state/work/products/` directory for per-product deep files. `config/implementation_status.yaml` — `work_products` entry. `config/commands.md` — `/work products` family. PRD FW-18 registered. UX Spec §23.1 updated. **Reflection Loop** (specs/reflection-loop.md v1.2.0): Multi-horizon planning & review engine spec — sweep→extract→score→reconcile→synthesize→draft pipeline, three-tier persistence (live/archive/compacted), backfill strategy for 82-week work-scrape corpus, impact scoring with org-sensitivity confidence gates, carry-forward hard-decay policy, `/stage` integration for draft deliverables. PRD FW-19 registered. Tech Spec §19.10 Product Knowledge Domain technical architecture added. UX Spec §23.13 Product Knowledge Domain UX added. `specs/work-products.md` archived to `.archive/work-products.md`. |
 | v3.14.0 | 2026-03 | **PAY-DEBT-RELOADED v2.0 — Infrastructure Hardening (WS-1–WS-9-B):** **WS-1 (`work_loop.py` DAG fix):** `scripts/work_loop.py` — silent short-circuit on empty connector result eliminated; previous `if not connector_results: return []` guard before stage-3 enrichment caused stages 3–7 never to execute when any connector returned `[]`; fix: stages 3–7 execute unconditionally with empty list as valid input; 7 new tests covering all DAG code paths. **WS-2 (centralized config loader):** `scripts/lib/` package (new); `scripts/lib/config_loader.py` (~80 LOC) — `load_config(name: str, _config_dir: str | None = None) -> dict` with `@functools.lru_cache(maxsize=None)`; `_config_dir` is a secondary cache key enabling per-test temp-dir isolation without monkeypatching; `invalidate() -> None` calls `load_config.cache_clear()`; `_CONFIG_FILES: dict[str, str]` maps 10 canonical names (`user_profile`, `artha_config`, `connectors`, `channels`, `routing`, `commands`, `signal_routing`, `skills`, `domain_registry`, `patterns`) to YAML filenames; 92 direct `yaml.safe_load()` call sites across Work OS scripts replaced with `load_config()`; `tests/conftest.py` — autouse `_clear_config_cache(tmp_path)` fixture calls `invalidate()` after every test; `scripts/post_work_refresh.py::_is_enabled(artha_dir)` uses `load_config("user_profile", _config_dir=str(artha_dir / "config"))`. **WS-3 (narrative decomposition):** `scripts/narrative_engine.py` (1,766-LOC god-file) → `scripts/narrative/` bounded-context package: `__init__.py` (~60 LOC, thin backward-compatible shim re-exporting all 10 template names + `render()` entry point); `templates.py` (~400 LOC, template registry, metadata dataclass, `get_template()`, `list_templates()`); `renderer.py` (~500 LOC, Jinja2 env setup, markdown pipeline, `render_section()`, `_apply_escapes()`); `context.py` (~700 LOC, `assemble_context()`, all 10 section builders, `_load_*` helpers using `load_config()`); import path `scripts.narrative_engine` preserved via shim; Rule-6 enforced in WS-4 boundary tests. **WS-4 (architectural boundary rules):** `tests/unit/test_architectural_boundaries.py` — AST-grep-based import scanner enforcing 7 rules: Rule-1 no cross-domain imports (channels↔work); Rule-2 no direct connector imports from non-connector scripts; Rule-3 no connector upward imports; Rule-4 no connector cross-imports; Rule-5 no direct `yaml.safe_load(open(known_config_file))` (AST `ast.parse()` + `ast.walk()`); Rule-6 no narrative cross-module coupling (`renderer.py` must not import `templates.py`); Rule-7 no `threading.Lock()` in `async with await` context. All 7 pass; auto-collected in CI. **WS-5 (test coverage):** 11 new test files/classes — `tests/work/test_post_work_refresh.py` (15 tests: `_is_enabled()` with/without `run_on_catchup` flag, `run()` mock DAG, `main()` argparse, `_append_run_log()` 100-entry rotation cap); `tests/unit/test_config_loader.py` (12 tests: cache hit/miss, `_config_dir` isolation, `invalidate()`, unknown name raises `KeyError`, tmp_path override); `tests/work/test_work_loop_dag.py` (7 tests). **WS-6 (exception observability):** `WorkConnectorError.to_log_dict() -> dict` returns `{connector, error_type, message, ts_utc, stage}`; 12 `except Exception: pass` swallows in `work_loop.py` connector paths replaced with `logger.error()` + append to `tmp/work_loop_errors.jsonl` (JSONL, one record per error, auto-created); `_JSON_SINK` module-level singleton (`threading.Lock` + `open(path, "a")`). **WS-7 (`signal_routing` externalization):** `config/signal_routing.yaml` (new, 47 entries, format: `{signal_type, action_type, priority, conditions}`) extracted from `scripts/action_composer.py` `_SIGNAL_ROUTING` Python dict; `action_composer.py` loader uses `load_config("signal_routing")` at module import, `_SIGNAL_ROUTING` retained as in-process fallback (N2 compliance — no behavior change on YAML parse failure); 3 new tests: `test_yaml_matches_fallback` asserts 47/47 YAML entries match fallback dict. **WS-8 (dep pins + type annotations + lint):** `pyproject.toml` — `pydantic[email]>=2.6,<3`, `PyYAML>=6.0,<7`, `cryptography>=42,<44`, `aiohttp>=3.9,<4`, `msal>=1.28,<2` pinned; `mypy --strict` annotations on `work_loop.py`, `post_work_refresh.py`, `work_reader.py`; ruff `select=["E","F","W","I"]` + pylint 10.0/10. **WS-9-A (concurrency audit):** `tmp/ws9-audit.md` — 4 shared-state races: SQLite WAL race (yellow — WAL mode mitigates, `BEGIN IMMEDIATE` not universal), `tmp/` write races (green — atomic `os.replace` used), signal_routing reload (green — read-only after init), WorkIQ MCP singleton (yellow — event loop assumed single-threaded). **WS-9-B (concurrency tests):** `tests/unit/test_channel_security.py` — 2 tests: `test_concurrent_ingest_proposals_dedup` (10 threads, same 5-item proposal set, assert dedup==5); `test_concurrent_write_and_ingest` (`threading.Barrier(2)` writer+reader, assert no corruption). **Architectural health:** 7.5/10 → 9.0/10. **Test suite:** 3,429 passed, 0 failed, 13 skipped, 20 xfailed. Implements PRD v7.2.0. Builds on PAY-DEBT v1.0 structural work (god-file decompositions, YAML registry externalization, structured observability) recorded in Tech Spec v3.9.x–v3.12.x. See `specs/pay-debt-reloaded.md` (archived to `.archive/`). |
 | v3.13.0 | 2026-03 | **PR-3 AI Trend Radar** (specs/ai-posts.md PR-3 v1.0.6): **New module:** `scripts/skills/ai_trend_radar.py` — `AITrendRadarSkill` with `pull()`/`parse()`/`to_dict()`; `AISignal` dataclass; `_signal_id()` SHA-256 stable ID; `_score_signal()` 9-rule scorer (keyword_hit +2.0, title_body_match +0.5, multi_source_bonus +0.15, employer_safety_gate −5.0 block, multi_topic_boost, source_trust factor); `_detect_category()` ordered: model→framework→tool→tutorial→technique→research; `_apply_topic_boost()` max-wins; `_emit_experiment_moments()` GAP-2 guard (no re-emit on second run); warm-start lifecycle (reads `state/ai_trend_radar.md` `meta.warm_start_file`, 30-day timeliness penalty, sets `warm_start_active: false` after first live run); `state/ai_trend_radar.md` state file (YAML frontmatter: topics_of_interest, experiments, meta); `tmp/ai_trend_signals.json` + `tmp/ai_trend_metrics.json` I/O. **Tests:** `tests/unit/test_ai_trend_radar.py` — 52 tests across 13 test classes (SignalIdStability, RelevanceScoring, SignalDeduplication, MultiSourceBonus, EmployerSafetyGate, TopicBoost, WarmStartTimelinessPenalty, ScoredMomentEmission, OutputFileIntegrity, WarmStartLifecycle, CategoryDetection, TryWorthy, FactoryFunction). **`scripts/pr_manager.py`** — `ai_experiment_complete` in `_MOMENT_WEIGHTS` (0.85), `_DEFAULT_MOMENT_THREAD_MAP` (NT-1/1.0, NT-5/0.5), `_MOMENT_PLATFORMS` (["linkedin"]); `cultural_festival` excludes "linkedin". **`scripts/pr_stage/domain.py`** — `platform_exclude: list[str] = field(default_factory=list)` on `ContentCard`; `to_dict()`/`from_dict()` updated. **`scripts/pr_stage/service.py`** — `platform_exclude` on local `ScoredMoment` dataclass, propagated through `_adapt_moment()` and `ContentCard` construction. **`scripts/briefing_adapter.py`** — `render_radar_section(signals_file, *, max_items, artha_dir)` with emoji category map, try-worthy badge, topic match, URL link, footer hint. **`scripts/channel_listener.py`** — `/radar`, `/try`, `/skip` aliases; `cmd_radar()`, `cmd_radar_try()`, `cmd_radar_skip()` handlers registered in `_HANDLERS`. **`state/pr_manager.md`** — `register_b_practitioner` voice sub-register; `data_quality: partial` on LinkedIn. **`state/gallery.yaml`** — CARD-SEED-RADAR seed card (occasion_type: ai_experiment_complete, platform_exclude: [], convergence_score: 0.72). **`config/connectors.yaml`** — `rss_feed.enabled: true`; 7 feeds registered. **`config/artha_config.yaml`** — `enhancements.pr_manager.ai_trend_radar:` block (newsletter_senders list ×13, relevance_keywords, try_worthy_threshold: 0.7, surface_threshold: 0.35, max_signals_per_week: 10). **`config/patterns.yaml`** — PAT-PR-004 stale-radar (source_file: tmp/ai_trend_metrics.json, stale_days: 14). **`config/skills.yaml`** — `ai_trend_radar: enabled: true, priority: P2, cadence: weekly`. **`config/implementation_status.yaml`** — `features.ai_trend_radar:` entry. 52 new tests. Total: 1974 passed, 0 failures (all passing). See F11.12. |
 | v3.12.1 | 2026-03 | **PR-2 Content Stage — Bug-fixes + Vault Policy Change:** **1) Gallery removed from vault:** `scripts/foundation.py` — `("gallery", ".yaml")` and `("gallery_memory", ".yaml")` removed from `SENSITIVE_FILES` (12→10 entries); gallery contains public social-media drafts, not PII or financial data — vault encryption was causing permission-lockout between sessions (vault `encrypt` sets `----------` on plaintext, making gallery unreadable until next `decrypt`). `state/gallery.yaml` + `state/gallery_memory.yaml` are now plaintext YAML, never encrypted. `config/Artha.md` `/stage` command updated: removed vault-decrypt gate, marked "plaintext — not vaulted". **2) Date parser fix:** `scripts/skills/occasion_tracker.py` — `_parse_date_flexible()` expanded from ISO-only (`YYYY-MM-DD`) to also handle `M/D/YYYY`, `MM/DD/YYYY`, and `M/D` (no-year assumes current year) formats; all dates in `state/occasions.md` use US date formats, so the ISO-only parser was silently returning 0 occasions. **3) ScoredMoment field adapter:** `scripts/pr_stage/service.py` — added `ContentStage._adapt_moment()` static method that bridges PR-1 `ScoredMoment` field names (`label`/`moment_type`/string `event_date`) to PR-2 expected fields (`occasion`/`occasion_type`/`date` object); `process_moments()` signature relaxed to `list` (was `list[ScoredMoment]`); adapter called inside `process_moments()` loop before card creation. **4) Festival data seeded:** `state/occasions.md` — added 16 Indian festivals for 2026–2027 (Holi, Ugadi/Gudi Padwa, Ram Navami, Baisakhi, Eid ul-Fitr, Raksha Bandhan, Janmashtami, Ganesh Chaturthi, Navratri, Dussehra, Karwa Chauth, Diwali, Bhai Dooj, Chhath Puja, Makar Sankranti, Maha Shivaratri) + 1 birthday; occasions.md schema v1.1 dates use `M/D/YYYY` and `M/D` formats. 1922 tests (all passing). |
@@ -3863,7 +3864,7 @@ To support the automated testing requirements in PRD §14.4, Artha employs a Pyt
 - **Testing Library:** `pytest` (standard Python testing framework).
 - **Mocking:** `pytest-mock` for isolating scripts from the filesystem, network, and credential store.
 - **Snapshot Testing:** `pytest-snapshot` or custom logic for "Golden File" validation.
-- **Test count:** 698 passed (personal surface), ~541 passed (Work OS — `tests/work/`), 5 skipped, 20 xfailed (post v3.7 Work OS implementation; Work OS count reflects work.md v2.1.0 — see §19.9).
+- **Test count:** 698 passed (personal surface), ~1,375 passed (Work OS — `tests/work/`), 7 skipped, 20 xfailed (post v3.16 Work OS implementation; Work OS count reflects Reflection Loop implementation — see §19.11).
 - **Data Diffing:** `datadiﬀ` for granular comparison of extracted Markdown vs. expected snapshots.
 
 ### 17.2 Test Categories
@@ -4068,9 +4069,308 @@ Tier selection happens in `_check_agency_available()` at preflight: probes `agen
 
 **Note:** `tests/unit/test_bridge_schemas.py` (55 tests) covers the older `BridgeSchema` API that predates the v1.7.0 redesign. `tests/work/test_bridge_enforcement.py` covers the current `bridge_schemas.py` implementation.
 
+### 19.10 Product Knowledge Domain
+
+Product Knowledge Domain (FW-18) provides durable product/technology knowledge that persists across projects. Unlike project state (2-week staleness), product knowledge uses a 6-month staleness tier and is trigger-loaded rather than always-on.
+
+#### File Structure
+
+```
+state/work/
+├── work-products.md              # Index (~5–15 KB, trigger-loaded)
+│   ├── Product taxonomy tree
+│   ├── Per-product: 3-line summary + deep file pointer
+│   └── Active project cross-references
+│
+└── products/                     # Deep files (loaded on demand)
+    └── <slug>.md                 # One file per tracked product/service
+```
+
+#### Loading Model
+
+Trigger-loaded, same tier as `work-people`:
+- **Not** loaded on every briefing — preserves context window
+- Loaded when a meeting title matches a product routing keyword → deep file injected into prep context
+- Loaded when user runs `/work products` or `/work products <name>`
+- Loaded when a narrative template explicitly references product data
+- Loaded when the Reflection Loop (FW-19) tags accomplishments by product
+
+#### Index Schema (`state/work/work-products.md`)
+
+```yaml
+---
+schema_version: "1.0"
+domain: work-products
+last_updated: "<ISO timestamp>"
+work_os: true
+generated_by: work_domain_writers
+encrypted: false
+product_count: <N>
+layer_summary: { data-plane: N, control-plane: N, offering: N, platform: N }
+---
+```
+
+Markdown body contains the taxonomy tree and per-product summary rows. Routing keywords for each product are defined in `config/domain_registry.yaml` (`work-products` entry, `routing_keywords` list).
+
+#### Deep File Schema (`state/work/products/<slug>.md`)
+
+| Section | Content |
+|---|---|
+| Architecture Overview | 2–5 paragraphs describing the product’s role and scale |
+| Components | Table: `name`, `role`, `owner` |
+| Dependencies | Table: `type` (upstream/downstream), `interface` |
+| Team & Stakeholders | Table: `name`, `role`, `relationship` |
+| Data Sources & Observability | Table: `source`, `query_key`, `cadence` |
+| Related Projects | Table linking to `work-projects.md` entries |
+| Key Metrics | Table: `metric`, `source`, `target`, `current` |
+| Knowledge Log | Append-only entries: `YYYY-MM-DD: note [from: source]` |
+
+#### Products vs. Projects
+
+| Dimension | Products | Projects |
+|---|---|---|
+| **Lifecycle** | Durable — persist indefinitely | Time-bound — start → close |
+| **Content** | Architecture, components, dependencies, teams | Milestones, work items, deliverables |
+| **Staleness tier** | 6 months | 2 weeks |
+| **Update source** | Design reviews, architecture docs, onboarding | ADO, meetings, daily standup |
+
+#### Integration Points
+
+| Surface | Integration |
+|---|---|
+| **Meeting prep** (`/work prep`) | Keyword match → inject architecture summary, key contacts, latest metric |
+| **Narrative engine** (FW-13) | Memo/newsletter/deck templates reference product context for richer output |
+| **Reflection Loop** (FW-19) | Accomplishment Index gets `Product` column; items tagged by product |
+| **Promo case** (FW-15) | Product scope evidence: "owns knowledge of N products across M layers" |
+| **Bootstrap** (FW-12) | Product seed questions during `/work bootstrap` |
+
+#### Meeting Context Injection
+
+`_product_meeting_context(title: str) -> list[str]` generalizes single-product meeting context injection:
+
+1. Read `work-products.md` index
+2. For each product, check if any `routing_keyword` matches the meeting title
+3. Load the matching product’s deep file
+4. Extract: architecture summary, key contacts, latest metric, most recent Knowledge Log entry
+5. Return up to 4 context lines (same format as existing injection)
+6. **Fallback:** if product index does not exist or no keyword match, fall back to the prior single-product context function
+
+Backward compatibility: existing single-product keyword list and context function continue to work; `_product_meeting_context()` is tried first.
+
+#### Bootstrap Seed Questions
+
+Added to the `/work bootstrap` interview (FW-12):
+- "What products does your team own or contribute to?" — `type: multiline_list`, written to `work-products.md` index
+- "What is the primary architecture layer you work on?" — `type: str`, optional
+
+#### Privacy & Encryption
+
+| Data | Encrypted | Notes |
+|---|---|---|
+| Product names, architecture | No | Not PII; architecture knowledge is referenceable |
+| Team names in deep files | No | Use role/alias where possible |
+| Product index | No | Lightweight taxonomy, no sensitive data |
+
+`pii_guard.py` runs on all product file content before display. Product codenames can be added to `privacy.redact_keywords` in `config/artha_config.yaml` if needed. No external APIs required.
+
+#### Planned Test Coverage
+
+`tests/work/test_work_products.py`:
+- `write_products_index()`: valid YAML frontmatter written; empty product list handled
+- `write_product_deep(slug)`: correct `state/work/products/<slug>.md` structure; atomic write
+- `cmd_products()`: index list rendered from valid state file
+- `cmd_products("<name>")`: deep file loaded and rendered; graceful handling when slug not found
+- `_product_meeting_context()`: keyword match returns context lines; falls back to prior function when product index absent
+- Bootstrap seed questions → valid index entries with correct `product_count` frontmatter
+- Schema validation: `schema_version`, `domain`, `last_updated` present and valid
+
 ---
 
-*Artha Tech Spec v3.5 — End of Document*
+### 19.11 Reflection Loop Technical Architecture (FW-19 v1.5.0)
+
+The Reflection Loop is a multi-horizon planning & review engine that provides sweep→synthesize→score→reconcile→draft capabilities across daily, weekly, monthly, quarterly, and yearly horizons. It is a headless engine that powers existing commands (`/work memo`, `/work newsletter`, `/scorecard`, `/goals`) rather than creating a parallel surface.
+
+#### Pipeline Architecture
+
+8-step pipeline executed via `/work reflect`:
+
+```
+DETECT → SWEEP → EXTRACT → SCORE → RECONCILE → SYNTHESIZE → DRAFT → PERSIST
+```
+
+| Step | Module | Responsibility |
+|---|---|---|
+| 1. DETECT | `reflect.py` `_detect_horizons()` | Check last close times + day-gate (Thu/Fri for weekly+) |
+| 2. SWEEP | `sweep.py` | 5-pass: WorkIQ, state diff, Kusto, calendar, goal/KPI |
+| 3. EXTRACT | `reflect.py` | Structured item extraction (accomplishments, CFs, decisions, risks) |
+| 4. SCORE | `scoring.py` `score_item()` | `(urgency × importance) + visibility_bonus + goal_alignment_bonus` |
+| 5. RECONCILE | `reconcile.py` | Two-pass: deterministic ID match → injectable LLM semantic match |
+| 6. SYNTHESIZE | `narrative/reflect.py` | Horizon-specific Markdown with YAML frontmatter |
+| 7. DRAFT | `narrative/reflect.py` | Deliverable (memo/newsletter/deck) → `/stage` card |
+| 8. PERSIST | `reflect.py` `_persist_reflection()` | Atomic write via `write_state_atomic()` |
+
+**Failure semantics:** Minimum viable sweep requires ≥1 of passes 1–3 returning data. Partial-success: failed passes logged as `skipped` in frontmatter. No retry within same invocation — failures queued for next run.
+
+#### Module Layout
+
+```
+scripts/work/
+├── reflect.py            # Pipeline orchestrator (~400 LOC)
+├── sweep.py              # 5-pass data collection (~200 LOC)
+├── scoring.py            # Additive impact model (~150 LOC)
+├── reconcile.py          # Two-pass plan-vs-actual (~200 LOC)
+├── reflect_reader.py     # Typed read facade (~120 LOC)
+├── compaction_manifest.py # Idempotent multi-file compaction
+├── reflection_key.py     # Stable artifact identifier
+└── helpers.py            # write_state_atomic() utility
+
+scripts/narrative/
+└── reflect.py            # 4 horizon templates
+
+scripts/backfill/
+├── scrape_parser.py      # 4-format family parser (~300 LOC)
+├── cross_reference.py    # Enrichment from existing state (~100 LOC)
+└── backfill_runner.py    # Orchestrator (~150 LOC)
+```
+
+#### Infrastructure (Sprint 0 Prerequisites)
+
+| Component | Location | Contract |
+|---|---|---|
+| `write_state_atomic()` | `scripts/work/helpers.py` | Write → tmp file → validate YAML frontmatter → `os.replace()` (atomic on all platforms including Windows) |
+| Concurrency guard | `state/work/.reflect-lock` | UUID4 + UTC timestamp JSON lock; stale after 30 min; no PID-based detection (Windows `os.kill()` sends SIGTERM, not signal-0) |
+| `CompactionManifest` | `scripts/work/compaction_manifest.py` | JSON manifest for multi-file compaction; crash recovery via `check_stale_compaction()` on startup; `--repair-compaction` flag for manual resolution |
+| `ReflectionKey` | `scripts/work/reflection_key.py` | Frozen dataclass `<horizon>/<iso-period>` (e.g., `weekly/2026-W14`); `already_exists()` prevents duplicate writes on retry |
+
+#### Three-Tier Persistence
+
+| Tier | File | Size | Retention |
+|---|---|---|---|
+| **1 (Live)** | `state/work/reflect-current.md` | ~5–10 KB | Overwritten each cycle; 15 KB size guard (blocks pipeline, no auto-compact) |
+| **2 (Archive)** | `state/work/reflections/{weekly,monthly,quarterly}/*.md` | ~3–8 KB each | 90 days full; compacted to Tier 3 with 30-day grace period |
+| **3 (History)** | `state/work/reflect-history.md` | ~20–40 KB/year | Indefinite; Accomplishment Index rows **never compacted** |
+
+**Compaction triggers:** Weekly reflection compacts dailies; monthly compacts weeklies >90 days; quarterly compacts monthlies >90 days. Grace period: `compacted_at` + 30 days before deletion.
+
+#### Scoring Model
+
+Additive visibility model (v1.3+ — eliminates Deep Work escape hatch):
+
+```
+score = (urgency × importance) + visibility_bonus + goal_alignment_bonus
+```
+
+| Dimension | Values | Role |
+|---|---|---|
+| Urgency | critical(1.0), high(0.8), medium(0.5), low(0.2) | Multiplicative base |
+| Importance | strategic(1.0), operational(0.7), administrative(0.3) | Multiplicative |
+| Visibility | ORG(+0.6), SKIP(+0.4), TEAM(+0.2), SELF(+0.0) | Additive bonus |
+| Goal Alignment | direct(+0.5), tangential(+0.2), unaligned(0) | Additive bonus |
+
+Score-to-label: ≥1.0 = HIGH, 0.3–0.99 = MEDIUM, <0.3 = LOW. Configurable in `config/artha_config.yaml` under `enhancements.work_os.reflect.scoring`.
+
+#### Reconciliation (`reconcile.py`)
+
+Two-pass strategy with injectable LLM boundary for testability:
+
+| Pass | Method | Match Condition | Testable |
+|---|---|---|---|
+| 1 | `match_by_id()` | Exact CF_ID or task_id | Pure function — no LLM |
+| 2 | `match_by_llm()` | Semantic title similarity | Mock-injectable `LLMMatcher` Protocol |
+
+Unit test contract: ≥90% line coverage; Pass 2 tests MUST inject `MockLLMMatcher`.
+
+#### Carry-Forward Policy
+
+| Age | Action |
+|---|---|
+| 0–2 weeks | Normal — shown in reflection with priority |
+| >2 weeks | Flagged `[STALE]` in all reflections |
+| 3 carries | Auto-moved to Parking Lot → requires `RE-PRIORITIZE` or `DROP` at monthly retro |
+| Active cap | Max 15 active CFs; new items force triage of oldest |
+
+CF IDs: `CF-YYYYMMDD-NNN` (4-digit year, counter resets daily, derived by scanning existing CFs).
+
+#### Backfill Pipeline
+
+3-phase backfill from 82-week work-scrape corpus (Aug 2024 W4 → Mar 2026 W3):
+
+| Phase | Method | Recall Target | API Calls |
+|---|---|---|---|
+| 1a | Parse scrape corpus (4 format families: A, B-early, B-mid, B-late) | ~85% | 0 |
+| 1b | Cross-reference with project-journeys, career, performance state | ~92% | 0 |
+| 2 | WorkIQ gap-fill (10 calls/session, ~3 sessions) | ~97% | ~30 |
+| 3 | Interactive user validation (8 quarterly reviews) | ~99% | 0 |
+
+Backfill CFs tagged `historical` — never surface as active in live system.
+
+#### Observability
+
+Pipeline step telemetry in `reflect-current.md` YAML frontmatter (`last_run` block with per-step status/duration/counts). Audit log at `state/work/work-audit.jsonl` (JSONL, append-only, 90-day rotation, 500 KB growth guard, sequence numbers, truncation guard).
+
+#### Integration Points
+
+| Surface | Integration |
+|---|---|
+| `/work` (briefing) | Friday footer: "Weekly review due — N unreconciled CF items" |
+| `/work memo` | `ReflectReader.get_current_reflection()` for source data (fallback: direct WorkIQ) |
+| `/work newsletter` | Weekly reflection accomplishments section |
+| `/work connect-prep` | Quarterly reflections + Accomplishment Index |
+| `/work promo-case` | `reflect-history.md` Accomplishment Index |
+| `/scorecard`, `/goals` | `ReflectReader.get_weekly_history()` + `get_goal_trend()` |
+
+**Fallback guarantee:** All commands fall back to current behavior (WorkIQ + state files directly) if no reflection data exists.
+
+#### Test Coverage
+
+| Module | Test File | Tests | Coverage Target |
+|---|---|---|---|
+| `reflect.py` | `tests/work/test_reflect.py` | Horizon detection, pipeline, state persistence, CF mechanics | >90% |
+| `sweep.py` | `tests/work/test_sweep.py` | Each sweep pass, combined sweep, WorkIQ fallback | >85% |
+| `scoring.py` | `tests/work/test_scoring.py` | Determinism, rubric, org-sensitivity, edge cases | >95% |
+| `reconcile.py` | `tests/work/test_reconcile.py` | ID match, LLM mock match, partial overlap | >90% |
+| `reflect_reader.py` | `tests/work/test_reflect_reader.py` | Fixture-based, no live I/O | >90% |
+| `compaction_manifest.py` | `tests/work/test_compaction_manifest.py` | Create, record, complete, stale detection | >90% |
+| `backfill/` | `tests/work/test_backfill_runner.py` + `test_scrape_parser.py` + `test_cross_reference.py` | Format families, cross-ref, orchestrator | >85% |
+
+#### Configuration
+
+```yaml
+enhancements:
+  work_os:
+    reflect:
+      enabled: false  # Feature flag — enable after bootstrap
+      scoring:
+        urgency_weights: { critical: 1.0, high: 0.8, medium: 0.5, low: 0.2 }
+        importance_weights: { strategic: 1.0, operational: 0.7, administrative: 0.3 }
+        visibility_bonus: { org: 0.6, skip: 0.4, team: 0.2, self: 0.0 }
+        goal_alignment_bonus: { direct: 0.5, tangential: 0.2, unaligned: 0.0 }
+        label_thresholds: { high: 1.0, medium: 0.3 }
+      horizons:
+        daily_close_after_hours: 6
+        weekly_due_day: "friday"
+        monthly_due_week: "last"
+        compaction_age_days: 90
+      backfill:
+        scrape_path: "<local-path>/knowledge/work-scrape"
+        workiq_gap_fill: true
+        max_workiq_calls_per_session: 10
+```
+
+#### Privacy & Security
+
+| Data | Classification | Storage |
+|---|---|---|
+| Reflection state files | Internal Use | `state/work/` local, encrypted via `.age` if configured |
+| Scrape corpus | Personal & Confidential | External drive only — never copied to cloud-synced paths |
+| Drafted deliverables | Internal Use | Staged via `/stage`; PII guard runs before display |
+| Audit log | Internal Use | `state/work/work-audit.jsonl`; 90-day rotation |
+
+Feature flag: `enhancements.work_os.reflect.enabled: false` by default. No new external APIs.
+
+---
+
+*Artha Tech Spec v3.16.0 — End of Document*
 
 ---
 
