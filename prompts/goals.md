@@ -42,3 +42,14 @@ Frequency: include in every briefing. If no goals defined, show "(no goals set �
 - `█████░░░░░` = 50%
 - `███████████` = 100%
 - Use 10-character bars with filled blocks proportional to progress
+
+## Directives for Artha Goal Intelligence
+
+### Directive 1 — Goal Creation (F13.1)
+When the user defines a new goal through conversation, propose the full structured entry for confirmation per UX §8.1: infer goal type (outcome/habit/milestone), suggest metrics, identify data sources. On confirmation, update the Markdown table in `state/goals.md` AND call `goals_writer.py --create` with the structured fields (id, title, type, category, target-date, and metric flags if applicable).
+
+### Directive 2 — OI → Goal Inference
+During cross-domain reasoning (Step 8), scan `open_items.md` for any open OIs that advance an active goal. Mention connections in the briefing narrative. Do not modify `open_items.md`.
+
+### Directive 3 — Table → YAML Coordination
+When updating goal data in the Markdown tables (progress, status changes, next actions), also call `goals_writer.py --update G-NNN --field value` for each changed YAML field. The LLM owns Markdown tables; the script owns YAML frontmatter. Both layers must stay in sync.

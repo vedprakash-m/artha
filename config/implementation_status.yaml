@@ -135,28 +135,28 @@ features:
 
   # ── Reflection Loop ─────────────────────────────────────────────────────
   work_os_reflect_sprint0:
-    spec: "specs/reflection-loop.md Sprint 0"
+    spec: ".archive/specs/reflection-loop.md Sprint 0"
     status: implemented
     confidence: high
     note: "Base infrastructure — AccomplishmentEntry, ReflectionKey, reflect.py pipeline"
   work_os_reflect_phase1:
-    spec: "specs/reflection-loop.md Phase 1 / §3.1–§3.5"
+    spec: ".archive/specs/reflection-loop.md Phase 1 / §3.1–§3.5"
     status: implemented
     confidence: high
     note: "Full reflection pipeline — weekly/monthly/quarterly horizons, reconcile.py, audit log"
   work_os_reflect_reader:
-    spec: "specs/reflection-loop.md §3.6 P7"
+    spec: ".archive/specs/reflection-loop.md §3.6 P7"
     status: implemented
     confidence: high
     note: "ReflectReader typed facade — get_current_reflection, get_weekly_history, get_goal_trend"
   work_os_reflect_sprint2:
-    spec: "specs/reflection-loop.md §8 Sprint 2"
+    spec: ".archive/specs/reflection-loop.md §8 Sprint 2"
     status: implemented
     confidence: high
     note: "Sprint 2 integration — index_db_path param, scorecard/goals wiring, narrative stub replaced"
 
   work_os_reflect_phase1_5:
-    spec: "specs/reflection-loop.md §6 Phase 1.5 Backfill Engine"
+    spec: ".archive/specs/reflection-loop.md §6 Phase 1.5 Backfill Engine"
     status: implemented
     confidence: high
     note: >
@@ -178,6 +178,25 @@ features:
       - "Phase 3: Interactive review output (run_backfill_review)"
       - "CLI: --backfill, --backfill-review, --repair-compaction, --tune flags"
       - "Tests: test_scrape_parser.py, test_cross_reference.py, test_backfill_runner.py"
+
+  work_os_accomplishment_ledger:
+    spec: "specs/artha-prd.md FW-20, specs/artha-tech-spec.md §19.7"
+    status: implemented
+    confidence: high
+    note: >
+      Canonical chronological accomplishment ledger (state/work/work-accomplishments.md).
+      187 entries covering 40 weeks (2025-W23 → 2026-W13). Each entry: unique A-NNN ID,
+      impact (HIGH/MEDIUM/LOW), program tag, status (DONE/OPEN/DEFERRED), evidence link.
+      Weekly reflections enriched with accomplishment_refs frontmatter field cross-referencing
+      ledger entries. Summary statistics by month and by program. Open items tracked.
+      Consumed by: /work connect-prep, /work promo-case, /work promo-case --narrative,
+      /work connect, /work newsletter. Never compacted.
+    phases_complete:
+      - "Ledger created: 187 entries, 10 months coverage (Jun 2025 → Mar 2026)"
+      - "40 weekly reflections enriched with accomplishment_count, impact_summary, accomplishment_refs"
+      - "Summary statistics: by month (10 months), by program (10 programs), open items list (7 items)"
+      - "Integrated into tech spec §19.7 State Files, §19.11 Three-Tier Persistence, §19.11 Integration Points"
+      - "Integrated into PRD (FW-20), commands.md, domain_registry.yaml"
 
   # ── PR Manager ─────────────────────────────────────────────────────────
   pr_manager:
@@ -1033,4 +1052,5 @@ features:
     status: implemented
     confidence: high
     note: "_PREREAD_SECTION='## Pre-Read Log'; _load_preread_markers() parses Pre-Read Log table from work-notes.md returning {meeting_lower: timestamp}; cmd_mark_preread(meeting_id) appends | meeting | timestamp | 0 | row to Pre-Read Log in work-notes.md (creates section+table if absent); --preread-id argparse arg; 6 tests in TestPrereadTracking; v2.7.0"
+
 

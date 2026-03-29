@@ -142,6 +142,51 @@ sprints:
     outcome: ""
 ```
 
+### `state/goals.md` Goals schema (v2.0)
+
+Active goals are tracked in a `goals:` list within `goals.md`. Schema added in Phase 1 of the Goals Reloaded spec (2026-03-28).
+
+```yaml
+goals:
+  - id: G-001              # Sequential, never reused
+    title: "[goal name]"
+    type: milestone        # milestone | outcome | habit
+    category: "[domain]"   # fitness|health|finance|learning|academic|career|etc.
+    status: active         # active | parked | done | dropped
+    next_action: "[specific next action — sentence]"
+    next_action_date: YYYY-MM-DD
+    review_date: YYYY-MM-DD
+    last_progress: YYYY-MM-DD   # null for parked/new goals
+    created: YYYY-MM-DD
+    target_date: YYYY-MM-DD
+    leading_indicators: []
+    # Optional — outcome goals with a measurable metric:
+    metric:
+      baseline: 200        # starting value (enables accurate % for direction: down)
+      current: 183.0
+      target: 160
+      unit: lb             # lb|kg|usd|pct|count|etc.
+      direction: down      # up | down
+    # Optional — parked goals:
+    parked_reason: "[reason for deferral]"
+    parked_since: YYYY-MM-DD
+    # Optional — per-goal sprint tracking (Phase 1: display convenience; Phase 2: replaces top-level sprints:):
+    sprint:
+      id: SPR-001             # optional cross-reference to top-level sprints: entry
+      target: "[specific measurable outcome for this sprint]"
+      sprint_start: YYYY-MM-DD
+      sprint_end: YYYY-MM-DD
+      progress_pct: 0         # 0–100
+```
+
+> **Sprint coexistence (v2.0):** The top-level `sprints:` block (§Sprint schema v2.1 above) is preserved
+> for backward compatibility — Step 3 sprint calibration reads `state/goals.md → sprints`. Per-goal
+> `sprint:` sub-blocks are a display convenience. **Phase 2:** Migrate Step 3 to read per-goal
+> `sprint:` sub-blocks and deprecate top-level `sprints:`. Set via `goals_writer.py --update G-NNN`
+> (per-goal sprint support is Phase 2 — write the sub-block manually until then).
+
+**`goals_writer.py`** manages all YAML writes to this block. The LLM owns Markdown tables; the script owns YAML frontmatter (dual-layer architecture). Work goals use the identical schema in `state/work/work-goals.md` — accessed via `goals_view.py --scope all` or `--scope work`.
+
 ### `state/decisions.md` Deadline schema (v2.1)
 ```yaml
 - id: DEC-001

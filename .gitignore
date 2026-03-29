@@ -144,6 +144,7 @@ config/Artha.md
 # --- Runtime lock and ephemeral files ---
 .artha-op-lock
 *.bak
+state/*.bak*
 state/.preflight_write_test
 state/*.lock
 state/*.yaml.age.*

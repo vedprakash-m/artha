@@ -18,12 +18,13 @@ Monthly cost: $[X] / $[BUDGET] budget ([%]%)
 Read from `health-check.md` and test MCP/CLI connectivity.
 
 ### `/goals`
-Goal scorecard only — no email fetch. Read from `state/goals.md`. Display:
+Goal scorecard only — no email fetch. Read `state/goals.md` (personal only) or both personal + work files with `--scope all` (tags work goals `[work]`). Display:
 ```
-━━ GOAL PULSE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━ GOAL PULSE ━━━━━━━━━━━━━━━━━━━━━━━━━━
 [goal bar: NAME  ████████░░ 80%  ON TRACK]
 [goal bar: NAME  ████░░░░░░ 40%  AT RISK ]
 ```
+Goal columns: Type | Next Action (overdue marker) | Staleness (days since last_progress) | Progress (metric bar for outcome goals).
 Show 2-week trend if available.
 
 **Sprint display (if any sprint is active):**
@@ -402,6 +403,7 @@ If topic not recognized: "I don't have specific state data for '[topic]' but her
 ### `/power`
 **Power Half Hour** — focused 30-minute session. Artha becomes a rapid-fire action assistant:
 1. Lists all open items due ≤7 days (ordered by U×I×A score)
+1.5. **Goal Check:** Surface any active goals where `next_action_date` is today or past, OR where `last_progress` > 14 days. Max 2 lines. Example: "⚡ G-002 next action overdue (weigh in was due Saturday). G-003 still parked 30d." If all goals are healthy, skip silently (UX-1).
 2. Presents each item with FNA annotation
 3. For each item: "Done / Defer / Escalate / Skip?"
 4. Executes approved actions (email draft, calendar event) with minimal friction
@@ -553,7 +555,7 @@ Reads work-projects. Sprint status, blockers, aging items, dependency risk, Deli
 Reads work-calendar, work-comms, work-projects, work-notes. Context recovery after PTO/travel/sick. Shows what changed, what is waiting, what is resolved, who needs response first.
 
 ## `/work connect` — Review Evidence Assembly
-Reads work-career, work-projects, work-comms, work-calendar. Surfaces accomplishments and evidence mapped to review goals.
+Reads work-career, work-projects, work-comms, work-calendar, work-accomplishments. Surfaces accomplishments and evidence mapped to review goals. The accomplishment ledger provides the chronological source of truth with impact ratings and program tags.
 
 ## `/work people <name>` — Person Lookup
 Reads work-people. Org context, collaboration history, meeting frequency, communication patterns.
@@ -586,7 +588,9 @@ Reads work-career, work-projects, work-people, work-notes, work-decisions. Phase
 Reads work-calendar, work-people, work-notes, work-projects. Phase 2.
 
 ## `/work connect-prep` — Connect Cycle Preparation
-Reads work-performance, work-career, work-projects, work-people. Goal progress, evidence summary, manager pivot log.
+Reads work-performance, work-career, work-projects, work-people, work-accomplishments. Goal progress, evidence summary, manager pivot log.
+- Accomplishment ledger filtered by Connect cycle date range + program + impact level
+- OPEN items surfaced as risks/blockers to address before submission
 - `--skip` — skip-level optimized narrative
 - `--calibration` — third-person calibration defense brief (§7.6)
 - `--final` — full rewards season packet
@@ -633,10 +637,10 @@ question, flag it as a golden query candidate. If the same pattern is used 2+ ti
 prompt to formalize it into the registry.
 
 ## `/work promo-case` — Promotion Readiness Assessment
-Reads work-project-journeys, work-performance, work-people (visibility events), work-career. Outputs: promotion thesis (auto-generated from scope arc), evidence density per goal (★1–5), visibility events from L-N+ stakeholders, readiness signal, evidence gaps. Phase 3.
+Reads work-project-journeys, work-performance, work-people (visibility events), work-career, work-accomplishments. Outputs: promotion thesis (auto-generated from scope arc), evidence density per goal (★1–5), visibility events from L-N+ stakeholders, readiness signal, evidence gaps. The accomplishment ledger provides the exhaustive chronological record of every HIGH/MEDIUM impact item across all programs — the evidence backbone for the promo narrative. Phase 3.
 
 ## `/work promo-case --narrative` — Full Promotion Narrative
-Generates `state/work/work-promo-narrative.md` — promotion-grade document with thesis, before/after transformation, scope expansion arc, milestone evidence with artifact citations, manager/peer voice, visibility events. Human-review draft only — never submitted autonomously. Phase 3.
+Generates `state/work/work-promo-narrative.md` — promotion-grade document with thesis, before/after transformation, scope expansion arc, milestone evidence with artifact citations, manager/peer voice, visibility events. Consumes `work-accomplishments.md` ledger as exhaustive evidence source alongside project journeys and career evidence. Human-review draft only — never submitted autonomously. Phase 3.
 
 ## `/work journey [project]` — Project Timeline View
 Reads work-project-journeys. Shows long-running program timeline: milestones, evidence citations, scope expansion arc, before/after state. `[project]` filters to a single program or shows all. Phase 3.
@@ -651,5 +655,22 @@ status, owning team, and active projects. Reads `state/work/work-products.md`.
 
 ## `/work remember <text>` — Instant Micro-Capture
 Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]` marker and timestamp. Processed by work-learn on next refresh cycle (fact extraction, keyword linking, org-calendar detection for `org-calendar:` prefix). Input is PII-scanned before write. Phase 2.
+
+## `/work reflect` — Reflection Loop (Multi-Horizon Planning & Review)
+Auto-detects which horizon is due (daily/weekly/monthly/quarterly) and runs the full
+sweep → extract → score → reconcile → synthesize → draft pipeline. Reads all work state
+files + WorkIQ for comprehensive data collection. Produces structured reflection artifacts
+in `state/work/reflections/` with accomplishments, carry-forwards, and reconciliation.
+- `/work reflect daily` — force daily close
+- `/work reflect weekly` — force weekly reflection
+- `/work reflect monthly` — force monthly retrospective
+- `/work reflect quarterly` — force quarterly review
+- `/work reflect --status` — show last close times and which horizons are due
+- `/work reflect --audit` — show reflection audit log with sequence numbers
+- `/work reflect --compact` — manual compaction trigger (Tier 2 → Tier 3)
+- `/work reflect --tune` — interactive scoring calibration (5 pairwise comparisons)
+- `/work reflect --backfill` — run historical backfill from work-scrape corpus
+- `/work reflect --backfill-review` — interactive validation of backfilled data
+- Phase: Active (Sprint 0 + Phase 1 + Phase 1.5 + Sprint 2 complete)
 
 ---

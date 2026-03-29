@@ -310,8 +310,8 @@ class ScoredMoment:
     primary_thread: str       # best matching thread ID (NT-1 … NT-6)
     alt_threads: list[str]    # additional matching thread IDs
     platforms: list[str]      # recommended platforms for this moment
-    above_daily_threshold: bool    # score >= 0.8
-    above_weekly_threshold: bool   # score >= 0.6
+    above_daily_threshold: bool    # score >= 0.65
+    above_weekly_threshold: bool   # score >= 0.45
     source: str               # "occasion_tracker" | "goals" | "trend" | "calendar"
 
     def as_dict(self) -> dict:
@@ -319,9 +319,9 @@ class ScoredMoment:
 
     @property
     def score_emoji(self) -> str:
-        if self.convergence_score >= 0.8:
+        if self.convergence_score >= 0.65:
             return "🟠"
-        if self.convergence_score >= 0.6:
+        if self.convergence_score >= 0.45:
             return "🟡"
         return "🔵"
 
@@ -392,8 +392,8 @@ class MomentDetector:
             primary_thread=primary_thread,
             alt_threads=alt_threads,
             platforms=_MOMENT_PLATFORMS.get(moment_type, ["linkedin"]),
-            above_daily_threshold=score >= 0.8,
-            above_weekly_threshold=score >= 0.6,
+            above_daily_threshold=score >= 0.65,
+            above_weekly_threshold=score >= 0.45,
             source=source,
         )
 
@@ -1536,8 +1536,8 @@ def run_step8(
         above_weekly = [m for m in unique_moments if m.above_weekly_threshold]
         print(
             f"[pr_manager] Step 8 complete: {len(unique_moments)} moments scored, "
-            f"{len(above_daily)} high-opportunity (≥0.8), "
-            f"{len(above_weekly)} weekly calendar (≥0.6)"
+            f"{len(above_daily)} high-opportunity (≥0.65), "
+            f"{len(above_weekly)} weekly calendar (≥0.45)"
         )
 
     return unique_moments

@@ -249,15 +249,80 @@ class CoachingEngine:
     # Goal extraction
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_v2_goal(goal: dict) -> dict | None:
+        """Map a v2.0 structured goal dict into coaching heuristic fields.
+
+        Returns None for non-active goals (parked/done/dropped) — they are
+        excluded from nudge selection entirely.
+        Adds ``status_flag`` and ``off_pace`` fields consumed by select_nudge().
+        """
+        status = goal.get("status", "active")
+        if status in ("parked", "done", "dropped"):
+            return None
+
+        normalized = dict(goal)
+
+        # Staleness: no last_progress or last_progress > 14 days ago = at_risk
+        last_progress = goal.get("last_progress")
+        stale = True  # no progress recorded
+        if last_progress:
+            try:
+                lp_date = date.fromisoformat(str(last_progress)[:10])
+                stale = (date.today() - lp_date).days > 14
+            except (ValueError, TypeError):
+                stale = False
+
+        # Metric off-pace: compare actual % done vs expected linear trajectory
+        off_pace = stale
+        metric = goal.get("metric")
+        if isinstance(metric, dict):
+            try:
+                cur = float(metric.get("current") or 0)
+                tgt = float(metric.get("target") or 0)
+                baseline = float(metric.get("baseline") or 0)
+                direction = metric.get("direction", "up")
+                if baseline and tgt and baseline != tgt:
+                    remaining = (cur - tgt) if direction == "down" else (tgt - cur)
+                    total = abs(baseline - tgt)
+                    pct_done = max(0.0, min(1.0, 1.0 - remaining / total))
+                    target_date_str = goal.get("target_date")
+                    created_str = goal.get("created")
+                    if target_date_str and created_str:
+                        td = date.fromisoformat(str(target_date_str)[:10])
+                        cr = date.fromisoformat(str(created_str)[:10])
+                        today_d = date.today()
+                        total_days = (td - cr).days
+                        elapsed_days = (today_d - cr).days
+                        if total_days > 0:
+                            expected_pct = elapsed_days / total_days
+                            if pct_done < expected_pct - 0.20:
+                                off_pace = True
+            except (ValueError, TypeError):
+                pass
+
+        normalized["status_flag"] = "at_risk" if stale else "in_progress"
+        normalized["off_pace"] = off_pace
+        return normalized
+
     def _extract_goals(self, goals: dict) -> list[dict]:
         """Extract structured goal data from goals.md frontmatter or content heuristics."""
         if not isinstance(goals, dict):
             return []
 
-        # If frontmatter has structured goals list
-        goals_list = goals.get("goals", [])
-        if isinstance(goals_list, list) and goals_list:
-            return [g for g in goals_list if isinstance(g, dict)]
+        # v2.0 structured goals: normalize heuristic fields and return.
+        # Even if all goals are parked (result=[]), do NOT fall through to the
+        # emoji heuristic — the structured block is the authoritative source.
+        goals_list = goals.get("goals")
+        if goals_list is not None:
+            if not isinstance(goals_list, list):
+                return []
+            normalized = [
+                self._normalize_v2_goal(g)
+                for g in goals_list
+                if isinstance(g, dict)
+            ]
+            return [n for n in normalized if n is not None]
 
         # Fallback: inspect raw text indicators
         content = goals.get("_raw_content", "")
@@ -356,17 +421,52 @@ def load_goals_content(goals_path: Path) -> dict:
 # --- Standalone entry point -------------------------------------------------
 
 def main() -> int:
-    """CLI: python scripts/coaching_engine.py"""
-    from lib.common import ARTHA_DIR  # type: ignore[import]
+    """CLI: python scripts/coaching_engine.py [--goals-file PATH] [--format json|human]
 
-    state_dir = ARTHA_DIR / "state"
+    --goals-file PATH  Path to goals state file (default: state/goals.md or
+                       state/work/work-goals.md for work goals)
+    --format json      Emit JSON nudge spec for Step 8 LLM call-site contract:
+                       {"goal_id": "G-NNN", "goal_title": "...",
+                        "nudge_type": "next_small_win", "strategy": "question",
+                        "suppressed": false}
+                       Emits {"suppressed": true} when no nudge selected.
+    --format human     Human-readable output (default)
+    """
+    import argparse
+    import json
+
+    ap = argparse.ArgumentParser(
+        description="Artha Coaching Engine — deterministic nudge selector",
+        add_help=True,
+    )
+    ap.add_argument(
+        "--goals-file", dest="goals_file", default=None,
+        help="Path to goals state file (default: auto-detect from ARTHA_DIR)",
+    )
+    ap.add_argument(
+        "--format", choices=["json", "human"], default="human",
+        help="Output format: json for Step 8 LLM call-site, human for interactive use",
+    )
+    args = ap.parse_args()
+
+    # Resolve goals file path
+    if args.goals_file:
+        goals_path = Path(args.goals_file)
+    else:
+        try:
+            from lib.common import ARTHA_DIR  # type: ignore[import]
+            goals_path = ARTHA_DIR / "state" / "goals.md"
+        except ImportError:
+            goals_path = Path(__file__).resolve().parent.parent / "state" / "goals.md"
+
     engine = CoachingEngine()
+    goals_data = load_goals_content(goals_path)
 
-    goals_data = load_goals_content(state_dir / "goals.md")
-
-    # Load memory facts
+    # Load memory facts for suppression / style preferences
     facts: list[dict] = []
-    memory_path = state_dir / "memory.md"
+    memory_path = goals_path.parent / "memory.md"
+    if not memory_path.exists():
+        memory_path = goals_path.parent.parent / "state" / "memory.md"
     if memory_path.exists() and _YAML_AVAILABLE:
         content = memory_path.read_text(encoding="utf-8")
         match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
@@ -384,11 +484,32 @@ def main() -> int:
         preferences={},
     )
 
+    if args.format == "json":
+        if nudge:
+            # Find the goal_id from goals data matching the title
+            goals_list = goals_data.get("goals", [])
+            goal_id = None
+            for g in goals_list:
+                if isinstance(g, dict) and g.get("title") == nudge.goal_title:
+                    goal_id = g.get("id")
+                    break
+            print(json.dumps({
+                "goal_id": goal_id,
+                "goal_title": nudge.goal_title,
+                "nudge_type": nudge.nudge_type,
+                "strategy": nudge.style,
+                "suppressed": False,
+            }))
+        else:
+            print(json.dumps({"suppressed": True}))
+        return 0
+
+    # Human format (default)
     if nudge:
-        print(f"💡 Coaching nudge ({nudge.nudge_type}):")
+        print(f"\U0001f4a1 Coaching nudge ({nudge.nudge_type}):")
         print(f"   {nudge.message}")
     else:
-        print("ℹ️  No coaching nudge selected (suppressed or no trigger)")
+        print("\u2139\ufe0f  No coaching nudge selected (suppressed or no trigger)")
 
     return 0
 
