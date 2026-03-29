@@ -243,7 +243,7 @@ def analyze_skills() -> dict[str, Any]:
     try:
         if str(_ARTHA_DIR) not in sys.path:
             sys.path.insert(0, str(_ARTHA_DIR))
-        from scripts.lib.skill_health import CADENCE_REDUCTION  # type: ignore[import]
+        from lib.skill_health import CADENCE_REDUCTION  # type: ignore[import]
     except ImportError:
         CADENCE_REDUCTION = {"every_run": "daily", "daily": "weekly"}
 

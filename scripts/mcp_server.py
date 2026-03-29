@@ -504,7 +504,7 @@ def artha_run_skills(skill_name: str | None = None) -> str:
 
         # Import shared health-tracking library (non-blocking if unavailable)
         try:
-            from scripts.lib.skill_health import (
+            from lib.skill_health import (
                 is_zero_value as _mcp_is_zero,
                 is_stable_value as _mcp_is_stable,
                 update_health_counters as _mcp_update_health,

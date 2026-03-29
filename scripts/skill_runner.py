@@ -67,7 +67,7 @@ if str(ARTHA_DIR) not in sys.path:
 
 # Import shared health-tracking library (non-fatal if unavailable)
 try:
-    from scripts.lib.skill_health import (
+    from lib.skill_health import (
         is_zero_value as _is_zero_value,
         is_stable_value as _is_stable_value,
         update_health_counters as _update_health_counters,
