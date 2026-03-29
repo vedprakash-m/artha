@@ -367,6 +367,18 @@
         "workiq_calendar": { "type": "boolean" }
       },
       "additionalProperties": { "type": "boolean" }
+    },
+    "setup": {
+      "type": "object",
+      "description": "Setup staircase — tracks onboarding progress. Auto-updated by Artha.",
+      "properties": {
+        "archetype": { "type": "string" },
+        "completeness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "next_suggested": { "type": "string" },
+        "completed_steps": { "type": "array", "items": { "type": "string" } },
+        "remaining_steps": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": { "type": ["boolean", "string", "number"] }
     }
   },
   "additionalProperties": false
