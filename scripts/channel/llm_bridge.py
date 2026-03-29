@@ -14,6 +14,14 @@ from channel.state_readers import _read_state_file, _apply_scope_filter, _DOMAIN
 from channel.formatters import _trim_to_cap, _extract_section_summaries, _strip_frontmatter
 from channel.audit import _audit_log
 
+try:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from lib.error_messages import get_message as _get_error_message
+except ImportError:
+    def _get_error_message(code: str) -> str:  # type: ignore[misc]
+        return f"Error: {code} — check your connector configuration."
+
 _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _STATE_DIR = _ARTHA_DIR / "state"
 _PROMPTS_DIR = _ARTHA_DIR / "prompts"
@@ -118,6 +126,13 @@ _INTENT_PATTERNS: dict[str, list[str]] = {
     "radar": [
         r"what'?s new in ai", r"ai trends?", r"show radar",
         r"ai news",
+    ],
+    "reconnect": [
+        r"reconnect gmail", r"reconnect google",
+        r"reconnect outlook", r"reconnect microsoft",
+        r"fix encryption", r"reconnect icloud",
+        r"reconnect workiq", r"reconnect work.?iq",
+        r"fix.*connection", r"reauth",
     ],
 }
 
@@ -251,6 +266,24 @@ def _gather_intent_context(
             sf = _STATE_DIR / fname
             if sf.exists():
                 sections.append(f"[state/{fname}]\n{_read_safe(sf)}")
+
+    elif intent == "reconnect":
+        # Include health-check.md so the LLM knows which connectors are failing.
+        hc = _STATE_DIR / "health-check.md"
+        if hc.exists():
+            sections.append(f"[state/health-check.md]\n{_read_safe(hc)}")
+        # Static reconnect guide — no vault access needed.
+        sections.append(
+            "[reconnect-guide]\n"
+            "To reconnect a service, run the appropriate command from the Artha directory:\n"
+            "• Gmail / Google Calendar: python scripts/setup_google_oauth.py\n"
+            "• Outlook / Microsoft 365: python scripts/setup_msgraph_oauth.py\n"
+            "• iCloud: python scripts/setup_icloud_auth.py\n"
+            "• WorkIQ: npx workiq login\n"
+            "• Encryption (fix or set up): python scripts/lib/auto_vault.py\n"
+            "Note: These require terminal (CLI) access. "
+            "If you are on the bridge/Telegram path, open your terminal first."
+        )
 
     # intent == "teach" → no state files needed; LLM uses its knowledge directly.
 
@@ -531,7 +564,7 @@ async def _ask_llm(question: str, context: str) -> str:
             return result
         log.warning("[ask] %s failed or empty, trying next...", name)
 
-    return "All LLM CLIs failed. Try again later."
+    return _get_error_message("connector_timeout") or "All LLM CLIs failed. Try again later."
 
 
 # ── _ask_llm_ensemble ───────────────────────────────────────────
@@ -575,7 +608,7 @@ async def _ask_llm_ensemble(question: str, context: str) -> str:
             responses.append((name, result))
 
     if not responses:
-        return "All LLM CLIs failed. Try again later."
+        return _get_error_message("connector_timeout") or "All LLM CLIs failed. Try again later."
     if len(responses) == 1:
         name, answer = responses[0]
         log.info("[ask-all] only %s responded (%d chars)", name, len(answer))
@@ -676,10 +709,14 @@ async def cmd_ask(question: str, scope: str, *, is_bridge: bool = True) -> tuple
                    context_chars=len(context), ensemble=ensemble)
 
     # Call LLM(s)
-    if ensemble:
-        answer = await _ask_llm_ensemble(q, context)
-    else:
-        answer = await _ask_llm(q, context)
+    try:
+        if ensemble:
+            answer = await _ask_llm_ensemble(q, context)
+        else:
+            answer = await _ask_llm(q, context)
+    except Exception as _exc:
+        log.error("[ask] unexpected error: %s", _exc)
+        return _get_error_message("python_traceback") or "An unexpected error occurred.", "N/A"
 
     # Truncate to Telegram limit
     if len(answer) > 3800:
