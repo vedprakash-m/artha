@@ -332,8 +332,12 @@ class AITrendRadarSkill(BaseSkill):
     def _load_config(self) -> dict:
         """Load ai_trend_radar config block from artha_config.yaml."""
         try:
-            from lib.config_loader import load_config  # noqa: PLC0415
-            raw = load_config("artha_config")
+            import yaml  # noqa: PLC0415
+            cfg_path = self._artha_dir / "config" / "artha_config.yaml"
+            if not cfg_path.exists():
+                return {}
+            with cfg_path.open(encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
             return (
                 raw.get("enhancements", {})
                    .get("pr_manager", {})
@@ -346,8 +350,12 @@ class AITrendRadarSkill(BaseSkill):
     def _load_employer_blocked_terms(self) -> frozenset:
         """Load employer blocked terms from user_profile.yaml (never hardcoded, DP-6)."""
         try:
-            from lib.config_loader import load_config  # noqa: PLC0415
-            raw = load_config("user_profile", str(self._artha_dir / "config"))
+            import yaml  # noqa: PLC0415
+            cfg_path = self._artha_dir / "config" / "user_profile.yaml"
+            if not cfg_path.exists():
+                return frozenset()
+            with cfg_path.open(encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
             terms = raw.get("employment", {}).get("confidential_terms", []) or []
             return frozenset(t.lower() for t in terms if t)
         except Exception:
@@ -834,8 +842,12 @@ class AITrendRadarSkill(BaseSkill):
     def _get_configured_feed_tags(self, connectors_path: Path) -> set[str]:
         """Extract configured RSS feed tags from connectors.yaml."""
         try:
-            from lib.config_loader import load_config  # noqa: PLC0415
-            data = load_config("connectors", str(connectors_path.parent))
+            import yaml  # noqa: PLC0415
+            if not connectors_path.exists():
+                return set()
+            with connectors_path.open(encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            data = data.get("connectors", data)
             feeds = (
                 data.get("rss_feed", {})
                 .get("fetch", {})
