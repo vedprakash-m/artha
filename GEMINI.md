@@ -67,4 +67,4 @@ defined in `config/Artha.md`. Execute them exactly as documented in that file.
 
 **Work OS note:** `work` commands are a separate surface from personal
 commands. They read only from `state/work/` and never access personal state.
-See `specs/work.md` for the full Work OS specification.
+Implementation: `scripts/work_loop.py`, `scripts/work_reader.py`.

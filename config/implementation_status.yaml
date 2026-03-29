@@ -657,8 +657,8 @@ features:
     confidence: high
     note: "scripts/setup_plaid.py — Plaid Link OAuth flow + keyring storage"
 
-  # ── Work OS (specs/work.md v2.3.0, §19 Phase 0–2) ───────────────────────
-  #
+  # ── Work OS (v2.3.0, Phase 0–5) ─────────────────────────────────────────
+  # Original spec archived to .archive/specs/work.md — section refs below are historical.
   # Scripts: work_reader.py, work_loop.py, work_domain_writers.py,
   #          narrative_engine.py, work_notes.py, work_bootstrap.py,
   #          post_work_refresh.py

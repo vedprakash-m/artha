@@ -10,7 +10,7 @@ tools:
   - read
   - search
 ---
-<!-- Agency metadata: version=0.1.0, spec=specs/work.md, tier=universal, audience=Any M365 user -->
+<!-- Agency metadata: version=0.1.0, spec=.archive/specs/work.md (historical), tier=universal, audience=Any M365 user -->
 <!-- Agency tools (not VS Code built-ins): bash is granted via Agency runtime -->
 
 # Artha Work OS — Baseline Agent (M365 Graph Tier)

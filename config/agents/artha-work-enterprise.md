@@ -6,7 +6,7 @@ description: >
   boundary protection, and career evidence.
   Tier: corporate — M365 + Azure DevOps.
 version: "0.1.0"
-spec: specs/work.md
+# spec: .archive/specs/work.md (historical — merged into implementation)
 tier: enterprise
 audience: Corporate M365 user with Azure DevOps
 mcp-servers: {}
