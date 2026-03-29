@@ -66,12 +66,60 @@ patterns:
 
   - id: "PAT-003"
     name: "Goal milestone stale"
-    description: "Fires when a goal has had no progress update for 14+ days"
+    description: "Fires when an active goal has had no progress update for 14+ days"
     source_file: "state/goals.md"
-    source_path: "goals"         # list field
+    source_path: "goals"         # list field — requires goals YAML block (schema v2.0)
     condition:
       all_of:
-        - field: "last_updated"
+        - field: "status"
+          eq: "active"           # only check active goals; skip parked/done/dropped
+        - field: "last_progress"
+          stale_days: 14
+    output_signal:
+      signal_type: "goal_stale"
+      domain: "goals"
+      urgency: 1
+      impact: 2
+      entity_field: "title"
+      metadata: {}
+    cooldown_hours: 72
+    enabled: true
+
+  - id: "PAT-003b"
+    name: "Goal auto-park candidate"
+    description: "Fires when an active goal has no progress, no next_action, and was created >30 days ago"
+    source_file: "state/goals.md"
+    source_path: "goals"
+    condition:
+      all_of:
+        - field: "status"
+          eq: "active"
+        - field: "last_progress"
+          is_null: true
+        - field: "next_action"
+          is_null: true
+        - field: "created"
+          stale_days: 30
+    output_signal:
+      signal_type: "goal_autopark_candidate"
+      domain: "goals"
+      urgency: 2
+      impact: 2
+      entity_field: "title"
+      metadata: {}
+    cooldown_hours: 168
+    enabled: true
+
+  - id: "PAT-003-work"
+    name: "Work goal milestone stale"
+    description: "Fires when an active work goal has had no progress update for 14+ days (§3.2.1 — one instance per source_file)"
+    source_file: "state/work/work-goals.md"
+    source_path: "goals"         # identical schema to state/goals.md
+    condition:
+      all_of:
+        - field: "status"
+          eq: "active"           # only check active goals; skip parked/done/dropped
+        - field: "last_progress"
           stale_days: 14
     output_signal:
       signal_type: "goal_stale"

@@ -42,6 +42,10 @@ Last catch-up: [N] hrs ago | Emails: [N] | Period: since [date/time]
 [SPRINT] [name]  ██████░░░░  60%  Day 18/30  ← (if sprint active)
 (omit if goals.md is empty)
 
+**Goal Heartbeat** (≤2 lines, non-weekly briefings only — omit when all goals healthy):
+⚡ [G-NNN: issue description] · [G-NNN: issue description]
+Show ONLY if any active goal has: `next_action_date` in the past, OR `last_progress` > 14 days, OR metric pace deviation > 20%. Silent when all goals are on track (UX-1). This prevents the 5-day blindspot between weekly reviews. On weekly summary days, fold into § Goal Review instead.
+
 ━━ 🤝 RELATIONSHIP PULSE ━━━━━━━━━━━━━━━━━
 • On cadence: [N] close family · [N] friends | Overdue: [N reconnects]
 • [Top 1 reconnect suggestion if overdue: "Consider reaching out to [Name] — [N] days"]
@@ -117,6 +121,24 @@ Kids, Calendar, and low-sensitivity domains display normally in email.
 
 ## Goal Progress
 [Full scorecard with week-over-week trend arrows ↑↓→ and leading indicator status]
+
+### § Goal Review (fold into weekly summary when `generate_weekly_summary == true`)
+```
+━━ 🎯 GOAL REVIEW — Week of [Mon]–[Sun] ━━━━━━━━━━━━━━
+[G-NNN] [GOAL NAME]         [STATUS LABEL]   [brief note]
+[G-NNN] [GOAL NAME]         [STATUS LABEL]   [brief note]
+[COACHING NUDGE from Step 8s — fold here on weekly days]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+Status label definitions:
+- **ON TRACK** — metric pace ≥ expected, or milestone `next_action` not overdue
+- **NEEDS_ACTION** — `next_action_date` is in the past
+- **STALE** — `last_progress` > 14 days
+- **OFF PACE** — outcome goal: actual progress pace < required pace to hit `target_date`
+- **STREAK BROKEN** — habit goal: `last_completed` > cadence window (Phase 2)
+- **PARKED** — `status: parked` (dim display, show parked_reason)
+
+Flash mode: omit Goal Review entirely (§8.8 flash briefings have no goals section).
 
 ## 🤝 Relationship Health
 - On cadence this week: [N close family] · [N close friends] · [N extended family]

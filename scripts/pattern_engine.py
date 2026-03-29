@@ -156,6 +156,14 @@ def _evaluate_operator(condition: dict[str, Any], doc: dict[str, Any]) -> bool:
                 return True
         return False
 
+    if "is_null" in condition:
+        # Defensive: treat None, empty string, bare "null" string, and missing key all as null.
+        # LLM-written YAML has semantic ambiguity: `field: null` → None,
+        # `field:` → None or "", `field: ""` → "", missing key → KeyError avoided by doc.get().
+        want_null = bool(condition["is_null"])
+        is_null_value = value is None or value == "" or str(value).strip().lower() == "null"
+        return is_null_value == want_null
+
     return False
 
 

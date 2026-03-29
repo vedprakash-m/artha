@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from coaching_engine import CoachingEngine
+from coaching_engine import CoachingEngine, load_goals_content
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +194,185 @@ class TestMessageLength:
         if nudge is not None:
             text = getattr(nudge, "message", "") or getattr(nudge, "text", "")
             assert len(str(text)) <= 280
+
+
+# ---------------------------------------------------------------------------
+# v2.0 Structured Goals — _normalize_v2_goal
+# ---------------------------------------------------------------------------
+
+class TestNormalizeV2Goal:
+    """Unit tests for the v2.0 goal normalizer added in Goals Reloaded Phase 2."""
+
+    def test_active_recent_progress_is_in_progress(self):
+        recent = str(date.today() - timedelta(days=5))
+        goal = {"id": "G-001", "title": "T", "status": "active", "last_progress": recent,
+                "created": "2026-01-01", "target_date": "2026-12-31"}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["status_flag"] == "in_progress"
+        assert result["off_pace"] is False
+
+    def test_active_stale_progress_is_at_risk(self):
+        stale = str(date.today() - timedelta(days=20))
+        goal = {"id": "G-001", "title": "T", "status": "active", "last_progress": stale,
+                "created": "2026-01-01", "target_date": "2026-12-31"}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["status_flag"] == "at_risk"
+        assert result["off_pace"] is True
+
+    def test_active_no_progress_is_at_risk(self):
+        goal = {"id": "G-001", "title": "T", "status": "active", "last_progress": None,
+                "created": "2026-01-01", "target_date": "2026-12-31"}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["status_flag"] == "at_risk"
+        assert result["off_pace"] is True
+
+    def test_parked_returns_none(self):
+        goal = {"id": "G-003", "title": "T", "status": "parked", "last_progress": None}
+        assert CoachingEngine._normalize_v2_goal(goal) is None
+
+    def test_done_returns_none(self):
+        goal = {"id": "G-004", "title": "T", "status": "done", "last_progress": None}
+        assert CoachingEngine._normalize_v2_goal(goal) is None
+
+    def test_original_fields_preserved(self):
+        recent = str(date.today() - timedelta(days=3))
+        goal = {"id": "G-001", "title": "Summit", "status": "active",
+                "last_progress": recent, "next_action": "Book hike",
+                "created": "2026-01-01", "target_date": "2026-12-31"}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["id"] == "G-001"
+        assert result["next_action"] == "Book hike"
+
+    def test_metric_off_pace_sets_off_pace_true(self):
+        """Goal >20% behind expected linear trajectory sets off_pace=True."""
+        created = str(date.today() - timedelta(days=180))
+        target = str(date.today() + timedelta(days=180))
+        goal = {"id": "G-002", "title": "Weight", "status": "active", "type": "outcome",
+                "last_progress": str(date.today() - timedelta(days=5)),
+                "created": created, "target_date": target,
+                "metric": {"baseline": 200, "current": 198, "target": 160,
+                           "unit": "lb", "direction": "down"}}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["status_flag"] == "in_progress"  # not stale
+        assert result["off_pace"] is True               # but metric behind
+
+    def test_metric_on_pace_off_pace_remains_false(self):
+        """Goal at expected pace keeps off_pace=False."""
+        created = str(date.today() - timedelta(days=365))
+        target = str(date.today() + timedelta(days=365))
+        goal = {"id": "G-002", "title": "Weight", "status": "active", "type": "outcome",
+                "last_progress": str(date.today() - timedelta(days=5)),
+                "created": created, "target_date": target,
+                "metric": {"baseline": 200, "current": 180, "target": 160,
+                           "unit": "lb", "direction": "down"}}
+        result = CoachingEngine._normalize_v2_goal(goal)
+        assert result is not None
+        assert result["off_pace"] is False
+
+
+# ---------------------------------------------------------------------------
+# v2.0 Structured Goals — select_nudge with YAML frontmatter
+# ---------------------------------------------------------------------------
+
+class TestSelectNudgeV2:
+    """select_nudge with v2.0 structured goals (Goals Reloaded Phase 2)."""
+
+    _eng = CoachingEngine()
+
+    def _nudge(self, goals: list[dict], enabled: bool = True):
+        return self._eng.select_nudge(
+            goals={"schema_version": "2.0", "goals": goals},
+            memory_facts=[],
+            health_history=[],
+            preferences={"coaching_enabled": enabled},
+        )
+
+    def test_recent_goal_fires_next_small_win(self):
+        recent = str(date.today() - timedelta(days=5))
+        nudge = self._nudge([{"id": "G-001", "title": "Summit", "status": "active",
+                               "last_progress": recent, "created": "2026-01-01",
+                               "target_date": "2026-12-31"}])
+        assert nudge is not None
+        assert nudge.nudge_type == "next_small_win"
+
+    def test_stale_goal_fires_obstacle_anticipation(self):
+        stale = str(date.today() - timedelta(days=20))
+        nudge = self._nudge([{"id": "G-001", "title": "Summit", "status": "active",
+                               "last_progress": stale, "created": "2026-01-01",
+                               "target_date": "2026-12-31"}])
+        assert nudge is not None
+        assert nudge.nudge_type == "obstacle_anticipation"
+
+    def test_all_parked_returns_none(self):
+        nudge = self._nudge([
+            {"id": "G-001", "title": "T", "status": "parked", "last_progress": None},
+        ])
+        assert nudge is None
+
+    def test_empty_goals_list_returns_none(self):
+        assert self._nudge([]) is None
+
+    def test_coaching_disabled_returns_none(self):
+        recent = str(date.today() - timedelta(days=3))
+        nudge = self._nudge([{"id": "G-001", "title": "T", "status": "active",
+                               "last_progress": recent, "created": "2026-01-01",
+                               "target_date": "2026-12-31"}], enabled=False)
+        assert nudge is None
+
+    def test_mixed_parked_and_active_fires_for_active(self):
+        recent = str(date.today() - timedelta(days=5))
+        nudge = self._nudge([
+            {"id": "G-003", "title": "Parked", "status": "parked", "last_progress": None},
+            {"id": "G-001", "title": "Active Goal", "status": "active",
+             "last_progress": recent, "created": "2026-01-01", "target_date": "2026-12-31"},
+        ])
+        assert nudge is not None
+        assert nudge.goal_title == "Active Goal"
+
+    def test_at_risk_beats_in_progress_priority(self):
+        """Priority 1 (at_risk) fires before Priority 3 (in_progress)."""
+        recent = str(date.today() - timedelta(days=3))
+        stale = str(date.today() - timedelta(days=20))
+        nudge = self._nudge([
+            {"id": "G-001", "title": "Fresh", "status": "active",
+             "last_progress": recent, "created": "2026-01-01", "target_date": "2026-12-31"},
+            {"id": "G-002", "title": "Stale", "status": "active",
+             "last_progress": stale, "created": "2026-01-01", "target_date": "2026-12-31"},
+        ])
+        assert nudge is not None
+        assert nudge.nudge_type == "obstacle_anticipation"
+        assert nudge.goal_title == "Stale"
+
+
+# ---------------------------------------------------------------------------
+# load_goals_content
+# ---------------------------------------------------------------------------
+
+class TestLoadGoalsContentV2:
+
+    def test_reads_structured_goals(self, tmp_path):
+        content = (
+            "---\nschema_version: '2.0'\ngoals:\n"
+            "  - id: G-001\n    title: Summit\n    status: active\n---\n# Goals\n"
+        )
+        gf = tmp_path / "goals.md"
+        gf.write_text(content)
+        data = load_goals_content(gf)
+        assert "goals" in data
+        assert data["goals"][0]["id"] == "G-001"
+
+    def test_missing_file_returns_empty_dict(self, tmp_path):
+        assert load_goals_content(tmp_path / "nonexistent.md") == {}
+
+    def test_raw_content_included(self, tmp_path):
+        content = "---\nschema_version: '1.0'\n---\n# My Goals\n"
+        gf = tmp_path / "goals.md"
+        gf.write_text(content)
+        data = load_goals_content(gf)
+        assert "_raw_content" in data
+        assert "# My Goals" in data["_raw_content"]

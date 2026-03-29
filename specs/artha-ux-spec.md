@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 3.4 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.5 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.4.0, Tech Spec v3.16.0
+> **Implements**: PRD v7.5.0, Tech Spec v3.17.0
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.5 | 2026-03-28 | **GOALS-RELOADED v6.3 UX — Goal Intelligence Phase 1:** §8 Goal Intelligence updated with dual-layer architecture (LLM owns Markdown display table; `goals_writer.py` owns YAML frontmatter — LLM never edits YAML in-place). **Goal Heartbeat** — conditional ≤2-line goal signal in non-weekly briefings (Goal Evaluation Protocol at Step 8-Or produces `ON TRACK / NEEDS_ACTION / STALE / OFF PACE` signals; shown only when a flag is active). **Goal Review** — weekly summary subsection (§8.6 template, `goal_review_enabled` kill switch in `config/artha_config.yaml`; every active goal shown with progress bar, status label, and next action). **`/goals --scope all`** merges personal (`state/goals.md`) + work goals (`state/work/work-goals.md`) into single output with `[work]` tagging; `--scope personal` / `--scope work` subsets available. **Work OS boundary** — personal catch-up pipeline reads only `state/goals.md`; Work OS (`/work` commands + work pipeline) reads only `state/work/work-goals.md`; scopes never cross. **Coaching engine JSON nudge** — Step 8 runs `coaching_engine.py --format json`; nudge presented at briefing end (Step 19b) as a single contextual recommendation with `nudge_type` (next_small_win / accountability / momentum / insight / challenge); suppressed when goals are all active and on-pace. Status labels: `ON TRACK | NEEDS_ACTION | STALE | OFF PACE | PARKED`. (implements PRD v7.5.0 F13.1/F13.3/F13.4/F13.6/F13.7, Tech Spec v3.17.0) |
 | v3.3 | 2026-03 | **FW-19 Reflection Loop UX (§23.14):** `/work reflect` command family UX — horizon auto-detection prompt, weekly reflection output format, carry-forward table with age/priority/due columns, reconciliation view (planned vs actual with ✅/⏭/❌/🆕 status), scoring visibility (raw scores for first 4 weeks then labels only), `--status` Markdown table, `--tune` pairwise calibration session (15 comparisons), `--backfill` progress display, `--audit` log viewer. Command table expanded: `/work reflect`, `/work reflect weekly`, `/work reflect monthly`, `/work reflect quarterly`, `/work reflect --status`, `/work reflect --tune`, `/work reflect --backfill`, `/work reflect --audit`. Draft deliverables staged via `/stage` system (not inline). Friday briefing footer shows reflection due status. (implements PRD v7.4.0 FW-19, Tech Spec v3.16.0 §19.11) |
 | v3.2 | 2026-03 | **PAY-DEBT-RELOADED v2.0 + PAY-DEBT v1.0 — Zero UX-visible changes:** WS-1 through WS-9-B are entirely infrastructure, test-quality, and architectural hardening improvements with no impact on any user-facing surface. PAY-DEBT v1.0 god-file decompositions (TD-1–TD-5) restructured internal modules; PAY-DEBT-RELOADED v2.0 hardened config loading, narrative rendering, DAG execution, and concurrency guarantees. All 28 `/work *` commands, all Telegram slash commands, all briefing section formats (flash/standard/deep), all onboarding flows, and all `/stage` card lifecycle views are unchanged. Architectural health improved from ~5/10 (pre-PAY-DEBT v1.0) to 9.0/10 (post-PAY-DEBT-RELOADED v2.0); test suite expanded to 3,429 total tests with full coverage of `post_work_refresh`, `config_loader`, `narrative/` package, `work_loop` DAG paths, and channel security concurrency. (implements PRD v7.2.0, Tech Spec v3.14.0; see `specs/pay-debt-reloaded.md` and `specs/pay-debt.md`, archived to `.archive/`) |
 | v2.7.3 | 2026-03 | **DUAL v1.3.0 UX** — Multi-machine setup is transparent to the user; all action proposal and execution flows are unchanged at the UX layer. On the Mac (proposer): bridge result ingestion runs silently before each catch-up briefing — executed actions appear in the briefing with their outcome status as if executed locally. On Windows (executor): action proposals arrive via OneDrive-synced bridge files; the `channel_listener.py` executor poll loop picks them up and executes automatically or queues for approval — same Telegram approval UX as single-machine mode. **Per-machine connectors:** connectors that are not applicable to the current machine are silently skipped during pipeline fetch (no user-visible error); `list_connectors` command shows a PLATFORM column. **Preflight advisory:** a P1 bridge health check surfaces if the bridge key is missing or the bridge directory is not accessible — shown as `⚠️ [ADVISORY] bridge: key not found` (non-blocking, catch-up proceeds). **Nudge daemon:** silently skips execution on any machine that is not the designated listener host — no user-visible behavior change. (implements PRD v7.0.8, Tech Spec v3.10.0, specs/dual-setup.md) |
@@ -569,6 +570,12 @@ Never hallucinate. Never guess. "I don't know" with a resolution path is infinit
 
 ## 8. Goal Intelligence — Interaction Design
 
+**Architecture (v2.0):** The LLM owns the human-readable Markdown goals table in the briefing and on-demand `/goals` output — it renders status, progress bars, and commentary there. `goals_writer.py` owns the YAML frontmatter block in `state/goals.md` — all structured writes (create, update field, change status) go exclusively through this script. The LLM never edits YAML in-place.
+
+**Work OS boundary:** Personal catch-up pipeline reads only `state/goals.md`. Work OS pipeline (`/work` commands) reads only `state/work/work-goals.md`. These scopes never overlap; `/goals --scope all` is the only view that merges both.
+
+**Status labels:** `ON TRACK` · `NEEDS_ACTION` · `STALE` (no progress >14d) · `OFF PACE` (metric behind trajectory) · `PARKED`
+
 ### 8.1 Goal Creation Flow
 
 Goals are created through conversation, not forms. The UX must feel like talking to a financial advisor, not filling out a spreadsheet.
@@ -602,6 +609,20 @@ Artha: Got it. I'll track:
 - Auto-wired metrics are highlighted — the user sees which data sources will feed the goal automatically.
 - If a metric requires manual input, Artha says so upfront: "This will need manual check-ins — I'll prompt you weekly."
 
+### 8.1a Goal Heartbeat *(v2.0 — Goals Reloaded)*
+
+A conditional ≤2-line goal signal injected into non-weekly briefings (flash, standard) when the Goal Evaluation Protocol (Step 8-Or) detects any flag:
+
+```
+GOALS  NET WORTH: OFF PACE ($7k behind pace)  ·  EXERCISE: STALE (11d no progress)
+```
+
+Design rules:
+- Shown only when at least one goal has status ≠ `ON TRACK` — silence when all goals are on track.
+- Max 2 goals surfaced; remaining flagged count appended: `(+1 more — /goals)`.
+- Never shown in weekly briefing (Goal Review section covers this).
+- Always precedes the Action Proposals block so it reads as a signal, not a summary.
+
 ### 8.2 Goal Progress Visualization
 
 Terminal-native progress bars using Unicode block characters:
@@ -611,6 +632,7 @@ Net Worth 2026 Target       ██████░░░░  62%  → On Track
 Monthly Amazon < $XXX       ████████░░  78%  ⚠ At Risk
 ByteByteGo course by Q2     ██░░░░░░░░  22%  ⚠ Behind
 Exercise 4x/week            ██████░░░░  60%  → On Track
+Weight Goal (185→160 lb)    ████░░░░░░  43%  → On Track   ← direction:down normalized
 ```
 
 **Bar interpretation:**
@@ -620,6 +642,27 @@ Exercise 4x/week            ██████░░░░  60%  → On Track
 - `⚠` prefix = at risk or behind
 - `🔴` prefix = significantly behind
 - `✓` = achieved (100% filled)
+
+**Direction:down formula:** For goals where lower is better (e.g. weight, spending), progress = `1 - (current - target) / (baseline - target)`. Requires `baseline:` field in the metric block.
+
+### 8.2a Goal Review Section *(v2.0 — Goals Reloaded)*
+
+Appears in every weekly summary as a dedicated subsection (gated by `goal_review_enabled: true` in `config/artha_config.yaml`):
+
+```
+## Goal Review · Week of March 24–30, 2026
+
+PERSONAL
+  Net Worth 2026         ██████░░░░  62%  → ON TRACK      next: Review Q1 statement
+  Weight to 160 lb       ████░░░░░░  43%  → ON TRACK      last update: 2d ago
+  Exercise 4x/week       ██░░░░░░░░  22%  ⚠ NEEDS_ACTION  last: 4d ago
+  ByteByteGo course      ██░░░░░░░░  20%  🔴 OFF PACE     next: Schedule 2h session
+
+WORK  [from /goals --scope work]
+  ...
+
+1 goal flagged. Run /goals --scope all for full detail.
+```
 
 ### 8.3 Goal Trajectory Forecast Display
 
@@ -705,13 +748,15 @@ Immigration Readiness
 3. **Color/emoji coding:** ✔ healthy, ⚠ early warning, 🔴 critical divergence. Same taxonomy as alert system.
 4. **Accessible via `/goals leading` or shown automatically** in the weekly Goal Scorecard when a divergence is detected.
 
-### 8.6 Coaching Engine Interaction Design *(v1.3)*
+### 8.6 Coaching Engine Interaction Design *(v1.3; v2.0 — Goals Reloaded)*
 
-Three interaction types: **Accountability nudge** (question format by default — "What's blocking X?", with quick-response buttons), **Obstacle anticipation** (predicts blockers based on calendar + behavioral patterns, suggests time blocks), **Celebration** (milestone-level achievements only). Design rules: appears after briefing alongside action proposals, max 1 nudge per catch-up (rotating across goals), nudge format configurable (question/statement/metric), obstacle anticipation opt-in, dismissal always available (suppress 7 days).
+Coaching engine runs at Step 8 via `coaching_engine.py --format json`; output presented at briefing end (Step 19b). JSON contract: `{goal_id, nudge_type, suppressed, reason}`. Nudge types: `next_small_win`, `accountability`, `momentum`, `insight`, `challenge`. Suppressed when all active goals are on-pace — no nudge shown if nothing needs nudging.
 
-### 8.7 Goal Sprint Display *(v1.4)*
+Three interaction types: **Accountability nudge** (question format — "What's blocking X?"), **Obstacle anticipation** (predicts blockers based on calendar + behavioral patterns, suggests time blocks), **Celebration** (milestone-level achievements only). Design rules: appears after briefing alongside action proposals, max 1 nudge per catch-up (rotating across goals), nudge format configurable, dismissal always available (suppress 7 days).
 
-Active sprint shown in Goal Pulse: target, progress bar, pace (needed vs actual), status. Sprint validation: target_value mandatory. Max 1 active sprint, 7-30 day duration. Behind-pace nudge in daily briefing; on-pace gets checkmark only.
+### 8.7 Goal Sprint Display *(v1.4; v2.0 — Goals Reloaded)*
+
+Active sprint shown in Goal Pulse: target, progress bar, pace (needed vs actual), status. Sprint sub-block in YAML (`start`, `end`, `target`, `label`) coexists with the goal's primary `metric` block. Sprint validation: target mandatory. Max 1 active sprint, 7–30 day duration. Behind-pace nudge in daily briefing; on-pace gets checkmark only.
 
 ### 8.8 College Application Countdown Display *(v1.4)*
 
@@ -1783,6 +1828,8 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | `/work reflect --tune` | Intel | Interactive scoring calibration — 15 pairwise comparisons |
 | `/work reflect --backfill` | Intel | Backfill from 82-week work-scrape corpus |
 | `/work reflect --audit [N]` | Intel | Show last N audit log entries (default: 20) |
+| `/work accomplishments` | Intel | Browse accomplishment ledger — filter by program, impact, date range |
+| `/work accomplishments add` | Intel | Append new accomplishment to ledger with next sequential A-NNN ID |
 | `/work return [window]` | Intel | Absence recovery — summarizes what changed while away (default 3d, e.g. `4d`) |
 | `/work boundary` | Intel | Boundary intelligence report — load trends, after-hours patterns, recommendations |
 | `/work connect` | Intel | Review-cycle evidence by goal area |
@@ -2230,6 +2277,7 @@ If nothing is due: `All horizons current. Next weekly due: Fri Mar 27.`
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 🏆 ACCOMPLISHMENTS (14 items · 3 HIGH, 7 MEDIUM, 4 LOW)
+  📋 Ledger refs: A-179 → A-187 (see work-accomplishments.md)
 
   By Goal:
   G2: Fleet Automation (+5 items, +23% progress)

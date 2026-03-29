@@ -880,6 +880,18 @@ if imminent_meeting:
       actions: [open] [skip]
 ```
 
+**8s — Goal Evaluation Protocol (personal pipeline only):**
+Invoke `coaching_engine.py --goals-file state/goals.md --format json` and capture the nudge spec for use in Step 19b.
+
+During ORIENT, for the `Goals × [All Domains]` pair, execute the Goal Evaluation Protocol for **personal goals only** (work goal evaluation is handled by the Reflection Loop; do NOT apply this protocol to `state/work/work-goals.md` during a personal catch-up):
+1. For each active goal in `state/goals.md` YAML: check if any OIs completed since last catch-up advance this goal. If yes, note the connection in narrative (Phase 1 — do NOT call `goals_writer.py --update linked_ois` until Phase 2).
+2. Flag any goal where `next_action_date` is in the past.
+3. Flag any goal where `last_progress` > 14 days (pre-empting PAT-003).
+4. For `type: outcome` goals with `metric`: compute whether pace is on/off track against `target_date`.
+5. Carry all goal findings forward to Step 8-D for U×I×A scoring.
+
+For work goals, the daily catch-up may read work goal status from `state/work/work-goals.md` for the GOAL PULSE display, but does NOT run the Goal Evaluation Protocol against them.
+
 ### Step 9 — Web research (if needed)
 For domains requiring external data, delegate to Gemini CLI via `safe_cli.py`:
 - Visa Bulletin (monthly USCIS priority dates): `python3 scripts/safe_cli.py gemini "What is the current USCIS Visa Bulletin EB-2 India priority date?"`
@@ -891,6 +903,8 @@ For **immigration**, **finance**, or **estate** decisions with ambiguity:
 - Generate analysis from Claude (you) + Gemini CLI
 - Note where analyses agree/disagree
 - Present synthesized answer with confidence level
+
+**Goal Review (weekly summary only):** When `generate_weekly_summary == true`, include a **§ Goal Review** subsection within the weekly summary per the template in `config/briefing-formats.md` §8.X. Use STALE / NEEDS_ACTION / ON TRACK / OFF PACE labels per goal. For Habit goals, check streak status. Fold the coaching nudge from Step 8s into this section.
 
 ### Step 11 — Synthesize briefing
 Assemble the catch-up briefing using the format in §8.1. Display in terminal.

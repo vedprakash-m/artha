@@ -830,7 +830,7 @@ domains:
 
   work-career:
     label: "Work Career Evidence"
-    description: "Continuous evidence capture for review cycles, accomplishment memory, impact tracking"
+    description: "Continuous evidence capture for review cycles, accomplishment memory, impact tracking. Cross-references work-accomplishments.md ledger for exhaustive chronological evidence."
     sensitivity: elevated
     always_load: false
     phase: phase_work
@@ -864,7 +864,7 @@ domains:
 
   work-performance:
     label: "Work Performance & Connect OS"
-    description: "Connect goals, manager 1:1 pivot tracking, commitment ledger, stakeholder influence map, narrative assembly"
+    description: "Connect goals, manager 1:1 pivot tracking, commitment ledger, stakeholder influence map, narrative assembly. Consumes work-accomplishments.md ledger for Connect evidence assembly."
     sensitivity: elevated
     always_load: false
     phase: phase_work

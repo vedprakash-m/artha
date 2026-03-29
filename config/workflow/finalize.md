@@ -357,7 +357,7 @@ If `executed > 0`, list each executed action with its undo window (if applicable
 
 ### Step 19b — Coaching nudge
 
-If `domains.goals.enabled: true`: suggest one actionable nudge from goal sprint data.
+Present the coaching nudge selected by `coaching_engine.py` at Step 8 (`--goals-file state/goals.md --format json`). Generate a 2-line coaching message matching the user's preferred style from `memory.md → coaching_preferences`. On weekly summary days, fold the nudge into the Goal Review section (§8.X in `config/briefing-formats.md`). If `coaching_engine.py` returns `suppressed: true` or exits non-zero, skip silently (UX-1).
 Max 2 lines in standard mode, omit in flash mode.
 
 ---

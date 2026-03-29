@@ -47,6 +47,11 @@ except ImportError:
     _ReflectReader = None  # type: ignore[assignment,misc]
     _REFLECT_READER_AVAILABLE = False
 
+try:
+    import yaml as _yaml
+except ImportError:  # pragma: no cover
+    _yaml = None  # type: ignore[assignment]
+
 _WORK_STATE_DIR = _ARTHA_DIR / "state" / "work"
 
 _STATUS_ICONS = {
@@ -102,24 +107,31 @@ def _extract_run_metrics(health_content: str, n: int = 7) -> list[dict]:
     return runs
 
 
-def _parse_goals_index(content: str) -> list[dict]:
-    goals: list[dict] = []
-    m = re.search(r"goals_index:\n(.*?)(?:\n```|\Z)", content, re.DOTALL)
-    if not m:
-        return goals
-    current: dict = {}
-    for line in m.group(1).split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("- id:"):
-            if current:
-                goals.append(current)
-            current = {"id": stripped.split(":", 1)[1].strip()}
-        elif current and ":" in stripped and not stripped.startswith("#"):
-            k, _, v = stripped.partition(":")
-            current[k.strip()] = v.strip().strip("'\"")
-    if current:
-        goals.append(current)
-    return goals
+def _parse_goals_yaml(content: str) -> list[dict]:
+    """Parse the `goals` list from YAML frontmatter (schema v2.0).
+
+    Falls back to empty list if `goals` key absent (schema v1.0 files).
+    Extracts only the frontmatter block first to avoid Markdown table pipes
+    being misinterpreted as YAML block scalars.
+    """
+    if _yaml is None:
+        return []
+    try:
+        import re as _re
+        fm_m = _re.match(r"---\s*\n(.*?)\n---", content, _re.DOTALL)
+        if not fm_m:
+            return []
+        fm = _yaml.safe_load(fm_m.group(1)) or {}
+        raw = fm.get("goals", [])
+        if isinstance(raw, list):
+            return [g for g in raw if isinstance(g, dict)]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+# Legacy alias — scorecard rendering call-sites use _parse_goals_index
+_parse_goals_index = _parse_goals_yaml
 
 
 def _count_open_items(items_content: str) -> dict:

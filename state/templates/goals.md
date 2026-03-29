@@ -1,9 +1,12 @@
 ---
-schema_version: "1.0"
+schema_version: '2.0'
 domain: goals
-last_updated: ""
+last_updated: ''
 sensitivity: medium
 encrypted: false
+goals: []
+# Minimal stub — goals_writer.py --create will append entries.
+# Full schema: config/registry.md → "Goals schema (v2.0)"
 ---
 # Goals & Progress Tracking
 

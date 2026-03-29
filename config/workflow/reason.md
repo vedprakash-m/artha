@@ -109,6 +109,16 @@ something that neither domain alone would surface:
 
 **Output: `[ORIENT]` block** with connection matrix and compound signals list.
 
+**Goal Evaluation Protocol (personal pipeline only — Step 1.13, specs/goals-reloaded.md §3.6):**
+For the `Goals × [All Domains]` pair above, execute these steps before scoring. Personal goals only — work goal evaluation is handled by the Reflection Loop:
+1. For each active goal in `state/goals.md` YAML: check if any OIs completed since last catch-up advance this goal. If yes, note the connection in briefing narrative.
+2. Flag any goal where `next_action_date` is in the past → score as `[U=2 or 3] Goals — [goal title] next action overdue`.
+3. Flag any goal where `last_progress` > 14 days → score as `[U=1] Goals — [goal title] stale (N days)`.
+4. For `type: outcome` goals with `metric`: compute whether pace is on/off track against `target_date`. Off-pace → score as `[U=1] Goals — [goal title] pace deviation`.
+5. Carry all goal findings to Step 8-D for U×I×A scoring.
+
+Work goals: read `state/work/work-goals.md` for GOAL PULSE display only — do NOT run this protocol against them.
+
 ---
 
 ### 8-D: DECIDE — Prioritize with U×I×A Scoring
@@ -134,6 +144,8 @@ Select the **ONE THING** — the single highest-scoring item that is:
 - **Actionable** (user can do something about it)
 - **Time-sensitive** (matters NOW, not next month)
 - **High-impact** (affects a high-stakes domain or multiple domains)
+
+**Goal-alignment tie-breaker:** When two candidates score equally on U×I×A *and* one advances an active goal (identified in the Goal Evaluation Protocol at Step 8-Or), prefer the goal-advancing item. Goal alignment breaks ties — it does not override genuine urgency. Most real-life OIs are operational (kids, insurance, finance); goal alignment should elevate strategic work when urgency permits, not routinely overpower real-world obligations.
 
 **Output: `[DECIDE]` block** with prioritized action list, scored items, and ONE THING selection.
 
