@@ -114,6 +114,8 @@ _FALLBACK_HANDLER_MAP: Final[dict[str, str]] = {
     "connectors.plaid_connector": "connectors.plaid_connector",
     # Feed connectors (stdlib-only, no auth — PR-3 AI Radar)
     "connectors.rss_feed": "connectors.rss_feed",
+    # API discovery connector (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.api_discovery": "connectors.api_discovery",
 }
 
 # Security allowlist — only these module paths may ever be loaded dynamically.
