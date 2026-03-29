@@ -133,6 +133,52 @@ features:
     status: implemented
     confidence: high
 
+  # ── Reflection Loop ─────────────────────────────────────────────────────
+  work_os_reflect_sprint0:
+    spec: "specs/reflection-loop.md Sprint 0"
+    status: implemented
+    confidence: high
+    note: "Base infrastructure — AccomplishmentEntry, ReflectionKey, reflect.py pipeline"
+  work_os_reflect_phase1:
+    spec: "specs/reflection-loop.md Phase 1 / §3.1–§3.5"
+    status: implemented
+    confidence: high
+    note: "Full reflection pipeline — weekly/monthly/quarterly horizons, reconcile.py, audit log"
+  work_os_reflect_reader:
+    spec: "specs/reflection-loop.md §3.6 P7"
+    status: implemented
+    confidence: high
+    note: "ReflectReader typed facade — get_current_reflection, get_weekly_history, get_goal_trend"
+  work_os_reflect_sprint2:
+    spec: "specs/reflection-loop.md §8 Sprint 2"
+    status: implemented
+    confidence: high
+    note: "Sprint 2 integration — index_db_path param, scorecard/goals wiring, narrative stub replaced"
+
+  work_os_reflect_phase1_5:
+    spec: "specs/reflection-loop.md §6 Phase 1.5 Backfill Engine"
+    status: implemented
+    confidence: high
+    note: >
+      Backfill Engine (scripts/backfill/ package): 4-format scrape_parser
+      (A/B-early/B-mid/B-late), cross_reference Phase 1b enrichment
+      (project-journeys + career evidence, Jaccard similarity),
+      backfill_runner orchestrator (phases 1a/1b/2 scaffold/3 interactive).
+      CLI flags wired in reflect.py: --backfill (Phase 1a+1b), --backfill-review
+      (Phase 3), --repair-compaction, --tune (interactive calibration).
+      CF items tagged carry_forward_status: historical + status: resolved.
+      Source citation format: [source: work-scrape/YYYY/NN-wWW.md].
+      Idempotent: ReflectionKey.already_exists() guard on every write.
+      Non-destructive: never modifies existing state files.
+      WorkIQ Phase 2 gap-fill scaffolded (budget tracking, session budget 10).
+    phases_complete:
+      - "Phase 1a: Parse all work-scrape .md files (4 format families)"
+      - "Phase 1b: Cross-reference enrichment (project-journeys + career evidence)"
+      - "Phase 2: WorkIQ gap-fill scaffold (scaffolded; phase 2 calls deferred)"
+      - "Phase 3: Interactive review output (run_backfill_review)"
+      - "CLI: --backfill, --backfill-review, --repair-compaction, --tune flags"
+      - "Tests: test_scrape_parser.py, test_cross_reference.py, test_backfill_runner.py"
+
   # ── PR Manager ─────────────────────────────────────────────────────────
   pr_manager:
     spec: "specs/pr-manager.md PR-1 v1.2"

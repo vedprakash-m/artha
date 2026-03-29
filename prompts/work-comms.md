@@ -32,6 +32,40 @@ Classify as action-required if ANY of:
 - Teams DM (all DMs have implicit action potential unless FYI-flagged)
 - Sender is manager or skip-level and thread is unacknowledged >12h
 
+## Thread Closure Validation (Two-Pass Protocol)
+
+**MANDATORY:** After identifying action-required threads, run a verification pass
+before surfacing them in the briefing. Do NOT skip this step.
+
+**Pass 1 — Identify:** Extract all threads classified as action-required (above heuristics).
+
+**Pass 2 — Validate:** For EACH action-required thread, ask WorkIQ:
+  *"Did I (Ved) reply to or send a follow-up message in this thread after [timestamp of the inbound message]?"*
+  Or equivalently check: *"What is the latest message in this thread and who sent it?"*
+
+**Pass 2b — Ownership Check:** For EACH remaining OPEN thread, verify the action is actually directed at YOU:
+  *"In this thread, who specifically is being asked to take action? Is the ask directed at Ved, or at someone else?"*
+  If the ask is directed at someone else (e.g., "Altaf, can you provide scenarios?"), reclassify as:
+  `👀 [WATCHING] [sender]: "[subject]" — action on [owner], you are cc'd`
+  Do NOT surface other people's action items as YOUR action items just because you're in the thread.
+
+**Classification after validation:**
+- ✅ **RESOLVED** — You already replied. Show in briefing as:
+  `✅ [RESOLVED] [sender]: "[subject]" — you replied [age] ago. Latest: [your reply summary]`
+- ⏳ **OPEN** — No reply from you. Show in briefing as:
+  `⏳ [OPEN] [sender]: "[subject]" — awaiting your response ([age]h) [action needed]`
+- 🔄 **AWAITING OTHERS** — You replied, now waiting on them. Show as:
+  `🔄 [PENDING] [sender]: "[subject]" — you replied, awaiting their response`
+
+**Briefing display rules:**
+- OPEN items appear in the 🔴/🟡 action sections (as before)
+- RESOLVED items appear in a **separate "Threads Resolved" section** at the bottom — provides transparency without false urgency
+- AWAITING OTHERS items appear in the "Pending" section
+- Always show the count: "5 threads surfaced: 2 open, 2 resolved, 1 awaiting others"
+
+**Why this matters:** Without validation, every inbound ask appears "open" even if the user
+already responded. This creates false urgency and erodes trust in the briefing.
+
 ## Pre-Filter (Suppress from Briefing)
 - Senders matching: no-reply@, noreply@, donotreply@, mailer-daemon@
 - Subject matching calendar RSVP patterns: "Accepted:", "Declined:", "Tentative:"
@@ -60,8 +94,17 @@ Read `state/work/work-comms.md` first. Then update:
 ## Briefing Format
 ```
 ### Work Comms
-• X action items (Y email, Z Teams)
+• X threads surfaced: Y open, Z resolved, W awaiting others
+
+⏳ OPEN (action needed):
 • 🟠 [sender]: "[subject]" — awaiting your response ([age]h)
-• 🟡 [count] threads pending others' response
-• 🔵 [count] FYI threads (filtered)
+• 🟡 [sender]: "[subject]" — [action needed] ([age]h)
+
+🔄 AWAITING OTHERS:
+• [sender]: "[subject]" — you replied [age] ago, pending their response
+
+✅ RESOLVED (no action needed):
+• [sender]: "[subject]" — you replied [age] ago. Latest: [summary]
+
+🔵 [count] FYI threads (filtered)
 ```

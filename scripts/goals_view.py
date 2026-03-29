@@ -33,6 +33,15 @@ _ARTHA_DIR = _SCRIPTS_DIR.parent
 _STATE_DIR = _ARTHA_DIR / "state"
 _GOALS_FILE = _STATE_DIR / "goals.md"
 
+try:
+    from work.reflect_reader import ReflectReader as _ReflectReader
+    _REFLECT_READER_AVAILABLE = True
+except ImportError:
+    _ReflectReader = None  # type: ignore[assignment,misc]
+    _REFLECT_READER_AVAILABLE = False
+
+_WORK_STATE_DIR = _ARTHA_DIR / "state" / "work"
+
 _STATUS_ICONS = {
     "on_track": "🟢",
     "in_progress": "🟢",
@@ -136,6 +145,56 @@ def _format_deadline(days: int | None) -> str:
     return f"{days}d"
 
 
+def _format_leading(goals: list[dict], meta: dict, work_state_dir: Path) -> str:
+    """Leading indicators: per-goal trend data from ReflectReader.get_goal_trend()."""
+    lines = [
+        "## Goal Leading Indicators",
+        f"_State as of: {meta.get('last_updated', 'unknown')}_\n",
+    ]
+    if not _REFLECT_READER_AVAILABLE:
+        lines.append(
+            "_\u26a0 ReflectReader not available "
+            "\u2014 run with PYTHONPATH=scripts_"
+        )
+        return "\n".join(lines)
+    try:
+        reader = _ReflectReader(work_state_dir)  # type: ignore[misc]
+        lines += [
+            "| Goal | ID | Status | Trend (8w) | Last Score |",
+            "|------|----|--------|-----------|------------|"]
+        for g in sorted(goals, key=lambda x: (
+            int(x.get("priority", "P9")[1:]) if x.get("priority", "P9")[1:].isdigit() else 9,
+        )):
+            gid = g.get("id", "?")
+            trend = reader.get_goal_trend(gid, last_n=8)
+            scored = [s for s in trend.scores if s is not None]
+            if scored:
+                last_score = f"{scored[-1]:.0%}"
+                bar = "".join(
+                    "\u2593" if s is not None and s >= 0.7
+                    else "\u2592" if s is not None and s >= 0.4
+                    else "\u2591" if s is not None
+                    else "\xb7"
+                    for s in trend.scores
+                )
+                trend_str = f"`{bar}`"
+            else:
+                last_score = "\u2014"
+                trend_str = "_(Phase 1 \u2014 scoring begins Phase 2)_"
+            icon = _STATUS_ICONS.get(g.get("status", ""), "\u2b1c")
+            title = g.get("title", "?")[:45]
+            lines.append(
+                f"| {title} | {gid} | {icon} | {trend_str} | {last_score} |"
+            )
+    except Exception as exc:
+        lines.append(f"_Error loading trend data: {exc}_")
+    lines.append(
+        f"\n_Generated: "
+        f"{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_"
+    )
+    return "\n".join(lines)
+
+
 def _format_flash(goals: list[dict], meta: dict) -> str:
     attention = [g for g in goals if g.get("status", "") in ("critical", "urgent", "at_risk")]
     lines = [
@@ -211,12 +270,16 @@ def main() -> int:
         "--format", choices=["flash", "standard", "digest"], default="standard",
         help="Output density (default: standard)"
     )
+    parser.add_argument(
+        "--leading", action="store_true",
+        help="Show per-goal leading indicators with trend data (uses ReflectReader)",
+    )
     args = parser.parse_args()
 
     content = _read_goals()
     if not content:
         print(
-            "⚠ state/goals.md not found or empty. Run a catch-up or /bootstrap to populate.",
+            "\u26a0 state/goals.md not found or empty. Run a catch-up or /bootstrap to populate.",
             file=sys.stderr,
         )
         return 1
@@ -226,6 +289,10 @@ def main() -> int:
 
     if not goals:
         print("_No goals found in goals.md. Use /goals to define goals._")
+        return 0
+
+    if args.leading:
+        print(_format_leading(goals, meta, _WORK_STATE_DIR))
         return 0
 
     if args.format == "flash":

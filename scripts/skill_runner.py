@@ -158,12 +158,48 @@ def run_skill(skill_name: str, artha_dir: Path) -> Dict[str, Any]:
         return {"status": "failed", "error": str(e)}
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Artha skill runner")
+    parser.add_argument(
+        "--skill", "-s",
+        metavar="SKILL",
+        help="Run only this skill (use canonical name or alias, e.g. 'radar')",
+    )
+    parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Bypass cadence check — force the skill to run even if recently executed",
+    )
+    cli = parser.parse_args()
+    # Resolve alias if provided
+    if cli.skill:
+        cli.skill = _SKILL_ALIASES.get(cli.skill, cli.skill)
+
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    
+
     config = load_config()
     cache = load_cache()
-    enabled_skills = [name for name, cfg in config.get("skills", {}).items() if should_run(name, config, cache)]
-    
+
+    if cli.skill:
+        # Single-skill mode: validate allowlist
+        if cli.skill not in _ALLOWED_SKILLS:
+            logging.error(f"Skill '{cli.skill}' is not in the allowlist.")
+            return
+        skill_cfg = config.get("skills", {}).get(cli.skill, {})
+        if not skill_cfg.get("enabled"):
+            logging.warning(f"Skill '{cli.skill}' is disabled in config/skills.yaml. Skipping.")
+            return
+        if cli.force or should_run(cli.skill, config, cache):
+            enabled_skills = [cli.skill]
+        else:
+            logging.info(f"Skill '{cli.skill}' cadence not yet reached. Use --force to override.")
+            return
+    else:
+        enabled_skills = [
+            name for name, cfg in config.get("skills", {}).items()
+            if should_run(name, config, cache)
+        ]
+
     if not enabled_skills:
         logging.info("No skills due for execution. Skipping.")
         return
@@ -252,6 +288,97 @@ def _write_occasion_tracker_output(cache: Dict[str, Any]) -> None:
         logging.info(f"Wrote {len(upcoming)} occasion(s) to {output_path.name}")
     except Exception as e:
         logging.warning(f"Could not write occasion_tracker_output.json: {e}")
+
+
+def write_radar_trend_scan_bridge(
+    signals_path: Path | None = None,
+    output_path: Path | None = None,
+) -> int:
+    """Convert tmp/ai_trend_signals.json → tmp/trend_scan.json for pr_manager --step8.
+
+    pr_manager.MomentDetector.score_from_trends() expects:
+        [{"topic": "<str>", "relevance": "high|medium|low"}, ...]
+
+    ai_trend_signals.json has:
+        {"signals": [{"topic": "<str>", "relevance_score": 0.0–1.0, ...}, ...]}
+
+    Returns the number of trends written.
+    Called automatically by skill_runner after radar runs, or manually in Step 8s.
+    """
+    src = signals_path or (ARTHA_DIR / "tmp" / "ai_trend_signals.json")
+    dst = output_path or (ARTHA_DIR / "tmp" / "trend_scan.json")
+    if not src.exists():
+        logging.debug("write_radar_trend_scan_bridge: no signals file at %s", src)
+        return 0
+    try:
+        data = json.loads(src.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        logging.warning("write_radar_trend_scan_bridge: could not read %s: %s", src, e)
+        return 0
+
+    def _score_to_label(score: float) -> str:
+        # Calibrated to match surface_threshold=0.30 and try_worthy_threshold=0.55
+        # "medium" starts at 0.28 so any signal that passed surface_threshold
+        # maps to at least medium → magnitude=0.7 in score_from_trends.
+        if score >= 0.55:
+            return "high"
+        if score >= 0.28:
+            return "medium"
+        return "low"
+
+    signals = data.get("signals") or []
+    trends = [
+        {
+            "topic": s.get("topic", ""),
+            "relevance": _score_to_label(s.get("relevance_score", 0.0)),
+            "try_worthy": s.get("try_worthy", False),
+            "summary": s.get("summary", ""),
+            "url": s.get("best_source_url", ""),
+            "category": s.get("category", ""),
+        }
+        for s in signals
+        if s.get("topic")
+    ]
+    try:
+        dst.parent.mkdir(exist_ok=True)
+        dst.write_text(json.dumps(trends, indent=2), encoding="utf-8")
+        logging.info("Wrote %d trend(s) to %s (bridge from radar signals)", len(trends), dst.name)
+    except OSError as e:
+        logging.warning("write_radar_trend_scan_bridge: could not write %s: %s", dst, e)
+        return 0
+    return len(trends)
+
+
+def write_newsletter_jsonl(emails: List[Dict[str, Any]], output_path: Path | None = None) -> int:
+    """Write a list of email dicts to tmp/newsletter_pipeline.jsonl for the radar skill.
+
+    Called from catch-up Step 8s (or Step 7 social processing) after Gmail MCP fetch.
+    Each email dict should have keys: from, subject, body, date, source.
+    Returns the number of records written.
+
+    CLI usage (from catch-up pipeline):
+        python3 scripts/skill_runner.py --write-newsletter-jsonl < emails.json
+    """
+    out = output_path or (ARTHA_DIR / "tmp" / "newsletter_pipeline.jsonl")
+    out.parent.mkdir(exist_ok=True)
+    count = 0
+    try:
+        with out.open("w", encoding="utf-8") as fh:
+            for email in emails:
+                record = {
+                    "source": email.get("source", "gmail"),
+                    "from": email.get("from", ""),
+                    "subject": email.get("subject", ""),
+                    "body": email.get("body", email.get("snippet", "")),
+                    "date": email.get("date", ""),
+                    "url": email.get("url", ""),
+                }
+                fh.write(json.dumps(record) + "\n")
+                count += 1
+        logging.info(f"Wrote {count} newsletter record(s) to {out.name}")
+    except Exception as e:
+        logging.warning(f"Could not write newsletter_pipeline.jsonl: {e}")
+    return count
 
 
 def _write_skills_metrics(timing: Dict[str, float], total_elapsed: float) -> None:
