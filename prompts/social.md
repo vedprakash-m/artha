@@ -582,6 +582,17 @@ Each post should advance at least one thread:
 
 ### Briefing Contribution
 
+**AI Trend Radar section (every catch-up when signals exist):**
+If `tmp/ai_trend_signals.json` exists and `config/artha_config.yaml → pr_manager.ai_trend_radar.enabled: true`:
+Run: `python3 -c "from scripts.briefing_adapter import render_radar_section; print(render_radar_section())"`
+If output is non-empty, inject it into the briefing as:
+```
+━━ 🧠 AI RADAR ━━━━━━━━━━━━━━━━━━━━━━━━━━
+[output from render_radar_section()]
+```
+Place this section AFTER the BY DOMAIN section and BEFORE the GOAL PULSE section.
+For flash briefings: show only ✅ try-worthy signals (1 line each, max 2).
+
 **Daily briefing** (only when a moment has convergence_score ≥ 0.8):
 Read `tmp/content_moments.json`. If exists and has moments with `above_daily_threshold: true`:
 ```

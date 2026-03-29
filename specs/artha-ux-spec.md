@@ -1,11 +1,12 @@
 # Artha — UX Specification
 
-> **Version**: 3.5 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.6 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.5.0, Tech Spec v3.17.0
 
 | Version | Date | Summary |
 |---------|------|---------|
+| v3.6 | 2026-03-28 | **SKILLS-RELOADED v2.5 UX** — Skill health surfacing, engagement rate observability, and adaptive briefing expansion: **Skill Health table** (§10.17) visible on `/health` command — shows all skills with health classification (healthy/degraded/broken/disabled), consecutive-zero count, last-value date, and action recommendation; catch-up briefing shows only degraded/broken skills; flash mode suppresses degraded — broken only. **Adaptive cadence disclosure (R7)** — when `BriefingAdapter` applies R7 cadence reduction, briefing footer shows "[Skill] now checks less often (no new data recently)"; at 20 consecutive zeros a one-time disable prompt fires: "[Skill] has been quiet for a while — disable it? [yes / keep]". **R2 activation** — `engagement_rate` is now populated per catch-up in `state/catch_up_runs.yaml`; once 10 runs accumulate, R2 compression can activate: "Briefing simplified — recent sessions show low engagement." **R8 meta-alarm** — if `engagement_rate < 15%` for 7 of last 10 runs, surfaces once per 14 days: "Recent briefings are generating little action — want to narrow focus?" **`/eval skills`** — runs `eval_runner.py --skills`; shows skill health table sorted broken-first with success%, zero%, wall-clock timing, cadence recommendation. **`/eval effectiveness`** — Claude-rendered engagement trends from `state/catch_up_runs.yaml` (last 10 catch-ups): engagement rate history, R2/R8 activation status, skill disable recommendations. Internal rule names (R2, R7, R8) never appear in briefings — user sees only human-language descriptions. (implements PRD v5.0 §11.x, Tech Spec v3.17.0 §8.9 SKILLS-RELOADED v2.5; see `specs/skills-reloaded.md` → archived to `.archive/skills-reloaded-v2.5.md`) |
 | v3.5 | 2026-03-28 | **GOALS-RELOADED v6.3 UX — Goal Intelligence Phase 1:** §8 Goal Intelligence updated with dual-layer architecture (LLM owns Markdown display table; `goals_writer.py` owns YAML frontmatter — LLM never edits YAML in-place). **Goal Heartbeat** — conditional ≤2-line goal signal in non-weekly briefings (Goal Evaluation Protocol at Step 8-Or produces `ON TRACK / NEEDS_ACTION / STALE / OFF PACE` signals; shown only when a flag is active). **Goal Review** — weekly summary subsection (§8.6 template, `goal_review_enabled` kill switch in `config/artha_config.yaml`; every active goal shown with progress bar, status label, and next action). **`/goals --scope all`** merges personal (`state/goals.md`) + work goals (`state/work/work-goals.md`) into single output with `[work]` tagging; `--scope personal` / `--scope work` subsets available. **Work OS boundary** — personal catch-up pipeline reads only `state/goals.md`; Work OS (`/work` commands + work pipeline) reads only `state/work/work-goals.md`; scopes never cross. **Coaching engine JSON nudge** — Step 8 runs `coaching_engine.py --format json`; nudge presented at briefing end (Step 19b) as a single contextual recommendation with `nudge_type` (next_small_win / accountability / momentum / insight / challenge); suppressed when goals are all active and on-pace. Status labels: `ON TRACK | NEEDS_ACTION | STALE | OFF PACE | PARKED`. (implements PRD v7.5.0 F13.1/F13.3/F13.4/F13.6/F13.7, Tech Spec v3.17.0) |
 | v3.3 | 2026-03 | **FW-19 Reflection Loop UX (§23.14):** `/work reflect` command family UX — horizon auto-detection prompt, weekly reflection output format, carry-forward table with age/priority/due columns, reconciliation view (planned vs actual with ✅/⏭/❌/🆕 status), scoring visibility (raw scores for first 4 weeks then labels only), `--status` Markdown table, `--tune` pairwise calibration session (15 comparisons), `--backfill` progress display, `--audit` log viewer. Command table expanded: `/work reflect`, `/work reflect weekly`, `/work reflect monthly`, `/work reflect quarterly`, `/work reflect --status`, `/work reflect --tune`, `/work reflect --backfill`, `/work reflect --audit`. Draft deliverables staged via `/stage` system (not inline). Friday briefing footer shows reflection due status. (implements PRD v7.4.0 FW-19, Tech Spec v3.16.0 §19.11) |
 | v3.2 | 2026-03 | **PAY-DEBT-RELOADED v2.0 + PAY-DEBT v1.0 — Zero UX-visible changes:** WS-1 through WS-9-B are entirely infrastructure, test-quality, and architectural hardening improvements with no impact on any user-facing surface. PAY-DEBT v1.0 god-file decompositions (TD-1–TD-5) restructured internal modules; PAY-DEBT-RELOADED v2.0 hardened config loading, narrative rendering, DAG execution, and concurrency guarantees. All 28 `/work *` commands, all Telegram slash commands, all briefing section formats (flash/standard/deep), all onboarding flows, and all `/stage` card lifecycle views are unchanged. Architectural health improved from ~5/10 (pre-PAY-DEBT v1.0) to 9.0/10 (post-PAY-DEBT-RELOADED v2.0); test suite expanded to 3,429 total tests with full coverage of `post_work_refresh`, `config_loader`, `narrative/` package, `work_loop` DAG paths, and channel security concurrency. (implements PRD v7.2.0, Tech Spec v3.14.0; see `specs/pay-debt-reloaded.md` and `specs/pay-debt.md`, archived to `.archive/`) |
@@ -859,6 +860,13 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                  /skip <signal_id>  Dismiss signal from radar
 /catch-up flash  Flash briefing (≤30 sec reading time)        1 minute    *(v1.3)*
 /catch-up deep   Deep analysis with extended reasoning        5–8 minutes *(v1.3)*
+/eval            Catch-up evaluation report (full)            10 seconds  *(v2.5)*
+                 Backed by scripts/eval_runner.py
+                 /eval perf          Performance trends only
+                 /eval accuracy      Acceptance rate, signal:noise
+                 /eval freshness     Domain staleness, OAuth health
+                 /eval skills        Skill health table (broken-first) *(v5.0)*
+                 /eval effectiveness Engagement rate trends, R2/R8 status *(v5.0)*
 ```
 
 **CLI diagnostic flag (not a slash command):**
@@ -946,6 +954,55 @@ Top 3 highest-impact 30-min tasks from open_items + goal blockers. Per task: eff
 ### 10.16 Teach Me Interaction Pattern *(v1.4)*
 
 Domain-aware explanations calibrated to user's knowledge level. Structure: "What you know" (from state) → "What matters" (context-specific) → "What to do" (actionable). Sources cited. Follow-up questions suggested. Immigration/finance domains get legal/regulatory context.
+
+### 10.17 `/eval skills` and `/eval effectiveness` Output Design *(v5.0)*
+
+**`/eval skills`** — runs `eval_runner.py --skills`; reads `state/skills_cache.json`. Sorted: broken first, then degraded, then healthy. Shows only non-`warming_up` skills unless `--verbose`.
+
+```
+## Skill Health — 18 Skills
+
+| Skill                      | Health     | Success% | Zero% | Last Value | Wall Clock | Cadence                    |
+|----------------------------|------------|---------|-------|-----------|-----------|----------------------------|
+| mental_health_utilization  | 🔴 broken  | 0%       | —     | Never      | —          | daily                      |
+| uscis_status               | ⚠️ degraded | 100%    | 100%  | Never      | 45ms       | every_run → suggest daily  |
+| financial_resilience       | ⚠️ degraded | 100%    | 100%  | Never      | 32ms       | every_run → suggest daily  |
+| bill_due_tracker           | ✅ healthy  | 100%    | 18%   | Mar 26     | 12ms       | every_run                  |
+| noaa_weather               | ✅ healthy  | 95%      | 5%    | Mar 27     | 88ms       | every_run                  |
+
+Recommendations:
+• Disable mental_health_utilization — 100% failure rate
+• Disable uscis_status — no active case; re-enable when filing
+• Reduce financial_resilience cadence to daily — data unchanged 25 sessions
+```
+
+**`/eval effectiveness`** — Claude-rendered from `state/catch_up_runs.yaml` + `state/skills_cache.json`. No Python script required — Claude narrates small data better than formatted output.
+
+```
+## Artha Effectiveness — Last 10 Catch-ups
+
+| Date  | Format   | Engagement | User OIs | Corrections | Items Surfaced | Skills Broken |
+|-------|----------|-----------|----------|-------------|----------------|---------------|
+| 3/27  | standard | 0.33       | 1        | 0           | 3              | 1             |
+| 3/26  | flash    | 0.50       | 2        | 1           | 6              | 1             |
+| 3/25  | standard | 0.40       | 2        | 0           | 5              | 1             |
+| 3/20  | standard | null       | 0        | 0           | 0              | 1             |
+| ...
+
+Trends:
+• Mean engagement rate: 0.41 (target: 0.25–0.50) ✅
+• R2 compression: NOT ACTIVE (need 3 more runs with engagement_rate)
+• R8 alarm: NOT ACTIVE (mean rate above threshold)
+
+Recommendations:
+• 1 skill broken (mental_health_utilization) — see /eval skills
+• Engagement healthy — no format changes needed
+```
+
+**Design rules:**
+- Internal rule names (R2, R7, R8) appear in `/eval` output only — never in catch-up briefings
+- `engagement_rate: null` entries are counted in the window but excluded from mean calculation
+- "Target: 0.25–0.50" is shown as context; rates above 0.50 are noted but not flagged — over-engagement is not a problem
 
 ## 11. Proactive Check-In — Conversational Design
 
@@ -1412,6 +1469,70 @@ Artha adapts verbosity to the user's implicit request. "Tell me more" → expand
 ```
 Preference: Morning briefings concise (<2 minutes reading time).
 Preference: Immigration deep-dives detailed (Raj wants full context).
+```
+
+---
+
+## 16a. Adaptive Briefing Behavior *(v5.0 — SKILLS-RELOADED)*
+
+After 10 catch-ups, `BriefingAdapter` silently adjusts format and content based on historical behavior. All adaptations are disclosed in the briefing footer using human language — internal rule names (R1–R8) never appear in user-facing text.
+
+### 16a.1 Adaptive Rules Summary
+
+| Rule | Trigger | User-facing disclosure |
+|------|---------|----------------------|
+| R1 | User has used flash format in ≥7 of last 10 catch-ups | "Briefing format: flash (matching your usual preference)" |
+| R2 | `engagement_rate < 30%` in ≥7 of last 10 non-null runs | "Briefing simplified — recent sessions show low engagement" |
+| R3 | Quiet period detected (no alerts for 5+ catch-ups) | *(no disclosure — just fewer items, handled by quiet-day logic)* |
+| R4 | User has dismissed coaching nudge in ≥8 of last 10 catch-ups | "Coaching tip skipped (you prefer it off)" |
+| R7 | Skill `consecutive_zero >= 10` (P1/P2 only) | "[Skill description] now checks less often (no new data recently)" |
+| R7-prompt | Skill `consecutive_zero >= 20`, prompt not yet sent | "[Skill description] has been quiet for a while — disable it? [yes / keep]" |
+| R8 | `engagement_rate < 15%` for 7 of last 10 runs, once per 14 days | "Recent briefings are generating little action — want to narrow focus? [Narrow focus / Trim quiet domains / Switch to flash / Keep current]" |
+
+**Safety rails (all rules):**
+- P0/P1 domains (`immigration`, `health`, critical `finance`) are NEVER suppressed by R2
+- R7 and R8 prompts fire at most once per occurrence window — never nag
+- `/catch-up deep` always shows full output regardless of active rules
+- Cold-start gate: R2 and R8 require ≥10 catch-ups with valid `engagement_rate` data
+
+### 16a.2 Skill Health in Briefing
+
+The briefing body shows skill health only for degraded/broken skills. Healthy skills are silent (UX-1).
+
+**Standard and deep briefing** — "Skill Health" line in briefing footer when any broken/degraded skills exist:
+```
+[System] 2 skills need attention — run /eval skills for details.
+  • mental_health_utilization: broken (100% failure rate)
+  • uscis_status: now checks less often (empty 25 sessions)
+```
+
+**Flash briefing** — only broken skills (degraded suppressed):
+```
+[System] 1 skill broken — run /eval skills.
+```
+
+**`/health` command** — full skill health table (all skills, all states):
+```
+### 🔧 Skill Health
+
+| Skill                     | Health      | Last Value | Consecutive Zeros | Action                         |
+|---------------------------|-------------|-----------|-------------------|--------------------------------|
+| mental_health_utilization | 🔴 broken   | Never      | N/A (all failures)| Fix or disable                 |
+| uscis_status              | ⚠️ degraded  | Never      | 25                | Now checks less often          |
+| financial_resilience      | ⚠️ degraded  | Never      | 25                | Needs vault/config fix         |
+| king_county_tax           | 🔄 stable   | Mar 26     | 0 (stable×15)     | Consider cadence: weekly       |
+| bill_due_tracker          | ✅ healthy   | Mar 26     | 0                 | —                              |
+```
+
+### 16a.3 Briefing Footer Transparency Block
+
+All active adaptations are shown in a compact footer block after every briefing section where rules fired. The footer is invisible when no rules are active:
+
+```
+━━ Artha adapted this briefing:
+• Briefing simplified — recent sessions show low engagement
+• uscis_status now checks less often (no new data recently)
+Run /eval effectiveness for detailed engagement history.
 ```
 
 ---

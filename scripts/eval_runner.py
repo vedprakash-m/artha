@@ -12,6 +12,7 @@ Usage:
     python scripts/eval_runner.py                   # Full eval report
     python scripts/eval_runner.py --perf            # Performance only
     python scripts/eval_runner.py --accuracy        # Accuracy only
+    python scripts/eval_runner.py --skills          # Skill health table
     python scripts/eval_runner.py --json            # JSON output
     python scripts/eval_runner.py --trend 7         # 7-day trend analysis
 
@@ -29,8 +30,10 @@ from typing import Any
 _ARTHA_DIR = Path(__file__).resolve().parent.parent
 _HEALTH_CHECK = _ARTHA_DIR / "state" / "health-check.md"
 _PIPELINE_METRICS = _ARTHA_DIR / "tmp" / "pipeline_metrics.json"
-_SKILLS_METRICS = _ARTHA_DIR / "tmp" / "skills_metrics.json"
+_SKILLS_METRICS = _ARTHA_DIR / "tmp" / "skills_metrics.json"  # deprecated; kept for fallback
 _CATCHUP_METRICS = _ARTHA_DIR / "tmp" / "catchup_metrics.json"
+_SKILLS_CACHE = _ARTHA_DIR / "state" / "skills_cache.json"   # unified persistent cache
+_CATCH_UP_RUNS = _ARTHA_DIR / "state" / "catch_up_runs.yaml"  # structured run history
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +125,11 @@ def analyze_performance(days: int = 7) -> dict[str, Any]:
             for name, times in sorted(connector_times.items())
         }
 
-    # Per-skill breakdown
-    if skills_runs:
+    # Per-skill breakdown — prefer unified cache (last_wall_clock_ms), fall back to metrics file
+    skill_breakdown = _skill_breakdown_from_cache()
+    if skill_breakdown:
+        result["skill_breakdown"] = skill_breakdown
+    elif skills_runs:
         skill_times: dict[str, list[float]] = {}
         for run in skills_runs:
             for sname, t in run.get("skill_timing", {}).items():
@@ -190,6 +196,190 @@ def _analyze_series(
         "p95_seconds": round(sorted(times)[int(len(times) * 0.95)], 2) if len(times) >= 5 else None,
         "trend": trend,
     }
+
+
+def _skill_breakdown_from_cache() -> dict[str, Any] | None:
+    """Read per-skill wall-clock timing from the unified state/skills_cache.json.
+
+    Returns a dict keyed by skill name with timing + health summary, or None
+    if the cache doesn't exist or has no health data yet.
+    """
+    if not _SKILLS_CACHE.exists():
+        return None
+    try:
+        cache = json.loads(_SKILLS_CACHE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    breakdown: dict[str, Any] = {}
+    for name, entry in cache.items():
+        if not isinstance(entry, dict):
+            continue
+        health = entry.get("health", {})
+        if not health:
+            continue
+        wall_ms = health.get("last_wall_clock_ms")
+        breakdown[name] = {
+            "last_wall_clock_ms": wall_ms,
+            "avg_seconds": round(wall_ms / 1000, 3) if wall_ms is not None else None,
+            "total_runs": health.get("total_runs", 0),
+            "health_classification": health.get("classification", "warming_up"),
+            "consecutive_zero": health.get("consecutive_zero", 0),
+        }
+    return breakdown if breakdown else None
+
+
+# ---------------------------------------------------------------------------
+# Skill health analysis  (Phase 3)
+# ---------------------------------------------------------------------------
+
+def analyze_skills() -> dict[str, Any]:
+    """Read state/skills_cache.json and state/skills.yaml to produce skill health table.
+
+    Returns a summary dict with per-skill health details and aggregate counts.
+    Triggered by the --skills CLI flag.
+    """
+    # Resolve CADENCE_REDUCTION from shared lib (with fallback for standalone runs)
+    try:
+        if str(_ARTHA_DIR) not in sys.path:
+            sys.path.insert(0, str(_ARTHA_DIR))
+        from scripts.lib.skill_health import CADENCE_REDUCTION  # type: ignore[import]
+    except ImportError:
+        CADENCE_REDUCTION = {"every_run": "daily", "daily": "weekly"}
+
+    # Load cache
+    if not _SKILLS_CACHE.exists():
+        return {"error": "state/skills_cache.json not found — run skills first"}
+    try:
+        cache: dict[str, Any] = json.loads(_SKILLS_CACHE.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"error": f"Cannot read skills cache: {exc}"}
+
+    # Load skills config for cadence and enabled status
+    _skills_cfg_path = _ARTHA_DIR / "config" / "skills.yaml"
+    skills_cfg: dict[str, Any] = {}
+    if _skills_cfg_path.exists():
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(_skills_cfg_path.read_text()) or {}
+            skills_cfg = raw.get("skills", raw) if isinstance(raw, dict) else {}
+        except Exception:
+            pass
+
+    classification_icons = {
+        "warming_up": "🌱",
+        "healthy": "✅",
+        "degraded": "⚠️",
+        "stable": "📦",
+        "broken": "🔴",
+    }
+
+    rows: list[dict[str, Any]] = []
+    counts: dict[str, int] = {"warming_up": 0, "healthy": 0, "degraded": 0, "stable": 0, "broken": 0}
+
+    for skill_name, entry in sorted(cache.items()):
+        if not isinstance(entry, dict):
+            continue
+        health = entry.get("health", {})
+        total = health.get("total_runs", 0)
+        success = health.get("success_count", 0)
+        zero = health.get("zero_value_count", 0)
+        wall_ms = health.get("last_wall_clock_ms")
+        classification = health.get("classification", "warming_up")
+        counts[classification] = counts.get(classification, 0) + 1
+
+        # Success% and Zero% — guard against 0 total_runs
+        success_pct = f"{round(success / total * 100)}%" if total else "—"
+        zero_pct = f"{round(zero / total * 100)}%" if total else "—"
+
+        # Wall clock display
+        wall_display = f"{wall_ms}ms" if wall_ms is not None else "—"
+
+        # Last value timestamp — read from health.last_nonzero_value
+        # (the ISO timestamp of the most recent run that returned non-zero data)
+        last_val = health.get("last_nonzero_value")
+        if last_val and isinstance(last_val, str) and len(last_val) >= 10:
+            try:
+                dt = datetime.fromisoformat(last_val.replace("Z", "+00:00"))
+                last_val_display = dt.strftime("%-m/%-d")
+            except ValueError:
+                last_val_display = last_val[:10]
+        else:
+            last_val_display = "Never"
+
+        # Cadence display — suggest reduction if degraded/stable
+        cfg_entry = skills_cfg.get(skill_name, {})
+        cadence = cfg_entry.get("cadence", "?")
+        cadence_display = str(cadence)
+        if classification in ("degraded", "stable") and cadence in CADENCE_REDUCTION:
+            cadence_display = f"{cadence} → suggest {CADENCE_REDUCTION[cadence]}"
+
+        rows.append({
+            "skill": skill_name,
+            "classification": classification,
+            "icon": classification_icons.get(classification, "?"),
+            "success_pct": success_pct,
+            "zero_pct": zero_pct,
+            "last_value": last_val_display,
+            "wall_clock": wall_display,
+            "cadence": cadence_display,
+            "total_runs": total,
+            "consecutive_zero": health.get("consecutive_zero", 0),
+            "r7_skips": health.get("r7_skips", 0),
+        })
+
+    # Sort: broken first, then degraded, then stable, healthy, warming_up
+    _order = {"broken": 0, "degraded": 1, "stable": 2, "healthy": 3, "warming_up": 4}
+    rows.sort(key=lambda r: (_order.get(r["classification"], 5), r["skill"]))
+
+    return {
+        "total": len(rows),
+        "broken": counts.get("broken", 0),
+        "degraded": counts.get("degraded", 0),
+        "stable": counts.get("stable", 0),
+        "healthy": counts.get("healthy", 0),
+        "warming_up": counts.get("warming_up", 0),
+        "skills": rows,
+    }
+
+
+def render_skills_table(skills_data: dict[str, Any]) -> str:
+    """Render skill health as a human-readable text table."""
+    if "error" in skills_data:
+        return f"⚠ Skill health: {skills_data['error']}"
+
+    rows = skills_data.get("skills", [])
+    total = skills_data.get("total", len(rows))
+
+    lines = [
+        "━━ SKILL HEALTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"## Skill Health — {total} Skills",
+        "",
+        f"  {'Skill':<32} {'Health':<12} {'Success%':>8} {'Zero%':>6} {'Last Val':>9} {'Wall':>7}  Cadence",
+        f"  {'─'*32} {'─'*12} {'─'*8} {'─'*6} {'─'*9} {'─'*7}  {'─'*20}",
+    ]
+    for r in rows:
+        icon = r["icon"]
+        cls = r["classification"]
+        lines.append(
+            f"  {r['skill']:<32} {icon} {cls:<10} {r['success_pct']:>8} {r['zero_pct']:>6} "
+            f"{r['last_value']:>9} {r['wall_clock']:>7}  {r['cadence']}"
+        )
+
+    broken = skills_data.get("broken", 0)
+    degraded = skills_data.get("degraded", 0)
+    stable = skills_data.get("stable", 0)
+    healthy = skills_data.get("healthy", 0)
+    warming = skills_data.get("warming_up", 0)
+
+    lines += [
+        "",
+        f"  Summary: {broken} broken  {degraded} degraded  {stable} stable  "
+        f"{healthy} healthy  {warming} warming up",
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +564,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--perf", action="store_true", help="Performance analysis only")
     parser.add_argument("--accuracy", action="store_true", help="Accuracy analysis only")
     parser.add_argument("--freshness", action="store_true", help="Freshness analysis only")
+    parser.add_argument("--skills", action="store_true", help="Skill health table (reads state/skills_cache.json)")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--trend", type=int, default=7, metavar="DAYS", help="Trend window (default: 7)")
     args = parser.parse_args(argv)
+
+    # --skills is a standalone mode
+    if args.skills:
+        data = analyze_skills()
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            print(render_skills_table(data))
+        return 0
 
     perf = analyze_performance(args.trend) if not args.accuracy and not args.freshness else {}
     accuracy = analyze_accuracy() if not args.perf and not args.freshness else {}

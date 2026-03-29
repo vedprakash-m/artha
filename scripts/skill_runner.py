@@ -14,7 +14,10 @@ from typing import Dict, Any, List
 # Path setup — must precede venv bootstrap and third-party imports
 ARTHA_DIR = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILLS_CONFIG = ARTHA_DIR / "config" / "skills.yaml"
-CACHE_FILE = ARTHA_DIR / "tmp" / "skills_cache.json"  # ephemeral, not synced
+# Canonical persistent cache location (state/ — persists across sessions, synced).
+# Migration: if old tmp/ path exists and new state/ path doesn't, move on first run.
+CACHE_FILE = ARTHA_DIR / "state" / "skills_cache.json"
+_CACHE_FILE_LEGACY = ARTHA_DIR / "tmp" / "skills_cache.json"  # deprecated
 SKILLS_DIR = ARTHA_DIR / "scripts" / "skills"
 _SCRIPTS_DIR = ARTHA_DIR / "scripts"
 
@@ -62,6 +65,20 @@ _SKILL_TIMEOUT = 30
 if str(ARTHA_DIR) not in sys.path:
     sys.path.append(str(ARTHA_DIR))
 
+# Import shared health-tracking library (non-fatal if unavailable)
+try:
+    from scripts.lib.skill_health import (
+        is_zero_value as _is_zero_value,
+        is_stable_value as _is_stable_value,
+        update_health_counters as _update_health_counters,
+        atomic_write_json as _atomic_write_json,
+        CADENCE_REDUCTION as _CADENCE_REDUCTION,
+    )
+    _SKILL_HEALTH_AVAILABLE = True
+except ImportError:
+    _SKILL_HEALTH_AVAILABLE = False
+    _CADENCE_REDUCTION: dict = {"every_run": "daily", "daily": "weekly"}
+
 def load_config() -> Dict[str, Any]:
     if not SKILLS_CONFIG.exists():
         logging.warning(f"Config file {SKILLS_CONFIG} not found.")
@@ -69,7 +86,20 @@ def load_config() -> Dict[str, Any]:
     with open(SKILLS_CONFIG, "r") as f:
         return yaml.safe_load(f) or {"skills": {}}
 
+def _migrate_cache_if_needed() -> None:
+    """Move skills_cache.json from tmp/ to state/ on first run (one-time migration)."""
+    if not CACHE_FILE.exists() and _CACHE_FILE_LEGACY.exists():
+        try:
+            import shutil
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(_CACHE_FILE_LEGACY), str(CACHE_FILE))
+            logging.info(f"Migrated skills_cache.json: tmp/ → state/ (persistent cache)")
+        except Exception as e:
+            logging.warning(f"Cache migration failed (will start fresh): {e}")
+
+
 def load_cache() -> Dict[str, Any]:
+    _migrate_cache_if_needed()
     if not CACHE_FILE.exists():
         return {}
     try:
@@ -79,34 +109,69 @@ def load_cache() -> Dict[str, Any]:
         logging.error(f"Failed to load cache: {e}")
         return {}
 
-def should_run(skill_name: str, config: Dict[str, Any], cache: Dict[str, Any]) -> bool:
-    """Enforce cadence control."""
-    skill_cfg = config.get("skills", {}).get(skill_name, {})
-    if not skill_cfg.get("enabled"):
-        return False
-    
-    cadence = skill_cfg.get("cadence", "every_run")
+def _cadence_elapsed(skill_name: str, cadence: str, cache: Dict[str, Any]) -> bool:
+    """Return True if the skill is due to run under the given cadence."""
     if cadence == "every_run":
         return True
-    
+
     last_run_str = cache.get(skill_name, {}).get("last_run")
     if not last_run_str:
-        return True # Cold start
-    
+        return True  # Cold start — always run
+
     try:
         last_run = datetime.fromisoformat(last_run_str)
         now = datetime.now(timezone.utc)
-        
         if cadence == "daily" and now - last_run < timedelta(days=1):
-            logging.info(f"Skipping {skill_name} (daily cadence not yet reached)")
             return False
         if cadence == "weekly" and now - last_run < timedelta(weeks=1):
-            logging.info(f"Skipping {skill_name} (weekly cadence not yet reached)")
             return False
     except Exception as e:
         logging.error(f"Cadence check failed for {skill_name}: {e}")
         return True
-        
+
+    return True
+
+
+def should_run(skill_name: str, config: Dict[str, Any], cache: Dict[str, Any]) -> bool:
+    """Enforce cadence control with R7 health-aware cadence reduction.
+
+    R7 is checked AFTER the configured cadence passes — it can only reduce
+    frequency, never increase it. A weekly skill stays weekly at minimum.
+    P0 skills are exempt from R7 cadence reduction.
+    """
+    skill_cfg = config.get("skills", {}).get(skill_name, {})
+    if not skill_cfg.get("enabled"):
+        return False
+
+    configured_cadence = skill_cfg.get("cadence", "every_run")
+
+    # Existing cadence check runs first
+    if not _cadence_elapsed(skill_name, configured_cadence, cache):
+        logging.info(f"Skipping {skill_name} ({configured_cadence} cadence not yet reached)")
+        return False
+
+    # R7: health-aware cadence reduction (P1/P2 only, maturity >= measuring)
+    # Applied AFTER configured cadence says skill is due — checks if consecutive
+    # zeros warrant running less often than configured.
+    priority = skill_cfg.get("priority", "P1")
+    if priority != "P0":
+        health = cache.get(skill_name, {}).get("health", {})
+        maturity = health.get("maturity", "warming_up")
+        consecutive_zero = health.get("consecutive_zero", 0)
+        if consecutive_zero >= 10 and maturity != "warming_up":
+            reduced_cadence = _CADENCE_REDUCTION.get(configured_cadence)
+            if reduced_cadence and not _cadence_elapsed(skill_name, reduced_cadence, cache):
+                # Record R7 skip in the loaded cache (shallow-copy safe for nested dicts)
+                if skill_name in cache and "health" in cache[skill_name]:
+                    cache[skill_name]["health"]["r7_skips"] = (
+                        cache[skill_name]["health"].get("r7_skips", 0) + 1
+                    )
+                logging.info(
+                    f"R7: skipping {skill_name} (cadence {configured_cadence}→{reduced_cadence}, "
+                    f"consecutive_zeros={consecutive_zero})"
+                )
+                return False
+
     return True
 
 def get_delta(skill_name: str, current_data: Any, prev_cache: Dict[str, Any], compare_fields: List[str]) -> bool:
@@ -240,13 +305,28 @@ def main():
                 except Exception:
                     is_changed = True  # Default to changed if we can't detect
                 
-                new_cache[name] = {
+                # Build cache entry (carry forward previous health counters)
+                base_entry: Dict[str, Any] = {
                     "last_run": now_iso,
                     "current": res,
                     "previous": prev_skill_entry.get("current"),
-                    "changed": is_changed
+                    "changed": is_changed,
                 }
-                
+                if "health" in prev_skill_entry:
+                    base_entry["health"] = prev_skill_entry["health"]
+
+                # Update health counters (non-blocking — never prevents cache write)
+                if _SKILL_HEALTH_AVAILABLE:
+                    try:
+                        zero = _is_zero_value(name, res, prev_skill_entry.get("current"), config)
+                        stable = _is_stable_value(res, prev_skill_entry.get("current"))
+                        wall_ms = round(elapsed * 1000)
+                        base_entry = _update_health_counters(base_entry, zero, stable, wall_ms)
+                    except Exception as health_exc:
+                        logging.debug(f"Health tracking failed for {name}: {health_exc}")
+
+                new_cache[name] = base_entry
+
             except Exception as exc:
                 logging.error(f"Skill {name} generated an unhandled exception: {exc}")
                 if config.get("skills", {}).get(name, {}).get("priority") == "P0":
@@ -257,14 +337,24 @@ def main():
     for sname, t in sorted(skill_timing.items()):
         logging.info(f"  {sname}: {t:.2f}s")
 
-    # Write cache (encrypted by vault.py in Step 18)
-    with open(CACHE_FILE, "w") as f:
-        json.dump(new_cache, f, indent=2)
+    # Write cache atomically (encrypted by vault.py in Step 18)
+    # Uses fcntl.flock + tempfile + os.replace for concurrent write safety.
+    if _SKILL_HEALTH_AVAILABLE:
+        try:
+            _atomic_write_json(CACHE_FILE, new_cache)
+        except Exception as write_exc:
+            logging.warning(f"Atomic write failed ({write_exc}); falling back to direct write")
+            with open(CACHE_FILE, "w") as f:
+                json.dump(new_cache, f, indent=2)
+    else:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(new_cache, f, indent=2)
 
     # Bridge: write tmp/occasion_tracker_output.json for pr_manager --step8
     _write_occasion_tracker_output(new_cache)
 
-    # Write timing metrics to tmp/skills_metrics.json
+    # Write timing metrics (deprecated — timing now in unified cache health sub-dict).
+    # Kept for backward compatibility with any external tooling that reads the file.
     _write_skills_metrics(skill_timing, total_elapsed)
     
     logging.info(f"Skill execution complete. Cache updated at {CACHE_FILE}")
@@ -382,7 +472,9 @@ def write_newsletter_jsonl(emails: List[Dict[str, Any]], output_path: Path | Non
 
 
 def _write_skills_metrics(timing: Dict[str, float], total_elapsed: float) -> None:
-    """Persist skill run metrics to tmp/skills_metrics.json."""
+    """DEPRECATED: timing data is now in state/skills_cache.json health sub-dict.
+    Kept for backward compatibility. Will be removed in a future cleanup pass.
+    """
     metrics_path = ARTHA_DIR / "tmp" / "skills_metrics.json"
     metrics_path.parent.mkdir(exist_ok=True)
     entry = {

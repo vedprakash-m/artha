@@ -1638,7 +1638,7 @@ Gmail is the single Artha integration point for all email accounts. All other ac
 | Employer Benefits Portal | Manual input (annual open enrollment) | Benefits elections, coverage details | Manual |
 | Apple Health (HealthKit) | HealthKit XML export (manual or Shortcuts-automated) | Steps, sleep, heart rate, workouts, weight | Import on catch-up (weekly cadence) |
 
-### 11.x Data Fidelity Skills *(v4.0)*
+### 11.x Data Fidelity Skills *(v5.0)*
 
 To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** — small, lightweight lookups that query institutional portals or official APIs directly.
 
@@ -1658,12 +1658,64 @@ To enhance data fidelity beyond email parsing, Artha uses targeted **"Skills"** 
 - **Change Detection:** Skills track their own previous state in `state/skills_cache.json`. Alerts only fire when a meaningful field (e.g., USCIS status) changes.
 - **Execution Cadence:** Skills support per-run, daily, or weekly cadences to minimize network traffic and rate-limit risk.
 
-**4. Roadmap**
+**4. Skill Taxonomy *(v5.0)***
+
+Each skill is classified by its role relative to goal traction:
+
+| Class | Definition | Surfacing rule |
+|-------|-----------|----------------|
+| **Goal-bearing** | Directly feeds data into Goal Pulse, ONE THING, or coaching timing | Degradation triggers a Goal Pulse warning |
+| **Operational** | Time-sensitive or safety-critical signals not tied to a specific goal | Surfaces only when materially urgent |
+| **Background** | Infrastructure health checks; user never sees output unless broken | Surfaces only on failure or sustained degradation |
+
+Declared in `config/skills.yaml` via `class:` and optional `goal_refs:`:
+```yaml
+bill_due_tracker:
+  class: goal-bearing       # goal-bearing | operational | background
+  goal_refs: [G-FIN-001]   # links to state/goals.md (goals-reloaded v6.3)
+  priority: P1
+  cadence: every_run
+```
+
+**5. Per-Skill Health Tracking *(v5.0)***
+
+Each skill in `state/skills_cache.json` carries a `health` sub-dict with counters updated on every run:
+
+- **Classification:** `warming_up` (< 5 runs), `healthy`, `degraded` (succeeds but returns no useful data), `broken` (< 50% success rate), `disabled`
+- **Maturity tiers:** `warming_up` (< 5 runs) — no adaptive rules fire; `measuring` (5–14 runs) — classification assigned, R7 cadence reduction eligible; `trusted` (≥ 15 runs) — full adaptive behavior including R7 disable prompts
+- **Zero-value detection:** A skill returning `{}`, `null`, or an error struct is a "zero-value" run. Consecutive zeros tracked in `health.consecutive_zero`
+- **Recovery:** A degraded/broken skill self-heals when it returns non-zero values; original cadence is restored automatically
+- **Shared library:** `scripts/lib/skill_health.py` (pure functions: `is_zero_value()`, `is_stable_value()`, `update_health_counters()`, `classify_health()`, `atomic_write_json()`) — importable by both `skill_runner.py` and the MCP `artha_run_skills` handler
+
+**6. Adaptive Cadence Reduction — R7 *(v5.0)***
+
+If a skill returns zero-value data for 10+ consecutive runs, the system auto-reduces its cadence (`every_run → daily`, `daily → weekly`) — disclosed in the briefing footer as "[Skill] now checks less often (no new data recently)." At 20 consecutive zeros, the user is prompted once: "[Skill] has been quiet for a while — disable it?" If the user responds "yes", `health_check_writer.py --disable-skill <name>` sets `enabled: false`. **P0 skills (`uscis_status`, `visa_bulletin`) are never auto-reduced or disabled.** The user must opt in to any permanent change (P6 — Earned Autonomy).
+
+**7. Engagement Rate Observability *(v5.0)***
+
+Every catch-up records an engagement rate in `state/catch_up_runs.yaml`:
+
+```
+Engagement Rate = (user_ois + user_corrections) / items_surfaced
+```
+
+- `user_ois` — OIs explicitly added by the user (not Step 7 auto-extraction), via `origin: user` field
+- `user_corrections` — corrections captured at Step 19 calibration
+- `items_surfaced` — count of P0/P1/P2 alerts generated during domain processing
+
+Written by `health_check_writer.py` via new flags `--engagement-rate`, `--user-ois`, `--system-ois`, `--items-surfaced`, `--correction-count`. **Target range: 25–50%.** Null when `items_surfaced == 0` (no-signal catch-up).
+
+This metric powers two adaptive rules:
+- **R2 compression:** If `engagement_rate < 30%` in ≥ 7 of the last 10 non-null runs, the `BriefingAdapter` suppresses the info tier ("Briefing simplified — recent sessions show low engagement"). P0/P1 domains are never suppressed.
+- **R8 meta-alarm:** If `engagement_rate < 15%` for 7 of last 10 runs, a one-time prompt fires: "Recent briefings are generating little action — want to narrow focus?" (at most once per 14 days)
+
+**8. Roadmap**
 - **Phase 1.1 (Infra):** Centralized state, dynamic loader, and cadence control.
 - **Phase 1.2 (Immigration):** USCIS Visa Bulletin parser (EB-2 India, Table A & B, Authorized Chart).
 - **Phase 1.3 (Safety/Property):** NHTSA Recall checks (Kia/Mazda) and Sangamon County Assessed Value extension.
 - **Phase 1.4 (Concierge):** NOAA Weather unblocking outdoor Open Items.
 - **Phase 2.0 (Credentialed):** OFX Bank direct download (Chase) and AirNow AQI (EPA).
+- **Phase 2.5 (SKILLS-RELOADED):** Health tracking, engagement rate, R7/R8 adaptive rules, `scripts/lib/skill_health.py` shared library.
 
 **All sources are pull-based.** There are no push notifications, no webhooks, no event-driven triggers. Every data source is queried in batch during each catch-up session. Because all non-API sources arrive via email, Gmail MCP is the single integration point for ~80% of data sources.
 

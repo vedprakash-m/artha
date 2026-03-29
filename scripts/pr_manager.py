@@ -433,9 +433,10 @@ class MomentDetector:
         return sorted(results, key=lambda m: m.convergence_score, reverse=True)
 
     def score_from_trends(self, trends: list[dict]) -> list[ScoredMoment]:
-        """Score trend signals from Gemini trend scan (Step 9, Monday only).
+        """Score trend signals from AI Trend Radar via trend_scan bridge.
 
-        Expected trend dict keys: topic (str), relevance (str: high/medium/low)
+        Expected trend dict keys: topic (str), relevance (str: high/medium/low),
+        try_worthy (bool), summary (str), url (str), category (str).
         """
         results: list[ScoredMoment] = []
         magnitude_map = {"high": 1.0, "medium": 0.7, "low": 0.4}
@@ -443,16 +444,24 @@ class MomentDetector:
             topic = trend.get("topic", "")
             relevance_str = str(trend.get("relevance", "medium")).lower()
             magnitude = magnitude_map.get(relevance_str, 0.5)
-            # Classify trend moment type
-            topic_lower = topic.lower()
-            if any(w in topic_lower for w in ["ai", "tech", "software", "cloud", "ml"]):
-                moment_type = "trending_tech"
-            elif any(w in topic_lower for w in ["education", "learning", "school"]):
-                moment_type = "trending_education"
-            elif any(w in topic_lower for w in ["career", "job", "leadership"]):
-                moment_type = "career_milestone"
+            try_worthy = trend.get("try_worthy", False)
+
+            # Try-worthy signals from the AI Radar become ai_experiment_complete
+            # moments (higher weight, maps to NT-1 + NT-5 threads) — these are
+            # the signals that should trigger LinkedIn content suggestions.
+            if try_worthy:
+                moment_type = "ai_experiment_complete"
             else:
-                moment_type = "trending_tech"
+                # Classify non-try-worthy trends by keyword matching
+                topic_lower = topic.lower()
+                if any(w in topic_lower for w in ["ai", "tech", "software", "cloud", "ml"]):
+                    moment_type = "trending_tech"
+                elif any(w in topic_lower for w in ["education", "learning", "school"]):
+                    moment_type = "trending_education"
+                elif any(w in topic_lower for w in ["career", "job", "leadership"]):
+                    moment_type = "career_milestone"
+                else:
+                    moment_type = "trending_tech"
 
             # Trends are always "today" relevant (timeliness = 1.0)
             today_str = date.today().isoformat()
@@ -1421,7 +1430,9 @@ def run_step8(
     # output file is absent (skill_runner writes cache; bridge handles the file write
     # going forward, but this fallback handles the first catch-up after the wiring).
     if not all_moments and not occ_path.exists():
-        _skills_cache_path = _TMP_DIR / "skills_cache.json"
+        # Try state/ first (canonical persistent location), fall back to tmp/
+        _state_cache = _TMP_DIR.parent / "state" / "skills_cache.json"
+        _skills_cache_path = _state_cache if _state_cache.exists() else _TMP_DIR / "skills_cache.json"
         if _skills_cache_path.exists():
             try:
                 _cache = json.loads(_skills_cache_path.read_text(encoding="utf-8"))

@@ -3,33 +3,49 @@ skills:
     enabled: true
     priority: P0
     cadence: every_run
+    class: background
+    goal_refs: []
+    zero_value_fields: [case_status, receipt_number]
   # property_tax is the generalized skill (reads provider URL from user_profile.yaml).
   # king_county_tax is a backward-compatibility alias for the same skill.
   property_tax:
     enabled: false  # Enable for new installations; king_county_tax entry below covers existing users
     priority: P1
     cadence: daily
+    class: background
+    goal_refs: []
   king_county_tax:
     enabled: true
     priority: P1
     cadence: daily
+    class: background
+    goal_refs: []
+    zero_value_fields: [tax_amount]
   visa_bulletin:
     enabled: true
     priority: P0
     cadence: weekly
+    class: goal-bearing
+    goal_refs: []
   noaa_weather:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     trigger_keywords: ["hike", "summit", "trail", "peak"]
   nhtsa_recalls:
     enabled: true
     priority: P1
     cadence: weekly
+    class: operational
+    goal_refs: []
   passport_expiry:
     enabled: true
     priority: P1
     cadence: every_run
+    class: goal-bearing
+    goal_refs: []
     requires_vault: true
     safety_critical: false
     description: "Check passport expiry dates from decrypted immigration state. Alerts at 180/90/60 days."
@@ -37,6 +53,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "Detect subscription price increases and trial-to-paid conversions from state/digital.md."
@@ -44,6 +62,8 @@ skills:
     enabled: true
     priority: P1
     cadence: weekly
+    class: background
+    goal_refs: []
     requires_vault: true
     safety_critical: false
     description: "Compute monthly burn rate, emergency fund runway, and single-income stress scenario from state/finance.md."
@@ -54,6 +74,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "Check contact freshness across circles. Nudges stale relationships; cadence-aware."
@@ -62,6 +84,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "7-day lookahead for birthdays, anniversaries, Indian festivals, US holidays. Greeting suggestions."
@@ -70,6 +94,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: goal-bearing
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "Extract bill due dates from occasions.md. Alert 7/3/1 days before due, flag overdue."
@@ -78,6 +104,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     platform: macos_only
@@ -87,6 +115,8 @@ skills:
     enabled: true
     priority: P1
     cadence: daily
+    class: operational
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "Scan state files for credit monitoring signals. Hard inquiries, score changes, fraud alerts."
@@ -95,6 +125,8 @@ skills:
     enabled: true
     priority: P1
     cadence: daily
+    class: goal-bearing
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: "Track LWSD school events for Parth and Trisha. Alert 3 days ahead. Scans kids.md for grade alerts."
@@ -105,6 +137,8 @@ skills:
     enabled: true
     priority: P1
     cadence: every_run
+    class: operational
+    goal_refs: []
     execution_after: pipeline
     requires_vault: false
     safety_critical: false
@@ -120,6 +154,8 @@ skills:
     enabled: true
     priority: P1
     cadence: weekly
+    class: background
+    goal_refs: []
     requires_vault: true
     safety_critical: false
     description: >
@@ -133,6 +169,8 @@ skills:
     enabled: true
     priority: P2
     cadence: weekly
+    class: background
+    goal_refs: []
     requires_vault: false
     safety_critical: false
     description: >
