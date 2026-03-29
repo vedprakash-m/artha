@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .base_skill import BaseSkill
+from lib.config_loader import load_config
 
 _log = logging.getLogger("ai_trend_radar")
 
@@ -332,12 +333,7 @@ class AITrendRadarSkill(BaseSkill):
     def _load_config(self) -> dict:
         """Load ai_trend_radar config block from artha_config.yaml."""
         try:
-            import yaml  # noqa: PLC0415
-            cfg_path = self._artha_dir / "config" / "artha_config.yaml"
-            if not cfg_path.exists():
-                return {}
-            with cfg_path.open(encoding="utf-8") as fh:
-                raw = yaml.safe_load(fh) or {}
+            raw = load_config("artha_config", _config_dir=str(self._artha_dir / "config"))
             return (
                 raw.get("enhancements", {})
                    .get("pr_manager", {})
@@ -350,12 +346,7 @@ class AITrendRadarSkill(BaseSkill):
     def _load_employer_blocked_terms(self) -> frozenset:
         """Load employer blocked terms from user_profile.yaml (never hardcoded, DP-6)."""
         try:
-            import yaml  # noqa: PLC0415
-            cfg_path = self._artha_dir / "config" / "user_profile.yaml"
-            if not cfg_path.exists():
-                return frozenset()
-            with cfg_path.open(encoding="utf-8") as fh:
-                raw = yaml.safe_load(fh) or {}
+            raw = load_config("user_profile", _config_dir=str(self._artha_dir / "config"))
             terms = raw.get("employment", {}).get("confidential_terms", []) or []
             return frozenset(t.lower() for t in terms if t)
         except Exception:

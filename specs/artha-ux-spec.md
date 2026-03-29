@@ -1886,6 +1886,136 @@ Pre-meeting context complements (does not replace) the 🤝 RELATIONSHIP PULSE s
 | UX-OD-24 | Should Teach Me mode cite sources within state files? *(v1.4)* | Yes (transparency) / No (cleaner) / Footnotes | **Footnotes.** Add [1], [2] markers with "Source: immigration.md, line 15" at bottom. Transparency without clutter. |
 | UX-OD-25 | Should college countdown appear in email briefings? *(v1.4)* | Yes (Priya sees it too) / No (terminal only, sensitive) / Yes but simplified | **Yes but simplified.** Email gets milestone count + next action only. Full countdown in terminal. |
 
+---
+
+## 24. v5.1 UX Patterns — Simplification Relaunch
+
+*Source: `specs/ui-reloaded.md` — implemented March 2026. These patterns supersede conflicting guidance in earlier sections.*
+
+### 24.1 Headline Briefing Format
+
+**Headline** is the new default format for 4–48h gaps (replaces `standard`). It is a **priority filter** — runs the full 21-step pipeline and shows only critical/urgent items — not a diff view.
+
+**Ten format rules:**
+
+1. Only 🔴 critical and 🟠 urgent items appear. Standard/low items are in "show everything."
+2. Empty domains are **invisible** — "No new activity" is noise.
+3. **ONE THING is the opening line** — the highest urgency×impact×actionability item.
+4. Calendar is exactly one line: "6 events (dentist 3pm · standup 10am)."
+5. Items and goals are summary stats, not expanded lists.
+6. Relationships are one line — top overdue reconnect only.
+7. Developer metrics (signal:noise, PII stats, email count) are absent — they live in `/health`.
+8. Machine IDs are hidden — "OI-023" becomes "the tax return"; system resolves IDs when user refers by description.
+9. Dates are human — "April 15 (17 days)" not "2026-04-15."
+10. Drill-down prompt is always present: *"Say 'show everything' for the full briefing, or ask about any domain."*
+
+**Quiet day pattern** (no critical/urgent items):
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARTHA · Sunday, March 29 — ✅ All Clear
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Nothing urgent today.
+📅 2 events  📋 12 open · none overdue  🎯 All goals on track
+Say "show everything" for the full picture.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Format ladder:** flash (<4h) → headline (4–48h) → digest (>48h). Monday auto-selects weekly (headline + week-ahead). "Show everything" always available.
+
+### 24.2 Colon-Menu Progressive Disclosure
+
+Appending `:` to any command lists its sub-commands without requiring `/guide` or `/help`:
+
+```
+/work:    → shows work sub-commands (briefing, prep, sprint, connect-prep, memo, people, remember…)
+/brief:   → shows briefing format options (default, headline, flash, deep, everything, digest, weekly)
+/content: → shows content actions (draft, approve, posted, dismiss, history, voice, threads)
+/items:   → shows item actions (add, done, defer, quick)
+/goals:   → shows goal actions (sprint, pause, check-in)
+/domain:  → shows all 20 domain names
+/health:  → shows health sections (connections, quality, cost, privacy, reconnect)
+```
+
+**Colon menu design rules:**
+- Numbered, not IDed — user types `2` or the name
+- One line per option (name + short description)
+- Always ends with an NL hint: "Or just say what you want."
+- Prompt-only implementation — no Python code needed
+
+### 24.3 `/guide` — Contextual Discovery
+
+`/guide` with no arguments generates a **contextually relevant** command menu based on current state, time of day, and recent activity. It is not a static page.
+
+**Contextual hints table:**
+
+| State signal | What `/guide` promotes |
+|---|---|
+| Monday morning | "Week ahead" + weekly summary trigger |
+| Friday afternoon | Weekend planner + quick-win items |
+| Items overdue > 3 | "Power half hour" for rapid clearing |
+| Goal stale > 14 days | Sprint suggestion for stalled goal |
+| Connect cycle approaching | `/work connect-prep` prominently |
+| Token expired | "reconnect [service]" at top |
+| No user profile | Setup wizard prominently |
+
+Command graduation into `/guide`: commands appear **only after reaching Graduated status** (>30 days production, <5% error rate). Beta commands are labeled "(beta)". This prevents cluttering discovery with unreliable features.
+
+### 24.4 `/content` — Unified Content UX
+
+One namespace replaces `/pr` and `/stage`. The key UX improvement is **fuzzy topic matching** replacing machine IDs:
+
+- `/content approve holi` searches active cards for "holi" in title/topic
+- Single match → proceeds immediately
+- Zero/multiple matches → disambiguation prompt
+- Machine IDs (`CARD-SEED-HOLI-2026`) still accepted for precision
+
+**Edge case:** `/content expand <topic>` with no matching card: *"No card found for that topic — say `/content draft [platform] [topic]` to create one."*
+
+### 24.5 `/health` — Consolidated System View
+
+`/health` with no arguments shows all sections in one view: Connections, Domain Health, Quality (7-day), Cost, Privacy, State Changes. Scoped views available: `/health connections`, `/health quality`, `/health cost`, `/health privacy`.
+
+`/health reconnect <service>` provides guided OAuth re-auth — the same flow triggered by NL ("reconnect Gmail"). It appears in the `/health:` colon menu.
+
+### 24.6 Error UX — Errors That Respect Humans
+
+**Error philosophy:**
+1. **Self-heal first** — attempt token refresh before surfacing any error
+2. **One sentence, one action** — no script names, no file paths, no technical concepts
+3. **Partial data > no data** — missing source is a footnote, not a blocker
+4. **No tracebacks, ever** — caught at output boundary, logged, replaced with human message
+
+**Examples:**
+- Old: `"⚠️ Outlook data unavailable — rerun setup_msgraph_oauth.py on Mac"`
+- New: `"I couldn't reach your Outlook. Say 'reconnect Outlook' to fix it."`
+
+First failure → silent skip. Third consecutive failure → one-line fix instruction. Never a blocker until 7-day bound is crossed.
+
+### 24.7 First-Run UX
+
+**Demo-first pattern:** Before any setup, show a demo briefing on synthetic data. Motivation before friction. Then: "Want to set up your real data? Just tell me your name and email."
+
+**Onboarding staircase:**
+1. Demo briefing (zero config, 0 seconds)
+2. Name + email → archetype auto-detected → first real briefing
+3. First catch-up → Artha suggests: "Want to add your Google Calendar?"
+4. Artha notices gaps over time and suggests relevant setup conversationally
+
+Encryption is **automatic and invisible** — user never sees "age", "keypair", "keyring", or "recipient."
+
+### 24.8 Success Metrics (v5.1)
+
+| Metric | Target |
+|---|---|
+| Commands needed to get value | ≤ 2 (7-command surface) |
+| First value time (new user) | < 90 seconds |
+| Headline comprehension | >80% users understand "say 'show everything'" |
+| Bridge path quality parity | >90% of primary CLI intents handled correctly |
+| NL routing accuracy | >95% of recognized intents route correctly |
+| Preflight GO rate | >90% on first run without manual intervention |
+| Error self-heal rate | >70% of token failures resolve without user action |
+
 ### 22.3 Design Principles Summary Table
 
 | # | Principle | Enforced By |
