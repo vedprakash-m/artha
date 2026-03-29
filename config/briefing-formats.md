@@ -432,4 +432,118 @@ ARTHA · [Date] — ⚠️ DEGRADED MODE
 - Recovery suggestion appended to briefing footer: "To restore: re-run `python scripts/setup_XXX_oauth.py`"
 
 ---
+## §8.13 Headline Briefing (New Default: 4–48h Gap)
 
+**Trigger:** Gap between 4h and 48h since last briefing (overridden by
+day-of-week rules when Monday, Friday, or 1st of month). This is the new
+default for normal morning/evening cadence — replaces `standard` as the
+4–48h auto-selection.
+
+**Template:**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARTHA · [Day, Month Day]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚡ [ONE THING — highest U×I×A item, plain English, no machine IDs]
+   → [Optional: one-line action appended if item creates an action item]
+
+🔴 [Critical item 2, if present]
+🟠 [Urgent item 3, if present — max 2 urgent items in headline]
+
+📅 [N] events ([event 1 time · event 2 time · ...])
+📋 [N] overdue · [N total] open
+🎯 [Goal 1]: [status one word] · [Goal 2]: [status] [if relevant]
+🤝 Overdue: [name] ([N] days) [if present]
+
+Say "show everything" for the full briefing, or ask about any domain.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Quiet Day Template (when no critical or urgent items exist):**
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARTHA · [Day, Month Day] — ✅ All Clear
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Nothing urgent today.
+
+📅 [N] events ([event 1] · [event 2] [if present])
+📋 [N] items open · none overdue
+🎯 [Summary of goal status if any goals active]
+
+Say "show everything" for the full picture.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Format Rules:**
+
+1. **Only critical (🔴) and urgent (🟠) items appear.** Standard and low
+   items live in "show everything."
+
+2. **Empty domains are invisible.** "No new activity" is noise. If a domain
+   has nothing, it does not appear in the headline.
+
+3. **ONE THING is the opening line.** The highest U×I×A item is the first
+   thing the user reads. If no critical/urgent item, opens with "All clear"
+   (quiet day format).
+
+4. **Calendar is one line.** "[N] events (event 1 time · event 2 time)" —
+   not a full event list. "Show everything" expands to full calendar block.
+
+5. **Items and goals are summary stats.** "4 overdue · 12 open" and
+   "Weight: on track · Azure cert: stalled" — enough to know if action is
+   needed, not the full pulse.
+
+6. **Relationships are one line.** Top overdue reconnect only.
+
+7. **Developer metrics are gone.** Signal:noise, PII stats, and email count
+   move to `/health`. The briefing footer is the "show everything" prompt.
+
+8. **Machine IDs are hidden.** "OI-023" → "the tax return." "G-001" →
+   "Summit Mailbox Peak." Artha resolves IDs internally when the user
+   refers to items by description.
+
+9. **Dates are human.** "April 15 (17 days)" not "2026-04-15." "3 days ago"
+   not "2026-03-26."
+
+10. **The drill-down prompt is always present.** Every headline briefing
+    ends with "say 'show everything' for the full briefing, or ask about
+    any domain." This teaches progressive disclosure through repetition.
+
+**Flash vs Headline — The Distinction:**
+
+| | Flash (§8.8) | Headline (§8.13) |
+|---|---|---|
+| **Trigger** | <4h since last briefing | 4–48h since last briefing |
+| **Question it answers** | "Anything change since I last checked?" | "What's the ONE thing I need to know?" |
+| **Data source** | State diffs only — no pipeline rerun | Full 21-step pipeline, critical/urgent filter |
+| **Max length** | 8 lines | 5–15 lines |
+| **Empty behavior** | "Nothing new" (2 words) | "All clear" + calendar + stats |
+| **Critical alerts** | Shown if present | Always the opening line |
+
+**Format Selection Priority Table:**
+
+| Gap | Day | Priority | Format Selected |
+|-----|-----|----------|----------------|
+| Any | Monday (1st run) | 1 (highest) | `weekly` (§8.6 + week-ahead) |
+| Any | 1st of month | 1 | `monthly-retro` (§8.10) |
+| Any | Friday | 2 | `headline` + weekend-planner section |
+| < 4h | Any | 3 | `flash` (§8.8) |
+| 4–48h | Any | 4 | `headline` (§8.13) ← **new default** |
+| > 48h | Any | 5 | `digest` (§8.7) |
+| User: "deep" | Any | User | `deep` |
+| User: "everything" | Any | User | `standard` (§8.1) |
+
+**Note:** Day-of-week and calendar rules take priority over gap rules. A
+Monday with a 73-hour gap runs `weekly`, not `digest`. The 1st of the
+month on a Friday runs monthly-retro, not the Friday weekend-planner.
+
+**Backward compatibility:** `/brief standard` and "show everything" still
+produce the full §8.1 format unchanged. `/brief deep` produces §8.1 plus
+trend analysis and coaching. This section adds `headline` as a new format;
+it does not modify or deprecate any existing format.
+
+---

@@ -14,15 +14,15 @@ Usage:
 P0 checks (hard-block catch-up if any fail):
   1  vault.py health           — age installed, credential store key present, state dir writable
   2  Vault lock status        — no active session collision; stale lock auto-cleared
-  3  Gmail OAuth token        — token file exists and is not structurally broken
-  4  Calendar OAuth token     — token file exists and is not structurally broken
-  5  pipeline.py --health -s gmail   — Gmail API connection live
-  6  pipeline.py --health -s google_calendar — Calendar API connection live
-  7  pii_guard.py test        — PII filter script executable and passing tests
-  8  gmail_send.py --health   — Send auth valid (token present)
-  9  State directory          — state/ directory writable
+  3  pii_guard.py test        — PII filter script executable and passing tests
+  4  pipeline.py --health -s google_calendar — Calendar API connection live
+  5  gmail_send.py --health   — Send auth valid (token present)
+  6  State directory          — state/ directory writable
 
 P1 checks (logged as warnings, do NOT block catch-up):
+  7  Gmail OAuth token        — token file exists and is not structurally broken
+  8  Calendar OAuth token     — token file exists and is not structurally broken
+  9  pipeline.py --health -s gmail   — Gmail API connection live (warn, skip Gmail data)
   10 open_items.md readable        — persistent action file accessible
   11 Token freshness               — tokens not within 5 min of expiry
   12 Briefings directory           — briefings/ directory writable
@@ -239,14 +239,14 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
     )
 
 
-def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
+def check_oauth_token(service_name: str, token_filename: str, severity: str = "P0") -> CheckResult:
     """Verify a Google OAuth token file exists and has required fields."""
     token_path = os.path.join(TOKEN_DIR, token_filename)
     check_name = f"{service_name} OAuth token"
 
     if not os.path.exists(token_path):
         return CheckResult(
-            check_name, "P0", False,
+            check_name, severity, False,
             f"Token file missing: {_rel(token_path)}",
             fix_hint="Run: python scripts/setup_google_oauth.py",
         )
@@ -256,7 +256,7 @@ def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
             token_data = json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
         return CheckResult(
-            check_name, "P0", False,
+            check_name, severity, False,
             f"Token file unreadable or corrupt: {exc}",
             fix_hint="Run: python scripts/setup_google_oauth.py",
         )
@@ -266,7 +266,7 @@ def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
     missing  = [f for f in required if not token_data.get(f)]
     if missing:
         return CheckResult(
-            check_name, "P0", False,
+            check_name, severity, False,
             f"Token file missing fields: {missing}",
             fix_hint="Re-authenticate: python scripts/setup_google_oauth.py",
         )
@@ -278,7 +278,7 @@ def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
         if perms != "600":
             os.chmod(token_path, 0o600)  # auto-fix permissions
 
-    return CheckResult(check_name, "P0", True, f"Token file valid ✓ ({_rel(token_path)})")
+    return CheckResult(check_name, severity, True, f"Token file valid ✓ ({_rel(token_path)})")
 
 
 def check_token_freshness(service_name: str, token_filename: str) -> CheckResult:
@@ -1521,15 +1521,10 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_keyring_backend())
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
-    checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
-    checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json"))
     checks.append(check_pii_guard())
     # Global API live connection via unified pipeline.py (skip if --quiet to reduce latency)
     if not quiet:
         try:
-            checks.append(check_script_health(
-                "pipeline.py", ["--health", "--source", "gmail"], severity="P0"
-            ))
             checks.append(check_script_health(
                 "pipeline.py", ["--health", "--source", "google_calendar"], severity="P0"
             ))
@@ -1543,6 +1538,20 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                 fix_hint="Check network connectivity and OAuth credentials",
             ))
     checks.append(check_state_directory())
+
+    # ── P1 — Gmail / Calendar OAuth tokens (non-blocking: warn, skip source) ──
+    checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json", severity="P1"))
+    checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json", severity="P1"))
+    if not quiet:
+        try:
+            checks.append(check_script_health(
+                "pipeline.py", ["--health", "--source", "gmail"], severity="P1"
+            ))
+        except subprocess.TimeoutExpired:
+            checks.append(CheckResult(
+                "Gmail API connectivity", "P1", False,
+                "Gmail API health check timed out — continuing without Gmail data",
+            ))
 
     # ── P1 — State file population from templates (first-run) ─────────────
     checks.append(check_state_templates(auto_fix=auto_fix))

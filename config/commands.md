@@ -1,7 +1,75 @@
 ## §5 Slash Commands
 
-### `/catch-up`
-Full catch-up workflow (§2). Equivalent to "catch me up", "morning briefing", "SITREP".
+**Primary namespaces:** `/brief`, `/work`, `/items`, `/goals`, `/domain`, `/content`, `/guide`
+**System:** `/health`
+**Legacy aliases:** `/catch-up` → `/brief` · `/pr` → `/content` · `/stage` → `/content` ·
+`/eval` → `/health quality` · `/cost` → `/health cost` · `/privacy` → `/health privacy` · `/diff` → `/health changes`
+
+---
+
+### `/brief` (primary) — Briefing Command
+
+Full catch-up pipeline. Format determined by Step 2b logic (default: `headline` for 4–48h gaps).
+Equivalent natural language: "catch me up", "morning briefing", "SITREP", "what did I miss".
+
+Sub-commands:
+- `/brief flash` — force flash format (§8.8) regardless of gap
+- `/brief deep` — extended briefing with trend analysis, coaching, scenarios
+- `/brief standard` — force full §8.1 standard format (alias: "show everything")
+- `/brief digest` — force digest format (§8.7)
+
+### `/catch-up` (legacy alias for `/brief`)
+Same as `/brief`. All sub-commands still work: `/catch-up flash`, `/catch-up deep`, `/catch-up standard`.
+
+---
+
+### `/guide` — Contextual Command Discovery
+
+Show what Artha can do right now, adapted to current state, time of day, and recent activity.
+No state files loaded — generated from always-available metadata (last catch-up time, item counts, goal count).
+
+Display format:
+```
+━━ What I Can Do Right Now ━━━━━━━━━━━━━━━
+
+📬 Briefing
+   "catch me up" — your morning briefing (last run: [N]h ago)
+   "show dashboard" — unified personal + work view
+   "flash briefing" — 30-second update
+
+💼 Work
+   "what's happening at work?" — full work briefing
+   "prep me for my [time]" — meeting preparation
+   "how's the sprint?" — delivery health
+
+📋 Track & Act
+   "what's open?" — [N] overdue, [N] total items
+   "how are my goals?" — [N] active goals [sprint status]
+   "mark [item] done" — complete an action item
+
+🔍 Deep Dive
+   "tell me about [domain]" — any of 20 life domains
+   Available: finance, immigration, health, kids, home, employment,
+   travel, learning, vehicle, insurance, estate, calendar, comms,
+   social, digital, shopping, wellness, boundary, pets, decisions, caregiving
+
+✍️ Content
+   "what should I post?" — content calendar
+   "draft a LinkedIn post about [topic]" — create content
+
+🛠️ System
+   "/health" — system integrity + evaluation + cost
+   "set up [domain]" — configure a new domain
+   "connect [service]" — add a data integration
+
+💡 Or just ask any question — I'll find the right context.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Scoped discovery: `/guide work`, `/guide system`, `/guide setup`, `/guide content`.
+Colon syntax: `/guide:` lists available scoped options without expanding any one.
+
+---
 
 ### `/status`
 Quick health check — no email fetch. Display:
@@ -88,25 +156,60 @@ For `enable` / `disable` sub-commands: call `profile_loader.toggle_domain()`, th
 
 
 
-### `/cost`
-Show current month API cost estimate vs. configured monthly budget (from `user_profile.yaml → budget.monthly_api_budget_usd`). Read from `health-check.md:cost_tracking`. Estimate tokens used × current AI CLI pricing.
+### `/cost` (legacy alias → `/health cost`)
+Shows monthly API cost. Now a section within `/health`. Still works as standalone shortcut.
 
-### `/health`
-System integrity check:
-- Verify all files in `config/registry.md` exist on disk
-- Verify state file schema versions match prompt expectations
-- Test: `vault.py status`, `python scripts/pii_guard.py test` (quiet), Gemini CLI ping, Copilot CLI ping
-- Report any drift, missing files, or version mismatches
-Display: `✅ N/N checks passed` or itemized failures.
+### `/health` — System Health (consolidated)
+Single "is everything OK?" command. Consolidates system integrity, evaluation quality, domain
+freshness, cost, and privacy into one view.
 
-### `/eval`
-Run the catch-up evaluation report (`python scripts/eval_runner.py`). Displays performance
-trends, accuracy metrics, signal:noise ratio, and data freshness. Flags:
-- `/eval` — full report (performance + accuracy + freshness)
-- `/eval perf` — performance only (connector/skill/phase timing trends)
-- `/eval accuracy` — accuracy only (acceptance rate, signal:noise)
-- `/eval freshness` — domain staleness and OAuth health
-- `/eval skills` — skill health table (runs `python3 scripts/eval_runner.py --skills`)
+```
+━━ ARTHA SYSTEM HEALTH ━━━━━━━━━━━━━━━━━━━
+
+🔌 Connections
+  Gmail: ✅ connected (last success: 2h ago)
+  Outlook (personal): ✅ connected
+  Google Calendar: ✅ connected (last success: 2h ago)
+  WorkIQ: ✅ available (Windows only)
+  [each configured connector with status + last success]
+
+🏥 Domain Health
+  Active (updated ≤30d): [N] domains
+  Stale (30–180d): [N] domains [list]
+  Archive (>180d): [N] domains
+  Encrypted: [N] files (vault [healthy/locked/error])
+
+📊 Quality (last 7 days)
+  Catch-ups: [N] | Alerts: [N] (🔴N 🟠N 🟡N)
+  Signal:noise: [%] (target >30%)
+  Action acceptance: [%] ([N] proposed, [N] accepted, [N] deferred)
+  Corrections logged: [N]
+
+💰 Cost (this month)
+  Estimated API usage: $[X] / $[BUDGET] budget ([%]%)
+
+🔒 Privacy
+  PII scanned: [N] items | Redacted: [N] | Patterns: [N] types
+  Encrypted domains: [N] | Vault status: [locked/unlocked]
+  Last git sync: [N]h ago
+
+📈 State Changes (since last catch-up)
+  Modified: [list of changed state files]
+  Added: [N] items | Closed: [N] items
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+Scoped views:
+- `/health connections` → connections section only
+- `/health quality` → quality metrics (was `/eval`)
+- `/health cost` → cost section (was `/cost`)
+- `/health privacy` → full privacy disclosure (was `/privacy`)
+- `/health changes` → state changes (was `/diff`)
+- `/health reconnect <service>` → guided OAuth re-auth for a named service
+
+### `/eval` (legacy alias → `/health quality`)
+Still works. `/eval`, `/eval perf`, `/eval accuracy`, `/eval freshness` all route to the
+appropriate `/health` sub-section. `/eval skills` remains independent (runs `eval_runner.py --skills`).
 
 ### `/eval skills`
 Run `python3 scripts/eval_runner.py --skills`. Reads `state/skills_cache.json` and renders
@@ -361,8 +464,8 @@ Goal scorecard with leading indicators. Read `state/goals.md` + leading indicato
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-### `/diff [period]`
-Show meaningful state changes over a period. Uses git history of the `state/` directory.
+### `/diff [period]` (legacy alias → `/health changes`)
+Still works. Show meaningful state changes over a period. Uses git history of the `state/` directory.
 - `/diff` → changes since last catch-up (default)
 - `/diff 7d` → changes in last 7 days
 - `/diff 30d` → changes in last 30 days
@@ -383,8 +486,8 @@ state/immigration.md  [+N/-N lines]
 Filter out `last_updated:` timestamp changes as noise. Show only semantic content changes.
 If git history not available: "No git history found — run `git init && git add state/ && git commit -m 'Artha baseline'` to enable /diff."
 
-### `/privacy`
-Show the current privacy surface. Display:
+### `/privacy` (legacy alias → `/health privacy`)
+Still works. Show the current privacy surface. Display:
 ```
 ━━ PRIVACY SURFACE ━━━━━━━━━━━━━━━━━━━━━━━━
 Encrypted at rest (age):
@@ -444,82 +547,78 @@ Log session to `state/audit.md` as `POWER_HOUR | [timestamp] | items_handled: [N
 
 ---
 
-### `/pr` — PR Manager (Personal Narrative Engine)
-> **Requires:** `enhancements.pr_manager: true` (activate via `/bootstrap pr_manager`)
-> **Script:** `python3 scripts/pr_manager.py`
+### `/content` — Content Namespace (replaces `/pr` and `/stage`)
 
-**`/pr`** — Content calendar for this week. Shows scored moments + quota status.
+> **Requires:** `enhancements.pr_manager: true` (activate via `/bootstrap pr_manager`)
+> **State files:** `state/pr_manager.md`, `state/gallery.yaml`
+
+**`/content`** or **`/content calendar`** — Content calendar view with moment scores and quota.
+Shows scored moments, thread status, posts-this-week quota.
 Run: `python3 scripts/pr_manager.py --view`
 ```
-━━ 📣 PR MANAGER — CONTENT CALENDAR ━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━ 📣 CONTENT CALENDAR ━━━━━━━━━━━━━━━━━━━━━━━━
 Moment                     Platforms       Thread   Score
 ────────────────────────────────────────────────────────
-🟠 Holi (Wed Mar 25)      LI + FB + WA    NT-2     0.92
-🟡 Q1 reflection          LinkedIn        NT-5     0.68
+🟠 [Occasion] (date)      LI + FB + WA    NT-2     0.92
+🟡 [Topic]               LinkedIn        NT-5     0.68
 Posts this week: 0/2 (LinkedIn) · 0/2 (FB) · 0/2 (IG)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-**`/pr threads`** — Narrative thread progress: last post, post cadence, reception trend per thread.
+**`/content threads`** — Narrative thread progress: last post, cadence, reception trend per thread.
 Run: `python3 scripts/pr_manager.py --threads`
 
-**`/pr voice`** — Display active voice profile: tone, language, AVOID list, signature elements, any user overrides.
+**`/content voice`** — Display active voice profile: tone, language, AVOID list, signature elements.
 Run: `python3 scripts/pr_manager.py --voice`
 
-**`/pr moments`** — All detected moments with convergence scores (Phase 3+).
-Run: `python3 scripts/pr_manager.py --step8 --verbose` then display `tmp/content_moments.json`.
+**`/content history [year]`** — Post history. Read `state/pr_manager.md → Post History`.
 
-**`/pr history`** — Post history (last 30 days). Read `state/pr_manager.md → Post History` section.
+**`/content draft <platform> [topic]`** — Create a draft for `<platform>`. Topic is optional.
+> Requires: `enhancements.pr_manager.compose: true`
 
-**`/pr draft <platform>`** — Generate a draft for `<platform>` (linkedin, facebook, instagram, whatsapp_status).
-> **Requires:** `enhancements.pr_manager.compose: true` (Phase 3)
+Platform shorthands: `li` → `linkedin`, `fb` → `facebook`, `ig` → `instagram`, `wa` → `whatsapp_status`
+
 1. Run: `python3 scripts/pr_manager.py --draft-context <platform>` → get JSON context
-2. Use context to generate 1 clean variant in-context
-3. Display in Content Proposal format (§9.2 of specs/pr-manager.md)
-4. Apply 3-gate PII firewall (context sanitization + pii_guard.py + human review)
-5. On approval: `python3 scripts/pr_manager.py --log-post <platform> "<topic>" <thread_id> <score>`
+2. Generate 1 clean variant in-context
+3. Apply 3-gate PII firewall (context sanitization + pii_guard.py + human review)
+4. On approval: `python3 scripts/pr_manager.py --log-post <platform> "<topic>" <thread_id> <score>`
 
-**`/pr draft <platform> <topic>`** — Draft about a specific topic (e.g. `/pr draft linkedin "Holi 2026"`).
+**`/content cards`** — List active cards by status (seed/drafting/staged/approved).
+Load `state/gallery.yaml`, filter `status ∈ {seed, drafting, staged, approved}`.
 
-**`/pr draft <platform> --trending`** — Fresh Gemini trend context bypass cache (Phase 3+, costs ~$0.02).
+**`/content preview <topic>`** — Show full card. Fuzzy-matches topic in card title or subject.
+Display: occasion, event date, status, platform drafts, PII flags.
 
-**Platform shorthands:** `li` → `linkedin`, `fb` → `facebook`, `ig` → `instagram`, `wa` → `whatsapp_status`
+**`/content approve <topic>`** — Mark card approved; emit copy-ready content per platform.
+Fuzzy-matches topic. If multiple match → ask for disambiguation.
 
-**Command gating:** Phase 1: `/pr`, `/pr threads`, `/pr voice` — require `enhancements.pr_manager: true`.
-Phase 3+: `/pr draft`, `/pr moments`, `/pr history` — additionally require `enhancements.pr_manager.compose: true`.
+**`/content expand <topic>`** — Generate full draft for an existing seeded card.
+If no card found: "No card found for that topic — say `/content draft [platform] [topic]` to create one."
 
----
+**`/content posted <topic> <platform>`** — Log post as published; update platform draft status.
 
-### `/stage` — Content Stage (PR-2)
+**`/content dismiss <topic>`** — Archive card without posting. Moves to `dismissed` status.
 
-> **Sub-feature of PR Manager (PR-2) · Spec: specs/pr-stage.md v1.3.0**
-> Active when `enhancements.pr_manager.stage: true` in `config/artha_config.yaml`.
-> State file: `state/gallery.yaml`
+**`/content archive [year]`** — Browse historical gallery from `state/gallery_memory.yaml`.
 
-**`/stage`** — List all active content cards (seed, drafting, staged, approved).
-Display: card ID, occasion, event date, status, days until event, platform draft summary.
+**Fuzzy matching:** When topic is provided, search `state/gallery.yaml` for topic in card title or
+subject. Single match → proceed. Zero or multiple → ask for disambiguation. Machine IDs
+(e.g., `CARD-SEED-HOLI-2026`) still work for precision.
 
-**`/stage preview <CARD-ID>`** — Show full card with draft content for all platforms.
-Display draft text, PII flags, approval status per platform.
-
-**`/stage approve <CARD-ID>`** — Mark card as approved; emit copy-ready content for each platform.
-Prints formatted post text, any visual prompt file paths.
-
-**`/stage draft <CARD-ID>`** — Manually trigger draft generation for a seed card.
-Requires: `enhancements.pr_manager.stage: true`. Phase 2: calls LLM with deep context.
-
-**`/stage posted <CARD-ID> <platform>`** — Log that a post has been published on `<platform>`.
-Updates platform draft status to posted; triggers archive when all platforms resolved.
-
-**`/stage dismiss <CARD-ID>`** — Archive a card without posting (user decided not to post).
-Card moves to `dismissed` state and is eventually archived to `gallery_memory.yaml`.
-
-**`/stage history [year]`** — Browse cross-year archived cards from `state/gallery_memory.yaml`. (Phase 4)
-
-**Command gating:** All `/stage` commands require `enhancements.pr_manager.stage: true`.
-Phase 1: `/stage` list is available (auto-populated from Step 8).
-Phase 2: `/stage preview`, `/stage draft`, `/stage approve`, `/stage posted`, `/stage dismiss`.
-Phase 4: `/stage history`.
+**Legacy aliases (all still work):**
+- `/pr` → `/content calendar`
+- `/pr threads` → `/content threads`
+- `/pr voice` → `/content voice`
+- `/pr history` → `/content history`
+- `/pr draft <platform>` → `/content draft <platform>`
+- `/pr moments` → `/content calendar` (moments view)
+- `/stage` → `/content cards`
+- `/stage preview <ID>` → `/content preview <topic>`
+- `/stage approve <ID>` → `/content approve <topic>` (ID still works for precision)
+- `/stage draft <ID>` → `/content expand <topic>`
+- `/stage posted <ID> <platform>` → `/content posted <topic> <platform>`
+- `/stage dismiss <ID>` → `/content dismiss <topic>`
+- `/stage history [year]` → `/content archive [year]`
 
 ---
 
