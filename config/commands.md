@@ -804,4 +804,73 @@ in `state/work/reflections/` with accomplishments, carry-forwards, and reconcili
 - `/work reflect --backfill-review` — interactive validation of backfilled data
 - Phase: Active (Sprint 0 + Phase 1 + Phase 1.5 + Sprint 2 complete)
 
+## `/work thrivesync` — Weekly Team Priorities Post
+Generates your top-N weekly priorities post for the team ThriveSync ritual (Monday 8 AM).
+Reads work-goals, work-projects, work-open-items, work-performance. Synthesizes the highest-impact
+items into a crisp, copy-pasteable list for Teams.
+
+**Workflow:**
+1. `work thrivesync` — generate draft from current work state (auto-triggered on Monday briefings)
+2. Review and edit the draft
+3. `work thrivesync approve` — marks as posted, logs to `state/work/work-thrivesync.md`
+4. Copy the approved text to Teams
+
+**Sub-commands:**
+- `work thrivesync` — generate this week's draft
+- `work thrivesync approve` — mark current draft as posted (updates `last_posted`)
+- `work thrivesync history` — show last 4 weeks of ThriveSync posts
+- `work thrivesync edit <n> <new text>` — replace priority #n with new text before approving
+
+**Configuration:** `user_profile.yaml → work.thrivesync`
+- `top_n`: number of priorities (default 5)
+- `day`: posting day (default Monday)
+- `time`: posting deadline (default 08:00)
+- `channel`: where to post (default teams)
+
+**Monday briefing integration:** When `thrivesync_due = true`, the Monday briefing
+automatically includes a §8.14 ThriveSync block after the Week Ahead section.
+The block contains a ready-to-post draft — no separate command needed unless you
+want to regenerate or edit.
+
+**Natural language triggers:** "thrivesync", "weekly priorities", "what should I post",
+"my top 5 for the week", "team priorities post"
+
+- Phase: Active
+
+## `/work scope` — Ownership Areas & Next Actions
+Reads `state/work/work-scope.md`. Displays all active ownership areas with priority tier,
+co-owner, current next action, and LT visibility flag. This is the "full scope dump" that
+feeds ThriveSync generation and Connect evidence assembly.
+
+**Display format:**
+```
+━━ YOUR SCOPE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+P0  XPF Ramp           → Drive P1 to 100%; resolve deployment blockers
+P0  DD on PF (Yasser)  → Unblock RDMA regression; confirm pilot date
+P1  Armada (Ramjee)    → Define M1 scope doc and timeline
+P1  Ops Excellence     → Asgard migration %; SLO delta
+P1  xDeployment (Isaiah) → OneDeploy blocker resolution
+P1  xSSE (Nikita)      → XPF/DD-PF/Armada execution; BIOS deadline
+P2  Rubik (Isaiah)     → Roadmap with Isaiah; milestone plan
+P2  Shiproom AI        → Security hardening to go live
+P2  xConfig            → Architecture learning for Armada
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9 areas · Updated [date]
+```
+
+**Sub-commands:**
+- `work scope` — display all active areas with next actions
+- `work scope update <area> <next action>` — update the next action for an area
+- `work scope add <area>` — interactively add a new ownership area
+- `work scope remove <area>` — archive an area (moves to evolution log)
+- `work scope history` — show the area evolution log (additions, removals, priority changes)
+
+**Integration points:**
+- **ThriveSync** (§8.14): scope areas are the primary input for weekly priority generation
+- **Connect-prep**: scope breadth feeds the "scope expansion arc" evidence
+- **Work briefing**: scope areas inform the domain coverage in morning briefings
+- **Reflection loop**: weekly reflections reconcile scope vs actual time spent
+
+- Phase: Active
+
 ---

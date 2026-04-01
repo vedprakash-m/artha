@@ -296,6 +296,174 @@ Key this week:
 ```
 Pull from merged 7-day calendar. Cross-reference `open_items.md` for deadlines falling this week. Highlight days with ≥3 events as busy. Omit section if calendar feeds all failed.
 
+### 8.14 ThriveSync (Mondays — added after §8.11 Week Ahead)
+
+Triggered when `thrivesync_due = true` (Monday AND `work.thrivesync.enabled` in user_profile.yaml).
+
+**What ThriveSync IS:** A concise list of outcomes and deliverables you will drive this week.
+**What ThriveSync is NOT:** A meeting list, a status report, or an internal context dump.
+
+**Core Principles (learned from iterative refinement):**
+
+1. **Outcome-oriented, not meeting-oriented.** Each item answers "what will I deliver/unblock/drive?"
+   — not "what meetings will I attend." Meetings are inputs that inform priority ranking,
+   but they do NOT appear as line items. Exception: LT reviews where you present are
+   deliverables (you prepare and present work product).
+2. **Audience-safe.** ThriveSync is read by the broader team. Do NOT include:
+   - Internal prep context (CVP count, attendee seniority, skip-level prep notes)
+   - IcM numbers (say "NMAgent Sev2.5 incident" not "IcM 767614860")
+   - Names of senior attendees to signal importance
+   - Prep tasks for meetings (those belong in `work prep`, not ThriveSync)
+3. **Milestone-first framing.** Lead with the objective/milestone, follow with tactical unblocks.
+   Good: "Drive 1P Pilot readiness for late April; unblock RDMA regression"
+   Bad: "RDMA perf regression unblock; pilot re-confirmation"
+4. **P0 consolidation.** A P0 program (e.g. XPF) gets ONE top-level numbered item
+   with sub-items for all its workstreams — never split across multiple numbered
+   entries. Sub-items carry the detail: standups, MAP gaps, rollout tracking, etc.
+   Lower-priority programs (P1/P2) may share a top-level entry (e.g. Armada / Rubik)
+   when co-scoped.
+5. **Scope attribution by impact.** Items belong under the program they IMPACT,
+   not the vertical that technically owns the component. Example: BIOS key expiry
+   affects XPF ramp → sub-item under XPF, not xSSE.
+6. **Consolidate related items.** Newsletter + skip-level update = same artifact, one line.
+   Related programs (Armada + Rubik) can share a line when both have the same
+   meeting/deliverable.
+7. **Side projects: include only with real deliverables.** Admin deadlines (awards
+   nominations, HR tasks, training due dates) are excluded. But side projects with
+   tangible output (app enhancements, security hardening, demo prep) DO get a line.
+   The test: "Is there a deliverable my team can see?" If yes, include.
+8. **Selective name attribution.** Program co-owners get `(w/ Name)` on the top-level
+   item. Ad-hoc collaborators on individual sub-items do NOT get named.
+9. **No stale metrics.** If a number comes from state files, verify the data age.
+   If older than 3 days, either refresh or drop the specific number.
+10. **Workstream-first, not metric-first.** Name the deployment stage and scope,
+    not the metric. Good: "STG rollout with fixes for Autotuning, LSO, kRDMA".
+    Bad: "OS compliance ~71%, LSO+kRDMA rollout decision".
+11. **Syncs are meetings, not deliverables.** Named syncs ("Repair Support Sync",
+    "OneDeploy/DM Sync") are meetings — do NOT list as sub-items. Only include
+    what comes OUT of the sync (the workstream or decision).
+12. **LT review gets the date.** Always include the day: "LT review (3/31)".
+13. **Verticals state their cross-program scope.** Verticals like xDeployment serve
+    multiple programs — state which: "cross-program deployment execution for
+    XPF/DD-PF/Armada".
+14. **Concise.** Target 5–7 items. Every word must earn its place.
+
+**Generation Algorithm:**
+
+**Phase 0 — Freshness Gate** (MANDATORY — blocks generation on failure):
+Run `work refresh` to ensure state files have THIS week's data.
+Check `state/work/work-calendar.md` → `last_updated` AND date coverage.
+Check all state files used → `last_updated`. Flag any >3 days old.
+
+| Calendar State | Action |
+|---|---|
+| Covers this week with work meetings | Proceed to Phase 1 |
+| Refresh succeeded but no work meetings (Agency/WorkIQ failed) | **ASK USER** for this week's key meetings |
+| Refresh failed (token expired, network error) | Fix root cause, re-run. If still no calendar, **ASK USER** |
+| Last week's data still in file | **BLOCK. NEVER generate with last week's calendar.** |
+
+If ANY state file is >3 days old, append to output:
+```
+⚠️ DATA FRESHNESS WARNING:
+  [file]: last refreshed [date] ([N] days ago) — metrics may be outdated
+  Verify current numbers before posting.
+```
+**NEVER silently use stale data.** Failures must be loud.
+
+**Phase 1 — Scope Sweep** (identify candidates from each ownership area):
+1. Read `state/work/work-scope.md` — for each active area, extract:
+   - Current next action (the deliverable, not the meeting)
+   - Priority tier (P0/P1/P2)
+   - Co-owner (for parenthetical attribution — program co-owners only)
+2. Read `state/work/work-open-items.md` — extract blocked/escalated items
+3. Read `state/work/work-goals.md` — active goals with this-week next_action_date
+4. Read `state/work/work-projects.md` — hot issues and this-week deliverables
+5. For P0 programs: collect ALL workstreams into sub-item candidates (standups,
+   MAP gaps, deployment, rollout decisions, syncs, operational cadences)
+
+**Phase 2 — Calendar Urgency Overlay** (meetings inform ranking, not line items):
+5. Read `state/work/work-calendar.md` OR user-provided meeting list
+6. LT reviews where you present → elevate that program to #1 AND include date: "LT review (3/31)"
+7. Meetings with VP+/skip-level/CVP attendees → elevate that program's ranking
+8. Daily standups you drive → mention in the program line ("daily standups"), not as separate item
+9. Named syncs (Repair Support Sync, OneDeploy/DM Sync) → DO NOT list. Extract the workstream outcome instead.
+10. Skip-level monthlies, 1:1s, sync meetings → DO NOT list as separate items
+
+**Phase 3 — Comms Signal Boost** (when data is fresh):
+11. Read `state/work/work-comms.md` — only if <3 days old
+12. Active Sev-2+ incidents get mentioned by description (no IcM numbers)
+13. Escalation threads inform sub-items under the relevant program
+
+**Phase 4 — Rank & Synthesize**:
+14. Apply priority hierarchy:
+    1. **P0 program as single entry with sub-items** — XPF gets #1 when LT review/newsletter
+       is scheduled. Cover: standups, MAP gaps, rollout scope (name the stage, not the
+       metric), cross-cutting items by impact.
+    2. **P1 partner programs** — DD-PF (#2 typically)
+    3. **Critical blockers** (describe impact, not ticket numbers)
+    4. **Verticals supporting P0** — xDeployment, xSSE rank ABOVE lower-tier programs
+       because they directly enable P0 execution. State cross-program scope.
+    5. **Lower-tier programs** — Armada / Rubik (club when co-scoped)
+    6. **Side projects with real deliverables** — Shiproom AI (app work, security hardening,
+       demo prep). Include only when there's tangible output, not admin deadlines.
+    7. **OMIT:** Admin deadlines, awards nominations, HR tasks, training due dates
+15. For each item: milestone/objective first, then tactical actions
+16. Name program co-owners: "(w/ Yasser)", "(w/ Isaiah)", "(w/ Nikita)" —
+    do NOT name ad-hoc collaborators on sub-items
+17. Club related programs when they share a deliverable this week
+
+**Output format:**
+```
+━━ 🎯 THRIVESYNC — Week of [Mon date] ━━━━
+
+Top [N]:
+    1. [P0 Program] — [LT review (date), newsletter]; Critical topics:
+    - [Workstream: standups with scope]
+    - [Workstream: gap area]
+    - [Workstream: rollout stage with fixes/scope]
+    - [Cross-cutting item attributed by impact]
+    2. [P1 Program] (w/ [co-owner]) — [milestone first]; [unblock second]
+    3. [Vertical] (w/ [co-owner]) — [delivery scope]; cross-program execution for [X/Y/Z]
+    4. [Vertical] (w/ [co-owner]) — [scope execution]
+    5. [Program / Program] — [milestone]; [shared deliverable]; [roadmap]
+    6. [Side project with real deliverable] — [app work]; [demo/event prep]
+    ...
+
+Docs:
+    [Document being written/published this week, if any]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Data sources: [list files used with freshness]
+  work-scope.md (today) | work-projects.md ([date]) | work-open-items.md ([date])
+  work-calendar: [source — live refresh / user-provided / Agency]
+  ⚠️ [any staleness warnings]
+```
+
+**Validation rules:**
+- Target 5–7 top-level items (minimum 4, maximum 8)
+- P0 programs MUST be a single entry with sub-items (never split)
+- LT review always includes the date: "LT review (3/31)"
+- Every P0 scope area MUST appear
+- Verticals supporting P0 rank ABOVE lower-tier programs
+- Verticals state cross-program scope ("for XPF/DD-PF/Armada")
+- Cross-cutting items attributed to the program they impact, not the owning vertical
+- No meetings as standalone line items (meetings inform, not populate)
+- No named syncs as sub-items (extract the workstream/outcome instead)
+- No internal context (seniority, CVP count, IcM numbers)
+- Side projects included only when real deliverable exists; admin tasks excluded
+- Workstream-first framing, not metric-first
+- No stale metrics without freshness warning
+- Milestone/objective framing before tactical details
+- Program co-owners named; ad-hoc collaborators not named
+- Draft is always human-reviewed — never auto-posted
+
+**Staleness check:**
+If `state/work/work-thrivesync.md` has a `last_posted` date within 6 days, show:
+`"✅ ThriveSync already posted this week ([date]). Run 'work thrivesync' to regenerate."`
+
+After user approves, update `state/work/work-thrivesync.md` with posted content and date.
+
 ### 8.12 Weekend Planner (Fridays — added to §8.1 after BY DOMAIN section)
 ```
 ━━ 🏡 WEEKEND PLANNER ━━━━━━━━━━━━━━━━━━━

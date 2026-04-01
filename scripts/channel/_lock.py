@@ -9,6 +9,9 @@ from pathlib import Path
 
 _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _STATE_DIR = _ARTHA_DIR / "state"
+_PID_FILE = _STATE_DIR / ".channel_listener.pid"
+_SINGLETON_MUTEX_NAME = "Global\\ArthaChannelListener"
+_singleton_mutex_handle = None
 log = logging.getLogger("channel_listener")
 
 def _acquire_singleton_lock() -> bool:

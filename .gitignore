@@ -37,6 +37,7 @@ specs/*
 !specs/artha-prd.md
 !specs/artha-tech-spec.md
 !specs/artha-ux-spec.md
+!specs/actions-reloaded.md
 
 # --- State files (all user-generated, ALL subdirectories) ---
 state/*.md

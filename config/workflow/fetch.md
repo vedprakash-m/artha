@@ -34,6 +34,7 @@ source: config/Artha.core.md §2, Steps 3–4e
 Set session flags based on today's date and `state/health-check.md` data:
 
 - **Monday**: `week_ahead = true` (add §8.11 Week Ahead section in Step 11)
+- **Monday** AND `work.thrivesync.enabled`: `thrivesync_due = true` (add §8.14 ThriveSync nudge in Step 11)
 - **Friday**: `weekend_planner = true` (add §8.12 Weekend Planner in Step 11)
 - **1st of month** AND last monthly retro >28 days ago: `generate_monthly_retro = true`
 - **Monday** AND last weekly summary >8 days ago: `generate_weekly_summary = true`

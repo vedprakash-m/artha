@@ -167,37 +167,20 @@ elevated to 🔴 CRITICAL if the person is in `core_family`, or 🟠 URGENT for
 
 ### Step 12.5 — Compose action proposals from domain signals *(Action Layer)*
 
-**SKIP if** `actions.enabled: false` in `config/artha_config.yaml` → log `⏭️ Step 12.5 skipped — actions disabled`  
+**SKIP if** `actions.enabled: false` in `config/artha_config.yaml` → log `⏭️ Step 12.5 skipped — actions disabled`
 **SKIP in read-only mode** → log `⏭️ Step 12.5 skipped — read-only mode`
 
-For each domain signal surfaced in Step 12 (P0/P1 alerts), run the action composer:
-
-```python
-from scripts.action_composer import ActionComposer
-from scripts.action_executor import ActionExecutor
-from pathlib import Path
-
-artha_dir = Path(".")
-composer = ActionComposer(artha_dir=artha_dir)
-executor = ActionExecutor(artha_dir)
-
-for signal in domain_signals:          # signals collected during Step 12
-    proposal = composer.compose(signal)
-    if proposal is not None:
-        try:
-            action_id = executor.propose_direct(proposal)
-            log(f"[action] queued {proposal.action_type} → {action_id[:8]}…")
-        except Exception as e:
-            log(f"[action] propose failed for {proposal.action_type}: {e}")
+```bash
+python3 scripts/action_orchestrator.py --run
 ```
 
-Workflow sequences (e.g., address_change, tax_prep) use `composer.compose_workflow(trigger, context)`.
+The orchestrator reads:
+- `tmp/pipeline_output.jsonl` (from Step 4)
+- `tmp/ai_signals.jsonl` (from Steps 7–8, if AI wrote any)
+- `state/*.md` (pattern engine evaluates state files)
 
-**Constraints (non-negotiable):**
-- Do NOT auto-execute anything — only propose to the queue
-- High-friction actions (immigration, estate) always get `friction: high`
-- PII guard fires at enqueue time; block silently if PII detected in params
-- Duplicate proposals for the same (action_type, domain) within 24h are silently dropped
+Output: numbered pending action list on stdout for the AI to embed in the
+briefing. Errors to stderr. Exit code: 0=ok, 1=partial, 3=failure.
 
 ### Step 13 — Propose write actions
 

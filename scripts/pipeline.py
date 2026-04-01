@@ -432,6 +432,21 @@ def fetch_single(
 # Pipeline run
 # ---------------------------------------------------------------------------
 
+def _validate_output_path(raw: str, artha_dir: Path) -> Path:
+    """Validate --output path is safe: must resolve inside tmp/.
+
+    Prevents path traversal attacks (e.g. '../../etc/passwd').
+    """
+    target = (artha_dir / raw).resolve()
+    allowed = (artha_dir / "tmp").resolve()
+    if not str(target).startswith(str(allowed) + "/") and target != allowed:
+        raise ValueError(
+            f"--output must be inside tmp/ (got {raw!r}). "
+            "Use a relative path like 'tmp/pipeline_output.jsonl'."
+        )
+    return target
+
+
 def run_pipeline(
     cfg: dict[str, Any],
     *,
@@ -439,6 +454,7 @@ def run_pipeline(
     source_filter: list[str] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    output_path: Path | None = None,
 ) -> int:
     """Run the fetch pipeline.  Streams JSONL to stdout.
 
@@ -460,6 +476,7 @@ def run_pipeline(
     total_records = 0
     timing: dict[str, float] = {}
     pipeline_start = time.monotonic()
+    all_classified_lines: list[str] = []  # collected for --output snapshot
 
     # Pre-validate: build work items (handler + auth loaded before threading)
     work_items: list[tuple[str, Any, dict, dict, dict]] = []  # (name, handler, auth, fetch_cfg, retry_cfg)
@@ -517,6 +534,8 @@ def run_pipeline(
                 classified_lines = _classify_email_lines(lines, verbose=verbose)
                 for line in classified_lines:
                     print(line)
+                if output_path is not None:
+                    all_classified_lines.extend(classified_lines)
                 total_records += len(classified_lines)
                 _log.info("connector.fetch", connector=name, records=len(classified_lines), ms=round(elapsed * 1000), error=None)
                 if verbose:
@@ -541,6 +560,23 @@ def run_pipeline(
 
     # Write timing metrics to tmp/pipeline_metrics.json
     _write_pipeline_metrics(timing, total_records, error_count)
+
+    # Atomic snapshot write to --output path (fresh per run, no append)
+    if output_path is not None and all_classified_lines:
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = output_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                for line in all_classified_lines:
+                    fh.write(line + "\n")
+            tmp_path.replace(output_path)  # atomic rename — no partial reads
+            if verbose:
+                print(
+                    f"[pipeline] --output: wrote {len(all_classified_lines)} records to {output_path}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(f"[pipeline] WARNING: --output write failed: {exc}", file=sys.stderr)
 
     return 3 if error_count > 0 else 0
 
@@ -804,6 +840,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Verbose logging to stderr",
     )
+    p.add_argument(
+        "--output", "-o",
+        metavar="PATH",
+        default=None,
+        help="Write JSONL output to this file path inside tmp/ (fresh snapshot per run, atomic write)",
+    )
     return p.parse_args(argv)
 
 
@@ -818,12 +860,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.health:
         return run_health_checks(cfg, source_filter=args.sources, verbose=args.verbose)
 
+    output_path: Path | None = None
+    if args.output:
+        try:
+            output_path = _validate_output_path(args.output, _REPO_ROOT)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
     return run_pipeline(
         cfg,
         since=args.since,
         source_filter=args.sources,
         dry_run=args.dry_run,
         verbose=args.verbose,
+        output_path=output_path,
     )
 
 

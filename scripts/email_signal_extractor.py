@@ -104,6 +104,9 @@ _SIGNAL_PATTERNS: list[tuple[list[re.Pattern], str, str, int, int]] = [
             re.compile(r"pay\s+by\s+\w+\s+\d{1,2}", re.I),
             re.compile(r"your\s+bill\s+is\s+(ready|available)", re.I),
             re.compile(r"minimum\s+payment\s+due", re.I),
+            # Urgency phrases in school/event fee emails
+            re.compile(r"(?:pay|submit).*(?:fee|payment).*asap", re.I),
+            re.compile(r"fee\s+is\s+now\s+posted", re.I),
         ],
         "bill_due", "finance", 2, 2,
     ),
@@ -115,6 +118,9 @@ _SIGNAL_PATTERNS: list[tuple[list[re.Pattern], str, str, int, int]] = [
             re.compile(r"application\s+deadline", re.I),
             re.compile(r"filing\s+deadline", re.I),
             re.compile(r"deadline\s+to\s+submit", re.I),
+            # Insurance/cancellation forms
+            re.compile(r"cancellation\s+form", re.I),
+            re.compile(r"form\s+to\s+be\s+sent", re.I),
         ],
         "form_deadline", "comms", 2, 2,
     ),
@@ -123,7 +129,13 @@ _SIGNAL_PATTERNS: list[tuple[list[re.Pattern], str, str, int, int]] = [
         [
             re.compile(r"out\s+for\s+delivery", re.I),
             re.compile(r"delivered\s+to\s+your\s+(door|address|home)", re.I),
-            re.compile(r"arriving\s+today", re.I),
+            # "arriving today" AND "arriving April 8" / "arriving Monday"
+            re.compile(
+                r"arriving\s+(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday"
+                r"|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?"
+                r"|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2})",
+                re.I,
+            ),
             re.compile(r"package\s+delivered", re.I),
             re.compile(r"your\s+order\s+has\s+arrived", re.I),
         ],
@@ -158,8 +170,27 @@ _SIGNAL_PATTERNS: list[tuple[list[re.Pattern], str, str, int, int]] = [
             re.compile(r"field\s+trip\s+permission", re.I),
             re.compile(r"permission\s+slip", re.I),
             re.compile(r"school\s+action\s+required", re.I),
+            # Missing assignment alerts from school districts
+            re.compile(r"missing\s+assignment", re.I),
+            re.compile(r"assignment.*(?:flagged|missing|past\s+due)", re.I),
+            # Survey deadlines from school/org
+            re.compile(r"(?:survey|form).*(?:complete\s+today|due\s+today|hasn.t)", re.I),
+            re.compile(r"complete\s+today\s+if\s+you\s+haven", re.I),
+            # Upcoming school events with specific dates (STEM, assessments, etc.)
+            re.compile(r"(?:assessment|test|exam|finals?)\s+@\s+\w+", re.I),
+            re.compile(r"(?:spring|fall|final)\s+(?:fitness\s+)?assessment", re.I),
         ],
         "school_action_needed", "kids", 2, 2,
+    ),
+    # 9a. Bank / financial transaction alert (INR / non-USD)
+    (
+        [
+            re.compile(r"(?:rs|inr)[\.\s]*[\d,]+.*(?:deducted|debited|credited|transferred)", re.I),
+            re.compile(r"(?:deducted|debited)\s+from\s+your\s+(?:hdfc|sbi|icici|axis|kotak)?\s*(?:bank\s+)?account", re.I),
+            re.compile(r"neft\s+transaction", re.I),
+            re.compile(r"upi\s+(?:transaction|payment|debit)", re.I),
+        ],
+        "financial_alert", "finance", 2, 2,
     ),
     # 9. Slack action item (CONNECT §4.3) — matches Slack message records
     #    where source == "slack" (and any email containing TODO/ACTION phrases)
@@ -202,12 +233,18 @@ _DEDUP_WINDOW_HOURS = 24
 
 
 def _extract_text(email_record: dict) -> str:
-    """Build a scannable text blob from subject + from + snippet."""
+    """Build a scannable text blob from subject + from + snippet + body."""
+    # body_preview is a trimmed field; fall back to body when absent
+    body_text = (
+        email_record.get("body_preview")
+        or email_record.get("body")
+        or ""
+    )
     parts = [
         str(email_record.get("subject", "") or ""),
         str(email_record.get("from", "") or ""),
         str(email_record.get("snippet", "") or ""),
-        str(email_record.get("body_preview", "") or "")[:500],
+        str(body_text)[:500],
     ]
     return " ".join(p for p in parts if p).lower()
 
