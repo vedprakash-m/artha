@@ -262,6 +262,8 @@ Each domain has a state file in `state/work/` that is updated on refresh:
 | `work-sources` | work-sources.md | Registered data source registry |
 | `work-project-journeys` | work-project-journeys.md | Long-running program timelines with milestone provenance |
 | `work-org-calendar` | work-org-calendar.md | Org dates: Connect deadlines, fiscal events, rewards season |
+| `work-scope` | work-scope.md | Ownership areas, priority tiers, co-owners, next actions per area |
+| `work-thrivesync` | work-thrivesync.md | Weekly ThriveSync posts, draft history, style patterns |
 | `xpf-program-structure` | xpf-program-structure.md | XPF program metrics (42 metrics, 12 workstreams, signal summary) — Kusto-validated |
 | `golden-queries` | golden-queries.md | 73 golden Kusto queries for program metrics — schema-validated KQL |
 
@@ -320,6 +322,8 @@ For detailed connector diagnostics: see [docs/connectors.md](connectors.md).
 /work promo-case --narrative  Full promo narrative draft
 /work decide <context>   Structured decision support
 /work memo --weekly      Auto-draft weekly status
+/work thrivesync         Weekly team priorities (Monday 8AM)
+/work scope              Ownership areas & next actions
 /work return [Nd]        Absence recovery catch-up
 /work health             System & connector health check
 /work bootstrap          Guided first-time setup

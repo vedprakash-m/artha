@@ -14,7 +14,14 @@
 # Finance
 bill_due:
   action_type: instruction_sheet
-  friction: high
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+financial_alert:
+  action_type: instruction_sheet
+  friction: standard
   min_trust: 1
   reversible: false
   undo_window_sec: null
@@ -29,7 +36,7 @@ property_tax_due:
 subscription_renewal:
   action_type: instruction_sheet
   friction: low
-  min_trust: 2
+  min_trust: 1
   reversible: false
   undo_window_sec: null
 
@@ -228,11 +235,11 @@ security_alert:
   undo_window_sec: null
 
 school_action_needed:
-  action_type: email_reply
-  friction: standard
-  min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  action_type: reminder_create
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
 
 form_deadline:
   action_type: instruction_sheet
@@ -241,13 +248,8 @@ form_deadline:
   reversible: false
   undo_window_sec: null
 
-# E12 — Decision Tracker
-decision_detected:
-  action_type: decision_log_proposal
-  friction: standard
-  min_trust: 1
-  reversible: false
-  undo_window_sec: null
+# E12 — Decision Tracker (V1.1: decision_log_proposal handler not yet implemented)
+# decision_detected: removed in v1.3.0 — no handler exists; scheduled for V1.1
 
 # E6 — Subscription Lifecycle (extended)
 subscription_trial_ending:

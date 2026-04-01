@@ -95,11 +95,18 @@ _FALLBACK_SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
     "appointment_confirmed":      {"action_type": "calendar_create",       "friction": "low",      "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
     "delivery_arriving":          {"action_type": "reminder_create",       "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
     "security_alert":             {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "school_action_needed":       {"action_type": "email_reply",           "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
+    # School notifications: the action is to log/act (check portal, fill survey, attend)
+    # not to reply by email — use reminder_create so it surfaces as a low-friction nudge
+    "school_action_needed":       {"action_type": "reminder_create",        "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
     "form_deadline":              {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "bill_due":                   {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "financial_alert":            {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    "subscription_renewal":       {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
 
     # E12 — Decision Tracker
-    "decision_detected":          {"action_type": "decision_log_proposal", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
+    # NOTE: "decision_detected" → "decision_log_proposal" REMOVED (§5.2.3 of specs/actions-reloaded.md).
+    # No handler module actions/decision_log_proposal.py exists; approval would raise ValueError.
+    # Scheduled for V1.1 when a functional handler is implemented.
 
     # E6 — Subscription Lifecycle (extended)
     "subscription_trial_ending":            {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
@@ -134,11 +141,14 @@ _FRICTION_NAMES = ["low", "standard", "high"]
 _DEFAULT_EXPIRY_HOURS = 72
 
 # Known-valid action types for routing table validation (Phase 6 §10.2.3)
+# INVARIANT: must remain in sync with _FALLBACK_ACTION_MAP in action_executor.py.
+# See specs/actions-reloaded.md §5.2.3 — "decision_log_proposal" removed until
+# actions/decision_log_proposal.py handler is implemented in V1.1.
 _ALLOWED_ACTION_TYPES: frozenset[str] = frozenset({
     "email_send", "email_reply", "calendar_create", "calendar_modify",
     "reminder_create", "whatsapp_send", "todo_sync", "instruction_sheet",
     "slack_send", "todoist_sync", "apple_reminders_sync",
-    "decision_log_proposal",
+    # "decision_log_proposal" — V1.1: add when handler is implemented
 })
 
 
@@ -165,18 +175,27 @@ _validate_routing_table()
 
 
 def _load_signal_routing() -> dict[str, dict]:
-    """Load signal routing from config/signal_routing.yaml.  Falls back to hardcoded dict.
+    """Load signal routing: hardcoded base + YAML overrides (merged).
 
-    Ref: specs/pay-debt-reloaded.md §7 WS-7
+    YAML entries override the hardcoded fallback — they do NOT replace it.
+    This ensures all 50+ signal types in _FALLBACK_SIGNAL_ROUTING remain
+    routable even when config/signal_routing.yaml only contains a subset.
+
+    Critical fix (§5.2.2 of specs/actions-reloaded.md v1.3.0):
+    The prior behaviour loaded YAML as a full replacement, silently shadowing
+    42+ hardcoded routes whenever signal_routing.yaml existed.
+
+    Ref: specs/actions-reloaded.md §5.2.2
     """
+    base = dict(_FALLBACK_SIGNAL_ROUTING)
     try:
         from lib.config_loader import load_config  # noqa: PLC0415
-        routing = load_config("signal_routing")
-        if routing:
-            return routing
+        yaml_routing = load_config("signal_routing")
+        if isinstance(yaml_routing, dict) and yaml_routing:
+            base.update(yaml_routing)  # YAML entries override, not replace
     except Exception:
         pass
-    return _FALLBACK_SIGNAL_ROUTING
+    return base
 
 
 # ---------------------------------------------------------------------------

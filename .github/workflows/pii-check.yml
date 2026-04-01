@@ -41,7 +41,7 @@ jobs:
         run: |
           FAIL=0
           # Files that contain PII patterns by design (regex definitions, test fixtures)
-          EXEMPT="scripts/pii_guard.py tests/unit/test_pii_guard.py tests/unit/test_pii_firewall_actions.py tests/integration/test_catch_up_e2e.py tests/pii_test_data.txt specs/supercharge-reloaded.md .githooks/pre-commit"
+          EXEMPT="scripts/pii_guard.py tests/unit/test_pii_guard.py tests/unit/test_pii_firewall_actions.py tests/unit/test_action_orchestrator.py tests/unit/test_action_orchestrator_security.py tests/integration/test_catch_up_e2e.py tests/integration/test_action_orchestrator.py tests/pii_test_data.txt specs/supercharge-reloaded.md .githooks/pre-commit"
           while IFS= read -r file; do
             # Skip binary files, encrypted .age files, token files, and .gitignored patterns
             case "$file" in

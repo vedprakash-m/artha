@@ -254,9 +254,9 @@ Also call `artha_run_skills` to run data fidelity skills in parallel with the fe
 
 **Tier 2 — Unified pipeline (when MCP unavailable, `config/connectors.yaml` exists):**
 ```bash
-python3 scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose
+python3 scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose --output tmp/pipeline_output.jsonl
 ```
-Output: JSONL stream to stdout. Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
+Output: JSONL stream to stdout + atomic write to `tmp/pipeline_output.jsonl` for the Action Layer (Step 12.5). Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
 
 **Important — Google Calendar:** The pipeline reads calendar IDs from `config/user_profile.yaml` under `integrations.google_calendar.calendar_ids`. Ensure the family shared calendar and US Holidays calendar are configured — do NOT silently drop them.
 
@@ -913,6 +913,8 @@ Prepend overdue open items from `open_items.md` (deadline < today, status: open)
 
 **Week Ahead (Monday only):** If `week_ahead = true`, insert §8.11 block after the BY DOMAIN section, before the Goal Pulse. Pull events from the merged 7-day calendar (Step 4). Cross-reference `open_items.md` deadlines.
 
+**ThriveSync (Monday only):** If `thrivesync_due = true`, insert §8.14 block after the Week Ahead section. Sweep `state/work/work-scope.md` for all ownership areas and their next actions, overlay with this week's calendar urgency signals and comms data, then rank using the learned priority hierarchy (LT reviews first, critical blockers second, program delivery third, verticals fourth, learning last). Draft is always human-reviewed before posting.
+
 **Weekend Planner (Friday only):** If `weekend_planner = true`, insert §8.12 block after the BY DOMAIN section. Show Sat/Sun events + ≤3 open items suitable for weekend handling.
 
 **FNA block (Mode 3 only — alerts present):** If any 🔴 or 🟠 alerts exist, append `⚡ FNA:` one-liner from Step 8j directly before the ONE THING block.
@@ -1121,8 +1123,100 @@ Config flag: `harness.agentic.delegation.enabled` (default: true)
 
 ---
 
-### Step 13 — Propose write actions
-If any email/event suggests a write action (reply to email, add calendar event, send WhatsApp, pay bill), present as a structured **Action Proposal** (format per §9). Do not execute without user approval.
+### Step 12.5 — Generate action proposals *(Action Layer)*
+
+**SKIP if** `harness.actions.enabled: false` in `config/artha_config.yaml`
+→ log `⏭️ Step 12.5 skipped — actions disabled`
+**SKIP in read-only mode** → log `⏭️ Step 12.5 skipped — read-only mode`
+
+Run the action orchestrator to convert domain signals into actionable proposals:
+
+```bash
+python3 scripts/action_orchestrator.py --run
+```
+
+**If you used MCP (`artha_fetch_data`) in Step 4 instead of `pipeline.py`,**
+run with `--mcp` to skip email signal extraction (pattern engine still runs):
+```bash
+python3 scripts/action_orchestrator.py --run --mcp
+```
+
+The orchestrator:
+1. Reads `tmp/pipeline_output.jsonl` (written by Step 4)
+2. Reads `tmp/ai_signals.jsonl` (written by you during Steps 7–8, if any)
+3. Runs deterministic signal extraction (email patterns + state patterns)
+4. Composes ActionProposals and queues them in `actions.db` (platform-local)
+5. Prints a numbered summary of pending actions to stdout
+
+Embed the orchestrator output in the briefing under `§ PENDING ACTIONS`.
+
+**Context window guard:** If the orchestrator summary exceeds 40 lines (e.g.,
+20+ pending proposals), truncate to the 10 highest-friction proposals (then
+oldest first within the same friction tier) and
+append: `"... and N more. Run 'items' or 'python3 scripts/action_orchestrator.py --list' to see all."` This prevents the action section from consuming
+excessive context window budget in the briefing. The sort order matches
+`ActionQueue.list_pending()` which orders by friction DESC then created_at ASC
+— there is no separate urgency field on proposals.
+
+If the orchestrator reports 0 pending actions, omit the section entirely.
+If the orchestrator fails or is unavailable, log the error and continue
+— action proposals are never blocking.
+
+**Burn-in mode:** If `harness.actions.burn_in: true` in `config/artha_config.yaml`,
+embed the orchestrator output under `[DEBUG] Proposed Actions` at the end
+of the briefing (not in the main `§ PENDING ACTIONS` section). This allows
+validating signal quality for 5 sessions before full integration.
+
+---
+
+### Step 13 — Present and approve actions
+
+If Step 12.5 produced pending actions, present them using the orchestrator
+output format (numbered list with IDs, friction indicators, and domains).
+
+**Content-bearing action preview (human-gate contract):** For action types
+that send content to external recipients — `email_send`, `email_reply`,
+`whatsapp_send`, and any future messaging handler — the compact numbered
+list is **not sufficient** for informed approval. The UX spec (§9) requires
+full content preview and editability for write actions.
+
+Before the user approves a content-bearing action, the AI MUST:
+1. Retrieve the full proposal parameters from the queue
+   (`python3 scripts/action_orchestrator.py --show <id>`)
+2. Present an **expanded preview** showing: recipient, subject, full body
+   text (or message content), and any attachments
+3. Offer the user the ability to edit before approving:
+   `"approve 1"` (as-is), `"approve 1 with edits"` (AI applies edits
+   then re-queues), or `"reject 1"`
+
+Non-content actions (`calendar_create`, `reminder_create`, `todoist_sync`,
+etc.) can be approved from the compact summary — the title/domain/friction
+tuple provides sufficient review context.
+
+Wait for user input:
+- "approve 1" or "approve abc12345" → run:
+  `python3 scripts/action_orchestrator.py --approve abc12345`
+- "reject 2" or "reject def67890" → run:
+  `python3 scripts/action_orchestrator.py --reject def67890`
+- "approve all low" → run:
+  `python3 scripts/action_orchestrator.py --approve-all-low`
+- "skip" or "next" → continue to Step 14 without acting on proposals
+- "defer 3" or "defer 3 until tomorrow" → run:
+  `python3 scripts/action_orchestrator.py --defer ghi11223 --until "tomorrow"`
+  Preset horizons: `+1h`, `+4h`, `tomorrow`, `next-session` (default).
+  Maps to `ActionExecutor.defer(action_id, until=...)` which requires an
+  explicit `until` value. `next-session` resolves to `+24h` as a sensible
+  default when the user says bare "defer" without a horizon.
+
+After each approval, show the execution result.
+If the user does not respond to proposals, continue after presenting them
+— proposals remain pending in the queue for the next session or Telegram
+approval.
+
+**Ad-hoc actions:** If the user explicitly requests an action not from the
+queue (e.g., "send email to X about Y"), present it using the §9 Action
+Proposal Format and execute via the appropriate handler script directly.
+The §9 format is for human-initiated ad-hoc requests only.
 
 WhatsApp messages: use URL scheme → `open "https://wa.me/[PHONE]?text=[ENCODED_TEXT]"`. User must manually tap Send. Never auto-send.
 

@@ -22,7 +22,7 @@ SECURITY:
 STATE MACHINE (canonical — §2.4 of specs/act.md):
   pending → approved | modifying | rejected | deferred | expired
   modifying → pending (edit done or timeout)
-  deferred → pending (defer time reached)
+  deferred → pending (defer time reached) | rejected (user explicitly rejects)
   approved → executing | cancelled
   executing → succeeded | failed
   succeeded → (reverse action queued as new PENDING, via ActionExecutor)
@@ -666,6 +666,23 @@ class ActionQueue:
         ).fetchall()
         return [self._row_to_proposal(r, privkey) for r in rows]
 
+    def find_by_prefix(
+        self, prefix: str, privkey: str | None = None
+    ) -> list[ActionProposal]:
+        """Find active (non-terminal) actions whose ID starts with *prefix*.
+
+        Used by _resolve_id to locate deferred / non-pending actions by their
+        short display prefix.  Returns an empty list when nothing matches.
+        """
+        rows = self._conn.execute(
+            """SELECT * FROM actions
+               WHERE id LIKE ? AND status NOT IN (
+                   'succeeded','failed','rejected','expired','cancelled'
+               )""",
+            (prefix + "%",),
+        ).fetchall()
+        return [self._row_to_proposal(r, privkey) for r in rows]
+
     def list_history(
         self, days: int = 7, privkey: str | None = None
     ) -> list[dict[str, Any]]:
@@ -986,7 +1003,7 @@ def _validate_transition(from_status: str, to_status: str, actor: str) -> None:
     ALLOWED: dict[str, set[str]] = {
         "pending":   {"approved", "modifying", "rejected", "deferred", "expired"},
         "modifying": {"pending"},
-        "deferred":  {"pending"},
+        "deferred":  {"pending", "rejected"},
         "approved":  {"executing", "cancelled"},
         "executing": {"succeeded", "failed"},
     }

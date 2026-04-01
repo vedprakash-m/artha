@@ -326,7 +326,12 @@ features:
   health:
     status: implemented
 
-  # ── Action Layer (specs/act.md v1.3.0) ─────────────────────────────────
+  # ── Action Layer (specs/actions-reloaded.md v1.4.0) ────────────────────
+  action_orchestrator:
+    spec: "specs/actions-reloaded.md"
+    status: implemented
+    confidence: high
+    note: "v1.4: --run/--list/--show/--approve/--reject/--defer/--approve-all-low/--expire/--health; _resolve_id finds deferred items; deferred->rejected state machine; E2E validated 750-record real pipeline"
   action_queue:
     spec: "specs/act.md §3"
     status: implemented
@@ -484,7 +489,7 @@ features:
     spec: "specs/act-reloaded.md E1"
     status: implemented
     confidence: high
-    note: "scripts/email_signal_extractor.py — 8 signal categories, Step 6.5"
+    note: "scripts/email_signal_extractor.py — 9 signal categories (RSVP, appointment, bill, form deadline, delivery, security, renewal, school action, financial alert/INR); body field scanning; 14 signals from real 30-email corpus"
   knowledge_capture:
     spec: "specs/act-reloaded.md E2"
     status: implemented

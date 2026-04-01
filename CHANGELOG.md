@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Action Layer v1.4: Orchestrator + Signal Extraction (specs/actions-reloaded.md)
+- `scripts/action_orchestrator.py`: new top-level CLI combining email signal extraction, pattern engine, AI signals, dedup, compose/propose, approve/reject/defer/expire lifecycle, and audit log into one command (`--run`, `--list`, `--show`, `--approve`, `--reject`, `--defer`, `--approve-all-low`, `--expire`, `--health`)
+- `scripts/email_signal_extractor.py`: expanded from 1-pattern to 9-category signal coverage — RSVP deadlines, appointment confirmed, bill due, form deadline (+ cancellation forms), delivery arrival (including "arriving [date]" variants), security alerts, subscription renewals, school action needed (missing assignments, surveys, events), financial alerts (INR/NEFT/UPI transactions)
+- `scripts/action_queue.py`: `find_by_prefix()` method — resolves 8-char ID prefix across all non-terminal statuses, enabling `--reject` and `--show` on deferred items; `deferred → rejected` added to state machine transitions (§2.4)
+- `scripts/action_composer.py`: `school_action_needed` remapped `email_reply → reminder_create` (eliminates spurious `thread_id` handler validation failure); added `bill_due`, `financial_alert`, `subscription_renewal` entries to `_FALLBACK_SIGNAL_ROUTING`
+- `config/signal_routing.yaml`: `school_action_needed` updated to `reminder_create`, `bill_due` friction lowered to `standard`, `financial_alert` entry added
+- `scripts/email_signal_extractor.py`: `_extract_text()` now scans `body` field in addition to `body_preview` (captures Amazon order "Arriving April 8" and other body-only content)
+- E2E validated on 7-day real pipeline data (750 records: WhatsApp, Gmail, Outlook, OneNote, HomeAssistant, RSS): 14 signals extracted, 8 unique after dedup, 4 proposals queued
+- `tests/unit/test_action_orchestrator.py`, `tests/unit/test_action_orchestrator_security.py`, `tests/integration/test_action_orchestrator.py`: full test coverage for new orchestrator (4,014 tests total, all passing)
+- `specs/actions-reloaded.md`: canonical spec for Action Layer v1.4 — now committed to repo
+
+### Fixed — Action Layer
+- `_resolve_id()` previously returned raw 8-char prefix when action was deferred, causing `transition()` to raise "Action not found"; now uses `find_by_prefix()` to search all active statuses
+- `cmd_show()` had separate duplicate prefix-matching logic; consolidated to use `_resolve_id()` — deferred items now visible via `--show`
+- State machine blocked `deferred → rejected`; adding `rejected` to allowed transitions from `deferred` enables users to discard deferred items without un-deferring first
+- Pipeline `--output` write timing issue investigated and resolved: full multi-connector run (750 records, 135s) confirmed to write atomically
+
 ### Added — Kusto Live Data Pipeline (Tier 1)
 - `scripts/kusto_runner.py`: `run_refresh_set()` batch API — runs curated golden queries (GQ-001, 002, 010, 012, 050, 051) and returns structured results for pipeline consumption
 - `scripts/work_loop.py`: Kusto provider integration — `_check_kusto_available()` in preflight, `_run_kusto_metrics()` in fetch stage, wired into `_write_domain_files_from_connector_data()`
