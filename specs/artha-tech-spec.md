@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.17.0 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.18.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.5.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.18.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer fully wired: `action_orchestrator.py` signal→compose→queue pipeline, email signal extractor (9 categories, 14+ regex patterns across `body` field), pattern engine integration, Step 12.5 in `Artha.md`, signal routing merge invariant (YAML overrides hardcoded fallback), handler-routing alignment invariant, platform-local `actions.db`, `--defer` horizons, `--show` content preview, burn-in mode. 4,014 tests. F15.20. |
 | v3.17.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1:.. |
 | v3.16.0 | 2026-03 | FW-19 Reflection Loop v1.5.0 — Full Implementation:.. |
 | v3.15.0 | 2026-03 | Work OS FW-18 Product Knowledge + FW-19 Reflection Loop (specs):.. |
@@ -166,6 +167,8 @@ Artha is a **pull-based personal intelligence system** built on four principles:
 | View scripts | `~/OneDrive/Artha/scripts/*_view.py` | Script-backed deterministic renderers: `dashboard_view.py`, `domain_view.py`, `status_view.py`, `goals_view.py` (`--scope personal/work/all`; direction:down metric bars), `items_view.py`, `scorecard_view.py`, `diff_view.py` |
 | Goal state writer | `~/OneDrive/Artha/scripts/goals_writer.py` | Deterministic YAML writer for `state/goals.md` v2.0 schema; atomic writes via `write_state_atomic()`; CLI flags for all goal fields; exit codes 0–3 |
 | Migration scripts | `~/OneDrive/Artha/scripts/migrate_state.py` | YAML front-matter schema migration DSL for state files |
+| Action orchestrator | `~/OneDrive/Artha/scripts/action_orchestrator.py` | Single CLI integration point for the Action Layer: signal→compose→queue pipeline. Commands: `--run`, `--run --mcp`, `--approve`, `--reject`, `--defer`, `--approve-all-low`, `--show`, `--list`, `--expire`, `--health`. *(ACTIONS-RELOADED v1.3.0)* |
+| Action queue | `~/.artha-local/actions.db` | Platform-local SQLite database for action proposal lifecycle (pending → approved → executed). NOT inside OneDrive workspace — avoids WAL/SHM sync corruption. Cross-machine propagation via the DUAL v1.3.0 bridge. |
 | Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Helper scripts: vault.py, backup.py, pipeline.py, etc. |
 | OneDrive sync | Native OS integration | Cross-device state sync; Mac writes, iPhone/Windows read |
 | Gmail MCP | Claude Code MCP config | Email access via OAuth (read-only) |
@@ -1464,9 +1467,13 @@ When the user asks a question outside of a catch-up:
 - iPhone queries are read-only, answered from cached state
 - Staleness = time since last state snapshot upload
 
-### 7.4 Action Execution Framework
+### 7.4 Action Execution Framework *(ACTIONS-RELOADED v1.3.0)*
 
-**Action Proposal Schema:** Every action displays: Type, Recipient, Channel, Content Preview, Trust Required, Sensitivity, Friction level. Options: Approve / Modify / Reject.
+The Action Layer is Artha's write path — converting domain intelligence (signals) into actionable proposals that users can approve, reject, or defer.
+
+#### 7.4.1 Action Proposal Schema
+
+Every action proposal contains: Type, Recipient, Channel, Content Preview, Trust Required, Sensitivity, Friction level. Options: Approve / Modify / Reject.
 
 **Trust Levels:** L0 = recommendations only. L1 = approve/modify/reject. L2 = pre-approved types auto-execute with post-hoc notification.
 
@@ -1483,6 +1490,8 @@ When the user asks a question outside of a catch-up:
 | Generate visual | Gemini Imagen | L0+ | None |
 | Archive email | Gmail MCP | L2 | Pre-approved |
 | Draft attorney email | Gmail MCP | L1+ | Always (Autonomy Floor) |
+| Reminder create | Apple Reminders / Todoist | L1+ | Approve |
+| Instruction sheet | null (guidance prose only) | L0+ | None |
 
 **Autonomy Floor (never auto-executed):** Communications sent on your behalf, financial transactions, immigration actions, actions affecting others' data.
 
@@ -1492,7 +1501,158 @@ When the user asks a question outside of a catch-up:
 
 **Visual Messaging:** Gemini Imagen generates visual → saved to `visuals/` → composed with email/WhatsApp actions → user approves. Occasions configured in `occasions.md`.
 
-**Lifecycle:** PROPOSE → REVIEW → EXECUTE → LOG. All actions (approved, modified, rejected) logged to audit.md.
+**Lifecycle:** PROPOSE → REVIEW → EXECUTE → LOG. All actions (approved, modified, rejected) logged to `state/audit.md` and `actions.db`.
+
+#### 7.4.2 Orchestrator Architecture (Signal→Proposal Pipeline)
+
+All action proposal generation flows through `scripts/action_orchestrator.py` — the single integration point that wires signal producers to the action queue.
+
+```
+pipeline.py ─→ JSONL to stdout + tee to tmp/pipeline_output.jsonl
+                                  │
+                         AI catch-up workflow (Steps 5–12)
+                                  │
+                         Step 12.5 (AI runs CLI)
+                                  ▼
+               ┌─────────────────────────────────────┐
+               │  action_orchestrator.py --run        │
+               │                                      │
+               │  1. Load tmp/pipeline_output.jsonl   │
+               │  2. email_signal_extractor.extract() │
+               │  3. pattern_engine.evaluate()        │
+               │  4. Deduplicate signals              │
+               │  5. Pre-enqueue handler validation   │
+               │  6. ActionComposer.compose() each    │
+               │  7. ActionExecutor.propose_direct()  │
+               │  8. Print summary to stdout          │
+               │  9. Persist signals → tmp/signals.jsonl │
+               └──────────────┬──────────────────────┘
+                              │
+                   AI embeds § PENDING ACTIONS in briefing
+                   User says "approve 1" / "reject 2" / "approve all low"
+                              │
+               action_orchestrator.py --approve <id>
+                   ActionExecutor.approve() → handler.execute()
+                   Result logged to actions.db + state/audit.md
+```
+
+**Tier 1 (MCP data path):** When `artha_fetch_data()` is used in Step 4 (no pipeline JSONL), run with `--mcp` flag to skip email signal extraction — pattern engine still runs against state files:
+```bash
+python3 scripts/action_orchestrator.py --run --mcp
+```
+
+**Tier 2 (pipeline data path):** `pipeline.py --output tmp/pipeline_output.jsonl` writes a fresh snapshot per run via atomic `Path.replace()` (no partial reads; no stale accumulation). The orchestrator loads this file for email signal extraction.
+
+#### 7.4.3 Signal Producers
+
+| Producer | Module | Coverage |
+|----------|--------|----------|
+| Email signal extractor | `scripts/email_signal_extractor.py` | 9 categories: `bill_due`, `event_rsvp_needed`, `school_action_needed`, `delivery_arriving`, `form_deadline`, `financial_alert`, `security_alert`, `subscription_renewal`, `appointment_confirmed`. Scans `body` field (falls back to `body_preview`). Skips `marketing: true` records. |
+| Pattern engine | `scripts/pattern_engine.py` | ~5 active types: `goal_stale`, `maintenance_due`, `document_expiring`, `review_pending`, `health_check_overdue`. Evaluates `config/patterns.yaml` against state files. Per-pattern cooldowns in `state/pattern_engine_state.yaml`. |
+
+**Signal coverage gap (V1.0):** `_FALLBACK_SIGNAL_ROUTING` defines 50+ signal types but only ~13 have active producers in V1.0. The remaining types are pre-wired for future producer expansion — adding a pattern to `config/patterns.yaml` activates a signal type with no code changes.
+
+#### 7.4.4 Signal Routing: YAML-Fallback Merge Invariant
+
+`action_composer.py`'s `_load_signal_routing()` **merges** `config/signal_routing.yaml` entries **over** the hardcoded `_FALLBACK_SIGNAL_ROUTING` base. YAML entries override individual keys; they do NOT replace the full dict. This ensures all 50+ hardcoded signal types route correctly even when `signal_routing.yaml` has only a subset of entries.
+
+```python
+def _load_signal_routing() -> dict[str, dict]:
+    base = dict(_FALLBACK_SIGNAL_ROUTING)
+    yaml_routing = load_config("signal_routing")  # may be partial
+    if yaml_routing:
+        base.update(yaml_routing)  # YAML overrides, not replaces
+    return base
+```
+
+#### 7.4.5 Handler–Action Type Alignment Invariant
+
+`_ALLOWED_ACTION_TYPES` (in `action_composer.py`) and `_FALLBACK_ACTION_MAP` (in `action_executor.py`) MUST remain in sync. Every allowed type must have a handler module. Validate with:
+```bash
+python3 -c "from scripts.action_composer import _ALLOWED_ACTION_TYPES; \
+from scripts.action_executor import _FALLBACK_ACTION_MAP; \
+missing = _ALLOWED_ACTION_TYPES - set(_FALLBACK_ACTION_MAP); \
+assert not missing, f'Missing handlers: {missing}'"
+```
+
+#### 7.4.6 Platform-Local Database
+
+`actions.db` is stored outside the cloud-synced workspace to prevent SQLite WAL/SHM corruption from OneDrive sync:
+
+| Platform | Path |
+|----------|------|
+| macOS | `~/.artha-local/actions.db` |
+| Windows | `%LOCALAPPDATA%\Artha\actions.db` |
+| Linux | `$XDG_DATA_HOME/artha/actions.db` |
+
+The DB contains only action queue state — all intelligence (goals, domain state, financials) remains in Markdown. Bounded by `max_queue_size: 1000` and `archive_after_days: 30`. Human-readable audit trail in cloud-synced `state/audit.md`. Cross-machine propagation via the DUAL v1.3.0 bridge (§3.11).
+
+#### 7.4.7 Orchestrator CLI Reference
+
+| Command | Purpose |
+|---------|--------|
+| `--run` | Signal→compose→queue (core loop) |
+| `--run --mcp` | Skip email signals; pattern engine only (MCP Tier 1) |
+| `--approve <id>` | Execute an approved proposal |
+| `--reject <id> [--reason]` | Reject a proposal |
+| `--defer <id> [--until]` | Defer: `+1h` \| `+4h` \| `tomorrow` \| `next-session` (default +24h) |
+| `--approve-all-low` | Batch-approve all low-friction proposals |
+| `--show <id>` | Expanded preview — required before approving content-bearing actions (`email_send`, `email_reply`, `whatsapp_send`) |
+| `--list` | Print all pending proposals |
+| `--expire` | Remove proposals past `expires_at` |
+| `--health` | Handler import check + queue stats |
+
+**Exit codes:** 0=ok, 1=partial failure, 3=full failure. Always non-blocking — catch-up never fails due to action layer errors.
+
+**Kill switch:** `harness.actions.enabled: false` in `config/artha_config.yaml` → instant full disable, no errors. Catch-up degrades to read-only intelligence behavior.
+
+**Burn-in mode:** `harness.actions.burn_in: true` → proposals appear under `[DEBUG] Proposed Actions` at the end of the briefing (not the main `§ PENDING ACTIONS` section). Use for 5 sessions to validate signal quality before full integration.
+
+#### 7.4.8 Reliability Hardening
+
+| Mechanism | Detail |
+|-----------|--------|
+| Import-level handler check | `_handler_health_check()` at `--run` startup — unavailable action types suppressed for the session |
+| Pre-enqueue validation | `_validate_proposal_handler()` runs `handler.validate(proposal)` before enqueue — catches structural errors before the user ever approves |
+| Graceful degradation | No pipeline JSONL → pattern engine still runs; email signals=0. Catch-up never fails. |
+| Rate limiting | `ActionRateLimiter` enforces per-type limits from `config/actions.yaml` (e.g., `email_send: max 20/hour`) |
+| Timeout protection | 60s wall-clock limit on `--run`; per-handler timeout on `--approve` |
+| SQLite WAL | `PRAGMA journal_mode=WAL` + `busy_timeout=5000` on `actions.db` |
+
+#### 7.4.9 Security Invariants
+
+| Invariant | Mechanism | Test |
+|-----------|-----------|------|
+| Handler allowlist | `_HANDLER_MAP` in `actions/__init__.py` | `test_handler_allowlist_security` |
+| PII double-scan | `_pii_scan_params()` at enqueue AND execute | `test_pii_guard_blocks_at_enqueue` |
+| Autonomy floor | `TrustEnforcer.check()` — hardcoded, not bypassable via config | `test_autonomy_floor_not_bypassable` |
+| Human gate | All handlers require `approve()` before `execute()` | `test_no_auto_execute` |
+| Audit trail | Every state transition logged to DB + `state/audit.md` | `test_audit_completeness` |
+| Signal isolation | V1.0: deterministic code only (no AI-emitted signals). V1.1: AI signals gated by `harness.actions.ai_signals: false` default + mandatory `friction: high` escalation | Config flag + design invariant |
+| Encrypted params at rest | Sensitive proposal parameters encrypted in `actions.db` with age | `test_encryption_at_rest` |
+| Output path safety | `pipeline.py --output` validated to be inside `tmp/` only | `test_output_path_traversal_blocked` |
+| No network in orchestrator | `--run` makes zero network calls; network only during handler `--approve` execution | Architecture invariant |
+
+#### 7.4.10 Operational Telemetry
+
+Every `--run` emits a structured log line to `state/audit.md`:
+```
+[2026-04-01T09:00:00Z] ACTION_ORCHESTRATOR | signals:4 suppressed:1 queued:3 expired:0 depth:5 errors:0
+```
+
+**`--health` output:**
+```
+═══ ACTION LAYER HEALTH ════════════════════════════════════
+Queue: 5 pending, 2 deferred, 0 expired-uncleared
+Handlers: 11/13 healthy (apple_reminders_sync: macOS only, todoist_sync: no API token)
+Bridge: last sync 47m ago (healthy)
+Config: actions.enabled=true, ai_signals=false, burn_in=false
+DB: ~/.artha-local/actions.db (WAL, 4 tables, 847 rows)
+Approval funnel (30d): 42 proposed → 31 approved → 28 succeeded → 3 failed → 8 expired → 3 rejected
+════════════════════════════════════════════════════════════
+```
+
+**Key counters:** `signals_detected`, `proposals_queued`, `proposals_suppressed` (cross-session dedup), `proposals_expired`, `queue_depth`, `approvals_total`, `approvals_succeeded`, `approvals_failed`, `rejections_total`, `deferrals_total`.
 
 ### 7.5 Bootstrap Command Workflow *(v2.0)*
 
