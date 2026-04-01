@@ -1,7 +1,7 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.6 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.7 | **Status**: Draft | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.5.0, Tech Spec v3.17.0
 
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.7 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 UX — §9 Action Proposals rewritten with queue-backed interaction model: `§ PENDING ACTIONS` briefing section, numbered proposal list with IDs and friction indicators, `--show` content preview requirement for email actions, `--defer` with preset horizons (`+1h`, `tomorrow`, `next-session`), `--approve-all-low` batch command, `--health` output design, burn-in debug section. |
 | v3.6 | 2026-03-28 | SKILLS-RELOADED v2.5 UX.. |
 | v3.5 | 2026-03-28 | GOALS-RELOADED v6.3 UX — Goal Intelligence Phase 1:.. |
 | v3.3 | 2026-03 | FW-19 Reflection Loop UX (§23.14):.. |
@@ -769,27 +770,124 @@ Active sprint shown in Goal Pulse: target, progress bar, pace (needed vs actual)
 
 Appears in Kids section when any milestone ≤90 days away. Milestones color-coded: 🔴 ≤14d, 🟠 ≤30d, 🟡 ≤90d, ✅ complete. Always shows NEXT ACTION. Application year as context anchor. Displayed during application season (Aug-Mar senior year).
 
-## 9. Action Proposals — Approval UX
+## 9. Action Proposals — Approval UX *(ACTIONS-RELOADED v1.3.0)*
 
-### 9.1 Proposal Display Format
+### 9.1 Briefing Embed — `§ PENDING ACTIONS`
 
-Every action shows: type, recipient, channel, full content preview, trust level, friction classification *(v1.2)*, source domain. Options: [approve] [edit] [skip] [skip all].
+The orchestrator (`scripts/action_orchestrator.py --list`) emits a numbered
+block the AI embeds verbatim in the briefing at catch-up Step 12.5:
 
-### 9.2 Approval Patterns
+```
+═══ ACTION ORCHESTRATOR ═══════════════════════════════════
+Signals detected: 4 (email: 3, pattern: 1)
+Proposals queued: 3 (1 duplicate suppressed)
+Expired: 0
 
-Single action: approve → "✅ Sent. Logged to audit.md." Edit: user specifies change → Artha shows updated preview → approve/edit more/skip. Batch approval for low-friction items: "approve all" for calendar additions, visual generation.
+─── PENDING ACTIONS (3) ───────────────────────────────────
+1. [abc12345] 🟠 email_reply | finance | Reply: Property tax notice
+   Friction: high | Trust: 1 | Expires: 2026-04-03T17:00Z
+2. [def67890] 🟢 calendar_create | calendar | Add: Parent-teacher meeting
+   Friction: low | Trust: 1 | Expires: 2026-04-03T17:00Z
+3. [ghi11223] 🟢 reminder_create | shopping | Reminder: Amazon delivery Tue
+   Friction: low | Trust: 0 | Expires: 2026-04-03T17:00Z
 
-### 9.3 Sequencing
+Commands: approve <id>, reject <id>, approve-all-low, defer <id> [--until "+1h"|"tomorrow"|"next-session"]
+════════════════════════════════════════════════════════════
+```
 
-Order: 1. Critical/urgent (immigration, finance), 2. Communications (emails, WhatsApp by recipient), 3. Calendar (batched), 4. Informational, 5. Teams Join *(v1.5)* (≤15min imminent meetings). After last action: summary of approved/skipped.
+Context-window guard: truncate display at 10 pending proposals; show count
+of additional hidden proposals with `--list --limit 10` and note "N more —
+use `--list --all` to see all."
 
-### 9.4 WhatsApp Action UX
+### 9.2 Non-Content vs Content-Bearing Actions
 
-WhatsApp uses OS URL scheme — opens with pre-filled message, user must tap Send. Note displayed: "This will open WhatsApp with pre-filled message. You'll need to tap Send." Cannot confirm delivery (outside Artha's view).
+**Non-content actions** (`calendar_create`, `reminder_create`,
+`todoist_sync`, etc.) may be approved from the compact numbered summary —
+the title / domain / friction tuple provides sufficient review context.
 
-### 9.5 Instruction-Sheet Action Type *(v1.9)*
+**Content-bearing actions** (`email_send`, `email_reply`, `whatsapp_send`,
+and any future messaging handler) require full expanded preview before
+approval. Before presenting these for approval the AI MUST:
 
-Two actions in `config/actions.yaml` use `type: instruction_sheet` — they generate guidance prose rather than executing code. Handler is null; no network calls, no file writes.
+1. Run `python3 scripts/action_orchestrator.py --show <id>` and display
+   the full expanded preview:
+
+```
+═══ ACTION DETAIL ══════════════════════════════════════════════
+ID:       abc12345
+Type:     email_reply
+Domain:   finance
+Friction: high
+Trust:    1
+Expires:  2026-04-03T17:00:00+00:00
+
+Title:    Reply: Property tax notice from County Assessor
+
+─── CONTENT PREVIEW ──────────────────────────────────────────
+To:       assessor@county.gov
+Subject:  Re: Property Tax Assessment Notice
+Body:
+  Dear Assessor,
+
+  Thank you for the notice regarding...
+  [body text, max 80 lines; truncated with "... (truncated)" if longer]
+════════════════════════════════════════════════════════════
+```
+
+2. Offer: `"approve 1"` (as-is), `"approve 1 with edits"` (AI applies
+   edits then re-queues), or `"reject 1"`.
+
+If decryption fails (key unavailable), print:
+`"🔒 Parameters encrypted — decrypt from Mac terminal to preview."`
+
+### 9.3 Approval Command Reference
+
+| User says | Artha runs |
+|-----------|-----------|
+| "approve 1" or "approve abc12345" | `--approve abc12345` |
+| "reject 2" or "reject def67890" | `--reject def67890` |
+| "approve all low" | `--approve-all-low` |
+| "skip" or "next" | Continue without acting; proposals remain pending |
+| "defer 3" | `--defer ghi11223 --until "next-session"` (default = +24h) |
+| "defer 3 until +1h" | `--defer ghi11223 --until "+1h"` |
+| "defer 3 until tomorrow" | `--defer ghi11223 --until "tomorrow"` |
+
+**Defer horizons:**
+
+| Horizon | Resolves to |
+|---------|------------|
+| `+1h` | 1 hour from now |
+| `+4h` | 4 hours from now |
+| `tomorrow` | Next day 09:00 local |
+| `next-session` | +24h (default when bare "defer" is used) |
+
+After each approval show the execution result. If no response, continue
+to Step 14 — proposals remain pending for the next session or Telegram
+approval.
+
+### 9.4 Sequencing
+
+High-friction proposals first (require explicit review), then standard,
+then low-friction (batch-approvable). Within each tier: oldest first
+(earliest `created_at`). Low-friction proposals may be batch-approved with
+"approve all low" (`--approve-all-low`).
+
+Previous ordering (*v1.5*): Critical/urgent → Communications → Calendar →
+Informational → Teams Join. The friction-tier ordering supersedes this for
+queue-backed proposals; domain-priority remains a signal-weighting input,
+not a display-sort.
+
+### 9.5 WhatsApp Action UX
+
+WhatsApp uses OS URL scheme — opens with pre-filled message, user must tap
+Send. Note displayed: "This will open WhatsApp with pre-filled message.
+You'll need to tap Send." Cannot confirm delivery (outside Artha's view).
+
+### 9.6 Instruction-Sheet Action Type *(v1.9)*
+
+Two actions in `config/actions.yaml` use `type: instruction_sheet` — they
+generate guidance prose rather than executing code. Handler is null; no
+network calls, no file writes.
 
 ```
   ┌──────────────────────────────────────────────────────────────┐
@@ -810,6 +908,17 @@ Two actions in `config/actions.yaml` use `type: instruction_sheet` — they gene
 - Price increase detected → "Propose: cancel or justify continued value"
 - Trial-to-paid conversion upcoming → "Propose: cancel or upgrade decision"
 - Trial already converted without decision → "Flag for immediate review" (🟠 Urgent)
+
+### 9.7 Ad-hoc Actions (Human-Initiated)
+
+When the user explicitly requests an action not from the queue (e.g.,
+"send email to X about Y"), the action bypass the orchestrator queue and
+is presented inline using the legacy `━━ ACTION PROPOSAL ━━` format,
+then executed via the appropriate handler script directly.
+
+This format is **for human-initiated ad-hoc requests only** — system-
+detected proposals always flow through `actions.db` and appear in
+`§ PENDING ACTIONS`.
 
 ## 10. Slash Commands — Command Palette
 
