@@ -11,6 +11,11 @@ import pytest
 _ARTHA_DIR = Path(__file__).resolve().parent.parent.parent
 _CONFIG_FILE = _ARTHA_DIR / "config" / "artha_config.yaml"
 
+pytestmark = pytest.mark.skipif(
+    not _CONFIG_FILE.exists(),
+    reason="config/artha_config.yaml not present (gitignored personal config — skip in CI)",
+)
+
 
 @pytest.fixture(scope="module")
 def cfg():
