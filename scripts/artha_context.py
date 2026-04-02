@@ -167,7 +167,7 @@ class ArthaContext(BaseModel):
     steps_executed: list[int] = []
 
     # Session timing
-    session_start: datetime = None  # type: ignore[assignment]
+    session_start: datetime | None = None
 
     if _PYDANTIC_AVAILABLE:
         model_config = {"arbitrary_types_allowed": True}
