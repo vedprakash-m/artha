@@ -549,6 +549,45 @@ _TOK_ARTIFACT       = 80
 _TOK_EPISODE        = 50
 _TOK_KUSTO          = 40
 
+# ---------------------------------------------------------------------------
+# Data Quality Weights (spec: data-quality-gate.md)
+# Priority order (non-negotiable): Accuracy > Freshness > Completeness
+# These weights are used by assess_quality() and context_for() to compute
+# composite quality scores. Domain-aware: calendar/comms/incidents are
+# freshness-dominated; decisions/accomplishments are accuracy-dominated.
+# ---------------------------------------------------------------------------
+_DQ_WEIGHT_DEFAULT      = {"A": 0.5, "F": 0.3, "C": 0.2}
+_DQ_WEIGHT_CALENDAR     = {"A": 0.1, "F": 0.8, "C": 0.1}
+_DQ_WEIGHT_COMMS        = {"A": 0.1, "F": 0.8, "C": 0.1}
+_DQ_WEIGHT_INCIDENTS    = {"A": 0.2, "F": 0.7, "C": 0.1}
+_DQ_WEIGHT_DECISIONS    = {"A": 0.7, "F": 0.1, "C": 0.2}
+_DQ_WEIGHT_ACCOMPLISHMENTS = {"A": 0.6, "F": 0.1, "C": 0.3}
+_DQ_WEIGHT_GOLDEN_QUERIES  = {"A": 0.6, "F": 0.2, "C": 0.2}
+_DQ_WEIGHT_PEOPLE       = {"A": 0.5, "F": 0.3, "C": 0.2}
+_DQ_WEIGHT_PRODUCTS     = {"A": 0.6, "F": 0.1, "C": 0.3}
+
+_DQ_DOMAIN_WEIGHTS = {
+    "default":          _DQ_WEIGHT_DEFAULT,
+    "calendar":         _DQ_WEIGHT_CALENDAR,
+    "comms":            _DQ_WEIGHT_COMMS,
+    "incidents":        _DQ_WEIGHT_INCIDENTS,
+    "decisions":        _DQ_WEIGHT_DECISIONS,
+    "accomplishments":  _DQ_WEIGHT_ACCOMPLISHMENTS,
+    "golden_queries":   _DQ_WEIGHT_GOLDEN_QUERIES,
+    "people":           _DQ_WEIGHT_PEOPLE,
+    "products":         _DQ_WEIGHT_PRODUCTS,
+}
+
+# Minimum confidence to include in context assembly.
+# Entities below this threshold are dropped to preserve accuracy.
+_DQ_MIN_CONFIDENCE      = 0.5
+
+# Quality gate thresholds (composite Q score)
+_DQ_GATE_PASS           = 0.7   # Serve directly
+_DQ_GATE_WARN           = 0.5   # Serve with staleness caveat
+_DQ_GATE_STALE_SERVE    = 0.3   # Serve stale + caveat (no blocking heal)
+# Below 0.3 = REFUSE: "I don't have reliable data for this"
+
 
 # ---------------------------------------------------------------------------
 # Dataclasses (spec §6.2)
