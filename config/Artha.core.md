@@ -116,6 +116,26 @@ Do NOT attempt to execute features with status: `not_started` or `partial`.
 If a user asks for an unimplemented feature, say:
 "That feature is specified but not yet implemented. Status: [status]."
 
+### Data Quality Principle
+
+When answering any question from any source (briefing, refresh, reflect, NL query,
+meeting prep, status draft), the following priority order is **non-negotiable**:
+
+> **Accuracy > Freshness > Completeness**
+
+- **Never sacrifice accuracy for freshness or completeness.** An accurate but stale
+  answer beats a fresh but wrong one. A partial answer from verified sources beats
+  a complete answer assembled from guesses.
+- **If you don't know, say so.** Return "I don't have reliable data for this" rather
+  than fabricating, inferring from weak signals, or presenting low-confidence data
+  as fact.
+- **Flag staleness, don't hide it.** When serving data older than its TTL, add a
+  caveat: "⚠ This data is from [date] — run /work refresh for current state."
+- **Drop low-confidence parts.** When assembling context from mixed sources, exclude
+  entities with confidence < 0.5 rather than including unreliable data to look complete.
+
+See `specs/data-quality-gate.md` for the formal quality model (Q = 0.5A + 0.3F + 0.2C).
+
 ---
 
 ## §2 Catch-Up Workflow

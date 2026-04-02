@@ -1,3 +1,4 @@
+# pii-guard: ignore-file — test fixtures are 100% synthetic; no real PII (DD-5)
 """tests/unit/test_eval_workflow.py — Integration smoke tests for EV-7 and EV-8.
 
 Tests:
