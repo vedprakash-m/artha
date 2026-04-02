@@ -18,7 +18,7 @@ jobs:
           python-version: "3.11"
       - name: Syntax check all Python files
         run: |
-          find scripts/ -name "*.py" ! -path "*/__pycache__/*" ! -path "*/.archive/*" \
+          find scripts/ tests/ -name "*.py" ! -path "*/__pycache__/*" ! -path "*/.archive/*" \
             -exec python -m py_compile {} \;
           python -m py_compile artha.py
           echo "✓ Syntax OK"
@@ -93,8 +93,15 @@ jobs:
           pip install -r scripts/requirements.txt
           pip install pytest pytest-mock
 
+      - name: Debug environment
+        run: |
+          python --version
+          python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE _t USING fts5(x)'); print('FTS5: OK')" || echo 'FTS5: NOT AVAILABLE'
+          python -c "import sqlite3; print('SQLite:', sqlite3.sqlite_version)"
+          python -c "import pydantic; print('pydantic:', pydantic.__version__)"
+
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+        run: python -m pytest tests/ -v --tb=long
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"

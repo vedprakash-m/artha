@@ -5,6 +5,7 @@ Ref: specs/kb-graph-design.md §6, §11
 """
 from __future__ import annotations
 
+import sqlite3 as _sqlite3
 import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -15,6 +16,23 @@ _ARTHA   = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS = _ARTHA / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
+
+
+def _fts5_available() -> bool:
+    """Return True if the SQLite build includes the FTS5 extension."""
+    try:
+        conn = _sqlite3.connect(":memory:")
+        conn.execute("CREATE VIRTUAL TABLE _fts5_probe USING fts5(x)")
+        conn.close()
+        return True
+    except _sqlite3.OperationalError:
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _fts5_available(),
+    reason="SQLite FTS5 extension not available in this build",
+)
 
 from lib.knowledge_graph import (  # noqa: E402
     KnowledgeGraph,
