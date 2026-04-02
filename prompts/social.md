@@ -593,6 +593,26 @@ If output is non-empty, inject it into the briefing as:
 Place this section AFTER the BY DOMAIN section and BEFORE the GOAL PULSE section.
 For flash briefings: show only ✅ try-worthy signals (1 line each, max 2).
 
+**Newsletter contribution suggestions (monthly, when suggestions exist):**
+Run: `python3 -c "from scripts.briefing_adapter import render_newsletter_suggestions; print(render_newsletter_suggestions())"`
+If output is non-empty, append it immediately after the AI Radar section:
+```
+[output from render_newsletter_suggestions()]
+```
+These suggestions surface when radar detects signals matching a configured newsletter's
+editorial profile and the user's areas of expertise. Configured in
+`config/artha_config.yaml → pr_manager.ai_trend_radar.newsletter_targets`.
+
+**LinkedIn content idea suggestions (when suggestions exist):**
+Run: `python3 -c "from scripts.briefing_adapter import render_linkedin_suggestions; print(render_linkedin_suggestions())"`
+If output is non-empty, append it immediately after the newsletter suggestions section:
+```
+[output from render_linkedin_suggestions()]
+```
+These surface trending external topics where the user's practitioner voice adds unique
+value. Opposite of the newsletter — external/public framing is the goal. Configured in
+`config/artha_config.yaml → pr_manager.ai_trend_radar.linkedin_targets`.
+
 **Daily briefing** (only when a moment has convergence_score ≥ 0.8):
 Read `tmp/content_moments.json`. If exists and has moments with `above_daily_threshold: true`:
 ```

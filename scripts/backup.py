@@ -480,6 +480,14 @@ def backup_snapshot(registry: list, today: "_date_type | None" = None) -> int:
         except SystemExit:
             log("AUTO_VALIDATE_FAILED | non_fatal | snapshot_was_created_successfully")
 
+    # KB database backup (non-fatal) — runs after prune + validate
+    try:
+        from lib.knowledge_graph import KnowledgeGraph  # noqa: PLC0415
+        KnowledgeGraph().backup(tier=tier)
+        log(f"KB_BACKUP_OK | tier: {tier}")
+    except Exception as kb_exc:
+        log(f"KB_BACKUP_FAILED | tier: {tier} | error: {kb_exc}")
+
     return backed_up
 
 

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 import sys
 import time
 from datetime import datetime, timezone
@@ -212,6 +214,10 @@ def run(
     if not dry_run:
         _append_run_log(run_record, artha_dir)
 
+    # Step 6: Log digest (EV-8) — non-blocking, gated by harness.eval.log_digest.enabled
+    if not dry_run:
+        _run_log_digest(artha_dir)
+
     return run_record
 
 
@@ -219,7 +225,128 @@ def run(
 # Sub-commands
 # ---------------------------------------------------------------------------
 
-def rebuild_self_model(artha_dir: Path) -> bool:
+def _is_log_digest_enabled(artha_dir: Path) -> bool:
+    """Check config flag harness.eval.log_digest.enabled."""
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
+        return bool(
+            cfg.get("harness", {})
+            .get("eval", {})
+            .get("log_digest", {})
+            .get("enabled", False)
+        )
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _write_eval_alerts(new_anomalies: list[dict], artha_dir: Path) -> None:
+    """Append new anomalies to state/eval_alerts.yaml (with R8 deduplication).
+
+    - Dedup window: 14 days (same code+connector = skip)
+    - Escalation: unacked P1 alerts > 24h get escalated: true
+    - Capacity: keeps last 20 entries (config: harness.eval.alerts.max_entries)
+    """
+    try:
+        import yaml  # type: ignore[import]
+    except ImportError:
+        return
+
+    alerts_path = artha_dir / "state" / "eval_alerts.yaml"
+    now = datetime.now(timezone.utc)
+    dedup_cutoff = now - timedelta(days=14)
+
+    # Load existing alerts
+    existing: list[dict] = []
+    if alerts_path.exists():
+        try:
+            raw = alerts_path.read_text(encoding="utf-8")
+            loaded = yaml.safe_load(raw) or {}
+            existing = loaded.get("alerts", [])
+        except Exception:  # noqa: BLE001
+            existing = []
+
+    # Escalate unacked P1s older than 24h
+    for alert in existing:
+        if alert.get("severity") == "P1" and not alert.get("acked") and not alert.get("escalated"):
+            ts_str = alert.get("detected_at", "")
+            try:
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if (now - ts).total_seconds() > 86400:
+                    alert["escalated"] = True
+            except (ValueError, TypeError):
+                pass
+
+    # R8 dedup: build set of (code, connector) seen within 14d
+    recent_keys: set[tuple[str, str]] = set()
+    for alert in existing:
+        ts_str = alert.get("detected_at", "")
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= dedup_cutoff:
+                recent_keys.add((alert.get("code", ""), alert.get("connector", "")))
+        except (ValueError, TypeError):
+            pass
+
+    # Append new non-duplicate anomalies
+    for anomaly in new_anomalies:
+        key = (anomaly.get("code", ""), anomaly.get("connector", ""))
+        if key in recent_keys:
+            continue
+        existing.append({
+            **anomaly,
+            "detected_at": now.isoformat(),
+            "acked": False,
+            "escalated": False,
+        })
+        recent_keys.add(key)
+
+    # Capacity enforcement (default: 20)
+    max_entries = 20
+    existing = existing[-max_entries:]
+
+    # Atomic write
+    (artha_dir / "state").mkdir(exist_ok=True)
+    tmp_fd, tmp_path_str = tempfile.mkstemp(dir=artha_dir / "state", prefix=".eval_alerts-", suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            yaml.dump({"alerts": existing}, fh, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        os.replace(tmp_path_str, alerts_path)
+    except Exception:  # noqa: BLE001
+        try:
+            os.unlink(tmp_path_str)
+        except OSError:
+            pass
+
+
+def _run_log_digest(artha_dir: Path) -> None:
+    """Run log digest, write tmp/log_digest.json, update eval_alerts.yaml.
+
+    Non-blocking — failures are silently swallowed after logging to stderr.
+    """
+    if not _is_log_digest_enabled(artha_dir):
+        return
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "log_digest", _SCRIPTS_DIR / "log_digest.py"
+        )
+        mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        digest = mod.build_digest()
+        mod.write_digest(digest)
+        anomalies = digest.get("anomalies", [])
+        if anomalies:
+            _write_eval_alerts(anomalies, artha_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[log_digest] non-fatal error: {exc}", file=sys.stderr)
+
+
+
     """Rebuild state/self_model.md from existing memory.md + health-check.md.
 
     Idempotent and safe to run at any time.  Does not re-extract facts.

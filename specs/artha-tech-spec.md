@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.18.0 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.19.0 | **Status**: Active Development | **Date**: March 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.5.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.19.0 | 2026-04 | Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS): `scripts/eval_runner.py`, `scripts/eval_scorer.py`, `scripts/lib/metric_store.py`, `scripts/correction_feeder.py`, `scripts/log_digest.py`, `scripts/lib/knowledge_graph.py`, `scripts/kb_bootstrap.py`. Closes 10 observability gaps (G1–G10). 127 eval tests. `.gitignore` hardened: machine-specific conflict-copy patterns replaced with generic `state/*.age`. |
 | v3.18.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer fully wired: `action_orchestrator.py` signal→compose→queue pipeline, email signal extractor (9 categories, 14+ regex patterns across `body` field), pattern engine integration, Step 12.5 in `Artha.md`, signal routing merge invariant (YAML overrides hardcoded fallback), handler-routing alignment invariant, platform-local `actions.db`, `--defer` horizons, `--show` content preview, burn-in mode. 4,014 tests. F15.20. |
 | v3.17.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1:.. |
 | v3.16.0 | 2026-03 | FW-19 Reflection Loop v1.5.0 — Full Implementation:.. |
@@ -4764,7 +4765,162 @@ Feature flag: `enhancements.work_os.reflect.enabled: false` by default. No new e
 
 ---
 
-*Artha Tech Spec v3.16.0 — End of Document*
+## 21. Observability & Evaluation Framework *(v1.4.0)*
+
+Closes the feedback loop on briefing quality by measuring, scoring, and learning from every catch-up. Without this layer, Artha is a black box — smart prompts with no signal on whether they actually work.
+
+### 21.1 Structural Gaps Addressed
+
+Ten observable quality gaps (G1–G10) are tracked and closed:
+
+| ID | Gap | Metric |
+|----|-----|--------|
+| G1 | Missed actionable emails | False-negative rate per domain |
+| G2 | Over-alerting / noise | False-positive alert rate |
+| G3 | State staleness | Time since last update per domain |
+| G4 | Goal drift undetected | Leading indicator miss rate |
+| G5 | Correction not learned | Re-occurrence rate after correction |
+| G6 | Action proposals not acted | Approval / expiry ratio |
+| G7 | Cross-domain signal missed | Compound signal detection rate |
+| G8 | Briefing too long / overwhelming | Completion proxy (calibration answer rate) |
+| G9 | Wrong compression level chosen | Flash/Standard/Deep mismatch flag |
+| G10 | Skill degradation unpredicted | Skill health counter trend |
+
+### 21.2 Architecture
+
+```
+catch-up run
+    │
+    ▼
+scripts/eval_runner.py        ← orchestrates eval harness per run
+    │   └─ structured briefing output (BriefingOutput schema)
+    │   └─ calibration answers (accepted / corrected)
+    │
+    ▼
+scripts/eval_scorer.py        ← computes per-domain accuracy scores
+    │   accuracy = accepted / (accepted + corrected) per domain
+    │   rolling 7-day + 30-day averages stored in MetricStore
+    │
+    ▼
+scripts/lib/metric_store.py   ← SQLite-backed time-series store
+    │   Tables: run_metrics, domain_scores, skill_health
+    │   Location: ~/.artha-local/eval.db (platform-local, never committed)
+    │
+    ▼
+scripts/log_digest.py         ← digest last-N runs into summary
+    │   Outputs: accuracy table, gap trend, divergence warnings
+    │
+    ▼
+scripts/correction_feeder.py  ← turns user corrections → memory.md entries
+        Correction schema: {domain, field, old_value, new_value, source_step}
+        Written to state/memory.md Corrections section
+        Triggers re-evaluation of relevant G5 (correction retention) metric
+```
+
+### 21.3 Phases
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| P1 | Structured output capture + schema validation | Complete |
+| P2 | Calibration-answer accuracy scoring per domain | Complete |
+| P3 | Correction→memory pipeline (G5 closure) | Complete |
+| P4 | Skill health integration (G10) | Complete |
+| P5 | Cross-run gap trend dashboard via `/eval` | In progress |
+
+### 21.4 Key Invariants
+
+- Eval DB (`~/.artha-local/eval.db`) is platform-local and never committed to git.
+- `eval_runner.py` is non-blocking: catch-up never fails due to eval errors (all eval ops are wrapped in try/except).
+- Accuracy scores feed into `state/health-check.md → Accuracy Pulse Data` section each run.
+- `correction_feeder.py` writes only to `state/memory.md` — never modifies domain state files directly.
+- `metric_store.py` prunes records older than 90 days automatically.
+
+### 21.5 Test Coverage
+
+127 tests across `tests/eval/` and `tests/unit/test_eval_*.py` files. Key test files:
+
+| File | Tests | Coverage |
+|------|-------|----------|
+| `test_eval_runner_accuracy.py` | 18 | Accuracy math, rolling averages |
+| `test_eval_scorer.py` | 15 | Scorer output schema, edge cases |
+| `test_eval_workflow.py` | 22 | End-to-end harness flow |
+| `test_correction_feeder.py` | 12 | Correction schema, memory write |
+| `test_metric_store.py` (via `test_knowledge_graph.py`) | 14 | MetricStore CRUD, pruning |
+| `test_log_digest.py` | 11 | Digest output, gap detection |
+| `test_self_model_feedback.py` | 15 | Self-model update triggers |
+| `test_outcome_signals.py` | 20 | Signal → metric mapping |
+
+---
+
+## 22. Knowledge Graph Architecture (Work OS) *(v1.0)*
+
+The Work OS knowledge layer stores a structured, queryable graph of entities — people, projects, systems, decisions, and their relationships — extracted from the work briefing pipeline. Unlike flat Markdown state files, the graph enables traversal queries: "who are the stakeholders of the project currently at risk?" or "which system is shared between two active work streams?"
+
+### 22.1 Design Principles
+
+1. **Derived, not authoritative.** The graph is populated from `state/work/*.md` and briefing pipeline outputs — not from external HR or CMDB systems. It reflects what Artha has observed, not a golden source.
+2. **Ephemeral identity, durable relationships.** Entity metadata (job title, team) can change; relationship edges (person→project, decision→system) accumulate over time.
+3. **Privacy-first.** The graph is local-only (SQLite in `knowledge/kb.sqlite`), gitignored, and never synced to GitHub. No entity data from the knowledge graph appears in public specs or logs.
+4. **Deterministic queries.** Graph queries use SQL + structured traversal, not LLM inference — ensuring reproducibility and testability.
+5. **Bootstrap from existing state.** `kb_bootstrap.py` populates the graph from the existing `knowledge/*.md` files; no manual curation required for an initial graph.
+
+### 22.2 Entity Model
+
+| Entity Type | Key Fields | Example Use |
+|-------------|-----------|-------------|
+| `Person` | alias, role, team, recency | Stakeholder lookup for meeting prep |
+| `Project` | name, status, phase, owner | Active project list for work briefing |
+| `System` | name, type, health | System health correlation with incidents |
+| `Decision` | title, outcome, date, domains | Decision history for context |
+| `Commitment` | description, due_date, owner | Commitment tracking for boundary alerts |
+| `Topic` | name, domain, frequency | Topic clustering for trend detection |
+
+### 22.3 Relationship Schema (SQLite)
+
+```sql
+-- Core entity tables (one per entity type above)
+CREATE TABLE entities (
+    id       TEXT PRIMARY KEY,   -- UUID
+    type     TEXT NOT NULL,      -- 'person', 'project', 'system', etc.
+    name     TEXT NOT NULL,
+    attrs    TEXT,               -- JSON blob for type-specific fields
+    first_seen TEXT,             -- ISO timestamp
+    last_seen  TEXT
+);
+
+-- Directed relationships
+CREATE TABLE relationships (
+    id          TEXT PRIMARY KEY,
+    from_id     TEXT REFERENCES entities(id),
+    to_id       TEXT REFERENCES entities(id),
+    rel_type    TEXT NOT NULL,   -- 'owns', 'depends_on', 'participates_in', etc.
+    confidence  REAL DEFAULT 1.0,
+    first_seen  TEXT,
+    last_seen   TEXT,
+    source      TEXT             -- e.g. 'work_briefing', 'kb_bootstrap'
+);
+
+CREATE INDEX idx_rel_from ON relationships(from_id, rel_type);
+CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
+```
+
+### 22.4 Key Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/lib/knowledge_graph.py` | `KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`. Transactional writes. |
+| `scripts/kb_bootstrap.py` | Reads `knowledge/*.md` files, extracts entities and relationships via regex + structured parse, populates `knowledge/kb.sqlite`. Idempotent — safe to re-run. |
+
+### 22.5 Integration with Work OS Pipeline
+
+- `work_loop.py` Step 3 (enrich): after fetching work briefing data, `knowledge_graph.upsert_entity()` updates person and project nodes.
+- `work_reader.py` `graph` command: traversal query output for stakeholder/project relationships.
+- `kb.sqlite` location: `knowledge/kb.sqlite` — gitignored at the `knowledge/` directory level.
+- Bootstrap: `python scripts/kb_bootstrap.py` (one-time or after new knowledge files are added).
+
+---
+
+*Artha Tech Spec v3.19.0 — End of Document*
 
 ---
 
@@ -4772,6 +4928,7 @@ Feature flag: `enhancements.work_os.reflect.enabled: false` by default. No new e
 
 | Version | Changes |
 |---------|---------|
+| v3.19.0 | **Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS)**: `scripts/eval_runner.py` (orchestrates eval harness; closes G1–G10 observability gaps); `scripts/eval_scorer.py` (briefing quality scorer — completeness, priority order, PII compliance, action accuracy; rolling 7-day+30-day averages); `scripts/lib/metric_store.py` (SQLite-backed time-series MetricStore in `~/.artha-local/eval.db`; 90-day auto-prune); `scripts/correction_feeder.py` (user correction → `state/memory.md` + domain confidence delta → `state/self_model.md`); `scripts/log_digest.py` (daily log aggregator; gap trend detection); `scripts/lib/knowledge_graph.py` (`KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`; transactional SQLite writes); `scripts/kb_bootstrap.py` (idempotent bootstrap from `knowledge/*.md` state files; hash-based dedup). 127 new eval tests in `tests/eval/` + `tests/unit/test_eval_*.py`. `.gitignore` hardened: machine-specific conflict-copy pattern replaced with generic `state/*.age` superset; OneDrive shadow `.git 2/` fix. |
 | v3.8–v3.9 | **Work OS Phases 2–5** (PRD FR-19 FW-11–FW-17, v2.7.0): `scripts/work_bootstrap.py` (12-question guided setup interview, atomic writes, dry-run); `scripts/work_notes.py` (post-meeting capture, D-NNN/OI-NNN IDs, `/work remember` micro-capture); `scripts/work_reader.py` (25-command read-path CLI: work, pulse, sprint, health, return, connect, connect-prep, people, docs, sources, prep, live, newsletter, deck, memo, talking-points, promo-case, promo-narrative, journey, day, decide, graph, preread, incidents, repos); `scripts/work_domain_writers.py` (atomic writers for 11 domain files: calendar, comms, projects, boundary, career, sources, notes, decisions, open-items, people, performance); `scripts/narrative_engine.py` (10 Jinja2 templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo); `scripts/post_work_refresh.py` (session history writer, run log appender); `scripts/kusto_runner.py` (KQL bridge, ADO/Kusto query runner); `config/agents/` expanded to 3 tiers (artha-work.md baseline, artha-work-enterprise.md corporate ADO, artha-work-msft.md Microsoft Enhanced); `state/work/` expanded 6→20 domain files; `.github/workflows/work-tests.yml` CI matrix; 883 tests in `tests/work/` (12 test files); `specs/work.md` archived to `.archive/specs/work.md` — PRD/Tech/UX specs now canonical. §19.7 state files expanded 8→22 rows; §19.9 test coverage updated ~541→883. |
 | v3.7 | Work Intelligence OS (Phase 2C — PRD FR-19, specs/work.md v1.7.0): `scripts/work_loop.py` (7-stage loop: fetch → enrich → filter → infer → score → write → bridge); `scripts/work_warm_start.py` (§15 warm-start processor — ScrapeParser, WarmStartAggregator, 6 state file writers, atomic write, dry-run mode); `scripts/schemas/work_objects.py` (6 canonical dataclasses: WorkMeeting, WorkDecision, WorkCommitment, WorkStakeholder, WorkArtifact, WorkSource; 5 enums: ObjectStatus, CommitmentStatus, DecisionOutcome, StakeholderRecency, plus shared types); `scripts/schemas/work_connector_protocol.py` (ConnectorFailureMode enum, ConnectorProtocolEntry frozen dataclass, PROTOCOL table, get_protocol(), user_signal_for(), log_connector_failure() — §8.4 connector error protocol); `scripts/schemas/bridge_schemas.py` (WorkLoadPulse, BridgeArtifact, BridgeManifest validators + 55 bridge enforcement tests); `config/agents/` (work_briefing_agent.md, work_enrich_agent.md, meeting_prep_agent.md); `state/work/` directory with 6 domain files; `state/bridge/work_load_pulse.json` boundary artifact; 166 new tests in `tests/work/` (test_work_objects.py — 29, test_connector_protocol.py — 31, test_work_warm_start.py — 33, test_bridge_schemas.py — previously 55); §19 Work OS Technical Architecture section added to this spec. PRD bumped to v4.2. UX Spec §23 Work OS Interaction Design added. |
 | v3.6 | Deep Agents Option B — Core Harness Patterns (PRD F15.114–F15.118): `scripts/context_offloader.py` (`offload_artifact`, builtin summary fns, `OFFLOADED_FILES`/`OFFLOADED_GLOB_PATTERNS`); `scripts/domain_index.py` (`build_domain_index`, `get_prompt_load_list`, `_domain_status` ACTIVE/STALE/ARCHIVE); `scripts/session_summarizer.py` (`SessionSummary` Pydantic v2 + dataclass fallback, `estimate_context_pct`, `should_summarize_now`, `get_context_card`); `scripts/middleware/` package — `StateMiddleware` Protocol + `compose_middleware()`, `PiiMiddleware`, `WriteGuardMiddleware`, `WriteVerifyMiddleware`, `AuditMiddleware`, `RateLimiterMiddleware`; `scripts/schemas/` package — `BriefingOutput`, `AlertItem`, `DomainSummary`, `FlashBriefingOutput`, `SessionSummarySchema`, `DomainIndexCard`. `config/Artha.md` + `config/Artha.core.md` Steps 4b′/5/7/8h/11b/Session Protocol/harness_metrics/18a′. `config/artha_config.yaml` `harness:` namespace. `pydantic>=2.0.0` in requirements.txt. 698 tests (+157 from 541). |

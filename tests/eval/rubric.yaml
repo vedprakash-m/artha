@@ -1,0 +1,50 @@
+# Scoring thresholds for eval tests — externalized from code
+# Ref: specs/eval.md EV-12
+# All values are unit-test assertions AND informational documentation.
+version: "1.0.0"
+
+quality:
+  # A golden briefing must score above this threshold
+  golden_min: 60
+  # An anti-golden briefing must score below this threshold
+  anti_golden_max: 40
+  # Minimum acceptable quality_score in production (alert if below)
+  min_quality_score: 40
+  # Max streak of consecutive None quality_score values before alert
+  null_score_max_streak: 5
+  # % drop between rolling halves that signals regression
+  regression_drop_pct: 20
+  # Per-dimension minimums (enforced by rubric, informational for tests)
+  min_actionability: 10
+  min_specificity: 8
+  min_completeness: 8
+  min_signal_purity: 10
+  min_calibration: 8
+
+error_budget:
+  # Target maximum overall error budget percentage
+  max_pct: 5.0
+  anomaly_levels:
+    HIGH_ERROR_RATE:
+      threshold: 0.20
+      severity: P1
+    TREND_WORSENING:
+      delta_pp: 0.05
+      severity: P2
+    QUIET_FAILURE:
+      streak: 3
+      severity: P2
+
+corrections:
+  per_domain_cap: 10
+  global_cap: 50
+  allowed_types:
+    - correction
+    - threshold
+
+alerts:
+  max_entries: 20
+  p1_escalation_hours: 24
+  dedup_window_days: 14
+  # P0 alerts block preflight (EV-14)
+  p0_blocks_preflight: true

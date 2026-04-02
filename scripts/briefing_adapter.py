@@ -246,7 +246,7 @@ def _r5_consistent_domains(runs: list[dict]) -> list[str]:
         return []
     domain_sets: list[set[str]] = []
     for r in window:
-        domains = r.get("domains_loaded", r.get("domains", []))
+        domains = r.get("domains_processed", r.get("domains_loaded", r.get("domains", [])))
         if isinstance(domains, (list, set)):
             domain_sets.append({str(d).lower() for d in domains})
         elif isinstance(domains, str):
@@ -339,9 +339,41 @@ def _r8_meta_regression_alarm(runs: list[dict]) -> str | None:
 
     return f"R8:meta_regression_alarm(low={low_count}/{total_with_data})"
 
-# ---------------------------------------------------------------------------
-# BriefingAdapter
-# ---------------------------------------------------------------------------
+
+def _r9_quality_regression(
+    runs: list[dict],
+    drop_threshold_pct: float = 20.0,
+    min_runs: int = 7,
+) -> str | None:
+    """R9: Flag quality regression in last 7 runs.
+
+    Reads state/briefing_scores.json via MetricStore and signals when the
+    quality trend is 'regressing' with sufficient data.
+
+    Args:
+        runs: catch_up_runs list (used for guard only; MetricStore reads scores).
+        drop_threshold_pct: Unused directly; MetricStore uses a fixed 3-pt threshold.
+        min_runs: Minimum scored runs needed before firing.
+
+    Returns:
+        Adjustment string like "R9:quality_regression(trend=regressing,avg=52.1)"
+        or None if no regression.
+    """
+    try:
+        from lib.metric_store import MetricStore  # noqa: PLC0415
+        ms = MetricStore(_ROOT_DIR)
+        trend_data = ms.get_quality_trend(window=min_runs)
+        if trend_data.get("trend") != "regressing":
+            return None
+        run_count = trend_data.get("run_count", 0)
+        if run_count < min_runs:
+            return None
+        avg_q = trend_data.get("avg_quality", 0.0)
+        return f"R9:quality_regression(trend=regressing,avg={avg_q:.1f},runs={run_count})"
+    except Exception:  # noqa: BLE001
+        return None
+
+
 
 class BriefingAdapter:
     """Analyse health-check history and return adjusted BriefingConfig.
@@ -391,6 +423,7 @@ class BriefingAdapter:
         r6 = _r6_weekend_planner_skip(runs)
         r7_footer = _r7_skill_health_footer()
         r8 = _r8_meta_regression_alarm(runs)
+        r9 = _r9_quality_regression(runs)
 
         # Apply R1 — format adjustment (only when user did NOT force format)
         if r1 and not user_forced:
@@ -429,6 +462,10 @@ class BriefingAdapter:
         # R8 — meta-regression alarm (surfaces once per 14-day window)
         if r8:
             cfg.adaptive_adjustments.append(r8)
+
+        # R9 — quality regression signal (eval layer)
+        if r9:
+            cfg.adaptive_adjustments.append(r9)
 
         return cfg
 
@@ -563,6 +600,134 @@ def render_radar_section(
     if try_badge_shown:
         lines.append("_✅ = try-worthy: add to experiments with `/try <topic>`_")
         lines.append("")
+
+    return "\n".join(lines)
+
+
+_NL_CATEGORY_EMOJI = {
+    "tool_release": "🔧",
+    "technique": "💡",
+    "model_release": "🤖",
+    "tutorial": "📖",
+    "framework_update": "📦",
+    "research": "🔬",
+}
+
+
+def render_newsletter_suggestions(
+    signals_file: "Path | str | None" = None,
+    *,
+    artha_dir: "Path | None" = None,
+) -> str:
+    """Render newsletter contribution suggestions from radar signals.
+
+    Reads newsletter_suggestions from the radar output and renders a Markdown
+    section suggesting topics the user could contribute to newsletters.
+    Returns empty string if no suggestions are available.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    if signals_file is None:
+        base = _Path(artha_dir) if artha_dir else _Path(__file__).parent.parent
+        signals_file = base / "tmp" / "ai_trend_signals.json"
+
+    signals_path = _Path(signals_file)
+    if not signals_path.exists():
+        return ""
+
+    try:
+        data = json.loads(signals_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    suggestions = data.get("newsletter_suggestions") or []
+    if not suggestions:
+        return ""
+
+    lines = ["## 📰 Newsletter Contribution Ideas"]
+    lines.append("")
+
+    current_nl = ""
+    for sugg in suggestions:
+        nl_name = sugg.get("newsletter", "")
+        if nl_name != current_nl:
+            current_nl = nl_name
+            lines.append(f"**{nl_name}** _(monthly)_")
+            lines.append("")
+
+        topic = sugg.get("topic", "")
+        category = sugg.get("category", "technique")
+        emoji = _NL_CATEGORY_EMOJI.get(category, "📡")
+        angle = sugg.get("angle", "")
+        url = sugg.get("best_source_url", "")
+        fit = sugg.get("fit_score", 0.0)
+
+        lines.append(f"- {emoji} **{topic}**")
+        if angle:
+            lines.append(f"  _{angle}_")
+        if url and url.startswith("https://"):
+            lines.append(f"  🔗 {url}")
+        lines.append("")
+
+    lines.append("_💡 These topics align with the newsletter's editorial focus and your expertise._")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_linkedin_suggestions(
+    signals_file: "Path | str | None" = None,
+    *,
+    artha_dir: "Path | None" = None,
+) -> str:
+    """Render LinkedIn content idea suggestions from radar signals.
+
+    Reads linkedin_suggestions from the radar output and renders a Markdown
+    section suggesting topics for LinkedIn posts/articles with voice angles.
+    Returns empty string if no suggestions are available.
+    """
+    import json
+    from pathlib import Path as _Path
+
+    if signals_file is None:
+        base = _Path(artha_dir) if artha_dir else _Path(__file__).parent.parent
+        signals_file = base / "tmp" / "ai_trend_signals.json"
+
+    signals_path = _Path(signals_file)
+    if not signals_path.exists():
+        return ""
+
+    try:
+        data = json.loads(signals_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    suggestions = data.get("linkedin_suggestions") or []
+    if not suggestions:
+        return ""
+
+    lines = ["## 💼 LinkedIn Content Ideas"]
+    lines.append("")
+
+    for sugg in suggestions:
+        topic = sugg.get("topic", "")
+        category = sugg.get("category", "technique")
+        emoji = _NL_CATEGORY_EMOJI.get(category, "📡")
+        angle = sugg.get("angle", "")
+        url = sugg.get("best_source_url", "")
+        seen_in = sugg.get("seen_in", 1)
+
+        trending_badge = f" 🔥 _{seen_in} sources_" if seen_in >= 2 else ""
+        lines.append(f"- {emoji} **{topic}**{trending_badge}")
+        if angle:
+            lines.append(f"  _{angle}_")
+        if url and url.startswith("https://"):
+            lines.append(f"  🔗 {url}")
+        lines.append("")
+
+    lines.append("_💼 These are trending topics where your practitioner voice adds unique value._")
+    lines.append("")
 
     return "\n".join(lines)
 

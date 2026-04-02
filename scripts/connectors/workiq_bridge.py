@@ -48,9 +48,20 @@ _CACHE_TTL: dict[str, int] = {
     "calendar":  4 * 3600,    # 4 hours
     "email":     1 * 3600,    # 1 hour
     "teams":     2 * 3600,    # 2 hours
+    "teams_ai":  6 * 3600,    # 6 hours — AI channel scan, less volatile
     "people":    7 * 86400,   # 7 days
     "documents": 4 * 3600,    # 4 hours
 }
+
+# Target channels for teams_ai mode — queried individually for best WorkIQ results
+_TEAMS_AI_CHANNELS: list[str] = [
+    "AI Tools - SIG",
+    "AI Learning Champs",
+    "XStore AI Enthusiasts",
+    "Connect with an AI Pioneer",
+    "GitHub Copilot at Microsoft",
+    "Small Language Model Forum",
+]
 
 # Query templates — NO user-specific data embedded here.
 # All user context comes from user_profile.yaml or runtime parameters.
@@ -67,6 +78,12 @@ _QUERIES: dict[str, str] = {
     "teams": (
         "List my Teams messages from the last {lookback} hours that need my attention. "
         "Format as one line per message: SENDER | CHANNEL_OR_DM | MESSAGE_PREVIEW | NEEDS_ACTION(yes/no)"
+    ),
+    "teams_ai": (
+        "What were the most recent messages posted in the {channel_name} channel "
+        "in Teams during the last {lookback_days} days? Show up to 15 messages. "
+        "Format each as one line: "
+        "SENDER | TOPIC_OR_SUBJECT | SHORT_PREVIEW | URL_OR_LINK_SHARED"
     ),
     "people": (
         "Who is {person_name}? Include: job title, department, manager, "
@@ -299,6 +316,76 @@ def _parse_teams(raw: str, redact_kws: list[str]) -> list[dict]:
     return messages
 
 
+def _parse_teams_ai(raw: str, redact_kws: list[str],
+                    channel_override: str = "") -> list[dict]:
+    """Parse WorkIQ Teams AI channel scan response into radar-compatible records.
+
+    Handles both 4-field (SENDER|TOPIC|PREVIEW|URL) and 3-field (SENDER|TOPIC|PREVIEW)
+    responses since WorkIQ doesn't always return URLs. Also handles free-form prose
+    by extracting numbered/bulleted items.
+    """
+    if not raw or not raw.strip():
+        return []
+
+    messages: list[dict] = []
+    channel = channel_override
+
+    # Try structured pipe-table first (4 fields)
+    rows = _parse_pipe_table(raw, 4)
+    for row in rows:
+        sender, topic, preview, url = row
+        if "SENDER" in sender.upper() or "TOPIC" in sender.upper():
+            continue
+        preview = _apply_redact(preview, redact_kws)
+        topic = _apply_redact(topic, redact_kws)
+        messages.append(_teams_ai_record(sender.strip(), channel, topic.strip(),
+                                         preview.strip(), url.strip()))
+
+    # Try 3-field variant
+    if not messages:
+        rows = _parse_pipe_table(raw, 3)
+        for row in rows:
+            sender, topic, preview = row
+            if "SENDER" in sender.upper():
+                continue
+            preview = _apply_redact(preview, redact_kws)
+            topic = _apply_redact(topic, redact_kws)
+            messages.append(_teams_ai_record(sender.strip(), channel, topic.strip(),
+                                             preview.strip(), ""))
+
+    # Fallback: extract numbered items from prose (1. **Name** — description)
+    if not messages:
+        import re as _re
+        for m in _re.finditer(
+            r"(?:^|\n)\s*\d+\.\s+\*{0,2}(.+?)\*{0,2}\s*(?:\n|$)",
+            raw,
+        ):
+            line = m.group(1).strip()
+            if len(line) > 10:
+                # Try to split "Sender — Topic" or "Sender: Topic"
+                parts = _re.split(r"\s*[—–:]\s*", line, maxsplit=1)
+                sender = parts[0].strip("* ") if len(parts) > 1 else ""
+                topic = parts[-1].strip("* ")
+                messages.append(_teams_ai_record(sender, channel, topic, topic, ""))
+
+    return messages
+
+
+def _teams_ai_record(sender: str, channel: str, topic: str,
+                     preview: str, url: str) -> dict:
+    """Build a radar-compatible record from a Teams AI channel message."""
+    return {
+        "subject": topic or preview,
+        "from": f"{sender} via {channel}" if sender else channel,
+        "body": preview or topic,
+        "date_iso": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "link": url if url.startswith("http") else "",
+        "source": "workiq_teams_ai",
+        "channel": channel,
+        "tag": f"teams:{channel.lower().replace(' ', '_').replace('-', '_')}",
+    }
+
+
 def _parse_people(raw: str, name_query: str) -> list[dict]:
     """Parse WorkIQ person profile response — returns a single-item list."""
     if not raw.strip():
@@ -412,62 +499,81 @@ def fetch(
         return
 
     # Build query from template
-    if mode == "calendar":
-        query = _QUERIES["calendar"].format(start_date=start_date, end_date=end_date)
-    elif mode == "email":
-        query = _QUERIES["email"].format(lookback=lookback)
-    elif mode == "teams":
-        query = _QUERIES["teams"].format(lookback=lookback)
-    elif mode == "people":
-        if not person_name:
-            return
-        query = _QUERIES["people"].format(person_name=person_name)
-    elif mode == "documents":
-        query = _QUERIES["documents"].format(lookback_days=lookback_days)
-    else:
-        raise ValueError(f"[workiq_bridge] Unknown mode: {mode!r}")
-
-    try:
-        raw = _ask_workiq(query)
-    except RuntimeError as exc:
-        print(f"[workiq_bridge] fetch failed ({mode}): {exc}", file=sys.stderr)
-        return
-    except subprocess.TimeoutExpired:
-        print(
-            f"[workiq_bridge] WorkIQ timed out after {SUBPROCESS_TIMEOUT}s ({mode})",
-            file=sys.stderr,
-        )
-        return
-
-    # Parse
-    records: list[dict] = []
-    if mode == "calendar":
-        records = _parse_calendar(raw, redact_kws)
-        if not records and raw.strip() and PARSE_RETRY_ONCE:
-            # Retry with explicit format reminder
-            explicit_query = query + (
-                " IMPORTANT: Do NOT include a header row. "
-                "Each line must have exactly 7 fields separated by pipes."
+    if mode == "teams_ai":
+        # Multi-channel strategy: query each channel separately for better
+        # WorkIQ hit rate (combined topic+channel queries return 0 results).
+        channels = kwargs.get("channels", _TEAMS_AI_CHANNELS)
+        records: list[dict] = []
+        for ch_name in channels:
+            ch_query = _QUERIES["teams_ai"].format(
+                channel_name=ch_name, lookback_days=lookback_days,
             )
             try:
-                raw2 = _ask_workiq(explicit_query)
-                records = _parse_calendar(raw2, redact_kws)
-                if not records:
-                    print(
-                        "[workiq_bridge] calendar parse still 0 after retry — "
-                        "possible WorkIQ format change. Session skipped.",
-                        file=sys.stderr,
-                    )
-            except (RuntimeError, subprocess.TimeoutExpired):
-                pass
-    elif mode == "email":
-        records = _parse_email(raw, redact_kws)
-    elif mode == "teams":
-        records = _parse_teams(raw, redact_kws)
-    elif mode == "people":
-        records = _parse_people(raw, person_name)
-    elif mode == "documents":
-        records = _parse_documents(raw, redact_kws)
+                ch_raw = _ask_workiq(ch_query)
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                print(f"[workiq_bridge] teams_ai channel {ch_name!r} failed: {exc}",
+                      file=sys.stderr)
+                continue
+            ch_records = _parse_teams_ai(ch_raw, redact_kws, channel_override=ch_name)
+            records.extend(ch_records)
+    else:
+        # Standard single-query modes
+        if mode == "calendar":
+            query = _QUERIES["calendar"].format(start_date=start_date, end_date=end_date)
+        elif mode == "email":
+            query = _QUERIES["email"].format(lookback=lookback)
+        elif mode == "teams":
+            query = _QUERIES["teams"].format(lookback=lookback)
+        elif mode == "people":
+            if not person_name:
+                return
+            query = _QUERIES["people"].format(person_name=person_name)
+        elif mode == "documents":
+            query = _QUERIES["documents"].format(lookback_days=lookback_days)
+        else:
+            raise ValueError(f"[workiq_bridge] Unknown mode: {mode!r}")
+
+        try:
+            raw = _ask_workiq(query)
+        except RuntimeError as exc:
+            print(f"[workiq_bridge] fetch failed ({mode}): {exc}", file=sys.stderr)
+            return
+        except subprocess.TimeoutExpired:
+            print(
+                f"[workiq_bridge] WorkIQ timed out after {SUBPROCESS_TIMEOUT}s ({mode})",
+                file=sys.stderr,
+            )
+            return
+
+        # Parse
+        records = []
+        if mode == "calendar":
+            records = _parse_calendar(raw, redact_kws)
+            if not records and raw.strip() and PARSE_RETRY_ONCE:
+                # Retry with explicit format reminder
+                explicit_query = query + (
+                    " IMPORTANT: Do NOT include a header row. "
+                    "Each line must have exactly 7 fields separated by pipes."
+                )
+                try:
+                    raw2 = _ask_workiq(explicit_query)
+                    records = _parse_calendar(raw2, redact_kws)
+                    if not records:
+                        print(
+                            "[workiq_bridge] calendar parse still 0 after retry — "
+                            "possible WorkIQ format change. Session skipped.",
+                            file=sys.stderr,
+                        )
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    pass
+        elif mode == "email":
+            records = _parse_email(raw, redact_kws)
+        elif mode == "teams":
+            records = _parse_teams(raw, redact_kws)
+        elif mode == "people":
+            records = _parse_people(raw, person_name)
+        elif mode == "documents":
+            records = _parse_documents(raw, redact_kws)
 
     if source_tag:
         for r in records:

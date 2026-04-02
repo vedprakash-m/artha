@@ -7,16 +7,23 @@ Analyzes catch-up quality across multiple dimensions:
   2. Accuracy — action acceptance rates, correction frequency, domain coverage
   3. Signal quality — signal:noise ratio, suppression effectiveness
   4. Data freshness — domain staleness, connector health
+  5. Quality — 5-dimension briefing quality score (EV-5 / eval_scorer.py)
+  6. Log health — connector error budgets, anomaly detection (EV-6 / log_digest.py)
+  7. Memory health — memory pipeline run statistics (EV-11c)
 
 Usage:
     python scripts/eval_runner.py                   # Full eval report
     python scripts/eval_runner.py --perf            # Performance only
     python scripts/eval_runner.py --accuracy        # Accuracy only
     python scripts/eval_runner.py --skills          # Skill health table
+    python scripts/eval_runner.py --quality         # Quality score analysis
+    python scripts/eval_runner.py --summary         # Dashboard summary
+    python scripts/eval_runner.py --log-health      # Log digest + anomaly report
+    python scripts/eval_runner.py --memory          # Memory pipeline health
     python scripts/eval_runner.py --json            # JSON output
     python scripts/eval_runner.py --trend 7         # 7-day trend analysis
 
-Ref: audit item §metrics-gap, observability.md
+Ref: audit item §metrics-gap, observability.md, specs/eval.md
 """
 from __future__ import annotations
 
@@ -34,6 +41,12 @@ _SKILLS_METRICS = _ARTHA_DIR / "tmp" / "skills_metrics.json"  # deprecated; kept
 _CATCHUP_METRICS = _ARTHA_DIR / "tmp" / "catchup_metrics.json"
 _SKILLS_CACHE = _ARTHA_DIR / "state" / "skills_cache.json"   # unified persistent cache
 _CATCH_UP_RUNS = _ARTHA_DIR / "state" / "catch_up_runs.yaml"  # structured run history
+_BRIEFING_SCORES = _ARTHA_DIR / "state" / "briefing_scores.json"  # EV-5 quality history
+_LOG_DIGEST = _ARTHA_DIR / "tmp" / "log_digest.json"              # EV-6 anomaly digest
+_EVAL_ALERTS = _ARTHA_DIR / "state" / "eval_alerts.yaml"          # EV-16b alert queue
+_MEMORY_PIPELINE_RUNS = Path(
+    __import__("os").path.expanduser("~")
+) / ".artha-local" / "logs" / "memory_pipeline_runs.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +61,23 @@ def _load_json(path: Path) -> list[dict]:
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError):
         return []
+
+
+def _load_catch_up_runs() -> list[dict]:
+    """Load structured run history from state/catch_up_runs.yaml (EV-4 / DD-2)."""
+    if not _CATCH_UP_RUNS.exists():
+        return []
+    try:
+        import yaml
+    except ImportError:
+        return []
+    try:
+        data = yaml.safe_load(_CATCH_UP_RUNS.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [r for r in data if isinstance(r, dict)]
+    except Exception:
+        pass
+    return []
 
 
 def _load_health_check() -> dict:
@@ -383,53 +413,400 @@ def render_skills_table(skills_data: dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Accuracy analysis
+# Accuracy analysis (EV-4 / G1 fix — now reads catch_up_runs.yaml)
 # ---------------------------------------------------------------------------
 
 def analyze_accuracy() -> dict[str, Any]:
-    """Analyze catch-up accuracy from health-check data."""
-    hc = _load_health_check_yaml_blocks()
+    """Analyze catch-up accuracy from catch_up_runs.yaml (G1 fix: correct source)."""
+    runs = _load_catch_up_runs()
 
-    # Extract accuracy pulse data
-    accuracy = hc.get("accuracy_pulse", {})
-    domain_accuracy = hc.get("per_domain_accuracy", {})
+    if not runs:
+        # Legacy fallback: parse health-check.md yaml blocks
+        hc = _load_health_check_yaml_blocks()
+        accuracy = hc.get("accuracy_pulse", {})
+        domain_accuracy = hc.get("per_domain_accuracy", {})
+        legacy_runs = hc.get("catch_up_runs", [])
+        if not isinstance(legacy_runs, list):
+            legacy_runs = []
+        total_proposed = sum(
+            r.get("actions_proposed_this_session", 0)
+            for r in legacy_runs if isinstance(r, dict)
+        )
+        result: dict[str, Any] = {
+            "total_catch_ups": len(legacy_runs),
+            "actions_proposed": total_proposed,
+            "source": "legacy_health_check",
+        }
+        if accuracy:
+            result["rolling_7d"] = {
+                "acceptance_rate_pct": accuracy.get("acceptance_rate_pct"),
+                "actions_proposed": accuracy.get("actions_proposed", 0),
+            }
+        if domain_accuracy:
+            result["per_domain"] = domain_accuracy
+        return result
 
-    # Extract catch-up run history for acceptance rates
-    runs = hc.get("catch_up_runs", [])
-    if not isinstance(runs, list):
-        runs = []
+    # EV-4: read from catch_up_runs.yaml
+    total = len(runs)
+    # Engagement rate stats
+    rates = [r["engagement_rate"] for r in runs if r.get("engagement_rate") is not None]
+    avg_rate = round(sum(rates) / len(rates), 4) if rates else None
 
-    total_proposed = 0
-    total_accepted = 0
-    for run in runs:
-        if isinstance(run, dict):
-            total_proposed += run.get("actions_proposed_this_session", 0)
+    # Correction stats
+    corrections = [r.get("correction_count", 0) or 0 for r in runs]
+    avg_corrections = round(sum(corrections) / len(corrections), 2) if corrections else 0
 
-    result: dict[str, Any] = {
-        "total_catch_ups": len(runs),
-        "actions_proposed": total_proposed,
+    # Compliance / quality stats (EV-3 new fields)
+    compliance_scores = [r["compliance_score"] for r in runs if r.get("compliance_score") is not None]
+    quality_scores = [r["quality_score"] for r in runs if r.get("quality_score") is not None]
+
+    # Rolling 7-day window
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    recent = [r for r in runs if r.get("timestamp", "") >= cutoff]
+    recent_rates = [r["engagement_rate"] for r in recent if r.get("engagement_rate") is not None]
+
+    result = {
+        "total_catch_ups": total,
+        "avg_engagement_rate": avg_rate,
+        "avg_corrections_per_session": avg_corrections,
+        "source": "catch_up_runs.yaml",
+    }
+    if compliance_scores:
+        result["avg_compliance_score"] = round(sum(compliance_scores) / len(compliance_scores), 1)
+    if quality_scores:
+        result["avg_quality_score"] = round(sum(quality_scores) / len(quality_scores), 1)
+    if recent:
+        result["rolling_7d"] = {
+            "runs": len(recent),
+            "avg_engagement_rate": round(sum(recent_rates) / len(recent_rates), 4) if recent_rates else None,
+        }
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Quality analysis (EV-4 / G2 — reads state/briefing_scores.json)
+# ---------------------------------------------------------------------------
+
+def analyze_quality(days: int = 30) -> dict[str, Any]:
+    """Analyze briefing quality trend from state/briefing_scores.json.
+
+    Returns per-dimension averages, trend, and regression detection.
+    Requires eval_scorer.py to have been run at least once.
+    """
+    scores = _load_json(_BRIEFING_SCORES)
+    if not scores:
+        return {"error": "state/briefing_scores.json not found — run eval_scorer.py first"}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    recent = [s for s in scores if s.get("timestamp", "") >= cutoff]
+    if not recent:
+        recent = scores[-10:]  # fall back to last 10 entries
+
+    quality_vals = [s["quality_score"] for s in recent if s.get("quality_score") is not None]
+    if not quality_vals:
+        return {"error": "No quality_score values in briefing_scores.json"}
+
+    avg_q = round(sum(quality_vals) / len(quality_vals), 1)
+    trend = "insufficient_data"
+
+    if len(quality_vals) >= 4:
+        mid = len(quality_vals) // 2
+        newer_avg = sum(quality_vals[mid:]) / len(quality_vals[mid:])
+        older_avg = sum(quality_vals[:mid]) / mid
+        if newer_avg < older_avg * 0.80:
+            trend = "regressing"
+        elif newer_avg > older_avg * 1.10:
+            trend = "improving"
+        else:
+            trend = "stable"
+
+    # Per-dimension averages
+    dim_keys = ["actionability", "specificity", "completeness", "signal_purity", "calibration"]
+    dimension_avgs: dict[str, float] = {}
+    for k in dim_keys:
+        vals = [s.get("dimensions", {}).get(k) for s in recent if s.get("dimensions", {}).get(k) is not None]
+        if vals:
+            dimension_avgs[k] = round(sum(vals) / len(vals), 1)
+
+    # Compliance
+    comp_vals = [s["compliance_score"] for s in recent if s.get("compliance_score") is not None]
+    avg_compliance = round(sum(comp_vals) / len(comp_vals), 1) if comp_vals else None
+
+    return {
+        "scored_sessions": len(recent),
+        "avg_quality_score": avg_q,
+        "trend": trend,
+        "dimension_averages": dimension_avgs,
+        "avg_compliance_score": avg_compliance,
+        "min_quality": min(quality_vals),
+        "max_quality": max(quality_vals),
     }
 
-    if accuracy:
-        result["rolling_7d"] = {
-            "acceptance_rate_pct": accuracy.get("acceptance_rate_pct"),
-            "actions_proposed": accuracy.get("actions_proposed", 0),
-            "actions_accepted": accuracy.get("actions_accepted", 0),
-        }
 
-    if domain_accuracy:
-        result["per_domain"] = domain_accuracy
+# ---------------------------------------------------------------------------
+# Log health analysis (EV-4 / G5 — reads tmp/log_digest.json)
+# ---------------------------------------------------------------------------
 
-    # Signal quality
-    signal_noise = hc.get("signal_noise_tracking", {})
-    if signal_noise:
-        result["signal_noise"] = {
-            "current_ratio_pct": signal_noise.get("current", {}).get("ratio_pct"),
-            "rolling_30d_pct": signal_noise.get("rolling_30d_avg", {}).get("ratio_pct"),
-            "alert_threshold_pct": signal_noise.get("alert_threshold_pct", 30),
-        }
+def analyze_log_health() -> dict[str, Any]:
+    """Read tmp/log_digest.json and surface connector error budgets + anomalies.
 
-    return result
+    Requires log_digest.py to have been run at least once.
+    """
+    if not _LOG_DIGEST.exists():
+        return {"error": "tmp/log_digest.json not found — run log_digest.py first"}
+    try:
+        data = json.loads(_LOG_DIGEST.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        return {"error": f"Cannot read log_digest.json: {exc}"}
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Memory health analysis (EV-11c — reads memory_pipeline_runs.jsonl)
+# ---------------------------------------------------------------------------
+
+def _analyze_memory_health() -> dict[str, Any]:
+    """Read ~/.artha-local/logs/memory_pipeline_runs.jsonl for memory pipeline stats."""
+    if not _MEMORY_PIPELINE_RUNS.exists():
+        return {"status": "no_data", "message": "memory_pipeline_runs.jsonl not found"}
+
+    runs: list[dict] = []
+    try:
+        for line in _MEMORY_PIPELINE_RUNS.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    runs.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+    except OSError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    if not runs:
+        return {"status": "empty", "message": "No records in memory_pipeline_runs.jsonl"}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    recent = [r for r in runs if r.get("timestamp", "") >= cutoff]
+    total = len(recent)
+    errors = sum(1 for r in recent if r.get("status") == "error")
+    error_rate = round(errors / total, 4) if total else 0.0
+
+    return {
+        "status": "ok",
+        "total_runs_30d": total,
+        "error_count_30d": errors,
+        "error_rate": error_rate,
+        "last_run": runs[-1].get("timestamp") if runs else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Eval self-health check (EV-16b — checks for null score streaks)
+# ---------------------------------------------------------------------------
+
+def _check_eval_self_health() -> list[dict[str, Any]]:
+    """Detect null quality_score streaks (EV-16b) and stale data conditions.
+
+    Returns list of alert dicts. Empty list = healthy.
+    """
+    alerts: list[dict[str, Any]] = []
+
+    # Check for null quality score streak
+    scores = _load_json(_BRIEFING_SCORES)
+    if scores:
+        recent_10 = scores[-10:]
+        null_streak = sum(1 for s in recent_10 if s.get("quality_score") is None)
+        try:
+            from lib.config_loader import load_config
+            raw_cfg = load_config("artha_config.yaml")
+            null_threshold = (
+                raw_cfg.get("harness", {})
+                .get("eval", {})
+                .get("self_health", {})
+                .get("null_score_threshold", 5)
+            )
+        except Exception:
+            null_threshold = 5
+        if null_streak >= null_threshold:
+            alerts.append({
+                "code": "EV-SH-01",
+                "severity": "P1",
+                "message": f"Quality score null for {null_streak} consecutive sessions",
+            })
+
+    # Check for stale catch_up_runs (no runs in 7 days)
+    runs = _load_catch_up_runs()
+    if runs:
+        last_ts = sorted(r.get("timestamp", "") for r in runs if r.get("timestamp"))
+        if last_ts:
+            age_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            if last_ts[-1] < age_cutoff:
+                alerts.append({
+                    "code": "EV-SH-02",
+                    "severity": "P2",
+                    "message": f"No catch-up runs recorded in last 7 days (last: {last_ts[-1][:10]})",
+                })
+
+    return alerts
+
+
+# ---------------------------------------------------------------------------
+# Trust evidence (EV-11b)
+# ---------------------------------------------------------------------------
+
+def compute_trust_evidence(runs: list[dict] | None = None) -> dict[str, Any]:
+    """Compute trust evidence score from outcome signals in catch_up_runs.yaml.
+
+    Trust evidence = (items_resolved_24h + positive_coaching) /
+                     max(sessions_with_signals, 1)
+    Range 0.0–1.0. Requires outcome signal fields (EV-11a).
+    """
+    if runs is None:
+        runs = _load_catch_up_runs()
+    if not runs:
+        return {"score": None, "message": "no_data"}
+
+    total_resolved = sum(r.get("outcome_items_resolved_24h", 0) or 0 for r in runs)
+    total_surfaced = sum(r.get("items_surfaced", 0) or 0 for r in runs)
+    sessions_with_signals = sum(
+        1 for r in runs
+        if r.get("outcome_items_resolved_24h") is not None
+    )
+
+    score = round(total_resolved / max(total_surfaced, 1), 4) if total_surfaced else None
+    return {
+        "score": score,
+        "total_resolved": total_resolved,
+        "total_surfaced": total_surfaced,
+        "sessions_with_signals": sessions_with_signals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Self-model feedback (EV-10/11 — stale domain auto-downgrade)
+# ---------------------------------------------------------------------------
+
+def _eval_to_self_model_feedback(
+    min_runs: int = 7,
+    stale_streak: int = 3,
+) -> dict[str, Any]:
+    """Detect quality regressions and stale domains; return overlay suggestions.
+
+    Called by briefing_adapter R9 and Step 6d of Artha.md.
+
+    Returns a dict with:
+      - trend: quality trend string ('regressing'|'improving'|'stable'|'insufficient_data')
+      - stale_domains: list of domain names missing from last ``stale_streak`` runs
+      - overlays: list of self-model overlay strings to prepend to domain context
+      - should_apply: bool — True when caller should inject the overlays
+    """
+    runs = _load_catch_up_runs()
+    quality = analyze_quality()
+    trend = quality.get("trend", "insufficient_data")
+    run_count = len(runs)
+
+    stale_domains: list[str] = []
+    if run_count >= stale_streak:
+        # Reuse _detect_stale_domains from retrospective_view if available
+        try:
+            import importlib.util as _ilu
+            _spec = _ilu.spec_from_file_location(
+                "retrospective_view",
+                Path(__file__).resolve().parent / "retrospective_view.py",
+            )
+            _mod = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
+            _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+            stale_domains = getattr(_mod, "_detect_stale_domains")(runs, streak_threshold=stale_streak)
+        except Exception:
+            pass
+
+    overlays: list[str] = []
+
+    # Quality regression overlay
+    if trend == "regressing" and run_count >= min_runs:
+        dim_avgs = quality.get("dimension_averages", {})
+        worst_dims = sorted(dim_avgs, key=lambda k: dim_avgs[k])[:2]
+        for dim in worst_dims:
+            score = dim_avgs[dim]
+            if score < 60:
+                overlays.append(
+                    f"[self-model overlay] {dim} quality is low ({score:.0f}/20) — "
+                    f"increase specificity and concrete details."
+                )
+
+    # Stale domain overlay
+    for domain in stale_domains:
+        overlays.append(
+            f"[self-model overlay] domain '{domain}' has been absent from the "
+            f"last {stale_streak} briefings — proactively check {domain} state."
+        )
+
+    should_apply = bool(overlays) and (trend == "regressing" or bool(stale_domains))
+
+    return {
+        "trend": trend,
+        "stale_domains": stale_domains,
+        "overlays": overlays,
+        "should_apply": should_apply,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dashboard summary (EV-0d)
+# ---------------------------------------------------------------------------
+
+def print_summary(as_json: bool = False) -> dict[str, Any]:
+    """Print a human-readable eval dashboard across all dimensions.
+
+    When as_json=True, returns a compact dict and does not print.
+    """
+    runs = _load_catch_up_runs()
+    scores = _load_json(_BRIEFING_SCORES)
+    alerts = _check_eval_self_health()
+
+    # Compute summary metrics
+    quality_vals = [s["quality_score"] for s in scores[-10:] if s.get("quality_score") is not None]
+    avg_quality = round(sum(quality_vals) / len(quality_vals), 1) if quality_vals else None
+    session_count = len(runs)
+    alert_count = len(alerts)
+
+    compliance_vals = [s["compliance_score"] for s in scores[-10:] if s.get("compliance_score") is not None]
+    avg_compliance = round(sum(compliance_vals) / len(compliance_vals), 1) if compliance_vals else None
+
+    eng_rates = [r["engagement_rate"] for r in runs[-10:] if r.get("engagement_rate") is not None]
+    avg_engagement = round(sum(eng_rates) / len(eng_rates), 3) if eng_rates else None
+
+    summary = {
+        "session_count": session_count,
+        "avg_quality": avg_quality,
+        "avg_compliance": avg_compliance,
+        "avg_engagement_rate": avg_engagement,
+        "alert_count": alert_count,
+        "alerts": alerts,
+    }
+
+    if as_json:
+        return summary
+
+    # Human-readable dashboard
+    lines = [
+        "== ARTHA EVAL DASHBOARD ==================================",
+        "",
+        f"  Sessions tracked : {session_count}",
+        f"  Avg quality score: {avg_quality if avg_quality is not None else 'N/A'} / 100",
+        f"  Avg compliance   : {avg_compliance if avg_compliance is not None else 'N/A'} / 100",
+        f"  Avg engagement   : {f'{avg_engagement:.1%}' if avg_engagement is not None else 'N/A'}",
+        "",
+    ]
+    if alerts:
+        lines.append(f"  [!] {alert_count} alert(s):")
+        for a in alerts:
+            lines.append(f"    [{a['severity']}] {a['code']}: {a['message']}")
+    else:
+        lines.append("  [OK] No eval alerts")
+    lines += ["", "=========================================================="]
+    print("\n".join(lines))
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +942,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--accuracy", action="store_true", help="Accuracy analysis only")
     parser.add_argument("--freshness", action="store_true", help="Freshness analysis only")
     parser.add_argument("--skills", action="store_true", help="Skill health table (reads state/skills_cache.json)")
+    parser.add_argument("--quality", action="store_true", help="Quality score analysis (reads state/briefing_scores.json)")
+    parser.add_argument("--log-health", action="store_true", help="Log digest + anomaly report (reads tmp/log_digest.json)")
+    parser.add_argument("--memory", action="store_true", help="Memory pipeline health analysis")
+    parser.add_argument("--summary", action="store_true", help="Dashboard summary across all dimensions")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--trend", type=int, default=7, metavar="DAYS", help="Trend window (default: 7)")
     args = parser.parse_args(argv)
@@ -576,6 +957,80 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(data, indent=2))
         else:
             print(render_skills_table(data))
+        return 0
+
+    # --summary: dashboard mode
+    if args.summary:
+        result = print_summary(as_json=args.json)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        return 0
+
+    # --quality: briefing quality trend
+    if args.quality:
+        data = analyze_quality(days=args.trend)
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ QUALITY ANALYSIS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            if "error" in data:
+                lines.append(f"  ⚠ {data['error']}")
+            else:
+                lines.append(f"  Sessions scored  : {data['scored_sessions']}")
+                lines.append(f"  Avg quality score: {data['avg_quality_score']} / 100  ({data['trend']})")
+                if data.get("avg_compliance_score") is not None:
+                    lines.append(f"  Avg compliance   : {data['avg_compliance_score']} / 100")
+                lines.append(f"  Range            : {data['min_quality']}–{data['max_quality']}")
+                if data.get("dimension_averages"):
+                    lines.append("")
+                    lines.append("  Dimension averages:")
+                    for k, v in data["dimension_averages"].items():
+                        lines.append(f"    {k:<16}: {v}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
+        return 0
+
+    # --log-health: log digest anomaly report
+    if args.log_health:
+        data = analyze_log_health()
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ LOG HEALTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            if "error" in data:
+                lines.append(f"  ⚠ {data['error']}")
+            else:
+                anomalies = data.get("anomalies", [])
+                connectors = data.get("connectors", {})
+                lines.append(f"  Error budget: {data.get('error_budget_pct', '?')}% (target <5%)")
+                lines.append(f"  Anomalies   : {len(anomalies)}")
+                for a in anomalies:
+                    lines.append(f"    ⚠ [{a.get('type', 'unknown')}] {a.get('connector', '?')}: {a.get('message', '')}")
+                if connectors:
+                    lines.append("")
+                    lines.append("  Connector stats (p95 latency / error rate):")
+                    for cname, stats in sorted(connectors.items()):
+                        lines.append(f"    {cname:<24}: p95={stats.get('p95_ms', '?')}ms  err={stats.get('error_rate_pct', '?')}%")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
+        return 0
+
+    # --memory: memory pipeline health
+    if args.memory:
+        data = _analyze_memory_health()
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ MEMORY HEALTH ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            lines.append(f"  Status       : {data.get('status', 'unknown')}")
+            if data.get("total_runs_30d") is not None:
+                lines.append(f"  Runs (30d)   : {data['total_runs_30d']}")
+                lines.append(f"  Errors (30d) : {data['error_count_30d']}  ({data['error_rate']:.1%})")
+                lines.append(f"  Last run     : {data.get('last_run', 'N/A')}")
+            else:
+                lines.append(f"  {data.get('message', '')}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
         return 0
 
     perf = analyze_performance(args.trend) if not args.accuracy and not args.freshness else {}

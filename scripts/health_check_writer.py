@@ -38,6 +38,7 @@ Exit codes
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -75,16 +76,33 @@ _LOG_ROTATION_DAYS = 7
 # Lock guard (non-blocking — fail-safe)
 # ---------------------------------------------------------------------------
 
-def _acquire_lock(timeout_secs: float = 3.0) -> bool:
-    """Try to acquire the Artha write lock. Returns False if lock is held."""
+def _acquire_lock(timeout_secs: float = 3.0, stale_secs: float = 60.0) -> bool:
+    """Try to acquire the Artha write lock. Returns False if lock is held.
+
+    Uses O_CREAT|O_EXCL for an atomic create, avoiding the TOCTOU race in the
+    previous exists()+touch() pattern.  Stale locks older than *stale_secs*
+    are removed automatically before each attempt.
+    """
     deadline = time.monotonic() + timeout_secs
     while time.monotonic() < deadline:
-        if not LOCK_FILE.exists():
-            try:
-                LOCK_FILE.touch(exist_ok=False)
-                return True
-            except FileExistsError:
-                pass
+        # Recover stale lock before attempting acquire
+        try:
+            if LOCK_FILE.stat().st_mtime < time.time() - stale_secs:
+                LOCK_FILE.unlink(missing_ok=True)
+        except FileNotFoundError:
+            pass  # Already gone; proceed to create
+        except OSError:
+            pass
+        # Atomic create: fails immediately if another process holds the lock
+        try:
+            fd = os.open(
+                str(LOCK_FILE),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            )
+            os.close(fd)
+            return True
+        except FileExistsError:
+            pass
         time.sleep(0.2)
     return False
 
@@ -253,8 +271,26 @@ def _rotate_connector_logs(content: str) -> str:
 # Catch-up run history (state/catch_up_runs.yaml)
 # ---------------------------------------------------------------------------
 
+def _compute_config_hash() -> str:
+    """Return 12-char SHA-256 prefix of key config files (deterministic).
+
+    Hash inputs: config/artha_config.yaml + config/Artha.md (sorted by name).
+    Returns '000000000000' if neither file is readable.
+    """
+    h = hashlib.sha256()
+    for fname in sorted(["artha_config.yaml", "Artha.md"]):
+        p = CONFIG_DIR / fname
+        try:
+            h.update(p.read_bytes())
+        except OSError:
+            pass
+    digest = h.hexdigest()
+    return digest[:12] if any(b != 0 for b in h.digest()) else "000000000000"
+
+
 def _append_catch_up_run(
     timestamp: str,
+    artha_dir: "Path | str | None" = None,
     engagement_rate: float | None = None,
     user_ois: int | None = None,
     system_ois: int | None = None,
@@ -263,6 +299,20 @@ def _append_catch_up_run(
     briefing_format: str | None = None,
     email_count: int | None = None,
     domains_processed: list[str] | None = None,
+    compliance_score: float | None = None,
+    quality_score: float | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
+    calibration_skipped: bool | None = None,
+    coaching_nudge: str | None = None,
+    config_hash: str | None = None,
+    weekend_planner_shown: bool | None = None,
+    self_model_overlays: list[str] | None = None,
+    items_resolved: int | None = None,
+    outcome_corrections: int | None = None,
+    outcome_items_resolved: int | None = None,
+    outcome_queries: int | None = None,
+    **_kwargs,
 ) -> None:
     """Append a structured catch-up run entry to state/catch_up_runs.yaml.
 
@@ -282,35 +332,82 @@ def _append_catch_up_run(
         return  # PyYAML not available; skip silently
 
     # Build entry dict — include only fields that were actually provided
-    entry: dict = {"timestamp": timestamp}
-    # engagement_rate: store null if items_surfaced == 0 (no alerts = no-signal run)
-    if items_surfaced is not None and items_surfaced == 0:
+    entry: dict = {"timestamp": timestamp, "schema_version": "1.0.0"}
+
+    # DD-6 formula: (user_ois + corrections) / surfaced. Use caller-supplied value
+    # when provided (allows pre-computed rates); fall back to formula when None.
+    # When items_surfaced == 0, always store None (undefined rate).
+    _surf = int(items_surfaced) if items_surfaced is not None else 0
+    _ui = int(user_ois) if user_ois is not None else 0
+    _cc = int(correction_count) if correction_count is not None else 0
+    if _surf == 0:
         entry["engagement_rate"] = None  # YAML null — R2 skips null entries
+        entry["correction_rate"] = None
     elif engagement_rate is not None:
         entry["engagement_rate"] = round(float(engagement_rate), 4)
+        entry["correction_rate"] = round(_cc / _surf, 4)
     else:
-        entry["engagement_rate"] = None
+        entry["engagement_rate"] = round((_ui + _cc) / _surf, 4)
+        entry["correction_rate"] = round(_cc / _surf, 4)
 
     if user_ois is not None:
-        entry["user_ois"] = int(user_ois)
+        entry["user_ois"] = _ui
     if system_ois is not None:
         entry["system_ois"] = int(system_ois)
     if items_surfaced is not None:
-        entry["items_surfaced"] = int(items_surfaced)
+        entry["items_surfaced"] = _surf
     if correction_count is not None:
-        entry["correction_count"] = int(correction_count)
+        entry["correction_count"] = _cc
     if briefing_format:
         entry["briefing_format"] = briefing_format
     if email_count is not None:
         entry["email_count"] = int(email_count)
     if domains_processed:
         entry["domains_processed"] = list(domains_processed)
+    if items_resolved is not None:
+        entry["items_resolved"] = int(items_resolved)
+        entry["resolution_rate"] = round(int(items_resolved) / _surf, 4) if _surf > 0 else None
+
+    # EV-3 additional observability fields
+    if compliance_score is not None:
+        entry["compliance_score"] = round(float(compliance_score), 4)
+    if quality_score is not None:
+        entry["quality_score"] = round(float(quality_score), 4)
+    if session_id:
+        entry["session_id"] = session_id
+    if model:
+        entry["model"] = model
+    if calibration_skipped is not None:
+        entry["calibration_skipped"] = bool(calibration_skipped)
+    if coaching_nudge:
+        entry["coaching_nudge"] = coaching_nudge
+    if config_hash:
+        entry["config_hash"] = config_hash
+    if weekend_planner_shown is not None:
+        entry["weekend_planner_shown"] = bool(weekend_planner_shown)
+    if self_model_overlays:
+        entry["self_model_overlays"] = list(self_model_overlays)
+    # EV-11a outcome signals (backfilled by collect_outcome_signals)
+    if outcome_corrections is not None:
+        entry["outcome_corrections_next_session"] = int(outcome_corrections)
+    if outcome_items_resolved is not None:
+        entry["outcome_items_resolved_24h"] = int(outcome_items_resolved)
+    if outcome_queries is not None:
+        entry["outcome_user_queries_since"] = int(outcome_queries)
+
+    # Determine file paths (override when artha_dir is provided)
+    if artha_dir is not None:
+        _state_dir = Path(artha_dir) / "state"
+        _runs_file = _state_dir / "catch_up_runs.yaml"
+    else:
+        _state_dir = STATE_DIR
+        _runs_file = CATCH_UP_RUNS_FILE
 
     # Read existing runs list
     existing: list[dict] = []
-    if CATCH_UP_RUNS_FILE.exists():
+    if _runs_file.exists():
         try:
-            raw = yaml.safe_load(CATCH_UP_RUNS_FILE.read_text(encoding="utf-8"))
+            raw = yaml.safe_load(_runs_file.read_text(encoding="utf-8"))
             if isinstance(raw, list):
                 existing = raw
         except Exception:
@@ -322,9 +419,9 @@ def _append_catch_up_run(
         existing = existing[-100:]
 
     # Atomic write via tempfile + os.replace
-    STATE_DIR.mkdir(exist_ok=True)
+    _state_dir.mkdir(exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
-        dir=STATE_DIR, prefix=".catch_up_runs-", suffix=".tmp"
+        dir=_state_dir, prefix=".catch_up_runs-", suffix=".tmp"
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -336,7 +433,7 @@ def _append_catch_up_run(
                 "---\n"
             )
             yaml.dump(existing, fh, allow_unicode=True, default_flow_style=False)
-        os.replace(tmp_path, CATCH_UP_RUNS_FILE)
+        os.replace(tmp_path, _runs_file)
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -454,6 +551,19 @@ def write_health_check(
     items_surfaced: int | None = None,
     correction_count: int | None = None,
     verbose: bool = False,
+    compliance_score: float | None = None,
+    quality_score: float | None = None,
+    session_id: str | None = None,
+    model: str | None = None,
+    calibration_skipped: bool | None = None,
+    coaching_nudge: str | None = None,
+    config_hash: str | None = None,
+    weekend_planner_shown: bool | None = None,
+    self_model_overlays: list[str] | None = None,
+    items_resolved: int | None = None,
+    outcome_corrections: int | None = None,
+    outcome_items_resolved: int | None = None,
+    outcome_queries: int | None = None,
 ) -> int:
     """Update health-check.md atomically and append to catch_up_runs.yaml.  Returns exit code."""
     if not _acquire_lock():
@@ -523,6 +633,19 @@ def write_health_check(
                 briefing_format=briefing_format,
                 email_count=email_count,
                 domains_processed=domains_processed,
+                compliance_score=compliance_score,
+                quality_score=quality_score,
+                session_id=session_id,
+                model=model,
+                calibration_skipped=calibration_skipped,
+                coaching_nudge=coaching_nudge,
+                config_hash=config_hash,
+                weekend_planner_shown=weekend_planner_shown,
+                self_model_overlays=self_model_overlays,
+                items_resolved=items_resolved,
+                outcome_corrections=outcome_corrections,
+                outcome_items_resolved=outcome_items_resolved,
+                outcome_queries=outcome_queries,
             )
             if verbose:
                 print("[health_check_writer] ✓ catch_up_runs.yaml appended", file=sys.stderr)
@@ -611,6 +734,92 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Number of user corrections applied during Step 19 calibration",
     )
     p.add_argument(
+        "--compliance-score",
+        dest="compliance_score",
+        type=float,
+        metavar="SCORE",
+        help="Compliance score (0.0–1.0) from audit_compliance.evaluate()",
+    )
+    p.add_argument(
+        "--quality-score",
+        dest="quality_score",
+        type=float,
+        metavar="SCORE",
+        help="Briefing quality score (0.0–100.0) from eval_scorer.py",
+    )
+    p.add_argument(
+        "--session-id",
+        dest="session_id",
+        metavar="HEX",
+        help="Session trace ID (16-char hex from ArthaContext.session_id)",
+    )
+    p.add_argument(
+        "--model",
+        dest="model",
+        metavar="NAME",
+        help="LLM model name used this session (e.g. gpt-4o, claude-3-7-sonnet)",
+    )
+    p.add_argument(
+        "--calibration-skipped",
+        dest="calibration_skipped",
+        action="store_true",
+        default=None,
+        help="Set if Step 19 calibration was skipped this session",
+    )
+    p.add_argument(
+        "--coaching-nudge",
+        dest="coaching_nudge",
+        metavar="TEXT",
+        help="Coaching nudge text surfaced this session (Step 19)",
+    )
+    p.add_argument(
+        "--config-hash",
+        dest="config_hash",
+        metavar="HEX12",
+        help="12-char SHA-256 prefix of config files (auto-computed if omitted)",
+    )
+    p.add_argument(
+        "--weekend-planner-shown",
+        dest="weekend_planner_shown",
+        action="store_true",
+        default=None,
+        help="Set if the weekend planner was surfaced this session",
+    )
+    p.add_argument(
+        "--self-model-overlays",
+        dest="self_model_overlays",
+        metavar="LIST",
+        help="Comma-separated list of self-model overlay keys applied",
+    )
+    p.add_argument(
+        "--items-resolved",
+        dest="items_resolved",
+        type=int,
+        metavar="N",
+        help="Number of open items resolved/closed during this session",
+    )
+    p.add_argument(
+        "--outcome-corrections",
+        dest="outcome_corrections",
+        type=int,
+        metavar="N",
+        help="Count of user corrections in next session (EV-11a backfill)",
+    )
+    p.add_argument(
+        "--outcome-items-resolved",
+        dest="outcome_items_resolved",
+        type=int,
+        metavar="N",
+        help="Open items resolved within 24h of briefing (EV-11a backfill)",
+    )
+    p.add_argument(
+        "--outcome-queries",
+        dest="outcome_queries",
+        type=int,
+        metavar="N",
+        help="Ad-hoc queries made since last catch-up (EV-11a backfill)",
+    )
+    p.add_argument(
         "--disable-skill",
         dest="disable_skill",
         metavar="SKILL_NAME",
@@ -647,11 +856,17 @@ def main(argv: list[str] | None = None) -> int:
         args.last_catch_up, args.email_count, args.domains_processed,
         args.session_mode, args.briefing_format, args.engagement_rate,
         args.user_ois, args.system_ois, args.items_surfaced, args.correction_count,
+        args.compliance_score, args.quality_score, args.session_id, args.model,
+        args.calibration_skipped, args.coaching_nudge, args.config_hash,
+        args.weekend_planner_shown, args.self_model_overlays, args.items_resolved,
     ]):
         return 0
 
     last_catch_up = args.last_catch_up or datetime.now(timezone.utc).isoformat()
     domains = [d.strip() for d in args.domains_processed.split(",")] if args.domains_processed else None
+    overlays = [o.strip() for o in args.self_model_overlays.split(",")] if args.self_model_overlays else None
+    # Auto-compute config_hash if not supplied by caller
+    cfg_hash = args.config_hash or _compute_config_hash()
 
     return write_health_check(
         last_catch_up=last_catch_up,
@@ -665,6 +880,19 @@ def main(argv: list[str] | None = None) -> int:
         items_surfaced=args.items_surfaced,
         correction_count=args.correction_count,
         verbose=args.verbose,
+        compliance_score=args.compliance_score,
+        quality_score=args.quality_score,
+        session_id=args.session_id,
+        model=args.model,
+        calibration_skipped=args.calibration_skipped,
+        coaching_nudge=args.coaching_nudge,
+        config_hash=cfg_hash,
+        weekend_planner_shown=args.weekend_planner_shown,
+        self_model_overlays=overlays,
+        items_resolved=args.items_resolved,
+        outcome_corrections=args.outcome_corrections,
+        outcome_items_resolved=args.outcome_items_resolved,
+        outcome_queries=args.outcome_queries,
     )
 
 

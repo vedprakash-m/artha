@@ -102,6 +102,35 @@ _PAT_OPINION = re.compile(
 )
 _PENALTY_OPINION = -0.15           # opinion-only (no artifact evidence)
 
+# Newsletter contribution fit scoring (§9.5)
+# The AI Learning Newsletter is ~85-90% internal content. Scoring prioritises
+# signals that map to the contributor's real internal experience, not generic
+# external trends.
+_NEWSLETTER_FIT_INTERNAL_KW = 0.35   # directly mentions internal Storage/MS tool
+_NEWSLETTER_FIT_BRIDGE = 0.30        # external signal maps to contributor's experience
+_NEWSLETTER_FIT_PRACTICAL = 0.15     # applied/how-to framing
+_NEWSLETTER_PENALTY_EXTERNAL = -0.20 # purely external tool/product with no bridge
+_NEWSLETTER_PENALTY_NEWS = -0.25     # model benchmarks, fundraising, industry news
+_NEWSLETTER_FIT_THRESHOLD = 0.35     # minimum fit score to suggest
+
+# LinkedIn content idea scoring (§9.6)
+# LinkedIn values: trending topics, public shareability, practitioner voice,
+# contrarian takes, concrete examples. Opposite of internal newsletter.
+_LINKEDIN_FIT_TRENDING = 0.25        # matches trending AI topic keywords
+_LINKEDIN_FIT_VOICE = 0.30           # maps to contributor's unique voice angle
+_LINKEDIN_FIT_PRACTICAL = 0.15       # hands-on / how-to framing (LinkedIn loves this)
+_LINKEDIN_FIT_MULTI_SOURCE = 0.10    # seen in 2+ sources = trending signal
+_LINKEDIN_PENALTY_INTERNAL = -0.30   # purely internal tool names (not shareable)
+_LINKEDIN_PENALTY_NEWS = -0.15       # pure news recap without a take
+_LINKEDIN_FIT_THRESHOLD = 0.35       # minimum fit score to suggest
+
+_PAT_NEWSLETTER_PRACTICAL = re.compile(
+    r"\b(how to|how-to|setup|configure|build|implement|deploy|integrate|automate"
+    r"|workflow|walkthrough|step.by.step|getting started|demo|hands.on"
+    r"|productivity|hack|tip|trick)\b",
+    re.IGNORECASE,
+)
+
 # Hands-on artifact evidence — used to gate topic bonus on opinion content
 def _has_artifact_evidence(text: str) -> bool:
     """True if the text contains concrete hands-on signals (install, howto, GitHub)."""
@@ -247,6 +276,202 @@ def _apply_topic_boost(
                     best_topic = topic_row["name"]
                 break
     return best_boost, best_topic
+
+
+def _score_newsletter_fit(
+    signal: "AISignal",
+    newsletter_cfg: dict,
+) -> tuple[float, str]:
+    """Score how well a radar signal fits an internal newsletter's editorial profile.
+
+    The AI Learning Newsletter is ~85-90% internal content — "how I used X at
+    work" stories for [Organization] engineers/PMs. Scoring prioritises:
+      1. Direct mentions of internal tools (Bluebird, Kusto, XStore, etc.)
+      2. Experiential bridges: external trend → "write YOUR internal version"
+      3. Practical/applied framing
+    And penalises:
+      - Purely external tool discoveries with no internal bridge
+      - Industry news (benchmarks, fundraising, policy)
+
+    Returns (fit_score, contribution_angle).
+    Deterministic — no LLM calls (DP-3 compliant).
+    """
+    text = f"{signal.topic} {signal.summary}".lower()
+    fit = 0.0
+    angle = ""
+
+    # 0. Exclusion check — industry news / irrelevant topics
+    exclude_signals = [kw.lower() for kw in newsletter_cfg.get("exclude_signals", [])]
+    if any(kw in text for kw in exclude_signals):
+        fit += _NEWSLETTER_PENALTY_NEWS
+
+    # 1. Direct internal keyword match (strongest signal)
+    internal_keywords = [kw.lower() for kw in newsletter_cfg.get("internal_keywords", [])]
+    internal_match = any(kw in text for kw in internal_keywords)
+    if internal_match:
+        fit += _NEWSLETTER_FIT_INTERNAL_KW
+        angle = "Internal tool deep-dive for the Storage team"
+
+    # 2. Experiential bridge: external trend → your hands-on angle
+    bridges = newsletter_cfg.get("experiential_bridges", [])
+    best_bridge_angle = ""
+    for bridge in bridges:
+        trigger = bridge.get("trigger", "").lower()
+        if trigger and trigger in text:
+            fit += _NEWSLETTER_FIT_BRIDGE
+            best_bridge_angle = bridge.get("your_angle", "")
+            break
+
+    # Use bridge angle as primary (more specific than generic internal match)
+    if best_bridge_angle:
+        angle = best_bridge_angle
+
+    # 3. Practical / applied framing boost
+    if _PAT_NEWSLETTER_PRACTICAL.search(text):
+        fit += _NEWSLETTER_FIT_PRACTICAL
+
+    # 4. Penalty: purely external with no internal bridge and no internal keyword
+    if not internal_match and not best_bridge_angle:
+        fit += _NEWSLETTER_PENALTY_EXTERNAL
+
+    # Default angle fallback
+    if not angle:
+        angle = "Share your perspective on this for the Storage team"
+
+    return round(max(0.0, min(fit, 1.0)), 2), angle
+
+
+def _generate_newsletter_suggestions(
+    surfaced: list["AISignal"],
+    newsletter_targets: list[dict],
+) -> list[dict]:
+    """Generate newsletter contribution suggestions from surfaced radar signals.
+
+    For each newsletter target, scores signals for editorial fit and returns
+    top suggestions with contribution angles. Only suggests topics where the
+    contributor has a credible internal angle (not generic external trends).
+    """
+    suggestions: list[dict] = []
+
+    for nl in newsletter_targets:
+        nl_name = nl.get("name", "Newsletter")
+        max_sugg = nl.get("max_suggestions", 3)
+
+        scored: list[tuple[float, "AISignal", str]] = []
+        for sig in surfaced:
+            fit_score, angle = _score_newsletter_fit(sig, nl)
+            if fit_score >= _NEWSLETTER_FIT_THRESHOLD:
+                scored.append((fit_score, sig, angle))
+
+        # Sort by fit descending, take top N
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for fit_score, sig, angle in scored[:max_sugg]:
+            suggestions.append({
+                "newsletter": nl_name,
+                "topic": sig.topic,
+                "category": sig.category,
+                "fit_score": fit_score,
+                "angle": angle,
+                "best_source_url": sig.best_source_url,
+                "relevance_score": sig.relevance_score,
+            })
+
+    return suggestions
+
+
+def _score_linkedin_fit(
+    signal: "AISignal",
+    linkedin_cfg: dict,
+) -> tuple[float, str]:
+    """Score how well a radar signal works as LinkedIn content.
+
+    LinkedIn values: trending topics, public shareability, practitioner voice,
+    concrete examples, contrarian takes. Opposite of the internal newsletter —
+    external/public framing is a feature, not a penalty.
+
+    Returns (fit_score, content_angle).
+    Deterministic — no LLM calls (DP-3 compliant).
+    """
+    text = f"{signal.topic} {signal.summary}".lower()
+    fit = 0.0
+    angle = ""
+
+    # 0. Exclusion — internal-only tool names not suitable for public post
+    exclude_signals = [kw.lower() for kw in linkedin_cfg.get("exclude_signals", [])]
+    if any(kw in text for kw in exclude_signals):
+        fit += _LINKEDIN_PENALTY_INTERNAL
+
+    # 1. Trending keyword match
+    trending_kws = [kw.lower() for kw in linkedin_cfg.get("trending_keywords", [])]
+    if any(kw in text for kw in trending_kws):
+        fit += _LINKEDIN_FIT_TRENDING
+
+    # 2. Voice angle match — your unique practitioner perspective
+    voice_angles = linkedin_cfg.get("voice_angles", [])
+    best_voice_angle = ""
+    for va in voice_angles:
+        trigger = va.get("trigger", "").lower()
+        if trigger and trigger in text:
+            fit += _LINKEDIN_FIT_VOICE
+            best_voice_angle = va.get("angle", "")
+            break
+
+    if best_voice_angle:
+        angle = best_voice_angle
+
+    # 3. Practical/how-to framing boost (LinkedIn loves "here's how I did X")
+    if _PAT_NEWSLETTER_PRACTICAL.search(text):
+        fit += _LINKEDIN_FIT_PRACTICAL
+
+    # 4. Multi-source trending bonus
+    if signal.seen_in >= 2:
+        fit += _LINKEDIN_FIT_MULTI_SOURCE
+
+    # 5. Pure news recap penalty (no unique take)
+    if not best_voice_angle and not _PAT_NEWSLETTER_PRACTICAL.search(text):
+        fit += _LINKEDIN_PENALTY_NEWS
+
+    if not angle:
+        angle = "Share your practitioner perspective"
+
+    return round(max(0.0, min(fit, 1.0)), 2), angle
+
+
+def _generate_linkedin_suggestions(
+    surfaced: list["AISignal"],
+    linkedin_targets: list[dict],
+) -> list[dict]:
+    """Generate LinkedIn content ideas from surfaced radar signals.
+
+    Scores signals for public shareability and practitioner voice angles.
+    Only suggests topics where the contributor has a unique take.
+    """
+    suggestions: list[dict] = []
+
+    for lt in linkedin_targets:
+        lt_name = lt.get("name", "LinkedIn")
+        max_sugg = lt.get("max_suggestions", 3)
+
+        scored: list[tuple[float, "AISignal", str]] = []
+        for sig in surfaced:
+            fit_score, angle = _score_linkedin_fit(sig, lt)
+            if fit_score >= _LINKEDIN_FIT_THRESHOLD:
+                scored.append((fit_score, sig, angle))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for fit_score, sig, angle in scored[:max_sugg]:
+            suggestions.append({
+                "platform": lt_name,
+                "topic": sig.topic,
+                "category": sig.category,
+                "fit_score": fit_score,
+                "angle": angle,
+                "best_source_url": sig.best_source_url,
+                "relevance_score": sig.relevance_score,
+                "seen_in": sig.seen_in,
+            })
+
+    return suggestions
 
 
 def _extract_topic_from_item(item: dict) -> str:
@@ -436,7 +661,8 @@ class AITrendRadarSkill(BaseSkill):
     def _is_relevant_item(
         self, record: dict, newsletter_senders: set, relevance_keywords: list
     ) -> bool:
-        """True if this pipeline record is an AI-relevant newsletter, RSS, or API discovery item."""
+        """True if this pipeline record is an AI-relevant newsletter, RSS, API discovery,
+        or WorkIQ Teams channel item."""
         source = record.get("source", "").lower()
         from_addr = record.get("from", "").lower()
         marketing_cat = record.get("marketing_category", "").lower()
@@ -448,12 +674,14 @@ class AITrendRadarSkill(BaseSkill):
         )
         # API discovery items are pre-filtered for AI relevance by the connector
         is_api_discovery = source == "api_discovery"
+        # WorkIQ Teams items come from AI-focused channels — pre-filtered at query level
+        is_teams_ai = source in ("workiq_teams", "workiq_teams_ai")
 
-        if not (is_rss or is_newsletter or is_api_discovery):
+        if not (is_rss or is_newsletter or is_api_discovery or is_teams_ai):
             return False
 
-        # API discovery items already passed AI keyword filtering at source
-        if is_api_discovery:
+        # Pre-filtered sources bypass keyword gate
+        if is_api_discovery or is_teams_ai:
             return True
 
         # AI relevance gate
@@ -636,9 +864,24 @@ class AITrendRadarSkill(BaseSkill):
                         f'{sig.seen_in} source(s). /radar topic add "{sig.topic[:40]}"'
                     )
 
+        # --- Newsletter contribution suggestions (§9.5) ---
+        newsletter_targets = config.get("newsletter_targets", [])
+        newsletter_suggestions = _generate_newsletter_suggestions(
+            surfaced, newsletter_targets,
+        ) if newsletter_targets else []
+
+        # --- LinkedIn content idea suggestions (§9.6) ---
+        linkedin_targets = config.get("linkedin_targets", [])
+        linkedin_suggestions = _generate_linkedin_suggestions(
+            surfaced, linkedin_targets,
+        ) if linkedin_targets else []
+
         # --- Write output files ---
         self._rotate_signals_file()
-        self._write_signals_file(surfaced, surfaced_count)
+        self._write_signals_file(
+            surfaced, surfaced_count,
+            newsletter_suggestions, linkedin_suggestions,
+        )
         self._write_metrics_file(
             raw_count=raw_count,
             filtered_count=filtered_count,
@@ -674,6 +917,8 @@ class AITrendRadarSkill(BaseSkill):
         return {
             "signals": [s.to_dict() for s in surfaced],
             "organic_suggestions": organic_suggestions,
+            "newsletter_suggestions": newsletter_suggestions,
+            "linkedin_suggestions": linkedin_suggestions,
             "scored_moments": [m.as_dict() if hasattr(m, "as_dict") else m for m in scored_moments],
             "warm_start": is_warm_start,
             "metrics": self._run_metrics,
@@ -770,7 +1015,9 @@ class AITrendRadarSkill(BaseSkill):
             except OSError as e:
                 _log.warning("Could not rotate signals file: %s", e)
 
-    def _write_signals_file(self, signals: list[AISignal], surfaced_count: int) -> None:
+    def _write_signals_file(self, signals: list[AISignal], surfaced_count: int,
+                            newsletter_suggestions: list[dict] | None = None,
+                            linkedin_suggestions: list[dict] | None = None) -> None:
         """Write ranked signals to tmp/ai_trend_signals.json."""
         self._signals_file.parent.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc)
@@ -781,6 +1028,8 @@ class AITrendRadarSkill(BaseSkill):
             "week_end": date.today().isoformat(),
             "signal_count": surfaced_count,
             "signals": [s.to_dict() for s in signals],
+            "newsletter_suggestions": newsletter_suggestions or [],
+            "linkedin_suggestions": linkedin_suggestions or [],
         }
         try:
             self._signals_file.write_text(
