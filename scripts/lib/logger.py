@@ -130,9 +130,10 @@ class _JsonlHandler(logging.Handler):
 class StructuredLogger:
     """Thin wrapper that adds structured context to stdlib Logger."""
 
-    def __init__(self, name: str, handler: _JsonlHandler) -> None:
+    def __init__(self, name: str, handler: _JsonlHandler, defaults: dict | None = None) -> None:
         self._name = name
         self._handler = handler
+        self._defaults = defaults or {}
         self._logger = logging.getLogger(f"artha.structured.{name}")
         self._logger.setLevel(logging.DEBUG)
         # Avoid duplicate handlers if the same logger is fetched twice
@@ -142,6 +143,8 @@ class StructuredLogger:
         self._logger.propagate = False
 
     def _emit(self, level: int, event: str, **kwargs: Any) -> None:
+        span_id = kwargs.pop("span_id", None)
+        parent_span_id = kwargs.pop("parent_span_id", None)
         payload: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "level": logging.getLevelName(level),
@@ -149,7 +152,13 @@ class StructuredLogger:
             "module": self._name,
             "trace_id": uuid.uuid4().hex[:16],
         }
+        payload.update(self._defaults)
         payload.update(kwargs)
+        if span_id is not None:
+            payload["span_id"] = span_id
+        if parent_span_id is not None:
+            payload["parent_span_id"] = parent_span_id
+        payload = {k: v for k, v in payload.items() if v is not None}
         record = logging.LogRecord(
             name=self._logger.name,
             level=level,
@@ -175,7 +184,11 @@ class StructuredLogger:
         self._emit(logging.DEBUG, event, **kwargs)
 
 
-def get_logger(name: str, logs_dir: Path | None = None) -> StructuredLogger:
+def get_logger(
+    name: str,
+    logs_dir: Path | None = None,
+    defaults: dict | None = None,
+) -> StructuredLogger:
     """Return a StructuredLogger singleton for name.
 
     Parameters
@@ -185,10 +198,14 @@ def get_logger(name: str, logs_dir: Path | None = None) -> StructuredLogger:
     logs_dir:
         Override log directory (default: ``~/.artha-local/logs/``).
         Pass a tmp_path in tests.
+    defaults:
+        Default key/value pairs merged into every log event emitted by
+        this logger (e.g. ``{"session_id": sid, "config_hash": h}``).  
+        Keys present in a specific ``log.*()`` call override these defaults.
     """
-    cache_key = f"{name}::{logs_dir}"
+    cache_key = f"{name}::{logs_dir}::{json.dumps(defaults or {}, sort_keys=True)}"
     if cache_key not in _loggers:
         resolved_dir = logs_dir if logs_dir is not None else _DEFAULT_LOG_DIR
         handler = _JsonlHandler(resolved_dir)
-        _loggers[cache_key] = StructuredLogger(name, handler)
+        _loggers[cache_key] = StructuredLogger(name, handler, defaults=defaults)
     return _loggers[cache_key]

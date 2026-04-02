@@ -103,6 +103,11 @@ class CheckResult:
     fix_hint: str = ""
     auto_fixed: bool = False
 
+    @property
+    def ok(self) -> bool:
+        """Alias for .passed — used by tests."""
+        return self.passed
+
 
 # ---------------------------------------------------------------------------
 # Individual health checks
@@ -1513,6 +1518,106 @@ def check_action_handlers() -> CheckResult:
         )
 
 
+def check_eval_alerts() -> CheckResult:
+    """P0: Block catch-up if any unacked P0 eval alerts are present.
+
+    Reads state/eval_alerts.yaml and fails hard if unacked P0 alerts exist.
+    P1/P2 alerts are informational only (do not block).
+
+    Ref: specs/eval.md EV-14
+    """
+    alerts_path = pathlib.Path(ARTHA_DIR) / "state" / "eval_alerts.yaml"
+    if not alerts_path.exists():
+        # Also check root-level path (used by tests and some deployments)
+        root_alerts = pathlib.Path(ARTHA_DIR) / "eval_alerts.yaml"
+        if root_alerts.exists():
+            alerts_path = root_alerts
+        else:
+            return CheckResult("eval alerts", "P0", True, "No eval alerts file — eval layer clean")
+
+    try:
+        import yaml  # type: ignore[import]
+        raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return CheckResult(
+            "eval alerts", "P1", False,
+            f"Could not read state/eval_alerts.yaml: {exc}",
+            fix_hint="Delete or repair state/eval_alerts.yaml",
+        )
+
+    alert_list = raw.get("alerts", [])
+    if not isinstance(alert_list, list):
+        return CheckResult("eval alerts", "P1", True, "eval_alerts.yaml has no alerts list")
+
+    p0_active = [
+        a for a in alert_list
+        if isinstance(a, dict)
+        and a.get("severity") == "P0"
+        and not a.get("acked", False)
+    ]
+    if p0_active:
+        names = ", ".join(a.get("code", "?") for a in p0_active[:3])
+        return CheckResult(
+            "eval alerts", "P0", False,
+            f"{len(p0_active)} unacked P0 eval alert(s): {names}",
+            fix_hint=(
+                "Resolve or ack P0 alerts in state/eval_alerts.yaml "
+                "(set acked: true) then re-run preflight"
+            ),
+        )
+
+    # Count P1/P2 for informational suffix
+    p1_count = sum(
+        1 for a in alert_list
+        if isinstance(a, dict) and a.get("severity") == "P1" and not a.get("acked", False)
+    )
+    suffix = f" | {p1_count} unacked P1 alert(s)" if p1_count else ""
+    return CheckResult(
+        "eval alerts", "P0", True,
+        f"No blocking P0 eval alerts{suffix}",
+    )
+
+
+def check_eval_p1_alerts() -> "CheckResult | None":
+    """P1 warning: surface unacked P1 eval alerts as a separate check row.
+
+    Returns None if no unacked P1 alerts (caller skips appending).
+    Unlike check_eval_alerts() this never blocks catch-up.
+
+    Ref: specs/eval.md EV-14
+    """
+    alerts_path = pathlib.Path(ARTHA_DIR) / "state" / "eval_alerts.yaml"
+    if not alerts_path.exists():
+        return None
+    try:
+        import yaml  # type: ignore[import]
+        raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+
+    alert_list = raw.get("alerts", [])
+    if not isinstance(alert_list, list):
+        return None
+
+    p1_active = [
+        a for a in alert_list
+        if isinstance(a, dict)
+        and a.get("severity") == "P1"
+        and not a.get("acked", False)
+    ]
+    if not p1_active:
+        return None
+
+    names = ", ".join(
+        a.get("code", a.get("type", "?")) for a in p1_active[:3]
+    )
+    return CheckResult(
+        "eval alerts p1", "P1", False,
+        f"{len(p1_active)} unacked P1 eval alert(s): {names}",
+        fix_hint="Ack P1 alerts in state/eval_alerts.yaml (set acked: true) or resolve",
+    )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -1522,6 +1627,10 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
     checks.append(check_pii_guard())
+    checks.append(check_eval_alerts())  # EV-14: block on unacked P0 eval alerts
+    p1_alert_result = check_eval_p1_alerts()
+    if p1_alert_result is not None:
+        checks.append(p1_alert_result)
     # Global API live connection via unified pipeline.py (skip if --quiet to reduce latency)
     if not quiet:
         try:

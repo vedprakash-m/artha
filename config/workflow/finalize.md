@@ -32,6 +32,35 @@ Log each: `⏭️ Step N skipped — read-only mode`
 
 ## Steps
 
+### Step 2b — Collect Retrospective Outcome Signals *(Eval Layer)*
+
+**SKIP if** `harness.eval.outcome_signals.enabled: false` in `config/artha_config.yaml`
+**SKIP in read-only mode** → log `⏭️ Step 2b skipped — read-only mode`
+**SKIP if** no previous run found in `state/catch_up_runs.yaml`
+
+Before beginning finalization, collect retrospective outcome signals from the
+previous session and backfill them into the previous run record:
+
+```python
+from pathlib import Path
+from scripts.artha_context import _get_last_run, collect_outcome_signals, _backfill_run_record
+
+artha_dir = Path(".")
+prev_run = _get_last_run(artha_dir)
+if prev_run and not prev_run.get("outcome_corrections_next_session"):
+    outcomes = collect_outcome_signals(prev_run, {}, artha_dir)
+    if outcomes:
+        _backfill_run_record(artha_dir, prev_run.get("session_id", ""), outcomes)
+        print(f"[Step 2b] Outcome signals backfilled to session {prev_run.get('session_id','?')[:8]}…")
+```
+
+Outcome fields populated: `outcome_corrections_next_session`, `outcome_items_resolved_24h`,
+`outcome_user_queries_since`, `outcome_briefing_referenced`, `outcome_user_absence_flag`.
+
+**Failure is non-blocking** — finalize continues regardless of errors.
+
+---
+
 ### Step 11c — Persistent Fact Extraction
 
 **SKIP in read-only mode** → log `⏭️ Step 11c skipped — read-only mode`
@@ -181,6 +210,63 @@ The orchestrator reads:
 
 Output: numbered pending action list on stdout for the AI to embed in the
 briefing. Errors to stderr. Exit code: 0=ok, 1=partial, 3=failure.
+
+### Step 12b — Digest connector logs *(Eval Layer)*
+
+**SKIP if** `harness.eval.log_digest.enabled: false` in `config/artha_config.yaml`
+**SKIP in read-only mode** → log `⏭️ Step 12b skipped — read-only mode`
+
+After action proposals are queued, digest the structured JSONL connector logs:
+
+```bash
+python scripts/log_digest.py
+```
+
+Writes `tmp/log_digest.json` with per-connector error rates, p95 latencies,
+error budget percentage (target: <5%), and any detected anomalies
+(HIGH_ERROR_RATE, TREND_WORSENING, QUIET_FAILURE).
+
+Anomalies are written to `state/eval_alerts.yaml` by the post-catch-up memory
+pipeline (Step 11c runs `_run_log_digest()` internally). This step is for
+explicit standalone invocation when the memory pipeline is disabled or
+read-only mode is active.
+
+**Failure is non-blocking** — catch-up completes regardless.
+
+---
+
+### Step 12c — Briefing Confidence Footer *(Eval Layer)*
+
+**SKIP if** Step 12b produced null `quality_score` (eval scorer failed or disabled)
+**SKIP in read-only mode** → log `⏭️ Step 12c skipped — read-only mode`
+
+After scoring completes, inject a one-line confidence footer at the end of the
+briefing file:
+
+```
+If Step 12b produced a quality_score and compliance_score:
+    Append to the briefing file:
+    ---
+    📊 Briefing confidence: {quality_score}/100 (Δ{delta} from last) | {domains_found}/{domains_expected} domains | 14d avg: {avg_14d} | {flagged_count} items need verification
+
+Where:
+    quality_score = from eval_scorer output
+    delta = quality_score minus previous session's quality_score
+            (read from state/briefing_scores.json last entry).
+            Format: "+5" or "−3". If no previous entry: omit delta clause.
+    avg_14d = rolling 14-day average quality_score from briefing_scores.json.
+              If fewer than 3 data points: omit clause.
+    domains_found / domains_expected = from completeness dimension
+    flagged_count = count of items marked with ⚡ verification overlay (from Step 6b)
+
+If Step 12b failed (null scores): do NOT append a footer. Absence of
+footer = no eval data (user can infer this from the missing line).
+```
+
+**Non-blocking:** Footer append is wrapped in try/catch. If it fails, the
+catch-up continues. The briefing file is left without a footer.
+
+---
 
 ### Step 13 — Propose write actions
 

@@ -81,3 +81,22 @@ clean: ## Remove __pycache__ and .pyc files
 
 check: lint ruff import-check test pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"
+
+# ── Eval Layer Gates (specs/eval.md EV-16) ────────────────────────────────────
+
+.PHONY: phase0-gate phase1-gate phase2-gate eval-all-gates eval-test
+
+phase0-gate: ## EV-0d: Run eval summary (accuracy + quality metrics)
+	$(PYTHON) scripts/eval_runner.py --summary
+
+phase1-gate: ## EV-5: Score the most recent briefing
+	$(PYTHON) scripts/eval_scorer.py --latest
+
+phase2-gate: ## EV-6: Digest connector logs and report error budget
+	$(PYTHON) scripts/log_digest.py --json
+
+eval-test: ## EV-12: Run eval test suite only
+	$(PYTEST) tests/eval/ --tb=short -q
+
+eval-all-gates: phase0-gate phase1-gate phase2-gate eval-test ## Run all eval gates (phase0 + phase1 + phase2 + tests)
+	@echo "✓ All eval gates passed."

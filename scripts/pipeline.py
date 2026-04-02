@@ -439,7 +439,7 @@ def _validate_output_path(raw: str, artha_dir: Path) -> Path:
     """
     target = (artha_dir / raw).resolve()
     allowed = (artha_dir / "tmp").resolve()
-    if not str(target).startswith(str(allowed) + "/") and target != allowed:
+    if not target.is_relative_to(allowed):
         raise ValueError(
             f"--output must be inside tmp/ (got {raw!r}). "
             "Use a relative path like 'tmp/pipeline_output.jsonl'."

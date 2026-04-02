@@ -120,8 +120,12 @@ coverage.xml
 # --- Personal development setup docs (machine-specific paths) ---
 docs/cross-platform-git-setup.md
 
-# --- OneDrive artifacts ---
+# --- OneDrive artifacts and conflict copies ---
+# No machine-name patterns here: keep this file free of personal identifiers.
+# state/*.age is a superset of state/*.md.age etc. and also covers OneDrive
+# conflict-copy variants (e.g. state/foo.md-MACHINENAME.age).
 *conflicted*
+state/*.age
 .DS_Store
 
 # --- IDE settings ---
@@ -149,6 +153,6 @@ state/*.yaml.age.*
 state/*.md.age.*
 
 # --- OneDrive conflict copies ---
-*-CPC-vemis-DJD0M*
-".git 2/"
+# OneDrive git-shadow directory (sync artefact)
+.git 2/
 *.pre-*-bak

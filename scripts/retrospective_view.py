@@ -34,8 +34,10 @@ Ref: specs/act-reloaded.md Enhancement 15, config/briefing-formats.md §8.10
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
+import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -246,7 +248,190 @@ def _upcoming_deadlines(open_items_path: Path, from_date: date, days: int = 30) 
     return sorted(upcoming)[:5]
 
 
+
 # --- Main generator ---------------------------------------------------------
+
+
+def _detect_stale_domains(
+    runs: list[dict],
+    streak_threshold: int = 3,
+) -> list[str]:
+    """Return domain names missing from 'domains_processed' in the last N runs.
+
+    A domain is considered stale if it appeared in at least one earlier run
+    (so it was once active) but is absent from the most recent
+    ``streak_threshold`` consecutive runs.
+
+    Args:
+        runs: List of catch-up run dicts (from catch_up_runs.yaml), ordered
+              oldest-first.
+        streak_threshold: Number of consecutive recent runs without a domain
+                          needed to flag it stale (default: 3).
+
+    Returns:
+        Sorted list of stale domain names.
+    """
+    if len(runs) < streak_threshold:
+        return []
+
+    def _domains_from_run(r: dict) -> set[str]:
+        raw = (
+            r.get("domains_processed")
+            or r.get("domains_loaded")
+            or r.get("domains")
+            or []
+        )
+        if isinstance(raw, list):
+            return {str(d).lower() for d in raw if d}
+        return set()
+
+    # Domains seen in any run before the recent window
+    recent_runs = runs[-streak_threshold:]
+    earlier_runs = runs[:-streak_threshold]
+
+    ever_seen: set[str] = set()
+    for r in earlier_runs:
+        ever_seen |= _domains_from_run(r)
+
+    if not ever_seen:
+        return []
+
+    # Check if each ever-seen domain is absent from ALL recent runs
+    stale = []
+    for domain in sorted(ever_seen):
+        in_any_recent = any(domain in _domains_from_run(r) for r in recent_runs)
+        if not in_any_recent:
+            stale.append(domain)
+
+    return stale
+
+
+def _detect_stale_domain_files(
+    state_dir: Path,
+    threshold_days: int = 30,
+) -> list[dict]:
+    """Return domains whose state/*.md last_updated is older than threshold_days.
+
+    Excludes housekeeping files (audit.md, health-check.md, dashboard.md).
+    Returns list of dicts with domain, last_updated, days_stale.
+    """
+    _EXCLUDED = {"audit.md", "health-check.md", "dashboard.md", "open_items.md",
+                 "memory.md", "goals.md", "decisions.md", "eval_alerts.yaml"}
+    stale = []
+    for md_file in state_dir.glob("*.md"):
+        if md_file.name in _EXCLUDED or md_file.name.startswith("."):
+            continue
+        fm = _load_frontmatter(md_file)
+        last_updated = fm.get("last_updated")
+        if not last_updated:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(last_updated).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age = (datetime.now(timezone.utc) - dt).days
+            if age > threshold_days:
+                stale.append({
+                    "domain": md_file.stem,
+                    "last_updated": str(last_updated),
+                    "days_stale": age,
+                })
+        except (ValueError, TypeError):
+            continue
+    return sorted(stale, key=lambda x: x["days_stale"], reverse=True)
+
+
+def _write_stale_domain_p2_alerts(stale_domains: list[dict], state_dir: Path) -> None:
+    """Write a P2 eval alert for each stale domain to state/eval_alerts.yaml.
+
+    Uses atomic tempfile+os.replace write. Deduplicates by domain name within
+    the last 14 days to avoid flooding the alert log.
+    Non-blocking — silently swallows all errors.
+    """
+    if not stale_domains or not _YAML_AVAILABLE:
+        return
+
+    alerts_path = state_dir / "eval_alerts.yaml"
+    now = datetime.now(timezone.utc)
+    dedup_cutoff = now.timestamp() - 14 * 86400
+
+    # Load existing alerts
+    existing: list[dict] = []
+    if alerts_path.exists():
+        try:
+            raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8")) or {}
+            existing = raw.get("alerts", [])
+        except Exception:
+            existing = []
+
+    # Build dedup set (domain names seen in last 14d for stale_domain type)
+    recent_domain_keys: set[str] = set()
+    for alert in existing:
+        if not isinstance(alert, dict):
+            continue
+        if alert.get("type") != "stale_domain":
+            continue
+        ts_str = alert.get("detected_at", "")
+        try:
+            ts = datetime.fromisoformat(ts_str)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts.timestamp() >= dedup_cutoff:
+                recent_domain_keys.add(alert.get("details", {}).get("domain", ""))
+        except (ValueError, TypeError):
+            pass
+
+    # Append new non-duplicate alerts
+    added = False
+    for entry in stale_domains:
+        domain = entry["domain"]
+        if domain in recent_domain_keys:
+            continue
+        existing.append({
+            "type": "stale_domain",
+            "severity": "P2",
+            "detected_at": now.isoformat(),
+            "acked": False,
+            "escalated": False,
+            "details": {
+                "domain": domain,
+                "last_updated": entry["last_updated"],
+                "days_stale": entry["days_stale"],
+            },
+        })
+        recent_domain_keys.add(domain)
+        added = True
+
+    if not added:
+        return
+
+    # Capacity enforcement: keep last 20
+    existing = existing[-20:]
+
+    # Atomic write
+    try:
+        state_dir.mkdir(exist_ok=True)
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=state_dir, prefix=".eval_alerts-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                yaml.dump(
+                    {"alerts": existing}, fh,
+                    default_flow_style=False, allow_unicode=True, sort_keys=False,
+                )
+            os.replace(tmp_path_str, alerts_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path_str)
+            except OSError:
+                pass
+    except Exception:
+        pass  # Non-blocking
+
+
+# --- Main generator ---------------------------------------------------------
+
 
 class RetrospectiveView:
     """Generates monthly retrospective reports."""
@@ -303,6 +488,15 @@ class RetrospectiveView:
         )
         next_deadlines = _upcoming_deadlines(state_dir / "open_items.md", month_end)
 
+        # EV-11: Detect stale domain state files and write P2 alerts (non-blocking)
+        stale_domain_files: list[dict] = []
+        try:
+            stale_domain_files = _detect_stale_domain_files(state_dir)
+            if stale_domain_files:
+                _write_stale_domain_p2_alerts(stale_domain_files, state_dir)
+        except Exception:
+            stale_domain_files = []
+
         # Build retrospective
         lines = [
             f"# Monthly Retrospective — {month_label}",
@@ -351,6 +545,15 @@ class RetrospectiveView:
             lines += ["", "## 🧠 Pattern Insights (from memory)", ""]
             for insight in memory_insights:
                 lines.append(f"- {insight}")
+
+        if stale_domain_files:
+            lines += ["", "## ⚠️ Recommended Actions", ""]
+            for s in stale_domain_files[:5]:
+                lines.append(
+                    f"- **{s['domain']}** — state file stale for {s['days_stale']} days "
+                    f"(last updated: {s['last_updated']}). "
+                    "Check connector health: `python scripts/pipeline.py --health`"
+                )
 
         if next_deadlines:
             lines += ["", "## 🔭 Next Month Preview", ""]

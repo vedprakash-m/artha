@@ -1027,6 +1027,39 @@ features:
     status: implemented
     confidence: high
     note: "_assess_provider_tier(graph_ok, ado_ok, workiq_ok, agency_ok) returns 4-tier string; _build_degraded_mode_report() returns list[str] with per-command degradation callouts + remediation steps; inserted into cmd_health() as 'Provider coverage:' section; uninitialized ado_ok/agency_ok/workiq_ok bug fixed; 13 tests in TestAssessProviderTier + TestBuildDegradedModeReport + TestHealthProviderCoverage; v2.7.0"
+
+  # ── Knowledge Graph (specs/kb-graph-design.md) ──────────────────────────
+  kb_graph:
+    spec: "specs/kb-graph-design.md"
+    status: implemented
+    confidence: high
+    note: "v1.0 — SQLite WAL graph; 16 tables + FTS5 + 13 triggers; KnowledgeGraph API (22 methods); NullKnowledgeGraph graceful degradation; 7 MCP tools; backup hook in backup.py; bootstrap from knowledge/*.md"
+    phase: v1.0
+  kb_graph_core:
+    spec: "specs/kb-graph-design.md §6"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/knowledge_graph.py — upsert_entity, add_relationship, context_for (2-hop BFS), find_path, traverse, get_context_as_of, global_context_for, rebuild_communities (Union-Find), validate_integrity, backup (7-step with WAL-safe tempfile)"
+  kb_graph_bootstrap:
+    spec: "specs/kb-graph-design.md §7"
+    status: implemented
+    confidence: high
+    note: "scripts/kb_bootstrap.py — FileExtractor; parses knowledge/*.md; heuristic entity + relationship extraction; --dry-run / --file / --status CLI flags; no LLM dependency (Phase v1.0)"
+  kb_graph_mcp_tools:
+    spec: "specs/kb-graph-design.md §8"
+    status: implemented
+    confidence: high
+    note: "artha_kb_query, artha_kb_context, artha_kb_search, artha_kb_recent_changes, artha_kb_stale, artha_kb_global, artha_kb_episodes — all registered in scripts/mcp_server.py"
+  kb_graph_backup_hook:
+    spec: "specs/kb-graph-design.md §9"
+    status: implemented
+    confidence: high
+    note: "Non-fatal KB backup appended to backup_snapshot() in scripts/backup.py; fires after GFS prune + auto-validate per tier"
+  kb_graph_enricher:
+    spec: "specs/kb-graph-design.md §10"
+    status: implemented
+    confidence: high
+    note: "KnowledgeEnricher.enrich_briefing(dict)→dict + enrich_meeting_prep(dict)→dict in knowledge_graph.py; dict-in/dict-out API; adds 'kb_context' key; NullKG returns input unchanged; wiring to pipeline.py deferred to v1.1"
   work_os_phase4_prompt_linter:
     spec: "specs/work.md §19 Phase 4 item 5"
     status: implemented

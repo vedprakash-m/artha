@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Eval Spec v1.4.0 (specs/eval.md)
+- DD-17: Schema versioning policy — all eval artifacts carry `schema_version` with semver, validated by MetricStore on load
+- DD-18: Dynamic domain expectations — `_load_expected_domains()` reads `config/domain_registry.yaml` instead of hardcoded list
+- §7.5: Eval Data Privacy Classification — artifact-level PII/sensitivity table, `.gitignore` audit checklist
+- EV-0d: Eval dashboard — `print_summary()` function with `--summary` / `--summary --json` CLI flags
+- Reading guide at top of TOC for audience-specific navigation
+- Risks R21 (schema version drift across devices) and R22 (domain registry out of sync)
+- Assumptions A-23 (`domain_registry.yaml` exists) and A-24 (no existing `schema_version` fields)
+- `schema_version: '1.0.0'` added to all Appendix B schema examples (B.1–B.4)
+- 10 new tests (3 EV-0d + 4 DD-17 + 3 DD-18) — total 127 tests across 26 files
+
 ### Added — Action Layer v1.4: Orchestrator + Signal Extraction (specs/actions-reloaded.md)
 - `scripts/action_orchestrator.py`: new top-level CLI combining email signal extraction, pattern engine, AI signals, dedup, compose/propose, approve/reject/defer/expire lifecycle, and audit log into one command (`--run`, `--list`, `--show`, `--approve`, `--reject`, `--defer`, `--approve-all-low`, `--expire`, `--health`)
 - `scripts/email_signal_extractor.py`: expanded from 1-pattern to 9-category signal coverage — RSVP deadlines, appointment confirmed, bill due, form deadline (+ cancellation forms), delivery arrival (including "arriving [date]" variants), security alerts, subscription renewals, school action needed (missing assignments, surveys, events), financial alerts (INR/NEFT/UPI transactions)

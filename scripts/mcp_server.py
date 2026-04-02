@@ -727,6 +727,192 @@ def artha_todo_sync(
 
 
 # ===========================================================================
+# Knowledge Graph tools
+# ===========================================================================
+
+@mcp.tool()
+def artha_kb_query(
+    entity_id: str,
+    token_budget: int = 4000,
+) -> str:
+    """Return full context for a KB entity (2-hop BFS, capped at token_budget).
+
+    Args:
+        entity_id: The stable entity ID (e.g. 'infrastructure-armada-platform').
+        token_budget: Approximate token limit for the returned context block.
+    """
+    params = {"entity_id": entity_id, "token_budget": token_budget}
+    _check_rate_limit("artha_kb_query")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        ctx = kg.context_for(entity_id, token_budget=token_budget)
+        _audit("artha_kb_query", params, "ok")
+        return json.dumps(ctx, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_query", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_context(
+    entity_name: str,
+    depth: int = 2,
+    token_budget: int = 4000,
+) -> str:
+    """Resolve an entity by name and return its neighbourhood context.
+
+    Args:
+        entity_name: Human-readable name to search for (case-insensitive).
+        depth: BFS hop depth (1–3 recommended).
+        token_budget: Approximate token limit for the returned context block.
+    """
+    params = {"entity_name": entity_name, "depth": depth, "token_budget": token_budget}
+    _check_rate_limit("artha_kb_context")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        entity_id = kg.resolve_entity(entity_name)
+        if entity_id is None:
+            _audit("artha_kb_context", params, "not_found")
+            return json.dumps({"error": f"Entity not found: {entity_name!r}"})
+        ctx = kg.context_for(entity_id, depth=depth, token_budget=token_budget)
+        _audit("artha_kb_context", params, "ok")
+        return json.dumps(ctx, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_context", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_search(
+    query: str,
+    domain: str = "",
+    limit: int = 10,
+) -> str:
+    """Full-text search over KB entities and summaries.
+
+    Args:
+        query: Search terms (FTS5 — supports phrase and prefix queries).
+        domain: Filter results to this domain (leave empty for all domains).
+        limit: Maximum results to return.
+    """
+    params = {"query": query, "domain": domain or None, "limit": limit}
+    _check_rate_limit("artha_kb_search")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        results = kg.search(query, domain=domain or None, limit=min(limit, 50))
+        _audit("artha_kb_search", params, "ok")
+        return json.dumps(
+            [r.__dict__ if hasattr(r, "__dict__") else r for r in results],
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception as exc:
+        _audit("artha_kb_search", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_recent_changes(
+    domain: str = "",
+    days: int = 30,
+) -> str:
+    """List entities that changed in the past N days.
+
+    Args:
+        domain: Filter to a specific domain (empty = all).
+        days: Look-back window in days.
+    """
+    params = {"domain": domain or None, "days": days}
+    _check_rate_limit("artha_kb_recent_changes")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        changes = kg.recent_changes(domain=domain or None, days=days)
+        _audit("artha_kb_recent_changes", params, "ok")
+        return json.dumps(changes, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_recent_changes", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_stale(
+    domain: str = "",
+) -> str:
+    """Return entities whose information may be outdated.
+
+    Args:
+        domain: Filter to a specific domain (empty = all).
+    """
+    params = {"domain": domain or None}
+    _check_rate_limit("artha_kb_stale")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        stale = kg.stale_entities(domain=domain or None)
+        _audit("artha_kb_stale", params, "ok")
+        return json.dumps(stale, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_stale", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_global(
+    question: str,
+    max_tokens: int = 800,
+) -> str:
+    """Global context search: community summaries + FTS across all domains.
+
+    Best for high-level questions that span multiple entities. For targeted
+    entity lookups, prefer artha_kb_context or artha_kb_query.
+
+    Args:
+        question: The question or topic to retrieve context for.
+        max_tokens: Approximate token limit for the returned block.
+    """
+    params = {"question": question, "max_tokens": max_tokens}
+    _check_rate_limit("artha_kb_global")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        result = kg.global_context_for(question, max_tokens=max_tokens)
+        _audit("artha_kb_global", params, "ok")
+        return json.dumps(result, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_global", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def artha_kb_episodes(
+    entity_mentions: str = "",
+    since_days: int = 30,
+) -> str:
+    """Retrieve recent KB episodes (ingested events / briefings / meetings).
+
+    Args:
+        entity_mentions: Optional comma-separated entity IDs to filter by.
+        since_days: How many days back to look.
+    """
+    params = {"entity_mentions": entity_mentions, "since_days": since_days}
+    _check_rate_limit("artha_kb_episodes")
+    try:
+        from lib.knowledge_graph import get_kb  # noqa: PLC0415
+        kg = get_kb()
+        mentions = [m.strip() for m in entity_mentions.split(",") if m.strip()] or None
+        episodes = kg.recent_episodes(entity_ids=mentions, days=since_days)
+        _audit("artha_kb_episodes", params, "ok")
+        return json.dumps(episodes, ensure_ascii=False, default=str)
+    except Exception as exc:
+        _audit("artha_kb_episodes", params, f"error:{exc}")
+        return json.dumps({"error": str(exc)})
+
+
+# ===========================================================================
 # Entry point
 # ===========================================================================
 if __name__ == "__main__":
