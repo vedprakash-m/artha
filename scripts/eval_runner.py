@@ -30,6 +30,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+
+# Ensure UTF-8 output on Windows (PowerShell defaults to cp1252)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -44,6 +51,8 @@ _CATCH_UP_RUNS = _ARTHA_DIR / "state" / "catch_up_runs.yaml"  # structured run h
 _BRIEFING_SCORES = _ARTHA_DIR / "state" / "briefing_scores.json"  # EV-5 quality history
 _LOG_DIGEST = _ARTHA_DIR / "tmp" / "log_digest.json"              # EV-6 anomaly digest
 _EVAL_ALERTS = _ARTHA_DIR / "state" / "eval_alerts.yaml"          # EV-16b alert queue
+_EXT_AGENT_METRICS = _ARTHA_DIR / "tmp" / "ext-agent-metrics.jsonl"  # AR-9 agent inv. metrics
+_EXT_AGENT_REGISTRY = _ARTHA_DIR / "config" / "agents" / "external-registry.yaml"  # AR-9 registry
 _MEMORY_PIPELINE_RUNS = Path(
     __import__("os").path.expanduser("~")
 ) / ".artha-local" / "logs" / "memory_pipeline_runs.jsonl"
@@ -565,6 +574,180 @@ def analyze_log_health() -> dict[str, Any]:
 # Memory health analysis (EV-11c — reads memory_pipeline_runs.jsonl)
 # ---------------------------------------------------------------------------
 
+def analyze_agent_metrics(agent_filter: str | None = None, days: int = 30) -> dict[str, Any]:
+    """AR-9 — Read tmp/ext-agent-metrics.jsonl for agent invocation metrics."""
+    records: list[dict] = []
+    if _EXT_AGENT_METRICS.exists():
+        try:
+            for line in _EXT_AGENT_METRICS.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        except OSError as exc:
+            return {"error": str(exc)}
+
+    if not records:
+        return {"agents": {}, "total_invocations": 0, "routing_decisions": 0}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    recent = [r for r in records if r.get("timestamp", "") >= cutoff]
+
+    by_agent: dict[str, dict] = {}
+    routing_total = 0
+    for r in recent:
+        rtype = r.get("record_type", "invocation")
+        if rtype == "routing_decision":
+            routing_total += 1
+            continue
+        name = r.get("agent_name", "unknown")
+        if agent_filter and name != agent_filter:
+            continue
+        a = by_agent.setdefault(name, {
+            "invocations": 0, "successes": 0, "failures": 0,
+            "total_latency_ms": 0, "quality_scores": [], "cache_hits": 0,
+        })
+        a["invocations"] += 1
+        if r.get("success"):
+            a["successes"] += 1
+        else:
+            a["failures"] += 1
+        a["total_latency_ms"] += r.get("latency_ms", 0)
+        if r.get("quality_score") is not None:
+            a["quality_scores"].append(r["quality_score"])
+        if r.get("cache_hit"):
+            a["cache_hits"] += 1
+
+    summary: dict[str, Any] = {}
+    for name, a in sorted(by_agent.items()):
+        inv = a["invocations"]
+        qs = a["quality_scores"]
+        summary[name] = {
+            "invocations": inv,
+            "success_rate": round(a["successes"] / inv, 3) if inv else 0.0,
+            "avg_latency_ms": round(a["total_latency_ms"] / inv) if inv else 0,
+            "avg_quality": round(sum(qs) / len(qs), 2) if qs else None,
+            "cache_hit_rate": round(a["cache_hits"] / inv, 3) if inv else 0.0,
+        }
+
+    return {
+        "agents": summary,
+        "total_invocations": sum(a["invocations"] for a in summary.values()),
+        "routing_decisions": routing_total,
+        "period_days": days,
+    }
+
+
+def analyze_routing_audit(days: int = 7) -> dict[str, Any]:
+    """AR-9 — Summarise routing decisions from tmp/ext-agent-metrics.jsonl."""
+    records: list[dict] = []
+    if _EXT_AGENT_METRICS.exists():
+        try:
+            for line in _EXT_AGENT_METRICS.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        except OSError:
+            pass
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    decisions = [
+        r for r in records
+        if r.get("record_type") == "routing_decision"
+        and r.get("timestamp", "") >= cutoff
+    ]
+
+    if not decisions:
+        return {"decisions": [], "total": 0}
+
+    by_agent: dict[str, int] = {}
+    dispatched = 0
+    declined = 0
+    for d in decisions:
+        agent = d.get("matched_agent", "none")
+        by_agent[agent] = by_agent.get(agent, 0) + 1
+        if d.get("dispatched"):
+            dispatched += 1
+        else:
+            declined += 1
+
+    return {
+        "total": len(decisions),
+        "dispatched": dispatched,
+        "declined": declined,
+        "by_agent": dict(sorted(by_agent.items(), key=lambda x: x[1], reverse=True)),
+        "recent": decisions[-10:],
+        "period_days": days,
+    }
+
+
+def analyze_cache_report() -> dict[str, Any]:
+    """AR-9 — Report cache sizes and hit rates from ext-agent-cache directory."""
+    cache_dir = _ARTHA_DIR / "tmp" / "ext-agent-cache"
+    result: dict[str, Any] = {"agents": {}, "total_files": 0, "total_bytes": 0}
+    if not cache_dir.exists():
+        return result
+    for p in cache_dir.iterdir():
+        if p.name == ".gitkeep":
+            continue
+        if p.is_dir():
+            files = list(p.rglob("*"))
+            size = sum(f.stat().st_size for f in files if f.is_file())
+            result["agents"][p.name] = {"files": len(files), "bytes": size}
+            result["total_files"] += len(files)
+            result["total_bytes"] += size
+        elif p.is_file():
+            size = p.stat().st_size
+            result["agents"][p.stem] = {"files": 1, "bytes": size}
+            result["total_files"] += 1
+            result["total_bytes"] += size
+
+    # Merge hit rates from metrics file
+    inv_data = analyze_agent_metrics()
+    for name, stats in inv_data.get("agents", {}).items():
+        if name in result["agents"]:
+            result["agents"][name]["cache_hit_rate"] = stats.get("cache_hit_rate")
+
+    return result
+
+
+def _render_agent_metrics_report(
+    data: dict[str, Any],
+    agent_filter: str | None = None,
+) -> str:
+    """Render AR-9 agent metrics as text."""
+    lines = ["━━ EXTERNAL AGENT METRICS (AR-9) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+    agents = data.get("agents", {})
+    if not agents:
+        lines.append("  No agent invocation records found.")
+        lines.append(f"  Metrics file: {_EXT_AGENT_METRICS}")
+    else:
+        lines.append(
+            f"  {'Agent':<30} {'Inv':>5} {'Succ%':>7} {'AvgMs':>7} {'Qual':>6} {'Cache%':>7}"
+        )
+        lines.append("  " + "-" * 66)
+        for name, s in sorted(agents.items()):
+            qual = f"{s['avg_quality']:.1f}" if s["avg_quality"] is not None else "  N/A"
+            lines.append(
+                f"  {name:<30} {s['invocations']:>5} "
+                f"{s['success_rate']*100:>6.1f}% "
+                f"{s['avg_latency_ms']:>6}ms "
+                f"{qual:>6} "
+                f"{s['cache_hit_rate']*100:>6.1f}%"
+            )
+        lines.append("")
+        lines.append(f"  Total invocations : {data['total_invocations']}")
+        lines.append(f"  Routing decisions : {data['routing_decisions']}")
+        lines.append(f"  Period            : {data.get('period_days', 30)} days")
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+
 def _analyze_memory_health() -> dict[str, Any]:
     """Read ~/.artha-local/logs/memory_pipeline_runs.jsonl for memory pipeline stats."""
     if not _MEMORY_PIPELINE_RUNS.exists():
@@ -946,9 +1129,74 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-health", action="store_true", help="Log digest + anomaly report (reads tmp/log_digest.json)")
     parser.add_argument("--memory", action="store_true", help="Memory pipeline health analysis")
     parser.add_argument("--summary", action="store_true", help="Dashboard summary across all dimensions")
+    parser.add_argument("--agents", action="store_true", help="AR-9 external agent invocation metrics")
+    parser.add_argument("--agent", metavar="NAME", help="AR-9 filter metrics to a specific agent")
+    parser.add_argument("--routing-audit", action="store_true", help="AR-9 routing decision log summary")
+    parser.add_argument("--cache-report", action="store_true", help="AR-9 ext-agent-cache size and hit rates")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--trend", type=int, default=7, metavar="DAYS", help="Trend window (default: 7)")
     args = parser.parse_args(argv)
+
+    # --agents / --agent: AR-9 external agent invocation metrics
+    if args.agents or args.agent:
+        data = analyze_agent_metrics(agent_filter=args.agent, days=args.trend)
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            print(_render_agent_metrics_report(data, agent_filter=args.agent))
+        return 0
+
+    # --routing-audit: AR-9 routing decision log
+    if args.routing_audit:
+        data = analyze_routing_audit(days=args.trend)
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ ROUTING AUDIT (AR-9) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            if not data["total"]:
+                lines.append("  No routing decisions recorded.")
+            else:
+                lines.append(f"  Total decisions : {data['total']}  (last {data['period_days']}d)")
+                lines.append(f"  Dispatched      : {data['dispatched']}")
+                lines.append(f"  Declined        : {data['declined']}")
+                for agent, count in data.get("by_agent", {}).items():
+                    lines.append(f"    {agent:<32}: {count}")
+                if data.get("recent"):
+                    lines.append("")
+                    lines.append("  Recent decisions (last 10):")
+                    for d in data["recent"]:
+                        ts = d.get("timestamp", "?")[:16]
+                        agent = d.get("matched_agent", "?")[:28]
+                        conf = d.get("confidence", 0)
+                        act = "DISPATCH" if d.get("dispatched") else "declined"
+                        lines.append(f"    [{ts}] {agent:<28} conf={conf:.2f}  {act}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
+        return 0
+
+    # --cache-report: AR-9 cache sizes and hit rates
+    if args.cache_report:
+        data = analyze_cache_report()
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ AGENT CACHE REPORT (AR-9) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"]
+            agents = data.get("agents", {})
+            if not agents:
+                lines.append("  No cached data found.")
+            else:
+                lines.append(f"  {'Agent':<30} {'Files':>6} {'Size':>10} {'Cache%':>8}")
+                lines.append("  " + "-" * 56)
+                for name, info in sorted(agents.items()):
+                    size_kb = round(info["bytes"] / 1024, 1)
+                    hit = info.get("cache_hit_rate")
+                    hit_str = f"{hit*100:.1f}%" if hit is not None else "   N/A"
+                    lines.append(f"  {name:<30} {info['files']:>6} {size_kb:>8}KB {hit_str:>8}")
+                lines.append("")
+                lines.append(f"  Total: {data['total_files']} files, {round(data['total_bytes']/1024,1)}KB")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
+        return 0
 
     # --skills is a standalone mode
     if args.skills:

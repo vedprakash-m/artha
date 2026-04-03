@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.6.0
+## Product Requirements Document · v7.7.0
 
 **Author:** [Author]
-**Date:** March 28, 2026
+**Date:** April 2, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.7.0 | 2026-04-02 | AR-9 External Agent Composition: file-drop model (`config/agents/external/`); trust tiers (owned→untrusted); context classification + PII scrubbing pipeline; `runSubagent`-based invocation (60s timeout); response verification against local KB; knowledge extraction to `tmp/ext-agent-cache/`; agent health tracking and auto-retirement; full audit trail; injection defense. Data Quality Gate (Work OS): pull-based 3-dimension KB quality model (Accuracy ≥ Freshness ≥ Completeness); QualityVerdict (PASS/WARN/STALE/REFUSE); corroborating-source scoring. 4,515 tests. F15.EXT-1–F15.EXT-14; F15.DQ-1–F15.DQ-3. |
 | v7.6.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer orchestrator architecture absorbed: F15.20 updated with signal pipeline, actions.db, kill switch, and Step 12.5 reference. |
 | v7.5.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1 complete:.. |
 | v7.4.0 | 2026-03 | FW-19 Reflection Loop v1.5.0 — Spec Consolidation:.. |

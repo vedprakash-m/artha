@@ -28,7 +28,8 @@ config/prompt-overlays/*.md
 # --- Local archive (personal specs, notes with PII — never committed) ---
 .archive/
 knowledge/
-ar/
+autoresearch/
+ai-demo-day/
 
 # --- Specs directory — only canonical specs are committed ---
 # All specs/ files are ignored by default; only the 3 canonical specs are
@@ -139,6 +140,13 @@ visuals/
 
 # --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
+
+# --- External agent drop folder, registry, and work-specific agent configs ---
+# These contain personal work context (team names, ADO IDs, tool-specific instructions)
+# Only the 3 canonical artha-work*.md agent definitions (already tracked) are public.
+config/agents/external/
+config/agents/external-registry.yaml
+config/agents/*.agent.md
 
 # --- Decrypted state transient files ---
 .artha-decrypted

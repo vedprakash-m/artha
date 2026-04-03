@@ -40,7 +40,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Schema version — increment on any DDL change
 # ---------------------------------------------------------------------------
-_SCHEMA_VERSION = "2"
+_SCHEMA_VERSION = "3"
 
 # ---------------------------------------------------------------------------
 # Source weight seed data (spec §4.10)
@@ -97,12 +97,14 @@ CREATE TABLE IF NOT EXISTS entities (
     current_state      TEXT,
     confidence         REAL NOT NULL DEFAULT 0.5,
     last_validated     TEXT,
-    staleness_ttl_days INTEGER NOT NULL DEFAULT 90,
-    validation_method  TEXT,
-    source             TEXT,
-    source_episode_id  INTEGER,
-    created_at         TEXT NOT NULL,
-    updated_at         TEXT NOT NULL,
+    staleness_ttl_days      INTEGER NOT NULL DEFAULT 90,
+    validation_method       TEXT,
+    source                  TEXT,
+    source_type             TEXT,
+    corroborating_sources   INTEGER NOT NULL DEFAULT 0,
+    source_episode_id       INTEGER,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL,
     FOREIGN KEY (source_episode_id) REFERENCES episodes(id)
 );
 CREATE INDEX IF NOT EXISTS idx_entity_domain ON entities(domain);
@@ -530,7 +532,8 @@ CREATE VIEW IF NOT EXISTS relationship_conflicts AS
         AND eh1.id        < eh2.id
     WHERE eh1.changed_at > datetime('now', '-30 days')
       AND eh2.changed_at > datetime('now', '-30 days')
-      AND COALESCE(eh1.new_value, '') != COALESCE(eh2.new_value, '');
+      AND COALESCE(eh1.new_value, '') != COALESCE(eh2.new_value, '')
+      AND eh1.changed_by IS NOT eh2.changed_by;
 """
 
 # Fields on entities that can be mutated (logged to entity_history on change)
@@ -607,6 +610,8 @@ class Entity:
     last_validated: str | None
     staleness_ttl_days: int
     effective_staleness: str  # computed: 'fresh' | 'aging' | 'stale' | 'expired'
+    source_type: str = ""            # provenance tier (e.g. 'workiq', 'manual')
+    corroborating_sources: int = 0   # distinct source count for accuracy scoring
 
 
 @dataclass(frozen=True)
@@ -640,6 +645,9 @@ class EntityContext:
     community_context: str | None
     suggested_followups: list
     token_estimate: int
+    quality_score: float = 0.0                    # composite Q score (domain-aware)
+    quality_caveats: tuple = ()                   # caveat strings for WARN/STALE/REFUSE
+    has_conflicts: bool = False                   # True if any entity has provenance conflicts
 
 
 @dataclass(frozen=True)
@@ -738,6 +746,8 @@ def _row_to_entity(row: sqlite3.Row) -> Entity:
             int(r.get("staleness_ttl_days") or 90),
             r.get("updated_at", ""),
         ),
+        source_type=r.get("source_type") or "",
+        corroborating_sources=int(r.get("corroborating_sources") or 0),
     )
 
 
@@ -781,6 +791,9 @@ class NullKnowledgeGraph:
             artifacts=[], documents=[], gaps=[], kusto_queries=[],
             shadow_refs=[], recent_episodes=[], community_context=None,
             suggested_followups=[], token_estimate=0,
+            quality_score=0.0,
+            quality_caveats=("KB not yet populated — serving from markdown only",),
+            has_conflicts=False,
         )
 
     def get_entity(self, id: str) -> None:                         return None
@@ -957,9 +970,33 @@ class KnowledgeGraph:
         """Additive-only migration. Pattern mirrors action_queue._migrate_schema_if_needed()."""
         if current_version == _SCHEMA_VERSION:
             return
-        # Future migrations added here as elif blocks, each idempotent.
-        _log.info("KB schema version: stored=%s, expected=%s — no migration needed",
-                  current_version, _SCHEMA_VERSION)
+        if current_version in ("1", "2"):
+            # v2 → v3: add source_type and corroborating_sources to entities.
+            # Uses try/except per column for idempotency (SQLite has no IF NOT EXISTS
+            # for ALTER TABLE ADD COLUMN).
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for ddl in (
+                    "ALTER TABLE entities ADD COLUMN source_type TEXT",
+                    "ALTER TABLE entities ADD COLUMN corroborating_sources INTEGER NOT NULL DEFAULT 0",
+                ):
+                    try:
+                        self._conn.execute(ddl)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
+                self._conn.execute(
+                    "UPDATE kb_meta SET value=? WHERE key='schema_version'",
+                    (_SCHEMA_VERSION,),
+                )
+                self._conn.execute("COMMIT")
+                _log.info("KB schema migrated: %s → %s", current_version, _SCHEMA_VERSION)
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+        else:
+            _log.info("KB schema version: stored=%s, expected=%s — no migration needed",
+                      current_version, _SCHEMA_VERSION)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -974,7 +1011,26 @@ class KnowledgeGraph:
             artifacts=[], documents=[], gaps=[], kusto_queries=[],
             shadow_refs=[], recent_episodes=[], community_context=None,
             suggested_followups=[], token_estimate=0,
+            quality_score=0.0,
+            quality_caveats=("KB not yet populated — serving from markdown only",),
+            has_conflicts=False,
         )
+
+    def entity_has_active_conflicts(self, entity_id: str) -> bool:
+        """Return True if the entity has provenance conflicts in entity_history.
+
+        Queries the relationship_conflicts VIEW which only fires for truly
+        conflicting provenance (different changed_by authors asserted different
+        values within the last 30 days).
+        """
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM relationship_conflicts WHERE entity_id=? LIMIT 1",
+                (entity_id,),
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
 
     def _strength_rank(self, strength: str) -> int:
         return {"strong": 0, "moderate": 1, "weak": 2, "historical": 3}.get(strength, 4)
@@ -1375,6 +1431,38 @@ class KnowledgeGraph:
         # --- Suggested followups ---
         followups = self._suggest_followups(entity, edges_to_include, gaps)
 
+        # --- Quality assessment (lazy import — avoids circular dependency N1) ---
+        try:
+            import lib.dq_gate as _dq  # noqa: PLC0415
+            if entity.confidence < _DQ_MIN_CONFIDENCE:
+                _quality_score = 0.0
+                _quality_caveats: tuple = (
+                    f"Entity confidence {entity.confidence:.2f} below minimum "
+                    f"{_DQ_MIN_CONFIDENCE} — excluded from reliable serving",
+                )
+                _has_conflicts = False
+            else:
+                _qs = _dq.assess_quality(entity, self)
+                _quality_score = _qs.composite
+                if _qs.verdict == _dq.QualityVerdict.WARN:
+                    _quality_caveats = (
+                        f"{entity.name} data is aging (Q={_qs.composite:.2f})",
+                    )
+                elif _qs.verdict in (
+                    _dq.QualityVerdict.STALE_SERVE, _dq.QualityVerdict.REFUSE
+                ):
+                    _quality_caveats = (
+                        f"{entity.name}: stale or unreliable data "
+                        f"(Q={_qs.composite:.2f}). Run /work refresh to update.",
+                    )
+                else:
+                    _quality_caveats = ()
+                _has_conflicts = self.entity_has_active_conflicts(entity.id)
+        except Exception:
+            _quality_score = 0.0
+            _quality_caveats = ()
+            _has_conflicts = False
+
         return EntityContext(
             entity=entity,
             edges=edges_to_include,
@@ -1389,6 +1477,9 @@ class KnowledgeGraph:
             community_context=community_ctx,
             suggested_followups=followups[:3],
             token_estimate=used_tokens,
+            quality_score=_quality_score,
+            quality_caveats=_quality_caveats,
+            has_conflicts=_has_conflicts,
         )
 
     def get_context_as_of(

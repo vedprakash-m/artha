@@ -1,0 +1,153 @@
+"""AR-9 External Agent Composition — Metrics JSONL Writer (EA-10a).
+
+Appends structured records to ``tmp/ext-agent-metrics.jsonl``.
+All operations are fire-and-forget — this module NEVER raises.
+
+Record types
+------------
+invocation
+    One record per agent invocation attempt (success or failure).
+routing_decision
+    One record per routing evaluation that produces a match.
+
+Record schemas (consumed by eval_runner.py)
+-------------------------------------------
+invocation::
+
+    {
+        "timestamp": "2026-04-02T10:30:00Z",
+        "record_type": "invocation",
+        "agent_name": "storage-deployment-expert",
+        "success": true,
+        "latency_ms": 4500.0,
+        "quality_score": 0.82,
+        "cache_hit": false,
+        "fallback_level": null,   # int or null
+        "failure_reason": null    # str or null
+    }
+
+routing_decision::
+
+    {
+        "timestamp": "2026-04-02T10:30:00Z",
+        "record_type": "routing_decision",
+        "matched_agent": "storage-deployment-expert",
+        "dispatched": true,
+        "confidence": 0.72,
+        "matched_keywords": ["deployment", "SDP"],
+        "routing_ms": 5.2
+    }
+"""
+
+# pii-guard: ignore-file
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+_DEFAULT_METRICS_FILE: Path = (
+    Path(__file__).resolve().parent.parent.parent
+    / "tmp"
+    / "ext-agent-metrics.jsonl"
+)
+
+
+def _append(record: dict, metrics_file: Optional[Path]) -> None:
+    """Internal: serialize ``record`` as JSONL to *metrics_file*. Never raises."""
+    target: Path = metrics_file if metrics_file is not None else _DEFAULT_METRICS_FILE
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def write_invocation_metric(
+    agent_name: str,
+    success: bool,
+    latency_ms: float,
+    quality_score: float | None = None,
+    cache_hit: bool = False,
+    fallback_level: int | None = None,
+    failure_reason: str | None = None,
+    metrics_file: Path | None = None,
+) -> None:
+    """Append an ``invocation`` record to the metrics JSONL file.
+
+    Fire-and-forget — never raises.
+
+    Parameters
+    ----------
+    agent_name:
+        Registered agent slug.
+    success:
+        Whether the invocation succeeded.
+    latency_ms:
+        Wall-clock latency in milliseconds.
+    quality_score:
+        Optional 0–1 quality score from the response verifier.
+    cache_hit:
+        Whether the response was served from the knowledge cache.
+    fallback_level:
+        0-based index of the fallback entry used, or ``None`` if primary.
+    failure_reason:
+        Reason string from ``InvocationError.reason`` on failure.
+    metrics_file:
+        Override target file (used in tests for isolation).
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {
+        "timestamp": ts,
+        "record_type": "invocation",
+        "agent_name": agent_name,
+        "success": success,
+        "latency_ms": float(latency_ms),
+        "quality_score": quality_score,
+        "cache_hit": cache_hit,
+        "fallback_level": fallback_level,
+        "failure_reason": failure_reason,
+    }
+    _append(record, metrics_file)
+
+
+def write_routing_decision(
+    matched_agent: str,
+    dispatched: bool,
+    confidence: float = 0.0,
+    matched_keywords: list[str] | None = None,
+    routing_ms: float = 0.0,
+    metrics_file: Path | None = None,
+) -> None:
+    """Append a ``routing_decision`` record to the metrics JSONL file.
+
+    Fire-and-forget — never raises.
+
+    Parameters
+    ----------
+    matched_agent:
+        Name of the agent that was matched.
+    dispatched:
+        Whether the agent was actually dispatched (auto_dispatch or manual).
+    confidence:
+        Router confidence score (0–1).
+    matched_keywords:
+        List of keywords that triggered the match.
+    routing_ms:
+        Time spent in the router in milliseconds.
+    metrics_file:
+        Override target file (used in tests for isolation).
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {
+        "timestamp": ts,
+        "record_type": "routing_decision",
+        "matched_agent": matched_agent,
+        "dispatched": dispatched,
+        "confidence": float(confidence),
+        "matched_keywords": matched_keywords or [],
+        "routing_ms": float(routing_ms),
+    }
+    _append(record, metrics_file)
