@@ -1813,6 +1813,32 @@ def bootstrap_structured(
         except Exception as exc:
             _log.debug("Could not record last_structured_run: %s", exc)
 
+        # Populate corroborating_sources: max distinct changed_by values that
+        # agreed on the same (field, new_value) pair for each entity.
+        # Spec: data-quality-gate.md §1 "corroborating_sources storage"
+        try:
+            kg._conn.execute("""
+                UPDATE entities
+                SET corroborating_sources = COALESCE((
+                    SELECT MAX(src_count)
+                    FROM (
+                        SELECT COUNT(DISTINCT changed_by) AS src_count
+                        FROM entity_history
+                        WHERE entity_id = entities.id
+                          AND new_value IS NOT NULL
+                        GROUP BY field, new_value
+                    )
+                ), 0)
+            """)
+            kg._conn.commit()
+            updated = kg._conn.execute(
+                "SELECT COUNT(*) FROM entities WHERE corroborating_sources >= 2"
+            ).fetchone()[0]
+            stats["corroborating_sources_updated"] = updated
+            _log.info("corroborating_sources: %d entities have ≥2 sources", updated)
+        except Exception as exc:
+            _log.warning("corroborating_sources update failed (non-fatal): %s", exc)
+
         # Rebuild communities
         try:
             nc = kg.rebuild_communities()

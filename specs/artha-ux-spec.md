@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.7 | **Status**: Draft | **Date**: March 2026
+> **Version**: 3.8 | **Status**: Draft | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.5.0, Tech Spec v3.17.0
+> **Implements**: PRD v7.7.0, Tech Spec v3.20.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.8 | 2026-04-02 | AR-9 External Agent Composition UX — §25: agent discovery (`agent list`), routing transparency indicator, expert consensus answer format with inline citation, data quality verdict badges (PASS/WARN/STALE/REFUSE) in briefing output, agent health dashboard (`agent health`), fallback cascade UX (agent → KB → investigation → Cowork). |
 | v3.7 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 UX — §9 Action Proposals rewritten with queue-backed interaction model: `§ PENDING ACTIONS` briefing section, numbered proposal list with IDs and friction indicators, `--show` content preview requirement for email actions, `--defer` with preset horizons (`+1h`, `tomorrow`, `next-session`), `--approve-all-low` batch command, `--health` output design, burn-in debug section. |
 | v3.6 | 2026-03-28 | SKILLS-RELOADED v2.5 UX.. |
 | v3.5 | 2026-03-28 | GOALS-RELOADED v6.3 UX — Goal Intelligence Phase 1:.. |
@@ -2069,6 +2070,56 @@ Appending `:` to any command lists its sub-commands without requiring `/guide` o
 | No user profile | Setup wizard prominently |
 
 Command graduation into `/guide`: commands appear **only after reaching Graduated status** (>30 days production, <5% error rate). Beta commands are labeled "(beta)". This prevents cluttering discovery with unreliable features.
+
+---
+
+## 25. External Agent Interaction UX (AR-9) *(v1.0)*
+
+### 25.1 Agent Discovery
+
+`agent list` — shows all registered external agents with trust tier, health status, and last-used timestamp. Terminal-native tabular output:
+
+```
+AGENT                          TIER       HEALTH   LAST USED
+storage-deployment-expert      verified   ✅ OK    2h ago
+kusto-query-assistant          verified   ✅ OK    1d ago
+fleet-diagnostics              external   ⚠ WARN  5d ago
+```
+
+### 25.2 Routing Transparency
+
+When an external agent is invoked, Artha announces it before showing the answer:
+
+```
+🔍 Consulting storage-deployment-expert (verified · last used 2h ago)…
+```
+
+Fallback cascade shown if agent is unavailable:
+
+```
+⚠️ Agent unavailable — answering from local KB (may be less current)
+```
+
+### 25.3 Expert Consensus Format
+
+Agent responses are integrated into Artha's own voice. Source citation appended inline:
+
+```
+[Source: storage-deployment-expert · confidence 0.87 · verified 2026-04-02]
+```
+
+### 25.4 Data Quality Verdict Indicators
+
+KB quality verdicts appear inline next to data-backed sections in briefing output:
+
+- ✅ **PASS** — data is current and accurate; no caveat added
+- ⚠️ **WARN** — usable but potentially stale; caveat appended inline
+- 🕐 **STALE** — stale data served; background refresh signaled at end of response
+- ❌ **REFUSE** — data too low-confidence; investigation guidance provided instead
+
+### 25.5 Agent Health Dashboard
+
+`agent health` tabular output per agent: availability %, avg latency, quality score, consecutive failure count. Retired agents shown with ⛔ prefix.
 
 ### 24.4 `/content` — Unified Content UX
 

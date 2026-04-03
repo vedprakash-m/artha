@@ -751,6 +751,41 @@ Reads work-calendar, work-projects, work-people, work-performance. Phase 3.
 ## `/work refresh` — Live Connector Refresh
 Executes full Work Operating Loop (§8.5) with live network I/O. Reports per-provider freshness afterward. This is the only command that invokes connectors inline.
 
+## `/work oof <name>` — OOF Coverage Prep (alias: `ooo`)
+Prepares Ved to cover for a team member who is Out of Office (OOF).
+Reads Team Lead Journal (work-notes.md) + queries WorkIQ for live tactical context.
+
+**Aliases:** `work ooo <name>`, `work cover <name>`, `<name> is OOF — prep me`
+
+**Flow:**
+1. **Static context** (instant, from KB + state files):
+   - Team Lead Journal entry for the person (open items, meetings to cover, mentoring notes)
+   - Their KB entity: works_on edges, expertise signals, OOF backup artifacts
+   - Current hot items in their domains (IcMs, blockers)
+   - Golden queries for their areas
+
+2. **Live tactical context** (WorkIQ query, ~30s):
+   - Recent Teams chats involving the person (last 5 days)
+   - Recent emails sent/received by the person (last 5 days)
+   - Action items they committed to (from chat/email signals)
+   - Decisions made in their area threads
+
+3. **Output** — written to `state/work/oof-coverage-<name>.md` (ephemeral):
+   - 📅 Meetings to attend (with times, attendees, purpose)
+   - 🔥 Hot items in their areas (IcMs, blockers, deadlines)
+   - 💬 Recent chat/email context (action items, commitments, threads)
+   - 📊 KQL queries to run for live data in their areas
+   - 📝 Mentoring context (relationship notes, growth areas)
+   - 🔄 When they return: what to hand back
+
+4. **Cleanup:** OOF coverage file is auto-deleted when user says `<name> is back` or
+   after 14 days (prevents stale OOF context from persisting).
+
+**Data quality:** Live WorkIQ data is accuracy-first — chat/email content is served
+with source attribution (sender, date, thread subject). If WorkIQ is unavailable,
+falls back to static context only with caveat: "⚠ No live chat data — run manually
+or check Teams directly."
+
 ## `/work query <question>` — Golden Query (Kusto Data)
 Matches `<question>` to the Golden Query Registry (`state/work/golden-queries.md`).
 If a match is found, executes validated KQL via `scripts/kusto_runner.py` and returns

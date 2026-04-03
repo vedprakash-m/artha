@@ -96,22 +96,12 @@ python scripts/migrate.py             # write config/user_profile.yaml
 
 ## What You Get
 
-- **Morning briefings** with action items across 24 life domains (health, finance, goals, immigration, kids, home, and more)
-- **Goal Intelligence Engine** *(v2.0, Goals Reloaded)* — conversational goal creation, machine-readable v2.0 schema (`state/goals.md` YAML frontmatter written by `goals_writer.py`), metric progress bars with direction-aware formulas, Goal Heartbeat in daily briefings, Goal Review section in weekly summaries, coaching nudge JSON output at Step 8, and cross-domain pattern alerts (PAT-003/003b/003-work). Work goals in `state/work/work-goals.md` — fully scoped to the Work OS pipeline. Use `/goals`, `/goals leading`, or `/goals --scope all` for personal + work merged view.
-- **Action Layer** *(v1.4)* — Artha can now **act**, not just report. Propose, approve, and execute real actions — send emails, create calendar events, set reminders, draft WhatsApp messages — with a human-gated approval queue, full audit trail, and one-tap Telegram approval. Signal extraction from real email/WhatsApp data (14+ regex patterns across 9 domains); fixed `deferred → rejected` state machine transition; `_resolve_id` now resolves short IDs across all non-terminal states.
-- **PR Manager — Personal Narrative Engine** *(v1.4, opt-in)* — Fuses deep personal context with external awareness to generate platform-specific social content that sounds unmistakably *you*. Moment detection, convergence scoring, narrative threads (LinkedIn/Facebook/Instagram/WhatsApp), voice profile, 3-gate PII firewall. Activate with `/bootstrap pr_manager`. **Content Stage (PR-2, Phase 1 complete)** — persistent card lifecycle for every occasion: 7-state FSM (seed → staged → approved → posted → archived), gallery plaintext YAML (not vaulted), Devanagari PII guard, anti-boilerplate DraftPersonalizer. Use `/stage` to review and approve staged content cards. **AI Trend Radar (PR-3)** — RSS, email + API sources (HN, dev.to, GitHub) surface try-worthy AI signals with community scoring; `ai_experiment_complete` moments auto-feed the content pipeline; `/radar`, `/try`, `/skip` Telegram commands.
-- **Sense → Reason → Act → Learn** — proactive nudges between sessions, adaptive briefing format that learns your behavior, deterministic email signal extraction, cross-domain pattern alerts, async knowledge capture via `/remember`, monthly retrospectives, and a **persistent memory pipeline** (MEM v1.3.0) that deterministically extracts durable facts from every briefing into `state/memory.md` and builds a living self-model in `state/self_model.md`
-- **Pluggable connectors** — Gmail, Google Calendar, Outlook, iCloud, Canvas LMS, OneNote, RSS, Apple Health, **WhatsApp** (Windows/macOS local DB), **iMessage** (macOS local DB), **Home Assistant** (local LAN, opt-in)
-- **Multi-machine support** *(DUAL v1.3)* — Run Artha across two machines via an encrypted OneDrive bridge: Mac as the proposer/enricher (morning briefings, action proposals) and Windows as the executor (24/7 Telegram listener, action execution). Per-machine connector routing (`run_on: darwin/windows/all`) ensures each machine only fetches what it can access. Zero new cloud dependencies — the shared OneDrive folder is the transport.
-- **Smart Home / IoT** *(v8.2)* — Home Assistant integration: device offline alerts, energy anomaly detection, printer supply levels, swim spa monitoring. LAN-only, privacy-first (no camera/audio, no cloud relay). Activate with `python scripts/setup_ha_token.py`
-- **Encrypted state** for sensitive domains with `age` — health, finance, immigration at rest
-- **Autonomous skills** — property tax, visa bulletin, passport expiry, vehicle recalls, subscription lifecycle monitor, financial resilience, **home device monitor**, coaching nudges. Skills carry **per-run health counters** in `state/skills_cache.json` (broken/degraded/healthy classifications); R7 auto-reduces check frequency for skills returning empty data. `/eval skills` shows the health table; `/eval effectiveness` shows engagement rate trends.
-- **Observability & Eval Loop** *(v1.4)* — Closed-feedback quality loop: `eval_runner.py` scores every catch-up briefing (completeness, priority order, PII compliance), persists per-domain accuracy to `state/eval_metrics.json`, and routes user corrections back into `state/memory.md` for durable recall. Use `/eval` to surface accuracy trends and skill health.
-- **Knowledge Graph** *(Work OS, opt-in)* — SQLite-backed entity graph (`knowledge/kb.sqlite`, never committed) models your professional world: people, projects, decisions, meetings, commitments. Bootstrapped from Work OS state files via `scripts/kb_bootstrap.py`. Enables warm-start context and relationship-aware briefings.
-- **Telegram bridge** — conversational interface from your phone (45+ command aliases, `/remember` inbox capture, `/power` half-hour session, `/relationships` graph, multi-LLM Q&A, inline action approvals)
-- **Household-aware** — adapts to single, couple, family, or roommate configurations; owner vs. renter
-- **Works everywhere** — macOS, Windows (`setup.ps1`), Linux; pure Python
-- **`--doctor`** — unified 11-point diagnostic: Python, venv, packages, age, keychain, tokens, state, PII hook, last catch-up
+- **Daily briefings** across 24 life domains (health, finance, goals, immigration, family, home, and more) — with action items, goal progress, and proactive nudges
+- **Goal Intelligence Engine** — conversational goal management with metric progress bars, sprint planning, and cross-domain pattern alerts
+- **Action Layer** — propose, approve, and execute real-world actions (email, calendar, reminders) through a human-gated queue with full audit trail
+- **Work OS** — professional briefings, meeting prep, sprint health, career evidence capture, and knowledge graph for your work context
+- **Pluggable connectors** — Gmail, Google Calendar, Outlook, WhatsApp, iMessage, Canvas LMS, Home Assistant (LAN-only), and more
+- **External Agent Composition** — route questions to specialized domain agents; trust tiers, PII scrubbing, injection defense, and quality-gated responses
 
 ---
 
@@ -134,22 +124,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ## Documentation
 
-| Guide | Description |
-|---|---|
-| [Quick Start](docs/quickstart.md) | Zero to first briefing in 15 minutes |
-| [Supported CLIs](docs/supported-clis.md) | Claude, Gemini, Copilot — setup and comparison |
-| [Actions](docs/actions.md) | Action Layer: approve, execute, undo actions |
-| [Connectors](docs/connectors.md) | Email, calendar, LMS data sources |
-| [Skills](docs/skills.md) | Autonomous background data pulls |
-| [Channels](docs/channels.md) | Telegram bridge setup |
-| [Plugins](docs/plugins.md) | User-contributed connectors and skills |
-| [Backup & Restore](docs/backup.md) | GFS snapshots, cold-start restore |
-| [Security & Privacy](docs/security.md) | Threat model, encryption, PII defense |
-| [Domains](docs/domains.md) | 24 life domains explained |
-| [Work OS](docs/work-os.md) | Professional intelligence layer — briefings, meeting prep, career evidence |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues and fixes |
-| [Contributing](CONTRIBUTING.md) | Dev setup, testing, code style |
-| [Changelog](CHANGELOG.md) | Version history |
+Full guides are in the [docs/](docs/) folder: quickstart, supported CLIs, connectors, skills, channels, actions, Work OS, backup & restore, security, and troubleshooting.
 
 ---
 

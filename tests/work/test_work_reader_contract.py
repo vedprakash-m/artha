@@ -31,7 +31,7 @@ _EXPECTED_SIGNATURES: dict[str, str] = {
     "cmd_deck": "(topic: 'str' = '') -> 'str'",
     "cmd_docs": "() -> 'str'",
     "cmd_graph": "() -> 'str'",
-    "cmd_health": "() -> 'str'",
+    "cmd_health": "(quality: 'bool' = False) -> 'str'",
     "cmd_incidents": "() -> 'str'",
     "cmd_journey": "(project: 'str' = '') -> 'str'",
     "cmd_live": "(meeting_id: 'str' = '') -> 'str'",

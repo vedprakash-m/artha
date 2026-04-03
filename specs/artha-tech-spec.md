@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.19.0 | **Status**: Active Development | **Date**: March 2026
+> **Version**: 3.20.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.5.0
+> **Implements**: PRD v7.7.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -4920,7 +4920,87 @@ CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
 
 ---
 
-*Artha Tech Spec v3.19.0 — End of Document*
+---
+
+## 23. External Agent Composition (AR-9) *(v1.3.1)*
+
+AR-9 extends AR-7's internal delegation protocol to support **externally-authored domain agents** — agents whose system prompts, tools, and behavior are owned by other teams or repositories. External agents are treated as **data sources**: discover → authenticate → fetch → validate → integrate → cache → observe.
+
+### 23.1 Component Architecture
+
+| Component | Module | Responsibility |
+|-----------|--------|---------------|
+| Agent Registry | `scripts/lib/agent_registry.py` | YAML-backed registry; drop-folder scan (`config/agents/external/`); content_hash dedup; shadow_mode flag; registered_at timestamp |
+| Agent Router | `scripts/lib/agent_router.py` | Geometric-mean confidence routing; keyword + context-type scoring |
+| Context Classifier | `scripts/lib/context_classifier.py` | Tags domain context as public / scoped / private |
+| Context Scrubber | `scripts/lib/context_scrubber.py` | PII scrubbing per domain-scoped profile; zero raw PII to external agents |
+| Injection Detector | `scripts/lib/injection_detector.py` | Recursive prompt injection decoder; confidence threshold filtering |
+| Agent Invoker | `scripts/lib/agent_invoker.py` | `runSubagent`-based invocation; 60s timeout; stale-while-revalidate cache in `tmp/ext-agent-cache/` |
+| Response Verifier | `scripts/lib/response_verifier.py` | Entity-based KB cross-check against local knowledge graph |
+| Response Integrator | `scripts/lib/response_integrator.py` | Expert consensus format; fallback cascade (agent → KB → investigation → Cowork) |
+| Knowledge Extractor | `scripts/lib/knowledge_extractor.py` | Structured extraction from agent responses → `tmp/ext-agent-cache/` |
+| Agent Scorer | `scripts/lib/agent_scorer.py` | Quality scoring: `accuracy × freshness × honesty_bonus` |
+| Health Tracker | `scripts/lib/agent_health.py` | Availability, latency, quality; auto-retirement at 5 consecutive failures |
+| Audit Logger | `scripts/lib/ext_agent_audit.py` | Full JSONL audit trail per invocation |
+| Metrics Writer | `scripts/lib/metrics_writer.py` | JSONL metrics emission for eval pipeline |
+| Manager CLI | `scripts/agent_manager.py` | Commands: `list`, `register`, `unregister`, `health`, `archive`, `delete` |
+
+### 23.2 Trust Tier Model
+
+| Tier | Description | Context Access |
+|------|-------------|---------------|
+| `owned` | Artha-authored agents (`artha-work*.md`) | Full context |
+| `trusted` | Verified internal team agents | Scoped context |
+| `verified` | Audited external agents | Scoped context + extra verification |
+| `external` | Unaudited external agents | Public context only |
+| `untrusted` | Rejected / quarantined | Blocked |
+
+### 23.3 File-Drop Update Model
+
+External agents are registered by dropping `.agent.md` files into `config/agents/external/`. Artha scans on invocation, checks `content_hash`, and updates the registry on changes. No daemon, no watcher — consistent with Artha's pull-based architecture.
+
+### 23.4 Security Invariants
+
+1. External agents receive **zero unfiltered PII** — the scrubber runs before every invocation.
+2. Injection detection is mandatory — all agent responses pass through the decoder.
+3. All delegations are logged to the JSONL audit trail.
+4. External agents cannot modify Artha state (read-only in V1).
+5. Credential isolation — external agents inherit no credentials from the Artha session.
+
+---
+
+## 24. Data Quality Gate *(v4.0)*
+
+Pull-based quality assessment for the Work OS KB layer, assessed at read time (not maintained by background jobs). Consistent with Artha's no-daemon principle.
+
+**Priority:** Accuracy > Freshness > Completeness (non-negotiable).
+
+### 24.1 Three-Dimension Model
+
+| Dimension | Default Weight | Key Factor |
+|-----------|---------------|-----------|
+| Accuracy (A) | 0.50 | Source reliability × conflict state × corroborating_sources |
+| Freshness (F) | 0.35 | Age relative to domain TTL |
+| Completeness (C) | 0.15 | Binary proxy — required fields present |
+
+### 24.2 Quality Verdicts
+
+| Verdict | Q Score | Behavior |
+|---------|---------|---------|
+| PASS | ≥ 0.75 | Serve directly |
+| WARN | 0.50–0.74 | Serve with caveat (no delay added) |
+| STALE | 0.25–0.49 | Serve stale + background heal signal |
+| REFUSE | < 0.25 | Decline with guidance |
+
+### 24.3 Implementation
+
+- `scripts/lib/dq_gate.py` — `_pre_answer_quality_gate()` pure function; `QualityVerdict(IntEnum)` with explicit values.
+- `corroborating_sources` is a denormalized integer field on the `entities` table (updated by `kb_bootstrap.py` on each ingest run) — avoids N+1 queries at read time.
+- Domain-aware weights configurable in `dq_gate.py` — Work OS uses higher Freshness weight than personal domains.
+
+---
+
+*Artha Tech Spec v3.20.0 — End of Document*
 
 ---
 
@@ -4928,6 +5008,7 @@ CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
 
 | Version | Changes |
 |---------|---------|
+| v3.20.0 | **AR-9 External Agent Composition (§23) + Data Quality Gate (§24)**: `scripts/lib/agent_registry.py` (YAML-backed registry, drop-folder scan, content_hash dedup, shadow_mode flag, registered_at timestamp); `scripts/lib/agent_router.py` (geometric-mean confidence routing); `scripts/lib/context_classifier.py` (domain-scoped public/scoped/private tagging); `scripts/lib/context_scrubber.py` (outbound PII scrubbing per domain profile); `scripts/lib/injection_detector.py` (recursive injection decoder, confidence threshold); `scripts/lib/agent_invoker.py` (`runSubagent`, 60s timeout, stale-while-revalidate cache in `tmp/ext-agent-cache/`); `scripts/lib/response_verifier.py` (entity-based KB cross-check); `scripts/lib/response_integrator.py` (expert consensus format, fallback cascade: agent→KB→investigation→Cowork); `scripts/lib/knowledge_extractor.py` (response → cache); `scripts/lib/agent_scorer.py` (accuracy × freshness × honesty_bonus); `scripts/lib/agent_health.py` (availability/latency/quality/auto-retirement at 5 consecutive failures); `scripts/lib/ext_agent_audit.py` (JSONL audit trail); `scripts/lib/metrics_writer.py` (eval pipeline integration); `scripts/agent_manager.py` (CLI). DQ Gate: `scripts/lib/dq_gate.py` — pull-based Accuracy×Freshness×Completeness model; QualityVerdict(PASS/WARN/STALE/REFUSE); domain-aware weights; corroborating_sources denormalized field. `.gitignore` hardened: `config/agents/external/`, `config/agents/external-registry.yaml`, `config/agents/*.agent.md` excluded. 4,515 tests: `tests/ext_agents/` (121) + `tests/test_dq_gate.py`. |
 | v3.19.0 | **Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS)**: `scripts/eval_runner.py` (orchestrates eval harness; closes G1–G10 observability gaps); `scripts/eval_scorer.py` (briefing quality scorer — completeness, priority order, PII compliance, action accuracy; rolling 7-day+30-day averages); `scripts/lib/metric_store.py` (SQLite-backed time-series MetricStore in `~/.artha-local/eval.db`; 90-day auto-prune); `scripts/correction_feeder.py` (user correction → `state/memory.md` + domain confidence delta → `state/self_model.md`); `scripts/log_digest.py` (daily log aggregator; gap trend detection); `scripts/lib/knowledge_graph.py` (`KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`; transactional SQLite writes); `scripts/kb_bootstrap.py` (idempotent bootstrap from `knowledge/*.md` state files; hash-based dedup). 127 new eval tests in `tests/eval/` + `tests/unit/test_eval_*.py`. `.gitignore` hardened: machine-specific conflict-copy pattern replaced with generic `state/*.age` superset; OneDrive shadow `.git 2/` fix. |
 | v3.8–v3.9 | **Work OS Phases 2–5** (PRD FR-19 FW-11–FW-17, v2.7.0): `scripts/work_bootstrap.py` (12-question guided setup interview, atomic writes, dry-run); `scripts/work_notes.py` (post-meeting capture, D-NNN/OI-NNN IDs, `/work remember` micro-capture); `scripts/work_reader.py` (25-command read-path CLI: work, pulse, sprint, health, return, connect, connect-prep, people, docs, sources, prep, live, newsletter, deck, memo, talking-points, promo-case, promo-narrative, journey, day, decide, graph, preread, incidents, repos); `scripts/work_domain_writers.py` (atomic writers for 11 domain files: calendar, comms, projects, boundary, career, sources, notes, decisions, open-items, people, performance); `scripts/narrative_engine.py` (10 Jinja2 templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo); `scripts/post_work_refresh.py` (session history writer, run log appender); `scripts/kusto_runner.py` (KQL bridge, ADO/Kusto query runner); `config/agents/` expanded to 3 tiers (artha-work.md baseline, artha-work-enterprise.md corporate ADO, artha-work-msft.md Microsoft Enhanced); `state/work/` expanded 6→20 domain files; `.github/workflows/work-tests.yml` CI matrix; 883 tests in `tests/work/` (12 test files); `specs/work.md` archived to `.archive/specs/work.md` — PRD/Tech/UX specs now canonical. §19.7 state files expanded 8→22 rows; §19.9 test coverage updated ~541→883. |
 | v3.7 | Work Intelligence OS (Phase 2C — PRD FR-19, specs/work.md v1.7.0): `scripts/work_loop.py` (7-stage loop: fetch → enrich → filter → infer → score → write → bridge); `scripts/work_warm_start.py` (§15 warm-start processor — ScrapeParser, WarmStartAggregator, 6 state file writers, atomic write, dry-run mode); `scripts/schemas/work_objects.py` (6 canonical dataclasses: WorkMeeting, WorkDecision, WorkCommitment, WorkStakeholder, WorkArtifact, WorkSource; 5 enums: ObjectStatus, CommitmentStatus, DecisionOutcome, StakeholderRecency, plus shared types); `scripts/schemas/work_connector_protocol.py` (ConnectorFailureMode enum, ConnectorProtocolEntry frozen dataclass, PROTOCOL table, get_protocol(), user_signal_for(), log_connector_failure() — §8.4 connector error protocol); `scripts/schemas/bridge_schemas.py` (WorkLoadPulse, BridgeArtifact, BridgeManifest validators + 55 bridge enforcement tests); `config/agents/` (work_briefing_agent.md, work_enrich_agent.md, meeting_prep_agent.md); `state/work/` directory with 6 domain files; `state/bridge/work_load_pulse.json` boundary artifact; 166 new tests in `tests/work/` (test_work_objects.py — 29, test_connector_protocol.py — 31, test_work_warm_start.py — 33, test_bridge_schemas.py — previously 55); §19 Work OS Technical Architecture section added to this spec. PRD bumped to v4.2. UX Spec §23 Work OS Interaction Design added. |

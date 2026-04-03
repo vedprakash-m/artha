@@ -1208,8 +1208,164 @@ def check_dep_freshness() -> CheckResult:
     return CheckResult("venv dependencies", "P1", True, f"All {len(_REQUIRED_DEPS)} core deps found ✓")
 
 
+def check_ext_agent_discovery() -> CheckResult:
+    """P1 non-blocking: Scan config/agents/external/ for unregistered .agent.md files.
+
+    Discovers new agent definitions dropped into the file-drop folder that have
+    not yet been registered via agent-manager register. Only runs when the AR-9
+    external agents feature is enabled in artha_config.yaml.
+    """
+    # Gate: only run if external agents feature is enabled
+    try:
+        import yaml as _yaml
+        _cfg_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
+        if not os.path.exists(_cfg_path):
+            return CheckResult("ext agent discovery", "P1", True,
+                               "artha_config.yaml absent — ext agent check skipped ✓")
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _artha_cfg = _yaml.safe_load(_f) or {}
+        _ea_block = (
+            _artha_cfg.get("harness", {})
+            .get("agentic", {})
+            .get("external_agents", {})
+        )
+        if not _ea_block.get("enabled", False):
+            return CheckResult("ext agent discovery", "P1", True,
+                               "External agents not enabled — skipped ✓")
+        if not _ea_block.get("discovery", {}).get("enabled", True):
+            return CheckResult("ext agent discovery", "P1", True,
+                               "Agent discovery disabled in config — skipped ✓")
+    except Exception as exc:
+        return CheckResult("ext agent discovery", "P1", True,
+                           f"Could not read artha_config.yaml ({exc}) — skipped ✓")
+
+    # Load registry to know already-registered agent names
+    registered_names: set[str] = set()
+    try:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from lib.agent_registry import AgentRegistry  # noqa: PLC0415
+        _registry_path = os.path.join(ARTHA_DIR, "config", "agents", "external-registry.yaml")
+        if os.path.exists(_registry_path):
+            _reg = AgentRegistry.load(os.path.join(ARTHA_DIR, "config"))
+            registered_names = {a.name for a in (_reg.active_agents() if hasattr(_reg, 'active_agents') else [])}
+    except Exception:
+        pass  # Registry missing or not yet built — treat all drops as unregistered
+
+    # Scan drop folder
+    drop_dir = os.path.join(ARTHA_DIR, "config", "agents", "external")
+    if not os.path.isdir(drop_dir):
+        return CheckResult("ext agent discovery", "P1", True,
+                           "config/agents/external/ not found — skipped ✓")
+
+    agent_files = [
+        f for f in os.listdir(drop_dir)
+        if f.endswith(".agent.md") and f != "README.md"
+    ]
+    if not agent_files:
+        return CheckResult("ext agent discovery", "P1", True,
+                           "config/agents/external/ — no .agent.md files ✓")
+
+    # Identify unregistered agents
+    unregistered = []
+    for fname in agent_files:
+        agent_name = fname[:-len(".agent.md")]
+        if agent_name not in registered_names:
+            unregistered.append(agent_name)
+
+    if not unregistered:
+        return CheckResult(
+            "ext agent discovery", "P1", True,
+            f"config/agents/external/: {len(agent_files)} agent(s) all registered ✓",
+        )
+
+    names_str = ", ".join(unregistered[:5]) + ("…" if len(unregistered) > 5 else "")
+    return CheckResult(
+        "ext agent discovery", "P1", False,
+        f"📡 Discovered {len(unregistered)} unregistered agent(s) in config/agents/external/: {names_str}",
+        fix_hint=(
+            "Run: python scripts/agent_manager.py register  "
+            "(registers all unregistered .agent.md files from the drop folder)"
+        ),
+    )
+
+
+def check_ext_agent_health() -> CheckResult:
+    """P1 non-blocking: Report degraded or suspended registered external agents.
+
+    Only runs when the AR-9 external agents feature is enabled.
+    Surfaces agents in 'degraded' or 'suspended' state so operators can take action.
+
+    EA-11b
+    """
+    # Gate: only run if external agents feature is enabled
+    try:
+        import yaml as _yaml
+        _cfg_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
+        if not os.path.exists(_cfg_path):
+            return CheckResult("ext agent health", "P1", True,
+                               "artha_config.yaml absent — ext agent health check skipped ✓")
+        with open(_cfg_path, encoding="utf-8") as _f:
+            _artha_cfg = _yaml.safe_load(_f) or {}
+        _ea_block = (
+            _artha_cfg.get("harness", {})
+            .get("agentic", {})
+            .get("external_agents", {})
+        )
+        if not _ea_block.get("enabled", False):
+            return CheckResult("ext agent health", "P1", True,
+                               "External agents not enabled — skipped ✓")
+    except Exception as exc:
+        return CheckResult("ext agent health", "P1", True,
+                           f"Could not read artha_config.yaml ({exc}) — skipped ✓")
+
+    # Load registry
+    try:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from lib.agent_registry import AgentRegistry  # noqa: PLC0415
+        _registry_path = os.path.join(ARTHA_DIR, "config", "agents", "external-registry.yaml")
+        if not os.path.exists(_registry_path):
+            return CheckResult("ext agent health", "P1", True,
+                               "No agent registry found — skipped ✓")
+        _reg = AgentRegistry.load(os.path.join(ARTHA_DIR, "config"))
+        _all_agents = list(_reg.all_agents()) if hasattr(_reg, "all_agents") else []
+    except Exception as exc:
+        return CheckResult("ext agent health", "P1", True,
+                           f"Could not load agent registry ({exc}) — skipped ✓")
+
+    if not _all_agents:
+        return CheckResult("ext agent health", "P1", True,
+                           "No registered agents ✓")
+
+    degraded = [a.name for a in _all_agents if a.health.status == "degraded"]
+    suspended = [a.name for a in _all_agents if a.health.status == "suspended"]
+
+    if not degraded and not suspended:
+        return CheckResult(
+            "ext agent health", "P1", True,
+            f"{len(_all_agents)} agent(s) all healthy ✓",
+        )
+
+    parts = []
+    if degraded:
+        parts.append(f"degraded: {', '.join(degraded[:3])}{'…' if len(degraded) > 3 else ''}")
+    if suspended:
+        parts.append(f"suspended: {', '.join(suspended[:3])}{'…' if len(suspended) > 3 else ''}")
+
+    return CheckResult(
+        "ext agent health", "P1", False,
+        f"⚠️ {len(degraded) + len(suspended)} agent(s) need attention — {'; '.join(parts)}",
+        fix_hint=(
+            "Run: python scripts/agent_manager.py status  "
+            "to review and reinstate suspended agents"
+        ),
+    )
+
+
 def check_channel_config() -> CheckResult:
     """P1: Validate channels.yaml has no incomplete placeholder values.
+
 
     Catches the three misconfigs that silently blocked Telegram responses:
       1. recipients.primary.id is empty or missing (CHANNEL_REJECT unknown_sender)
@@ -1689,6 +1845,11 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
     checks.append(check_ado_auth())
+
+    # ── P1 — External agent discovery (AR-9 — non-blocking) ───────────────
+    checks.append(check_ext_agent_discovery())
+    # EA-11b: external agent health status
+    checks.append(check_ext_agent_health())
 
     # ── P1 — Channel config (v5.1 — non-blocking) ──────────────────────────
     checks.append(check_channel_config())
