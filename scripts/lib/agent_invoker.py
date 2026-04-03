@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from scripts.lib.agent_registry import ExternalAgent
+    from lib.agent_registry import ExternalAgent
 
 # ---------------------------------------------------------------------------
 # Result & Error types

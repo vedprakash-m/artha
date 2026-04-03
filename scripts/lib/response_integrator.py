@@ -15,12 +15,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from scripts.lib.agent_scorer import score_agent_response
-from scripts.lib.response_verifier import KBCheckResult
+from lib.agent_scorer import score_agent_response
+from lib.response_verifier import KBCheckResult
 
 if TYPE_CHECKING:
-    from scripts.lib.agent_invoker import AgentResult
-    from scripts.lib.agent_registry import ExternalAgent
+    from lib.agent_invoker import AgentResult
+    from lib.agent_registry import ExternalAgent
 
 # ---------------------------------------------------------------------------
 # Attribution labels (spec §4.6 Step 4)

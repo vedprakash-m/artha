@@ -13,16 +13,16 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from scripts.lib.agent_registry import ExternalAgent
+    from lib.agent_registry import ExternalAgent
 
-from scripts.lib.context_classifier import (
+from lib.context_classifier import (
     ClassificationResult,
     ContextTier,
     classify_context,
     filter_context_fragments,
 )
-from scripts.lib.context_scrubber import ContextScrubber, ScrubResult
-from scripts.lib.injection_detector import InjectionDetector, ScanResult
+from lib.context_scrubber import ContextScrubber, ScrubResult
+from lib.injection_detector import InjectionDetector, ScanResult
 
 # ---------------------------------------------------------------------------
 # Delegation prompt template (verbatim from spec §4.4)

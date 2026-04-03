@@ -18,16 +18,16 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from scripts.lib.agent_registry import AgentHealth, AgentRegistry, ExternalAgent
+    from lib.agent_registry import AgentHealth, AgentRegistry, ExternalAgent
 
 # EA-10a / EA-11a — import writers at module level with graceful fallback
 try:
-    from scripts.lib.metrics_writer import write_invocation_metric as _write_invocation_metric
+    from lib.metrics_writer import write_invocation_metric as _write_invocation_metric
 except ImportError:  # pragma: no cover
     _write_invocation_metric = None  # type: ignore[assignment]
 
 try:
-    from scripts.lib.ext_agent_audit import write_ext_agent_event as _write_audit_event
+    from lib.ext_agent_audit import write_ext_agent_event as _write_audit_event
 except ImportError:  # pragma: no cover
     _write_audit_event = None  # type: ignore[assignment]
 

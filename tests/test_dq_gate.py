@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """tests/test_dq_gate.py — Unit tests for scripts/lib/dq_gate.py
 
 Spec: specs/data-quality-gate.md v4

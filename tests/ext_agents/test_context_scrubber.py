@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """tests/ext_agents/test_context_scrubber.py -- AR-9 ContextScrubber tests."""
 from __future__ import annotations
 
