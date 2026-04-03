@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """tests/ext_agents/test_e2e_delegation.py -- AR-9 end-to-end delegation pipeline tests."""
 from __future__ import annotations
 

@@ -1,3 +1,4 @@
+# pii-guard: ignore-file
 """tests/ext_agents/test_prompt_composer.py -- AR-9 PromptComposer tests."""
 from __future__ import annotations
 

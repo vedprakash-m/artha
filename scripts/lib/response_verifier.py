@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import NamedTuple
 
-from scripts.lib.injection_detector import InjectionDetector
+from lib.injection_detector import InjectionDetector
 
 # ---------------------------------------------------------------------------
 # Entity extraction patterns

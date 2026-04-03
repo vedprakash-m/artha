@@ -19,7 +19,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from scripts.lib.response_verifier import KBCheckResult
+    from lib.response_verifier import KBCheckResult
 
 # ---------------------------------------------------------------------------
 # Weights
