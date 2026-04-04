@@ -156,6 +156,9 @@ scripts/work_reader.py
 scripts/work_notes.py
 scripts/work/
 
+# --- Work OS tests (import above gitignored work scripts) ---
+tests/work/
+
 # --- External agent drop folder, registry, and work-specific agent configs ---
 # These contain personal work context (team names, ADO IDs, tool-specific instructions)
 # Only the 3 canonical artha-work*.md agent definitions (already tracked) are public.
