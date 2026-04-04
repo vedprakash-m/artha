@@ -89,6 +89,46 @@ class StateMiddleware(Protocol):
         """
         ...  # pragma: no cover
 
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        """Called before an agent pipeline step executes.
+
+        Default no-op — implementations that do not override this method
+        are unaffected.
+
+        Args:
+            step_name: Identifier for the step (e.g. ``"fetch"``, ``"reason"``).
+            context:   Mutable runtime context dict for the current session.
+            data:      Input data being passed into the step.
+        """
+        ...  # pragma: no cover
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        """Called after an agent pipeline step completes successfully.
+
+        Default no-op — implementations that do not override this method
+        are unaffected.
+
+        Args:
+            step_name: Identifier for the step.
+            context:   Mutable runtime context dict for the current session.
+            data:      Output data produced by the step.
+        """
+        ...  # pragma: no cover
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        """Called when an agent pipeline step raises an exception.
+
+        Default no-op — implementations that do not override this method
+        are unaffected.  Implementations MUST NOT re-raise — the caller
+        is responsible for propagation decisions.
+
+        Args:
+            step_name: Identifier for the step that raised.
+            context:   Mutable runtime context dict for the current session.
+            error:     The exception that was raised.
+        """
+        ...  # pragma: no cover
+
 
 class _PassthroughMiddleware:
     """No-op middleware used when the middleware feature flag is disabled."""
@@ -103,6 +143,15 @@ class _PassthroughMiddleware:
         return proposed_content
 
     def after_write(self, domain: str, file_path: Path) -> None:
+        pass
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
         pass
 
 
@@ -142,6 +191,33 @@ class _ComposedMiddleware:
                 mw.after_write(domain, file_path)
             except Exception:  # noqa: BLE001
                 # after_write must never propagate exceptions — degraded but safe
+                pass
+
+    def run_before_step(self, step_name: str, context: dict, data: Any) -> None:
+        """Run ``before_step`` on all middlewares (left-to-right, best-effort)."""
+        for mw in self._middlewares:
+            try:
+                if hasattr(mw, "before_step"):
+                    mw.before_step(step_name, context, data)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def run_after_step(self, step_name: str, context: dict, data: Any) -> None:
+        """Run ``after_step`` on all middlewares (left-to-right, best-effort)."""
+        for mw in self._middlewares:
+            try:
+                if hasattr(mw, "after_step"):
+                    mw.after_step(step_name, context, data)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def run_on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        """Run ``on_error`` on all middlewares (left-to-right, best-effort)."""
+        for mw in self._middlewares:
+            try:
+                if hasattr(mw, "on_error"):
+                    mw.on_error(step_name, context, error)
+            except Exception:  # noqa: BLE001
                 pass
 
 

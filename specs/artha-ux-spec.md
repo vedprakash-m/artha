@@ -955,6 +955,10 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
 /diff            State changes since last catch-up            5 seconds   *(v1.4)*
                  Shows additions/removals/modifications
                  per domain. No email fetch.
+/undo            Revert all session state writes to pre-session  2 seconds   *(AFW-6)*
+                 /undo <domain>   Revert a single domain only
+                 Shows diff summary; requires confirmation before applying
+                 Safe: read-only ops and non-state commands unaffected
 /pr              Content calendar — moments, threads, quota   5 seconds   *(v1.4)*
                  Backed by scripts/pr_manager.py --view
                  /pr threads   Narrative thread progress
@@ -1441,13 +1445,53 @@ Degraded states surfaced in health output:
 
 ---
 
-## 15. Onboarding & First-Run Experience
+### 14.7 Checkpoint Resume & Session Undo UX *(AFW-5/6)*
 
-### 15.1 Bootstrap Sequence
+#### 14.7.1 Checkpoint Resume Prompt
 
-First-run detects unpopulated state files → domain selection (priority-ordered) → guided interview (one question at a time, skip-friendly, format validation) → state file preview → confirmation → write. Progress saved per-domain. Resume with `/bootstrap` if interrupted.
+When a prior session checkpoint exists (created < 4h ago) and the user runs a new catch-up, Artha surfaces a resume prompt before fetching any data:
 
-**Platform setup entry points** *(v1.9)*:
+```
+━━ RESUME CHECKPOINT ━━
+A catch-up from <time> was interrupted at <phase>.
+Completed: email scan, finance, immigration
+Remaining: health, kids, home, work
+  [R] Resume from checkpoint   [N] Start fresh   [X] Discard checkpoint
+```
+
+Default: **R** (resume). Typing any other letter or pressing Enter on `N`/`X` starts fresh or discards. After 4 hours the checkpoint expires and no prompt is shown.
+
+#### 14.7.2 /undo Output Design *(AFW-6)*
+
+Running `/undo` (or `/undo <domain>`) shows a diff summary before applying:
+
+```
+━━ SESSION UNDO ━━
+These writes will be reverted:
+  finance.md      3 changes  (+2 lines, -1 line)
+  open_items.md   1 change   (+1 item)
+
+Type YES to confirm, or press Enter to cancel:
+```
+
+**Safety rules applied silently:**
+- Read-only operations (briefings, `/status`, `/diff`, queries) are never included in the undo scope
+- If the undo snapshot predates a manual user edit, a `⚠ Manual edit detected` warning is shown and the domain is excluded from the undo set unless the user explicitly adds it
+- `/undo` is not available after `git commit` (the snapshot is cleared on commit)
+
+#### 14.7.3 High-Score Item Undo Warning
+
+When any item in the current session has a composite signal score ≥ 0.85 (urgency × impact × freshness), a gentle warning appears before undo confirmation:
+
+```
+⚠ HIGH-PRIORITY ITEM: "Visa appointment — 48h to respond"
+   This item scored 0.92. Undoing will remove it from open_items.md.
+   Include in undo? [Y/n]:
+```
+
+Default: **Y** (include). This pattern prevents accidental loss of critical action items.
+
+---
 
 | Platform | Setup script | Venv path |
 |----------|-------------|-----------|

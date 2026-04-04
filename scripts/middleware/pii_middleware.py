@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from typing import Any
 from pathlib import Path
 
 from lib.common import ARTHA_DIR
@@ -39,6 +40,7 @@ class PIIMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         """Run PII filter on proposed_content.  Returns filtered content."""
         if not self._pii_script.exists():
@@ -47,21 +49,22 @@ class PIIMiddleware:
         try:
             result = subprocess.run(
                 [sys.executable, str(self._pii_script), "filter"],
-                input=proposed_content,
+                input=proposed_content.encode("utf-8"),
                 capture_output=True,
-                text=True,
                 timeout=10,
             )
+            stdout_text = result.stdout.decode("utf-8") if result.stdout else ""
+            stderr_text = result.stderr.decode("utf-8") if result.stderr else ""
             if result.returncode == 1:
                 # PII was found and filtered — return the filtered stdout
                 print(
-                    f"[pii_middleware] ⚠ PII detected in {domain} write — "
-                    f"redaction applied: {result.stderr.strip()}",
+                    f"[pii_middleware] \u26a0 PII detected in {domain} write \u2014 "
+                    f"redaction applied: {stderr_text.strip()}",
                     file=sys.stderr,
                 )
-                return result.stdout if result.stdout else proposed_content
+                return stdout_text if stdout_text else proposed_content
             # Exit 0 = no PII found; stdout is the clean text
-            return result.stdout if result.stdout.strip() else proposed_content
+            return stdout_text if stdout_text.strip() else proposed_content
         except Exception as exc:  # noqa: BLE001
             print(
                 f"[pii_middleware] ⚠ PII guard failed for {domain}: {exc} — write passes through",
@@ -71,3 +74,12 @@ class PIIMiddleware:
 
     def after_write(self, domain: str, file_path: Path) -> None:
         pass  # PII guard is a before-write concern only
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        pass

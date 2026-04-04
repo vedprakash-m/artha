@@ -46,20 +46,13 @@ from action_rate_limiter import ActionRateLimiter, RateLimitError
 try:
     from lib.logger import get_logger as _get_logger
     _aelog = _get_logger("action_executor")
-except Exception:  # pragma: no cover
-    class _NoOpLogger:  # type: ignore[no-redef]
-        def info(self, *a, **k): pass
-        def error(self, *a, **k): pass
-    _aelog = _NoOpLogger()  # type: ignore[assignment]
-
-try:
-    from lib.logger import get_logger as _get_logger
     _log = _get_logger("action_executor")
 except Exception:  # pragma: no cover
     class _NoOpLogger:  # type: ignore[no-redef]
         def info(self, *a, **k): pass
         def error(self, *a, **k): pass
-    _log = _NoOpLogger()  # type: ignore[assignment]
+    _aelog = _NoOpLogger()  # type: ignore[assignment]
+    _log = _NoOpLogger()    # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------

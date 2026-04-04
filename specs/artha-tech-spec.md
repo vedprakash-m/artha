@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.20.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.21.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.7.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.21.0 | 2026-04 | Agent Framework v1 (§25): AFW-1 through AFW-11 (Waves 0–3 complete). Guardrails, middleware pipeline, progressive disclosure, context compaction, checkpointing, undo, flat-file memory (ADR-001), composite signal scoring, structured tracing. `.gitignore` hardened. 4,872+ tests. |
 | v3.19.0 | 2026-04 | Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS): `scripts/eval_runner.py`, `scripts/eval_scorer.py`, `scripts/lib/metric_store.py`, `scripts/correction_feeder.py`, `scripts/log_digest.py`, `scripts/lib/knowledge_graph.py`, `scripts/kb_bootstrap.py`. Closes 10 observability gaps (G1–G10). 127 eval tests. `.gitignore` hardened: machine-specific conflict-copy patterns replaced with generic `state/*.age`. |
 | v3.18.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer fully wired: `action_orchestrator.py` signal→compose→queue pipeline, email signal extractor (9 categories, 14+ regex patterns across `body` field), pattern engine integration, Step 12.5 in `Artha.md`, signal routing merge invariant (YAML overrides hardcoded fallback), handler-routing alignment invariant, platform-local `actions.db`, `--defer` horizons, `--show` content preview, burn-in mode. 4,014 tests. F15.20. |
 | v3.17.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1:.. |
@@ -5000,7 +5001,170 @@ Pull-based quality assessment for the Work OS KB layer, assessed at read time (n
 
 ---
 
-*Artha Tech Spec v3.20.0 — End of Document*
+## 25. Agent Framework v1 (AFW) *(v3.21)*
+
+Artha's Agent Framework formalizes the runtime safety, memory, and observability infrastructure that makes production-grade AI workflows reliable across arbitrary conversation lengths and environmental conditions. Nine components shipped across implementation Waves 0–3 (see `specs/agent-fw.md` for the full design; this section is the canonical implementation reference).
+
+### 25.1 Tripwire Guardrail System (AFW-1)
+
+Seven runtime-enforced guardrails execute in **blocking** mode (before every tool call) or **parallel** mode (alongside every state write):
+
+| Guardrail | Mode | Trigger |
+|-----------|------|---------|
+| `VaultAccessGuardrail` | blocking | Read attempt on encrypted file without prior decrypt |
+| `RateLimitGuardrail` | blocking | Write operations exceed per-minute threshold |
+| `ConnectorHealthGuardrail` | blocking | MCP connector reports degraded or down |
+| `PIILeakGuardrail` | parallel | Pattern match on outbound data (SSN, A-number, CC, passport) |
+| `NetNegativeWriteGuardrail` | parallel | Proposed write removes >20% of existing state fields |
+| `PromptInjectionGuardrail` | blocking | Recursive decode + keyword scan on incoming text |
+| `InjectionDetectGuardrail` | parallel | Deep-scan on all MCP tool outputs |
+
+**Implementation:** `scripts/middleware/guardrails.py`, `scripts/middleware/guardrail_registry.py`.
+**Config:** `config/guardrails.yaml` (guardrail class names, modes, thresholds — no personal data).
+Guardrails are stateless and idempotent. Failed guardrail → write is blocked + `state/audit.md` entry appended.
+
+### 25.2 Middleware Pipeline (AFW-3)
+
+Every state write passes through a composed middleware chain created by `compose_middleware()`. Three hook points:
+
+- `before_step(domain, content, ctx)` — pre-write validation + guardrails
+- `after_step(domain, result, ctx)` — post-write audit + PII log
+- `on_error(domain, error, ctx)` — rollback + error state capture
+
+**Active components (compose order defined in `config/middleware.yaml`):**
+
+| Component | Role |
+|-----------|------|
+| `PiiMiddleware` | Scans for PII patterns before and after each write |
+| `WriteGuardMiddleware` | Enforces net-negative write protection (>20% field reduction) |
+| `WriteVerifyMiddleware` | Post-write checksum verification |
+| `AuditMiddleware` | Appends structured entry to `state/audit.md` on every write |
+| `RateLimiterMiddleware` | Sliding-window rate limit enforcement |
+
+Components are isolated and hot-composable. Adding a new component = add class + register in YAML. No existing components are modified.
+
+### 25.3 Progressive Disclosure — Domain Lazy-Loading (AFW-2)
+
+Six **always-load domains** load at session start: `health-check`, `open_items`, `memory`, `goals`, `self_model`, `audit`. All other domains load only when:
+
+- A router signal routes an incoming item to them (catch-up), or
+- The user issues `/domain <name>` or a natural-language query referencing them.
+
+Domain load state is tracked by `scripts/domain_index.py`. The **index card** (~600 tokens for all 24 domains) is built from state-file YAML frontmatter and provides enough metadata to route without full prompt load.
+
+**Token savings:** ~80% on `/status` and `/items` (zero domain prompts loaded); 35–50% on typical catch-up sessions (5–7 active of 24). Builds on the §9.8 Tiered Context Architecture — AFW-2 adds command-aware prompt gating on top of the tier model.
+
+### 25.4 Context Compaction (AFW-4)
+
+`scripts/session_summarizer.py` monitors context window pressure and triggers compaction when utilization exceeds `CompactionPolicy.threshold` (default: 70%). Compaction strategy:
+
+1. **Phase output compaction** — replace verbose per-domain extraction output with structured summary
+2. **Sliding window** — retain last N exchanges verbatim; summarize earlier exchanges into `tmp/session_history_N.md`
+3. **Artifact offload** — intermediate results >5K tokens written to `tmp/` via `scripts/context_offloader.py`
+
+Compaction is non-destructive — compacted content is preserved in `tmp/`. Disclosed to user via the `/health` harness metrics block (§10.5).
+
+### 25.5 Workflow Checkpointing (AFW-5)
+
+Long-running workflows (catch-up, bootstrap, eval) write checkpoint state to `tmp/checkpoint_<workflow>.json` after each major phase completes. Checkpoint TTL: **4 hours**. On session restart within TTL, Artha detects the checkpoint and offers resume:
+
+```
+Interrupted catch-up detected (phase 3/7 complete, 38 min ago).
+Resume from Email Classification? [yes / start fresh]
+```
+
+**Checkpoint schema:** `{ "workflow": str, "phase": int, "phase_name": str, "completed_phases": list, "timestamp": ISO8601, "ttl_hours": 4 }`.
+
+**Implementation:** `scripts/lib/state_snapshot.py` handles both checkpoint write and snapshot-before-write (see §25.6).
+
+### 25.6 Session Rewind / Undo (AFW-6)
+
+Before every state write, `scripts/lib/state_snapshot.py` captures a per-domain snapshot to `tmp/snapshots/<domain>_<timestamp>.md`. The `/undo` command restores the most recent pre-write snapshot:
+
+```
+/undo              # Restore all domains modified in this session
+/undo immigration  # Restore only immigration.md to pre-session state
+```
+
+**Undo confirmation flow:** Shows a diff summary before applying — `"Restoring immigration.md to state from 14 min ago. 3 fields will revert. Confirm? [yes/no]"`.
+
+**Safety rules:**
+- Items with composite signal score ≥0.66 (§25.8) generate a suppress-on-undo warning before restore
+- Snapshots are session-scoped and purged by `vault.py encrypt` at session close
+- Undo of a multi-domain catch-up asks for domain confirmation to prevent bulk accidental rollback
+
+### 25.7 Flat-File Memory System (AFW-7 / ADR-001)
+
+**ADR-001 (binding):** The permanent memory backend is `FlatFileProvider` — YAML-frontmatter Markdown files in `state/`. No SQLite, no vector database, no external memory service.
+
+**Implementation (`scripts/lib/memory_provider.py`):**
+
+| Capability | Detail |
+|-----------|--------|
+| YAML frontmatter | Each memory entry stores `domain`, `tags`, `created_at`, `importance` in frontmatter; prose content follows the `---` separator |
+| Synonym expansion | `_expand_query()` expands query terms via `_SYNONYMS` dict before search. E.g., `"money"` → `["finance", "budget", "salary", "investment"]`. Enables natural-language recall without embedding models. |
+| Scoped recall | `remember("visa status")` scans `state/memory.md` + domain-specific files via frontmatter filters |
+| Write deduplication | Before appending, provider checks normalized-content hash against existing entries for the same domain |
+| Schema migrations | `config/memory.yaml` declares `schema_version` and `upgrade_trigger`. `artha.py --upgrade-memory` runs zero-downtime migration. |
+
+### 25.8 Composite Signal Scoring (AFW-9)
+
+Every candidate briefing item receives a composite score:
+
+$$\text{score} = w_u \cdot \text{urgency} + w_i \cdot \text{impact} + w_f \cdot \text{freshness}$$
+
+**Default weights:** urgency=0.50, impact=0.30, freshness=0.20. All inputs normalized 0.0–1.0.
+
+**Routing thresholds:**
+
+| Score | Behavior |
+|-------|---------|
+| < 0.20 | Suppress — excluded from briefing |
+| 0.20–0.65 | Include normally |
+| ≥ 0.66 | Promote — surfaced at top of briefing section |
+
+Domain-specific weights configurable (e.g., immigration urgency=0.70). The ONE THING selection uses the highest composite score. Implementation: `scripts/lib/signal_scorer.py`.
+
+### 25.9 Structured Tracing & Observability (AFW-11)
+
+Every catch-up session generates a `trace_id` (UUID4) that propagates through all phases, log lines, and audit entries. Structured log format: JSONL, written to `tmp/trace_<trace_id>.jsonl`.
+
+**Log entry schema:**
+```json
+{
+  "trace_id": "uuid4",
+  "session_id": "uuid4",
+  "phase": "email_routing",
+  "event": "domain_routed",
+  "domain": "finance",
+  "ts": "ISO8601",
+  "duration_ms": 42,
+  "level": "INFO"
+}
+```
+
+`scripts/log_digest.py` aggregates trace files into daily summaries, detects gap trends (domains skipped, phases timing out), and feeds the eval pipeline (§21). Trace files are ephemeral — purged after `log_digest` runs (default: 7-day retention in `tmp/`).
+
+### 25.10 Implementation Status
+
+| AFW Item | Feature | Status | Primary File |
+|---------|---------|--------|-------------|
+| AFW-1 | Tripwire Guardrails | ✅ Complete | `scripts/middleware/guardrails.py` |
+| AFW-2 | Progressive Disclosure | ✅ Complete | `scripts/domain_index.py` |
+| AFW-3 | Middleware Pipeline | ✅ Complete | `scripts/middleware/` |
+| AFW-4 | Context Compaction | ✅ Complete | `scripts/session_summarizer.py` |
+| AFW-5 | Workflow Checkpointing | ✅ Complete | `scripts/lib/state_snapshot.py` |
+| AFW-6 | Session Undo | ✅ Complete | `scripts/lib/state_snapshot.py` |
+| AFW-7 | Flat-File Memory (ADR-001) | ✅ Complete | `scripts/lib/memory_provider.py` |
+| AFW-8 | Plugin Safety Architecture | ⏳ Deferred | Requires ≥15 plugin components |
+| AFW-9 | Composite Signal Scoring | ✅ Complete | `scripts/lib/signal_scorer.py` |
+| AFW-10 | Domain Training & Feedback | 🔒 Gated on AFW-7 | Unblocked; not yet scheduled |
+| AFW-11 | Structured Tracing | ✅ Complete | `scripts/log_digest.py` |
+| AFW-12 | Declarative Agent Definitions | 🔒 Gated on AFW-3 | Middleware adoption required |
+
+---
+
+*Artha Tech Spec v3.21.0 — End of Document*
 
 ---
 
@@ -5008,6 +5172,7 @@ Pull-based quality assessment for the Work OS KB layer, assessed at read time (n
 
 | Version | Changes |
 |---------|---------|
+| v3.21.0 | **Agent Framework v1 — §25**: AFW-1 Tripwire Guardrails (7 guardrails, blocking + parallel modes, `guardrails.py` + `guardrail_registry.py`); AFW-3 Middleware Pipeline (`compose_middleware()`, 5 components, `config/middleware.yaml`); AFW-2 Progressive Disclosure (6 always-load domains, `domain_index.py`, ~80% token savings on `/status`/`/items`); AFW-4 Context Compaction (`session_summarizer.py`, `CompactionPolicy`, sliding window); AFW-5 Workflow Checkpointing (`state_snapshot.py`, 4h TTL, phase-resume); AFW-6 Session Undo (`/undo [domain]`, snapshot-before-write, diff confirm); AFW-7 Flat-File Memory / ADR-001 (`memory_provider.py`, YAML frontmatter, synonym expansion, scoped recall, dedup); AFW-9 Composite Signal Scoring (`signal_scorer.py`, urgency×impact×freshness, suppress<0.20/promote≥0.66); AFW-11 Structured Tracing (UUID4 trace_id propagation, JSONL, `log_digest.py`). `.gitignore` hardened: `.gemini_security/` + `.gemini/` added. Spec updates: PRD §9.10 + UX §10/§14/§16. |
 | v3.20.0 | **AR-9 External Agent Composition (§23) + Data Quality Gate (§24)**: `scripts/lib/agent_registry.py` (YAML-backed registry, drop-folder scan, content_hash dedup, shadow_mode flag, registered_at timestamp); `scripts/lib/agent_router.py` (geometric-mean confidence routing); `scripts/lib/context_classifier.py` (domain-scoped public/scoped/private tagging); `scripts/lib/context_scrubber.py` (outbound PII scrubbing per domain profile); `scripts/lib/injection_detector.py` (recursive injection decoder, confidence threshold); `scripts/lib/agent_invoker.py` (`runSubagent`, 60s timeout, stale-while-revalidate cache in `tmp/ext-agent-cache/`); `scripts/lib/response_verifier.py` (entity-based KB cross-check); `scripts/lib/response_integrator.py` (expert consensus format, fallback cascade: agent→KB→investigation→Cowork); `scripts/lib/knowledge_extractor.py` (response → cache); `scripts/lib/agent_scorer.py` (accuracy × freshness × honesty_bonus); `scripts/lib/agent_health.py` (availability/latency/quality/auto-retirement at 5 consecutive failures); `scripts/lib/ext_agent_audit.py` (JSONL audit trail); `scripts/lib/metrics_writer.py` (eval pipeline integration); `scripts/agent_manager.py` (CLI). DQ Gate: `scripts/lib/dq_gate.py` — pull-based Accuracy×Freshness×Completeness model; QualityVerdict(PASS/WARN/STALE/REFUSE); domain-aware weights; corroborating_sources denormalized field. `.gitignore` hardened: `config/agents/external/`, `config/agents/external-registry.yaml`, `config/agents/*.agent.md` excluded. 4,515 tests: `tests/ext_agents/` (121) + `tests/test_dq_gate.py`. |
 | v3.19.0 | **Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS)**: `scripts/eval_runner.py` (orchestrates eval harness; closes G1–G10 observability gaps); `scripts/eval_scorer.py` (briefing quality scorer — completeness, priority order, PII compliance, action accuracy; rolling 7-day+30-day averages); `scripts/lib/metric_store.py` (SQLite-backed time-series MetricStore in `~/.artha-local/eval.db`; 90-day auto-prune); `scripts/correction_feeder.py` (user correction → `state/memory.md` + domain confidence delta → `state/self_model.md`); `scripts/log_digest.py` (daily log aggregator; gap trend detection); `scripts/lib/knowledge_graph.py` (`KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`; transactional SQLite writes); `scripts/kb_bootstrap.py` (idempotent bootstrap from `knowledge/*.md` state files; hash-based dedup). 127 new eval tests in `tests/eval/` + `tests/unit/test_eval_*.py`. `.gitignore` hardened: machine-specific conflict-copy pattern replaced with generic `state/*.age` superset; OneDrive shadow `.git 2/` fix. |
 | v3.8–v3.9 | **Work OS Phases 2–5** (PRD FR-19 FW-11–FW-17, v2.7.0): `scripts/work_bootstrap.py` (12-question guided setup interview, atomic writes, dry-run); `scripts/work_notes.py` (post-meeting capture, D-NNN/OI-NNN IDs, `/work remember` micro-capture); `scripts/work_reader.py` (25-command read-path CLI: work, pulse, sprint, health, return, connect, connect-prep, people, docs, sources, prep, live, newsletter, deck, memo, talking-points, promo-case, promo-narrative, journey, day, decide, graph, preread, incidents, repos); `scripts/work_domain_writers.py` (atomic writers for 11 domain files: calendar, comms, projects, boundary, career, sources, notes, decisions, open-items, people, performance); `scripts/narrative_engine.py` (10 Jinja2 templates: weekly_memo, talking_points, boundary_report, connect_summary, newsletter, deck, calibration_brief, connect_evidence, escalation_memo, decision_memo); `scripts/post_work_refresh.py` (session history writer, run log appender); `scripts/kusto_runner.py` (KQL bridge, ADO/Kusto query runner); `config/agents/` expanded to 3 tiers (artha-work.md baseline, artha-work-enterprise.md corporate ADO, artha-work-msft.md Microsoft Enhanced); `state/work/` expanded 6→20 domain files; `.github/workflows/work-tests.yml` CI matrix; 883 tests in `tests/work/` (12 test files); `specs/work.md` archived to `.archive/specs/work.md` — PRD/Tech/UX specs now canonical. §19.7 state files expanded 8→22 rows; §19.9 test coverage updated ~541→883. |

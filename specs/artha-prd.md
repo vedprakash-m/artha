@@ -1489,6 +1489,24 @@ Artha runs inside an AI CLI — the CLI **is** the runtime. The table below defi
 
 > **Policy:** When adding or changing environment support, update this table, the README "Supported Environments" section, and `docs/supported-clis.md` in the same commit.
 
+### 9.10 — Agent Framework Layer (AFW v1) *(v3.21)*
+
+Formal production-hardening layer governing runtime safety, memory continuity, and observability. Nine components shipped across implementation Waves 0–3 (see Tech Spec §25 for implementation details):
+
+| Capability | User-Visible Benefit |
+|-----------|---------------------|
+| Tripwire Guardrails (7 enforced) | Zero silent PII leaks; vault-access enforcement; prompt injection resistance |
+| Middleware Pipeline | Every state write is traceable, auditable, and reversible |
+| Progressive Domain Loading | 35–50% token reduction on typical catch-up; faster `/status` and `/items` |
+| Context Compaction | Catch-up survives 500+ emails without hitting context window limit |
+| Workflow Checkpointing (4h TTL) | Interrupted catch-up resumes from last completed phase |
+| Session Undo (`/undo`) | Any accidental write is reversible within a session |
+| Flat-File Memory (ADR-001) | Zero-infrastructure memory that survives across sessions with synonym recall |
+| Composite Signal Scoring | Briefing items ranked by urgency × impact × freshness |
+| Structured Tracing | Every session produces a JSONL trace for eval and gap detection |
+
+From a user perspective, the visible features are `/undo`, checkpoint resume prompts, and undo safety warnings on high-priority items. The remaining components operate silently to protect data integrity and system performance.
+
 ---
 
 ## 9. Autonomy Framework

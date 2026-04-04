@@ -133,6 +133,132 @@ features:
     status: implemented
     confidence: high
 
+  # ── Agent Framework (specs/agent-fw.md) ─────────────────────────────────
+  afw_wave0_write_path_unification:
+    spec: "specs/agent-fw.md Wave 0"
+    status: implemented
+    confidence: high
+    note: >
+      Four bypass writers migrated to state_writer canonical API.
+      calendar_writer → state_writer.write(domain="calendar").
+      trust_enforcer → state_writer.write(domain="health_check", pii_check=False).
+      fact_extractor → state_writer.write(domain="memory", pii_check=False).
+      checkpoint → state_writer.write_atomic() (durability, not middleware).
+      All fallback write_text() branches removed. Fail-loud on import failure.
+      Tests: tests/unit/test_write_path_unification.py (58 tests).
+  afw_wave1_progressive_disclosure:
+    spec: "specs/agent-fw.md §AFW-2"
+    status: implemented
+    confidence: high
+    note: >
+      build_domain_menu() and should_load_domain() added to scripts/domain_index.py
+      (per review decision: extend domain_index.py, not create domain_loader.py).
+      progressive_disclosure.enabled flag in config/artha_config.yaml.
+      A-1 PASSED (39 domains, ~1286 tokens, under 1500 budget).
+      A-3 VALIDATED (6 always-load domains sufficient for catch-up).
+      Tests: tests/unit/test_domain_index_wave1.py.
+  afw_wave1_signal_scoring:
+    spec: "specs/agent-fw.md §AFW-9"
+    status: implemented
+    confidence: high
+    note: >
+      scripts/lib/signal_scorer.py: score_signal() with urgency/impact/freshness weights.
+      Suppression threshold 0.2 CONFIRMED SAFE. Promotion threshold calibrated 0.8→0.66
+      (see afw_signal_scorer_calibration entry — COMPLETE).
+      Weights configurable via config/artha_config.yaml.
+      Tests: tests/unit/test_signal_scorer.py.
+  afw_wave1_session_undo:
+    spec: "specs/agent-fw.md §AFW-6"
+    status: implemented
+    confidence: high
+    note: >
+      state_snapshot.py: snapshot/restore_latest/prune/list_snapshots.
+      WriteGuardMiddleware: mandatory snapshot-before-write (abort if snapshot fails).
+      commands.md: /undo [domain] documented with flow, safety constraints, implementation ref.
+      Integration test: tests/integration/test_undo_state_change.py (6 tests).
+      Unit tests: tests/unit/test_state_snapshot.py (25 tests).
+  afw_wave1_checkpointing:
+    spec: "specs/agent-fw.md §AFW-5"
+    status: implemented
+    confidence: high
+    note: "checkpoint.py: read/write/clear checkpoint, TTL, feature flag. Tests: test_checkpoint_extended.py"
+  afw_wave2_guardrails:
+    spec: "specs/agent-fw.md §AFW-1"
+    status: implemented
+    confidence: high
+    note: "7 guardrails + registry + compose_middleware(). Tests: test_guardrails.py (50 tests)"
+  afw_wave2_middleware_hooks:
+    spec: "specs/agent-fw.md §AFW-3"
+    status: implemented
+    confidence: high
+    note: "middleware/__init__.py before_step/after_step/on_error hooks. Tests: test_middleware_step_hooks.py (21 tests)"
+  afw_wave2_compaction:
+    spec: "specs/agent-fw.md §AFW-4"
+    status: implemented
+    confidence: high
+    note: "CompactionPolicy, compact_phase_output, sliding_window_compact. Tests: test_compaction.py (36 tests)"
+  afw_wave2_session_tracing:
+    spec: "specs/agent-fw.md §AFW-11"
+    status: implemented
+    confidence: high
+    note: "logger.py begin/end_session_trace, SESSION_TRACE_ID, sensitive flag. Tests: test_logger_tracing.py (19 tests)"
+  afw_signal_scorer_calibration:
+    spec: "specs/agent-fw.md §AFW-9 §3.9.2"
+    status: implemented
+    confidence: high
+    note: >
+      scripts/eval/signal_scorer_calibration.py: calibration runner against briefings/ archive.
+      712 signals from 27 briefing files. suppress_below=0.2 CONFIRMED SAFE (0 critical suppressed).
+      promote_above calibrated from 0.8→0.66 (p90 of score distribution, only 3.2% reached 0.8).
+      Output: tmp/signal_scorer_calibration.json. signal_scorer.py _DEFAULT_PROMOTE_ABOVE updated.
+  afw_memory_provider_scaffold:
+    spec: "specs/agent-fw.md §AFW-7 pre-gate scaffold"
+    status: implemented
+    confidence: high
+    note: >
+      scripts/lib/memory_provider.py: MemoryProvider ABC + FlatFileProvider + SqliteFtsProvider
+      + LanceDbProvider (NotImplementedError gate). get_provider() factory with schema_version
+      validation. config/memory.yaml: schema_version:1, scope weights, consolidation thresholds.
+      A-6 experiment clock started 2026-04-03, ends 2026-05-03 (tmp/memory_experiment_results.md).
+  afw_wave2_integration_tests:
+    spec: "specs/agent-fw.md §7.2 integration test mandate"
+    status: implemented
+    confidence: high
+    note: >
+      3 new §7.2 integration tests added:
+      - test_catchup_checkpoint_resume.py (8 tests, AFW-5 kill-and-resume)
+      - test_full_catchup_with_guardrails.py (9 tests, AFW-1/AFW-3)
+      - test_progressive_loading_accuracy.py (10 tests, AFW-2/A-9)
+      All 27 tests pass (1 skipped: employment domain has no routing_keywords).
+      Production fix: domain_index.py str(kw).lower() coercion for int keywords.
+  afw_wave3_memory:
+    spec: "specs/agent-fw.md §3.7 (AFW-7)"
+    status: implemented
+    confidence: high
+    note: >
+      AFW-7 complete per ADR-001 (§10.8): FlatFileProvider permanent backend.
+      FlatFileProvider._load_entries() + _save_entries() rewritten for YAML frontmatter
+      matching live state/memory.md format. _expand_query() + _SYNONYMS domain synonym
+      expansion added. config/memory.yaml updated: dead SQLite/LanceDB config stripped,
+      upgrade_trigger section added per §3.7.7. A-5/A-6/A-7/A-15 experiments superseded
+      by ADR-001 — flat-file is permanent until upgrade_trigger criteria met.
+      G-5 (action_executor double import) fixed. 23 tests in tests/test_memory_system.py
+      all passing. AFW-7 Task 2 (wire fact_extractor.py to get_provider()) explicitly
+      deferred by spec until Task 1 validated in production.
+  afw_wave3_pending:
+    spec: "specs/agent-fw.md Wave 3 remaining"
+    status: not_started
+    confidence: high
+    note: >
+      AFW-10 (Domain Training & Feedback Loop): gate = AFW-7 Task 1 complete — NOW
+      UNBLOCKED. Spec §3.10 defines feedback signals, domain training loop, and
+      quality score tracking. Medium effort, P3.
+      AFW-12 (Declarative Agents): gate = AFW-1 + AFW-3 proven in production — GATE
+      MET (50 guardrail tests + 21 middleware hook tests all passing). Medium effort, P3.
+      AFW-8 (Plugin-Based Safety): deferred until 15+ guardrail/middleware components
+      in production — NOT YET MET (currently ~7 guardrails + 3 hooks).
+      AFW-7 Task 2: wire fact_extractor.py to get_provider() — deferred by spec.
+
   # ── Reflection Loop ─────────────────────────────────────────────────────
   work_os_reflect_sprint0:
     spec: ".archive/specs/reflection-loop.md Sprint 0"

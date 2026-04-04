@@ -23,6 +23,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 _MIN_SIZE_BYTES = 100
 
@@ -97,6 +98,7 @@ class WriteVerifyMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         return proposed_content  # Verification happens post-write
 
@@ -128,6 +130,15 @@ class WriteVerifyMiddleware:
                 f.write(line)
         except OSError:
             pass  # Audit log unavailable — don't fail on failure-to-log
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        pass
 
 
 def verify_file(domain: str, file_path: Path) -> list[str]:

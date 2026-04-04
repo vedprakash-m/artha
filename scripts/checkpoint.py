@@ -54,8 +54,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import sys
+_lib_dir = str(Path(__file__).resolve().parent / "lib")
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+from state_writer import write_atomic as _write_atomic  # noqa: PLC0415
+
 _CHECKPOINT_FILE = "tmp/.checkpoint.json"
-_MAX_AGE_HOURS = 4  # Stale checkpoints are ignored after this many hours
+_MAX_AGE_HOURS = 4  # Fallback — configurable via harness.agentic.checkpoints.stale_hours
+
+
+def _stale_hours(artha_dir: Path) -> float:
+    """Return the checkpoint TTL in hours from config, or ``_MAX_AGE_HOURS``."""
+    try:
+        import sys
+        scripts_dir = str(artha_dir / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from lib.config_loader import load_config  # noqa: PLC0415
+        # Pass the artha_dir-relative config dir so tests can override with tmp_path.
+        cfg = load_config("artha_config", str(artha_dir / "config"))
+        return float(
+            cfg.get("harness", {}).get("agentic", {}).get("checkpoints", {}).get("stale_hours", _MAX_AGE_HOURS)
+        )
+    except Exception:  # noqa: BLE001
+        return float(_MAX_AGE_HOURS)
 
 
 def _is_enabled(artha_dir: Path) -> bool:
@@ -109,7 +132,7 @@ def read_checkpoint(artha_dir: Path) -> dict[str, Any] | None:
             ts = ts.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         age_hours = (now - ts).total_seconds() / 3600
-        if age_hours > _MAX_AGE_HOURS:
+        if age_hours > _stale_hours(artha_dir):
             return None
     except (ValueError, OverflowError):
         return None
@@ -120,19 +143,29 @@ def read_checkpoint(artha_dir: Path) -> dict[str, Any] | None:
 def write_checkpoint(
     artha_dir: Path,
     last_step: int | float,
+    *,
+    phase: str | None = None,
+    connector_results: dict[str, Any] | None = None,
+    domain_signals: dict[str, Any] | None = None,
     **metadata: Any,
 ) -> None:
     """Write a checkpoint marker after a successful step.
 
     Creates ``tmp/.checkpoint.json`` with the step number, a UTC timestamp,
-    and any additional keyword arguments as step-specific metadata
-    (e.g. ``email_count=42``, ``domains_processed=["finance"]``).
+    and optional phase-level context for resume support.
 
     Args:
         artha_dir: Artha project root.
         last_step: The step number that just completed successfully.
-        **metadata: Optional per-step metadata stored alongside the
-            step number.  Values must be JSON-serialisable.
+        phase: Workflow phase name — ``"preflight"`` | ``"fetch"`` |
+            ``"process"`` | ``"reason"`` | ``"finalize"``.
+            Stored under the ``phase`` key for resume routing.
+        connector_results: Per-connector fetch output dict (fetch phase).
+            Stored under ``connector_results``; excluded from checkpoint
+            when ``None``.
+        domain_signals: Per-domain extracted signals dict (process phase).
+            Stored under ``domain_signals``; excluded when ``None``.
+        **metadata: Additional per-step metadata (JSON-serialisable).
     """
     if not _is_enabled(artha_dir):
         return
@@ -143,9 +176,13 @@ def write_checkpoint(
     data: dict[str, Any] = {
         "last_step": last_step,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        **({"phase": phase} if phase is not None else {}),
+        **({"connector_results": connector_results} if connector_results is not None else {}),
+        **({"domain_signals": domain_signals} if domain_signals is not None else {}),
         **metadata,
     }
-    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    serialized = json.dumps(data, indent=2, default=str)
+    _write_atomic(path, serialized)
 
 
 def clear_checkpoint(artha_dir: Path) -> None:

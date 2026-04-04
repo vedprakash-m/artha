@@ -4,7 +4,7 @@
 PYTHON ?= ~/.artha-venvs/.venv/bin/python
 PYTEST ?= $(PYTHON) -m pytest
 
-.PHONY: test lint ruff import-check pii-scan validate preflight generate clean check help start
+.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -79,7 +79,21 @@ clean: ## Remove __pycache__ and .pyc files
 	find . -name "*.pyc" -delete 2>/dev/null || true
 	@echo "✓ Clean"
 
-check: lint ruff import-check test pii-scan validate ## Full CI check
+lint-state-writes: ## AFW Wave 0: ban direct .write_text() on state files outside state_writer.py
+	@HITS=$$(grep -rn '\.write_text(' scripts/ \
+	  | grep -v 'scripts/lib/state_writer\.py' \
+	  | grep -v 'scripts/lib/health_check_writer\.py' \
+	  | grep -v '/test_' \
+	  | grep -v '\.write_text.*tmp/' \
+	  || true); \
+	if [ -n "$$HITS" ]; then \
+		echo "FAIL: direct .write_text() detected — route state writes through state_writer.write(), tmp writes through state_writer.write_atomic()"; \
+		echo "$$HITS"; \
+		exit 1; \
+	fi; \
+	echo "✓ No rogue .write_text() calls"
+
+check: lint ruff import-check lint-state-writes test pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"
 
 # ── Eval Layer Gates (specs/eval.md EV-16) ────────────────────────────────────

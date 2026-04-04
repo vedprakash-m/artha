@@ -25,6 +25,12 @@ _SCRIPTS_DIR = ARTHA_DIR / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+try:
+    from lib.logger import begin_session_trace as _begin_session_trace  # type: ignore[import]
+    _TRACE_AVAILABLE = True
+except ImportError:
+    _TRACE_AVAILABLE = False
+
 # Ensure correct venv before third-party imports (no-op if already in venv or CI)
 try:
     from _bootstrap import reexec_in_venv  # type: ignore[import]
@@ -223,6 +229,8 @@ def run_skill(skill_name: str, artha_dir: Path) -> Dict[str, Any]:
         return {"status": "failed", "error": str(e)}
 
 def main():
+    if _TRACE_AVAILABLE:  # AFW-11: tag all skill log events with a session trace ID
+        _begin_session_trace()
     import argparse
     parser = argparse.ArgumentParser(description="Artha skill runner")
     parser.add_argument(

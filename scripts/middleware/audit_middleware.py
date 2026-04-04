@@ -45,6 +45,7 @@ class AuditMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         """Record pre-write state for post-write correlation."""
         pii_may_have_been_redacted = proposed_content != current_content
@@ -79,6 +80,15 @@ class AuditMiddleware:
         """
         ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         self._append(f"[{ts}] {event_type} | {details}\n")
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        pass
 
     def _append(self, line: str) -> None:
         """Append a single line to the audit log, silently ignoring errors."""

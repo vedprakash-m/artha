@@ -35,6 +35,7 @@ import logging
 import os
 import sys
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,46 @@ from typing import Any
 # ---------------------------------------------------------------------------
 _DEFAULT_LOG_DIR = Path(os.path.expanduser("~")) / ".artha-local" / "logs"
 _MAX_AGE_DAYS = 30
+
+# ---------------------------------------------------------------------------
+# Session trace context variable
+# ---------------------------------------------------------------------------
+# Stores an optional session-level trace ID that is propagated to every
+# emitted event as ``session_trace_id`` (distinct from the per-event
+# ``trace_id`` which is generated fresh for each emission).
+# Set via begin_session_trace() / end_session_trace().
+_SESSION_TRACE_ID: ContextVar[str | None] = ContextVar(
+    "_SESSION_TRACE_ID", default=None
+)
+
+
+def begin_session_trace(trace_id: str | None = None) -> str:
+    """Start a session-level trace and return the trace ID in use.
+
+    Sets a ContextVar so that all subsequent log events emitted from the
+    same async context carry a ``session_trace_id`` field.
+
+    Parameters
+    ----------
+    trace_id:
+        Explicit trace ID to use.  If None, a fresh ``uuid4().hex[:16]``
+        is generated.  Useful for correlating log events across a
+        user-visible session.
+
+    Returns
+    -------
+    str
+        The trace ID that was set (same value as ``trace_id`` if provided).
+    """
+    sid = trace_id if trace_id is not None else uuid.uuid4().hex[:16]
+    _SESSION_TRACE_ID.set(sid)
+    return sid
+
+
+def end_session_trace() -> None:
+    """Clear the session-level trace ID from the current context."""
+    _SESSION_TRACE_ID.set(None)
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton cache: name → Logger
@@ -142,7 +183,20 @@ class StructuredLogger:
         # Don't propagate to root logger (avoids duplicate output)
         self._logger.propagate = False
 
-    def _emit(self, level: int, event: str, **kwargs: Any) -> None:
+    def _emit(self, level: int, event: str, sensitive: bool = False, **kwargs: Any) -> None:
+        # Sensitive events: honour trace_include_sensitive_data config gate.
+        # When sensitive=True and the config flag is false, omit the event.
+        if sensitive:
+            try:
+                from lib.config_loader import load_config  # noqa: PLC0415
+                cfg = load_config("artha_config") or {}
+                if not cfg.get("harness", {}).get("structured_output", {}).get(
+                    "trace_include_sensitive_data", True
+                ):
+                    return  # Sensitive event suppressed by config
+            except Exception:  # noqa: BLE001
+                pass  # Config unavailable — emit the event
+
         span_id = kwargs.pop("span_id", None)
         parent_span_id = kwargs.pop("parent_span_id", None)
         payload: dict[str, Any] = {
@@ -152,6 +206,11 @@ class StructuredLogger:
             "module": self._name,
             "trace_id": uuid.uuid4().hex[:16],
         }
+        # Session-level trace ID (set via begin_session_trace) — injected as
+        # a separate field alongside the per-event trace_id above.
+        session_tid = _SESSION_TRACE_ID.get()
+        if session_tid is not None:
+            payload["session_trace_id"] = session_tid
         payload.update(self._defaults)
         payload.update(kwargs)
         if span_id is not None:

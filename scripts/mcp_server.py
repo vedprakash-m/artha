@@ -117,9 +117,13 @@ def _check_rate_limit(tool: str, is_write: bool = False) -> str | None:
 # ---------------------------------------------------------------------------
 def _audit(tool: str, params: dict[str, Any], status: str) -> None:
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    _SENSITIVE = {"key", "password", "token", "secret", "content"}
+    # Substring matches for common secret patterns (e.g., 'api_key', 'oauth_token')
+    _SENSITIVE_SUB = {"key", "password", "token", "secret"}
+    # Exact matches for PII fields to avoid over-masking (e.g., 'to' shouldn't mask 'total')
+    _SENSITIVE_EXACT = {"to", "email", "phone", "address", "ssn", "content"}
+
     safe = {
-        k: "***" if any(s in k.lower() for s in _SENSITIVE) else v
+        k: "***" if (any(s in k.lower() for s in _SENSITIVE_SUB) or k.lower() in _SENSITIVE_EXACT) else v
         for k, v in params.items()
     }
     entry = (

@@ -102,6 +102,10 @@ python scripts/migrate.py             # write config/user_profile.yaml
 - **Work OS** — professional briefings, meeting prep, sprint health, career evidence capture, and knowledge graph for your work context
 - **Pluggable connectors** — Gmail, Google Calendar, Outlook, WhatsApp, iMessage, Canvas LMS, Home Assistant (LAN-only), and more
 - **External Agent Composition** — route questions to specialized domain agents; trust tiers, PII scrubbing, injection defense, and quality-gated responses
+- **Runtime guardrails** — 7 enforced checks block silent PII leaks, vault mis-access, and prompt injection before they reach state files
+- **Session undo & checkpointing** — `/undo [domain]` reverts any accidental write; interrupted catch-ups resume from the last completed phase (4-hour TTL)
+- **Adaptive signal scoring** — every briefing item ranked by urgency × impact × freshness; low-signal items suppressed, high-priority items promoted automatically
+- **Persistent memory** — flat-file memory records cross-session facts with natural-language recall and synonym expansion (no embedding infrastructure required)
 
 ---
 

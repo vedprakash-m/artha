@@ -733,7 +733,9 @@ def main(argv: list[str] | None = None) -> int:
             raw_tz = "ET"
         tz = _resolve_timezone(raw_tz)
         _write_profile_from_wizard(name, email, tz, "single", [])
-        print(f"\n  {_GREEN}✓{_RST}  Profile created for {name} ({email})")
+        # Mask for privacy: t***@example.com
+        masked = email if "@" not in email else f"{email[0]}***@{email.split('@')[-1]}"
+        print(f"\n  {_GREEN}✓{_RST}  Profile created for {name} ({masked})")
         rc = subprocess.call(
             [sys.executable, str(_SCRIPTS / "generate_identity.py")],
             cwd=str(_ROOT),
