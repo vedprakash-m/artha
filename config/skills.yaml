@@ -168,7 +168,7 @@ skills:
   ai_trend_radar:
     enabled: true
     priority: P2
-    cadence: weekly
+    cadence: daily
     class: background
     goal_refs: []
     requires_vault: false

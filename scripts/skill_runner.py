@@ -361,6 +361,10 @@ def main():
     # Bridge: write tmp/occasion_tracker_output.json for pr_manager --step8
     _write_occasion_tracker_output(new_cache)
 
+    # Bridge: write tmp/trend_scan.json if radar ran this cycle
+    if "ai_trend_radar" in enabled_skills:
+        write_radar_trend_scan_bridge()
+
     # Write timing metrics (deprecated — timing now in unified cache health sub-dict).
     # Kept for backward compatibility with any external tooling that reads the file.
     _write_skills_metrics(skill_timing, total_elapsed)
