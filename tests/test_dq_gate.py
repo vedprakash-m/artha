@@ -6,6 +6,7 @@ Phase E of data-quality-gate implementation.
 """
 from __future__ import annotations
 
+import importlib.util
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -466,6 +467,11 @@ class TestQualityVerdictOrdering:
 # Phase E.3 — Integration: _pre_answer_quality_gate (per-section scoring)
 # ---------------------------------------------------------------------------
 
+_work_helpers_available = importlib.util.find_spec("work") is not None
+_work_domain_writers_available = importlib.util.find_spec("work_domain_writers") is not None
+
+
+@pytest.mark.skipif(not _work_helpers_available, reason="work.helpers not available (gitignored)")
 class TestPreAnswerQualityGate:
     """spec §Phase E.3 — multi-domain per-section scoring, worst-verdict computation."""
 
@@ -612,6 +618,7 @@ class TestPreAnswerQualityGate:
 # Phase E (N5) — stamp_warmstart_providers()
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _work_domain_writers_available, reason="work_domain_writers not available (gitignored)")
 class TestStampWarmstartProviders:
     """spec N5 — stamp_warmstart_providers() stamps human-authored files non-destructively."""
 
@@ -719,6 +726,7 @@ class TestStampWarmstartProviders:
 # Phase E.5 — Regression: _staleness_header() delegates to _quality_header()
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skipif(not _work_helpers_available, reason="work.helpers not available (gitignored)")
 class TestStalenessHeaderFallback:
     """spec Phase E.5 — _staleness_header() is a deprecated wrapper, not an independent impl."""
 
