@@ -100,6 +100,12 @@ jobs:
           python -c "import sqlite3; print('SQLite:', sqlite3.sqlite_version)"
           python -c "import pydantic; print('pydantic:', pydantic.__version__)"
 
+      - name: Collect tests (diagnostic)
+        run: python -m pytest tests/ --ignore=tests/work --co -q 2>&1 || true
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
       - name: Run tests
         run: python -m pytest tests/ -v --tb=long --ignore=tests/work
         env:

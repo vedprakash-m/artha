@@ -104,7 +104,7 @@ select = [
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals"]
+norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals", "work"]
 
 # ---------------------------------------------------------------------------
 # Mypy — strict type checking for narrative/ subpackage
