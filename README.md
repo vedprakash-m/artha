@@ -106,6 +106,8 @@ python scripts/migrate.py             # write config/user_profile.yaml
 - **Session undo & checkpointing** — `/undo [domain]` reverts any accidental write; interrupted catch-ups resume from the last completed phase (4-hour TTL)
 - **Adaptive signal scoring** — every briefing item ranked by urgency × impact × freshness; low-signal items suppressed, high-priority items promoted automatically
 - **Persistent memory** — flat-file memory records cross-session facts with natural-language recall and synonym expansion (no embedding infrastructure required)
+- **Domain training loop** — per-domain accuracy tracking detects underperforming domains and generates correction suggestions automatically
+- **Golden-set eval framework** — parametrized regression tests with quality dimension gates ensure briefing quality never regresses
 
 ---
 

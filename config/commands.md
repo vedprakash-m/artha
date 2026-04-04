@@ -866,6 +866,15 @@ status, owning team, and active projects. Reads `state/work/work-products.md`.
 - Trigger-loaded: not fetched on every briefing; loaded when meeting prep or query references a product
 - Phase: Active
 
+## `/work code <question>` — Code Search (Bluebird)
+Routes code-level questions to Engineering Copilot Mini (Bluebird) MCP for ADO repo search.
+Configured repos: Storage-XKulfi, Storage-Armada (msazure/One project).
+- `work code <question>` — natural language code search
+- `work code <symbol>` — symbol lookup (class, method, function)
+- Requires Bluebird MCP server running (`.vscode/mcp.json` → `bluebird`)
+- Falls back to golden query catalog if Bluebird is unavailable
+- Phase: Active
+
 ## `/work remember <text>` — Instant Micro-Capture
 Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]` marker and timestamp. Processed by work-learn on next refresh cycle (fact extraction, keyword linking, org-calendar detection for `org-calendar:` prefix). Input is PII-scanned before write. Phase 2.
 

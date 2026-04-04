@@ -9,6 +9,23 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — AFW-10 Domain Training & Feedback Loop
+- `scripts/domain_training.py`: per-domain accuracy tracking over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration
+- Config gate: `harness.agentic.domain_training.enabled` (default: true); activation requires minimum 5 catch-up runs
+- CLI: `python scripts/domain_training.py` (full report), `--json` (structured output), `--domain X` (single domain)
+- Ref: specs/agent-fw.md §3.10, AFW-10
+
+### Added — EV-12 Golden-Set Eval Framework
+- `tests/eval/golden_set/test_golden_set.py`: parametrized regression tests loading fixtures from YAML
+- `tests/eval/golden_set/fixtures.yaml` (v1.0.0): 10 briefing quality fixtures (4 golden, 6 anti-golden) covering actionability, specificity, completeness, signal_purity, calibration dimensions
+- All fixture content is 100% fictional (DD-5 compliant)
+- Ref: specs/eval.md EV-12, tests/eval/rubric.yaml
+
+### Added — `/work code` Command (Bluebird MCP Integration)
+- `config/commands.md`: `/work code <question>` routes code-level questions to Bluebird MCP for ADO repo search (Storage-XKulfi, Storage-Armada)
+- Supports natural-language code search and symbol lookup (class, method, function)
+- Falls back to golden query catalog when Bluebird MCP is unavailable
+
 ### Added — Agent Framework v1 (AFW, v3.21.0)
 - AFW-1: Tripwire Guardrail System — 7 runtime-enforced blockers (PII leak, vault mis-access, prompt injection, scope creep, data exfil, disallowed tool call, undefined domain write); zero silent failures
 - AFW-2: Progressive Domain Loading — 6 always-load domains, 80% token savings for targeted queries, `scripts/domain_index.py`
