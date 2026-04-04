@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.21.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.22.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.7.0
+> **Implements**: PRD v7.8.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.22.0 | 2026-04 | AFW-10 Domain Training (`scripts/domain_training.py`): per-domain accuracy trend analysis over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration. EV-12 Golden-Set Eval (`tests/eval/golden_set/`): parametrized regression framework with `fixtures.yaml` (10 fixtures — 4 golden, 6 anti-golden), dimension-level quality gates (actionability, specificity, completeness, signal_purity, calibration). `/work code` Bluebird MCP integration for ADO code search with golden-query fallback. 3,515+ tests. |
 | v3.21.0 | 2026-04 | Agent Framework v1 (§25): AFW-1 through AFW-11 (Waves 0–3 complete). Guardrails, middleware pipeline, progressive disclosure, context compaction, checkpointing, undo, flat-file memory (ADR-001), composite signal scoring, structured tracing. `.gitignore` hardened. 4,872+ tests. |
 | v3.19.0 | 2026-04 | Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS): `scripts/eval_runner.py`, `scripts/eval_scorer.py`, `scripts/lib/metric_store.py`, `scripts/correction_feeder.py`, `scripts/log_digest.py`, `scripts/lib/knowledge_graph.py`, `scripts/kb_bootstrap.py`. Closes 10 observability gaps (G1–G10). 127 eval tests. `.gitignore` hardened: machine-specific conflict-copy patterns replaced with generic `state/*.age`. |
 | v3.18.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer fully wired: `action_orchestrator.py` signal→compose→queue pipeline, email signal extractor (9 categories, 14+ regex patterns across `body` field), pattern engine integration, Step 12.5 in `Artha.md`, signal routing merge invariant (YAML overrides hardcoded fallback), handler-routing alignment invariant, platform-local `actions.db`, `--defer` horizons, `--show` content preview, burn-in mode. 4,014 tests. F15.20. |
