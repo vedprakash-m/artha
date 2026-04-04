@@ -16,6 +16,7 @@ Coverage:
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 import textwrap
 from pathlib import Path
@@ -27,7 +28,15 @@ _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-import goals_writer  # noqa: E402
+# goals_writer imports work.helpers (gitignored) — skip entire module in CI
+_work_available = importlib.util.find_spec("work") is not None
+if _work_available:
+    import goals_writer  # noqa: E402
+
+pytestmark = pytest.mark.skipif(
+    not _work_available,
+    reason="work package not available (gitignored — private work module)",
+)
 
 
 # ---------------------------------------------------------------------------
