@@ -28,7 +28,6 @@ config/prompt-overlays/*.md
 # --- Local archive (personal specs, notes with PII — never committed) ---
 .archive/
 knowledge/
-autoresearch/
 ai-demo-day/
 
 # --- Specs directory — only canonical specs are committed ---
@@ -47,6 +46,8 @@ state/*.yaml.age
 # JSON runtime state (skills cache, catch-up run history — personal data, not committed)
 state/*.json
 state/*.json.age
+# Content directory — posts, drafts, voice profile, gallery, radar backlog (never committed)
+state/content/
 # Work OS state — personal work data (never committed)
 state/work/
 # Bridge artifacts — aggregate signals with potential PII (never committed)
@@ -62,9 +63,6 @@ state/*.db-wal
 
 # --- GFS backup snapshots (ZIP-per-day, stored at project root) ---
 backups/
-
-# --- Ved Dev Kit (personal framework, prompt history — not synced) ---
-ved-dev-kit/
 
 # --- Briefing and summary archives ---
 briefings/
