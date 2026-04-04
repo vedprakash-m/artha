@@ -549,6 +549,7 @@ class AITrendRadarSkill(BaseSkill):
         self._signals_file = artha_dir / "tmp" / "ai_trend_signals.json"
         self._prev_signals_file = artha_dir / "tmp" / "ai_trend_signals_prev.json"
         self._metrics_file = artha_dir / "tmp" / "ai_trend_metrics.json"
+        self._backlog_file = artha_dir / "state" / "radar_backlog.yaml"
         self._config: dict = {}
         self._state_data: dict = {}
         self._run_metrics: dict = {}
@@ -891,6 +892,9 @@ class AITrendRadarSkill(BaseSkill):
             warm_start_active=is_warm_start,
         )
 
+        # --- Merge into persistent backlog ---
+        self._merge_into_backlog(surfaced, linkedin_suggestions)
+
         # --- Warm-start lifecycle: one-shot cleanup (§4.3) ---
         if is_warm_start and warm_start_file:
             self._complete_warm_start(state, warm_start_file)
@@ -1096,6 +1100,111 @@ class AITrendRadarSkill(BaseSkill):
             return {f["tag"] for f in feeds if isinstance(f, dict) and "tag" in f}
         except Exception:
             return set()
+
+    # ── Backlog persistence ──────────────────────────────────────────────
+
+    def _merge_into_backlog(
+        self,
+        signals: list[AISignal],
+        linkedin_suggestions: list[dict] | None = None,
+    ) -> int:
+        """Merge surfaced signals into state/radar_backlog.yaml.
+
+        Signals persist until explicitly dismissed. New signals with higher
+        relevance update existing entries. Returns count of new signals added.
+        """
+        import yaml  # noqa: PLC0415
+
+        # Load existing backlog
+        existing: list[dict] = []
+        if self._backlog_file.exists():
+            try:
+                raw = yaml.safe_load(self._backlog_file.read_text(encoding="utf-8")) or {}
+                existing = raw.get("signals", [])
+            except Exception as e:
+                _log.warning("Could not read backlog: %s", e)
+
+        # Index by signal id for efficient merge
+        by_id: dict[str, dict] = {s["id"]: s for s in existing}
+
+        # Build linkedin angle lookup from suggestions
+        linkedin_angles: dict[str, str] = {}
+        for sug in (linkedin_suggestions or []):
+            topic = sug.get("topic", "")
+            angle = sug.get("angle", "")
+            if topic and angle:
+                # Match suggestion to signal by topic substring
+                for sig in signals:
+                    if sig.topic in topic or topic in sig.topic:
+                        linkedin_angles[sig.id] = angle
+                        break
+
+        new_count = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for sig in signals:
+            if sig.id in by_id:
+                entry = by_id[sig.id]
+                # Don't overwrite dismissed/posted entries
+                if entry.get("status") in ("dismissed", "posted"):
+                    continue
+                # Update relevance if higher
+                if sig.relevance_score > entry.get("relevance_score", 0):
+                    entry["relevance_score"] = round(sig.relevance_score, 3)
+                # Merge sources
+                old_sources = set(entry.get("sources", []))
+                new_sources = old_sources | set(sig.sources)
+                entry["sources"] = sorted(new_sources)
+                entry["seen_in"] = max(entry.get("seen_in", 1), sig.seen_in)
+                entry["last_seen"] = now_iso
+            else:
+                by_id[sig.id] = {
+                    "id": sig.id,
+                    "topic": sig.topic,
+                    "category": sig.category,
+                    "sources": sig.sources,
+                    "best_source_url": sig.best_source_url,
+                    "summary": sig.summary[:200],
+                    "detected_at": sig.detected_at,
+                    "relevance_score": round(sig.relevance_score, 3),
+                    "try_worthy": sig.try_worthy,
+                    "seen_in": sig.seen_in,
+                    "topic_match": sig.topic_match,
+                    "linkedin_angle": linkedin_angles.get(sig.id, ""),
+                    "status": "active",
+                    "added_at": now_iso,
+                    "last_seen": now_iso,
+                }
+                new_count += 1
+
+        # Sort by relevance descending, active first
+        status_order = {"active": 0, "posted": 1, "dismissed": 2}
+        all_signals = sorted(
+            by_id.values(),
+            key=lambda s: (status_order.get(s.get("status", "active"), 0),
+                           -s.get("relevance_score", 0)),
+        )
+
+        payload = {
+            "schema_version": "1.0",
+            "last_updated": now_iso,
+            "signal_count": len([s for s in all_signals if s.get("status") == "active"]),
+            "signals": all_signals,
+        }
+
+        try:
+            self._backlog_file.parent.mkdir(parents=True, exist_ok=True)
+            self._backlog_file.write_text(
+                yaml.dump(payload, default_flow_style=False, allow_unicode=True,
+                          sort_keys=False, width=120),
+                encoding="utf-8",
+            )
+            _log.info("RADAR_BACKLOG | merged=%d new | total=%d active | file=%s",
+                       new_count, payload["signal_count"], self._backlog_file.name)
+        except OSError as e:
+            _log.error("Could not write backlog: %s", e)
+
+        return new_count
 
     def _complete_warm_start(self, state: dict, warm_start_file: str) -> None:
         """One-shot warm-start completion (§4.3): clear flag, set timestamp, rename file."""
