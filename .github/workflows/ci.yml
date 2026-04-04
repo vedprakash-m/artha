@@ -101,7 +101,7 @@ jobs:
           python -c "import pydantic; print('pydantic:', pydantic.__version__)"
 
       - name: Run tests
-        run: python -m pytest tests/ -v --tb=long
+        run: python -m pytest tests/ -v --tb=long --ignore=tests/work
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
