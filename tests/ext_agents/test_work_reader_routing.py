@@ -1,6 +1,7 @@
 """tests/ext_agents/test_work_reader_routing.py — EA-3a + EA-15a tests."""
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -11,7 +12,15 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from work_reader import _ext_agent_consent  # type: ignore
+# work_reader.py is gitignored (private work scripts) — skip entire module in CI
+_work_reader_available = importlib.util.find_spec("work_reader") is not None
+if _work_reader_available:
+    from work_reader import _ext_agent_consent  # type: ignore
+
+pytestmark = pytest.mark.skipif(
+    not _work_reader_available,
+    reason="work_reader not available (gitignored — private work script)",
+)
 
 
 # ---------------------------------------------------------------------------
