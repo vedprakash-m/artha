@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 # Threshold: block if proposed content removes more than this % of fields
 _MAX_LOSS_PCT = 20.0
@@ -53,15 +54,50 @@ class WriteGuardMiddleware:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         """Check field-count delta and block the write if loss exceeds threshold.
 
         Also validates required frontmatter fields via state_schema if the
         proposed content loses any required field (Phase 7 hardening).
 
+        Snapshot is taken FIRST — before the loss-threshold check — so a
+        recoverable state is always available.  If the snapshot fails the
+        write is aborted (spec: AFW-6 §3.6 mandatory ordering).
+
         Returns:
             ``proposed_content`` if the write is safe, or ``None`` to block.
         """
+        # ----------------------------------------------------------------- #
+        # FIRST: snapshot current content for undo support (AFW-6)          #
+        # Must precede all other checks so a snapshot always exists on fail. #
+        # ----------------------------------------------------------------- #
+        if current_content and current_content.strip():
+            try:
+                import sys as _sys  # noqa: PLC0415
+                from pathlib import Path as _Path  # noqa: PLC0415
+
+                _lib = _Path(__file__).resolve().parents[1] / "lib"
+                if str(_lib) not in _sys.path:
+                    _sys.path.insert(0, str(_lib))
+                from state_snapshot import snapshot as _snapshot  # noqa: PLC0415
+
+                result = _snapshot(domain, current_content)
+                if result is None:
+                    print(
+                        f"[write_guard] ⛔ SNAPSHOT FAILED for {domain} — aborting write.",
+                        file=sys.stderr,
+                    )
+                    return None  # Abort: no snapshot → unsafe to proceed
+            except ImportError:
+                # state_snapshot not yet available (first-run / partial install)
+                # Log warning but allow write to proceed
+                print(
+                    f"[write_guard] ⚠ state_snapshot unavailable for {domain} — "
+                    "snapshot skipped.",
+                    file=sys.stderr,
+                )
+
         # Exempt: bootstrap files have minimal data by design
         if "updated_by: bootstrap" in (current_content or ""):
             return proposed_content
@@ -142,6 +178,15 @@ class WriteGuardMiddleware:
 
     def after_write(self, domain: str, file_path: Path) -> None:
         pass  # Write guard is a before-write concern only
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
+        pass
 
 
 def count_yaml_fields(text: str) -> int:

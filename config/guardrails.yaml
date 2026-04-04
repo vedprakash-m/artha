@@ -1,0 +1,53 @@
+# config/guardrails.yaml — Artha guardrail configuration
+#
+# Controls which guardrails are active, their mode (blocking/parallel),
+# and any per-guardrail thresholds.
+#
+# All guardrails are additionally gated on harness.wave0.complete.
+# If wave0.complete=false, each guardrail logs a WARNING and continues.
+#
+# Ref: specs/agent-fw.md §3.1 (AFW-1)
+
+wave0_gate: true  # Emit warning if wave0.complete is false (advisory only)
+
+input:
+  - name: vault_access
+    class: VaultAccessGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: prompt_injection
+    class: PromptInjectionGuardrail
+    enabled: true
+    mode: blocking
+
+tool:
+  - name: rate_limit
+    class: RateLimitGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: connector_health
+    class: ConnectorHealthGuardrail
+    enabled: true
+    mode: blocking
+    config:
+      max_failures: 3
+
+output:
+  - name: pii_output
+    class: PiiOutputGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: data_quality
+    class: DataQualityGuardrail
+    enabled: true
+    mode: blocking
+    config:
+      q_score_threshold: 0.5
+
+  - name: friction_gate
+    class: FrictionGateGuardrail
+    enabled: true
+    mode: blocking

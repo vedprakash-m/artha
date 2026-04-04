@@ -61,6 +61,7 @@ Display format:
    "/health" — system integrity + evaluation + cost
    "set up [domain]" — configure a new domain
    "connect [service]" — add a data integration
+   "undo" — restore previous state of a domain
 
 💡 Or just ask any question — I'll find the right context.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -274,6 +275,52 @@ Show only the 5-Minute task list from `state/memory.md → quick_tasks`. Quick d
 [N] quick tasks · updated [time]
 ```
 If `quick_tasks` is empty or not yet populated: "No quick tasks identified — run a catch-up to detect them."
+
+---
+
+### `/undo [domain]` — Restore Previous State (AFW-6)
+
+Roll back the most recent state write for a domain using the pre-write snapshot stored in
+`tmp/state_snapshots/`. Snapshots are taken automatically by `WriteGuardMiddleware` before
+every state file write.
+
+**Natural language triggers:** "undo", "undo the finance update", "roll back that health
+change", "revert the last write to immigration".
+
+**Usage:**
+- `/undo` — undo the most recent write across all domains (shows a menu if multiple candidates)
+- `/undo <domain>` — undo the most recent write to the named domain (e.g. `/undo finance`)
+
+**Undo flow:**
+```
+"undo the finance update"
+└── Find latest snapshot: tmp/state_snapshots/finance_<YYYYMMDDTHHmmss>.snap
+└── Restore snapshot content → state/finance.md (atomic write)
+└── Append to state/audit.md: "UNDO: finance restored to <timestamp>"
+└── Confirm: "✅ Restored finance state to <timestamp> (N chars)"
+```
+
+**When no snapshot exists:**
+```
+⚠ No snapshot found for domain 'finance'.
+  Snapshots are created before every write. If no snapshot exists, the domain
+  has not been modified this session or the snapshot expired (>24h retention).
+```
+
+**Snapshot retention:** Last 5 snapshots per domain; auto-pruned after 24 hours.
+Snapshots are stored in `tmp/state_snapshots/` (gitignored — never committed).
+
+**Safety constraints:**
+- Only restores `state/*.md` files — never `tmp/`, `config/`, or vault files.
+- Encrypted files (`*.md.age`) are snapshotted in their encrypted form; restoration
+  writes back the encrypted bytes.
+- `/undo` MUST NOT restore a pre-correction state (a snapshot taken before a Step 19
+  user correction was applied). When a correction is applied, existing snapshots for
+  that domain are superseded.
+
+**Implementation:** `scripts/lib/state_snapshot.restore_latest()` + `scripts/lib/state_writer.write_atomic()`.
+
+---
 
 ### `/bootstrap` and `/bootstrap <domain>`
 Guided interview to systematically populate state files. Replaces empty/bootstrap placeholder data with real user-provided information.

@@ -132,6 +132,10 @@ state/*.age
 # --- IDE settings ---
 .vscode/
 
+# --- AI CLI internal scratch files (Gemini, etc.) ---
+.gemini_security/
+.gemini/
+
 # --- Archive and working directories ---
 .archive/
 .claude/

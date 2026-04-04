@@ -46,6 +46,14 @@ domains:
       - EAD
       - green card
       - Form I-
+      - H-1B
+      - H-4
+      - PERM
+      - Fragomen
+      - priority date
+      - labor condition
+      - I-539
+      - I-131
     alert_thresholds:
       red: "Visa expires in <30 days, case denied"
       orange: "Visa expires in <90 days, RFE received"
@@ -93,6 +101,15 @@ domains:
       - "direct deposit"
       - DoorDash
       - "Uber earnings"
+      - Discover
+      - FICO
+      - autopay
+      - balance
+      - JPMCB
+      - credit score
+      - charge
+      - loan
+      - mortgage payment
     alert_thresholds:
       red: "Bill 10+ days overdue, unusual charge >$500"
       orange: "Bill due within 7 days, subscription price increase"
@@ -167,6 +184,15 @@ domains:
       - event
       - appointment
       - reminder
+      - birthday
+      - holiday
+      - deadline
+      - due date
+      - Ramzan
+      - Diwali
+      - Eid
+      - Navami
+      - Navratri
 
   comms:
     label: "Communications"
@@ -182,6 +208,18 @@ domains:
     requires_connectors: []
     optional_connectors: [imessage, whatsapp_export]
     auto_enable_when: []
+    routing_keywords:
+      - message
+      - email
+      - reply
+      - follow up
+      - RSVP
+      - Evite
+      - Nextdoor
+      - WhatsApp
+      - text
+      - conversation
+      - reach out
 
   goals:
     label: "Goals & Habits"
@@ -197,6 +235,19 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+    routing_keywords:
+      - goal
+      - habit
+      - sprint
+      - milestone
+      - certification
+      - cert
+      - AI-102
+      - Mailbox Peak
+      - hike
+      - training
+      - stalled
+      - progress
 
   # ── Standard lazy-loaded domains ──────────────────────────────────────────
 
@@ -266,6 +317,14 @@ domains:
       - PTA
       - field trip
       - report card
+      - assignment
+      - academic
+      - sports registration
+      - missing assignment
+      - quiz
+      - Aavya
+      - Aarav
+      - semester
 
   travel:
     label: "Travel"
@@ -319,6 +378,19 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+    routing_keywords:
+      - order
+      - Amazon
+      - delivered
+      - shipping
+      - return
+      - subscribe
+      - S&S
+      - Subscribe & Save
+      - tracking
+      - purchase
+      - Costco
+      - Walmart
 
   social:
     label: "Social & Relationships"
@@ -364,6 +436,17 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+    routing_keywords:
+      - insurance
+      - policy
+      - premium
+      - claim
+      - deductible
+      - Allstate
+      - coverage
+      - quote
+      - renew
+      - beneficiary
 
   estate:
     label: "Estate & Legal"
@@ -394,6 +477,20 @@ domains:
     requires_connectors: []
     optional_connectors: []
     auto_enable_when: []
+    routing_keywords:
+      - car
+      - vehicle
+      - EV6
+      - Kia
+      - Mazda
+      - CX-50
+      - registration
+      - VIN
+      - charging
+      - ChargePoint
+      - oil change
+      - tire
+      - DMV
 
   boundary:
     label: "Boundaries & Digital Wellness"

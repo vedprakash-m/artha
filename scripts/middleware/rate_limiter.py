@@ -146,8 +146,18 @@ class RateLimiter:
         domain: str,
         current_content: str,
         proposed_content: str,
+        ctx: Any | None = None,
     ) -> str | None:
         return proposed_content  # Rate limiter does not restrict state writes
 
     def after_write(self, domain: str, file_path: Path) -> None:
+        pass
+
+    def before_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def after_step(self, step_name: str, context: dict, data: Any) -> None:
+        pass
+
+    def on_error(self, step_name: str, context: dict, error: Exception) -> None:
         pass

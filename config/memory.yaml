@@ -1,0 +1,42 @@
+# config/memory.yaml — Artha memory subsystem configuration
+#
+# MANDATORY field: schema_version
+# Loading a memory store without this field must fail with SchemaVersionMissing.
+# Increment when the schema is incompatible with older stores (rollback signal).
+#
+# ADR-001 (specs/agent-fw.md §10.8): FlatFileProvider with YAML frontmatter is
+# the permanent backend. SQLite/LanceDB migration is CANCELLED.
+# See §3.7.7 for upgrade trigger criteria.
+
+schema_version: 1
+
+# Active backend — must match memory_provider in config/artha_config.yaml.
+# Allowed values: flat_file | sqlite_fts | lancedb
+# Permanent: flat_file — do NOT change without meeting ALL upgrade triggers below.
+provider: flat_file  # permanent — see ADR-001 in specs/agent-fw.md §10.8
+
+# ---------------------------------------------------------------------------
+# Upgrade trigger — DO NOT change provider without ALL four conditions met
+# (specs/agent-fw.md §3.7.7)
+# ---------------------------------------------------------------------------
+upgrade_trigger:
+  min_facts_threshold: 150        # current hard cap is 30 via audit_compliance.py
+  keyword_miss_rate_threshold: 0.10  # >10% of queries return empty when facts exist
+  a14_constraint_relaxed: false   # Artha must NOT require deps in VS Code Copilot
+  onedrive_sqlite_resolved: false # WAL-mode incompatibility must have a restore path
+  note: "Do not change provider without meeting ALL four trigger criteria simultaneously"
+
+# ---------------------------------------------------------------------------
+# Privacy enforcement
+# ---------------------------------------------------------------------------
+privacy:
+  # Work-scoped memories are strictly isolated from personal scope
+  # Cross-domain read requires explicit slice() call with read_only=True
+  work_personal_isolation: true
+
+  # Domains where memories are stored in encrypted scope (requires vault)
+  high_sensitivity_domains:
+    - immigration
+    - health
+    - finance
+

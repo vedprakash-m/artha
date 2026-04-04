@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Agent Framework v1 (AFW, v3.21.0)
+- AFW-1: Tripwire Guardrail System — 7 runtime-enforced blockers (PII leak, vault mis-access, prompt injection, scope creep, data exfil, disallowed tool call, undefined domain write); zero silent failures
+- AFW-2: Progressive Domain Loading — 6 always-load domains, 80% token savings for targeted queries, `scripts/domain_index.py`
+- AFW-3: Middleware Pipeline — 3-hook lifecycle (pre-read, pre-write, post-write); 5 middleware components (guard, audit, versioning, tracing, compaction)
+- AFW-4: Context Compaction — sliding window (last 4 messages), artifact offload for large state blobs, CompactionPolicy dataclass
+- AFW-5: Workflow Checkpointing — 4h TTL, pickle-based checkpoint, resume prompt, phase-level granularity
+- AFW-6: Session Rewind/Undo — `/undo [domain]`, snapshot-before-write model, diff-before-confirm, high-score item safety warning
+- AFW-7/ADR-001: Flat-File Memory Provider — YAML frontmatter, synonym expansion, scoped recall (session/user/repo), dedup, schema migrations
+- AFW-9: Composite Signal Scoring — urgency × impact × freshness formula, configurable weights, suppress threshold 0.20, promote threshold 0.66
+- AFW-11: Structured Tracing — trace_id propagation, JSONL schema, `scripts/log_digest.py`, 7-day retention policy
+- Spec updates: Tech Spec v3.21.0 §25 (10 subsections), PRD §9.10, UX Spec §14.7 + `/undo` command entry, README "What You Get" expanded
+- 4,872 tests passing across all AFW waves
+
 ### Added — Eval Spec v1.4.0 (specs/eval.md)
 - DD-17: Schema versioning policy — all eval artifacts carry `schema_version` with semver, validated by MetricStore on load
 - DD-18: Dynamic domain expectations — `_load_expected_domains()` reads `config/domain_registry.yaml` instead of hardcoded list

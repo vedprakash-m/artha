@@ -51,6 +51,11 @@ STATE_DIR = _REPO_ROOT / "state"
 TMP_DIR = _REPO_ROOT / "tmp"
 CALENDAR_FILE = STATE_DIR / "calendar.md"
 
+_lib_dir = str(_SCRIPTS_DIR / "lib")
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+from state_writer import write as _state_write  # noqa: PLC0415
+
 # Calendar event source tags from pipeline connectors
 _CALENDAR_SOURCE_TAGS = frozenset({
     "google_calendar",
@@ -256,7 +261,18 @@ def run(
     content = _update_last_updated(content, today_iso)
 
     try:
-        CALENDAR_FILE.write_text(content, encoding="utf-8")
+        result = _state_write(
+            CALENDAR_FILE,
+            content,
+            domain="calendar",
+            source="calendar_writer",
+        )
+        if not result.success:
+            print(
+                f"[calendar_writer] ERROR: state_writer.write() blocked for {CALENDAR_FILE}",
+                file=sys.stderr,
+            )
+            return 1
     except OSError as exc:
         print(f"[calendar_writer] ERROR writing {CALENDAR_FILE}: {exc}", file=sys.stderr)
         return 1

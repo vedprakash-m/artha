@@ -85,6 +85,12 @@ except ImportError:  # pragma: no cover
     def _load_harness_flag(path: str, default: bool = True) -> bool:  # type: ignore[misc]
         return default
 
+import sys
+_lib_dir = str(Path(__file__).resolve().parent / "lib")
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+from state_writer import write as _state_write  # noqa: PLC0415
+
 # ---------------------------------------------------------------------------
 # PII patterns — strip from fact statements before persistence
 # ---------------------------------------------------------------------------
@@ -750,6 +756,12 @@ def persist_facts(
     fm["last_updated"] = date.today().isoformat()
 
     updated = _rebuild_frontmatter(content, fm)
-    memory_path.write_text(updated, encoding="utf-8")
+    _state_write(
+        memory_path,
+        updated,
+        domain="memory",
+        source="fact_extractor",
+        pii_check=False,  # facts are already sanitized during extraction
+    )
 
     return len(unique_new)

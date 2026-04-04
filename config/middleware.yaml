@@ -1,0 +1,39 @@
+# config/middleware.yaml — Artha middleware pipeline configuration
+#
+# Defines which middleware classes participate in the agent pipeline and
+# which hooks each one registers for.  See scripts/middleware/__init__.py
+# for the compose_middleware() function that consumes this config.
+#
+# Hook points:
+#   before_step  — runs before each agent pipeline step (fetch, reason, etc.)
+#   after_step   — runs after each step completes successfully
+#   on_error     — runs when a step raises an unhandled exception
+#   before_write — runs before any state file write
+#   after_write  — runs after a state file write commits
+#
+# Ref: specs/agent-fw.md §3.3.4
+
+pipeline:
+  - name: metrics
+    class: MetricsMiddleware
+    enabled: true
+
+  - name: vault
+    class: VaultMiddleware
+    enabled: true
+    hooks: [before_step]
+
+  - name: audit
+    class: AuditMiddleware
+    enabled: true
+    hooks: [after_step]
+
+  - name: pii_filter
+    class: PiiFilterMiddleware
+    enabled: true
+    hooks: [after_step]
+
+  - name: error_recovery
+    class: ErrorRecoveryMiddleware
+    enabled: true
+    hooks: [on_error]

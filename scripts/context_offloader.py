@@ -30,7 +30,7 @@ Ref: specs/deep-agents.md Phase 1
 from __future__ import annotations
 
 import json
-from enum import IntEnum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any, Callable
 
@@ -312,3 +312,177 @@ def cross_domain_summary(data: dict) -> str:
         f"{len(top_alerts)} top alerts | {len(signals)} compound signals"
         + (f" | ONE THING: {preview}" if preview else "")
     )
+
+
+# ---------------------------------------------------------------------------
+# AFW-4: Context Compaction (specs/agent-fw.md §3.4)
+# ---------------------------------------------------------------------------
+
+
+class CompactionPolicy(Enum):
+    """Policy determining whether an artifact may be compacted.
+
+    ``COMPACTABLE`` — intermediate pipeline output; eligible for compaction
+    via ``compact_phase_output`` or ``sliding_window_compact``.
+
+    ``FROZEN`` — final user-facing output (e.g. briefing, session summary);
+    must NEVER be compacted.  Any attempt raises ``CompactionPolicyError``.
+    """
+
+    COMPACTABLE = "compactable"
+    FROZEN = "frozen"
+
+
+class CompactionPolicyError(Exception):
+    """Raised when a FROZEN artifact is passed to a compaction function."""
+
+
+# Artifacts whose content must never be compacted.  Enforced programmatically.
+FROZEN_ARTIFACTS: frozenset[str] = frozenset({"briefing_output", "session_summary"})
+
+
+def _assert_not_frozen(artifact_name: str) -> None:
+    """Raise CompactionPolicyError if artifact_name is in FROZEN_ARTIFACTS."""
+    if artifact_name in FROZEN_ARTIFACTS:
+        raise CompactionPolicyError(
+            f"Artifact '{artifact_name}' has policy FROZEN and must not be compacted. "
+            "FROZEN artifacts represent final user-facing output; compact only "
+            "intermediate Fetch/Process phase data."
+        )
+
+
+def compact_phase_output(
+    phase: str,
+    raw_output: str,
+    max_tokens: int = 2000,
+    *,
+    artifact_name: str | None = None,
+) -> str:
+    """Deterministic compaction of pipeline phase output (AFW-4 §3.4.2).
+
+    When ``harness.compaction.enabled = false`` (the default — gated on
+    assumption A-9 validation) this is a no-op that returns ``raw_output``
+    unchanged.
+
+    Args:
+        phase: One of ``"fetch"``, ``"process"``, or ``"reason"``.
+        raw_output: Raw text output from the named phase.
+        max_tokens: Soft token-count target for the compacted result.
+            Used only when the phase actively reduces output.
+        artifact_name: Optional registry name for FROZEN policy enforcement.
+            If supplied and ``artifact_name in FROZEN_ARTIFACTS``, raises
+            ``CompactionPolicyError`` immediately, before any compaction.
+
+    Returns:
+        Compacted string (or ``raw_output`` when gated / phase=reason).
+
+    Raises:
+        CompactionPolicyError: When ``artifact_name`` denotes a FROZEN artifact.
+    """
+    # FROZEN invariant: check before anything else
+    if artifact_name is not None:
+        _assert_not_frozen(artifact_name)
+
+    # A-9 gate: do NOT compact until assumption validated
+    if not load_harness_flag("compaction.enabled", default=False):
+        return raw_output
+
+    if phase == "fetch":
+        # Delegate to existing signal-extraction pipeline (avoids fork).
+        # Import lazily to avoid circular deps; gracefully degrade on import error.
+        try:
+            from email_classifier import classify_email_batch  # type: ignore[import]  # noqa: PLC0415
+            from fact_extractor import extract_facts  # type: ignore[import]  # noqa: PLC0415
+
+            classified = classify_email_batch(raw_output)
+            facts = extract_facts(classified)
+            compacted = "\n".join(str(f) for f in facts)
+            # Honour max_tokens soft cap
+            if _estimate_tokens(compacted) <= max_tokens:
+                return compacted
+            # Truncate to max_tokens (character-based approximation)
+            max_chars = max_tokens * _CHARS_PER_TOKEN
+            return compacted[:max_chars]
+        except Exception:  # noqa: BLE001
+            # Gracefully degrade: return raw_output if pipeline unavailable
+            return raw_output
+
+    elif phase == "process":
+        # Domain-extraction summarisation: keep only the first max_tokens worth
+        # of content.  Full summarisation template is applied in pipeline.py; here
+        # we apply a conservative truncation so stale raw content is not kept.
+        max_chars = max_tokens * _CHARS_PER_TOKEN
+        if len(raw_output) <= max_chars:
+            return raw_output
+        # Preserve structure: keep leading lines up to the char budget
+        lines = raw_output.splitlines(keepends=True)
+        result: list[str] = []
+        remaining = max_chars
+        for line in lines:
+            if len(line) > remaining:
+                break
+            result.append(line)
+            remaining -= len(line)
+        return "".join(result)
+
+    elif phase == "reason":
+        # Reason phase = final user-facing briefing; never compact.
+        return raw_output
+
+    # Unknown phase: pass through unchanged
+    return raw_output
+
+
+def sliding_window_compact(
+    history: list[dict],
+    keep_last: int = 3,
+    pinned_keys: list[str] | None = None,
+) -> list[dict]:
+    """Sliding-window compaction for post-briefing conversation (AFW-4 §3.4.2).
+
+    Keeps the last ``keep_last`` user/assistant exchange pairs (full fidelity)
+    and collapses older turns into a single system context block.  Items with
+    a ``role`` matching ``pinned_keys`` (e.g. action-item summaries) are always
+    preserved verbatim.
+
+    When ``harness.compaction.enabled = false`` (the default) returns
+    ``history`` unchanged so callers are always safe to call this.
+
+    Args:
+        history: List of ``{"role": str, "content": str, ...}`` message dicts.
+        keep_last: Number of user/assistant exchange *pairs* to retain in full.
+            Defaults to 3 (= 6 individual messages).
+        pinned_keys: Role values that are pinned and never summarised.
+            Defaults to ``["system"]`` when ``None``.
+
+    Returns:
+        Compacted (or original) history list.
+    """
+    # A-9 gate
+    if not load_harness_flag("compaction.enabled", default=False):
+        return history
+
+    if pinned_keys is None:
+        pinned_keys = ["system"]
+
+    pinned = [m for m in history if m.get("role") in pinned_keys]
+    non_pinned = [m for m in history if m.get("role") not in pinned_keys]
+
+    # Each "exchange" = 1 user message + 1 assistant reply = 2 items
+    recent_count = keep_last * 2
+    recent = non_pinned[-recent_count:] if len(non_pinned) > recent_count else non_pinned
+    older = non_pinned[:-recent_count] if len(non_pinned) > recent_count else []
+
+    if not older:
+        return pinned + recent
+
+    # Summarise older exchanges into a single system block
+    older_text = "\n".join(
+        f"[{m.get('role', 'unknown')}]: {str(m.get('content', ''))[:200]}"
+        for m in older
+    )
+    summary_block: dict[str, Any] = {
+        "role": "system",
+        "content": f"Prior context (compacted, {len(older)} messages): {older_text}",
+    }
+    return [summary_block] + pinned + recent

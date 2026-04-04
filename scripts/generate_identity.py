@@ -181,7 +181,9 @@ def _print_validate_summary(profile: dict) -> None:
                        if isinstance(v, dict) and v.get("enabled", False))
 
     print("  Identity preview:")
-    print(f"    Name:      {name}  ({email_display})")
+    # Mask for privacy: t***@example.com
+    masked = email_display if "@" not in email_display else f"{email_display[0]}***@{email_display.split('@')[-1]}"
+    print(f"    Name:      {name}  ({masked})")
     print(f"    Location:  {location}")
     if household:
         c_note = f", {len(children)} child(ren)" if children else ""
@@ -319,7 +321,38 @@ def _build_identity_block(profile: dict) -> str:
         lines.append("")
 
     # ── Active Domains ────────────────────────────────────────────────────────
+    # AFW-2: When progressive_disclosure.enabled, emit a compact domain menu
+    # (Stage 1) instead of the full per-domain bullet list.  The menu is ~1286
+    # tokens (A-1 validated) vs. the full list which grows with domain count.
+    _pd_enabled = False
     if enabled_domains:
+        try:
+            from lib.config_loader import load_config as _load_cfg  # noqa: PLC0415
+            _acfg = _load_cfg("artha_config", str(_ARTHA_DIR / "config"))
+            _pd_enabled = bool(
+                isinstance(_acfg, dict)
+                and (_acfg.get("progressive_disclosure") or {}).get("enabled", False)
+            )
+        except Exception:  # noqa: BLE001
+            _pd_enabled = False
+
+    if _pd_enabled:
+        # Stage 1: Compact domain advertisement (AFW-2 progressive loading)
+        try:
+            from domain_index import build_domain_menu, load_domain_registry  # noqa: PLC0415
+            _registry = load_domain_registry()
+            if _registry:
+                lines.append("### Active Domains")
+                lines.append(build_domain_menu(_registry))
+                lines.append("")
+                _pd_enabled = True  # mark success
+            else:
+                _pd_enabled = False  # fall through to legacy path
+        except Exception:  # noqa: BLE001
+            _pd_enabled = False  # fall through to legacy path
+
+    if not _pd_enabled and enabled_domains:
+        # Legacy (rollback): full per-domain bullet list
         lines.append("### Active Domains")
         for domain in sorted(enabled_domains):
             d_config = domains.get(domain, {}) or {}

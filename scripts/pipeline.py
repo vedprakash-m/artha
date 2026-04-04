@@ -69,8 +69,18 @@ except ImportError:
     sys.exit(2)
 
 from lib.auth import load_auth_context  # type: ignore[import]
-from lib.logger import get_logger  # type: ignore[import]
+from lib.logger import get_logger, begin_session_trace as _begin_session_trace  # type: ignore[import]
 from lib.retry import with_retry  # type: ignore[import]
+
+try:
+    from middleware.guardrail_registry import GuardrailRegistry as _GuardrailRegistry  # type: ignore[import]
+    from middleware.guardrails import GuardrailViolation as _GuardrailViolation, TripwireResult as _TripwireResult  # type: ignore[import]
+    _GUARDRAILS_AVAILABLE = True
+except ImportError:
+    _GuardrailRegistry = None  # type: ignore[assignment]
+    _GuardrailViolation = Exception  # type: ignore[assignment,misc]
+    _TripwireResult = None  # type: ignore[assignment]
+    _GUARDRAILS_AVAILABLE = False
 
 _log = get_logger("pipeline")
 
@@ -305,6 +315,7 @@ def _fetch_one(
     retry_cfg: dict,
     *,
     since: str,
+    registry: "_GuardrailRegistry | None" = None,
 ) -> tuple[str, list[str], float, str | None]:
     """Fetch one connector; return (name, jsonl_lines, elapsed_sec, error).
 
@@ -323,6 +334,18 @@ def _fetch_one(
     max_delay = retry_cfg.get("max_delay_seconds", 30.0)
 
     lines: list[str] = []
+
+    # ── AFW-1: Tool guardrail check before fetch ──────────────────────────────
+    if registry is not None and _GUARDRAILS_AVAILABLE and _TripwireResult is not None:
+        try:
+            _ctx = {"connector": name, "action_type": f"connector.{name}"}
+            _gr_out = registry.run_tool_guardrails(_ctx, fetch_cfg)
+            if _gr_out.result != _TripwireResult.PASS:
+                elapsed = time.monotonic() - t0
+                return (name, [], elapsed, f"guardrail:{_gr_out.result.value} — {_gr_out.message}")
+        except Exception as _gr_exc:  # noqa: BLE001
+            # Guardrail failure must never silently drop data — log and continue
+            _log.warning("guardrail.tool.error", connector=name, error=str(_gr_exc))
 
     def _do_fetch() -> int:
         count = 0
@@ -467,6 +490,8 @@ def run_pipeline(
         0  all connectors succeeded
         3  partial success (≥1 error)
     """
+    _begin_session_trace()  # AFW-11: set session_trace_id for all log events this run
+
     connectors = _enabled_connectors(cfg, source_filter)
     if not connectors:
         print("[pipeline] No connectors enabled — nothing to do.", file=sys.stderr)
@@ -508,15 +533,22 @@ def run_pipeline(
 
     # Run all connectors in parallel using module-level _fetch_one()
     max_workers = min(len(work_items), 8)
+    # AFW-1: One registry instance shared across all connector threads (thread-safe read-only)
+    _registry = _GuardrailRegistry() if _GUARDRAILS_AVAILABLE and _GuardrailRegistry is not None else None
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since): name
+            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since, registry=_registry): name
             for name, handler, auth, fcfg, rcfg in work_items
         }
         for future in as_completed(futures):
             conn_name = futures[future]
             try:
                 name, lines, elapsed, err = future.result()
+            except _GuardrailViolation as exc:  # non-recoverable policy violation
+                print(f"[pipeline] GUARDRAIL VIOLATION {conn_name}: {exc}", file=sys.stderr)
+                _log.error("guardrail.violation", connector=conn_name, error=str(exc))
+                error_count += 1
+                continue
             except Exception as exc:
                 print(f"[pipeline] ERROR {conn_name}: {exc}", file=sys.stderr)
                 error_count += 1
@@ -563,16 +595,27 @@ def run_pipeline(
 
     # Atomic snapshot write to --output path (fresh per run, no append)
     if output_path is not None and all_classified_lines:
+        # AFW-4: compact fetch-phase output before writing snapshot.
+        # No-op when harness.compaction.enabled = false (the default).
+        write_lines = all_classified_lines
+        try:
+            from context_offloader import compact_phase_output as _compact  # type: ignore[import]  # noqa: PLC0415
+            _raw = "\n".join(all_classified_lines)
+            _compacted = _compact("fetch", _raw)
+            if _compacted is not _raw:  # compaction was applied (not a no-op)
+                write_lines = [ln for ln in _compacted.splitlines() if ln]
+        except Exception:  # noqa: BLE001
+            pass  # scorer unavailable — write raw lines
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = output_path.with_suffix(".tmp")
             with open(tmp_path, "w", encoding="utf-8") as fh:
-                for line in all_classified_lines:
+                for line in write_lines:
                     fh.write(line + "\n")
             tmp_path.replace(output_path)  # atomic rename — no partial reads
             if verbose:
                 print(
-                    f"[pipeline] --output: wrote {len(all_classified_lines)} records to {output_path}",
+                    f"[pipeline] --output: wrote {len(write_lines)} records to {output_path}",
                     file=sys.stderr,
                 )
         except Exception as exc:

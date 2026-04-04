@@ -432,7 +432,8 @@ class TestPrintValidateSummary:
         gi._print_validate_summary(MINIMAL_PROFILE)
         captured = capsys.readouterr().out
         assert "Jane" in captured
-        assert "jane@example.com" in captured
+        # Email is masked in output for privacy: j***@example.com
+        assert "@example.com" in captured
 
     def test_prints_location(self, capsys):
         gi._print_validate_summary(MINIMAL_PROFILE)

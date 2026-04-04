@@ -299,7 +299,10 @@ def run_health_check() -> None:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             profile = json.load(resp)
-        print(f"  ✓ Connected as: {profile.get('displayName', 'unknown')} ({profile.get('mail') or profile.get('userPrincipalName', '')})")
+        email_raw = profile.get("mail") or profile.get("userPrincipalName", "unknown")
+        # Mask for privacy: t***@example.com
+        masked = email_raw if "@" not in email_raw else f"{email_raw[0]}***@{email_raw.split('@')[-1]}"
+        print(f"  ✓ Connected as: {profile.get('displayName', 'unknown')} ({masked})")
     except Exception as exc:
         print(f"  ✗ Graph API call failed: {exc}")
         print("  Token may be expired — run: python scripts/setup_msgraph_oauth.py --reauth")

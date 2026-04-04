@@ -329,7 +329,9 @@ def _test_connections() -> None:
         profile = gmail.users().getProfile(userId="me").execute()
         email   = profile.get("emailAddress", "unknown")
         msgs    = profile.get("messagesTotal", 0)
-        print(f"  ✓ Gmail OK: {email} ({msgs:,} messages)")
+        # Mask for privacy: t***@example.com
+        masked = email if "@" not in email else f"{email[0]}***@{email.split('@')[-1]}"
+        print(f"  ✓ Gmail OK: {masked} ({msgs:,} messages)")
     except Exception as exc:
         print(f"  ✗ Gmail test failed: {exc}")
 

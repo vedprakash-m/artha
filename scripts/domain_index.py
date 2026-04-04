@@ -298,3 +298,98 @@ def get_prompt_load_list(
         if domain in routed or should_load_prompt(domain, index_data, command):
             to_load.add(domain)
     return sorted(to_load)
+
+
+# ---------------------------------------------------------------------------
+# AFW-2: Registry-based progressive disclosure (specs/agent-fw.md §3.2)
+# ---------------------------------------------------------------------------
+
+
+def load_domain_registry(artha_dir: Path | None = None) -> dict:
+    """Load ``config/domain_registry.yaml`` and return the parsed dict.
+
+    Args:
+        artha_dir: Artha project root.  Defaults to ``ARTHA_DIR``.
+
+    Returns:
+        Parsed registry dict, or empty dict on any error.
+    """
+    try:
+        import sys  # noqa: PLC0415
+
+        base = artha_dir if artha_dir is not None else ARTHA_DIR
+        _scripts = str(base / "scripts")
+        if _scripts not in sys.path:
+            sys.path.insert(0, _scripts)
+        from lib.config_loader import load_config  # noqa: PLC0415
+
+        return load_config("domain_registry", str(base / "config"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def build_domain_menu(registry: dict) -> str:
+    """Build the Stage 1 domain advertisement text for the system prompt.
+
+    Produces a compact menu (~50 tokens per domain) listing enabled domains
+    with descriptions and up to 5 routing keywords.  Suitable for raw
+    injection into the system prompt; the model uses it to decide which
+    domain's full prompt file to request.
+
+    A-1 validated: 39 enabled domains → ~1286 tokens (under 1500-token budget).
+
+    Args:
+        registry: Parsed ``domain_registry.yaml`` dict
+            (see :func:`load_domain_registry`).
+
+    Returns:
+        Multi-line string.  First line is a header; subsequent lines are
+        ``- <domain>: <description> [keywords: k1, k2, ...]``.
+    """
+    lines = ["Available domains (load prompt only when needed):"]
+    for name, cfg in (registry.get("domains") or {}).items():
+        if not cfg.get("enabled_by_default", True):
+            continue
+        desc = cfg.get("description", "")
+        kw = cfg.get("routing_keywords", [])[:5]
+        entry = f"- {name}: {desc}"
+        if kw:
+            entry += f" [keywords: {', '.join(kw)}]"
+        lines.append(entry)
+    return "\n".join(lines)
+
+
+def should_load_domain(
+    domain_name: str,
+    signals: list[str],
+    user_query: str,
+    registry: dict,
+) -> bool:
+    """Determine whether a domain's full prompt must be loaded.
+
+    Returns ``True`` if:
+
+    - The domain is marked ``always_load`` (Tier-1 always-on domain), **or**
+    - Any of the domain's ``routing_keywords`` appears in the combined
+      signals text or user query (case-insensitive substring match).
+
+    Args:
+        domain_name: Domain name key as used in ``domain_registry.yaml``
+            (e.g. ``"immigration"``).
+        signals: List of signal strings from connectors / pattern engine.
+        user_query: The current user command or query string.
+        registry: Parsed domain_registry.yaml dict.
+
+    Returns:
+        ``True`` if the domain prompt should be loaded for this request.
+    """
+    domains = registry.get("domains") or {}
+    cfg = domains.get(domain_name, {})
+    if cfg.get("always_load", False):
+        return True
+    keywords = cfg.get("routing_keywords", [])
+    if not keywords:
+        return False
+    all_text = (" ".join(signals) + " " + user_query).lower()
+    return any(str(kw).lower() in all_text for kw in keywords)
+

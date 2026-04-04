@@ -252,18 +252,13 @@ def _load_cooldown_state(state_file: Path | None = None) -> dict[str, str]:
 
 
 def _save_cooldown_state(state: dict[str, str], state_file: Path | None = None) -> None:
-    """Persist updated last-fired timestamps atomically."""
-    import fcntl, os, tempfile
-
+    """Persist updated last-fired timestamps atomically (cross-platform)."""
     path = state_file or _STATE_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
     content = yaml.dump({"last_fired": state}, default_flow_style=False)
     try:
-        with open(tmp, "w", encoding="utf-8") as fh:
-            fcntl.flock(fh, fcntl.LOCK_EX)
-            fh.write(content)
-        os.replace(tmp, path)
+        from lib.state_writer import write_atomic as _write_atomic  # noqa: PLC0415
+        _write_atomic(path, content)
     except Exception:  # noqa: BLE001
         pass
 
@@ -382,6 +377,40 @@ class PatternEngine:
         if fired_now:
             merged = {**cooldown_state, **fired_now}
             _save_cooldown_state(merged, self._state_file)
+
+        # AFW-9: composite signal scoring — sort, suppress noise, and promote urgents.
+        # Feature-flagged so scoring failures never silently drop signals.
+        if signals and _load_flag("signal_scorer.enabled", default=True):
+            try:
+                from lib.signal_scorer import partition_signals as _partition  # noqa: PLC0415
+
+                # Wrap each DomainSignal as a scorer dict, carrying the original via "_sig".
+                scorer_dicts = [
+                    {
+                        "urgency": sig.urgency,
+                        "impact": sig.impact,
+                        "age_days": sig.metadata.get("age_days", 0),
+                        "_sig": sig,
+                    }
+                    for sig in signals
+                ]
+                promoted_d, normal_d, _suppressed = _partition(
+                    scorer_dicts, artha_dir=self._root_dir
+                )
+                ranked: list[DomainSignal] = []
+                for entry in promoted_d:
+                    s: DomainSignal = entry["_sig"]
+                    s.metadata["score"] = round(entry["_score"], 3)
+                    s.metadata["promoted"] = True
+                    ranked.append(s)
+                for entry in normal_d:
+                    s = entry["_sig"]
+                    s.metadata["score"] = round(entry["_score"], 3)
+                    ranked.append(s)
+                # _suppressed signals are intentionally dropped (noise reduction)
+                signals = ranked
+            except Exception:  # noqa: BLE001
+                pass  # scorer unavailable — return unfiltered list
 
         return signals
 

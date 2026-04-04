@@ -25,6 +25,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import sys
+_lib_dir = str(Path(__file__).resolve().parent / "lib")
+if _lib_dir not in sys.path:
+    sys.path.insert(0, _lib_dir)
+from state_writer import write as _state_write  # noqa: PLC0415
+
 
 # "auto:" prefix in approved_by = autonomous approval (not human)
 _AUTO_APPROVER_PREFIX = "auto:"
@@ -270,7 +276,13 @@ class TrustEnforcer:
         }
 
         updated = _replace_autonomy_block(content, new_autonomy)
-        self._health_check_path.write_text(updated, encoding="utf-8")
+        _state_write(
+                self._health_check_path,
+                updated,
+                domain="health_check",
+                source="trust_enforcer.reset_trust_level",
+                pii_check=False,
+            )
         self._autonomy = None  # invalidate cache
 
     def update_autonomy_block(self, updates: dict[str, Any]) -> None:
@@ -286,7 +298,13 @@ class TrustEnforcer:
         current.update(updates)
 
         updated = _replace_autonomy_block(content, current)
-        self._health_check_path.write_text(updated, encoding="utf-8")
+        _state_write(
+                self._health_check_path,
+                updated,
+                domain="health_check",
+                source="trust_enforcer.update_autonomy_block",
+                pii_check=False,
+            )
         self._autonomy = None  # invalidate cache
 
 
