@@ -145,6 +145,17 @@ visuals/
 # --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
 
+# --- Work OS scripts (contain employer-specific config references) ---
+# The public repo ships example/framework code; actual work scripts with
+# employer-specific connector wiring are local-only.
+scripts/work_loop.py
+scripts/work_bootstrap.py
+scripts/work_warm_start.py
+scripts/work_domain_writers.py
+scripts/work_reader.py
+scripts/work_notes.py
+scripts/work/
+
 # --- External agent drop folder, registry, and work-specific agent configs ---
 # These contain personal work context (team names, ADO IDs, tool-specific instructions)
 # Only the 3 canonical artha-work*.md agent definitions (already tracked) are public.
