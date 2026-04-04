@@ -123,7 +123,7 @@ N(s,"DELIVERY: Slow. Let each line land.\n\n\"Name the problem \u2014 the coordi
 s=prs.slides.add_slide(prs.slide_layouts[6]);bg(s,DK);R(s,Inches(0),Inches(0),SW,Inches(0.06),CY)
 T(s,Inches(1),Inches(1.8),Inches(11),Inches(0.8),"Thank You",sz=48,c=WH,b=True,f="Segoe UI Semibold",a=PP_ALIGN.CENTER)
 T(s,Inches(1),Inches(2.9),Inches(11),Inches(0.6),"Come see the live demo at the booth.",sz=22,c=CY,a=PP_ALIGN.CENTER,f="Segoe UI Light")
-T(s,Inches(1),Inches(4.0),Inches(11),Inches(0.4),"[Speaker Name]  \u00b7  [Organization]  \u00b7  Program Management",sz=17,c=RGBColor(0xA0,0xC0,0xE0),a=PP_ALIGN.CENTER)
+T(s,Inches(1),Inches(4.0),Inches(11),Inches(0.4),"[Speaker Name]  \u00b7  [Organization]  \u00b7  [Role]",sz=17,c=RGBColor(0xA0,0xC0,0xE0),a=PP_ALIGN.CENTER)
 T(s,Inches(1),Inches(4.5),Inches(11),Inches(0.4),"[email]  \u00b7  Booth [TBD]",sz=15,c=RGBColor(0x80,0xA0,0xC0),a=PP_ALIGN.CENTER)
 R(s,Inches(5.5),Inches(5.3),Inches(1.6),Inches(1.6),WH)
 T(s,Inches(5.5),Inches(5.65),Inches(1.6),Inches(0.6),"[ QR ]",sz=22,c=MG,a=PP_ALIGN.CENTER)
