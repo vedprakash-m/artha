@@ -167,7 +167,7 @@ as "it's your action item." Many items belong to teammates who are driving them.
 - **[Networking DRI]** — DRI for ALL networking/VNet topics: LSO, kRDMA, RDMA
   connectivity, NMAgent watchdog, Hypernet VNet Service Tags, IPv6 decisions
 - **[Program DRI]** — DRI for program structure, execution & reporting
-- **[Buildout DRI]** — DRI for buildout requirements, one-pager
+- **[Buildout DRI]** — DRI for buildout requirements & one-pager
 
 **Display rules:**
 - YOUR actions: show in 🔴/🟡 sections with full detail
