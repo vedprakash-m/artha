@@ -1,3 +1,4 @@
+# pii-guard: ignore-file — test fixtures intentionally contain synthetic PII patterns (SSN, etc.) to verify guardrail detection. Not real PII.
 """
 tests/unit/test_guardrails.py — Unit tests for AFW-1 guardrails.
 
