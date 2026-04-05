@@ -123,7 +123,7 @@ def _parse_open_items(content: str) -> list[dict]:
 
 def _write_todo_id(item_id: str, todo_id: str) -> None:
     """Update the todo_id field for a specific item in open_items.md."""
-    with open(OPEN_ITEMS_FILE) as f:
+    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
         content = f.read()
 
     # Find the id: line and the todo_id line within that item's block
@@ -138,13 +138,13 @@ def _write_todo_id(item_id: str, todo_id: str) -> None:
         print(f"[todo_sync] ⚠ Could not update todo_id for {item_id}", file=sys.stderr)
         return
 
-    with open(OPEN_ITEMS_FILE, "w") as f:
+    with open(OPEN_ITEMS_FILE, "w", encoding='utf-8') as f:
         f.write(updated)
 
 
 def _write_item_status(item_id: str, new_status: str, date_resolved: str) -> None:
     """Update the status field and (optionally) date_resolved for an item."""
-    with open(OPEN_ITEMS_FILE) as f:
+    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
         content = f.read()
 
     # Update status
@@ -165,7 +165,7 @@ def _write_item_status(item_id: str, new_status: str, date_resolved: str) -> Non
             flags=re.DOTALL,
         )
 
-    with open(OPEN_ITEMS_FILE, "w") as f:
+    with open(OPEN_ITEMS_FILE, "w", encoding='utf-8') as f:
         f.write(updated)
 
 
@@ -187,7 +187,7 @@ def _load_list_ids() -> dict[str, str]:
     # Legacy fallback: parse artha_config.yaml
     if not os.path.exists(CONFIG_FILE):
         return {}
-    with open(CONFIG_FILE) as f:
+    with open(CONFIG_FILE, encoding='utf-8') as f:
         content = f.read()
     m = re.search(r"^todo_lists:\n((?:  [^\n]*\n)*)", content, re.MULTILINE)
     if not m:
@@ -231,7 +231,7 @@ def push_items(access_token: str, dry_run: bool = False) -> dict:
         print("[todo_sync] ⚠ open_items.md not found — nothing to push", file=sys.stderr)
         return {"pushed": 0, "failed": 0, "skipped": 0}
 
-    with open(OPEN_ITEMS_FILE) as f:
+    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
         content = f.read()
 
     items   = _parse_open_items(content)
@@ -322,7 +322,7 @@ def pull_completions(access_token: str, dry_run: bool = False) -> dict:
     if not os.path.exists(OPEN_ITEMS_FILE):
         return {"completed": 0, "still_open": 0, "failed": 0}
 
-    with open(OPEN_ITEMS_FILE) as f:
+    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
         content = f.read()
 
     items       = _parse_open_items(content)
@@ -380,7 +380,7 @@ def print_status() -> None:
         print("[todo_sync] open_items.md not found")
         return
 
-    with open(OPEN_ITEMS_FILE) as f:
+    with open(OPEN_ITEMS_FILE, encoding='utf-8') as f:
         content = f.read()
 
     items = _parse_open_items(content)

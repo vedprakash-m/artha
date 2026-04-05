@@ -385,7 +385,7 @@ def run_refresh_set(
     Each query failure is isolated — other queries still run.
     """
     ids = query_ids or REFRESH_QUERY_IDS
-    reg = registry_path or str(_GOLDEN_REGISTRY)
+    reg = Path(registry_path) if registry_path else _GOLDEN_REGISTRY
     registry = parse_registry(reg)
     runner = KustoRunner()
     results: dict[str, dict] = {}

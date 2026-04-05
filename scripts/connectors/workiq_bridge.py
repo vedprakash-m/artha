@@ -83,7 +83,8 @@ _QUERIES: dict[str, str] = {
         "What were the most recent messages posted in the {channel_name} channel "
         "in Teams during the last {lookback_days} days? Show up to 15 messages. "
         "Format each as one line: "
-        "SENDER | TOPIC_OR_SUBJECT | SHORT_PREVIEW | URL_OR_LINK_SHARED"
+        "SENDER | MESSAGE_DATE(YYYY-MM-DD) | TOPIC_OR_SUBJECT | VERBATIM_FIRST_SENTENCE | TEAMS_PERMALINK_OR_LINK_SHARED"
+        "\nIMPORTANT: VERBATIM_FIRST_SENTENCE must be a direct quote from the message, not a paraphrase."
     ),
     "people": (
         "Who is {person_name}? Include: job title, department, manager, "
@@ -320,9 +321,9 @@ def _parse_teams_ai(raw: str, redact_kws: list[str],
                     channel_override: str = "") -> list[dict]:
     """Parse WorkIQ Teams AI channel scan response into radar-compatible records.
 
-    Handles both 4-field (SENDER|TOPIC|PREVIEW|URL) and 3-field (SENDER|TOPIC|PREVIEW)
-    responses since WorkIQ doesn't always return URLs. Also handles free-form prose
-    by extracting numbered/bulleted items.
+    Handles 5-field (SENDER|DATE|TOPIC|VERBATIM|URL), 4-field (SENDER|TOPIC|PREVIEW|URL),
+    and 3-field (SENDER|TOPIC|PREVIEW) responses. Also handles free-form prose.
+    Deduplicates by (sender, topic) before returning.
     """
     if not raw or not raw.strip():
         return []
@@ -330,18 +331,32 @@ def _parse_teams_ai(raw: str, redact_kws: list[str],
     messages: list[dict] = []
     channel = channel_override
 
-    # Try structured pipe-table first (4 fields)
-    rows = _parse_pipe_table(raw, 4)
+    # Try 5-field first (new format: SENDER|DATE|TOPIC|VERBATIM|URL)
+    rows = _parse_pipe_table(raw, 5)
     for row in rows:
-        sender, topic, preview, url = row
-        if "SENDER" in sender.upper() or "TOPIC" in sender.upper():
+        sender, msg_date, topic, verbatim, url = row
+        if "SENDER" in sender.upper() or "DATE" in sender.upper():
             continue
-        preview = _apply_redact(preview, redact_kws)
+        verbatim = _apply_redact(verbatim, redact_kws)
         topic = _apply_redact(topic, redact_kws)
+        # Validate date: must look like YYYY-MM-DD
+        clean_date = msg_date.strip() if re.match(r"\d{4}-\d{2}-\d{2}", msg_date.strip()) else ""
         messages.append(_teams_ai_record(sender.strip(), channel, topic.strip(),
-                                         preview.strip(), url.strip()))
+                                         verbatim.strip(), url.strip(), clean_date))
 
-    # Try 3-field variant
+    # Try 4-field (SENDER|TOPIC|PREVIEW|URL) — legacy / fallback
+    if not messages:
+        rows = _parse_pipe_table(raw, 4)
+        for row in rows:
+            sender, topic, preview, url = row
+            if "SENDER" in sender.upper() or "TOPIC" in sender.upper():
+                continue
+            preview = _apply_redact(preview, redact_kws)
+            topic = _apply_redact(topic, redact_kws)
+            messages.append(_teams_ai_record(sender.strip(), channel, topic.strip(),
+                                             preview.strip(), url.strip(), ""))
+
+    # Try 3-field (SENDER|TOPIC|PREVIEW)
     if not messages:
         rows = _parse_pipe_table(raw, 3)
         for row in rows:
@@ -351,36 +366,54 @@ def _parse_teams_ai(raw: str, redact_kws: list[str],
             preview = _apply_redact(preview, redact_kws)
             topic = _apply_redact(topic, redact_kws)
             messages.append(_teams_ai_record(sender.strip(), channel, topic.strip(),
-                                             preview.strip(), ""))
+                                             preview.strip(), "", ""))
 
     # Fallback: extract numbered items from prose (1. **Name** — description)
     if not messages:
-        import re as _re
-        for m in _re.finditer(
+        for m in re.finditer(
             r"(?:^|\n)\s*\d+\.\s+\*{0,2}(.+?)\*{0,2}\s*(?:\n|$)",
             raw,
         ):
             line = m.group(1).strip()
             if len(line) > 10:
-                # Try to split "Sender — Topic" or "Sender: Topic"
-                parts = _re.split(r"\s*[—–:]\s*", line, maxsplit=1)
+                parts = re.split(r"\s*[—–:]\s*", line, maxsplit=1)
                 sender = parts[0].strip("* ") if len(parts) > 1 else ""
                 topic = parts[-1].strip("* ")
-                messages.append(_teams_ai_record(sender, channel, topic, topic, ""))
+                messages.append(_teams_ai_record(sender, channel, topic, topic, "", ""))
 
-    return messages
+    # Deduplicate by (sender, topic prefix)
+    seen: set[tuple[str, str]] = set()
+    deduped: list[dict] = []
+    for rec in messages:
+        key = (rec.get("from", ""), rec.get("subject", "")[:40])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(rec)
+
+    return deduped
 
 
 def _teams_ai_record(sender: str, channel: str, topic: str,
-                     preview: str, url: str) -> dict:
-    """Build a radar-compatible record from a Teams AI channel message."""
+                     preview: str, url: str, msg_date: str = "") -> dict:
+    """Build a radar-compatible record from a Teams AI channel message.
+
+    msg_date: actual message date (YYYY-MM-DD) from WorkIQ response if available.
+              If empty, date_iso is left blank — do NOT substitute run-time clock.
+    """
+    clean_url = url if url.startswith("http") else ""
+    # Confidence: bump to "medium" only if we have a real link (verifiable source)
+    confidence = "medium" if clean_url else "low"
     return {
         "subject": topic or preview,
         "from": f"{sender} via {channel}" if sender else channel,
         "body": preview or topic,
-        "date_iso": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "link": url if url.startswith("http") else "",
+        "date_iso": f"{msg_date}T00:00:00Z" if msg_date else "",  # blank if unknown
+        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "link": clean_url,
         "source": "workiq_teams_ai",
+        "summary_source": "workiq_llm",   # marks as AI-summarized, not verbatim
+        "verbatim": False,                 # downstream consumers must not treat as quoted
+        "confidence": confidence,
         "channel": channel,
         "tag": f"teams:{channel.lower().replace(' ', '_').replace('-', '_')}",
     }

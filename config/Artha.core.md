@@ -1510,6 +1510,24 @@ python3 scripts/channel_push.py
 - Audit: `CHANNEL_PUSH` events logged to `state/audit.md`.
 - If `channels.yaml` is missing or `push_enabled: false`, silently skipped in < 10ms.
 
+### Step 20b — Data Health Check (non-blocking)
+
+Run a brief data quality lint across state files. Always non-blocking — never delays or halts catch-up.
+
+```bash
+python3 scripts/kb_lint.py --brief-mode
+```
+
+- If the command succeeds (exit 0) within 2 seconds: prepend the one-line output to the briefing header as a data health footer line.
+  Example: `Data Health: 87% (15 files, 2E 3W, 142ms)`
+- If `.brief-mode` is already captured from `state/lint_summary.yaml` (from a recent non-brief run): use its `health_pct` directly without re-running the script.
+- If the command fails, times out, or `kb_lint.py` is not present: skip silently.
+- Log to `state/audit.md` only if the command fails on 3 or more consecutive catch-ups.
+
+**Never block:** wrap in `try/except`; `--brief-mode` always exits 0, so any non-zero exit code is a hard error.
+
+---
+
 ### Step 21 — Persistent Fact Extraction
 
 After channel push (Step 20), extract durable facts from this session and persist them to `state/memory.md`. This enables cross-session learning — corrections made today suppress false-positive alerts tomorrow.

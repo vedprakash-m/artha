@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.22.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.23.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.8.0
+> **Implements**: PRD v7.9.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.23.0 | 2026-04-05 | KB-LINT Cross-Domain Data Health (§26): `scripts/kb_lint.py` (~900 LOC) + `config/lint_rules.yaml` (8 built-in P5 rules). Six-pass pipeline (P1 frontmatter, P2 stale dates, P3 orphan refs, P4 contradictions, P5 cross-domain YAML rules, P6 custom rules). `--brief-mode` briefing integration; `--fix`, `--json`, `--init`, `--pass` CLI flags. `health_pct` = % P1-error-free files. 46 unit tests + 4 regression tests. 3,570 tests total. |
 | v3.22.0 | 2026-04 | AFW-10 Domain Training (`scripts/domain_training.py`): per-domain accuracy trend analysis over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration. EV-12 Golden-Set Eval (`tests/eval/golden_set/`): parametrized regression framework with `fixtures.yaml` (10 fixtures — 4 golden, 6 anti-golden), dimension-level quality gates (actionability, specificity, completeness, signal_purity, calibration). `/work code` Bluebird MCP integration for ADO code search with golden-query fallback. 3,515+ tests. |
 | v3.21.0 | 2026-04 | Agent Framework v1 (§25): AFW-1 through AFW-11 (Waves 0–3 complete). Guardrails, middleware pipeline, progressive disclosure, context compaction, checkpointing, undo, flat-file memory (ADR-001), composite signal scoring, structured tracing. `.gitignore` hardened. 4,872+ tests. |
 | v3.19.0 | 2026-04 | Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS): `scripts/eval_runner.py`, `scripts/eval_scorer.py`, `scripts/lib/metric_store.py`, `scripts/correction_feeder.py`, `scripts/log_digest.py`, `scripts/lib/knowledge_graph.py`, `scripts/kb_bootstrap.py`. Closes 10 observability gaps (G1–G10). 127 eval tests. `.gitignore` hardened: machine-specific conflict-copy patterns replaced with generic `state/*.age`. |
@@ -5165,7 +5166,92 @@ Every catch-up session generates a `trace_id` (UUID4) that propagates through al
 
 ---
 
-*Artha Tech Spec v3.21.0 — End of Document*
+## 26. KB-LINT — Cross-Domain Data Health *(v3.23.0)*
+
+**Script:** `scripts/kb_lint.py` | **Config:** `config/lint_rules.yaml` | **Tests:** `tests/test_kb_lint.py` (46), `tests/eval/test_lint_regression.py` (4)
+
+### 26.1 Architecture
+
+KB-LINT reuses existing data-quality infrastructure:
+
+| Reuse | Source | Usage |
+|-------|--------|-------|
+| `_parse_frontmatter()` | `scripts/lib/dq_gate.py` | YAML frontmatter extraction in all passes |
+| `domain_index.py` | `scripts/domain_index.py` | O(N) state-file scanning |
+| `CheckResult` pattern | `scripts/preflight.py` | Pass output dataclass |
+| `prompt_linter.py` | `scripts/tools/prompt_linter.py` | Precedent for deterministic linting |
+
+Core dataclasses: `LintFinding(severity, pass_id, file_name, field, message, fix_hint)`, `PassResult(pass_id, findings, files_scanned, duration_ms)`, `LintResult(pass_results, files_scanned, duration_ms)`.
+
+`health_pct = (files with zero P1 errors) / (total files scanned) × 100`
+
+### 26.2 Six-Pass Pipeline
+
+| Pass | Name | Checks | Severity |
+|------|------|--------|----------|
+| P1 | Frontmatter Gate | `schema_version`, `last_updated`, `sensitivity` present and valid | ERROR |
+| P2 | Stale Date Detector | Date fields older than per-domain thresholds (90d high-sensitivity, 180d standard) | WARNING |
+| P3 | Orphan Reference Checker | Every domain reference valid against `config/domain_registry.yaml` active slugs | WARNING |
+| P4 | Contradiction Scanner | Cross-file pattern pairs from `contradiction_patterns` in `lint_rules.yaml` | WARNING |
+| P5 | Cross-Domain Rules | 8 built-in declarative YAML rules (insurance↔vehicle, health↔kids, finance↔insurance, etc.) | per-rule |
+| P6 | Custom Rules | User-defined extensions in `config/lint_rules.yaml` | per-rule |
+
+### 26.3 CLI Interface
+
+```
+python scripts/kb_lint.py              # Full six-pass audit; interactive findings table
+python scripts/kb_lint.py --fix        # Auto-remediate P1/P2 issues (with confirmation)
+python scripts/kb_lint.py --json       # Machine-readable JSON output (CI integration)
+python scripts/kb_lint.py --init       # Bootstrap missing state files from templates
+python scripts/kb_lint.py --pass P1    # Run a single pass only
+python scripts/kb_lint.py --brief-mode # Single-line Data Health output (briefing use)
+```
+
+### 26.4 Briefing Integration
+
+`--brief-mode` outputs a single line injected by `Artha.core.md` Step 20b:
+
+```
+Data Health: 100% (24 files, OK, 312ms)           # clean
+Data Health: 96% (24 files, 1 warning, 289ms)     # warnings only
+⚠ Data Health: 83% (24 files, 2 errors, 341ms) — run `lint` for details  # escalated
+Data Health: ⚠ lint error — run `lint` manually   # crash fallback
+```
+
+### 26.5 `config/lint_rules.yaml` Schema
+
+```yaml
+version: "1.0"
+cross_domain_rules:
+  - rule_id: kbl-p5-001
+    description: "Insurance references vehicle not in vehicle.md"
+    severity: WARNING          # ERROR | WARNING | INFO
+    check_type: cross_reference
+    source_domain: insurance
+    target_domain: vehicle
+    source_pattern: "vehicle|car|auto"
+    target_pattern: "\\b(Honda|Toyota|Subaru)\\b"
+```
+
+### 26.6 Implementation Status
+
+| Component | Status |
+|-----------|--------|
+| P1 Frontmatter Gate | ✅ Complete |
+| P2 Stale Date Detector | ✅ Complete |
+| P3 Orphan Reference Checker | ✅ Complete |
+| P4 Contradiction Scanner | ✅ Complete |
+| P5 Cross-Domain Rules (8 built-in) | ✅ Complete |
+| P6 Custom Rules | ✅ Complete |
+| `--brief-mode` briefing integration | ✅ Complete |
+| `--fix` auto-remediation | ✅ Complete |
+| `--json` machine output | ✅ Complete |
+| `Artha.core.md` Step 20b hook | ✅ Complete |
+| 46 unit tests + 4 regression tests | ✅ Complete |
+
+---
+
+*Artha Tech Spec v3.23.0 — End of Document*
 
 ---
 

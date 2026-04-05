@@ -28,7 +28,7 @@ from datetime import date, timedelta
 from typing import Any, Dict, Iterator
 
 _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTLOOK_TIMEOUT = 10  # seconds — outlookctl is fast (<5s typically)
+OUTLOOK_TIMEOUT = 25  # seconds — COM initialization can take 10-15s on first call
 TEAMS_LOCATION_PATTERN = re.compile(
     r"microsoft teams|teams meeting|online meeting", re.IGNORECASE
 )
@@ -115,7 +115,7 @@ def fetch(
     if raw is None:
         return
 
-    events = raw if isinstance(raw, list) else raw.get("events", [])
+    events = raw if isinstance(raw, list) else raw.get("items", raw.get("events", []))
     count = 0
     for item in events:
         if count >= max_results:
