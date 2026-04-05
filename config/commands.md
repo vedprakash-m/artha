@@ -160,6 +160,57 @@ For `enable` / `disable` sub-commands: call `profile_loader.toggle_domain()`, th
 ### `/cost` (legacy alias → `/health cost`)
 Shows monthly API cost. Now a section within `/health`. Still works as standalone shortcut.
 
+### `/lint` — Data Health Audit (KB-LINT)
+
+Run a cross-domain data quality audit across all state files in `state/*.md`.
+Equivalent natural language: "lint", "check data", "audit data", "data health", "how fresh is my data".
+
+**Usage:**
+```
+/lint                        — full lint (P1–P6 passes) across all domains
+/lint finance                — lint a single domain
+/lint --fix                  — lint + interactively apply fixable issues
+/lint --brief                — one-line summary only (used by briefing hook)
+/lint --init                 — add frontmatter skeletons to files missing ---
+/lint --json                 — machine-readable JSON output
+```
+
+**Passes:**
+| Pass | Name | Severity | Enabled by default |
+|------|------|----------|--------------------|
+| P1 | Schema validation (schema_version, last_updated, sensitivity) | ERROR | ✅ yes |
+| P2 | Staleness TTL check (per-domain or sensitivity-fallback) | WARNING | ✅ yes |
+| P3 | TODO / TBD / PLACEHOLDER audit (full file body + frontmatter) | WARNING | ✅ yes |
+| P4 | Past-date action items (appointment, deadline, renewal, etc.) | WARNING | opt-in |
+| P5 | Cross-domain reference integrity (from `config/lint_rules.yaml`) | WARNING | opt-in |
+| P6 | open_items.md referencing unknown domains | WARNING | opt-in |
+
+All passes with `--passes P1,P2,P3,P4,P5,P6` to run them all.
+
+**Bootstrap mode:** If ≥50% of files lack frontmatter, individual P1 errors are suppressed and
+the tool suggests `--init` instead of listing every file.
+
+**Sample output:**
+```
+╔══════════════════════════════════════════════╗
+║          Artha KB-LINT Report                ║
+╚══════════════════════════════════════════════╝
+
+Files scanned : 18   Errors: 2   Warnings: 4   Info: 0
+Data Health   : 89%  (347ms)
+
+── Findings ──────────────────────────────────
+  boundary
+    ⚠ [P1-empty-last_updated] boundary.md: Required field 'last_updated' is empty or placeholder
+  finance
+    ⚠ [P2-stale] finance.md: State file is stale (35d old, TTL=30d) — last_updated: 2026-02-28
+```
+
+**Implementation:** `scripts/kb_lint.py` — thin CLI over shared Artha primitives.
+Writes `state/lint_summary.yaml` after each full run for observability.
+
+---
+
 ### `/health` — System Health (consolidated)
 Single "is everything OK?" command. Consolidates system integrity, evaluation quality, domain
 freshness, cost, and privacy into one view.

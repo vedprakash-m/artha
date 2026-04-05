@@ -24,6 +24,7 @@ domains:
     label: "Immigration & Visa"
     description: "USCIS filings, visa status, passport, travel docs"
     sensitivity: high
+    staleness_ttl_days: 90
     always_load: true
     phase: existing
     prompt_file: "prompts/immigration.md"
@@ -64,6 +65,7 @@ domains:
     label: "Finance & Banking"
     description: "Bills, bank accounts, credit cards, investments, taxes"
     sensitivity: high
+    staleness_ttl_days: 30
     always_load: true
     phase: existing
     prompt_file: "prompts/finance.md"
@@ -120,6 +122,7 @@ domains:
     label: "Healthcare"
     description: "Doctor appointments, prescriptions, insurance, lab results"
     sensitivity: high
+    staleness_ttl_days: 90
     always_load: true
     phase: existing
     prompt_file: "prompts/health.md"
@@ -168,6 +171,7 @@ domains:
     label: "Calendar & Events"
     description: "Appointments, reminders, events, schedules"
     sensitivity: standard
+    staleness_ttl_days: 7
     always_load: true
     phase: existing
     prompt_file: "prompts/calendar.md"
@@ -198,6 +202,7 @@ domains:
     label: "Communications"
     description: "Important messages, follow-ups, pending conversations"
     sensitivity: standard
+    staleness_ttl_days: 7
     always_load: true
     phase: existing
     prompt_file: "prompts/comms.md"
@@ -225,6 +230,7 @@ domains:
     label: "Goals & Habits"
     description: "Personal and family goals, habit tracking, progress"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: true
     phase: existing
     prompt_file: "prompts/goals.md"
@@ -255,6 +261,7 @@ domains:
     label: "Home & Housing"
     description: "Mortgage/rent, maintenance, utilities, insurance"
     sensitivity: standard
+    staleness_ttl_days: 180
     always_load: false
     phase: existing
     prompt_file: "prompts/home.md"
@@ -280,6 +287,7 @@ domains:
     label: "Employment & Work"
     description: "Payroll, HR, benefits, performance reviews"
     sensitivity: standard
+    staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/employment.md"
@@ -295,6 +303,7 @@ domains:
     label: "Kids & School"
     description: "School events, homework, grades, activities"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: "prompts/kids.md"
@@ -330,6 +339,7 @@ domains:
     label: "Travel"
     description: "Flights, hotels, itineraries, passport"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: "prompts/travel.md"
@@ -353,6 +363,7 @@ domains:
     label: "Learning"
     description: "Online courses, certifications, skills development"
     sensitivity: standard
+    staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/learning.md"
@@ -368,6 +379,7 @@ domains:
     label: "Shopping"
     description: "Online orders, returns, price tracking"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: "prompts/shopping.md"
@@ -396,6 +408,7 @@ domains:
     label: "Social & Relationships"
     description: "Events, birthdays, relationship maintenance"
     sensitivity: standard
+    staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/social.md"
@@ -411,6 +424,7 @@ domains:
     label: "Digital & Subscriptions"
     description: "App subscriptions, digital services, domain names"
     sensitivity: standard
+    staleness_ttl_days: 180
     always_load: false
     phase: existing
     prompt_file: "prompts/digital.md"
@@ -426,6 +440,7 @@ domains:
     label: "Insurance"
     description: "Health, auto, home/renter, life insurance policies"
     sensitivity: high
+    staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/insurance.md"
@@ -452,6 +467,7 @@ domains:
     label: "Estate & Legal"
     description: "Will, trusts, POA, beneficiaries"
     sensitivity: high
+    staleness_ttl_days: 365
     always_load: false
     phase: existing
     prompt_file: "prompts/estate.md"
@@ -467,6 +483,7 @@ domains:
     label: "Vehicle"
     description: "Car registration, maintenance, insurance"
     sensitivity: high
+    staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/vehicle.md"
@@ -496,6 +513,7 @@ domains:
     label: "Boundaries & Digital Wellness"
     description: "Screen time, balance, personal boundaries"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: "prompts/boundary.md"
@@ -511,6 +529,7 @@ domains:
     label: "Decisions & Scenarios"
     description: "Active decision log, scenario analysis"
     sensitivity: standard
+    staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: null
@@ -528,6 +547,7 @@ domains:
     label: "Pets & Animal Care"
     description: "Pet health, vaccinations, medications, vet appointments"
     sensitivity: standard
+    staleness_ttl_days: 90
     always_load: false
     phase: phase_1b
     prompt_file: "prompts/pets.md"
@@ -562,6 +582,7 @@ domains:
     label: "Caregiving & Elder Care"
     description: "Care recipient health, facility communications, coordination"
     sensitivity: high
+    staleness_ttl_days: 30
     always_load: false
     phase: phase_2
     prompt_file: "prompts/caregiving.md"
@@ -604,6 +625,7 @@ domains:
     label: "Side Business / Freelance"
     description: "Invoices, clients, quarterly taxes, expenses"
     sensitivity: high
+    staleness_ttl_days: 30
     always_load: false
     phase: phase_2
     prompt_file: "prompts/business.md"
@@ -646,6 +668,7 @@ domains:
     label: "Fitness & Wellness"
     description: "Activity, sleep, nutrition, wearable data"
     sensitivity: standard
+    staleness_ttl_days: 14
     always_load: false
     phase: phase_2
     prompt_file: "prompts/wellness.md"
@@ -682,6 +705,7 @@ domains:
     label: "Community & Volunteering"
     description: "Donations, volunteer hours, community organizations"
     sensitivity: standard
+    staleness_ttl_days: 180
     always_load: false
     phase: phase_2
     prompt_file: "prompts/community.md"

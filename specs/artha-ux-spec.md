@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.8 | **Status**: Draft | **Date**: April 2026
+> **Version**: 3.10 | **Status**: Draft | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.7.0, Tech Spec v3.20.0
+> **Implements**: PRD v7.9.0, Tech Spec v3.23.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,7 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.9 | 2026-04-04 | AFW-10 Domain Training UX — `domain training` / `domain training --domain X` reports per-domain accuracy trends, correction compounding, and training suggestions. `/work code` Bluebird UX — natural-language code search and symbol lookup with golden-query catalog fallback. EV-12 Golden-Set Eval — `fixtures.yaml`-driven regression framework; dimension quality badges (actionability, specificity, completeness, signal_purity, calibration). |
+| v3.10 | 2026-04-05 | KB-LINT UX — §10.18: `lint` command added to command palette; `Data Health` briefing line with silent display on warnings and `⚠` escalation prefix on errors; interactive lint report format (findings table with severity icons, file, field, message, and inline fix hints); `--fix` confirmation UX (lists pending changes before applying). |
 | v3.9 | 2026-04-04 | AFW-10 Domain Training UX — `domain training` / `domain training --domain X` reports per-domain accuracy trends, correction compounding, and training suggestions. `/work code` Bluebird UX — natural-language code search and symbol lookup with golden-query catalog fallback. EV-12 Golden-Set Eval — `fixtures.yaml`-driven regression framework; dimension quality badges (actionability, specificity, completeness, signal_purity, calibration). |
 | v3.8 | 2026-04-02 | AR-9 External Agent Composition UX — §25: agent discovery (`agent list`), routing transparency indicator, expert consensus answer format with inline citation, data quality verdict badges (PASS/WARN/STALE/REFUSE) in briefing output, agent health dashboard (`agent health`), fallback cascade UX (agent → KB → investigation → Cowork). |
 | v3.7 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 UX — §9 Action Proposals rewritten with queue-backed interaction model: `§ PENDING ACTIONS` briefing section, numbered proposal list with IDs and friction indicators, `--show` content preview requirement for email actions, `--defer` with preset horizons (`+1h`, `tomorrow`, `next-session`), `--approve-all-low` batch command, `--health` output design, burn-in debug section. |
@@ -989,6 +989,12 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                  /eval freshness     Domain staleness, OAuth health
                  /eval skills        Skill health table (broken-first) *(v5.0)*
                  /eval effectiveness Engagement rate trends, R2/R8 status *(v5.0)*
+/lint            Cross-domain data health audit (six-pass)      5-15 seconds  *(v7.9)*
+                 Backed by scripts/kb_lint.py
+                 lint --fix          Auto-remediate P1/P2 issues (confirmation required)
+                 lint --json         Machine-readable findings output
+                 lint --pass P1      Run a single pass only
+                 lint --init         Bootstrap missing state templates
 ```
 
 **CLI diagnostic flag (not a slash command):**
@@ -1125,6 +1131,67 @@ Recommendations:
 - Internal rule names (R2, R7, R8) appear in `/eval` output only — never in catch-up briefings
 - `engagement_rate: null` entries are counted in the window but excluded from mean calculation
 - "Target: 0.25–0.50" is shown as context; rates above 0.50 are noted but not flagged — over-engagement is not a problem
+
+### 10.18 `lint` Output Design *(v7.9)*
+
+**Standard lint output** — runs `kb_lint.py` six-pass pipeline; interactive findings table:
+
+```
+━━ DATA HEALTH AUDIT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Pass P1 — Frontmatter Gate (24 files)
+  ✓ No issues found
+
+Pass P2 — Stale Dates (24 files)
+  ⚠ finance.md › last_updated: 2025-11-01 (157 days — threshold 90d)
+  ⚠ insurance.md › policy_review_date: 2025-10-15 (172 days)
+
+Pass P3 — Orphan References (24 files)
+  ✓ No issues found
+
+Pass P4 — Contradiction Scanner
+  ✓ No issues found
+
+Pass P5 — Cross-Domain Rules (8 rules)
+  ✓ No issues found
+
+Pass P6 — Custom Rules (2 rules)
+  ✓ No issues found
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Data Health: 100% · 0 errors · 2 warnings · 24 files · 312ms
+Run `lint --fix` to auto-remediate P2 stale-date warnings.
+```
+
+**Briefing line (embedded, --brief-mode):**
+
+```
+# Clean
+Data Health: 100% (24 files, OK, 312ms)
+
+# Warnings only
+Data Health: 96% (24 files, 1 warning, 289ms)
+
+# Errors present — prefixed ⚠ to surface urgency
+⚠ Data Health: 83% (24 files, 2 errors · 3 warnings, 341ms) — run `lint` for details
+```
+
+**`lint --fix` confirmation UX:**
+
+```
+The following fixes will be applied:
+  1. finance.md › last_updated → today's date (2026-04-05)
+  2. insurance.md › policy_review_date → today's date (2026-04-05)
+
+Apply 2 fixes? [yes / no]
+```
+
+**Design rules:**
+- `Data Health` line always appears in briefing output (Step 20b), even on first-run with no issues
+- Errors escalate with `⚠` prefix; warnings display silently (no prefix)
+- `--fix` never auto-applies without explicit confirmation — shows diff before any write
+- `lint --json` output is machine-readable; used by CI and eval pipeline
+- Findings table sorted: errors first, then warnings, then info; within each severity: by file name
 
 ## 11. Proactive Check-In — Conversational Design
 
