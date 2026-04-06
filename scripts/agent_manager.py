@@ -903,8 +903,8 @@ def cmd_delegate(
         print(f"⛔ Missing pipeline module: {exc}", file=sys.stderr)
         return 1
 
-    _knowledge_dir = str(_REPO_ROOT / "knowledge")
-    _cache_dir = str(_CACHE_DIR)
+    _knowledge_dir = _REPO_ROOT / "knowledge"
+    _cache_dir = _CACHE_DIR
 
     # Step 1: Verify (injection scan + KB cross-check)
     verifier = ResponseVerifier(knowledge_dir=_knowledge_dir)
