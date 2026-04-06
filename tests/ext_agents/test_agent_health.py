@@ -206,3 +206,54 @@ class TestCacheHitCluster:
         agent = tracker._registry.get("test-agent")
         assert agent.health.cache_hits_by_cluster.get("SDP", 0) == 1
         assert agent.health.cache_hits_by_cluster.get("canary", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Gap-3 fix — Health metrics persisted to disk on every update
+# ---------------------------------------------------------------------------
+
+
+class TestHealthDiskPersistence:
+    """Verify health changes survive a registry reload from disk (Gap-3 fix)."""
+
+    def test_record_invocation_persisted_to_disk(
+        self, tracker: AgentHealthTracker, tmp_registry_dir: Path
+    ):
+        """record_invocation → save() → reloaded registry sees updated health."""
+        tracker.record_invocation(
+            "test-agent", success=True, latency_ms=250, quality_score=0.85
+        )
+        # Reload from the on-disk YAML file
+        reloaded = AgentRegistry.load(tmp_registry_dir)
+        agent = reloaded.get("test-agent")
+        assert agent is not None
+        assert agent.health.total_invocations == 1
+        assert agent.health.successful_invocations == 1
+
+    def test_weak_query_persisted_to_disk(
+        self, tracker: AgentHealthTracker, tmp_registry_dir: Path
+    ):
+        """record_weak_query → save() → reloaded registry has weak pattern."""
+        tracker.record_weak_query("test-agent", "ambiguous query about family")
+        reloaded = AgentRegistry.load(tmp_registry_dir)
+        agent = reloaded.get("test-agent")
+        assert "ambiguous query about family" in agent.health.weak_queries
+
+    def test_keyword_quality_persisted_to_disk(
+        self, tracker: AgentHealthTracker, tmp_registry_dir: Path
+    ):
+        """record_keyword_quality → save() → reloaded registry has scores."""
+        tracker.record_keyword_quality("test-agent", ["deploy"], 0.72)
+        reloaded = AgentRegistry.load(tmp_registry_dir)
+        agent = reloaded.get("test-agent")
+        assert "deploy" in agent.health.keyword_quality
+        assert 0.72 in agent.health.keyword_quality["deploy"]
+
+    def test_cache_hit_cluster_persisted_to_disk(
+        self, tracker: AgentHealthTracker, tmp_registry_dir: Path
+    ):
+        """record_cache_hit_cluster → save() → reloaded registry has counts."""
+        tracker.record_cache_hit_cluster("test-agent", "SDP")
+        reloaded = AgentRegistry.load(tmp_registry_dir)
+        agent = reloaded.get("test-agent")
+        assert agent.health.cache_hits_by_cluster.get("SDP", 0) == 1
