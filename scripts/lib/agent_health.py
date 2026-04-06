@@ -14,9 +14,12 @@ State machine:
 
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+
+_log = logging.getLogger("artha.agent_health")
 
 if TYPE_CHECKING:
     from lib.agent_registry import AgentHealth, AgentRegistry, ExternalAgent
@@ -145,6 +148,7 @@ class AgentHealthTracker:
             health.consecutive_failures = 0
             health.last_success = now_iso
             if quality_score is not None:
+                quality_score = max(0.0, min(1.0, quality_score))
                 health.mean_quality_score = _update_mean(
                     health.mean_quality_score or 0.0,
                     quality_score,
@@ -235,8 +239,8 @@ class AgentHealthTracker:
                     fallback_level=fallback_level,
                     failure_reason=failure_reason,
                 )
-            except Exception:  # pragma: no cover
-                pass
+            except OSError:  # pragma: no cover
+                _log.debug("Metric write failed", exc_info=True)
 
         # EA-11a: append audit event for non-cache invocations
         if _write_audit_event is not None and not cache_hit:
@@ -247,8 +251,8 @@ class AgentHealthTracker:
                     f"success={success}"
                 )
                 _write_audit_event("EXT_AGENT_INVOKED", agent_name, _detail)
-            except Exception:  # pragma: no cover
-                pass
+            except OSError:  # pragma: no cover
+                _log.debug("Audit event write failed", exc_info=True)
 
     def record_injection(self, agent_name: str) -> None:
         """Shortcut: record an injection detection event → suspend agent."""

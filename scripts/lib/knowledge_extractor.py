@@ -9,10 +9,15 @@ Cache is platform-local; excluded from cloud sync (tmp/ is gitignored).
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+import tempfile
 import textwrap
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+_log = logging.getLogger("artha.knowledge_extractor")
 
 # Cache entry separator
 _SEPARATOR = "---"
@@ -27,6 +32,31 @@ _SOURCE_RE = re.compile(r"^Source:\s*(.+)", re.MULTILINE)
 _DEFAULT_MIN_QUALITY = 0.7
 _DEFAULT_TTL_DAYS = 7
 _DEFAULT_MAX_SIZE_CHARS = 50_000
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write *content* to *path* atomically via temp-file + rename.
+
+    On POSIX, os.replace is atomic.  On Windows it overwrites the target
+    (atomic within the filesystem driver).  Either way, a crash mid-write
+    leaves the original file intact rather than producing a truncated file.
+    """
+    fd, tmp = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=path.stem + "_"
+    )
+    try:
+        os.write(fd, content.encode("utf-8"))
+        os.close(fd)
+        fd = -1
+        os.replace(tmp, str(path))
+    except BaseException:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 class KnowledgeExtractor:
@@ -102,7 +132,7 @@ class KnowledgeExtractor:
             combined = self._evict_oldest(combined)
 
         try:
-            cache_file.write_text(combined, encoding="utf-8")
+            _atomic_write(cache_file, combined)
         except OSError:
             return False
 
@@ -245,7 +275,7 @@ class KnowledgeExtractor:
                 1,
             )
             try:
-                cache_file.write_text(updated, encoding="utf-8")
+                _atomic_write(cache_file, updated)
             except OSError:
                 pass
 

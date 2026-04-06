@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, asdict
@@ -101,6 +102,7 @@ class DataCard:
 
 def parse_registry(path: Path = _GOLDEN_REGISTRY) -> dict[str, GoldenQuery]:
     """Parse golden-queries.md into GoldenQuery objects."""
+    path = Path(path)  # defensive: accept str or Path
     if not path.exists():
         print(f"ERROR: Registry not found at {path}", file=sys.stderr)
         sys.exit(1)
@@ -249,23 +251,44 @@ class KustoRunner:
         database: str,
         kql: str,
         timeout_sec: int = 120,
+        max_retries: int = 3,
     ) -> tuple[list[dict], float]:
-        """Execute KQL and return (rows_as_dicts, elapsed_seconds)."""
+        """Execute KQL and return (rows_as_dicts, elapsed_seconds).
+
+        Retries on HTTP 429 (throttled) with exponential backoff.
+        """
         client = self._get_client(cluster_uri)
         normalized = normalize_kql(kql)
 
-        start = time.time()
-        try:
-            from azure.kusto.data import ClientRequestProperties
-            from datetime import timedelta as _td
-            props = ClientRequestProperties()
-            props.set_option("servertimeout", _td(seconds=timeout_sec))
+        from azure.kusto.data import ClientRequestProperties
+        from datetime import timedelta as _td
 
-            response = client.execute(database, normalized, properties=props)
-        except Exception as e:
-            elapsed = time.time() - start
-            print(f"ERROR: KQL execution failed after {elapsed:.1f}s: {e}", file=sys.stderr)
-            raise
+        start = time.time()
+        last_exc: Exception | None = None
+
+        for attempt in range(max_retries):
+            try:
+                props = ClientRequestProperties()
+                props.set_option("servertimeout", _td(seconds=timeout_sec))
+                response = client.execute(database, normalized, properties=props)
+                last_exc = None
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                is_throttled = "429" in err_str or "throttl" in err_str or "too many requests" in err_str
+                if is_throttled and attempt < max_retries - 1:
+                    backoff = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                    print(f"WARN: Kusto 429 throttled (attempt {attempt+1}/{max_retries}), "
+                          f"retrying in {backoff}s...", file=sys.stderr)
+                    time.sleep(backoff)
+                    last_exc = e
+                    continue
+                elapsed = time.time() - start
+                print(f"ERROR: KQL execution failed after {elapsed:.1f}s: {e}", file=sys.stderr)
+                raise
+
+        if last_exc is not None:
+            raise last_exc
 
         elapsed = time.time() - start
 
@@ -370,6 +393,30 @@ REFRESH_QUERY_IDS = [
 ]
 
 
+def _preflight_azure_auth() -> tuple[bool, str]:
+    """Check Azure CLI auth is valid before running Kusto queries.
+
+    Returns (ok: bool, message: str).
+    """
+    try:
+        result = subprocess.run(
+            ["az", "account", "show", "--query", "user.name", "-o", "tsv"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return True, f"Azure CLI authenticated as {result.stdout.strip()}"
+        return False, (
+            "Azure CLI not authenticated. Run `az login` to restore credentials.\n"
+            f"  stderr: {result.stderr.strip()[:200]}"
+        )
+    except FileNotFoundError:
+        return False, "Azure CLI (`az`) not found on PATH."
+    except subprocess.TimeoutExpired:
+        return False, "Azure CLI auth check timed out (10s)."
+    except Exception as e:
+        return False, f"Azure CLI auth check failed: {e}"
+
+
 def run_refresh_set(
     query_ids: list[str] | None = None,
     registry_path: str | None = None,
@@ -383,9 +430,19 @@ def run_refresh_set(
 
     Used by work_loop.py to populate xpf-program-structure.md metrics.
     Each query failure is isolated — other queries still run.
+    Includes Azure CLI auth preflight — skips all queries if auth is invalid.
     """
     ids = query_ids or REFRESH_QUERY_IDS
-    reg = registry_path or str(_GOLDEN_REGISTRY)
+
+    # Preflight: verify Azure CLI auth before wasting time on queries
+    auth_ok, auth_msg = _preflight_azure_auth()
+    if not auth_ok:
+        print(f"WARN: Kusto preflight failed — {auth_msg}", file=sys.stderr)
+        return {qid: {"rows": [], "card": None, "error": f"Auth preflight: {auth_msg}"} for qid in ids}
+
+    print(f"  kusto preflight: {auth_msg}", file=sys.stderr)
+
+    reg = Path(registry_path) if registry_path else _GOLDEN_REGISTRY
     registry = parse_registry(reg)
     runner = KustoRunner()
     results: dict[str, dict] = {}
