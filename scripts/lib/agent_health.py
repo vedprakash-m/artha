@@ -6,6 +6,7 @@ external agents.
 State machine:
   active → degraded  (3 consecutive failures OR sustained low quality)
   active → suspended (injection detected)
+  degraded → suspended (5 consecutive failures — circuit breaker §11.3)
   degraded → active  (1 success recovery)
   suspended → active (manual reinstate only)
   any → retired      (user command OR auto-retirement criteria met)
@@ -36,6 +37,7 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 _CONSECUTIVE_FAILURES_DEGRADED = 3        # 3 consecutive failures → degraded
+_CONSECUTIVE_FAILURES_SUSPENDED = 5       # 5 consecutive failures → suspended (circuit breaker §11.3)
 _QUALITY_DEGRADED_THRESHOLD = 0.4         # mean quality < 0.4 → flag for retirement
 _QUALITY_DEGRADED_DAYS = 30               # ...sustained for 30 days
 _CACHE_HIT_RATE_LOW = 0.05                # cache_hit_rate < 5%
@@ -195,6 +197,13 @@ class AgentHealthTracker:
             and current_status == "active"
         ):
             self._transition(agent, health, "degraded", "consecutive_failures")
+
+        elif (
+            not success
+            and health.consecutive_failures >= _CONSECUTIVE_FAILURES_SUSPENDED
+            and current_status == "degraded"
+        ):
+            self._transition(agent, health, "suspended", "circuit_breaker")
 
         # ----------------------------------------------------------
         # Auto-retirement checks
