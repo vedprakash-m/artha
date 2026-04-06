@@ -10,6 +10,7 @@ Analyzes catch-up quality across multiple dimensions:
   5. Quality — 5-dimension briefing quality score (EV-5 / eval_scorer.py)
   6. Log health — connector error budgets, anomaly detection (EV-6 / log_digest.py)
   7. Memory health — memory pipeline run statistics (EV-11c)
+  8. External agents — AR-9 invocation metrics, routing audit, cache report
 
 Usage:
     python scripts/eval_runner.py                   # Full eval report
@@ -20,6 +21,10 @@ Usage:
     python scripts/eval_runner.py --summary         # Dashboard summary
     python scripts/eval_runner.py --log-health      # Log digest + anomaly report
     python scripts/eval_runner.py --memory          # Memory pipeline health
+    python scripts/eval_runner.py --agents          # AR-9 external agent metrics
+    python scripts/eval_runner.py --agent NAME      # AR-9 filter to specific agent
+    python scripts/eval_runner.py --routing-audit   # AR-9 routing decision log
+    python scripts/eval_runner.py --cache-report    # AR-9 ext-agent-cache report
     python scripts/eval_runner.py --json            # JSON output
     python scripts/eval_runner.py --trend 7         # 7-day trend analysis
 

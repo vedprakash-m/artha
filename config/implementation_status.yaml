@@ -1217,4 +1217,71 @@ features:
     confidence: high
     note: "_PREREAD_SECTION='## Pre-Read Log'; _load_preread_markers() parses Pre-Read Log table from work-notes.md returning {meeting_lower: timestamp}; cmd_mark_preread(meeting_id) appends | meeting | timestamp | 0 | row to Pre-Read Log in work-notes.md (creates section+table if absent); --preread-id argparse arg; 6 tests in TestPrereadTracking; v2.7.0"
 
+  # ── AR-9: External Agent Composition ────────────────────────────────────
+  ext_agent_registry:
+    spec: "specs/subagent-ext-agent.md §4.2"
+    status: implemented
+    confidence: high
+    note: "config/agents/external-registry.yaml + scripts/lib/agent_registry.py (554 lines); AgentRegistry loads/parses all agent entries; full schema: trust_tier, routing, invocation, fallback_cascade, health, pii_profile; storage-deployment-expert registered as reference agent; tests: test_agent_registry.py"
+  ext_agent_router:
+    spec: "specs/subagent-ext-agent.md §4.3"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/agent_router.py (257 lines); AgentRouter.route() geometric-mean confidence scoring; min_keyword_hits guard; exclude_keywords; cache-hit shortcut before invocation; conflict logging; config flag harness.agentic.external_agents.routing.enabled; tests: test_agent_router.py, test_work_reader_routing.py"
+  ext_agent_context_pipeline:
+    spec: "specs/subagent-ext-agent.md §4.4, §3.4, §9.2"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/context_classifier.py (228 lines) + context_scrubber.py (166 lines) + prompt_composer.py (291 lines) + injection_detector.py (208 lines); 6-step pipeline: Collect→Classify→Filter→Scrub→Detect→Compose; PUBLIC/SCOPED/PRIVATE/SENSITIVE tiers; domain-scoped PII profiles; recursive injection decoder; tests: test_context_classifier.py, test_context_scrubber.py, test_prompt_composer.py, test_injection_detector.py"
+  ext_agent_invoker:
+    spec: "specs/subagent-ext-agent.md §4.5"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/agent_invoker.py (358 lines); AgentProvider ABC + VSCodeAgentProvider + MockAgentProvider; 60s timeout, 1 retry with 1.5x backoff; AgentResult, InvocationError; config: harness.agentic.external_agents.invocation.*; tests: test_agent_invoker.py"
+  ext_agent_response_pipeline:
+    spec: "specs/subagent-ext-agent.md §4.6"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/response_verifier.py (223 lines) + response_integrator.py (231 lines) + agent_scorer.py (187 lines); 7-step integration: Receive→Scan→Validate→Attribute→Enrich→Compose→Quality; KB entity cross-check; honesty bonus; 4 scoring dimensions (Consistency 0.35, Relevance 0.25, Specificity 0.25, Completeness 0.15); Expert Consensus UI block; tests: test_response_verifier.py, test_response_integrator.py, test_agent_scorer.py"
+  ext_agent_knowledge_cache:
+    spec: "specs/subagent-ext-agent.md §4.7"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/knowledge_extractor.py (310 lines); extracts novel facts from quality>=0.7 responses; TTL-based eviction; stale-while-revalidate; cache at tmp/ext-agent-cache/<agent>.md (tmp/ = ephemeral, not cloud-synced); max_cache_size_chars=50000; tests: test_knowledge_extractor.py"
+  ext_agent_health_tracker:
+    spec: "specs/subagent-ext-agent.md §4.8"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/agent_health.py (481 lines); active/degraded/suspended/retired states; auto-retirement criteria (quality<0.4 for 30d, cache_hit_rate<5% with >20 invocations, suspended>30d); trust promotion/demotion rules; consecutive failure thresholds; tests: test_agent_health.py"
+  ext_agent_audit:
+    spec: "specs/subagent-ext-agent.md §9.5, §7.1"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/ext_agent_audit.py (70 lines) + metrics_writer.py; 5 audit event types (ROUTED, INVOKED, INJECTION, UPDATE, HEALTH); JSONL metrics to tmp/ext-agent-metrics.jsonl; audit rows to state/work/work-audit.md; tests: test_ext_agent_audit.py, test_metrics_writer.py"
+  ext_agent_manager_cli:
+    spec: "specs/subagent-ext-agent.md §4.1, §4.9, Appendix C"
+    status: implemented
+    confidence: high
+    note: "scripts/agent_manager.py (859 lines); commands: list, register, retire, reinstate, promote, demote, refresh-cache, discover, health, validate, route; file-drop update model (config/agents/external/); SHA-256 content hash change detection; archive-on-update to config/agents/external/.archive/; tests: test_agent_manager_gaps.py"
+  ext_agent_preflight:
+    spec: "specs/subagent-ext-agent.md §8 Phase 0"
+    status: implemented
+    confidence: high
+    note: "scripts/preflight/integration_checks.py: check_ext_agent_discovery() scans drop folder for unregistered agents (P2); check_ext_agent_health() reports degraded/suspended agents; tests: test_preflight_ext_agent.py"
+  ext_agent_e2e:
+    spec: "specs/subagent-ext-agent.md §14"
+    status: implemented
+    confidence: high
+    note: "tests/test_e2e_delegation.py (165 lines) + test_fallback_cascade.py (203 lines); full pipeline smoke tests; fallback cascade tests (agent→KB→investigation→Cowork); 241 total AR-9 tests passing"
+  ext_agent_eval_dashboard:
+    spec: "specs/subagent-ext-agent.md §7.3 EA-8/EA-9"
+    status: implemented
+    confidence: high
+    note: "scripts/eval_runner.py: analyze_agent_metrics(), analyze_routing_audit(), analyze_cache_report(), _render_agent_metrics_report(); CLI flags: --agents, --agent NAME, --routing-audit, --cache-report, --trend DAYS; reads tmp/ext-agent-metrics.jsonl"
+  ext_agent_orchestration_wiring:
+    spec: "specs/subagent-ext-agent.md §1, §3.2"
+    status: implemented
+    confidence: high
+    note: "AR-9 section added to config/Artha.core.md and config/Artha.md after Delegation Protocol (AR-7); LLM layer now knows: routing check CLI, delegation flow, trust tiers, fallback cascade, agent management commands, observability flags; config gate: harness.agentic.external_agents.enabled"
+
 
