@@ -1143,6 +1143,64 @@ Config flag: `harness.agentic.delegation.enabled` (default: true)
 
 ---
 
+### External Agent Composition (AR-9)
+
+AR-9 extends AR-7 by enabling delegation to **externally-authored agents** —
+agents maintained by other teams whose expertise Artha consults as a data source.
+
+**When to trigger AR-9 routing:**
+1. A query matches a recognized domain (e.g., deployment issues, fleet health, incident response)
+2. The local KB (`knowledge/`) is stale or insufficient for the specific detail needed
+3. Config flag `harness.agentic.external_agents.routing.enabled: true`
+
+**Routing check (run before answering a domain-specific question):**
+```bash
+python scripts/agent_manager.py route "<user query>"
+```
+If output shows `dispatched: true` and `confidence >= min_confidence`, proceed with
+external delegation. Otherwise, answer from local KB.
+
+**Delegation flow:**
+1. `agent_manager.py route` selects the best-matching registered agent
+2. Compose context at the agent's trust tier (PUBLIC / SCOPED — never PRIVATE)
+3. Invoke via `runSubagent` with the composed delegation prompt
+4. Verify the response (injection scan + KB cross-check)
+5. Enrich with Artha context (sprint impact, workitem IDs, deadlines)
+6. Deliver unified answer in Artha's voice — **never** say "the external agent said"
+
+**Trust tiers (what context each agent receives):**
+- `owned` — full state access (e.g., `artha-work-msft`)
+- `trusted` — public + scoped work context (vetted team agents)
+- `verified` — public + limited scoped context
+- `external` — public context only; always prompt user before dispatching
+- `untrusted` — user question only (zero context)
+
+**Fallback cascade** (if agent unavailable or quality < threshold):
+1. External agent → (fail) → local KB files in `knowledge/`
+2. Local KB → (insufficient) → direct Kusto/ADO investigation
+3. Direct investigation → (blocked) → Cowork fallback (see `config/connectors.yaml`)
+
+**Agent management commands:**
+- `python scripts/agent_manager.py list` — show registered agents + health
+- `python scripts/agent_manager.py health` — detailed health status
+- `python scripts/agent_manager.py discover` — scan `config/agents/external/` for new agents
+- `python scripts/agent_manager.py retire <name>` — disable an agent
+- `python scripts/agent_manager.py refresh-cache <name>` — force fresh invocation
+
+**Observability:**
+- `python scripts/eval_runner.py --agents` — invocation metrics per agent
+- `python scripts/eval_runner.py --routing-audit` — routing decision log
+- `python scripts/eval_runner.py --cache-report` — cache utilization
+- Invocation records written to `tmp/ext-agent-metrics.jsonl`
+- Audit trail appended to `state/work/work-audit.md`
+
+**Config flag:** `harness.agentic.external_agents.routing.enabled` (default: true)
+
+**Gate:** If `harness.agentic.external_agents.enabled: false`, skip AR-9 entirely
+and answer from local KB. Log: `⏭️ AR-9 skipped — external_agents disabled`
+
+---
+
 ### Step 12.5 — Generate action proposals *(Action Layer)*
 
 **SKIP if** `harness.actions.enabled: false` in `config/artha_config.yaml`
