@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Hardened — AR-9 External Agent Composition (Safety Audit)
+- `scripts/lib/prompt_composer.py`: C-1 template injection defense — user query braces escaped before `str.format()`; 8,000 char hard cap with truncation indicator
+- `scripts/lib/knowledge_extractor.py`: C-2 atomic cache writes — `tempfile.mkstemp()` + `os.replace()` prevents partial-write corruption on crash or power loss
+- `scripts/lib/context_scrubber.py`: C-3 PII guard fail-safety — strict mode now blocks delegation when PII guard is unavailable or raises an exception (previously passed through)
+- `scripts/lib/agent_registry.py`: M-1 dead import cleanup (`copy`, `json`); silent YAML parse `except: pass` replaced with `_log.warning("Skipping malformed…")`
+- `scripts/lib/agent_health.py`: M-4 quality score clamped to `[0.0, 1.0]` before health tracking; bare `except Exception: pass` narrowed to `except OSError` with debug log
+- `tests/ext_agents/test_safety_invariants.py`: 16 new tests — 5 template injection, 3 atomic write, 4 PII boundary, 2 quality clamping, 1 query truncation, 1 registry resilience
+- Spec: Tech Spec v3.24.0 §23.5; AR-9 design spec v1.4.0
+- 270 AR-9 tests passing (254 baseline + 16 safety invariants)
+
 ### Added — AFW-10 Domain Training & Feedback Loop
 - `scripts/domain_training.py`: per-domain accuracy tracking over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration
 - Config gate: `harness.agentic.domain_training.enabled` (default: true); activation requires minimum 5 catch-up runs

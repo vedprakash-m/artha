@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.23.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.24.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.9.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.24.0 | 2026-04-05 | AR-9 Safety Hardening (§23): template injection defense (`prompt_composer.py` — brace escaping + 8K query cap), atomic writes (`knowledge_extractor.py` — `tempfile.mkstemp` + `os.replace`), PII guard fail-safety (`context_scrubber.py` — strict mode blocks on guard failure), quality score clamping (`agent_health.py` — `[0,1]` enforcement), dead import cleanup (`agent_registry.py`). 16 safety invariant tests (`test_safety_invariants.py`). 270 AR-9 tests passing. |
 | v3.23.0 | 2026-04-05 | KB-LINT Cross-Domain Data Health (§26): `scripts/kb_lint.py` (~900 LOC) + `config/lint_rules.yaml` (8 built-in P5 rules). Six-pass pipeline (P1 frontmatter, P2 stale dates, P3 orphan refs, P4 contradictions, P5 cross-domain YAML rules, P6 custom rules). `--brief-mode` briefing integration; `--fix`, `--json`, `--init`, `--pass` CLI flags. `health_pct` = % P1-error-free files. 46 unit tests + 4 regression tests. 3,570 tests total. |
 | v3.22.0 | 2026-04 | AFW-10 Domain Training (`scripts/domain_training.py`): per-domain accuracy trend analysis over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration. EV-12 Golden-Set Eval (`tests/eval/golden_set/`): parametrized regression framework with `fixtures.yaml` (10 fixtures — 4 golden, 6 anti-golden), dimension-level quality gates (actionability, specificity, completeness, signal_purity, calibration). `/work code` Bluebird MCP integration for ADO code search with golden-query fallback. 3,515+ tests. |
 | v3.21.0 | 2026-04 | Agent Framework v1 (§25): AFW-1 through AFW-11 (Waves 0–3 complete). Guardrails, middleware pipeline, progressive disclosure, context compaction, checkpointing, undo, flat-file memory (ADR-001), composite signal scoring, structured tracing. `.gitignore` hardened. 4,872+ tests. |
@@ -4925,7 +4926,7 @@ CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
 
 ---
 
-## 23. External Agent Composition (AR-9) *(v1.3.1)*
+## 23. External Agent Composition (AR-9) *(v1.4.0)*
 
 AR-9 extends AR-7's internal delegation protocol to support **externally-authored domain agents** — agents whose system prompts, tools, and behavior are owned by other teams or repositories. External agents are treated as **data sources**: discover → authenticate → fetch → validate → integrate → cache → observe.
 
@@ -4969,6 +4970,20 @@ External agents are registered by dropping `.agent.md` files into `config/agents
 3. All delegations are logged to the JSONL audit trail.
 4. External agents cannot modify Artha state (read-only in V1).
 5. Credential isolation — external agents inherit no credentials from the Artha session.
+
+### 23.5 Safety Hardening *(v1.4.0)*
+
+Deep audit of the 14-module AR-9 pipeline identified and resolved five safety issues:
+
+| ID | Fix | Module |
+|----|-----|--------|
+| C-1 | Template injection defense — user queries with `{`/`}` are brace-escaped before `str.format()`; 8,000 char hard cap | `prompt_composer.py` |
+| C-2 | Atomic cache writes — `tempfile.mkstemp()` + `os.replace()` prevents partial-write corruption | `knowledge_extractor.py` |
+| C-3 | PII guard fail-safety — strict mode blocks delegation when PII guard is unavailable or raises | `context_scrubber.py` |
+| M-1 | Dead import cleanup + silent-failure logging (malformed YAML files now warn) | `agent_registry.py` |
+| M-4 | Quality score clamped to `[0.0, 1.0]` before health tracking; bare `except` narrowed to `OSError` | `agent_health.py` |
+
+All five invariants enforced by 16 tests in `tests/ext_agents/test_safety_invariants.py`.
 
 ---
 
@@ -5251,7 +5266,7 @@ cross_domain_rules:
 
 ---
 
-*Artha Tech Spec v3.23.0 — End of Document*
+*Artha Tech Spec v3.24.0 — End of Document*
 
 ---
 
@@ -5259,6 +5274,7 @@ cross_domain_rules:
 
 | Version | Changes |
 |---------|---------|
+| v3.24.0 | **AR-9 Safety Hardening (§23.5)**: template injection defense in `prompt_composer.py` (brace escaping + 8K query cap); atomic writes in `knowledge_extractor.py` (`tempfile.mkstemp` + `os.replace`); PII guard fail-safety in `context_scrubber.py` (strict mode blocks on guard failure); quality score clamping in `agent_health.py` (`[0,1]` enforcement); dead import cleanup in `agent_registry.py`. 16 safety invariant tests. 270 AR-9 tests passing. |
 | v3.21.0 | **Agent Framework v1 — §25**: AFW-1 Tripwire Guardrails (7 guardrails, blocking + parallel modes, `guardrails.py` + `guardrail_registry.py`); AFW-3 Middleware Pipeline (`compose_middleware()`, 5 components, `config/middleware.yaml`); AFW-2 Progressive Disclosure (6 always-load domains, `domain_index.py`, ~80% token savings on `/status`/`/items`); AFW-4 Context Compaction (`session_summarizer.py`, `CompactionPolicy`, sliding window); AFW-5 Workflow Checkpointing (`state_snapshot.py`, 4h TTL, phase-resume); AFW-6 Session Undo (`/undo [domain]`, snapshot-before-write, diff confirm); AFW-7 Flat-File Memory / ADR-001 (`memory_provider.py`, YAML frontmatter, synonym expansion, scoped recall, dedup); AFW-9 Composite Signal Scoring (`signal_scorer.py`, urgency×impact×freshness, suppress<0.20/promote≥0.66); AFW-11 Structured Tracing (UUID4 trace_id propagation, JSONL, `log_digest.py`). `.gitignore` hardened: `.gemini_security/` + `.gemini/` added. Spec updates: PRD §9.10 + UX §10/§14/§16. |
 | v3.20.0 | **AR-9 External Agent Composition (§23) + Data Quality Gate (§24)**: `scripts/lib/agent_registry.py` (YAML-backed registry, drop-folder scan, content_hash dedup, shadow_mode flag, registered_at timestamp); `scripts/lib/agent_router.py` (geometric-mean confidence routing); `scripts/lib/context_classifier.py` (domain-scoped public/scoped/private tagging); `scripts/lib/context_scrubber.py` (outbound PII scrubbing per domain profile); `scripts/lib/injection_detector.py` (recursive injection decoder, confidence threshold); `scripts/lib/agent_invoker.py` (`runSubagent`, 60s timeout, stale-while-revalidate cache in `tmp/ext-agent-cache/`); `scripts/lib/response_verifier.py` (entity-based KB cross-check); `scripts/lib/response_integrator.py` (expert consensus format, fallback cascade: agent→KB→investigation→Cowork); `scripts/lib/knowledge_extractor.py` (response → cache); `scripts/lib/agent_scorer.py` (accuracy × freshness × honesty_bonus); `scripts/lib/agent_health.py` (availability/latency/quality/auto-retirement at 5 consecutive failures); `scripts/lib/ext_agent_audit.py` (JSONL audit trail); `scripts/lib/metrics_writer.py` (eval pipeline integration); `scripts/agent_manager.py` (CLI). DQ Gate: `scripts/lib/dq_gate.py` — pull-based Accuracy×Freshness×Completeness model; QualityVerdict(PASS/WARN/STALE/REFUSE); domain-aware weights; corroborating_sources denormalized field. `.gitignore` hardened: `config/agents/external/`, `config/agents/external-registry.yaml`, `config/agents/*.agent.md` excluded. 4,515 tests: `tests/ext_agents/` (121) + `tests/test_dq_gate.py`. |
 | v3.19.0 | **Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS)**: `scripts/eval_runner.py` (orchestrates eval harness; closes G1–G10 observability gaps); `scripts/eval_scorer.py` (briefing quality scorer — completeness, priority order, PII compliance, action accuracy; rolling 7-day+30-day averages); `scripts/lib/metric_store.py` (SQLite-backed time-series MetricStore in `~/.artha-local/eval.db`; 90-day auto-prune); `scripts/correction_feeder.py` (user correction → `state/memory.md` + domain confidence delta → `state/self_model.md`); `scripts/log_digest.py` (daily log aggregator; gap trend detection); `scripts/lib/knowledge_graph.py` (`KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`; transactional SQLite writes); `scripts/kb_bootstrap.py` (idempotent bootstrap from `knowledge/*.md` state files; hash-based dedup). 127 new eval tests in `tests/eval/` + `tests/unit/test_eval_*.py`. `.gitignore` hardened: machine-specific conflict-copy pattern replaced with generic `state/*.age` superset; OneDrive shadow `.git 2/` fix. |

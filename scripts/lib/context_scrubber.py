@@ -15,9 +15,12 @@ Ref: specs/subagent-ext-agent.md §3.5, §4.4 Step 4, EA-0d
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_log = logging.getLogger("artha.context_scrubber")
 
 # ---------------------------------------------------------------------------
 # Lazy import of pii_guard from scripts/
@@ -40,8 +43,7 @@ def _get_pii_guard():
     if not guard_path.exists():
         # Fallback: identity function (no-op) — keeps pipeline running but
         # logs a warning so the operator knows to investigate.
-        import logging
-        logging.getLogger("artha.context_scrubber").warning(
+        _log.warning(
             "pii_guard.py not found at %s — PII scrubbing disabled", guard_path
         )
         return None
@@ -105,7 +107,18 @@ class ContextScrubber:
 
         pii_guard = _get_pii_guard()
         if pii_guard is None:
-            # No PII guard available — pass through (degraded mode)
+            # No PII guard available — in strict mode this is a hard block
+            # because we cannot guarantee the fragment is PII-free.
+            if self.strict_mode:
+                _log.warning("pii_guard unavailable in strict mode — blocking fragment")
+                return ScrubResult(
+                    original_length=len(text),
+                    scrubbed_text="",
+                    pii_types_found={},
+                    was_modified=True,
+                    blocked=True,
+                )
+            _log.warning("pii_guard unavailable — passing fragment unscrubbed (non-strict)")
             return ScrubResult(
                 original_length=len(text),
                 scrubbed_text=text,
@@ -114,7 +127,27 @@ class ContextScrubber:
             )
 
         # Step 1: Apply PII filter (always — identifies what types are present)
-        filtered_text, found_types = pii_guard.filter_text(text)
+        try:
+            filtered_text, found_types = pii_guard.filter_text(text)
+        except Exception:
+            # PII guard raised — treat as unanalyzable.  In strict mode,
+            # block the fragment (fail-safe).  Otherwise pass through but
+            # log a warning so the issue gets investigated.
+            _log.exception("pii_guard.filter_text() raised — fail-safe triggered")
+            if self.strict_mode:
+                return ScrubResult(
+                    original_length=len(text),
+                    scrubbed_text="",
+                    pii_types_found={},
+                    was_modified=True,
+                    blocked=True,
+                )
+            return ScrubResult(
+                original_length=len(text),
+                scrubbed_text=text,
+                pii_types_found={},
+                was_modified=False,
+            )
 
         if not found_types:
             # No PII detected — pass through unchanged

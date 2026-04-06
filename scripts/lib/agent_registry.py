@@ -19,9 +19,8 @@ Ref: specs/subagent-ext-agent.md §4.2, §6.1, EA-1a
 """
 from __future__ import annotations
 
-import copy
 import hashlib
-import json
+import logging
 import os
 import tempfile
 import time
@@ -29,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger("artha.agent_registry")
 
 try:
     import yaml
@@ -198,8 +199,8 @@ class AgentRegistry:
                 agent = _parse_agent(name, entry)
                 agents[name] = agent
             except (KeyError, ValueError, TypeError):
-                # Skip malformed entries — don't crash the whole registry
-                pass
+                _log.warning("Skipping malformed registry entry: %s", name,
+                             exc_info=True)
 
         return cls(
             registry_path=registry_path,

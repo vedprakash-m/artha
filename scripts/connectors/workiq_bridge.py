@@ -97,6 +97,45 @@ _QUERIES: dict[str, str] = {
     ),
 }
 
+# ── Rich prompt templates (narrative-first, no pipe-table constraints) ──────
+# Used when context_depth="rich" — preserves thread context, decision arcs,
+# urgency signals, and attendee roles that pipe-table format destroys.
+_RICH_QUERIES: dict[str, str] = {
+    "calendar": (
+        "List every meeting on my calendar for the next {lookback_days} days. "
+        "For each meeting include: title, date/time, duration, organizer name "
+        "and role, full attendee list with their roles/titles if known, "
+        "agenda items or pre-read links from the invite body, "
+        "any decision context or background from prior meetings in the same "
+        "series, and whether I accepted/declined/tentatively accepted. "
+        "Group by day. Be thorough — include every detail from the invite body."
+    ),
+    "email": (
+        "Summarize every important email thread from the last {lookback_days} days. "
+        "For each thread include: subject, sender and all participants, "
+        "the full discussion arc (who said what in what order), "
+        "any action items requested of me or by me, "
+        "urgency signals (deadlines mentioned, escalation language, exec involvement), "
+        "and links or attachments referenced. "
+        "Skip automated notifications, calendar accepts/declines, and newsletters. "
+        "Preserve the narrative — do NOT compress into single-line summaries."
+    ),
+    "teams": (
+        "Summarize every important Teams conversation from the last {lookback_days} days. "
+        "For each conversation include: channel or chat name, participants, "
+        "the full discussion arc with key quotes, "
+        "decisions made or pending, unresolved questions, "
+        "@mentions of me, action items assigned to me or by me, "
+        "and any links/files shared. "
+        "Skip trivial chats (greetings, acknowledgements). "
+        "Preserve the narrative flow — do NOT compress into single-line summaries."
+    ),
+    # people + documents + teams_ai already produce good free-form output
+    "people": _QUERIES["people"],
+    "documents": _QUERIES["documents"],
+    "teams_ai": _QUERIES.get("teams_ai", ""),
+}
+
 # Pre-filter patterns for email/Teams noise suppression
 _PREFILTER_PATTERNS: list[str] = [
     r"(?i)^no-reply@",
@@ -142,27 +181,42 @@ def _cache_key_for_mode(mode: str, **params) -> str:
     return f"workiq_{mode}"
 
 
-def _get_cached(mode: str, key: str, cache: dict) -> Optional[list]:
-    """Return cached data if still fresh, else None."""
+def _get_cached(
+    mode: str, key: str, cache: dict, *, include_raw: bool = False,
+) -> Optional[list] | tuple[Optional[list], Optional[str]]:
+    """Return cached data if still fresh, else None.
+
+    When *include_raw* is True, returns ``(records, raw_narrative)`` tuple
+    so callers in rich/two-pass mode can access the original WorkIQ prose.
+    """
     entry = cache.get(key)
     if not entry:
-        return None
+        return (None, None) if include_raw else None
     try:
         ts = datetime.fromisoformat(entry["cached_at"])
         age = (datetime.now(timezone.utc) - ts).total_seconds()
         if age < _CACHE_TTL.get(mode, 3600):
-            return entry.get("data", [])
+            records = entry.get("data", [])
+            if include_raw:
+                return records, entry.get("raw_narrative")
+            return records
     except (KeyError, ValueError):
         pass
-    return None
+    return (None, None) if include_raw else None
 
 
-def _set_cached(mode: str, key: str, data: list, cache: dict) -> None:
-    cache[key] = {
+def _set_cached(
+    mode: str, key: str, data: list, cache: dict, *,
+    raw_narrative: Optional[str] = None,
+) -> None:
+    payload: dict = {
         "mode": mode,
         "cached_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
+    if raw_narrative is not None:
+        payload["raw_narrative"] = raw_narrative
+    cache[key] = payload
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +538,24 @@ def _redact_replacement() -> str:
 # Public connector interface
 # ---------------------------------------------------------------------------
 
+def _ask_workiq_mcp(question: str) -> Optional[str]:
+    """Direct MCP path for interactive Copilot sessions.
+
+    When running inside a Copilot agent session the MCP tool
+    ``workiq-ask_work_iq`` can be invoked directly — bypassing the npx
+    subprocess entirely.  This is faster, more reliable, and preserves
+    richer response fidelity.
+
+    Returns the raw response string, or *None* if the MCP path is
+    unavailable (e.g. running in batch mode from ``work_loop.py``).
+    """
+    # Stub — the MCP tool is only callable from the Copilot agent runtime.
+    # In batch/CLI contexts this always returns None so the subprocess path
+    # is used instead.  A future integration layer will detect the runtime
+    # and delegate automatically.
+    return None
+
+
 def fetch(
     *,
     since: str = "",
@@ -496,17 +568,23 @@ def fetch(
     start_date: str = "",
     end_date: str = "",
     person_name: str = "",
+    context_depth: str = "brief",
     **kwargs: Any,
 ) -> Iterator[dict]:
     """Fetch work M365 data via WorkIQ.
 
     Args:
-        mode:         One of: calendar | email | teams | people | documents
-        lookback:     Hours to look back (email, teams).  Default "48".
+        mode:          One of: calendar | email | teams | people | documents
+        lookback:      Hours to look back (email, teams).  Default "48".
         lookback_days: Days to look back (documents, calendar fallback).
-        start_date:   YYYY-MM-DD — calendar range start (default: today).
-        end_date:     YYYY-MM-DD — calendar range end (default: today + 6d).
-        person_name:  Name to look up (required for mode=people).
+        start_date:    YYYY-MM-DD — calendar range start (default: today).
+        end_date:      YYYY-MM-DD — calendar range end (default: today + 6d).
+        person_name:   Name to look up (required for mode=people).
+        context_depth: "brief" (default, backward-compatible pipe-table) or
+                       "rich" (two-pass: narrative + structured).  "rich"
+                       caches the full WorkIQ narrative alongside parsed
+                       records so downstream consumers can access the
+                       uncompressed context.
     """
     redact_kws = _redact_keywords()
     repl = _redact_replacement()
@@ -525,11 +603,42 @@ def fetch(
         mode, start_date=start_date, end_date=end_date, person_name=person_name,
     )
 
-    cached = _get_cached(mode, cache_key, cache)
-    if cached is not None:
-        for record in cached:
-            yield record
-        return
+    # ------------------------------------------------------------------
+    # Determine whether to use rich (narrative-first) or brief (pipe-table)
+    # prompts.  Rich mode = two-pass: first a narrative call (cached as
+    # raw_narrative), then a structured call for parseable records.
+    # ------------------------------------------------------------------
+    use_rich = context_depth == "rich" and mode in _RICH_QUERIES
+    query_bank = _RICH_QUERIES if use_rich else _QUERIES
+
+    # Try MCP direct path first (interactive sessions only)
+    use_mcp = kwargs.get("use_mcp", False)
+
+    # Cache — in rich mode also return any stored narrative
+    if use_rich:
+        cache_result = _get_cached(mode, cache_key, cache, include_raw=True)
+        if cache_result is not None:
+            cached_records, _cached_narrative = cache_result
+            if cached_records is not None:
+                for record in cached_records:
+                    yield record
+                return
+    else:
+        cached = _get_cached(mode, cache_key, cache)
+        if cached is not None:
+            for record in cached:
+                yield record
+            return
+
+    raw_narrative: Optional[str] = None  # populated by rich pass 1
+
+    def _call_workiq(question: str) -> str:
+        """Call WorkIQ via MCP (if available) or subprocess fallback."""
+        if use_mcp:
+            mcp_result = _ask_workiq_mcp(question)
+            if mcp_result is not None:
+                return mcp_result
+        return _ask_workiq(question)
 
     # Build query from template
     if mode == "teams_ai":
@@ -542,7 +651,7 @@ def fetch(
                 channel_name=ch_name, lookback_days=lookback_days,
             )
             try:
-                ch_raw = _ask_workiq(ch_query)
+                ch_raw = _call_workiq(ch_query)
             except (RuntimeError, subprocess.TimeoutExpired) as exc:
                 print(f"[workiq_bridge] teams_ai channel {ch_name!r} failed: {exc}",
                       file=sys.stderr)
@@ -552,31 +661,74 @@ def fetch(
     else:
         # Standard single-query modes
         if mode == "calendar":
-            query = _QUERIES["calendar"].format(start_date=start_date, end_date=end_date)
+            query = query_bank["calendar"].format(start_date=start_date, end_date=end_date)
         elif mode == "email":
-            query = _QUERIES["email"].format(lookback=lookback)
+            query = query_bank["email"].format(lookback=lookback)
         elif mode == "teams":
-            query = _QUERIES["teams"].format(lookback=lookback)
+            query = query_bank["teams"].format(lookback=lookback)
         elif mode == "people":
             if not person_name:
                 return
-            query = _QUERIES["people"].format(person_name=person_name)
+            query = query_bank["people"].format(person_name=person_name)
         elif mode == "documents":
-            query = _QUERIES["documents"].format(lookback_days=lookback_days)
+            query = query_bank["documents"].format(lookback_days=lookback_days)
         else:
             raise ValueError(f"[workiq_bridge] Unknown mode: {mode!r}")
 
-        try:
-            raw = _ask_workiq(query)
-        except RuntimeError as exc:
-            print(f"[workiq_bridge] fetch failed ({mode}): {exc}", file=sys.stderr)
-            return
-        except subprocess.TimeoutExpired:
-            print(
-                f"[workiq_bridge] WorkIQ timed out after {SUBPROCESS_TIMEOUT}s ({mode})",
-                file=sys.stderr,
-            )
-            return
+        # ---- Two-pass prompting (rich mode) ----
+        # Pass 1: narrative call with rich prompt → raw_narrative
+        # Pass 2: structured call with pipe-table prompt → records
+        if use_rich:
+            try:
+                raw_narrative = _call_workiq(query)
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                print(f"[workiq_bridge] rich pass-1 failed ({mode}): {exc}",
+                      file=sys.stderr)
+                # Graceful degradation: fall through to structured-only
+
+            # Pass 2 always uses the structured _QUERIES template
+            structured_query: str
+            if mode == "calendar":
+                structured_query = _QUERIES["calendar"].format(
+                    start_date=start_date, end_date=end_date)
+            elif mode == "email":
+                structured_query = _QUERIES["email"].format(lookback=lookback)
+            elif mode == "teams":
+                structured_query = _QUERIES["teams"].format(lookback=lookback)
+            elif mode == "people":
+                structured_query = _QUERIES["people"].format(person_name=person_name)
+            elif mode == "documents":
+                structured_query = _QUERIES["documents"].format(
+                    lookback_days=lookback_days)
+            else:
+                structured_query = query  # fallback
+
+            try:
+                raw = _call_workiq(structured_query)
+            except RuntimeError as exc:
+                print(f"[workiq_bridge] rich pass-2 failed ({mode}): {exc}",
+                      file=sys.stderr)
+                return
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[workiq_bridge] WorkIQ timed out on pass-2 ({mode})",
+                    file=sys.stderr,
+                )
+                return
+        else:
+            # ---- Single-pass (brief mode, backward-compatible) ----
+            try:
+                raw = _call_workiq(query)
+            except RuntimeError as exc:
+                print(f"[workiq_bridge] fetch failed ({mode}): {exc}",
+                      file=sys.stderr)
+                return
+            except subprocess.TimeoutExpired:
+                print(
+                    f"[workiq_bridge] WorkIQ timed out after {SUBPROCESS_TIMEOUT}s ({mode})",
+                    file=sys.stderr,
+                )
+                return
 
         # Parse
         records = []
@@ -589,7 +741,7 @@ def fetch(
                     "Each line must have exactly 7 fields separated by pipes."
                 )
                 try:
-                    raw2 = _ask_workiq(explicit_query)
+                    raw2 = _call_workiq(explicit_query)
                     records = _parse_calendar(raw2, redact_kws)
                     if not records:
                         print(
@@ -612,8 +764,8 @@ def fetch(
         for r in records:
             r.setdefault("source", source_tag)
 
-    # Cache and yield
-    _set_cached(mode, cache_key, records, cache)
+    # Cache and yield — include raw_narrative when available
+    _set_cached(mode, cache_key, records, cache, raw_narrative=raw_narrative)
     _save_cache(cache)
 
     for record in records:

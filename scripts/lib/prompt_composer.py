@@ -8,6 +8,7 @@ The main entry-point is PromptComposer.compose().
 
 from __future__ import annotations
 
+import logging
 import textwrap
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -50,6 +51,11 @@ _DELEGATION_TEMPLATE = textwrap.dedent("""\
 """)
 
 _NO_CONTEXT_PLACEHOLDER = "(No additional context available for this trust tier.)"
+
+# Safety limit for query length in delegation prompts (chars).
+_MAX_QUERY_CHARS = 8_000
+
+_log = logging.getLogger("artha.prompt_composer")
 
 # ---------------------------------------------------------------------------
 # Fragment priority for context budget trimming (spec §4.4)
@@ -228,8 +234,15 @@ class PromptComposer:
             if self._agent.invocation
             else 5000
         )
+        # Sanitise user query: escape braces to prevent str.format() crashes,
+        # and cap length to avoid unbounded prompt expansion.
+        safe_query = query.strip().replace("{", "{{").replace("}", "}}")
+        if len(safe_query) > _MAX_QUERY_CHARS:
+            safe_query = safe_query[:_MAX_QUERY_CHARS] + " …(truncated)"
+            _log.debug("Query truncated from %d to %d chars",
+                       len(query), _MAX_QUERY_CHARS)
         prompt = _DELEGATION_TEMPLATE.format(
-            user_question=query.strip(),
+            user_question=safe_query,
             scrubbed_context=context_str,
             budget=budget,
             max_response_chars=max_response,
