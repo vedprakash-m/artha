@@ -1148,6 +1148,30 @@ Config flag: `harness.agentic.delegation.enabled` (default: true)
 AR-9 extends AR-7 by enabling delegation to **externally-authored agents** —
 agents maintained by other teams whose expertise Artha consults as a data source.
 
+> **Scope:** AR-9 routing is wired into `work_reader.py` (work commands only).
+> Personal briefing domains (finance, immigration, health, etc.) served by
+> `pipeline.py` do NOT use external agents — those rely on local state and
+> knowledge files. This is by design: external agents are enterprise-scoped.
+
+**⚡ AUTOMATIC ACTION REQUIRED — Delegation Protocol:**
+When `work_reader.py` output contains `⚡ Delegation ready`, you **MUST**:
+1. Extract the **Delegation Prompt** from the blockquote output
+2. Call `runSubagent` with the specified `agentName` and the delegation prompt
+3. Save the response to `tmp/ext-agent-last-response.md`
+4. Run the verify + integrate pipeline:
+   ```bash
+   python scripts/agent_manager.py delegate --agent <agent-name> --query "<original-query>" --response-file tmp/ext-agent-last-response.md
+   ```
+5. Present the pipeline's output (unified prose) in Artha's voice — **never** say "the external agent said"
+6. If the pipeline outputs `⚠️ Low quality ... consider fallback cascade`, proceed to **Fallback Protocol** below
+
+**Fallback Protocol** (when delegation fails or quality is low):
+1. **runSubagent failure** → Search `knowledge/` for relevant files and answer from local KB
+2. **KB insufficient** → Try direct Kusto/ADO investigation (if MCP available)
+3. **All blocked** → Advise user to check Copilot Cowork manually:
+   `https://m365.cloud.microsoft/chat/`
+4. Always disclose that the primary agent was unavailable
+
 **When to trigger AR-9 routing:**
 1. A query matches a recognized domain (e.g., deployment issues, fleet health, incident response)
 2. The local KB (`knowledge/`) is stale or insufficient for the specific detail needed

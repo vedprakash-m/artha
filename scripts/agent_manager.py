@@ -971,12 +971,27 @@ def cmd_delegate(
         )
     except Exception as exc:
         print(f"⚠️ Health recording skipped: {exc}", file=sys.stderr)
+        health_tracker = None  # type: ignore[assignment]
+
+    # Step 5b: Record weak query pattern if quality is low (EA-13a)
+    if health_tracker is not None:
+        try:
+            health_tracker.maybe_record_weak_query(agent_name, query, quality_score)
+        except Exception as exc:
+            print(f"⚠️ Weak query recording skipped: {exc}", file=sys.stderr)
 
     # Output: unified prose + quality metadata
     print(integration.unified_prose)
     print(f"\n> Quality: {quality_score:.2f} | "
           f"Confidence: {integration.confidence_label} | "
           f"KB corroborations: {len(integration.kb_corroborations)}")
+
+    # Fallback advisory for low-quality responses (EA-5b)
+    if quality_score < 0.4 and agent.fallback_cascade:
+        cascade_types = [fc.type for fc in agent.fallback_cascade]
+        print(f"\n> ⚠️ Low quality ({quality_score:.2f}) — "
+              f"consider fallback cascade: {', '.join(cascade_types)}")
+
     return 0
 
 

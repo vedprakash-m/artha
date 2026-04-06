@@ -226,6 +226,10 @@ class AgentHealthTracker:
         # Persist changes
         # ----------------------------------------------------------
         self._registry.update_health(agent_name, health)
+        try:
+            self._registry.save()
+        except Exception:  # pragma: no cover — non-blocking persistence
+            _log.debug("Registry save failed after health update", exc_info=True)
 
         # EA-10a: append invocation metric record
         if _write_invocation_metric is not None:
@@ -299,6 +303,10 @@ class AgentHealthTracker:
             if len(scores) > 20:
                 health.keyword_quality[kw] = scores[-20:]
         self._registry.update_health(agent_name, health)
+        try:
+            self._registry.save()
+        except Exception:  # pragma: no cover
+            _log.debug("Registry save failed after keyword quality update", exc_info=True)
 
     # EA-13a: known weak area recording
     _WEAK_QUALITY_THRESHOLD: float = 0.3
@@ -326,6 +334,10 @@ class AgentHealthTracker:
             if len(health.weak_queries) > 50:
                 health.weak_queries = health.weak_queries[-50:]
         self._registry.update_health(agent_name, health)
+        try:
+            self._registry.save()
+        except Exception:  # pragma: no cover
+            _log.debug("Registry save failed after weak query update", exc_info=True)
 
     def maybe_record_weak_query(
         self,
@@ -363,6 +375,10 @@ class AgentHealthTracker:
             health.cache_hits_by_cluster.get(cluster_keyword, 0) + 1
         )
         self._registry.update_health(agent_name, health)
+        try:
+            self._registry.save()
+        except Exception:  # pragma: no cover
+            _log.debug("Registry save failed after cache hit cluster update", exc_info=True)
 
     # ------------------------------------------------------------------
     # Helpers
