@@ -1153,20 +1153,35 @@ agents maintained by other teams whose expertise Artha consults as a data source
 2. The local KB (`knowledge/`) is stale or insufficient for the specific detail needed
 3. Config flag `harness.agentic.external_agents.routing.enabled: true`
 
-**Routing check (run before answering a domain-specific question):**
-```bash
-python scripts/agent_manager.py route "<user query>"
+**Routing is automatic** — `work_reader.py` probes the agent router on every
+query-bearing command. If a registered agent matches with sufficient confidence,
+the user is prompted for consent:
 ```
-If output shows `dispatched: true` and `confidence >= min_confidence`, proceed with
-external delegation. Otherwise, answer from local KB.
+🤖 I can consult Storage Deployment Expert to help answer this. Proceed? [y/N]
+```
+If confirmed (or `auto_dispatch: true` in the agent definition), the full
+delegation pipeline runs inline:
 
 **Delegation flow:**
-1. `agent_manager.py route` selects the best-matching registered agent
-2. Compose context at the agent's trust tier (PUBLIC / SCOPED — never PRIVATE)
-3. Invoke via `runSubagent` with the composed delegation prompt
-4. Verify the response (injection scan + KB cross-check)
-5. Enrich with Artha context (sprint impact, workitem IDs, deadlines)
-6. Deliver unified answer in Artha's voice — **never** say "the external agent said"
+1. **Route** — `AgentRouter.route(query)` selects the best-matching registered agent
+2. **Compose** — `PromptComposer` builds a scrubbed prompt at the agent's trust tier (PUBLIC / SCOPED — never PRIVATE)
+3. **Invoke** — `invoke_with_fallback()` calls the agent via `runSubagent` with automatic retry + fallback cascade
+4. **Verify** — `ResponseVerifier` runs injection scan + KB cross-check on the response
+5. **Integrate** — `ResponseIntegrator` enriches with Artha context (sprint impact, workitem IDs, deadlines) and builds Expert Consensus block
+6. **Deliver** unified answer in Artha's voice — **never** say "the external agent said"
+
+**Live orchestration (how AR-9 runs in practice):**
+Steps 1-2 happen automatically inside `work_reader.py` — when a query matches an
+external agent and the user consents, `work_reader.py` outputs a **Delegation Prompt**
+block.  Then:
+1. Call `runSubagent` with the agent name and the rendered Delegation Prompt
+2. Save the response to a temp file and run the post-invocation pipeline:
+   ```bash
+   python scripts/agent_manager.py delegate --agent <name> --query "<query>" --response-file /tmp/response.txt
+   ```
+   Or pipe it: `echo "<response>" | python scripts/agent_manager.py delegate --agent <name> --query "<query>"`
+3. The pipeline verifies (injection + KB), scores, integrates, caches, and records health
+4. Present the unified output in Artha's voice
 
 **Trust tiers (what context each agent receives):**
 - `owned` — full state access (e.g., `artha-work-msft`)
@@ -1186,6 +1201,7 @@ external delegation. Otherwise, answer from local KB.
 - `python scripts/agent_manager.py discover` — scan `config/agents/external/` for new agents
 - `python scripts/agent_manager.py retire <name>` — disable an agent
 - `python scripts/agent_manager.py refresh-cache <name>` — force fresh invocation
+- `python scripts/agent_manager.py delegate --agent <name> --query "<q>"` — post-invocation pipeline
 
 **Observability:**
 - `python scripts/eval_runner.py --agents` — invocation metrics per agent

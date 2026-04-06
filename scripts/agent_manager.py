@@ -15,6 +15,7 @@ Commands:
   discover              — scan drop folder, show unregistered agent files
   health [name]         — show health metrics (all agents or specific agent)
   validate              — validate registry YAML integrity
+  delegate              — run post-invocation pipeline (verify + integrate + cache)
 
 CLI:
   python scripts/agent_manager.py list
@@ -28,6 +29,7 @@ CLI:
   python scripts/agent_manager.py health
   python scripts/agent_manager.py health storage-deployment-expert
   python scripts/agent_manager.py validate
+  python scripts/agent_manager.py delegate --agent storage-deployment-expert --query "SDP stuck"
 """
 from __future__ import annotations
 
@@ -641,6 +643,100 @@ def cmd_refresh_cache(name: str) -> int:
         return 0
 
 
+def cmd_info(name: str) -> int:
+    """Show detailed info for a single agent (spec Appendix C: --info)."""
+    reg = _load_registry()
+    if reg is None:
+        return 1
+
+    agent = reg.get(name)
+    if agent is None:
+        print(f"⛔ Agent not found: {name}", file=sys.stderr)
+        return 1
+
+    label = getattr(agent, "label", name)
+    desc = getattr(agent, "description", "")
+    trust = getattr(agent, "trust_tier", "external")
+    status = getattr(agent, "status", "unknown")
+    enabled = getattr(agent, "enabled", False)
+    source = getattr(agent, "source", "")
+    auto_d = getattr(agent, "auto_dispatch", False)
+    shadow = getattr(agent, "shadow_mode", False)
+
+    print(f"\n{'Agent Info':^60}")
+    print("═" * 60)
+    print(f"  Name:         {name}")
+    print(f"  Label:        {label}")
+    print(f"  Status:       {status} {'(enabled)' if enabled else '(disabled)'}")
+    print(f"  Trust tier:   {trust}")
+    print(f"  Auto-dispatch:{auto_d}")
+    print(f"  Shadow mode:  {shadow}")
+    print(f"  Source:       {source}")
+    if desc:
+        print(f"  Description:  {desc.strip()[:200]}")
+
+    # Routing
+    routing = getattr(agent, "routing", None)
+    if routing:
+        kw = getattr(routing, "keywords", []) or []
+        domains = getattr(routing, "domains", []) or []
+        min_conf = getattr(routing, "min_confidence", 0.0)
+        min_hits = getattr(routing, "min_keyword_hits", 1)
+        exclude = getattr(routing, "exclude_keywords", []) or []
+        print(f"\n  Routing:")
+        print(f"    Keywords ({len(kw)}): {', '.join(kw[:8])}{'…' if len(kw) > 8 else ''}")
+        print(f"    Domains:        {', '.join(domains)}")
+        print(f"    Min confidence: {min_conf}")
+        print(f"    Min keyword hits: {min_hits}")
+        if exclude:
+            print(f"    Exclude:        {', '.join(exclude)}")
+
+    # Invocation
+    inv = getattr(agent, "invocation", None)
+    if inv:
+        print(f"\n  Invocation:")
+        print(f"    Timeout:        {getattr(inv, 'timeout_seconds', 60)}s")
+        print(f"    Max budget:     {getattr(inv, 'max_budget', 10)}")
+        print(f"    Max response:   {getattr(inv, 'max_response_chars', 4000)} chars")
+
+    # PII profile
+    pii = getattr(agent, "pii_profile", None)
+    if pii:
+        allow = getattr(pii, "allow", []) or []
+        block = getattr(pii, "block", []) or []
+        print(f"\n  PII profile:")
+        print(f"    Allow: {', '.join(allow) if allow else '(none)'}")
+        if block:
+            print(f"    Block: {', '.join(block)}")
+
+    # Fallback
+    cascade = getattr(agent, "fallback_cascade", []) or []
+    if cascade:
+        fb_types = []
+        for fb in cascade:
+            fb_types.append(fb.get("type", "?") if isinstance(fb, dict) else getattr(fb, "type", "?"))
+        print(f"\n  Fallback cascade: {' → '.join(fb_types)}")
+
+    # Health summary
+    health = getattr(agent, "health", None)
+    if health:
+        total = getattr(health, "total_invocations", 0)
+        quality = getattr(health, "mean_quality_score", 0.0)
+        h_status = getattr(health, "status", "unknown")
+        print(f"\n  Health:       {h_status} | {total} invocations | quality {quality:.2f}")
+
+    # Cache
+    cache_file = _CACHE_DIR / f"{name}.md"
+    if cache_file.exists():
+        size = cache_file.stat().st_size
+        print(f"  Cache:        {size:,} bytes")
+    else:
+        print(f"  Cache:        none")
+
+    print()
+    return 0
+
+
 def cmd_health(name: Optional[str] = None) -> int:
     """Show health metrics for all agents or a specific agent.
 
@@ -758,6 +854,133 @@ def cmd_validate() -> int:
 
 
 # ---------------------------------------------------------------------------
+# cmd_delegate — AR-9 Post-invocation pipeline
+# ---------------------------------------------------------------------------
+
+def cmd_delegate(
+    agent_name: str,
+    query: str,
+    response_file: str | None = None,
+) -> int:
+    """Run the post-invocation pipeline: verify → score → integrate → cache → health.
+
+    Reads the agent response from *response_file* (or stdin if None/"-").
+    Outputs the final unified prose to stdout.
+
+    Returns 0 on success, 1 on failure.
+    """
+    reg = _load_registry()
+    if reg is None:
+        return 1
+
+    agent = reg.get(agent_name)
+    if agent is None:
+        print(f"⛔ Agent not found: {agent_name}", file=sys.stderr)
+        return 1
+
+    # Read agent response
+    if response_file and response_file != "-":
+        try:
+            response_text = Path(response_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"⛔ Cannot read response file: {exc}", file=sys.stderr)
+            return 1
+    else:
+        import io
+        response_text = sys.stdin.read()
+
+    if not response_text.strip():
+        print("⛔ Empty response — nothing to verify.", file=sys.stderr)
+        return 1
+
+    try:
+        from lib.response_verifier import ResponseVerifier  # noqa: PLC0415
+        from lib.agent_scorer import score_agent_response   # noqa: PLC0415
+        from lib.response_integrator import ResponseIntegrator  # noqa: PLC0415
+        from lib.knowledge_extractor import KnowledgeExtractor  # noqa: PLC0415
+        from lib.agent_health import AgentHealthTracker  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ Missing pipeline module: {exc}", file=sys.stderr)
+        return 1
+
+    _knowledge_dir = str(_REPO_ROOT / "knowledge")
+    _cache_dir = str(_CACHE_DIR)
+
+    # Step 1: Verify (injection scan + KB cross-check)
+    verifier = ResponseVerifier(knowledge_dir=_knowledge_dir)
+    injection_clean, kb_check = verifier.verify(response_text, query)
+
+    if not injection_clean:
+        print("⛔ Injection detected in agent response — discarding.", file=sys.stderr)
+        # Record the injection event
+        try:
+            health_tracker = AgentHealthTracker(registry=reg)
+            health_tracker.record_invocation(
+                agent_name=agent_name,
+                success=False,
+                latency_ms=0,
+                quality_score=0.0,
+                injection_detected=True,
+            )
+        except Exception:
+            pass
+        return 1
+
+    # Step 2: Score
+    quality_score = score_agent_response(response_text, query, kb_check=kb_check)
+
+    # Step 3: Integrate
+    from lib.agent_invoker import AgentResult  # noqa: PLC0415
+    from datetime import datetime, timezone as tz  # noqa: PLC0415
+    agent_result = AgentResult(
+        agent_name=agent_name,
+        response=response_text,
+        invoked_at=datetime.now(tz.utc),
+        latency_ms=0,
+    )
+    integrator = ResponseIntegrator()
+    integration = integrator.integrate(
+        agent=agent,
+        agent_result=agent_result,
+        kb_check=kb_check,
+    )
+
+    # Step 4: Cache high-quality responses
+    try:
+        extractor = KnowledgeExtractor(
+            cache_dir=_cache_dir,
+            agent_name=agent_name,
+        )
+        extractor.extract_and_cache(
+            response=response_text,
+            query=query,
+            quality_score=quality_score,
+        )
+    except Exception as exc:
+        # Non-blocking — caching failure doesn't break the pipeline
+        print(f"⚠️ Cache write skipped: {exc}", file=sys.stderr)
+
+    # Step 5: Record health metrics
+    try:
+        health_tracker = AgentHealthTracker(registry=reg)
+        health_tracker.record_invocation(
+            agent_name=agent_name,
+            success=True,
+            latency_ms=0,
+            quality_score=quality_score,
+        )
+    except Exception as exc:
+        print(f"⚠️ Health recording skipped: {exc}", file=sys.stderr)
+
+    # Output: unified prose + quality metadata
+    print(integration.unified_prose)
+    print(f"\n> Quality: {quality_score:.2f} | "
+          f"Confidence: {integration.confidence_label} | "
+          f"KB corroborations: {len(integration.kb_corroborations)}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -822,8 +1045,24 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_health = subparsers.add_parser("health", help="Show health metrics")
     p_health.add_argument("name", nargs="?", default=None, help="Agent name (optional)")
 
+    # info
+    p_info = subparsers.add_parser("info", help="Show detailed info for one agent")
+    p_info.add_argument("name", help="Agent name")
+
     # validate
     subparsers.add_parser("validate", help="Validate registry YAML integrity")
+
+    # delegate (post-invocation pipeline)
+    p_delegate = subparsers.add_parser(
+        "delegate",
+        help="Run post-invocation pipeline (verify + score + integrate + cache + health)",
+    )
+    p_delegate.add_argument("--agent", required=True, help="Agent name")
+    p_delegate.add_argument("--query", required=True, help="Original user query")
+    p_delegate.add_argument(
+        "--response-file", default=None,
+        help="Path to file with agent response (reads stdin if omitted)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -848,8 +1087,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_refresh_cache(args.name)
     elif args.command == "health":
         return cmd_health(name=getattr(args, "name", None))
+    elif args.command == "info":
+        return cmd_info(args.name)
     elif args.command == "validate":
         return cmd_validate()
+    elif args.command == "delegate":
+        return cmd_delegate(
+            agent_name=args.agent,
+            query=args.query,
+            response_file=getattr(args, "response_file", None),
+        )
     else:
         parser.print_help()
         return 1
