@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -342,6 +343,14 @@ def cmd_discover() -> int:
         print(f"\n{len(unregistered)} unregistered agent(s). Run: python scripts/agent_manager.py register")
     else:
         print("\nAll agents registered ✓")
+    # EAR-4 / R9: Auto-recompute TF-IDF vectors (catches any retirements above)
+    try:
+        from lib.tfidf_router import TFIDFRouter  # noqa: PLC0415
+        _fresh = _load_registry()
+        if _fresh is not None:
+            TFIDFRouter().rebuild(_fresh)
+    except Exception:
+        pass  # Non-blocking
     return 0
 
 
@@ -474,6 +483,14 @@ def cmd_register(file_path: Optional[str] = None, force: bool = False) -> int:
     if registered_count > 0 or updated_count > 0:
         if not _save_registry(reg):
             return 1
+        # EAR-4 / R9: Auto-recompute TF-IDF vectors after registry change
+        try:
+            from lib.tfidf_router import TFIDFRouter  # noqa: PLC0415
+            _fresh = _load_registry()
+            if _fresh is not None:
+                TFIDFRouter().rebuild(_fresh)
+        except Exception:
+            pass  # Non-blocking
 
     summary_parts = [f"Registered {registered_count}"]
     if updated_count:
@@ -537,7 +554,12 @@ def cmd_retire(name: str) -> int:
 
 
 def cmd_reinstate(name: str) -> int:
-    """Restore a suspended or degraded agent to active status."""
+    """Restore a suspended, degraded, or retired agent.
+
+    For retired agents (EAR-8 amendment): resets quality history to baseline
+    (0.5) and transitions to 'degraded' for a probationary period, rather
+    than directly to 'active'.  Audit trail records the reinstatement.
+    """
     reg = _load_registry()
     if reg is None:
         return 1
@@ -556,18 +578,40 @@ def cmd_reinstate(name: str) -> int:
             print(f"⛔ Agent not found: {name}", file=sys.stderr)
             return 1
         agent = reg._agents[name]
+        was_retired = getattr(agent, "status", "") == "retired" or (
+            hasattr(agent, "health") and agent.health
+            and getattr(agent.health, "status", "") == "retired"
+        )
         agent.enabled = True
-        agent.status = "active"
-        if hasattr(agent, "health") and agent.health:
-            agent.health.status = "active"
-            agent.health.consecutive_failures = 0
+        if was_retired:
+            # EAR-8 amendment: retired agents → degraded (probationary), not active
+            target_status = "degraded"
+            if hasattr(agent, "health") and agent.health:
+                agent.health.status = "degraded"
+                agent.health.consecutive_failures = 0
+                # Reset quality history to neutral baseline (0.5)
+                agent.health.mean_quality_score = 0.5
+                agent.health.total_invocations = 0
+        else:
+            target_status = "active"
+            if hasattr(agent, "health") and agent.health:
+                agent.health.status = "active"
+                agent.health.consecutive_failures = 0
+        agent.status = target_status
     else:
         print("⛔ Registry does not support reinstate operation", file=sys.stderr)
         return 1
 
     if not _save_registry(reg):
         return 1
-    print(f"✓ Reinstated agent: {name} → active")
+    _final_status = getattr(reg._agents.get(name, {}), "status", "active") if hasattr(reg, "_agents") else "active"
+    print(f"✓ Reinstated agent: {name} → {_final_status}")
+    # Log reinstatement to audit trail (non-blocking)
+    try:
+        from lib.ext_agent_audit import write_ext_agent_event  # noqa: PLC0415
+        write_ext_agent_event("AGENT_REINSTATED", name, f"target_status={_final_status}")
+    except Exception:
+        pass
     return 0
 
 
@@ -854,6 +898,152 @@ def cmd_validate() -> int:
 
 
 # ---------------------------------------------------------------------------
+# EAR new CLI commands
+# ---------------------------------------------------------------------------
+
+def cmd_clear_memory(agent_name: str) -> int:
+    """EAR-1 / R1 mitigation: Delete all persisted memory for an agent."""
+    try:
+        from lib.agent_memory import AgentMemory  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ agent_memory module unavailable: {exc}", file=sys.stderr)
+        return 1
+    mem = AgentMemory(agent_name=agent_name)
+    mem.clear()
+    print(f"✓ Memory cleared for agent: {agent_name}")
+    return 0
+
+
+def cmd_show_corrections(agent_name: str) -> int:
+    """EAR-12 / R8 mitigation: Display all persisted corrections for an agent."""
+    try:
+        from lib.correction_tracker import CorrectionTracker  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ correction_tracker module unavailable: {exc}", file=sys.stderr)
+        return 1
+    tracker = CorrectionTracker(agent_name=agent_name)
+    corrections = tracker.load_corrections()
+    if not corrections:
+        print(f"ℹ️  No corrections stored for agent: {agent_name}")
+        return 0
+    print(f"Corrections for {agent_name} ({len(corrections)} total):\n")
+    for i, c in enumerate(corrections, 1):
+        print(f"  [{i}] [{c.timestamp_iso}] {c.entity}")
+        print(f"       Wrong: {c.wrong}")
+        print(f"       Correct: {c.correct}")
+        print(f"       Source: {c.source}")
+        print()
+    return 0
+
+
+def cmd_rebuild_vectors() -> int:
+    """EAR-4 / R9 mitigation: Rebuild TF-IDF route vectors from current registry."""
+    try:
+        from lib.tfidf_router import TFIDFRouter  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ tfidf_router module unavailable: {exc}", file=sys.stderr)
+        return 1
+    reg = _load_registry()
+    if reg is None:
+        return 1
+    router = TFIDFRouter()
+    count = router.rebuild(reg)
+    print(f"✓ TF-IDF vectors rebuilt for {count} agent(s)")
+    return 0
+
+
+def cmd_health_sync() -> int:
+    """R-14: Aggregate health shard JSONL back into the registry YAML."""
+    reg = _load_registry()
+    if reg is None:
+        return 1
+    if not hasattr(reg, "_agents"):
+        print("⛔ Registry does not support health sync", file=sys.stderr)
+        return 1
+    try:
+        from lib.health_shard import HealthShard  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ health_shard module unavailable: {exc}", file=sys.stderr)
+        return 1
+    shard = HealthShard()
+    synced = 0
+    for agent_name in list(reg._agents.keys()):
+        try:
+            summary = shard.aggregate(agent_name)
+            agent = reg._agents[agent_name]
+            if hasattr(agent, "health") and agent.health:
+                health = agent.health
+                # Only update if shard has observations
+                if summary.total_invocations > 0:
+                    health.total_invocations = summary.total_invocations
+                    health.mean_quality_score = summary.mean_quality_score
+                    health.consecutive_failures = summary.consecutive_failures
+                    synced += 1
+        except Exception:
+            continue
+    if not _save_registry(reg):
+        return 1
+    print(f"✓ Health shard synced for {synced} agent(s)")
+    return 0
+
+
+def cmd_chain(chain_name: str, query: str) -> int:
+    """EAR-2: Execute a named agent chain by name."""
+    try:
+        from lib.agent_chainer import load_all_chains, AgentChainer  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ agent_chainer module unavailable: {exc}", file=sys.stderr)
+        return 1
+    chains_dir = _REPO_ROOT / "config" / "agents" / "chains"
+    chains = load_all_chains(chains_dir)
+    target = next((c for c in chains if c.name == chain_name), None)
+    if target is None:
+        print(f"⛔ Chain not found: {chain_name!r} (looked in {chains_dir})", file=sys.stderr)
+        available = [c.name for c in chains]
+        if available:
+            print(f"   Available: {', '.join(available)}", file=sys.stderr)
+        return 1
+    reg = _load_registry()
+    if reg is None:
+        return 1
+    chainer = AgentChainer(registry=reg)
+    result = chainer.execute(chain=target, query=query)
+    print(result.final_prose or "(no output)")
+    print(f"\n> Chain quality: {result.chain_quality:.2f} | "
+          f"Steps completed: {result.steps_completed}/{result.total_steps} | "
+          f"Status: {result.chain_status}")
+    return 0 if result.chain_status in ("success", "partial") else 1
+
+
+def cmd_fanout(query: str, top_n: int = 3) -> int:
+    """EAR-5: Fan-out query to top-N domain-independent agents in parallel."""
+    try:
+        from lib.fan_out import FanOut  # noqa: PLC0415
+        from lib.agent_router import AgentRouter  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ fan_out/agent_router module unavailable: {exc}", file=sys.stderr)
+        return 1
+    reg = _load_registry()
+    if reg is None:
+        return 1
+    cache_dir = str(_CACHE_DIR)
+    router = AgentRouter(reg, cache_dir)
+    matches = router.route_multi(query=query, top_n=top_n)
+    if not matches:
+        print("ℹ️  No matching agents found for fan-out query")
+        return 0
+    fan = FanOut(registry=reg)
+    result = fan.execute(query=query, matches=matches)
+    print(result.synthesis or "(no synthesis output)")
+    print(f"\n> Fan-out agents: {len(result.invocation_results)} | "
+          f"Combined confidence: {result.combined_confidence:.2f}")
+    if result.errors:
+        for err in result.errors:
+            print(f"⚠️ {err}", file=sys.stderr)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # cmd_delegate — AR-9 Post-invocation pipeline
 # ---------------------------------------------------------------------------
 
@@ -867,8 +1057,16 @@ def cmd_delegate(
     Reads the agent response from *response_file* (or stdin if None/"-").
     Outputs the final unified prose to stdout.
 
+    BLOCKING-1 (R-12): generates invocation_id at the very start and threads
+    it through all pipeline stages.  Emits a pipeline_trace record to
+    tmp/ext-agent-trace.jsonl on completion.
+
     Returns 0 on success, 1 on failure.
     """
+    import hashlib
+    import time as _time
+    import uuid
+
     reg = _load_registry()
     if reg is None:
         return 1
@@ -877,6 +1075,11 @@ def cmd_delegate(
     if agent is None:
         print(f"⛔ Agent not found: {agent_name}", file=sys.stderr)
         return 1
+
+    # BLOCKING-1: Generate invocation_id at pipeline start
+    invocation_id = str(uuid.uuid4())
+    pipeline_start = _time.monotonic()
+    query_hash = hashlib.sha256(query.encode("utf-8", errors="replace")).hexdigest()[:12]
 
     # Read agent response
     if response_file and response_file != "-":
@@ -899,6 +1102,7 @@ def cmd_delegate(
         from lib.response_integrator import ResponseIntegrator  # noqa: PLC0415
         from lib.knowledge_extractor import KnowledgeExtractor  # noqa: PLC0415
         from lib.agent_health import AgentHealthTracker  # noqa: PLC0415
+        from lib.health_shard import HealthShard  # noqa: PLC0415
     except ImportError as exc:
         print(f"⛔ Missing pipeline module: {exc}", file=sys.stderr)
         return 1
@@ -912,15 +1116,27 @@ def cmd_delegate(
 
     if not injection_clean:
         print("⛔ Injection detected in agent response — discarding.", file=sys.stderr)
-        # Record the injection event
+        latency_ms = (_time.monotonic() - pipeline_start) * 1000
+        # Record health + trace
+        shard = HealthShard()
+        shard.append(
+            agent_name,
+            success=False,
+            latency_ms=latency_ms,
+            quality_score=0.0,
+            injection_detected=True,
+            invocation_id=invocation_id,
+            query=query,
+        )
         try:
-            health_tracker = AgentHealthTracker(registry=reg)
-            health_tracker.record_invocation(
+            from lib.metrics_writer import write_invocation_trace  # noqa: PLC0415
+            write_invocation_trace(
+                invocation_id=invocation_id,
                 agent_name=agent_name,
-                success=False,
-                latency_ms=0,
+                query_hash=query_hash,
+                routing_confidence=0.0,
                 quality_score=0.0,
-                injection_detected=True,
+                latency_ms=latency_ms,
             )
         except Exception:
             pass
@@ -928,6 +1144,31 @@ def cmd_delegate(
 
     # Step 2: Score
     quality_score = score_agent_response(response_text, query, kb_check=kb_check)
+
+    # Step 2a: EAR-6 — Evaluator-optimizer retry on low-quality response
+    # Extract per-dimension scores from kb_check for targeted feedback
+    try:
+        from lib.evaluator_optimizer import EvaluatorOptimizer  # noqa: PLC0415
+        _eo = EvaluatorOptimizer()
+        _dim_scores = {
+            "consistency": float(getattr(kb_check, "consistency_score", 0.7)),
+            "relevance": float(getattr(kb_check, "relevance_score", 0.7)),
+            "specificity": float(getattr(kb_check, "specificity_score", 0.7)),
+            "completeness": float(getattr(kb_check, "completeness_score", 0.7)),
+        }
+        _eo_result = _eo.maybe_retry(
+            agent_name=agent_name,
+            query=query,
+            initial_response=response_text,
+            initial_quality=quality_score,
+            dim_scores=_dim_scores,
+            invoke_fn=None,   # post-hoc pipeline: no live re-invocation
+        )
+        if _eo_result.retried:
+            response_text = _eo_result.final_response
+            quality_score = _eo_result.final_quality
+    except (ImportError, Exception):
+        pass  # EAR-6 is non-blocking; proceed with original quality
 
     # Step 3: Integrate
     from lib.agent_invoker import AgentResult  # noqa: PLC0415
@@ -960,13 +1201,47 @@ def cmd_delegate(
         # Non-blocking — caching failure doesn't break the pipeline
         print(f"⚠️ Cache write skipped: {exc}", file=sys.stderr)
 
-    # Step 5: Record health metrics
+    # Step 4a: EAR-10 — Propagate key facts to downstream agents (feeds relationships)
+    try:
+        from lib.knowledge_propagator import KnowledgePropagator  # noqa: PLC0415
+        _feeds: list[str] = []
+        _invocation_cfg = getattr(agent, "invocation", None)
+        _rels = getattr(agent, "relationships", None)
+        if _rels is not None:
+            _feeds = list(getattr(_rels, "feeds", None) or [])
+        if not _feeds:
+            # Also check agent attributes directly (flat schema)
+            _feeds = list(getattr(agent, "feeds", None) or [])
+        if _feeds:
+            _propagator = KnowledgePropagator()
+            _propagator.propagate(
+                source_agent_name=agent_name,
+                source_trust_tier=getattr(agent, "trust_tier", "external"),
+                cached_response=response_text,
+                target_agents=_feeds,
+            )
+    except (ImportError, Exception):
+        pass  # EAR-10 is non-blocking
+
+    # Step 5: Record health to shard (BLOCKING-1 + R-14: O(n) write eliminated)
+    latency_ms = (_time.monotonic() - pipeline_start) * 1000
+    shard = HealthShard()
+    shard.append(
+        agent_name,
+        success=True,
+        latency_ms=latency_ms,
+        quality_score=quality_score,
+        invocation_id=invocation_id,
+        query=query,
+    )
+
+    # Step 5a: Also record to legacy registry health tracker (backwards compat)
     try:
         health_tracker = AgentHealthTracker(registry=reg)
         health_tracker.record_invocation(
             agent_name=agent_name,
             success=True,
-            latency_ms=0,
+            latency_ms=latency_ms,
             quality_score=quality_score,
         )
     except Exception as exc:
@@ -980,11 +1255,40 @@ def cmd_delegate(
         except Exception as exc:
             print(f"⚠️ Weak query recording skipped: {exc}", file=sys.stderr)
 
+    # Step 6: Emit pipeline trace (BLOCKING-1, R-12)
+    try:
+        from lib.metrics_writer import write_invocation_trace  # noqa: PLC0415
+        write_invocation_trace(
+            invocation_id=invocation_id,
+            agent_name=agent_name,
+            query_hash=query_hash,
+            routing_confidence=0.0,    # Unknown at this stage (post-hoc pipeline)
+            quality_score=quality_score,
+            latency_ms=latency_ms,
+        )
+    except Exception:
+        pass
+
     # Output: unified prose + quality metadata
     print(integration.unified_prose)
     print(f"\n> Quality: {quality_score:.2f} | "
           f"Confidence: {integration.confidence_label} | "
-          f"KB corroborations: {len(integration.kb_corroborations)}")
+          f"KB corroborations: {len(integration.kb_corroborations)} | "
+          f"InvocationID: {invocation_id[:8]}…")
+
+    # Step 7: EAR-1 — Write memory entry (fire-and-forget, non-blocking)
+    try:
+        from lib.agent_memory import AgentMemory  # noqa: PLC0415
+        _memory = AgentMemory(agent_name=agent_name)
+        _key_finding = integration.unified_prose[:200].replace("\n", " ").strip()
+        _memory.write_entry(
+            query=query,
+            quality_score=quality_score,
+            key_finding=_key_finding,
+            kb_corroborations=len(integration.kb_corroborations),
+        )
+    except (ImportError, Exception):
+        pass  # EAR-1 is non-blocking
 
     # Fallback advisory for low-quality responses (EA-5b)
     if quality_score < 0.4 and agent.fallback_cascade:
@@ -1079,6 +1383,68 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="Path to file with agent response (reads stdin if omitted)",
     )
 
+    # create (EAR-7 — blueprint-based agent generation)
+    p_create = subparsers.add_parser(
+        "create",
+        help="Create a new agent from a blueprint template (EAR-7)",
+    )
+    p_create.add_argument("--blueprint", required=True,
+                          help="Blueprint name (e.g. icm-triage)")
+    p_create.add_argument("--var", action="append", metavar="KEY=VALUE", default=[],
+                          help="Template variable assignment (repeatable)")
+    p_create.add_argument("--out", default=None,
+                          help="Output path for generated .agent.md (default: config/agents/external/<name>.agent.md)")
+
+    # route-multi (EAR-5 / BLOCKING-2 — show multi-agent routing candidates)
+    p_routemulti = subparsers.add_parser(
+        "route-multi",
+        help="Show top-N domain-independent routing candidates for a query (EAR-5)",
+    )
+    p_routemulti.add_argument("--query", required=True, help="Query to route")
+    p_routemulti.add_argument("--top-n", type=int, default=3, help="Max candidates")
+
+    # clear-memory (EAR-1 / R1 mitigation)
+    p_clear_mem = subparsers.add_parser(
+        "clear-memory",
+        help="Delete all persisted memory for an agent (EAR-1)",
+    )
+    p_clear_mem.add_argument("name", help="Agent name")
+
+    # show-corrections (EAR-12 / R8 mitigation)
+    p_show_corr = subparsers.add_parser(
+        "show-corrections",
+        help="Display stored user corrections for an agent (EAR-12)",
+    )
+    p_show_corr.add_argument("name", help="Agent name")
+
+    # rebuild-vectors (EAR-4 / R9 mitigation)
+    subparsers.add_parser(
+        "rebuild-vectors",
+        help="Rebuild TF-IDF route vectors from current registry (EAR-4)",
+    )
+
+    # health sync (R-14)
+    subparsers.add_parser(
+        "health-sync",
+        help="Aggregate health shard JSONL into registry YAML (R-14)",
+    )
+
+    # chain (EAR-2)
+    p_chain = subparsers.add_parser(
+        "chain",
+        help="Execute a named agent chain (EAR-2)",
+    )
+    p_chain.add_argument("name", help="Chain name (from config/agents/chains/*.chain.yaml)")
+    p_chain.add_argument("--query", required=True, help="Query to run through the chain")
+
+    # fanout (EAR-5)
+    p_fanout = subparsers.add_parser(
+        "fanout",
+        help="Fan-out query to multiple domain-independent agents in parallel (EAR-5)",
+    )
+    p_fanout.add_argument("--query", required=True, help="Query to fan out")
+    p_fanout.add_argument("--top-n", type=int, default=3, help="Max parallel agents")
+
     args = parser.parse_args(argv)
 
     if args.command == "list":
@@ -1112,9 +1478,202 @@ def main(argv: Optional[list[str]] = None) -> int:
             query=args.query,
             response_file=getattr(args, "response_file", None),
         )
+    elif args.command == "create":
+        return cmd_blueprint_create(
+            blueprint_name=args.blueprint,
+            var_assignments=args.var,
+            out_path=args.out,
+        )
+    elif args.command == "route-multi":
+        return cmd_route_multi(query=args.query, top_n=args.top_n)
+    elif args.command == "clear-memory":
+        return cmd_clear_memory(args.name)
+    elif args.command == "show-corrections":
+        return cmd_show_corrections(args.name)
+    elif args.command == "rebuild-vectors":
+        return cmd_rebuild_vectors()
+    elif args.command == "health-sync":
+        return cmd_health_sync()
+    elif args.command == "chain":
+        return cmd_chain(chain_name=args.name, query=args.query)
+    elif args.command == "fanout":
+        return cmd_fanout(query=args.query, top_n=args.top_n)
     else:
         parser.print_help()
         return 1
+
+
+# ---------------------------------------------------------------------------
+# EAR-7: Blueprint create command
+# ---------------------------------------------------------------------------
+
+def cmd_blueprint_create(
+    blueprint_name: str,
+    var_assignments: list[str],
+    out_path: str | None = None,
+) -> int:
+    """Create a new .agent.md from a blueprint template (EAR-7).
+
+    Blueprint files live in config/agents/blueprints/<name>.blueprint.yaml.
+    Variables are substituted in the template using Python str.format_map().
+
+    CLI:
+        python scripts/agent_manager.py create --blueprint icm-triage \\
+            --var service=XPF --var team="Infra SW PM"
+    """
+    import yaml  # noqa: PLC0415
+
+    blueprints_dir = _CONFIG_DIR / "agents" / "blueprints"
+    blueprint_file = blueprints_dir / f"{blueprint_name}.blueprint.yaml"
+
+    if not blueprint_file.exists():
+        available = [p.stem.replace(".blueprint", "") for p in blueprints_dir.glob("*.blueprint.yaml")]
+        print(f"⛔ Blueprint not found: {blueprint_name}", file=sys.stderr)
+        if available:
+            print(f"   Available: {', '.join(available)}", file=sys.stderr)
+        return 1
+
+    try:
+        blueprint = yaml.safe_load(blueprint_file.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        print(f"⛔ Failed to parse blueprint: {exc}", file=sys.stderr)
+        return 1
+
+    # Parse --var KEY=VALUE assignments
+    variables: dict[str, str] = {}
+    for assignment in var_assignments:
+        if "=" not in assignment:
+            print(f"⛔ Invalid --var format: {assignment!r} (expected KEY=VALUE)", file=sys.stderr)
+            return 1
+        k, v = assignment.split("=", 1)
+        variables[k.strip()] = v.strip()
+
+    # Validate required variables
+    required_vars = [v["name"] for v in blueprint.get("variables", [])]
+    missing = [v for v in required_vars if v not in variables]
+    if missing:
+        print(f"⛔ Missing required variables: {', '.join(missing)}", file=sys.stderr)
+        print(f"   Use: --var {missing[0]}=<value>", file=sys.stderr)
+        return 1
+
+    # Apply variable substitution to key fields — blueprints use {{var}} notation
+    _BLUEPRINT_VAR_RE = re.compile(r'\{\{(\w+)\}\}')
+
+    def _render(template) -> str:
+        if not isinstance(template, str):
+            return str(template) if template is not None else ""
+        def _replacer(m: re.Match) -> str:
+            key = m.group(1)
+            if key not in variables:
+                raise ValueError(f"Unknown variable '{{{{key}}}}' in template")
+            return variables[key]
+        return _BLUEPRINT_VAR_RE.sub(_replacer, template)
+
+    try:
+        # Blueprint YAML uses nested sections: blueprint:, agent:, invocation:
+        bp_meta = blueprint.get("blueprint", {}) or {}
+        bp_agent = blueprint.get("agent", {}) or {}
+        bp_invocation = blueprint.get("invocation", {}) or {}
+
+        raw_name = bp_meta.get("name", blueprint_name)
+        agent_name = _render(raw_name)
+        if not agent_name.endswith("-agent"):
+            agent_name = agent_name + "-agent"
+        label = _render(bp_meta.get("display_name", agent_name))
+        description = _render(bp_meta.get("description", ""))
+
+        keyword_templates = blueprint.get("keyword_templates", []) or []
+        keywords = [_render(kw) for kw in keyword_templates]
+
+        # Soul, examples, domains from top-level keys
+        soul = blueprint.get("soul_principles", []) or []
+        examples = blueprint.get("examples", []) or []
+        domains = blueprint.get("domains", []) or []
+        trust_tier = blueprint.get("trust_tier", "external")
+
+        # Build .agent.md frontmatter as YAML
+        frontmatter = {
+            "name": agent_name,
+            "label": label,
+            "description": description.strip(),
+            "domains": domains,
+            "trust_tier": trust_tier,
+            "keywords": keywords,
+            "exclude_keywords": blueprint.get("exclude_keywords", []) or [],
+            "invocation": {
+                "timeout_seconds": bp_invocation.get("timeout_seconds", 60),
+                "max_response_chars": bp_invocation.get("max_response_chars", 4000),
+                "max_context_chars": bp_invocation.get("max_context_chars", 2000),
+                "max_context_chars_absolute": bp_invocation.get("max_context_chars_absolute"),
+            },
+            "pii_profile": {
+                "allow": [],
+                "block": [],
+            },
+            "fallback_cascade": ["kb"],
+            "soul_principles": soul,
+        }
+
+        # Add examples if present
+        if examples:
+            frontmatter["examples"] = examples
+
+    except ValueError as exc:
+        print(f"⛔ Template rendering error: {exc}", file=sys.stderr)
+        return 1
+
+    # Determine output path
+    if out_path:
+        dest = Path(out_path)
+    else:
+        dest = _DROP_DIR / f"{agent_name}.agent.md"
+
+    # Write .agent.md
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        yaml_block = yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)
+        md_content = f"---\n{yaml_block}---\n\n# {label}\n\nGenerated from blueprint: `{blueprint_name}`.\n"
+        dest.write_text(md_content, encoding="utf-8")
+        print(f"✓ Created: {dest}")
+        print(f"  Name:    {agent_name}")
+        print(f"  Label:   {label}")
+        print(f"  Keywords: {len(keywords)}")
+        print(f"\nNext: python scripts/agent_manager.py register --file {dest}")
+        return 0
+    except OSError as exc:
+        print(f"⛔ Could not write agent file: {exc}", file=sys.stderr)
+        return 1
+
+
+# ---------------------------------------------------------------------------
+# EAR-5 / BLOCKING-2: route-multi command
+# ---------------------------------------------------------------------------
+
+def cmd_route_multi(query: str, top_n: int = 3) -> int:
+    """Show top-N domain-independent routing candidates for a query."""
+    reg = _load_registry()
+    if reg is None:
+        return 1
+
+    try:
+        from lib.agent_router import AgentRouter  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"⛔ {exc}", file=sys.stderr)
+        return 1
+
+    router = AgentRouter(registry=reg, cache_dir=_CACHE_DIR)
+    candidates = router.route_multi(query=query, top_n=top_n)
+
+    if not candidates:
+        print("No qualifying agents found for that query.")
+        return 0
+
+    print(f"\nTop-{top_n} domain-independent candidates for: '{query[:80]}'")
+    print("─" * 60)
+    for i, m in enumerate(candidates, 1):
+        print(f"  {i}. {m.agent_name:<35} conf={m.confidence:.3f}  kw={m.matched_keywords[:3]}")
+
+    return 0
 
 
 if __name__ == "__main__":

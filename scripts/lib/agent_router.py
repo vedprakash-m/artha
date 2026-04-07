@@ -1,6 +1,6 @@
 # pii-guard: ignore-file — infrastructure; no personal data
 """
-scripts/lib/agent_router.py — External agent routing engine for AR-9.
+scripts/lib/agent_router.py — External agent routing engine for AR-9 / EAR v2.
 
 Determines whether a user query should be routed to an external agent.
 Routing is keyword-based (deterministic, no LLM):
@@ -16,6 +16,12 @@ Algorithm (spec §4.3):
   4. Filter by min_confidence
   5. Sort; return best match (or None)
 
+EAR extensions:
+  - route_multi(query, top_n): returns multiple domain-independent candidates
+    for fan-out (EAR-5).  Includes domain independence check.  (R-2)
+  - Confidence margin logging: every route() call emits top1−top2 margin to
+    ext-agent-metrics.jsonl as a routing_margin record.  (R-1, R-3)
+
 Also handles:
   - Cache-hit shortcut: if knowledge cache has a fresh entry, return from
     cache without routing to the live agent
@@ -23,6 +29,7 @@ Also handles:
   - Exclude-keyword suppression
 
 Ref: specs/subagent-ext-agent.md §4.3, EA-2a/2b
+     specs/ext-agent-reloaded.md §Phase 0 BLOCKING-2, BLOCKING-3
 """
 from __future__ import annotations
 
@@ -56,6 +63,10 @@ class RoutingResult(NamedTuple):
     routing_ms: float                    # Time taken (ms) for the routing call
     cache_hit: bool = False              # True if matched from knowledge cache
 
+
+# EAR-4: TF-IDF lexical fallback threshold (spec §EAR-4, §Phase 0 BLOCKING-3)
+# When keyword confidence < this, attempt TF-IDF trigram routing.
+_LEXICAL_FALLBACK_THRESHOLD: float = 0.4
 
 # ---------------------------------------------------------------------------
 # Router
@@ -166,11 +177,8 @@ class AgentRouter:
         elapsed_ms = (time.monotonic() - start) * 1000
 
         if not candidates:
-            return RoutingResult(
-                match=None,
-                all_candidates=[],
-                routing_ms=elapsed_ms,
-            )
+            # EAR-4: No keyword match → try TF-IDF lexical fallback
+            return self._tfidf_fallback(query, start)
 
         # Step 6: Sort by confidence DESC, then by agent priority ASC
         candidates.sort(
@@ -181,6 +189,18 @@ class AgentRouter:
 
         best = candidates[0]
 
+        # EAR-4: If best keyword confidence is below the lexical fallback
+        # threshold, attempt TF-IDF to see if it finds a higher-confidence match.
+        # Keyword result is preferred if confidence is equal.
+        if best.confidence < _LEXICAL_FALLBACK_THRESHOLD:
+            _lex_result = self._tfidf_fallback(query, start)
+            if (
+                _lex_result.match is not None
+                and _lex_result.match.confidence > best.confidence
+            ):
+                _emit_routing_margin(candidates, elapsed_ms)
+                return _lex_result
+
         # Step 7: Check knowledge cache for best match
         cache_hit = _check_knowledge_cache(
             agent_name=best.agent_name,
@@ -189,6 +209,9 @@ class AgentRouter:
             cache_ttl_days=_get_cache_ttl(best.agent_name, self._registry),
         )
 
+        # BLOCKING-3 (R-1): Emit confidence margin to metrics JSONL
+        _emit_routing_margin(candidates, elapsed_ms)
+
         return RoutingResult(
             match=best,
             all_candidates=candidates,
@@ -196,10 +219,194 @@ class AgentRouter:
             cache_hit=cache_hit,
         )
 
+    def _tfidf_fallback(
+        self,
+        query: str,
+        start_time: float,
+    ) -> RoutingResult:
+        """EAR-4: TF-IDF lexical fallback when keyword routing yields no match
+        or confidence < _LEXICAL_FALLBACK_THRESHOLD.
+
+        Returns RoutingResult with best lexical match, or empty result.
+        """
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        try:
+            from lib.tfidf_router import TFIDFRouter  # noqa: PLC0415
+            lexical = TFIDFRouter()
+            matches = lexical.query(
+                query=query,
+                top_n=1,
+                min_score=_LEXICAL_FALLBACK_THRESHOLD,
+            )
+            if not matches:
+                return RoutingResult(match=None, all_candidates=[], routing_ms=elapsed_ms)
+
+            best_lex = matches[0]
+            # Convert LexicalMatch → RoutingMatch
+            rm = RoutingMatch(
+                agent_name=best_lex.agent_name,
+                confidence=best_lex.score,
+                keyword_hits=0,
+                keyword_coverage=0.0,
+                query_coverage=0.0,
+                domain_bonus=0.0,
+                recency_bonus=0.0,
+                matched_keywords=[],
+            )
+            cache_hit = _check_knowledge_cache(
+                agent_name=rm.agent_name,
+                query=query,
+                cache_dir=self._cache_dir,
+                cache_ttl_days=_get_cache_ttl(rm.agent_name, self._registry),
+            )
+            return RoutingResult(
+                match=rm,
+                all_candidates=[rm],
+                routing_ms=(time.monotonic() - start_time) * 1000,
+                cache_hit=cache_hit,
+            )
+        except (ImportError, Exception):
+            return RoutingResult(match=None, all_candidates=[], routing_ms=elapsed_ms)
+
+    def route_multi(
+        self,
+        query: str,
+        top_n: int = 3,
+    ) -> list[RoutingMatch]:
+        """Return up to top_n domain-independent candidates above min_confidence.
+
+        Algorithm (BLOCKING-2, EAR-5, R-2):
+          1. Run the base candidate enumeration (same as route()).
+          2. Filter to candidates that individually clear min_confidence.
+          3. Apply domain independence check: exclude agents whose domain set
+             overlaps (non-empty intersection) with any already-selected agent.
+          4. Sort by confidence DESC.
+          5. Return first top_n candidates.
+
+        Domain independence check: two agents are independent iff their
+        domain sets are disjoint.  If agents A and B share any domain tag,
+        only the higher-confidence one is included in the batch.
+
+        Parameters:
+            query:  The user's question.
+            top_n:  Maximum candidates to return (default 3, per EAR-5 cap).
+
+        Returns empty list if no qualified candidates.
+
+        Ref: specs/ext-agent-reloaded.md §Phase 0 BLOCKING-2
+        """
+        start = time.monotonic()
+        candidates: list[RoutingMatch] = []
+        query_lower = query.lower()
+        query_tokens = set(query_lower.split())
+
+        for agent in self._registry.active_agents():
+            if not agent.enabled:
+                continue
+            if any(
+                re.search(r'\b' + re.escape(ex.lower()) + r'\b', query_lower)
+                for ex in agent.routing.exclude_keywords
+            ):
+                continue
+            weak_queries = getattr(agent.health, "weak_queries", None) or []
+            if any(wq.lower() in query_lower for wq in weak_queries):
+                continue
+
+            matched_kws: list[str] = []
+            for kw in agent.routing.keywords:
+                pattern = r'\b' + re.escape(kw.lower()) + r'\b'
+                if re.search(pattern, query_lower):
+                    matched_kws.append(kw)
+
+            hits = len(matched_kws)
+            if hits < agent.routing.min_keyword_hits:
+                continue
+
+            total_kws = max(len(agent.routing.keywords), 1)
+            keyword_coverage = hits / total_kws
+            query_coverage = hits / max(len(query_tokens), 3)
+            base = sqrt(keyword_coverage * query_coverage)
+            domain_bonus = 0.1 if _query_in_agent_domain(query_lower, agent) else 0.0
+            recency_bonus = 0.05 if agent.health.last_success_within(hours=24) else 0.0
+            confidence = min(1.0, base + domain_bonus + recency_bonus)
+
+            effective_min = max(agent.routing.min_confidence, self._global_min)
+            if confidence < effective_min:
+                continue
+
+            candidates.append(RoutingMatch(
+                agent_name=agent.name,
+                confidence=confidence,
+                keyword_hits=hits,
+                keyword_coverage=keyword_coverage,
+                query_coverage=query_coverage,
+                domain_bonus=domain_bonus,
+                recency_bonus=recency_bonus,
+                matched_keywords=matched_kws,
+            ))
+
+        elapsed_ms = (time.monotonic() - start) * 1000
+
+        if not candidates:
+            return []
+
+        candidates.sort(
+            key=lambda m: (-m.confidence,
+                           self._registry.get(m.agent_name).routing.priority
+                           if self._registry.get(m.agent_name) else 100)
+        )
+
+        # Domain independence check: greedily select non-overlapping agents
+        selected: list[RoutingMatch] = []
+        selected_domains: set[str] = set()
+
+        for candidate in candidates:
+            if len(selected) >= top_n:
+                break
+            agent_obj = self._registry.get(candidate.agent_name)
+            agent_domains: set[str] = set()
+            if agent_obj:
+                agent_domains = {d.lower() for d in (agent_obj.routing.domains or [])}
+
+            # If domains overlap with already-selected → skip
+            if agent_domains and selected_domains and (agent_domains & selected_domains):
+                continue
+
+            selected.append(candidate)
+            selected_domains |= agent_domains
+
+        # Emit margin for the multi-result set
+        _emit_routing_margin(candidates, elapsed_ms)
+
+        return selected
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _emit_routing_margin(
+    candidates: list[RoutingMatch],
+    routing_ms: float,
+) -> None:
+    """Emit a routing_margin record. Fire-and-forget. (BLOCKING-3, R-1)"""
+    try:
+        from lib.metrics_writer import write_routing_margin  # noqa: PLC0415
+        top1 = candidates[0] if len(candidates) >= 1 else None
+        top2 = candidates[1] if len(candidates) >= 2 else None
+        if top1 is None:
+            return
+        margin = (top1.confidence - top2.confidence) if top2 else 0.0
+        write_routing_margin(
+            top1_agent=top1.agent_name,
+            top1_confidence=top1.confidence,
+            top2_agent=top2.agent_name if top2 else None,
+            top2_confidence=top2.confidence if top2 else 0.0,
+            confidence_margin=margin,
+            routing_ms=routing_ms,
+        )
+    except Exception:   # noqa: BLE001
+        pass  # Never block routing on metrics failure
 
 def _query_in_agent_domain(query_lower: str, agent) -> bool:
     """Return True if the query touches any of the agent's declared domains."""

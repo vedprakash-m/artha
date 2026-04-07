@@ -19,6 +19,7 @@ Row format (appended to existing Markdown table)
 # pii-guard: ignore-file
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,6 +59,10 @@ def write_ext_agent_event(
     target: Path = audit_file if audit_file is not None else _DEFAULT_AUDIT_FILE
     try:
         if not target.exists():
+            print(
+                f"⚠️  ext_agent_audit: audit file not found at {target} — skipping event",
+                file=sys.stderr,
+            )
             return
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         row = (

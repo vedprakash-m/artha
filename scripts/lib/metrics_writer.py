@@ -151,3 +151,85 @@ def write_routing_decision(
         "routing_ms": float(routing_ms),
     }
     _append(record, metrics_file)
+
+
+def write_routing_margin(
+    top1_agent: str,
+    top1_confidence: float,
+    top2_agent: Optional[str],
+    top2_confidence: float,
+    confidence_margin: float,
+    routing_ms: float = 0.0,
+    metrics_file: Path | None = None,
+) -> None:
+    """Append a ``routing_margin`` record to the metrics JSONL file.
+
+    Confidence margin = top-1 score - top-2 score.  Used to detect when
+    routing is becoming ambiguous (median margin < 0.10 over 7 days triggers
+    EAR-4 TF-IDF fallback upgrade recommendation).
+
+    Thresholds (from EAR-4 spec):
+      - Healthy:   margin > 0.15
+      - Degrading: margin 0.10–0.15
+      - Upgrade trigger: margin < 0.10 (surface heartbeat alert)
+
+    Fire-and-forget — never raises.
+
+    Ref: specs/ext-agent-reloaded.md §EAR-4, Sonnet v2 R-1
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {
+        "timestamp": ts,
+        "record_type": "routing_margin",
+        "top1_agent": top1_agent,
+        "top1_confidence": float(top1_confidence),
+        "top2_agent": top2_agent,
+        "top2_confidence": float(top2_confidence),
+        "confidence_margin": float(confidence_margin),
+        "routing_ms": float(routing_ms),
+    }
+    _append(record, metrics_file)
+
+
+def write_invocation_trace(
+    invocation_id: str,
+    agent_name: str,
+    query_hash: str,
+    routing_confidence: float,
+    quality_score: Optional[float],
+    latency_ms: float,
+    metrics_file: Path | None = None,
+    trace_file: Path | None = None,
+) -> None:
+    """Append a structured trace record to ``tmp/ext-agent-trace.jsonl``.
+
+    One record per completed pipeline invocation.  Used for post-mortem
+    correlation (especially under fan-out where multiple invocations overlap).
+
+    Fire-and-forget — never raises.
+
+    Ref: specs/ext-agent-reloaded.md §Phase 0 BLOCKING-1, Sonnet v2 R-12
+    """
+    _TRACE_FILE: Path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "tmp"
+        / "ext-agent-trace.jsonl"
+    )
+    target = trace_file or _TRACE_FILE
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    record = {
+        "timestamp": ts,
+        "record_type": "pipeline_trace",
+        "invocation_id": invocation_id,
+        "agent_name": agent_name,
+        "query_hash": query_hash,
+        "routing_confidence": float(routing_confidence),
+        "quality_score": quality_score,
+        "latency_ms": float(latency_ms),
+    }
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
