@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.24.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.25.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.9.0
+> **Implements**: PRD v7.10.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.25.0 | 2026-04-06 | EAR v2.0 — External Agent Reloaded (§27): 13 new `scripts/lib/` modules — `adaptive_context.py` (EAR-11 budget), `agent_chainer.py` (EAR-2 DAG), `agent_heartbeat.py` (EAR-8 probe), `agent_memory.py` (EAR-1 flat-file K→V), `correction_tracker.py` (EAR-12 FIFO), `evaluator_optimizer.py` (EAR-6 retry), `fan_out.py` (EAR-5 parallel), `health_shard.py` (R-14 sync), `knowledge_propagator.py` (EAR-10 propagation), `metrics_digest.py` (R-12 digest), `soul_allowlist.py` (EAR-9 SOUL), `tfidf_router.py` (EAR-4 lexical). `scripts/agent_scheduler.py` (EAR-3 cron). All 13 wired into `pipeline.py` (heartbeat Step 0), `prompt_composer.py` (compose Steps 1–6), `agent_manager.py` (cmd_delegate, 9 new CLI subcommands, reinstate retirement). TF-IDF auto-rebuild on `register`/`discover`. User correction auto-detection in `work_reader.py`. Audit file missing warning in `ext_agent_audit.py`. EAR-7 blueprint system: 8 YAML templates in `config/agents/blueprints/`, `cmd_blueprint_create()` renderer with placeholder substitution. 596 EAR unit tests (`tests/ext_agents/`). Zero regressions. 3,936 total. |
 | v3.24.0 | 2026-04-05 | AR-9 Safety Hardening (§23): template injection defense (`prompt_composer.py` — brace escaping + 8K query cap), atomic writes (`knowledge_extractor.py` — `tempfile.mkstemp` + `os.replace`), PII guard fail-safety (`context_scrubber.py` — strict mode blocks on guard failure), quality score clamping (`agent_health.py` — `[0,1]` enforcement), dead import cleanup (`agent_registry.py`). 16 safety invariant tests (`test_safety_invariants.py`). 270 AR-9 tests passing. |
 | v3.23.0 | 2026-04-05 | KB-LINT Cross-Domain Data Health (§26): `scripts/kb_lint.py` (~900 LOC) + `config/lint_rules.yaml` (8 built-in P5 rules). Six-pass pipeline (P1 frontmatter, P2 stale dates, P3 orphan refs, P4 contradictions, P5 cross-domain YAML rules, P6 custom rules). `--brief-mode` briefing integration; `--fix`, `--json`, `--init`, `--pass` CLI flags. `health_pct` = % P1-error-free files. 46 unit tests + 4 regression tests. 3,570 tests total. |
 | v3.22.0 | 2026-04 | AFW-10 Domain Training (`scripts/domain_training.py`): per-domain accuracy trend analysis over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration. EV-12 Golden-Set Eval (`tests/eval/golden_set/`): parametrized regression framework with `fixtures.yaml` (10 fixtures — 4 golden, 6 anti-golden), dimension-level quality gates (actionability, specificity, completeness, signal_purity, calibration). `/work code` Bluebird MCP integration for ADO code search with golden-query fallback. 3,515+ tests. |
@@ -5266,7 +5267,7 @@ cross_domain_rules:
 
 ---
 
-*Artha Tech Spec v3.24.0 — End of Document*
+*Artha Tech Spec v3.25.0 — End of Document*
 
 ---
 

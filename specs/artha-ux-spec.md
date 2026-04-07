@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.10 | **Status**: Draft | **Date**: April 2026
+> **Version**: 3.11 | **Status**: Draft | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.9.0, Tech Spec v3.24.0
+> **Implements**: PRD v7.10.0, Tech Spec v3.25.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.11 | 2026-04-06 | EAR v2.0 UX — Fleet health alerts surface before briefing output when agents are degraded/offline. TF-IDF fallback badge ("matched via keyword similarity") displayed in routing transparency indicator when semantic match falls below threshold. Agent memory and correction commands: `artha agents clear-memory <agent>`, `show-corrections <agent>`. Chain and fanout output blocks with sequential/parallel structure indicators (`agent chain`, `agent fanout`). Blueprint rendering: `artha agents blueprint create <name>` produces a ready-to-register `.agent.md` with placeholder substitution. Correction auto-capture: silent on route match, visible via `show-corrections`. Reinstate UX: retired agents promoted to `degraded` (not `active`) with quality score displayed as 0.5 (reset). Audit file warning: stderr notice on first event if audit trail not yet initialized. |
 | v3.10 | 2026-04-05 | KB-LINT UX — §10.18: `lint` command added to command palette; `Data Health` briefing line with silent display on warnings and `⚠` escalation prefix on errors; interactive lint report format (findings table with severity icons, file, field, message, and inline fix hints); `--fix` confirmation UX (lists pending changes before applying). |
 | v3.9 | 2026-04-04 | AFW-10 Domain Training UX — `domain training` / `domain training --domain X` reports per-domain accuracy trends, correction compounding, and training suggestions. `/work code` Bluebird UX — natural-language code search and symbol lookup with golden-query catalog fallback. EV-12 Golden-Set Eval — `fixtures.yaml`-driven regression framework; dimension quality badges (actionability, specificity, completeness, signal_purity, calibration). |
 | v3.8 | 2026-04-02 | AR-9 External Agent Composition UX — §25: agent discovery (`agent list`), routing transparency indicator, expert consensus answer format with inline citation, data quality verdict badges (PASS/WARN/STALE/REFUSE) in briefing output, agent health dashboard (`agent health`), fallback cascade UX (agent → KB → investigation → Cowork). |
@@ -2307,7 +2308,7 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 
 ---
 
-*Artha UX Spec v3.1 — End of Document*
+*Artha UX Spec v3.11 — End of Document*
 
 *"The best interface is the one you forget you're using. Artha speaks when it matters, is silent when it doesn't, and always tells you where you stand — in under 3 minutes."*
 

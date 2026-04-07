@@ -492,6 +492,20 @@ def run_pipeline(
     """
     _begin_session_trace()  # AFW-11: set session_trace_id for all log events this run
 
+    # Step 0 (EAR-8): Heartbeat preflight — surface agent fleet health alerts
+    _agent_fleet_alerts: str = ""
+    try:
+        from lib.agent_registry import AgentRegistry as _AgentRegistry  # noqa: PLC0415
+        from lib.agent_heartbeat import AgentHeartbeat as _AgentHeartbeat  # noqa: PLC0415
+        _hb_reg = _AgentRegistry.load(str(Path(__file__).resolve().parent.parent / "config"))
+        _hb = _AgentHeartbeat(_hb_reg)
+        _hb_alerts = _hb.check()
+        if _hb_alerts:
+            _alert_lines = "\n".join(a.format_line() for a in _hb_alerts)
+            _agent_fleet_alerts = f"\n§ Agent Fleet Health\n{_alert_lines}\n"
+    except Exception:
+        pass  # Heartbeat is non-blocking — never halt the pipeline
+
     connectors = _enabled_connectors(cfg, source_filter)
     if not connectors:
         print("[pipeline] No connectors enabled — nothing to do.", file=sys.stderr)
@@ -592,6 +606,10 @@ def run_pipeline(
 
     # Write timing metrics to tmp/pipeline_metrics.json
     _write_pipeline_metrics(timing, total_records, error_count)
+
+    # EAR-8: Print agent fleet health alerts to stderr (zero-noise when no alerts)
+    if _agent_fleet_alerts:
+        print(_agent_fleet_alerts, file=sys.stderr)
 
     # Atomic snapshot write to --output path (fresh per run, no append)
     if output_path is not None and all_classified_lines:

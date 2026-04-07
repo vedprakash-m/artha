@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.9.0
+## Product Requirements Document · v7.10.0
 
 **Author:** [Author]
-**Date:** April 5, 2026
+**Date:** April 6, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.10.0 | 2026-04-06 | EAR v2.0 — External Agent Reloaded: 13 new framework modules fully integrated into the live pipeline. EAR-1 persistent agent memory (flat-file K→V, LRU eviction, cross-session recall); EAR-2 agent chaining (DAG executor + `chain` CLI); EAR-3 cron scheduler (`agent_scheduler.py`) with metrics digest; EAR-4 TF-IDF lexical fallback routing (threshold=0.4, auto-rebuild on `register`/`discover`); EAR-5 fan-out parallel dispatch + `fanout` CLI; EAR-6 evaluator-optimizer retry/promote in `cmd_delegate()`; EAR-7 blueprint YAML system (8 templates, `blueprint` CLI, placeholder rendering); EAR-8 heartbeat preflight in pipeline + reinstate retirement semantics + audit file missing warning; EAR-9 SOUL allowlist enforcement in compose; EAR-10 knowledge propagation in compose + delegate; EAR-11 adaptive context budget in compose; EAR-12 correction block injection + user-input correction auto-detection from `work_reader`. 9 new CLI subcommands (`clear-memory`, `show-corrections`, `rebuild-vectors`, `health-sync`, `chain`, `fanout`, `blueprint`, `create`, `health`). 596 EAR unit tests. 3,936 total. F15.EAR-1–F15.EAR-12. |
 | v7.9.0 | 2026-04-05 | KB-LINT — Cross-Domain Data Health (`scripts/kb_lint.py`, `config/lint_rules.yaml`): six deterministic passes (P1 frontmatter, P2 stale dates, P3 orphan references, P4 contradiction scan, P5 cross-domain refs, P6 custom YAML rules); `Data Health` line embedded in every briefing; `lint` command for interactive audit; `--fix` auto-remediation; `--json` machine-readable output; 46 unit tests. 3,570 tests. F15.137. |
 | v7.8.0 | 2026-04-04 | AFW-10 Domain Training & Feedback Loop (`scripts/domain_training.py`): per-domain accuracy trends, correction compounding detection, training suggestions for underperforming domains. EV-12 Golden-Set Eval Framework (`tests/eval/golden_set/`): parametrized regression tests with 10 fixtures (4 golden, 6 anti-golden), dimension-level quality checks (actionability, specificity, completeness, signal_purity, calibration). `/work code` command: Bluebird MCP integration for ADO repo code search with golden-query fallback. 3,515+ tests. |
 | v7.7.0 | 2026-04-02 | AR-9 External Agent Composition: file-drop model (`config/agents/external/`); trust tiers (owned→untrusted); context classification + PII scrubbing pipeline; `runSubagent`-based invocation (60s timeout); response verification against local KB; knowledge extraction to `tmp/ext-agent-cache/`; agent health tracking and auto-retirement; full audit trail; injection defense. Data Quality Gate (Work OS): pull-based 3-dimension KB quality model (Accuracy ≥ Freshness ≥ Completeness); QualityVerdict (PASS/WARN/STALE/REFUSE); corroborating-source scoring. 4,515 tests. F15.EXT-1–F15.EXT-14; F15.DQ-1–F15.DQ-3. |
