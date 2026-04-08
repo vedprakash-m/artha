@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.10.0
+## Product Requirements Document · v7.12.0
 
 **Author:** [Author]
-**Date:** April 6, 2026
+**Date:** April 8, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,48 +15,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v7.10.0 | 2026-04-06 | EAR v2.0 — External Agent Reloaded: 13 new framework modules fully integrated into the live pipeline. EAR-1 persistent agent memory (flat-file K→V, LRU eviction, cross-session recall); EAR-2 agent chaining (DAG executor + `chain` CLI); EAR-3 cron scheduler (`agent_scheduler.py`) with metrics digest; EAR-4 TF-IDF lexical fallback routing (threshold=0.4, auto-rebuild on `register`/`discover`); EAR-5 fan-out parallel dispatch + `fanout` CLI; EAR-6 evaluator-optimizer retry/promote in `cmd_delegate()`; EAR-7 blueprint YAML system (8 templates, `blueprint` CLI, placeholder rendering); EAR-8 heartbeat preflight in pipeline + reinstate retirement semantics + audit file missing warning; EAR-9 SOUL allowlist enforcement in compose; EAR-10 knowledge propagation in compose + delegate; EAR-11 adaptive context budget in compose; EAR-12 correction block injection + user-input correction auto-detection from `work_reader`. 9 new CLI subcommands (`clear-memory`, `show-corrections`, `rebuild-vectors`, `health-sync`, `chain`, `fanout`, `blueprint`, `create`, `health`). 596 EAR unit tests. 3,936 total. F15.EAR-1–F15.EAR-12. |
-| v7.9.0 | 2026-04-05 | KB-LINT — Cross-Domain Data Health (`scripts/kb_lint.py`, `config/lint_rules.yaml`): six deterministic passes (P1 frontmatter, P2 stale dates, P3 orphan references, P4 contradiction scan, P5 cross-domain refs, P6 custom YAML rules); `Data Health` line embedded in every briefing; `lint` command for interactive audit; `--fix` auto-remediation; `--json` machine-readable output; 46 unit tests. 3,570 tests. F15.137. |
-| v7.8.0 | 2026-04-04 | AFW-10 Domain Training & Feedback Loop (`scripts/domain_training.py`): per-domain accuracy trends, correction compounding detection, training suggestions for underperforming domains. EV-12 Golden-Set Eval Framework (`tests/eval/golden_set/`): parametrized regression tests with 10 fixtures (4 golden, 6 anti-golden), dimension-level quality checks (actionability, specificity, completeness, signal_purity, calibration). `/work code` command: Bluebird MCP integration for ADO repo code search with golden-query fallback. 3,515+ tests. |
-| v7.7.0 | 2026-04-02 | AR-9 External Agent Composition: file-drop model (`config/agents/external/`); trust tiers (owned→untrusted); context classification + PII scrubbing pipeline; `runSubagent`-based invocation (60s timeout); response verification against local KB; knowledge extraction to `tmp/ext-agent-cache/`; agent health tracking and auto-retirement; full audit trail; injection defense. Data Quality Gate (Work OS): pull-based 3-dimension KB quality model (Accuracy ≥ Freshness ≥ Completeness); QualityVerdict (PASS/WARN/STALE/REFUSE); corroborating-source scoring. 4,515 tests. F15.EXT-1–F15.EXT-14; F15.DQ-1–F15.DQ-3. |
-| v7.6.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer orchestrator architecture absorbed: F15.20 updated with signal pipeline, actions.db, kill switch, and Step 12.5 reference. |
-| v7.5.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1 complete:.. |
-| v7.4.0 | 2026-03 | FW-19 Reflection Loop v1.5.0 — Spec Consolidation:.. |
-| v7.3.0 | 2026-03 | Spec Consolidation — Work OS FW-18 Product Knowledge Domain:.. |
-| v7.2.0 | 2026-03 | PAY-DEBT-RELOADED v2.0 — Infrastructure Hardening (WS-1–WS-9-B):. 15 tests.. 15 tests. |
-| v7.1.5 | 2026-03 | PAY-DEBT v1.0 — Structural Integrity Plan (TD-1–TD-5) [retroactive]:.. |
-| v7.1.0 | 2026-03 | Work OS v2.7.0 — Phases 2–5 complete:. 883 tests.. 883 tests. |
-| v7.0.11 | 2026-03 | PR-3 AI Trend Radar. F11.12.. F11.12. |
-| v7.0.10 | 2026-03 | PR-2 Content Stage fixes + vault policy change:. 1922 tests. F11.12.. 1922 tests. F11.12. |
-| v7.0.9 | 2026-03-21 | MEM v1.3.0. 1546 tests. F15.136.. 1546 tests. F15.136. |
-| v7.0.8 | 2026-03 | DUAL v1.3.0. 1586 tests. F15.133, F15.135.. 1586 tests. F15.133, F15.135. |
-| v7.0.7 | 2026-03-21 | ACT-RELOADED production hardening and test canonicalization: `scripts/pattern_engine.py` `_load_yaml. |
-| v7.0.6 | 2026-03-21 | read–reason–act. 1369 tests.. 1369 tests. |
-| v7.0.5 | 2026-03 | Utilization uplift (specs/util.md U-1–U-9): `config/connectors.yaml` all 8 personal-data connectors . 27 tests. |
-| v7.0.4 | 2026-03 | Catch-up quality hardening (catch-up-quality-report 2026-03-15): `scripts/email_classifier.py` (rule. 1042 tests. |
-| v7.0.3 | 2026-03 | Agentic Reloaded (AR-1–AR-8): bounded memory capacity enforcement (`MAX_MEMORY_CHARS=3000`, `MAX_FAC. 1015 tests. |
-| v7.0.2 | 2026-03 | Operational safety hardening: vault health 3-exit-code model (exit 2 = soft warnings, never blocks c. |
-| v7.0.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx` to all child middlewares (w. |
-| v7.0 | 2026-03 | Agentic Intelligence — OODA reasoning protocol, tiered context eviction, typed runtime context carri. 936 tests. F15.128, F15.132. |
-| v6.1 | 2026-03 | Agentic CLI Hardening (Gemini CLI feedback cycle): `skill_runner.py` venv bootstrap + entrypoint + i. 816 tests. F15.124, F15.127. |
-| v6.0 | 2026-03 | Cowork VM & Operational Hardening (Phases 1–5): environment detection layer, preflight advisory mode. 804 tests. F15.119, F15.123. |
-| v5.9 | 2026-03 | Deep Agents Option B — Core Harness Patterns (Phases 1–5): context offloading, progressive domain di. 698 tests. F15.114, F15.118. |
-| v5.8 | 2026-03 | Intelligence expansion + platform parity: financial_resilience skill, 1099-K gig income tracking, pu. F15.100, F15.113. |
-| v5.7 | 2026-03 | OOBE polish audit: setup.sh step counters + brand mark, AI CLI auto-detection, colorized demo briefi. F15.95, F15.99. |
-| v5.6 | 2026-03 | Interactive setup wizard + first-run friction fixes: starter profile, wizard do_setup(), no auto-pre. F15.89, F15.94. |
-| v5.5 | 2026-03 | 10-layer defense-in-depth for state data protection: advisory file locking, cloud sync fence, post-e. F15.88. |
-| v5.4 | 2026-03 | Novice UX deep audit round 2 (15 issues): demo-first onboarding, placeholder guard, Windows venv, ho. F15.78, F15.86. |
-| v5.3 | 2026-03 | Novice UX hardening (15-issue audit): Step 6 restored, age key deletion trap fixed, keyring check, o. F15.72, F15.77. |
-| v5.2 | 2026-03 | Phase 1b capabilities: domain registry, household types, renter mode, pet reminders, passport skill,. F15.60, F15.71. |
-| v5.1 | 2026-03 | ACB v2.1: Multi-LLM Q&A via Telegram, ensemble mode, HCI command redesign, write commands.. |
-| v5.0 | 2026-03 | Channel Bridge (ACB v2.0): Telegram push + interactive listener.. |
-| v4.4 | 2026-03 | Three-module arch: `foundation.py` + `backup.py` standalone CLI; key export/import; `--data-only` re. |
-| v4.3 | 2026-03 | ZIP-per-snapshot backup architecture — `backups/` root dir, self-contained ZIPs, `install` command.. |
-| v4.2 | 2026-03 | Comprehensive Backup Registry — all 31 state + 4 config files, full fresh-install restore.. |
-| v4.1 | 2026-03 | WorkIQ work calendar integration.. |
-| v4.0 | 2026-03 | Intelligence amplification: 29 enhancements.. |
-| v3.0 | 2025-10 | Architectural pivot to pull model.. |
-
+| v7.12.0 | 2026-04-08 | EAR-3 SHIPPED — 4 domain pre-compute agents (CapitalAgent, LogisticsAgent, ReadinessAgent, TribeAgent) + cron-based agent scheduler (`config/agents/schedules.yaml`) + state file registry (`config/state_registry.yaml`) + 4 domain-specific guardrails (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Spec compaction: −539 lines · −56 KB across all 3 core specs. |
+| v7.11.0 | 2026-04-07 | SPEC CONSOLIDATION — 10 satellite specs merged into core PRD/Tech Spec/UX Spec. New: FR-20 Readiness Intelligence, FR-21 Logistics Intelligence, FR-22 Tribe Intelligence, FR-23 Capital Intelligence (4 new life domains). P10 Design Principle (PM Skills Coach mandatory pattern). §9 Autonomy Matrix extended with per-domain contract + work L1 permanent cap. §12 Roadmap gains Phase 0 (30 prerequisites). §14 NFRs gain data-quality SLA targets. FR-19 extended with 6 work automation agents (FW-21–FW-26). All satellite specs archived to `.archive/specs/`. |
 See [CHANGELOG.md](../CHANGELOG.md) for full version history.
 
 ---
@@ -102,35 +62,20 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
 
 ## 1. Vision & Philosophy
 
-**Artha** (Sanskrit: अर्थ — *purpose, wealth, meaning*) is your personal intelligence operating system.
-
-In the Purusharthas — the four aims of human life in Sanskrit philosophy — Artha is one of the four pillars: *Dharma* (duty), **Artha** (purpose and material well-being), *Kama* (pleasure and fulfillment), and *Moksha* (liberation). Artha is chosen deliberately: this system serves your material life — finances, family, home, health — while keeping the larger picture of what you're building toward in focus.
-
-Artha manages everything outside of work: your family, finances, health, home, learning, and personal goals. Artha is not a dashboard. It is not a to-do app. It is not a notification router or an email summarizer. It is a **family-aware, privacy-first, goal-centered personal operating system** that continuously converts fragmented life data into prioritized decisions, forward-looking guidance, and friction-reducing actions.
+**Artha** (Sanskrit: अर्थ — *purpose, wealth, meaning*) is your **family-aware, privacy-first, goal-centered personal intelligence OS**. It manages everything outside work — finances, health, home, learning, kids, and goals — converting fragmented life data into prioritized decisions and friction-reducing actions. Not a dashboard, not a to-do app, not a notification router.
 
 ---
 
 ## 2. The Problem Artha Solves
 
-Your personal life is fragmented across more than 15 services, 2 email accounts, 5+ financial institutions, 3 school communication channels, immigration attorneys, utility providers, and dozens of subscriptions. There is no single place that knows all of it.
+Personal life is fragmented across 15+ services, 2 email accounts, 5+ financial institutions, 3 school channels, and dozens of subscriptions — with no integrating view.
 
-**The three dominant pain patterns, discovered from data:**
+**Three dominant pain patterns:**
+- **High-Volume Noise:** 90–100 school emails/month (ParentSquare: SCHS + LMS + District) with no urgency triage — "Arjun was marked absent" mixed with "Spirit Week reminder."
+- **High-Stakes Silence:** Life-critical deadlines (document expiry, legal filings, immigration milestones, insurance renewals) live in email threads and PDFs with no proactive alerting. Missing one costs months or years.
+- **Fragmented Finance:** Bills, subscriptions, investments, and loans across 8+ institutions (Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, International Bank). No unified picture.
 
-### Pattern 1 — High-Volume Noise
-ParentSquare generates 90–100 emails per month across three simultaneous streams: Springfield Central High School (Arjun), Lincoln Middle School (Ananya), and Springfield School District. Mixed in are teacher emails, attendance alerts, missing assignment notices, and grade reports. There is no consolidation, no triage, no filter between "Arjun was marked absent" (urgent) and "Spirit Week reminder" (not urgent).
-
-### Pattern 2 — High-Stakes Silence
-Life-critical deadlines — document expiry windows, legal filing timelines, insurance renewal dates, and case milestone dates — are tracked nowhere. They live in email threads, PDFs, and attorney correspondence — none of which proactively alerts you when a 90-day action window opens. The cost of missing one of these is measured in months or years.
-
-### Pattern 3 — Fragmented Finance
-Bills, subscriptions, investments, loans, and credit monitoring are spread across 8+ institutions: Chase, Fidelity, Vanguard, Morgan Stanley, E*Trade, Wells Fargo, Discover, and International Bank (NRI). Assembling a complete financial picture requires logging into all of them. No single signal tells you whether you are on track toward your goals.
-
-**What this costs today:**
-- Time spent triaging 112+ unread emails that span urgent and trivial in the same inbox
-- Anxiety from not knowing where key deadlines sit
-- Financial opacity across a complex multi-institution portfolio
-- No measurement of progress toward any personal goal
-- Family coordination happening reactively (Arjun missed? Find out at dinner) rather than proactively
+**What this costs:** 112+ emails to triage daily; deadline anxiety; financial opacity across complex multi-institution portfolio; no goal progress measurement; family coordination reactive rather than proactive.
 
 ---
 
@@ -148,11 +93,13 @@ Bills, subscriptions, investments, loans, and credit monitoring are spread acros
 
 **P6 — Earned autonomy.** Artha starts at Trust Level 0 (observe and report) and earns the right to act through demonstrated reliability. It does not rush toward autonomy; it earns it. See Section 9 for the full autonomy framework.
 
-**P7 — AI-native intelligence.** Artha is not a dashboard with an AI add-on. It is an AI-first system that reasons, infers, predicts, and remembers. Every signal passes through a semantic reasoning layer before surfacing. Artha infers intent from communication patterns, reasons across domains to discover non-obvious connections, forecasts future risk before thresholds are crossed, and remembers prior decisions and preferences to improve over time. The difference between a notification system and an intelligence system is reasoning — Artha reasons.
+**P7 — AI-native intelligence.** AI-first: every signal passes through semantic reasoning before surfacing. Artha infers intent from communication patterns, reasons across domains, forecasts risk before thresholds are crossed, and remembers prior decisions. Reasoning — not notification routing — is the core value.
 
-**P8 — Self-improving and extensible.** Artha measures its own accuracy, learns from corrections, and adopts new AI capabilities as they become available. Adding a new data source, domain, or integration follows a documented checklist — not a code rewrite. The system is designed to grow as trust and utility grow: new email accounts, document repositories, MCP servers, and AI features can be absorbed without architectural changes. Governance processes ensure this growth is deliberate, tested, and reversible.
+**P8 — Self-improving and extensible.** Artha measures its own accuracy, learns from corrections, and adopts new AI capabilities. New data sources, domains, and integrations follow a documented checklist — not a code rewrite. Growth is deliberate, tested, and reversible.
 
-**P9 — Multi-model for cost and capability.** Artha uses the right LLM for the right task at the right cost. Claude handles orchestration, state management, and MCP tool access. Gemini CLI provides free web research, URL summarization, and AI visual generation. Copilot CLI provides free code/config validation. For high-stakes decisions (immigration, finance, estate), all three models generate responses and Claude synthesizes the best answer. No single-vendor lock-in — the multi-LLM layer maximizes capability while minimizing cost.
+**P9 — Multi-model for cost and capability.** Claude handles orchestration/MCP; Gemini CLI handles free web research + Imagen; Copilot CLI handles code/config validation. High-stakes decisions (immigration, finance, estate) use all three models with Claude synthesizing the best answer. No single-vendor lock-in.
+
+**P10 — PM Skills Coach mandatory pattern.** Every agent must: (1) declare identity in 3 sentences (IS / IS NOT / success measure); (2) enumerate 3–6 Known Failure Modes with `CRITICAL DISTINCTION:` guards; (3) list 6–10 anti-patterns in a "What to NEVER Do" section. Injected at system-level during delegation; `agent_manager.py validate` enforces all three headers before any `.agent.md` is installed.
 
 ---
 
@@ -178,6 +125,12 @@ Bills, subscriptions, investments, loans, and credit monitoring are spread acros
 | Vehicles | Raj, Priya | WA DOL, service providers, NHTSA recalls | 🟡 Medium |
 | Estate Planning | Raj, Priya | Estate attorney, financial account beneficiaries, guardianship docs | 🔴 High |
 | Emergency Prep | All family | FEMA, County Emergency Management, New Madrid Seismic Zone readiness | 🟡 Medium |
+| Readiness | Raj | Apple Health/wearable biometrics, sleep/HRV/recovery data, GCal energy mapping | 🟡 Medium |
+| Logistics | Raj, Priya | Appliance warranties, vehicle registrations, subscription procurement, receipts | 🟡 Medium |
+| Tribe | All family | Contact decay scoring, WhatsApp groups, cultural calendar, relationship CRM | 🟡 Medium |
+| Capital | Raj, Priya | Fidelity, Vanguard, Morgan Stanley, E*Trade — forward projections, liquidity alerts, treasury | 🟡 Medium |
+
+> **Domain Taxonomy Note (v7.11.0):** Four new domains extend the original 18 with clear ownership boundaries. **Readiness** owns real-time biometric pre-computation and calendar energy flagging (`health` retains medical records). **Tribe** absorbs and promotes the former `social` domain; `relationships` is deprecated and merged (`social.md` → `tribe.md`). **Logistics** owns appliance lifecycle, warranties, subscriptions, and procurement (`home` retains property/mortgage/HOA). **Capital** owns forward-looking projections, liquidity alerts, and treasury orchestration (`finance` retains historical transaction records).
 | Goals | All family | (Artha-native — no existing tool) | 🔴 High |
 
 ---
@@ -229,98 +182,67 @@ Artha does not pad the briefing. If nothing is urgent, the "Today" section says 
 
 ### Mode 2 — On-Demand Chat
 
-**Trigger:** Any time during a Claude Code session on Mac, or via Claude iOS app with cached state in a Claude Project.
-**Latency:** <10s for state queries, <30s for email fetch. Answers from local Markdown state files.
+**Trigger:** Any Claude Code session, or Claude iOS app with cached state in a Claude Project. **Latency:** <10s state queries, <30s email fetch. Answers from local Markdown state files.
 Examples: bill due dates, immigration deadlines, spending summaries, goal progress, kids' academics, travel bookings, subscription renewals.
 
 ---
 
 ### Mode 3 — Batch Alert Review
 
-**Trigger:** Part of each catch-up session (batch, not real-time). Sufficient for personal life timescales (days/weeks/months).
+**Trigger:** Part of each catch-up session (batch, not real-time).
 
-**Alert severity:** 🔴 Critical (deadlines <30d, overdue bills, document expiry), 🟠 Urgent (<90d immigration, bills <3d), 🟡 Heads-up (renewals, goals behind), 🔵 Info (summaries). **Fastest Next Action** *(v4.0)*: every 🔴/🟠 alert includes a concrete next step.
+**Alert severity:** 🔴 Critical (deadlines <30d, overdue bills, document expiry), 🟠 Urgent (<90d immigration, bills <3d), 🟡 Heads-up (renewals, goals behind), 🔵 Info (summaries). Every 🔴/🟠 alert includes a **Fastest Next Action**.
 
 ---
 
 ### Mode 4 — Weekly Summary
 
-**Trigger:** Generated when the user runs catch-up on Sunday, or during the first catch-up after Sunday 8:00 PM Pacific. If no catch-up occurs over the weekend, the weekly summary is prepended to Monday's first catch-up.
-**Format:** Structured Markdown brief, longer than the daily briefing
+**Trigger:** First catch-up on/after Sunday. If missed, prepended to Monday's first catch-up.
+**Format:** Structured Markdown brief, longer than daily.
 
 **Summary structure:**
-- **Week in Review:** What happened across domains — highlights only
-- **Kids This Week:** Academic, attendance, activity summary per child
-- **Finance This Week:** Spending vs. budget, any anomalies, account changes
-- **Goals Progress:** Each active goal — this week's movement, trend, status
-- **Coming Up:** The 5 most important items in the week ahead
-- **Artha Observations:** Patterns Artha noticed that you should know about
+- **Week in Review:** Domain highlights only
+- **Kids This Week:** Academic, attendance, activity per child
+- **Finance This Week:** Spending vs. budget, anomalies, account changes
+- **Goals Progress:** Each active goal — movement, trend, status
+- **Coming Up:** 5 most important items in the week ahead
+- **Artha Observations:** Patterns worth knowing
 
 ---
 
 ### Mode 5 — Goal Intelligence Engine
 
-**Trigger:** Always on; powers sections of both briefing and weekly summary
-**The most distinctive feature of Artha** — see Section 7 for full specification.
-
-At its core: you define goals. Artha attaches metrics to them. Artha tracks progress automatically from connected data sources. Artha reports weekly and flags when you're off track.
+**Trigger:** Always on — powers briefing and weekly summary goal sections.
+**Core:** You define goals → Artha attaches metrics → Artha tracks automatically from connected data → reports weekly, flags when off track. See Section 7 for full specification.
 
 ---
 
 ### Mode 6 — Proactive Check-in
 
-**Trigger:** Integrated into the catch-up flow — when data suggests intervention would help, Artha surfaces check-in questions at the end of the briefing. The user can also explicitly ask "check in with me" during any Claude Code session.
-**Format:** Short conversational micro-interaction (2–3 targeted questions)
-**Duration:** Designed to take <2 minutes to respond
-
-*(Check-in details unchanged — see below)*
-
----
+**Trigger:** End of catch-up flow when data shows drift or emerging patterns; or explicit "check in with me" request.
+**Format:** Short conversational micro-interaction (2–3 targeted questions, <2 min to answer).
+**Intelligence:** Only triggered when data shows drift; cross-references calendar before suggesting time blocks; remembers prior responses; adapts timing to response patterns.
 
 ### Mode 7 — Mobile Conversational Bridge *(v5.1)*
 
-**Trigger:** Telegram message to Artha bot — any time, from any device (phone, tablet, desktop).
-**Format:** Plain text with Unicode formatting (no Markdown — bullets, numbered lists, emojis).
-**Duration:** Read commands <5s; LLM Q&A 15–40s (with "💭 Thinking…" ack); write commands <2s.
-
-This is Artha's **always-on mobile interface** — a persistent Telegram listener that bridges the gap between scheduled catch-ups. Unlike Mode 2 (on-demand chat via Claude Code terminal), Mode 7 requires no terminal, no SSH, and no Mac access. The user sends messages from their phone and gets structured responses.
+**Trigger:** Telegram message to Artha bot — any device. **Format:** Plain text + Unicode (no Markdown). **Latency:** Read <5s; LLM Q&A 15-40s; write <2s.
 
 **Three interaction tiers:**
+1. **Read commands** — instant state lookups: 's' (status), 'a' (alerts), 't' (tasks), 'q' (quick tasks), 'd' (domain), 'd kids' (deep-dive), 'g' (goals), 'diff' (state changes), 'dash' (dashboard).
+2. **LLM-powered Q&A** — free-form via multi-LLM failover (Claude -> Gemini -> Copilot). Context: domain prompts + state files + open items. Encrypted domains auto-decrypt/re-lock per query. Ensemble mode via 'aa' prefix.
+3. **Write commands** — 'items add <desc> [P0/P1/P2] [domain] [deadline]'; 'done OI-NNN'. Full audit logging.
 
-1. **Read commands** — instant state-file lookups: `s` (status), `a` (alerts), `t` (tasks), `q` (quick tasks), `d` (domain list), `d kids` (domain deep-dive), `g` (goals), `diff` (state changes), `dash` (dashboard).
-2. **LLM-powered Q&A** — free-form questions routed through a multi-LLM failover chain (Claude → Gemini → Copilot). Context assembled from domain prompts + state files + open items. Encrypted domains (finance, health, immigration, estate, insurance, vehicle) are automatically decrypted and re-locked after each query. Ensemble mode via `aa` prefix sends query to all CLIs in parallel, consolidated by Haiku.
-3. **Write commands** — `items add <description> [P0/P1/P2] [domain] [deadline]` creates open items; `done OI-NNN` marks them resolved. Full audit logging.
+**HCI design:** 45+ aliases, single-letter shortcuts ('s', 'a', 't', 'q', 'd', 'g', '?') — slash/hyphens/spaces optional. One-thumb phone operation.
 
-**HCI design:** 45+ command aliases with single-letter shortcuts (`s`, `a`, `t`, `q`, `d`, `g`, `?`). Slash optional. Hyphens optional. Spaces OK. "catchup", "catch-up", "catch up", "briefing" all resolve identically. Designed for one-thumb phone operation with minimal cognitive load.
+**Security:** Sender whitelist, PII redaction on every outbound byte, vault auto-relock after LLM calls, rate limiting.
 
-**Security:** Sender whitelist, PII redaction on every outbound byte, vault auto-relock after LLM calls, rate limiting, no PIN-bypass for encrypted data (LLM reads vault in-process and re-encrypts).
-
-Check-ins are interactive micro-conversations surfaced during catch-up sessions when data shows drift from goals or emerging patterns. Because Artha runs interactively (not as a background process), the check-in IS part of the conversation — no separate trigger needed.
-
-**Example check-in:**
-
-```
-ARTHA CHECK-IN · Friday 6:00 PM
-
-Hey — quick check-in on your week:
-
-1. No exercise logged this week, and your learning goal is 3 days behind.
-   Work hours ran long Tuesday and Thursday (detected late emails both nights).
-   Want me to block Saturday morning for a workout and a ByteByteGo session?
-
-2. Arjun has 2 overdue assignments in AP Language.
-   Want me to surface this in tomorrow's briefing for Priya too?
-
-3. Your Amazon spend is already at 85% of monthly target with 10 days left.
-   Flag before next checkout? [Yes / No / Adjust target]
-```
-
-**Check-in intelligence:**
-- Only triggered when data shows drift from goals or emerging patterns
-- Cross-references calendar availability before suggesting time blocks
-- Remembers prior responses (“stop asking about Spirit Week”)
-- Adapts timing to your response patterns
-
+**Example check-in** (surfaced at end of catch-up when data shows drift):
+\ARTHA CHECK-IN | Friday 6:00 PM
+1. No exercise this week + learning goal 3 days behind (late emails Tue/Thu detected).
+   Block Saturday morning for workout + ByteByteGo? [Yes/No]
+2. Arjun: 2 overdue AP Language assignments. Surface in Priya's briefing? [Yes/No]
+3. Amazon at 85% of monthly target, 10 days left. Flag before next checkout? [Yes/No/Adjust]
+\
 ---
 
 ## 6. Functional Requirements
@@ -1056,6 +978,121 @@ Hey — quick check-in on your week:
 | FW-18 | **Product Knowledge Base** — Durable product/technology knowledge that persists across projects. Index file (`state/work/work-products.md`) with taxonomy tree + per-product deep files (`state/work/products/*.md`). Captures: architecture, components, dependencies, team ownership, data sources. Trigger-loaded for meeting prep context injection. 6-month staleness (vs 2-week for projects). CLI: `/work products`, `/work products <name>`, `/work products add <name>`. | P2 |
 | FW-20 | **Accomplishment Ledger** — Canonical chronological record of all work accomplishments (small and big) across programs. Each entry: unique ID (A-NNN), impact (HIGH/MEDIUM/LOW), program tag, status (DONE/OPEN/DEFERRED), evidence link. Cross-referenced by weekly reflections via `accomplishment_refs` frontmatter. Consumed by `/work connect-prep`, `/work promo-case`, `/work connect`, `/work newsletter`. Summary statistics by month and program. Open items tracked for active risk awareness. `state/work/work-accomplishments.md`. | P1 |
 | FW-19 | **Reflection Loop** (v1.5.0) — Multi-horizon planning & review engine (daily/weekly/monthly/quarterly/yearly). 8-step pipeline: detect → sweep → extract → score → reconcile → synthesize → draft → persist. **Sweep**: 5-pass data collection (WorkIQ, state diff, Kusto, calendar, goal/KPI). **Scoring**: additive model `(urgency × importance) + visibility_bonus + goal_alignment_bonus` with org-sensitivity confidence gates. **Reconciliation**: two-pass strategy — deterministic ID match then injectable LLM semantic match (`reconcile.py`). **Persistence**: three-tier progressive summarization (Tier 1 live `reflect-current.md` ≤15 KB, Tier 2 recent archive `reflections/`, Tier 3 compacted `reflect-history.md` with Accomplishment Index never compacted). **Safety**: `write_state_atomic()` via `os.replace()`, `CompactionManifest` for idempotent multi-file compaction, `ReflectionKey` for crash-safe retry, UUID+timestamp concurrency guard, JSONL audit log with sequence numbers. **Carry-forward**: hard-decay at 3 carries → Parking Lot, max 15 active CFs. **Backfill**: 82-week work-scrape corpus (4 format families), 3-phase pipeline (parse → cross-reference → WorkIQ gap-fill), interactive validation. **Integration**: `ReflectReader` typed facade for `/scorecard`, `/goals`, `/radar`, narrative engine consumption. CLI: `/work reflect [daily|weekly|monthly|quarterly]`, `--status`, `--tune`, `--backfill`, `--compact`, `--audit`. See Tech Spec §19.11, UX Spec §23.14. | P1 |
+| FW-21 | **IcM Triage Agent** *(v7.11.0)* — Automated IcM incident triage via Kusto MCP. `call_when:` ≥3 unacked IcMs of same type OR any Sev2/Sev2.5. `do_directly_when:` single IcM with known owner. Surfaces triage recommendation with owner, severity, and suggested action. **Permanently L1** — propose only, never auto-execute. | P2 |
+| FW-22 | **XPF Readiness Agent** *(v7.11.0)* — Cross-platform fleet readiness checks via Kusto MCP. `call_when:` standup <2h and ops-dashboard stale, OR LT review <24h. `do_directly_when:` single metric check. Produces readiness score + blockers summary. **Permanently L1.** | P2 |
+| FW-23 | **ADO Cross-Project Query Agent** *(v7.11.0)* — Azure DevOps cross-project work item queries via ADO MCP. `call_when:` query spans ≥2 projects with ≥2 attribute filters. `do_directly_when:` single item lookup by ID. Returns structured work item table. **Permanently L1.** | P2 |
+| FW-24 | **Stakeholder Deck Agent** *(v7.11.0)* — Generates talking-point decks for LT/Shiproom. `call_when:` LT/Shiproom <72h OR Ramjee request >24h prior. `do_directly_when:` quick verbal 1:1 summary. Assembles project status + metrics + open risks. **Permanently L1.** | P2 |
+| FW-25 | **Meeting Pre-Brief Agent** *(v7.11.0)* — Enriched meeting context for high-signal meetings. `call_when:` L67+ attendee OR no recent 1:1 OR candidate interview. `do_directly_when:` recurring standup ≥4 weeks. Produces attendee context + open threads + decision history. **Permanently L1.** | P2 |
+| FW-26 | **Connect Evidence Agent** *(v7.11.0)* — Performance review evidence assembly. `call_when:` Connect deadline <30 days OR user requests goal evidence. `do_directly_when:` single bullet format. Cross-references accomplishment ledger (FW-20) + career log (FW-4). **Permanently L1.** | P2 |
+
+> **Work Agent Autonomy Cap (v7.11.0):** All work automation agents (FW-21 through FW-26) are **permanently capped at Trust Level 1** (propose-only). They may never advance past L1 regardless of acceptance rate or tenure. This is a hard architectural constraint — work actions carry organizational risk that personal-domain autonomy graduation does not. Each agent has explicit `call_when` and `do_directly_when` dispatch contracts defining when the orchestrator invokes them.
+
+---
+
+### FR-20 · Readiness Intelligence
+
+**Priority:** P2 (Phase 1+)
+**Summary:** Biomarker-aware dynamic rescheduling. Ingests Apple Health / wearable biometrics (sleep, HRV, recovery score) and flags calendar slots where the user is likely to underperform. Pre-computes a daily readiness score and proposes GCal restructuring when recovery is low.
+
+**Data sources:** Apple Health XML export (sleep, HRV, steps, heart rate, workouts, weight), wearable sync, Google Calendar.
+
+**Architecture:** `readiness-agent.md` (scheduled cron agent), `state/readiness.md`, `~/.artha-local/biometrics.db` (SQLite, sensitive — local-only). 14-day shadow mode before any proposal.
+
+**Outcome:** User sees "Readiness: 62% — consider moving the 2pm strategy session to Thursday (recovery day)" instead of discovering low energy mid-meeting.
+
+**Domain boundary:** `health` owns medical records (doctor visits, prescriptions, insurance). `readiness` owns real-time biometric pre-computation + calendar restructuring. Keywords: `energy`, `hrv`, `sleep`, `recovery`, `readiness`, `biometric`.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR20.1 | **Daily Readiness Score** — Composite score (0–100) from sleep quality, HRV trend, recovery data. Published to `state/readiness.md` daily. | P2 |
+| FR20.2 | **Calendar Energy Flags** — Flag high-cognitive-load meetings on low-readiness days. Surface in `/brief` and `/work` outputs. | P2 |
+| FR20.3 | **GCal Restructuring Proposals** — When readiness <60%, propose moving flexible meetings. L1 only — user confirms via one-tap. | P2 |
+| FR20.4 | **Biometric Trend Tracking** — 30-day rolling trends for sleep, HRV, exercise. Wire to wellness goals. | P2 |
+
+**Artifact spec:** `required_sections:` `## Readiness Score`, `## Calendar Flags`, `## Data Source`. `required_keywords:` `readiness_score:`, `focus_mode:`. `min_length_chars: 150`.
+
+---
+
+### FR-21 · Logistics Intelligence
+
+**Priority:** P2 (Phase 1+)
+**Summary:** The Invisible Bureaucrat — automates household bureaucracy. Tracks appliance warranties, vehicle registrations, subscription renewals, and procurement. Surfaces expiring items and proposes renewal/replacement actions.
+
+**Data sources:** Email parsing (receipts, warranty confirmations, renewal notices), manual entry for physical items, state files.
+
+**Architecture:** `logistics-agent.md` (scheduled cron agent), `state/logistics.md`. Phase 1–2: propose actions. Phase 3+: broker API integration for automated renewals (with approval gate).
+
+**Outcome:** User sees "Water heater warranty expires in 45 days. Extended warranty available — [Review options] [Dismiss]" instead of discovering the warranty lapsed.
+
+**Domain boundary:** `home` owns property/mortgage/HOA. `logistics` owns appliance lifecycle, receipts, warranties, subscriptions, procurement. Keywords: `warranty`, `registration`, `renewal`, `subscription`, `appliance`, `procurement`.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR21.1 | **Warranty & Expiration Tracker** — Registry of all appliances, vehicles, and subscriptions with expiration dates, renewal windows, and cost. | P2 |
+| FR21.2 | **Renewal Alerts** — 90/60/30-day advance alerts for expiring warranties, registrations, subscriptions. | P2 |
+| FR21.3 | **Subscription Review** — Quarterly audit of active subscriptions with cost, usage frequency, and cancel/keep recommendation. | P2 |
+| FR21.4 | **Shopping List Intelligence** — Surfaces upcoming procurement needs based on expiration data and consumption patterns. | P3 |
+| FR21.5 | **Receipt & Warranty Archive** — Parse confirmation emails to auto-populate warranty start/end dates and purchase amounts. | P2 |
+
+**Artifact spec:** `required_sections:` `## Upcoming Expirations`, `## Subscription Review`, `## Shopping List`. `required_keywords:` `warranty_expiry:` OR `warranty: unrecorded`. `min_length_chars: 250`.
+
+---
+
+### FR-22 · Tribe Intelligence
+
+**Priority:** P2 (Phase 1+)
+**Summary:** Predictive Context Nurturing — a relationship CRM for personal life. Scores contact decay, stages outreach drafts, and ensures no important relationship goes cold. Absorbs and replaces the former `social` domain.
+
+**Data sources:** Contact list, communication history (email, WhatsApp groups), cultural calendar (`state/occasions.md`), existing relationship graph.
+
+**Architecture:** `tribe-agent.md` (scheduled cron agent), `state/tribe.md` (replaces `state/social.md`). Cold-start from existing contacts + social state. WhatsApp Business API write-path deferred to Phase 3.
+
+**Outcome:** User sees "Haven't spoken to Vikram in 47 days (baseline: every 21 days). Decay score: 0.38. [Draft WhatsApp] [Draft email] [Dismiss]" instead of realizing months later that a friendship has gone cold.
+
+**Domain boundary:** `social` domain deprecated → merged into Tribe. `relationships` domain deprecated → merged into Tribe. `tribe.md` is the single state file. Keywords: `contact`, `decay`, `reconnect`, `outreach`, `relationship`, `tribe`.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR22.1 | **Contact Decay Scoring** — Per-contact decay score based on interaction frequency vs. baseline. Surfaces in `/brief` when score drops below threshold. | P2 |
+| FR22.2 | **Reconnect Radar** — Weekly list of contacts approaching or past decay threshold, ranked by relationship tier. | P2 |
+| FR22.3 | **Outreach Draft & Stage** — Auto-draft personalized outreach messages (email, WhatsApp). L1: staged for approval. Phase 3: WhatsApp send with confirmation. | P2 |
+| FR22.4 | **Cultural Calendar Integration** — Wire occasions.md (birthdays, Diwali, Holi, etc.) to Tribe for proactive greeting staging. | P2 |
+| FR22.5 | **Cold-Start Contacts** — Identify contacts with zero interaction baseline (new acquaintances, recent introductions) and prompt for initial outreach cadence. | P3 |
+
+**Artifact spec:** `required_sections:` `## Reconnect List`, `## Drafts Staged`, `## Cold-Start Contacts`. `required_keywords:` `decay_score:`, `baseline_frequency_days:`. `min_length_chars: 200`.
+
+---
+
+### FR-23 · Capital Intelligence
+
+**Priority:** P2 (Phase 1+)
+**Summary:** Autonomous Treasury — forward-looking wealth orchestration. Differs from `finance` (historical records) by owning projections, liquidity alerts, and treasury-style cash management. Includes an amount-confirmation gate: any proposed action involving >$200 requires the user to re-type the amount to confirm.
+
+**Data sources:** Financial account emails (Fidelity, Vanguard, Morgan Stanley, E*Trade), existing `state/finance.md` (read-only consumption), market data (Gemini web research).
+
+**Architecture:** `capital-agent.md` (scheduled cron agent), `state/capital.md`. L1 with source citation + amount-confirm gate. Phase 3: reversible sweep execution (with approval).
+
+**Outcome:** User sees "90-day projection: HSA will fall below $2,000 threshold by June 15. Recommendation: redirect $500/mo from savings → HSA. Source: Fidelity HSA balance trend. [Review details] [Dismiss]" instead of discovering the gap at the worst time.
+
+**Domain boundary:** `finance` owns historical transaction records, bill tracking, spend analysis. `capital` owns forward-looking projections, liquidity alerts, 90-day treasury, rebalancing proposals. Keywords: `projection`, `liquidity`, `treasury`, `rebalance`, `sweep`, `capital`.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR23.1 | **90-Day Cash Flow Projection** — Forward-looking projection based on income patterns, recurring expenses, and known upcoming costs. Updated daily. | P2 |
+| FR23.2 | **Liquidity Alerts** — Surface when any account is projected to drop below defined thresholds within 30/60/90 days. | P2 |
+| FR23.3 | **Proposed Treasury Actions** — Suggest fund transfers, rebalancing, or contribution changes. L1 with source citation. Amount-confirm gate: >$200 requires re-typing amount. | P2 |
+| FR23.4 | **Source Citation Requirement** — Every financial proposal must cite the data source, confidence level, and date of last observation. | P2 |
+| FR23.5 | **Reversible Sweep Proposals** — Phase 3: propose automated fund sweeps between accounts. All sweeps must be reversible within 24 hours. | P3 |
+
+**Artifact spec:** `required_sections:` `## 90-Day Projection`, `## Liquidity Alerts`, `## Proposed Actions`, `## Source Citations`. `required_keywords:` `source:`, `confidence:`. `min_length_chars: 400`.
 
 ---
 
@@ -1601,6 +1638,21 @@ As Artha earns higher trust levels, it gains access to self-improvement capabili
 - **Level 1:** Artha can propose routing rule and domain prompt improvements (user approves)
 - **Level 2:** Artha can auto-fix minor extraction errors (e.g., update a sender pattern) with post-hoc notification
 
+### Per-Domain Autonomy Contract *(v7.11.0)*
+
+The four new domains (Readiness, Logistics, Tribe, Capital) each have a domain-specific autonomy graduation path. Unlike the global trust levels above, these are tracked per-domain in `config/domain_autonomy_state.yaml`.
+
+| Domain | Phase 1 Level | Phase 2 Level | Phase 3 Level | Gate to Advance |
+|--------|--------------|--------------|--------------|-----------------|
+| Readiness | L1 — Propose | L2 — Execute with notification | L3 — Execute silently | ≥80% proposal acceptance over 14 Shadow Mode days |
+| Logistics | L1 — Propose | L1 — Propose | L2 — Execute with approval | Phase 3 API evaluation + PII review |
+| Tribe | L1 — Draft & Stage | L1 — Draft & Stage | L2 — Send with confirmation | WhatsApp connector + ≥80% draft acceptance |
+| Capital | L1 — Propose + source citation + amount-confirm gate | L1 — Propose | L2 — Execute with approval | ≥80% acceptance over 30 days; zero false positives |
+
+**Autonomy demotion rules:** Any HALT event demotes the domain to the next lower level for a 14-day cooldown. Two demotion trips within a cooldown window → forced L0, requiring manual re-elevation via `/autonomy review`. Demotion history is tracked in `config/domain_autonomy_state.yaml`.
+
+**Work domain hard cap:** All work automation agents (FR-19 FW-21–FW-26) are **permanently L1** — propose-only, no graduation path. Work actions carry organizational risk that personal-domain autonomy graduation does not apply to. See FR-19 work agent autonomy cap note.
+
 ---
 
 ## 10. Data Sources & Integrations
@@ -1921,6 +1973,28 @@ Work calendar data from WorkIQ MCP: meeting titles enter Claude API after local 
 
 ## 12. Phased Roadmap
 
+### Phase 0 — Prerequisites *(v7.11.0)*
+*Objective: Clear all blocking prerequisites before new domain delivery begins. ~2 weeks.*
+
+> **v7.11.0 Note:** Phase 0 is a prerequisite gate — no new domain agent enters Shadow Mode until all Phase 0 items are complete. This prevents shipping features on top of known foundation gaps.
+
+**30 prerequisite items (abbreviated — full checklist in `config/implementation_status.yaml`):**
+
+| Category | Key Items | Status |
+|---|---|---|
+| **Security (P0)** | Fix `injection_detector.py` fail-open → fail-safe (R1); reorder PII scrub before injection scan (C1.4); update `test_guardrails.py` assertion (F1) | Required |
+| **Domain Taxonomy** | Resolve canonical domain taxonomy in `domain_registry.yaml` — mark deprecated entries `enabled: false` + `migrated_to:` (F4); add 4 new domains with `always_load: false` (R2) | Required |
+| **Agent Infrastructure** | Implement EAR-4 TF-IDF Layer 2 routing (R3); implement 8 guardrails per domain (R4); raise `_MAX_SCHEDULED_AGENTS` to 8 + cron-group batching (A1); create `config/agents/schedules.yaml` (F2) | Required |
+| **State & Registry** | Create `config/state_registry.yaml` (A2); create `config/domain_autonomy_state.yaml` (§7.1); add `artha-local-dbs` backup target (R8) | Required |
+| **Agent Quality** | Apply PM Skills Coach pattern (P10) to all 4 new agent `.agent.md` files (§13.1); add `artifact_spec:` to all 4 agents (§13.3); write anti-golden TDD fixtures (B3.2); add adversarial routing test fixtures (A1.3) | Required |
+| **Observability** | Implement real token log parsing in `cost_tracker.py` (§13.2); add `begin_session_trace()` to `agent_scheduler.py`; implement per-domain EAR-8 heartbeat (`tmp/{domain}_last_run.json`) | Required |
+| **Context Management** | Implement per-agent context byte-budget — 12KB default, 120KB global cap (§13.4); apply blanket WAL + `busy_timeout(5000)` to `~/.artha-local/` (§5.2) | Required |
+| **Work Agents** | Create 6 work agent stubs (FW-21–FW-26) with PM Skills Coach headers; wire `artifact_spec:` into `eval_runner.py --agents` | Required |
+
+**Phase 0 gate:** `harness.phase0.complete: true` in `config/artha_config.yaml`. Set only after all 30 items verified by `scripts/preflight.py --phase0`.
+
+---
+
 ### Phase 1 — Foundation (Months 1–2)
 *Objective: Deliver immediate daily value in the highest-friction domains with zero custom code*
 
@@ -2076,6 +2150,36 @@ Goal Engine (FR-13: conversational creation, metric wiring, weekly scorecard, co
 
 ---
 
+### Phase 4 — New Domain Intelligence *(v7.11.0, Months 10–14)*
+*Objective: Deploy FR-20 through FR-23 (Readiness, Logistics, Tribe, Capital) with Shadow Mode gates and earned autonomy.*
+
+**Phase 4A — Shadow Autonomy (Weeks 1–4)**
+All four new domain agents run in Shadow Mode (L0/L1) — pre-compute outputs daily but surface only in `/domain <name>` deep dives, not in `/brief`. 14-day acceptance baselines recorded per domain.
+
+**Phase 4B — Local Vision & Biometrics (Weeks 5–8)**
+Readiness elevates to L1 + GCal proposal gate. Logistics adds local OCR for receipt/warranty parsing. Capital at L1 with source citation + amount-confirm gate (>$200 re-type). Tribe at L1 draft-and-stage. Semantic routing upgraded if TF-IDF Assumption passes validation.
+
+**Phase 4C — Action Execution Engine (Weeks 9–12)**
+L2+ autonomy elevation for domains meeting gate criteria. Logistics: broker API integration for automated renewals (with approval). Tribe: WhatsApp Business API write-path (with confirmation). Capital: reversible sweeps (with approval + amount gate). Event-driven topology evaluation.
+
+**Phase 4 success criteria:** All 4 new domains operational; ≥2 domains at L1 with positive acceptance rates; Readiness producing daily scores; Capital 90-day projections accurate ±15%; Tribe decay scoring calibrated; zero false-positive financial proposals.
+
+---
+
+### Phase 5 — Agent Marketplace *(v7.11.0, Months 15+)*
+*Objective: Open Artha to third-party agents with full trust, security, and quality controls. Requires AR-9 GA quality sustained ≥0.75 for 90 days.*
+
+**Build:**
+- Multi-agent composition: query decomposer → selector → fusion → verification pipeline
+- Streaming agent responses with per-chunk validation
+- Ed25519-signed agent packages with user ratings
+- Personal domain gates: 5 per-domain sensitivity approvals before external agent data access
+- Agent marketplace model with discovery, installation, and health tracking
+
+**Phase 5 success criteria:** ≥3 marketplace agents installed and healthy; multi-agent composition latency <5s; zero injection incidents; user approval ≥90% for marketplace agent outputs.
+
+---
+
 ## 13. Success Criteria
 
 Artha succeeds when it materially changes how you navigate your life. The following metrics will be tracked by Artha itself — as its own primary goal:
@@ -2091,7 +2195,7 @@ Artha succeeds when it materially changes how you navigate your life. The follow
 | Catch-up reliability | >= 95% complete | health-check.md |
 | Per-domain accuracy | >= 90% (30-day rolling) | health-check.md |
 | Action acceptance rate | >= 80% | audit.md |
-| Domain coverage | All 18 FRs active | Prompt count |
+| Domain coverage | All 22 FRs active | Prompt count |
 | Data integrity incidents | Zero | audit.md write guard log |
 | Signal:noise ratio | >= 60% per domain | health-check.md |
 | Session quick-start latency | <10s for non-catch-up | Time-to-first-response |
@@ -2192,7 +2296,31 @@ Artha monitors its own health. Accessible via on-demand chat ("Artha, are you he
 
 No US-centric hardcoding. Provider-agnostic via Integration Adapter Pattern (§9.6). Jurisdiction-aware rules are configuration, not code. Overlapping jurisdiction support during transitions. Fully portable state (OneDrive folder + Keychain re-provisioning).
 
-### 15.7 — Cost
+### 15.7 — Data Quality SLAs *(v7.11.0)*
+
+Cross-domain data quality is enforced by the Data Quality Gate (DQG) — a pull-based 3-dimension model. Quality scores are computed per-domain using weighted dimensions:
+
+| Dimension | Weight | What it measures |
+|---|---|---|
+| Accuracy | 50% | Factual correctness — cross-referenced against corroborating sources |
+| Freshness | 35% | Data staleness — time since last verified observation |
+| Completeness | 15% | Coverage — required fields populated vs. total required |
+
+**Per-domain accuracy targets:**
+
+| Domain | Accuracy Target | Freshness Target | Rationale |
+|---|---|---|---|
+| Immigration | ≥98% | ≤7 days | Legal deadlines — errors have irreversible consequences |
+| Finance / Capital | ≥95% | ≤14 days | Financial decisions require high confidence |
+| Health / Readiness | ≥90% | ≤7 days | Biometric data degrades quickly |
+| Work | ≥85% | ≤2 days | Meeting prep requires current data |
+| All other domains | ≥80% | ≤30 days | General life management |
+
+**Quality verdict thresholds:** ≥0.88 = PASS (healthy), 0.70–0.87 = WARN (surfaced in briefing footer), <0.70 = REFUSE (data stale — Artha declines to act on unreliable data). 12 cross-reference rules validate cross-domain consistency (e.g., insurance↔finance policy-premium match, immigration↔travel document validity).
+
+**KB-LINT integration:** A 6-pass deterministic pipeline (P1 Schema Validation, P2 Staleness, P3 TODO Audit, P4 Date Validity, P5 Cross-References, P6 Open Items) runs on every briefing generation. Health score formula: `error_free_files / max(1, files_scanned)`. P1–P3 results are auto-injected into briefing footers. CLI: `lint`, `lint --fix`, `lint --json`.
+
+### 15.8 — Cost
 
 | Component | Target | Control mechanism |
 |---|---|---|
@@ -2216,7 +2344,7 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 
 ---
 
-*Artha PRD v4.2 — End of Document*
+*Artha PRD v7.11.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

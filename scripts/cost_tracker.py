@@ -28,6 +28,8 @@ Ref: specs/act-reloaded.md Enhancement 8
 """
 from __future__ import annotations
 
+import re
+
 import json
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -248,6 +250,94 @@ def _aggregate_runs(runs: list[dict], model: dict) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# §13.2 Real token log parsing
+# ---------------------------------------------------------------------------
+
+_TOKEN_USAGE_FILE = _ROOT_DIR / "state" / "token_usage.json"
+_COPILOT_LOG_DIR = Path.home() / ".copilot" / "logs"
+_LOG_TOKEN_RE = re.compile(
+    r'"total_tokens":\s*(\d+)|"prompt_tokens":\s*(\d+)|"completion_tokens":\s*(\d+)'
+)
+_SINGLE_SESSION_ESTIMATE = 8_000   # conservative; sanity-check baseline
+
+
+def parse_copilot_logs() -> dict[str, int]:
+    """Parse ~/.copilot/logs/process-*.log for actual token counts today.
+
+    Returns dict with keys: prompt, completion, total.
+    Returns empty dict {} on any failure — caller falls back to estimates.
+
+    Sanity check: if actuals are >10x a single-session estimate, suspect a
+    log format change and return {} to prevent inflated reporting.
+    """
+    if not _COPILOT_LOG_DIR.exists():
+        return {}
+
+    today = date.today().isoformat()
+    totals: dict[str, int] = {"prompt": 0, "completion": 0, "total": 0}
+
+    for log_file in sorted(_COPILOT_LOG_DIR.glob("process-*.log")):
+        try:
+            for line in log_file.read_text(errors="replace").splitlines():
+                if today not in line:
+                    continue
+                for m in _LOG_TOKEN_RE.finditer(line):
+                    if m.group(1):
+                        totals["total"] += int(m.group(1))
+                    if m.group(2):
+                        totals["prompt"] += int(m.group(2))
+                    if m.group(3):
+                        totals["completion"] += int(m.group(3))
+        except (PermissionError, OSError):
+            continue
+
+    if totals["total"] == 0:
+        return {}
+
+    # Sanity check: >10x single-session estimate → suspect format change
+    if totals["total"] > _SINGLE_SESSION_ESTIMATE * 10:
+        import warnings
+        warnings.warn(
+            f"Token log actuals ({totals['total']:,}) are >10x single-session "
+            "estimate — suspected log format change. Falling back to estimates.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return {}
+
+    return totals
+
+
+def update_token_usage(actuals: dict[str, int]) -> None:
+    """Persist daily token actuals to state/token_usage.json.
+
+    Maintains a rolling 90-day window. Safe to call multiple times per day —
+    values are additive within the same calendar date.
+    """
+    data: dict[str, Any] = {}
+    if _TOKEN_USAGE_FILE.exists():
+        try:
+            data = json.loads(_TOKEN_USAGE_FILE.read_text(encoding="utf-8")) or {}
+        except (json.JSONDecodeError, OSError):
+            data = {}
+
+    today = date.today().isoformat()
+    if today in data and isinstance(data[today], dict):
+        for k in ("prompt", "completion", "total"):
+            data[today][k] = data[today].get(k, 0) + actuals.get(k, 0)
+    else:
+        data[today] = dict(actuals)
+
+    # Rolling 90-day window
+    if len(data) > 90:
+        keep = sorted(data.keys())[-90:]
+        data = {k: data[k] for k in keep}
+
+    _TOKEN_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _TOKEN_USAGE_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Main API
 # ---------------------------------------------------------------------------
 
@@ -275,7 +365,19 @@ class CostTracker:
         runs = _parse_catch_up_runs(fm)
         metrics = _load_pipeline_metrics()
 
+        # §13.2 — try real token log parsing first
+        today_actuals = parse_copilot_logs()
+        today_source = "estimated (±50%)"
+        if today_actuals and today_actuals.get("total", 0) > 0:
+            update_token_usage(today_actuals)
+            today_source = "actual (log-parsed)"
+
         aggregated = _aggregate_runs(runs, self._model)
+
+        # Override today's token count with log-parsed actuals if available
+        if today_actuals:
+            aggregated["today_actual_tokens"] = today_actuals
+        aggregated["today_tokens_source"] = today_source
 
         # API call counts from pipeline_metrics.json
         msgraph_calls = int(metrics.get("msgraph_calls", 0))
@@ -290,6 +392,10 @@ class CostTracker:
             aggregated["today_usd"] + gmail_cost + gemini_cost, 4
         )
 
+        disclaimer = (
+            "actual (log-parsed)" if today_source == "actual (log-parsed)"
+            else "±50% estimated — not from live API billing"
+        )
         return {
             **aggregated,
             "msgraph_calls": msgraph_calls,
@@ -299,7 +405,7 @@ class CostTracker:
             "gmail_cost_usd": round(gmail_cost, 4),
             "gemini_cost_usd": round(gemini_cost, 4),
             "total_today_usd": total_usd,
-            "accuracy_disclaimer": "±50% — estimates only; not from live API billing",
+            "accuracy_disclaimer": disclaimer,
         }
 
     def format_report(self, report: dict[str, Any]) -> str:
@@ -318,10 +424,18 @@ class CostTracker:
         gmail_calls = report.get("gmail_calls", 0)
         tg_msgs = report.get("telegram_messages", 0)
 
+        tokens_source = report.get("today_tokens_source", "estimated (±50%)")
+        today_actuals = report.get("today_actual_tokens", {})
+        if today_actuals and today_actuals.get("total", 0) > 0:
+            tokens_label = f"  | Tokens today: {today_actuals['total']:,} ({tokens_source})"
+        else:
+            tokens_label = f"  | Tokens today: {tokens_source}"
+        disclaimer = report.get("accuracy_disclaimer", "±50% estimated")
+
         lines = [
-            "💰 Artha Cost Estimate (est. ±50%)",
+            f"💰 Artha Cost Report ({disclaimer})",
             "",
-            f"Today:      ${today_usd:.2f}  ({report.get('today_sessions', 0)} session(s))",
+            f"Today:      ${today_usd:.2f}  ({report.get('today_sessions', 0)} session(s)){tokens_label}",
             f"This week:  ${week_usd:.2f}  ({week_sessions} session(s))",
             f"This month: ${month_usd:.2f}  ({month_sessions} session(s))",
             "",

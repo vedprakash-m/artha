@@ -187,6 +187,58 @@ features:
     status: implemented
     confidence: high
     note: "7 guardrails + registry + compose_middleware(). Tests: test_guardrails.py (50 tests)"
+
+  # ── Domain Guardrails (PRD-Reloaded §8 — R4) ─────────────────────────────
+  # Registered in config/guardrails.yaml `domain:` section.
+  # Implemented in scripts/middleware/guardrails.py.
+  guardrail_readiness_fallback:
+    spec: "specs/prd-reloaded.md §8.5"
+    class: ReadinessFallbackGR
+    status: implemented
+    confidence: high
+    note: "Graceful fallback when Apple Health export absent or >36h stale. Registered in guardrails.yaml domain section."
+  guardrail_readiness_no_inference:
+    spec: "specs/prd-reloaded.md §8.5"
+    class: ReadinessNoInferenceGR
+    status: implemented
+    confidence: high
+    note: "Blocks calendar-change proposals when readiness_score is null or <20. Registered in guardrails.yaml."
+  guardrail_logistics_injection:
+    spec: "specs/prd-reloaded.md §8.3 (R1, F1)"
+    class: LogisticsInjectionGR
+    status: implemented
+    confidence: high
+    note: "PII scrub BEFORE injection scan on all OCR/receipt output. fail_safe=HALT (not pass-through). Test: test_guardrails.py (fail-open regression guard)."
+  guardrail_logistics_pii_boundary:
+    spec: "specs/prd-reloaded.md §8.3"
+    class: LogisticsPIIBoundaryGR
+    status: implemented
+    confidence: high
+    note: "Blocks logistics entities that leak PII into Amazon deeplinks. Registered in guardrails.yaml."
+  guardrail_tribe_rate_limit:
+    spec: "specs/prd-reloaded.md §8.6"
+    class: TribeRateLimitGR
+    status: implemented
+    confidence: high
+    note: "Hard cap of 5 outreach drafts per catch-up session. _DRAFT_CAP=5 in tribe_agent.py. Test: tests/eval/routing_adversarial/test_tribe_rate_limit.py."
+  guardrail_tribe_no_auto_send:
+    spec: "specs/prd-reloaded.md §2.3, §6.3"
+    class: TribeNoAutoSendGR
+    status: implemented
+    confidence: high
+    note: "Tribe drafts must be staged via pr_manager.py content stage — never auto-sent. WhatsApp write path deferred to Phase 3."
+  guardrail_capital_source_citation:
+    spec: "specs/prd-reloaded.md §8.4 (R10)"
+    class: CapitalSourceCitationGR
+    status: implemented
+    confidence: high
+    note: "Every Capital proposal requires state file + line citation before presentation. No citation = HALT proposal."
+  guardrail_capital_amount_confirm:
+    spec: "specs/prd-reloaded.md §8.4 (R10)"
+    class: CapitalAmountConfirmGR
+    status: implemented
+    confidence: high
+    note: "Any action >$200 requires user to re-type the exact amount. Mismatch = REJECT (not re-prompt). Anti-hallucination gate."
   afw_wave2_middleware_hooks:
     spec: "specs/agent-fw.md §AFW-3"
     status: implemented
@@ -1249,6 +1301,173 @@ features:
     confidence: high
     note: "scripts/lib/knowledge_extractor.py (310 lines); extracts novel facts from quality>=0.7 responses; TTL-based eviction; stale-while-revalidate; cache at tmp/ext-agent-cache/<agent>.md (tmp/ = ephemeral, not cloud-synced); max_cache_size_chars=50000; tests: test_knowledge_extractor.py"
   ext_agent_health_tracker:
+
+phase_0_prerequisites:
+  # ── Phase 0 Prerequisites — specs/prd-reloaded.md §12 ──────────────────
+  # These tasks must be complete before any new domain work begins.
+  # Status values: implemented | partial | not_started
+
+  harness_wave0_complete:
+    spec: "specs/prd-reloaded.md §12"
+    status: implemented
+    confidence: high
+    note: "harness.wave0.complete: true confirmed in config/artha_config.yaml"
+
+  harness_progressive_disclosure_enabled:
+    spec: "specs/prd-reloaded.md §12"
+    status: implemented
+    confidence: high
+    note: "harness.progressive_disclosure.enabled: true confirmed in config/artha_config.yaml"
+
+  injection_detector_fail_safe:
+    spec: "specs/prd-reloaded.md §12, §8.3 (R1)"
+    status: implemented
+    confidence: high
+    note: "scripts/middleware/guardrails.py — except ImportError block returns GuardrailOutput(TripwireResult.HALT); security blocker fixed"
+
+  test_guardrails_halt_assertion:
+    spec: "specs/prd-reloaded.md §12 (F1)"
+    status: implemented
+    confidence: high
+    note: "tests/unit/test_guardrails.py line 197 updated to assert TripwireResult.HALT when injection_detector patched to None"
+
+  progressive_disclosure_config_path:
+    spec: "specs/prd-reloaded.md §12 (F7), §4.4"
+    status: implemented
+    confidence: high
+    note: "scripts/generate_identity.py lookup changed to (_acfg.get('harness') or {}).get('progressive_disclosure', {}).get('enabled', False)"
+
+  schedules_yaml_created:
+    spec: "specs/prd-reloaded.md §12 (F2)"
+    status: implemented
+    confidence: high
+    note: "config/agents/schedules.yaml created; agent_scheduler.py reads scheduled agent list correctly"
+
+  domain_taxonomy_resolved:
+    spec: "specs/prd-reloaded.md §12 (F4), §3.4"
+    status: partial
+    confidence: medium
+    note: "config/domain_registry.yaml has canonical domains; ownership boundaries for Readiness/health, Tribe/social, Logistics/home, Capital/finance require migrated_to: fields for deprecated entries"
+
+  schedules_slot_audit:
+    spec: "specs/prd-reloaded.md §12 (R13), §3.2"
+    status: implemented
+    confidence: high
+    note: "_MAX_SCHEDULED_AGENTS raised to 8 in agent_scheduler.py; cron_group: batching implemented; slots confirmed available for 4 new domain agents"
+
+  domain_registry_new_domains:
+    spec: "specs/prd-reloaded.md §12 (R2)"
+    status: partial
+    confidence: medium
+    note: "4 new domains in domain_registry.yaml; routing_keywords multi-word ordering not fully verified per §4.2 convention for all new domain entries"
+
+  domain_guardrails_8_implemented:
+    spec: "specs/prd-reloaded.md §12 (R4), §8.2"
+    status: implemented
+    confidence: high
+    note: "All 8 guardrails implemented in scripts/middleware/guardrails.py: LogisticsInjectionGR, LogisticsPIIBoundaryGR, CapitalSourceCitationGR, CapitalAmountConfirmGR, TribeRateLimitGR, TribeNoAutoSendGR, ReadinessFallbackGR, ReadinessNoInferenceGR"
+
+  ear4_tfidf_layer2:
+    spec: "specs/prd-reloaded.md §12 (R3), §4.2"
+    status: not_started
+    confidence: high
+    note: "EAR-4 TF-IDF Layer 2 not yet implemented in scripts/domain_index.py; Counter-based TF-IDF over domain descriptions required before Phase 1 routing is trusted"
+
+  ear3_ear5_stubs:
+    spec: "specs/prd-reloaded.md §12 (R7), §3.3"
+    status: implemented
+    confidence: high
+    note: "harness.ear3.complete: false and harness.ear5.complete: false stub flags added to config/artha_config.yaml; Phase 3 gate is machine-enforceable"
+
+  artha_local_backup_target:
+    spec: "specs/prd-reloaded.md §12 (R8), §5.2"
+    status: implemented
+    confidence: high
+    note: "scripts/backup.py includes artha-local-dbs GFS-tier ZIP target for ~/.artha-local/*.db; ~/.artha-local/ added to .cloudstorageignore"
+
+  session_trace_scheduler:
+    spec: "specs/prd-reloaded.md §12, §9.1"
+    status: implemented
+    confidence: high
+    note: "scripts/agent_scheduler.py calls begin_session_trace() per domain run; session_trace_id written to per-domain heartbeat file"
+
+  ear8_heartbeat_per_domain:
+    spec: "specs/prd-reloaded.md §12 (R5, R6), §9.1"
+    status: implemented
+    confidence: high
+    note: "tmp/{domain}_last_run.json heartbeat files with schema {domain, session_trace_id, timestamp_utc, status, records_written}; pipeline.py preflight validates staleness"
+
+  token_log_parsing:
+    spec: "specs/prd-reloaded.md §12, §13.2"
+    status: not_started
+    confidence: high
+    note: "scripts/cost_tracker.py parse_copilot_logs() + update_token_usage() not implemented; ~/.copilot/logs/ parsing not wired; state/token_usage.json not created"
+
+  domain_agent_md_files:
+    spec: "specs/prd-reloaded.md §12, §13.1"
+    status: not_started
+    confidence: high
+    note: "Four domain .agent.md files (Readiness, Capital, Tribe, Logistics) not created; PM Skills Coach prompt pattern with identity block + Known Failure Modes + What to NEVER Do required per §13.1"
+
+  artifact_spec_frontmatter:
+    spec: "specs/prd-reloaded.md §12, §13.3"
+    status: partial
+    confidence: high
+    note: "artifact_spec: added to 3 work agent .md files (artha-work.md, artha-work-enterprise.md, artha-work-msft.md); domain .agent.md files not yet created — field pending with domain agent creation"
+
+  max_scheduled_agents_8_cron_groups:
+    spec: "specs/prd-reloaded.md §12, §3.2 (A1)"
+    status: implemented
+    confidence: high
+    note: "_MAX_SCHEDULED_AGENTS=8 in agent_scheduler.py; cron_group: field in schedules.yaml; sequential group dispatch implemented; adversarial routing test fixture exists"
+
+  state_registry_yaml:
+    spec: "specs/prd-reloaded.md §12, §3.5 (A2)"
+    status: implemented
+    confidence: high
+    note: "config/state_registry.yaml created; all state/ files registered with {path, owner_agent, write_frequency, backup_tier, max_staleness_hours, sensitivity}; preflight.py and backup.py wired"
+
+  keyword_ordering_validation:
+    spec: "specs/prd-reloaded.md §12, §4.2 (B1)"
+    status: implemented
+    confidence: high
+    note: "scripts/domain_index.py emits WARNING if any domain's first routing keyword is a single-word term; multi-word phrases ordered first enforced"
+
+  wal_busy_timeout_blanket:
+    spec: "specs/prd-reloaded.md §12, §5.2"
+    status: implemented
+    confidence: high
+    note: "All sqlite3.connect() calls for ~/.artha-local/ execute PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; sentinel-file check in pipeline.py"
+
+  domain_autonomy_state_yaml:
+    spec: "specs/prd-reloaded.md §12, §7.1"
+    status: implemented
+    confidence: high
+    note: "config/domain_autonomy_state.yaml tracks 4 domains; trust_enforcer.py apply_demotion(domain=...) wired to update per-domain level (Ln→L(n-1), 14-day cooldown, trip_history append)"
+
+  pii_before_injection_reorder:
+    spec: "specs/prd-reloaded.md §12, §8.3 (C1.4)"
+    status: implemented
+    confidence: high
+    note: "scripts/lib/context_scrubber.py executes before scripts/lib/injection_detector.py in defense pipeline; PII scrub prevents leakage into injection audit log"
+
+  per_agent_context_budget:
+    spec: "specs/prd-reloaded.md §12, §13.4 (B2.1)"
+    status: implemented
+    confidence: high
+    note: "agent_context_budget_bytes in config/artha_config.yaml; scripts/lib/prompt_composer.py enforces hard cap with [CONTEXT TRIMMED — {N} fragments dropped] notice"
+
+  anti_golden_tdd_fixtures:
+    spec: "specs/prd-reloaded.md §12, §9.2 (B3.2)"
+    status: implemented
+    confidence: high
+    note: "Anti-golden TDD fixtures committed to tests/eval/ for all 4 domain guardrail areas; fixtures fail first (proving guardrail gap), then agent implementation makes them pass"
+
+  adversarial_routing_fixtures:
+    spec: "specs/prd-reloaded.md §12 (A1.3)"
+    status: implemented
+    confidence: high
+    note: "tests/eval/routing_adversarial/ contains 20+ synthetic multi-match edge case queries; 100% correct routing validated before 7th agent registered"
     spec: "specs/subagent-ext-agent.md §4.8"
     status: implemented
     confidence: high

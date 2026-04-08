@@ -331,7 +331,7 @@ def _build_identity_block(profile: dict) -> str:
             _acfg = _load_cfg("artha_config", str(_ARTHA_DIR / "config"))
             _pd_enabled = bool(
                 isinstance(_acfg, dict)
-                and (_acfg.get("progressive_disclosure") or {}).get("enabled", False)
+                and (_acfg.get("harness") or {}).get("progressive_disclosure", {}).get("enabled", False)
             )
         except Exception:  # noqa: BLE001
             _pd_enabled = False

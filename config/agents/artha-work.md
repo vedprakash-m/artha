@@ -9,11 +9,23 @@ version: "0.1.0"
 # spec: .archive/specs/work.md (historical — merged into implementation)
 tier: universal
 audience: Any M365 user
+autonomy: L1
+max_autonomy_level: 1
+max_context_bytes: 32768
 mcp-servers: {}
 tools:
   - read
   - search
   - bash
+applyTo: "**"
+artifact_spec:
+  required_sections:
+    - "## Today's Focus"
+    - "## Open Items"
+  required_keywords:
+    - "priority:"
+  min_length_chars: 200
+  phase_gate: "phase1"
 ---
 
 # Artha Work OS — Baseline Agent (M365 Graph Tier)

@@ -92,6 +92,7 @@ def _init_config() -> None:
             ("occasions", ".md"),
             ("transactions", ".md"),
         ],
+        "ARTHA_LOCAL_DIR": Path.home() / ".artha-local",
         "KC_SERVICE":      "age-key",
         "KC_ACCOUNT":      "artha",
         "STALE_THRESHOLD": 300,   # 5 min — soft TTL (stale if PID no longer running)

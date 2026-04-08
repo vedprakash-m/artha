@@ -225,7 +225,11 @@ class PromptInjectionGuardrail(BaseGuardrail):
                     ),
                 )
         except ImportError:
-            pass  # injection_detector unavailable — fail open
+            # injection_detector unavailable — fail SAFE (block, don't allow through)
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message="injection_detector unavailable — blocking on fail-safe",
+            )
 
         return GuardrailOutput(TripwireResult.PASS)
 
@@ -470,6 +474,366 @@ class FrictionGateGuardrail(BaseGuardrail):
 
 
 # ---------------------------------------------------------------------------
+# EAR-3 Domain Guardrails (§8.2, prd-reloaded.md)
+# Implementation order: Logistics → Capital → Tribe → Readiness  (R4)
+# ---------------------------------------------------------------------------
+
+
+class LogisticsInjectionGR(BaseGuardrail):
+    """Logistics — OCR/Vision AI injection defense (§8.2, §8.3).
+
+    Enforces the mandatory PII-scrub-before-injection-scan pipeline (C1.4):
+      Raw OCR → context_scrubber PII scrub → injection_detector scan → pass/discard
+
+    Fail-safe: HALT if either dependency is unavailable (never fail-open).
+    On HALT: receipt parse discarded; caller logs to state/audit.md.
+    """
+
+    name = "logistics_injection"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        raw_text = data if isinstance(data, str) else str(data or "")
+
+        # Step 1: PII scrub BEFORE injection scan (C1.4 ordering requirement)
+        try:
+            from lib.context_scrubber import ContextScrubber  # noqa: PLC0415
+
+            scrubbed_text = ContextScrubber().scrub(raw_text)
+        except ImportError:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message="context_scrubber unavailable — blocking OCR input on fail-safe",
+            )
+
+        # Step 2: Injection scan on PII-free text
+        try:
+            from lib.injection_detector import InjectionDetector  # noqa: PLC0415
+
+            result = InjectionDetector().scan(scrubbed_text)
+            if result.injection_detected:
+                signal_types = ", ".join(s.signal_type for s in result.signals[:5])
+                return GuardrailOutput(
+                    TripwireResult.HALT,
+                    message=(
+                        f"⚠ Injection signal in receipt OCR: "
+                        f"signals=[{signal_types}]. Receipt parse discarded."
+                    ),
+                )
+        except ImportError:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message="injection_detector unavailable — blocking OCR input on fail-safe",
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class LogisticsPIIBoundaryGR(BaseGuardrail):
+    """Logistics — block proposals that would transmit PII to external APIs (§8.2).
+
+    In Phase 1-2, any proposal payload classified above LOW sensitivity by
+    context_scrubber is blocked before it reaches broker or PA APIs.
+    """
+
+    name = "logistics_pii_boundary"
+    mode = GuardrailMode.BLOCKING
+
+    # Sensitivity levels above which proposals are blocked (case-insensitive)
+    _BLOCKED_LEVELS = {"medium", "high", "critical"}
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        payload = (context or {}).get("payload", data)
+        if payload is None:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        payload_str = payload if isinstance(payload, str) else str(payload)
+
+        try:
+            from lib.context_scrubber import ContextScrubber  # noqa: PLC0415
+
+            sensitivity = ContextScrubber().classify(payload_str)
+        except ImportError:
+            # Scrubber unavailable — default to PASS (non-security-critical path)
+            return GuardrailOutput(TripwireResult.PASS)
+
+        if str(sensitivity).lower() in self._BLOCKED_LEVELS:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Logistics proposal blocked: payload sensitivity '{sensitivity}' "
+                    "exceeds LOW boundary. PII must not be transmitted to external APIs."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CapitalSourceCitationGR(BaseGuardrail):
+    """Capital — block uncited financial proposals (§8.2, §8.4).
+
+    Any Capital proposal missing a ``source:`` field is stripped before
+    delivery.  No uncited figures reach the user.
+    """
+
+    name = "capital_source_citation"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "capital":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        # Check both the context dict and the data payload for a source field
+        has_source = bool(ctx.get("source"))
+        if not has_source and isinstance(data, dict):
+            has_source = bool(data.get("source"))
+
+        if not has_source:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Capital proposal blocked: missing mandatory 'source:' field. "
+                    "All Capital figures must cite the exact state/finance.md line "
+                    "or transaction ID."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CapitalAmountConfirmGR(BaseGuardrail):
+    """Capital — enforce amount-confirmation gate for proposals >$200 (§8.2, §8.4, C1.3).
+
+    Proposals with ``proposal_amount > 200`` require ``confirmation_amount``
+    to match exactly.  Mismatch → REJECT.  Missing confirmation → HALT.
+    """
+
+    name = "capital_amount_confirm"
+    mode = GuardrailMode.BLOCKING
+
+    _THRESHOLD = 200.0
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        amount = ctx.get("proposal_amount")
+        if amount is None:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            return GuardrailOutput(TripwireResult.PASS)
+
+        if amount <= self._THRESHOLD:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        # Amount exceeds threshold — require matching confirmation
+        confirmation = ctx.get("confirmation_amount")
+        if confirmation is None:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Capital proposal blocked: amount ${amount:.2f} exceeds "
+                    f"${self._THRESHOLD:.0f} threshold and requires amount-confirmation "
+                    "retyping. confirmation_amount not provided."
+                ),
+            )
+
+        try:
+            confirmation = float(confirmation)
+        except (TypeError, ValueError):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message="Capital proposal blocked: confirmation_amount is not a valid number.",
+            )
+
+        if confirmation != amount:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Amount does not match proposal. Type CANCEL or the correct "
+                    f"amount from the proposal: ${amount:.2f}."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class TribeRateLimitGR(BaseGuardrail):
+    """Tribe — hard cap of 5 outreach drafts per catch-up run (§8.2).
+
+    The 6th+ draft_message action is silently dropped (HALT) and logged.
+    Not user-configurable.  Cold-start contacts (session_draft_count == 0 → cap intact).
+    Non-draft-message actions are not subject to this cap.
+    """
+
+    name = "tribe_rate_limit"
+    mode = GuardrailMode.BLOCKING
+
+    _MAX_DRAFTS = 5
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("action") != "draft_message":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        draft_count = ctx.get("session_draft_count", 0)
+        try:
+            draft_count = int(draft_count)
+        except (TypeError, ValueError):
+            draft_count = 0
+
+        if draft_count >= self._MAX_DRAFTS:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Tribe draft cap reached: {draft_count}/{self._MAX_DRAFTS} drafts "
+                    "in this catch-up. Remaining drafts silently dropped."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class TribeNoAutoSendGR(BaseGuardrail):
+    """Tribe — block send_message if WhatsApp connector is not write-enabled (§8.2).
+
+    Hard guardrail: if output contains a send_message tool call targeting
+    WhatsApp and the connector does not have ``write: true``, HALT.
+    """
+
+    name = "tribe_no_auto_send"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("action") != "send_message":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        connector = ctx.get("connector", "")
+        if "whatsapp" not in str(connector).lower():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        connector_write_enabled = bool(ctx.get("connector_write", False))
+        if not connector_write_enabled:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message="WhatsApp write connector not configured.",
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class ReadinessFallbackGR(BaseGuardrail):
+    """Readiness — graceful fallback when Apple Health export is missing or stale (§8.2).
+
+    If the Apple Health export is absent or older than 24 hours:
+    - Sets ``readiness_score: unknown`` in context
+    - Suppresses calendar restructuring proposals (by HALTing on write proposals)
+
+    This is a Tool guardrail: runs before domain agents process health signals.
+    """
+
+    name = "readiness_fallback"
+    mode = GuardrailMode.BLOCKING
+
+    _MAX_EXPORT_AGE_HOURS = 24
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        export_age_hours = ctx.get("health_export_age_hours")
+
+        export_missing = ctx.get("health_export_missing", False)
+        if export_missing:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Readiness: Apple Health export missing — "
+                    "readiness_score set to unknown. Calendar proposals suppressed."
+                ),
+            )
+
+        if export_age_hours is not None:
+            try:
+                age = float(export_age_hours)
+            except (TypeError, ValueError):
+                age = None
+            if age is not None and age > self._MAX_EXPORT_AGE_HOURS:
+                return GuardrailOutput(
+                    TripwireResult.HALT,
+                    message=(
+                        f"Readiness: Apple Health export is {age:.1f}h old "
+                        f"(>{self._MAX_EXPORT_AGE_HOURS}h) — "
+                        "readiness_score set to unknown. Calendar proposals suppressed."
+                    ),
+                )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class ReadinessNoInferenceGR(BaseGuardrail):
+    """Readiness — strip calendar restructuring proposals when score is unknown (§8.2).
+
+    Hard rule: if ``readiness_score`` is ``'unknown'`` (or absent), any
+    proposal with ``action: write`` and ``proposal_type: calendar_*`` is
+    blocked.  Readiness must never be inferred from absence of data.
+    """
+
+    name = "readiness_no_inference"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        score = ctx.get("readiness_score")
+
+        # Only applies when score is unknown
+        if score != "unknown":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        # Block write actions on calendar proposals
+        action = str(ctx.get("action", "")).lower()
+        proposal_type = str(ctx.get("proposal_type", "")).lower()
+
+        is_calendar_write = action == "write" and "calendar" in proposal_type
+        if is_calendar_write:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Readiness: calendar restructuring blocked — "
+                    "readiness_score is unknown. Never infer readiness from "
+                    "absence of data."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+# ---------------------------------------------------------------------------
 # Registry of available guardrail classes (used by guardrail_registry.py)
 # ---------------------------------------------------------------------------
 
@@ -481,6 +845,15 @@ GUARDRAIL_CLASSES: dict[str, type[BaseGuardrail]] = {
     "PiiOutputGuardrail": PiiOutputGuardrail,
     "DataQualityGuardrail": DataQualityGuardrail,
     "FrictionGateGuardrail": FrictionGateGuardrail,
+    # EAR-3 domain guardrails (§8.2)
+    "LogisticsInjectionGR": LogisticsInjectionGR,
+    "LogisticsPIIBoundaryGR": LogisticsPIIBoundaryGR,
+    "CapitalSourceCitationGR": CapitalSourceCitationGR,
+    "CapitalAmountConfirmGR": CapitalAmountConfirmGR,
+    "TribeRateLimitGR": TribeRateLimitGR,
+    "TribeNoAutoSendGR": TribeNoAutoSendGR,
+    "ReadinessFallbackGR": ReadinessFallbackGR,
+    "ReadinessNoInferenceGR": ReadinessNoInferenceGR,
 }
 
 __all__ = [
@@ -496,5 +869,14 @@ __all__ = [
     "PiiOutputGuardrail",
     "DataQualityGuardrail",
     "FrictionGateGuardrail",
+    # EAR-3 domain guardrails
+    "LogisticsInjectionGR",
+    "LogisticsPIIBoundaryGR",
+    "CapitalSourceCitationGR",
+    "CapitalAmountConfirmGR",
+    "TribeRateLimitGR",
+    "TribeNoAutoSendGR",
+    "ReadinessFallbackGR",
+    "ReadinessNoInferenceGR",
     "GUARDRAIL_CLASSES",
 ]

@@ -1,5 +1,5 @@
 # config/domain_registry.yaml — Artha Domain Registry
-# Version: 1.0 | Updated: 2026-03-14
+# Version: 1.1 | Updated: 2026-04-07
 #
 # Single manifest for every domain: dependencies, sensitivity, loading rules,
 # auto-enable conditions, and household type applicability.
@@ -9,8 +9,21 @@
 #   - generate_identity.py: prompt assembly (only enabled domains)
 #   - Artha.core.md §lazy loading: always_load field for Tier 1 context optimization
 #   - vault_guard.py: derives SENSITIVE_DOMAINS dynamically
+#   - domain_index.py: routing keyword Layer 1 match
 #
-# Ref: specs/enhance.md §2.2, §9.2
+# Ref: specs/enhance.md §2.2, §9.2; specs/prd-reloaded.md §4.2, §3.4
+#
+# ROUTING KEYWORD ORDERING CONVENTION (B1 — specs/prd-reloaded.md §4.2):
+#   routing_keywords lists MUST begin with multi-word phrases before single-word terms.
+#   Rationale: Layer 1 matching scans in order; multi-word phrases consume more signal
+#   and produce fewer false-positive single-domain matches. Single-word terms placed
+#   first cause premature matches before multi-word candidates are reached.
+#   domain_index.py emits WARNING if any domain's first keyword is a single-word term.
+#
+# DEPRECATED DOMAIN CONVENTIONS:
+#   Domains marked enabled: false with migrated_to: <target> are retained for backward
+#   compatibility with existing state files. Their state and prompt files remain readable.
+#   Do NOT delete deprecated entries — they preserve backward-compat routing fallbacks.
 
 schema_version: "1.0"
 
@@ -415,6 +428,10 @@ domains:
     state_file: "state/social.md"
     requires_vault: false
     enabled_by_default: false
+    enabled: false
+    migrated_to: tribe
+    # Deprecated: relationship decay scoring and outreach drafts now owned by `tribe` domain (EAR-3).
+    # State file state/social.md retained as TribeAgent write target for backward compatibility.
     household_types: [family, couple, single, multi_gen, roommates]
     requires_connectors: []
     optional_connectors: []
@@ -675,6 +692,11 @@ domains:
     state_file: "state/wellness.md"
     requires_vault: false
     enabled_by_default: false
+    enabled: false
+    migrated_to: health
+    # Deprecated: biometric readiness signals now owned by `readiness` domain (EAR-3).
+    # General health/wellness goals owned by `health` domain.
+    # State file state/wellness.md retained for backward compatibility.
     household_types: [family, couple, single, multi_gen, roommates]
     requires_connectors: []
     optional_connectors: [apple_health, strava, garmin]
@@ -1218,6 +1240,10 @@ domains:
     state_file: "state/relationships.md"
     requires_vault: false
     enabled_by_default: true
+    enabled: false
+    migrated_to: tribe
+    # Deprecated: relationship decay scoring now owned by `tribe` domain (EAR-3).
+    # State file state/relationships.md retained for backward compatibility.
     household_types: [family, couple, single, multi_gen, roommates]
     requires_connectors: []
     optional_connectors: []
@@ -1237,3 +1263,137 @@ domains:
       orange: "3+ relationships past their cadence threshold"
       yellow: "Relationship approaching stale threshold"
       blue: "Relationship pulse updated"
+
+  # ── EAR-3 Pre-computed Domain Agents (specs/prd-reloaded.md §3) ─────────────
+  # Keywords ordered: multi-word phrases FIRST, then single-word terms (B1 convention).
+
+  readiness:
+    label: "Biological Readiness"
+    description: "Cognitive readiness index from biometric pre-computation; calendar restructuring proposals"
+    sensitivity: medium
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/readiness.md"
+    state_file: "state/readiness.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to pre-compute a daily readiness score from Apple Health data?"
+    routing_keywords:
+      - calendar reschedule
+      - deep work
+      - hrv
+      - sleep
+      - recovery
+      - energy
+      - readiness
+      - biometric
+      - focus
+      - fatigue
+    alert_thresholds:
+      orange: "Readiness score below threshold for 2+ consecutive days"
+      yellow: "Single low-HRV or sleep event (monitoring only — no proposal)"
+      blue: "Daily readiness score updated"
+
+  logistics:
+    label: "Logistics & Asset Lifecycle"
+    description: "Appliance warranties, subscription renewals, receipt tracking, procurement shopping list"
+    sensitivity: low
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/logistics.md"
+    state_file: "state/logistics.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to track appliance warranties and subscription renewals?"
+    routing_keywords:
+      - insurance quote
+      - subscription cancel
+      - warranty
+      - appliance
+      - receipt
+      - filter
+      - renewal
+      - procurement
+      - household
+    alert_thresholds:
+      red: "Warranty expired with no renewal action"
+      orange: "Warranty or subscription expires within 30 days"
+      yellow: "Renewal window opening in 60 days"
+      blue: "Logistics state rebuilt"
+
+  tribe:
+    label: "Tribe & Relationships"
+    description: "Relationship decay scoring, reconnect rankings, outreach draft staging"
+    sensitivity: medium
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/tribe.md"
+    state_file: "state/social.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [whatsapp_export]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to track relationship decay and stage reconnect drafts?"
+    routing_keywords:
+      - haven't spoken
+      - catch up with
+      - follow up
+      - relationship
+      - reconnect
+      - contact
+      - network
+      - outreach
+      - CRM
+    alert_thresholds:
+      orange: "3+ contacts past their decay threshold"
+      yellow: "Reconnect opportunity identified"
+      blue: "Tribe decay scores updated"
+
+  capital:
+    label: "Capital & Treasury"
+    description: "90-day cash-flow projection, liquidity alerts, sweep proposals with amount-confirm gate"
+    sensitivity: high
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/capital.md"
+    state_file: "state/finance_forecast.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to run 90-day cash-flow projections and flag liquidity events?"
+    routing_keywords:
+      - cash flow
+      - property tax
+      - liquidity
+      - forecast
+      - treasury
+      - sweep
+      - vanguard
+      - investment
+      - budget predict
+    alert_thresholds:
+      red: "Projected negative balance within 14 days"
+      orange: "Liquidity buffer below threshold within 30 days"
+      yellow: "Large scheduled outflow approaching"
+      blue: "90-day projection updated"

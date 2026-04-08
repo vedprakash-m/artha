@@ -252,7 +252,16 @@ class TestBuildIdentityBlock:
         block = gi._build_identity_block(profile)
         assert "()" not in block
 
-    def test_active_domains_section(self):
+    def test_active_domains_section(self, tmp_path, monkeypatch):
+        # Disable progressive_disclosure so the legacy domain bullet list renders,
+        # allowing us to assert individual domain names appear in the block.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "artha_config.yaml").write_text(
+            "harness:\n  progressive_disclosure:\n    enabled: false\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(gi, "_ARTHA_DIR", tmp_path)
         block = gi._build_identity_block(FULL_PROFILE)
         assert "Active Domains" in block
         assert "Finance" in block  # enabled

@@ -15,7 +15,8 @@ Execution:
     → Show schedule state for all configured agents.
 
 Safety constraints:
-  - Budget cap: max 5 scheduled agents.
+  - Budget cap: max _MAX_SCHEDULED_AGENTS (8) scheduled agent slots.
+    Agents sharing a cron_group occupy one slot; ungrouped agents each occupy one slot.
   - Cooldown: no agent scheduled more than 4×/day.
   - Stale schedule detection: 3 consecutive failures → suspend + surface in health.
   - No auto-install of OS-level schedulers.  User creates the cron/task manually.
@@ -46,7 +47,7 @@ _SCHEDULES_FILE = _CONFIG_DIR / "agents" / "schedules.yaml"
 _STATE_FILE = _REPO_ROOT / "tmp" / "ext-agent-schedule-state.yaml"
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 
-_MAX_SCHEDULED_AGENTS = 5
+_MAX_SCHEDULED_AGENTS = 8
 _MAX_RUNS_PER_DAY = 4
 _FAIL_SUSPEND_THRESHOLD = 3
 
@@ -153,108 +154,156 @@ def _tick(dry_run: bool = False) -> int:
 
     Returns count of agents run.
     """
+    import json as _json  # noqa: PLC0415
+
     schedules = _load_schedules()
     if not schedules:
         print("No schedules configured in config/agents/schedules.yaml")
         return 0
 
-    # Cap: max _MAX_SCHEDULED_AGENTS
-    schedules = schedules[:_MAX_SCHEDULED_AGENTS]
+    # Cap: cron_group-aware slot counting.
+    # Agents sharing a cron_group occupy ONE slot; ungrouped agents each occupy one slot.
+    seen_slots: dict[str, list[dict]] = {}
+    for _s in schedules:
+        _slot_key = _s.get("cron_group") or _s.get("agent", "")
+        seen_slots.setdefault(_slot_key, []).append(_s)
+    slot_keys = list(seen_slots.keys())[:_MAX_SCHEDULED_AGENTS]
+    schedules_by_slot = [seen_slots[k] for k in slot_keys]
 
     state = _load_state()
     now = datetime.now(timezone.utc)
     ran = 0
 
-    for sched in schedules:
-        agent_name = sched.get("agent", "")
-        cron = sched.get("cron", "")
-        query = sched.get("query", "")
-        staleness_tolerance = sched.get("staleness_tolerance_seconds", 3600)
+    for slot_agents in schedules_by_slot:
+        for sched in slot_agents:
+            agent_name = sched.get("agent", "")
+            cron = sched.get("cron", "")
+            query = sched.get("query", "")
+            staleness_tolerance = sched.get("staleness_tolerance_seconds", 3600)  # noqa: F841
 
-        if not agent_name or not cron or not query:
-            continue
+            if not agent_name or not cron or not query:
+                continue
 
-        entry = state.setdefault(agent_name, {
-            "last_run": None,
-            "last_result": None,
-            "consecutive_failures": 0,
-            "suspended": False,
-            "runs_today": {},
-        })
+            entry = state.setdefault(agent_name, {
+                "last_run": None,
+                "last_result": None,
+                "consecutive_failures": 0,
+                "suspended": False,
+                "runs_today": {},
+            })
 
-        # Skip suspended schedules
-        if entry.get("suspended"):
-            print(f"  ⏸ {agent_name}: schedule suspended (>={_FAIL_SUSPEND_THRESHOLD} failures)")
-            continue
+            # Skip suspended schedules
+            if entry.get("suspended"):
+                print(f"  ⏸ {agent_name}: schedule suspended (>={_FAIL_SUSPEND_THRESHOLD} failures)")
+                continue
 
-        # Cooldown: max runs per day
-        if _count_runs_today(entry) >= _MAX_RUNS_PER_DAY:
-            print(f"  🚫 {agent_name}: daily run limit reached ({_MAX_RUNS_PER_DAY})")
-            continue
+            # Cooldown: max runs per day
+            if _count_runs_today(entry) >= _MAX_RUNS_PER_DAY:
+                print(f"  🚫 {agent_name}: daily run limit reached ({_MAX_RUNS_PER_DAY})")
+                continue
 
-        # Check if this schedule's cron expression matches now (or is overdue)
-        last_run_str = entry.get("last_run")
-        is_due = False
+            # Check if this schedule's cron expression matches now (or is overdue)
+            last_run_str = entry.get("last_run")
+            is_due = False
 
-        if last_run_str:
-            try:
-                last_run = datetime.fromisoformat(last_run_str.replace("Z", "+00:00"))
-                # Due if cron matches current time OR if ≥1 hour since last run
-                # and cron was due since last run (simplified: use 1h granularity)
-                if _cron_matches(cron, now):
+            if last_run_str:
+                try:
+                    datetime.fromisoformat(last_run_str.replace("Z", "+00:00"))
+                    # Due if cron matches current time OR if ≥1 hour since last run
+                    # and cron was due since last run (simplified: use 1h granularity)
+                    if _cron_matches(cron, now):
+                        is_due = True
+                except (ValueError, TypeError):
                     is_due = True
-            except (ValueError, TypeError):
-                is_due = True
-        else:
-            is_due = True  # Never run before → always due
+            else:
+                is_due = True  # Never run before → always due
 
-        if not is_due:
-            continue
+            if not is_due:
+                continue
 
-        if dry_run:
-            print(f"  [dry-run] Would run: {agent_name}")
-            continue
+            # Derive domain name and session trace ID (R5: correlate pre-compute → catch-up)
+            domain = agent_name.lower().replace("agent", "").strip()
+            session_trace_id = f"pre-compute-{domain}-{now.strftime('%Y-%m-%dT%H-%M-%S')}"
 
-        # Execute
-        print(f"  ▶ Running scheduled agent: {agent_name}")
-        cmd = [
-            sys.executable,
-            str(_SCRIPTS_DIR / "agent_manager.py"),
-            "delegate",
-            "--agent", agent_name,
-            "--query", query,
-        ]
+            if dry_run:
+                print(f"  [dry-run] Would run: {agent_name} [{session_trace_id}]")
+                continue
 
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                cwd=str(_REPO_ROOT),
-            )
-            success = result.returncode == 0
-        except subprocess.TimeoutExpired:
-            success = False
+            # Begin session trace so all log events within this domain run are correlated
+            try:
+                from lib.logger import begin_session_trace as _begin_session_trace  # noqa: PLC0415
+                _begin_session_trace(session_trace_id)
+            except (ImportError, Exception):
+                pass
 
-        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        entry["last_run"] = ts
-        entry["last_result"] = "success" if success else "failure"
+            # Execute
+            print(f"  ▶ Running scheduled agent: {agent_name} [{session_trace_id}]")
+            cmd = [
+                sys.executable,
+                str(_SCRIPTS_DIR / "agent_manager.py"),
+                "delegate",
+                "--agent", agent_name,
+                "--query", query,
+            ]
 
-        today = now.date().isoformat()
-        if "runs_today" not in entry:
-            entry["runs_today"] = {}
-        entry["runs_today"][today] = entry["runs_today"].get(today, 0) + 1
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(_REPO_ROOT),
+                )
+                success = result.returncode == 0
+            except subprocess.TimeoutExpired:
+                success = False
 
-        if success:
-            entry["consecutive_failures"] = 0
-        else:
-            entry["consecutive_failures"] = entry.get("consecutive_failures", 0) + 1
-            if entry["consecutive_failures"] >= _FAIL_SUSPEND_THRESHOLD:
-                entry["suspended"] = True
-                print(f"  ⛔ {agent_name}: suspended after {_FAIL_SUSPEND_THRESHOLD} failures")
+            ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            entry["last_run"] = ts
+            entry["last_result"] = "success" if success else "failure"
 
-        ran += 1
+            today = now.date().isoformat()
+            if "runs_today" not in entry:
+                entry["runs_today"] = {}
+            entry["runs_today"][today] = entry["runs_today"].get(today, 0) + 1
+
+            if success:
+                entry["consecutive_failures"] = 0
+            else:
+                entry["consecutive_failures"] = entry.get("consecutive_failures", 0) + 1
+                if entry["consecutive_failures"] >= _FAIL_SUSPEND_THRESHOLD:
+                    entry["suspended"] = True
+                    print(f"  ⛔ {agent_name}: suspended after {_FAIL_SUSPEND_THRESHOLD} failures")
+
+            # Write per-domain heartbeat (R5: session_trace_id links pre-compute → morning briefing)
+            # Preserve agent-written records_written if agent updated the file during subprocess run
+            _hb_file = _REPO_ROOT / "tmp" / f"{domain}_last_run.json"
+            _agent_records = 0
+            try:
+                _prev_hb = _json.loads(_hb_file.read_text(encoding="utf-8"))
+                _agent_records = int(_prev_hb.get("records_written", 0))
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            _heartbeat = {
+                "domain": domain,
+                "session_trace_id": session_trace_id,
+                "timestamp_utc": ts,
+                "status": "success" if success else "failure",
+                "records_written": _agent_records,
+            }
+            if success and _agent_records == 0:
+                print(
+                    f"  \u26a0 {agent_name}: records_written=0 \u2014 agent heartbeat uninitialized "
+                    "(agent may not have written its own heartbeat)",
+                    file=sys.stderr,
+                )
+            try:
+                _hb_file.parent.mkdir(parents=True, exist_ok=True)
+                _hb_file.write_text(_json.dumps(_heartbeat, indent=2), encoding="utf-8")
+            except OSError:
+                pass
+
+            ran += 1
 
     if not dry_run:
         _save_state(state)
