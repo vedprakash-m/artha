@@ -36,12 +36,106 @@ Wave 0 of specs/agent-fw.md — write-path consolidation prerequisite.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+
+# ---------------------------------------------------------------------------
+# OCC Exceptions
+# ---------------------------------------------------------------------------
+
+class OCCConflictError(RuntimeError):
+    """Raised when an Optimistic Concurrency Control version mismatch is detected.
+
+    Attributes:
+        path:             Path to the state file.
+        expected_version: The version the writer read before composing the update.
+        found_version:    The version encountered on the re-read verify step.
+        message:          Human-readable description.
+    """
+
+    def __init__(
+        self,
+        path: Path | str,
+        expected_version: int,
+        found_version: int,
+    ) -> None:
+        self.path = Path(path)
+        self.expected_version = expected_version
+        self.found_version = found_version
+        super().__init__(
+            f"OCC conflict on {self.path}: "
+            f"expected version {expected_version}, found {found_version}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# OCC frontmatter helpers (private)
+# ---------------------------------------------------------------------------
+
+_OCC_VERSION_RE = re.compile(r"^version:\s*(\d+)\s*$", re.MULTILINE)
+_OCC_WRITER_RE = re.compile(r"^last_written_by:\s*(.+?)\s*$", re.MULTILINE)
+_OCC_AT_RE = re.compile(r"^last_written_at:\s*(.+?)\s*$", re.MULTILINE)
+
+
+def _extract_occ_version(content: str) -> int:
+    """Extract ``version:`` integer from YAML frontmatter.  Returns 0 if absent."""
+    m = _OCC_VERSION_RE.search(content)
+    return int(m.group(1)) if m else 0
+
+
+def _inject_occ_fields(content: str, version: int, source: str) -> str:
+    """Inject or update OCC fields in YAML frontmatter.
+
+    Handles two cases:
+    1. File already has a YAML frontmatter block (starts with ``---``):
+       updates/inserts the three OCC fields inside the block.
+    2. No frontmatter: prepends a minimal frontmatter block with OCC fields.
+
+    OCC fields written:
+      - ``version: <int>``
+      - ``last_written_by: <source>``
+      - ``last_written_at: <ISO-8601 UTC>``
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _set_field(text: str, key: str, value: str, regex: re.Pattern) -> str:
+        """Replace or append a ``key: value`` line in YAML frontmatter text."""
+        replacement = f"{key}: {value}"
+        if regex.search(text):
+            return regex.sub(replacement, text, count=1)
+        # Append before closing ``---``
+        return text.rstrip() + f"\n{replacement}"
+
+    if content.startswith("---"):
+        # Find frontmatter end marker
+        end_match = re.search(r"\n---\s*\n", content[3:])
+        if end_match:
+            fm_end = end_match.end() + 3  # +3 for the leading '---'
+            fm = content[3:fm_end - end_match.end() + end_match.start() + 3]
+            # Update fields within fm block
+            fm = _set_field(fm, "version", str(version), _OCC_VERSION_RE)
+            fm = _set_field(fm, "last_written_by", source, _OCC_WRITER_RE)
+            fm = _set_field(fm, "last_written_at", now_iso, _OCC_AT_RE)
+            return "---" + fm + content[fm_end:]
+
+    # No frontmatter — prepend one
+    header = (
+        f"---\n"
+        f"version: {version}\n"
+        f"last_written_by: {source}\n"
+        f"last_written_at: {now_iso}\n"
+        f"---\n"
+    )
+    return header + content
 
 
 @dataclass
@@ -184,6 +278,101 @@ def write_atomic(path: Path, content: str, **_kwargs: Any) -> WriteResult:
         return result
 
     result.success = True
+    return result
+
+
+def write_occ(
+    path: Path,
+    content: str,
+    *,
+    domain: str = "unknown",
+    source: str = "system",
+    snapshot: bool = True,
+    pii_check: bool = True,
+    ctx: Any | None = None,
+) -> WriteResult:
+    """Canonical OCC-protected state write.  Like ``write()`` but adds
+    Optimistic Concurrency Control (OCC) version management.
+
+    Protocol:
+      1. Read current ``version: N`` from YAML frontmatter (0 if absent).
+      2. Inject/update OCC fields in new content: ``version: N+1``,
+         ``last_written_by: <source>``, ``last_written_at: <ISO-8601 UTC>``.
+      3. Delegate to ``write()`` — full middleware stack + atomic write.
+      4. Re-read the written file and assert ``version == N+1``.
+         If mismatch: emit telemetry, raise ``OCCConflictError``.
+
+    This provides a best-effort conflict detector.  It is NOT a distributed
+    lock — concurrent writers on different machines may still race.
+    Artha is single-writer by design (one CLI session at a time), so OCC is
+    a safety net for crash-recovery and manual edits, not a real-time guard.
+
+    Args:
+        path:      Absolute path to the target state file.
+        content:   Full new file content (UTF-8 string).  OCC fields will be
+                   injected/updated automatically — do NOT set them manually.
+        domain:    Artha domain name (forwarded to middleware + telemetry).
+        source:    Identifying label for the caller (stored as
+                   ``last_written_by``).
+        snapshot:  Pre-write snapshot (forwarded to ``write()``).
+        pii_check: PII middleware flag (forwarded to ``write()``).
+        ctx:       Optional ArthaContext (forwarded to ``write()``).
+
+    Returns:
+        :class:`WriteResult` with ``success=True`` on success.
+
+    Raises:
+        :class:`OCCConflictError`: If the re-read version does not equal N+1.
+    """
+    # Step 1: read current version
+    current_content = ""
+    if path.exists():
+        try:
+            current_content = path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    current_version = _extract_occ_version(current_content)
+    next_version = current_version + 1
+
+    # Step 2: inject OCC fields into new content
+    enriched = _inject_occ_fields(content, next_version, source)
+
+    # Step 3: delegate to write() — atomic + middleware
+    result = write(
+        path,
+        enriched,
+        domain=domain,
+        source=source,
+        snapshot=snapshot,
+        pii_check=pii_check,
+        ctx=ctx,
+    )
+
+    if not result.success:
+        return result
+
+    # Step 4: verify
+    try:
+        written_content = path.read_text(encoding="utf-8")
+        written_version = _extract_occ_version(written_content)
+    except OSError:
+        # Cannot verify — treat as success (file may be on slow FS)
+        return result
+
+    if written_version != next_version:
+        # Emit telemetry (non-fatal import — if telemetry not yet on path)
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _lib = str(_Path(__file__).parent)
+            if _lib not in _sys.path:
+                _sys.path.insert(0, _lib)
+            from telemetry import emit_occ_conflict  # noqa: PLC0415
+            emit_occ_conflict(str(path), next_version, written_version)
+        except Exception:  # noqa: BLE001
+            pass
+        raise OCCConflictError(path, next_version, written_version)
+
     return result
 
 

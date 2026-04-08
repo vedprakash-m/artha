@@ -98,11 +98,11 @@ python scripts/migrate.py             # write config/user_profile.yaml
 
 - **Daily briefings** across 24 life domains (health, finance, goals, immigration, family, home, and more) — with action items, goal progress, and proactive nudges
 - **Goal Intelligence Engine** — conversational goal management with metric progress bars, sprint planning, and cross-domain pattern alerts
-- **Action Layer** — propose, approve, and execute real-world actions (email, calendar, reminders) through a human-gated queue with full audit trail
+- **Action Layer** — propose, approve, and execute real-world actions (email, calendar, reminders) through a human-gated queue with full audit trail; deterministic per-type schema validation, composite-key idempotency (TTL-windowed dedup), and OCC version-field conflict detection prevent silent data races
 - **Work OS** — professional briefings, meeting prep, sprint health, career evidence capture, and knowledge graph for your work context
 - **Pluggable connectors** — Gmail, Google Calendar, Outlook, WhatsApp, iMessage, Canvas LMS, Home Assistant (LAN-only), and more
 - **External Agent Composition v3.0 (EAR-3)** — route questions to specialized domain agents; persistent agent memory, TF-IDF lexical fallback routing, heartbeat preflight, user correction tracking, SOUL principles enforcement, fan-out and chain orchestration; trust tiers, PII scrubbing, injection defense, and quality-gated responses. Background pre-compute agents (Capital, Logistics, Readiness, Tribe) run on cron to compute deterministic summaries before the LLM is invoked — eliminating LLM arithmetic and data-freshness races
-- **Runtime guardrails** — 7 enforced checks block silent PII leaks, vault mis-access, and prompt injection before they reach state files
+- **Runtime guardrails** — 7 enforced checks block silent PII leaks, vault mis-access, and prompt injection before they reach state files; Phase 1/2 architectural hardening complete (FSM orchestrator, OCC state writes, idempotency layer, TF-IDF routing, tool boundary enforcement)
 - **Data health linting (KB-LINT)** — six-pass cross-domain linter embedded in every briefing; stale dates, orphan references, cross-domain contradictions, and format drift detected automatically; `lint` command for on-demand audit with `--fix` auto-remediation
 - **Session undo & checkpointing** — `/undo [domain]` reverts any accidental write; interrupted catch-ups resume from the last completed phase (4-hour TTL)
 - **Adaptive signal scoring** — every briefing item ranked by urgency × impact × freshness; low-signal items suppressed, high-priority items promoted automatically

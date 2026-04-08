@@ -8,7 +8,17 @@
 #
 # Ref: specs/agent-fw.md §3.1 (AFW-1)
 
-wave0_gate: true  # Emit warning if wave0.complete is false (advisory only)
+wave0_gate: hard  # Raise GateBlockedError if wave0.complete is false (hard block)
+                  # Override: --force-wave0 --justification "<reason>" (writes to telemetry + audit.md)
+
+# ── Idempotency Windows (specs/harden.md §2.3.2) ──────────────────────────────
+# Deduplication window per action type.  Parsed by scripts/lib/idempotency.py.
+# Format: Nd (days) | Nh (hours) | Nm (minutes)
+idempotency_windows:
+  scheduling:    7d   # Appointment / meeting booking
+  financial:     30d  # Transfers, payments, subscriptions
+  communication: 48h  # Email, calendar invites, messages
+  default:       24h  # All other action types
 
 input:
   - name: vault_access

@@ -437,6 +437,120 @@ def _audit_log(artha_dir: Path, message: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Blueprint 5: compose_draft() — Worker tool; writes to action queue only
+# ---------------------------------------------------------------------------
+
+def compose_draft(domain: str, payload: dict, *, session_id: str = "") -> str:
+    """Compose an action proposal and write it to state/action_queue.yaml.
+
+    This is the *only* write tool available to domain Workers (§2.5.1).
+    No network calls. No state writes outside state/action_queue.yaml.
+
+    Args:
+        domain:     Domain scope of the action (e.g. "finance", "immigration").
+        payload:    Structured action payload; must match the declared schema
+                    for its ``action_type`` (see §2.5.2 validation table).
+        session_id: Caller's session_id (for audit trail linkage); optional.
+
+    Returns:
+        action_id — first 16 hex chars of SHA-256(domain + canonical JSON payload).
+        Workers include this in their ``proposed_actions`` list.
+
+    Raises:
+        Nothing — all errors are caught and logged; returns empty string on failure
+        so the caller can detect the error without crashing the Worker.
+    """
+    import hashlib
+    import tempfile
+    import os as _os
+
+    try:
+        # Compute deterministic action_id (spec §2.5.1)
+        canonical = domain + json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        action_id = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        entry: dict = {
+            "action_id": action_id,
+            "domain": domain,
+            "status": "proposed",
+            "proposed_at": ts,
+            "session_id": session_id or "",
+            **payload,
+        }
+
+        # Atomic append to state/action_queue.yaml
+        queue_path = _ARTHA_DIR / "state" / "action_queue.yaml"
+        queue_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Load existing queue (list of entries) or start fresh
+        existing: list[dict] = []
+        if queue_path.exists():
+            try:
+                import yaml as _yaml  # type: ignore[import]
+                raw = queue_path.read_text(encoding="utf-8")
+                loaded = _yaml.safe_load(raw)
+                if isinstance(loaded, list):
+                    existing = loaded
+            except Exception:
+                pass  # Start with empty list if parse fails
+
+        # Deduplicate by action_id (idempotent compose)
+        if not any(e.get("action_id") == action_id for e in existing):
+            existing.append(entry)
+
+        # Atomic write
+        tmp_fd, tmp_path_str = tempfile.mkstemp(
+            dir=queue_path.parent, prefix=".action_queue_tmp_", suffix=".yaml"
+        )
+        try:
+            import yaml as _yaml  # type: ignore[import]
+            with _os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                _yaml.safe_dump(existing, fh, default_flow_style=False, allow_unicode=True)
+            _os.replace(tmp_path_str, queue_path)
+        except Exception:
+            try:
+                _os.unlink(tmp_path_str)
+            except Exception:
+                pass
+            raise
+
+        # Append pipe-delimited audit row (spec §2.1.4 audit.md schema)
+        action_type = str(payload.get("action_type", "default"))
+        description = str(payload.get("description", payload.get("intent", "")))
+        # Truncate payload_summary to ≤1 sentence, ≤80 chars; no PII
+        payload_summary = description[:80].split(".")[0]
+        audit_path = _ARTHA_DIR / "state" / "audit.md"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        audit_row = (
+            f"| {ts} | {session_id or '-'} | {domain} "
+            f"| {action_type} | proposed | {payload_summary} |\n"
+        )
+        with open(audit_path, "a", encoding="utf-8") as fh:
+            fh.write(audit_row)
+
+        # Emit telemetry (non-fatal)
+        try:
+            from lib.telemetry import emit as _emit_tel  # type: ignore[import]
+            _emit_tel(
+                "action.composed",
+                domain=domain,
+                extra={"action_id": action_id, "action_type": action_type, "session_id": session_id},
+            )
+        except Exception:
+            pass
+
+        return action_id
+
+    except Exception as exc:
+        print(
+            f"[action_orchestrator] compose_draft error: {exc}",
+            file=sys.stderr,
+        )
+        return ""
+
+
+# ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
 

@@ -38,6 +38,141 @@ _AUTO_APPROVER_PREFIX = "auto:"
 # Path to per-domain autonomy tracking file (§7.1)
 _DOMAIN_AUTONOMY_PATH = Path(__file__).resolve().parent.parent / "config" / "domain_autonomy_state.yaml"
 
+# Path to artha_config.yaml (wave0.complete source-of-truth)
+_ARTHA_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "artha_config.yaml"
+# Path to guardrails.yaml (wave0_gate: hard | advisory)
+_GUARDRAILS_PATH = Path(__file__).resolve().parent.parent / "config" / "guardrails.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Wave 0 Gate
+# ---------------------------------------------------------------------------
+
+class GateBlockedError(RuntimeError):
+    """Raised when a trust elevation or action is blocked by the Wave 0 gate.
+
+    Wave 0 must be complete (``harness.wave0.complete: true`` in
+    ``config/artha_config.yaml``) before any autonomous elevation can proceed.
+
+    Attributes:
+        reason:      Human-readable blocking reason.
+        justification: Override justification if --force-wave0 was used
+                       (None otherwise).
+    """
+
+    def __init__(self, reason: str, justification: str | None = None) -> None:
+        self.reason = reason
+        self.justification = justification
+        super().__init__(reason)
+
+
+def _load_wave0_complete() -> bool:
+    """Read ``harness.wave0.complete`` from config/artha_config.yaml.
+
+    Returns ``True`` if wave0 is complete, ``False`` otherwise.
+    Defaults to ``False`` (safe) on parse error.
+    """
+    try:
+        import re as _re
+        text = _ARTHA_CONFIG_PATH.read_text(encoding="utf-8")
+        # Look for: wave0:\n    complete: true/false
+        m = _re.search(r"wave0:\s*\n\s+complete:\s*(true|false)", text)
+        if m:
+            return m.group(1).strip() == "true"
+    except OSError:
+        pass
+    return False  # safe default
+
+
+def _load_wave0_gate_mode() -> str:
+    """Read ``wave0_gate`` value from config/guardrails.yaml.
+
+    Returns ``"hard"`` or ``"advisory"`` (defaults to ``"hard"``).
+    """
+    try:
+        text = _GUARDRAILS_PATH.read_text(encoding="utf-8")
+        import re as _re
+        m = _re.search(r"^wave0_gate:\s*(\S+)", text, _re.MULTILINE)
+        if m:
+            val = m.group(1).strip().rstrip("#").strip().lower()
+            if val in ("hard", "true"):
+                return "hard"
+            if val in ("advisory", "false"):
+                return "advisory"
+    except OSError:
+        pass
+    return "hard"  # safe default
+
+
+def _check_wave0_gate(justification: str | None = None) -> None:
+    """Check Wave 0 gate.  Raises ``GateBlockedError`` if blocked.
+
+    Args:
+        justification: If provided, the caller is using --force-wave0 override.
+                       The gate is bypassed and the override is logged to
+                       telemetry + audit.md.
+
+    Raises:
+        :class:`GateBlockedError`: If wave0.complete is false AND gate mode
+            is "hard" AND no justification is provided.
+    """
+    if justification is not None:
+        # Override path: bypass gate but log the override
+        try:
+            from telemetry import emit_wave0_override  # noqa: PLC0415
+            emit_wave0_override(justification=justification)
+        except Exception:  # noqa: BLE001
+            pass
+        _append_audit_override(justification)
+        return
+
+    wave0_complete = _load_wave0_complete()
+    if wave0_complete:
+        return  # gate open
+
+    gate_mode = _load_wave0_gate_mode()
+    if gate_mode == "hard":
+        raise GateBlockedError(
+            "Wave 0 incomplete: harness.wave0.complete is false in "
+            "config/artha_config.yaml. "
+            "Set wave0.complete: true after all lint-state-writes checks pass, "
+            "or use --force-wave0 --justification '<reason>' to override."
+        )
+    else:
+        # Advisory mode — emit warning but continue
+        import warnings
+        warnings.warn(
+            "[trust_enforcer] Wave 0 incomplete but gate is advisory — continuing.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+
+def _append_audit_override(justification: str) -> None:
+    """Append a Wave 0 override row to state/audit.md.
+
+    Row format (pipe-delimited):
+      timestamp | session_id | domain | action_type | status | payload_summary
+    """
+    try:
+        from telemetry import get_session_id  # noqa: PLC0415
+        session_id = get_session_id()
+    except Exception:  # noqa: BLE001
+        session_id = "unknown"
+
+    ts = datetime.now(timezone.utc).isoformat()
+    audit_path = _ARTHA_CONFIG_PATH.parent.parent / "state" / "audit.md"
+    row = (
+        f"| {ts} | {session_id} | system | wave0_override "
+        f"| override | justification: {justification[:120]} |\n"
+    )
+    try:
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(audit_path, "a", encoding="utf-8") as fh:
+            fh.write(row)
+    except OSError:
+        pass
+
 
 def _apply_domain_demotion(domain: str, reason: str) -> None:
     """Demote domain autonomy level by one tier with 14-day cooldown.
@@ -221,7 +356,85 @@ class TrustEnforcer:
                 "All actions require explicit human approval.",
             )
 
+        # Rule 5 — Wave 0 gate: hard block if wave0.complete is false.
+        try:
+            _check_wave0_gate()  # raises GateBlockedError if blocked
+        except GateBlockedError as exc:
+            return (False, f"WAVE0_GATE: {exc.reason}")
+
         return True, ""
+
+    def elevate(
+        self,
+        justification: str | None = None,
+    ) -> dict[str, Any]:
+        """Attempt to elevate trust level.
+
+        Enforces the Wave 0 gate as a hard block BEFORE evaluating
+        elevation criteria.  If ``harness.wave0.complete`` is ``false``,
+        raises :class:`GateBlockedError` unless ``--force-wave0`` override
+        is provided via ``justification``.
+
+        Args:
+            justification: Override justification string for ``--force-wave0``.
+                           If provided, the Wave 0 gate is bypassed and the
+                           override is logged to telemetry + audit.md.
+
+        Returns:
+            Result dict from :meth:`evaluate_elevation` with an additional
+            ``"elevated"`` key (True if level was incremented).
+
+        Raises:
+            :class:`GateBlockedError`: If Wave 0 gate is hard and incomplete.
+        """
+        # Hard Wave 0 gate — must pass before any elevation evaluation
+        _check_wave0_gate(justification)
+
+        result = self.evaluate_elevation()
+        if not result.get("eligible", False):
+            result["elevated"] = False
+            return result
+
+        # Perform the actual elevation
+        current = result["current_level"]
+        target = result["target_level"]
+        now_str = datetime.now(timezone.utc).date().isoformat()
+
+        autonomy = self._load_autonomy()
+        autonomy["trust_level"] = target
+        autonomy["trust_level_since"] = now_str
+        autonomy["days_at_level"] = 0
+        autonomy["last_elevation"] = now_str
+
+        content = ""
+        if self._health_check_path.exists():
+            content = self._health_check_path.read_text(encoding="utf-8")
+        updated = _replace_autonomy_block(content, autonomy)
+        _state_write(
+            self._health_check_path,
+            updated,
+            domain="health_check",
+            source="trust_enforcer.elevate",
+            pii_check=False,
+        )
+        self._autonomy = None  # invalidate cache
+
+        # Emit telemetry
+        try:
+            from telemetry import emit  # noqa: PLC0415
+            emit(
+                "trust.elevated",
+                extra={
+                    "from_level": current,
+                    "to_level": target,
+                    "force_wave0": justification is not None,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        result["elevated"] = True
+        return result
 
     def evaluate_elevation(
         self,

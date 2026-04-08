@@ -60,6 +60,10 @@ state/work/eval/
 state/*.db
 state/*.db-shm
 state/*.db-wal
+# Reasoning traces — per-session LLM reasoning (harden.md §5.1); PII-scrubbed but local-only
+state/traces/
+# Connector health/state subdirectory (harden.md §2.3.1; last_fetched_at timestamps)
+state/connectors/
 !state/.gitkeep
 !state/templates/
 
