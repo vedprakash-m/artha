@@ -356,6 +356,7 @@ class ActionExecutor:
         source_step: str | None = None,
         source_skill: str | None = None,
         linked_oi: str | None = None,
+        source_domain: str | None = None,
     ) -> ActionProposal:
         """Build, validate, PII-scan, and enqueue a new action proposal.
 
@@ -379,6 +380,53 @@ class ActionExecutor:
                 datetime.now(timezone.utc) + timedelta(hours=default_expiry_hours)
             ).isoformat(timespec="seconds")
 
+        # §2.5.2 Scope check — Worker domain must match proposed action domain
+        if source_domain is not None and source_domain != domain:
+            raise ValueError(
+                f"Cross-domain action proposal blocked: Worker domain '{source_domain}' "
+                f"cannot propose action in domain '{domain}'."
+            )
+
+        # §2.3.3 Idempotency pre-action check + reserve (harden.md §2.3.3)
+        _idem_key: str | None = None
+        try:
+            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
+            _idem_recipient = str(
+                parameters.get("recipient")
+                or parameters.get("to")
+                or parameters.get("payee")
+                or domain
+            )
+            _idem_intent = title.strip().lower()[:80]
+            _idem_key = _CK.compute(_idem_recipient, _idem_intent, action_type)
+            _idem_store = _IdemStore(
+                self._artha_dir / "state" / "idempotency_keys.json"
+            )
+            _idem_result = _idem_store.check_or_reserve(_idem_key, action_type)
+            if _idem_result == "duplicate":
+                _idem_entry = _idem_store._load().get(_idem_key, {})  # noqa: SLF001
+                _idem_ts = _idem_entry.get("created_at", "unknown time")
+                _audit_log(
+                    self._artha_dir,
+                    f"ACTION_DUPLICATE_SUPPRESSED | type:{action_type} | domain:{domain} | at:{_idem_ts}",
+                )
+                raise ValueError(
+                    f"You already scheduled this {action_type} at {_idem_ts}. "
+                    "Ignoring duplicate."
+                )
+            if _idem_result == "pending":
+                _idem_entry = _idem_store._load().get(_idem_key, {})  # noqa: SLF001
+                _idem_ts = _idem_entry.get("created_at", "unknown time")
+                raise ValueError(
+                    f"A prior {action_type} action (created {_idem_ts}) is still PENDING "
+                    "from a crashed session. Resolve it via 'artha action list' before "
+                    "re-attempting."
+                )
+        except ValueError:
+            raise
+        except Exception:  # noqa: BLE001
+            _idem_key = None  # idempotency store unavailable — fail-open, log best-effort
+
         proposal = ActionProposal(
             id=str(uuid.uuid4()),
             action_type=action_type,
@@ -396,6 +444,8 @@ class ActionExecutor:
             source_skill=source_skill,
             linked_oi=linked_oi,
         )
+        # Store idempotency key on proposal for mark_completed in approve()
+        object.__setattr__(proposal, "_idem_key", _idem_key)  # type: ignore[misc]  # frozen dataclass bypass
 
         # Field invariant check
         ok, reason = validate_proposal_fields(proposal)
@@ -548,6 +598,28 @@ class ActionExecutor:
                 reverse_action=None,
             )
 
+        # 5b. §2.5.2 Friction floor re-verification — high-friction actions require
+        #     a human approver; system/auto approvals are not permitted.
+        if proposal.friction == "high" or config.get("autonomy_floor", False):
+            _is_human = not (
+                approved_by.startswith("system:") or approved_by == "auto"
+            )
+            if not _is_human:
+                _audit_log(
+                    self._artha_dir,
+                    f"ACTION_FRICTION_FLOOR_BLOCKED | id:{action_id} | approver:{approved_by}",
+                )
+                return ActionResult(
+                    status="failure",
+                    message=(
+                        f"Action '{proposal.title}' requires explicit human approval "
+                        f"(friction={proposal.friction}). System approvals are not permitted."
+                    ),
+                    data=None,
+                    reversible=False,
+                    reverse_action=None,
+                )
+
         # 6. Transition PENDING → APPROVED (only if still pending)
         if current_status == "pending":
             try:
@@ -606,6 +678,21 @@ class ActionExecutor:
                 self._artha_dir,
                 f"ACTION_RESULT_SAVE_FAILED | id:{action_id} | error:{e}",
             )
+
+        # 7a. §2.3.3 Mark idempotency key as completed/failed after execution
+        try:
+            _stored_key = getattr(proposal, "_idem_key", None)
+            if _stored_key:
+                from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
+                _idem_store = _IdemStore(
+                    self._artha_dir / "state" / "idempotency_keys.json"
+                )
+                if result.status in ("success", "partial"):
+                    _idem_store.mark_completed(_stored_key)
+                else:
+                    _idem_store.mark_failed(_stored_key)
+        except Exception:  # noqa: BLE001
+            pass  # idempotency finalisation is best-effort; never block result return
 
         # 7b. Bridge result write (executor machine only; no-op if bridge disabled)
         self._maybe_write_bridge_result(action_id, result)

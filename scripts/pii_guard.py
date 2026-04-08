@@ -403,6 +403,54 @@ def filter_text(text: str) -> tuple[str, dict[str, int]]:
     return _apply_filter(text)
 
 
+# Action-payload fields to scan (order preserved for deterministic output)
+_PAYLOAD_FIELDS: tuple[str, ...] = (
+    "recipient", "payee", "body", "subject",
+    "notes", "description", "memo",
+)
+
+
+def scan_action_payload(payload: dict) -> list[str]:
+    """Scan an action proposal payload dict for PII patterns.
+
+    Scans the following fields (if present and non-empty):
+        recipient, payee, body, subject, notes, description, memo
+
+    Returns a list of unique PII type labels found across all fields
+    (e.g. ["SSN", "CC"]).  Empty list means no PII detected.
+    Non-destructive — scan-only, payload is never modified.
+    Emits ``pii.scan_hit`` telemetry on detection (non-fatal).
+    """
+    all_found: dict[str, int] = {}
+
+    for field in _PAYLOAD_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str) or not value:
+            continue
+        _, found = _apply_filter(value)
+        for pii_type, count in found.items():
+            all_found[pii_type] = all_found.get(pii_type, 0) + count
+
+    labels: list[str] = sorted(all_found.keys())
+
+    if labels:
+        try:
+            from scripts.lib.telemetry import emit  # lazy, non-fatal
+            emit(
+                "pii.scan_hit",
+                extra={
+                    "fields_scanned": [
+                        f for f in _PAYLOAD_FIELDS if payload.get(f)
+                    ],
+                    "pii_labels": labels,
+                },
+            )
+        except Exception:
+            pass
+
+    return labels
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────────────────────────────────────────

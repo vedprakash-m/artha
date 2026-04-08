@@ -3068,3 +3068,59 @@ Confirm amount to approve (type 500 or 'skip' to dismiss):
 - Tech Spec v3.26.0: §19 Work OS Technical Architecture, §21 Evaluation Framework, §22 Knowledge Architecture, §25 Agent Framework
 - Tech Spec v3.16.0: §19 Work OS (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage, §19.10 Product Knowledge Domain, §19.11 Reflection Loop)
 - Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)
+
+---
+
+## Appendix A — Approval UX Hardening
+
+> Sourced from `specs/harden.md` v1.6 (archived). These UX behaviors apply to the action approval flow (§6, §7 of this spec) and are implemented in `scripts/action_executor.py` + `scripts/trust_enforcer.py`.
+
+### A.1 Friction Floor Re-verification
+
+Actions with `friction: high` or `autonomy_floor: true` are re-verified for explicit current-session approval at every execution attempt — regardless of prior session approvals. The approval prompt must clearly state:
+
+> *"This action requires explicit approval each session. Please confirm."*
+
+Rationale: High-friction actions (financial, communications to external parties) must never execute on stale approval carry-over. Session boundary is the trust unit.
+
+### A.2 Wave 0 Gate UX
+
+When `harness.wave0.complete: false`, any L2 autonomy elevation attempt surfaces a non-dismissable modal:
+
+> *"This domain has not passed Wave 0 validation. L2 autonomy elevation is blocked until Wave 0 is closed. Use `--force-wave0 --justification '<reason>'` only for testing or emergency use — this override is session-scoped and leaves an audit trail."*
+
+The override (`--force-wave0`) is visible only in CLI mode. In interactive/briefing mode, the gate is a hard block with no UI override option. Users are directed to complete Wave 0 validation to unlock elevation.
+
+### A.3 UNCLASSIFIED Signal Queue
+
+Signals that score below the TF-IDF threshold (target: 0.4) are never silently dropped. They appear in a dedicated section at the bottom of every briefing:
+
+```
+── UNCLASSIFIED SIGNALS (3) ──────────────────────────────────
+These signals could not be automatically routed to a domain.
+
+[1] Signal #abc123 (confidence: 0.27) — assign domain or dismiss
+    > assign finance | assign immigration | dismiss
+[2] Signal #def456 (confidence: 0.31) — assign domain or dismiss
+    > assign health | assign work | dismiss
+──────────────────────────────────────────────────────────────
+```
+
+UX rules:
+- Confidence score always displayed — helps user calibrate trust in routing
+- All valid domain names available as inline assign options
+- Dismiss option always present — user explicitly acknowledges, never auto-discarded after X days
+- Section is suppressed if queue is empty — never shows a "0 unclassified" placeholder
+
+### A.4 Action Validator Error Messages
+
+When the deterministic validator rejects an action, the UX message is deterministic (not LLM-generated):
+
+| Rejection Cause | User-Facing Message |
+| :--- | :--- |
+| PII detected in payload | *"Action blocked: potential PII detected in parameters ([PII type], not value). Please re-propose with redacted parameters."* |
+| Missing required fields | *"Action blocked: required fields missing for [action_type]: [field1], [field2]. Please re-propose with complete parameters."* |
+| Scope violation | *"Action blocked: [Worker domain] cannot propose a [action domain] action. This is a routing error — please report."* |
+| Friction floor (no current-session approval) | *"Action blocked: high-friction actions require explicit approval each session. Please review and confirm."* |
+
+**Rule:** Never include the rejected payload content in the error message. Never ask the LLM to fix a validation failure — the action must be re-proposed from scratch.

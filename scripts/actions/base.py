@@ -275,6 +275,15 @@ MAX_TITLE_LENGTH = 120
 # Maximum result message length (enforced at execution)
 MAX_RESULT_MESSAGE_LENGTH = 300
 
+# §2.5.2 Per-action-type required payload fields.
+# Keys are action_type prefixes (matched with str.startswith).
+# Each entry: list of required parameter keys.
+_ACTION_REQUIRED_FIELDS: dict[str, list[str]] = {
+    "scheduling": ["recipient", "datetime", "intent"],
+    "financial":  ["payee", "amount", "category", "due_date"],
+    "communications": ["recipient", "channel", "subject", "intent"],
+}
+
 
 def validate_proposal_fields(proposal: ActionProposal) -> tuple[bool, str]:
     """Validate ActionProposal field invariants.
@@ -302,6 +311,17 @@ def validate_proposal_fields(proposal: ActionProposal) -> tuple[bool, str]:
         return False, f"proposal.sensitivity must be one of {VALID_SENSITIVITY}"
     if proposal.undo_window_sec is not None and proposal.undo_window_sec < 0:
         return False, "proposal.undo_window_sec must be non-negative"
+    # §2.5.2 Per-action-type required payload field check
+    for prefix, required in _ACTION_REQUIRED_FIELDS.items():
+        if proposal.action_type.startswith(prefix):
+            params = proposal.parameters or {}
+            missing = [f for f in required if f not in params or params[f] is None]
+            if missing:
+                return False, (
+                    f"action_type '{proposal.action_type}' missing required "
+                    f"parameter(s): {', '.join(missing)}"
+                )
+            break
     return True, ""
 
 
@@ -317,5 +337,6 @@ __all__ = [
     "VALID_RESULT_STATUSES",
     "MAX_TITLE_LENGTH",
     "MAX_RESULT_MESSAGE_LENGTH",
+    "_ACTION_REQUIRED_FIELDS",
     "validate_proposal_fields",
 ]

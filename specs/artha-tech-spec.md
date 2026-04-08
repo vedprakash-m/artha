@@ -5181,4 +5181,118 @@ The Knowledge Base population strategy defines a 7-phase approach for bootstrapp
 | v2.9 | Clone-audit hardening (#1–#30): PII scrub in all spec/doc files; vault store-key command; state/templates/ directory with 18 starter files; user_profile.example.yaml extended to 24 domains; preflight P1 enforcement; plist placeholder; PII guard; requirements.txt reorganised; CHANGELOG.md; 429-test suite with xfail markers |
 | v2.1 | Initial public release — `/diff`, Weekend Planner, Canvas LMS API Fetch, Apple Health XML Import |
 
+---
+
+## Appendix A — Architectural Hardening Blueprints
+
+> Sourced from `specs/harden.md` v1.6 (archived to `.archive/specs/harden.md`). Blueprints fully implemented as of April 2026.
+
+### A.1 Blueprint 1 — FSM Orchestrator & Lean-Context Instruction Partitioning
+
+`pipeline.py` is the FSM controller. Three-tier hierarchy:
+
+| Tier | Role | Invoked At |
+| :--- | :--- | :--- |
+| **Orchestrator** | Deterministic Python — routes, never reasons | Every session |
+| **Planner** | Frontier model — cross-domain reasoning | CLASSIFY + REVIEW_GATE only |
+| **Worker** | Frontier model — domain-scoped extraction, lean context | EXTRACT, once per active domain |
+
+**FSM states:** `PREFLIGHT → FETCH → CLASSIFY → EXTRACT → RECONCILE → REVIEW_GATE → PRESENT → COMMIT`
+
+**Worker context formula:** `[Core Identity] + [prompts/{domain}.md] + [state_delta] + [≤3 few-shot examples from state/audit.md]` — never the full 21-step workflow. Delivers 40–60% token reduction per turn.
+
+**Checkpoint recovery:** On unclean shutdown, `state/checkpoint.json` records `last_completed_state` + `state_outputs`. PREFLIGHT offers resume or restart on next session.
+
+**DEGRADED_MODE:** If planner API unavailable at CLASSIFY, fall back to static 21-step prompt and emit `DEGRADED_MODE` to `state/telemetry.jsonl`.
+
+**Phase 3 gate:** Signal-gated fan-out (dispatch only to domains with active signals) and full FSM formalization are Phase 3 features gated on `harness.ear5.complete: true`. Do not implement earlier.
+
+### A.2 Blueprint 2 — Version-Field OCC on Markdown
+
+Every state file YAML frontmatter gains `version` (int), `last_written_by`, `last_written_at`. Implemented in `scripts/lib/state_writer.py` via `write_occ()`:
+
+1. Read file → capture version N
+2. Write tempfile with version N+1
+3. `os.replace` (atomic) → re-read → verify version == N+1
+4. On mismatch: surface both versions to user — **never auto-merge prose sections**
+
+**Migration:** Files missing `version` treated as version 0. First OCC-aware write injects `version: 1`.
+
+### A.3 Blueprint 3 — Multi-Key Idempotency via Atomic-Write JSON
+
+Composite key: `SHA-256(recipient + intent + date_window)` stored in `state/idempotency_keys.json` (atomic write). Implemented in `scripts/lib/idempotency.py`.
+
+**Per-type windows** (`config/guardrails.yaml → idempotency_windows`):
+
+| Action Type | Window |
+| :--- | :--- |
+| `scheduling` | 7 days |
+| `financial` | 30 days |
+| `communications` | 48 hours |
+| `default` | 24 hours |
+
+**Protocol:** Write key PENDING → execute → update COMPLETED/FAILED. PENDING keys surfaced to user at PREFLIGHT for explicit resolution. Expired keys pruned at PREFLIGHT.
+
+### A.4 Blueprint 4 — TF-IDF Routing & In-Process PII Hygiene
+
+Three-tier routing: **Tier 1** explicit domain rules (zero tokens) → **Tier 2** TF-IDF cosine similarity (`tfidf_router.py`, threshold 0.4 tunable in `config/guardrails.yaml`) → **Tier 3** UNCLASSIFIED queue (never silently drop).
+
+**PII constraint:** Signal data flows as Python objects in memory only — never written to intermediate files during processing. `action_orchestrator.py` is network-isolated; PII flows terminate at `pipeline.py` boundary.
+
+**Threshold migration path:** Deploy UNCLASSIFIED queue at current 0.1 threshold first → collect ≥14 days telemetry → raise threshold to empirically supported value (≤0.4 target). Never raise before telemetry confirms safety.
+
+### A.5 Blueprint 5 — Tool Boundary Contract & Deterministic Action Validation
+
+**Tool boundary:** Workers call only `compose_draft(domain, payload)`. `execute_action` and `send_message` are Orchestrator-only. After every Worker/Planner response, `pipeline.py` (deterministic Python) inspects for prohibited tool patterns — discards full output and marks domain STALE on violation. >3 violations/session → `BOUNDARY_BREACH` + session termination.
+
+**Deterministic Action Validator** runs before every `execute_action` (implemented in `scripts/actions/base.py` + `scripts/pii_guard.py`):
+
+| Check | Failure Behavior |
+| :--- | :--- |
+| 1. PII scan (`pii_guard.scan_action_payload`) | Halt; notify user with PII type (not value); action rejected — no LLM retry |
+| 2. Schema validation (`_ACTION_REQUIRED_FIELDS`) | Halt; surface missing fields; action returned to Proposed state |
+| 3. Scope check | Halt; Worker domain must match action domain |
+| 4. Friction floor | `high` friction or `autonomy_floor: true` → verify current-session approval |
+
+**Per-type required fields:**
+
+| Action Type | Required Fields |
+| :--- | :--- |
+| `scheduling` | `recipient`, `datetime` (ISO 8601), `intent` |
+| `financial` | `payee`, `amount`, `category`, `due_date` (ISO 8601) |
+| `communications` | `recipient`, `channel` (`email`/`teams`/`sms`), `subject`, `intent` |
+
+### A.6 Observability & Telemetry
+
+Single sink: `state/telemetry.jsonl` (plaintext, append-only, no PII — hashed identifiers only). Key event types:
+
+| Event | Key Fields |
+| :--- | :--- |
+| Step trace | `step_name`, `ttft_ms`, `latency_ms`, `input_tokens`, `output_tokens`, `model_id`, `session_id` |
+| Routing confidence | `signal_id`, `matched_domain`, `confidence`, `tier` |
+| Action idempotency | `action_id`, `composite_key_hash`, `status` |
+| Guardrail events | `guardrail_name`, `result`, `domain` |
+| OCC events | `domain`, `file`, `version_expected`, `version_found`, `resolution` |
+| Cost-per-domain | `domain`, `input_tokens`, `output_tokens`, `estimated_cost_usd`, `actions_accepted`, `actions_rejected` |
+
+**Cost-to-intelligence ratio:** `value_score = actions_accepted / max(1, actions_proposed)`. If ratio < 0.5 for 14 consecutive sessions, surface recommendation to switch domain to Manual trigger — never autonomous demotion.
+
+**Reasoning traces:** `state/traces/session_{session_id}.md` — PII-scrubbed before write, pruned after 30 days in PREFLIGHT.
+
+**Baseline snapshot:** `state/telemetry_baseline.json` — computed after ≥7 days of Phase 0 collection. Denominator for all Phase 1–3 success metrics.
+
+### A.7 Guardrails & Fallback Matrix (Abridged)
+
+| Failure Mode | Primary | Fallback |
+| :--- | :--- | :--- |
+| OCC version conflict | Re-read both versions; surface to user | Never auto-merge prose |
+| Context pressure | `context_offloader.py` tiered eviction (Tier 1 → 2 → 3) | Core Identity + action queue never dropped |
+| Planner API unavailable | Detect at CLASSIFY | `DEGRADED_MODE` static prompt + telemetry event |
+| Idempotency file unavailable | PREFLIGHT open failure | Block all write actions; deliver read-only briefing |
+| Wave 0 gate open | `GateBlockedError` in TrustEnforcer | L2 elevation hard-blocked; override via `--force-wave0 --justification` only |
+| Action validator PII detected | `pii_guard` payload scan | Halt; never re-invoke LLM to fix |
+| Worker tool boundary violation | Orchestrator audit assertion | Discard output; mark domain STALE; log `TOOL_BOUNDARY_VIOLATION` |
+| Checkpoint on startup | PREFLIGHT detects `state/checkpoint.json` | Offer resume or restart; prune checkpoint after successful resume |
+| PENDING idempotency key on startup | PREFLIGHT key file scan | Surface to user; require explicit resolution before new actions |
+
 *"The entire application is a well-written instruction file. The data layer lives where the user lives — always fresh, always accessible, always encrypted where it matters. Nothing sensitive leaves the device. Three LLMs work together — the right model for the right task at the right cost. Now it learns your patterns, guards your data, and shows you what matters before you ask."*

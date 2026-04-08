@@ -219,3 +219,89 @@ class TFIDFRouter:
         """True if vector cache exists and has at least one entry."""
         self._ensure_loaded()
         return len(self._vectors) > 0
+
+
+# ---------------------------------------------------------------------------
+# Blueprint 4 — UNCLASSIFIED queue + per-signal confidence telemetry
+# ---------------------------------------------------------------------------
+
+class RoutingDecision(NamedTuple):
+    signal_id: str
+    matched_domain: str
+    confidence: float
+    tier: str  # "tfidf" | "unclassified"
+
+
+def route_with_unclassified(
+    signals: list[dict],
+    *,
+    router: "TFIDFRouter | None" = None,
+    min_sim: float = 0.1,
+    top_n: int = 1,
+) -> tuple[list[RoutingDecision], list[dict]]:
+    """Route a batch of signals, segregating low-confidence ones.
+
+    Each signal dict must have:
+        signal_id (str)   — stable identifier for telemetry correlation
+        text      (str)   — query text fed to TF-IDF similarity
+
+    Returns:
+        (classified: list[RoutingDecision], unclassified: list[dict])
+
+    ``classified`` entries have confidence >= ``min_sim``.
+    ``unclassified`` entries are the raw signal dicts that scored below threshold.
+
+    Per-signal telemetry is emitted for *every* signal regardless of result:
+        classified  → event = ``routing.classified``
+        unclassified → event = ``routing.unclassified``
+
+    Migration note (spec §Blueprint-4):
+        Keep min_sim=0.1 until ≥14 days of telemetry confirm no regression,
+        then raise to 0.4.  The UNCLASSIFIED queue surfaces the signals that
+        would be dropped by a higher threshold so operators can review them.
+    """
+    if router is None:
+        router = TFIDFRouter()
+
+    try:
+        from scripts.lib.telemetry import emit_routing  # lazy, non-fatal
+        _emit = emit_routing
+    except Exception:
+        def _emit(*_a, **_kw) -> None:  # type: ignore[misc]
+            pass
+
+    classified: list[RoutingDecision] = []
+    unclassified: list[dict] = []
+
+    for signal in signals:
+        signal_id: str = str(signal.get("signal_id", ""))
+        text: str = str(signal.get("text", ""))
+
+        matches = router.query(text, top_n=top_n, min_sim=min_sim)
+
+        if matches:
+            best = matches[0]
+            decision = RoutingDecision(
+                signal_id=signal_id,
+                matched_domain=best.agent_name,
+                confidence=round(best.similarity, 4),
+                tier="tfidf",
+            )
+            classified.append(decision)
+            _emit(
+                signal_id=signal_id,
+                matched_domain=best.agent_name,
+                confidence=round(best.similarity, 4),
+                tier="tfidf",
+            )
+        else:
+            unclassified.append(signal)
+            _emit(
+                signal_id=signal_id,
+                matched_domain="UNCLASSIFIED",
+                confidence=0.0,
+                tier="unclassified",
+            )
+
+    return classified, unclassified
+

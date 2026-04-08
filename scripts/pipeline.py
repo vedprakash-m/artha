@@ -39,6 +39,7 @@ import os
 import platform
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -91,6 +92,13 @@ _log = get_logger("pipeline")
 _CONNECTORS_YAML = _REPO_ROOT / "config" / "connectors.yaml"
 _HEALTH_CHECK_MD = _REPO_ROOT / "state" / "health-check.md"
 _CONNECTOR_PKG = "connectors"
+_CHECKPOINT_JSON = _REPO_ROOT / "state" / "checkpoint.json"
+_CONNECTOR_STATE_DIR = _REPO_ROOT / "state" / "connectors"
+
+# Connector staleness TTL thresholds (spec §2.1.3 FETCH state)
+_STALE_WARN_SECS  = 4  * 3600   # >4 h  → warn
+_STALE_ERROR_SECS = 24 * 3600   # >24 h → error
+_STALE_CRIT_SECS  = 72 * 3600   # >72 h → critical
 
 # Frozen fallback handler map — used if connectors.yaml is unreadable.
 # Kept in sync with connectors.yaml; last updated 2026-03-26.
@@ -478,6 +486,8 @@ def run_pipeline(
     dry_run: bool = False,
     verbose: bool = False,
     output_path: Path | None = None,
+    force_wave0_justification: str | None = None,
+    resume: bool = False,
 ) -> int:
     """Run the fetch pipeline.  Streams JSONL to stdout.
 
@@ -491,6 +501,97 @@ def run_pipeline(
         3  partial success (≥1 error)
     """
     _begin_session_trace()  # AFW-11: set session_trace_id for all log events this run
+
+    # ── Blueprint 1: session_id + FSM telemetry ────────────────────────────────
+    _session_id = _generate_session_id()
+    try:
+        from lib.telemetry import set_session_id as _set_sid, emit as _emit_tel  # type: ignore[import]
+        _set_sid(_session_id)
+        _emit_tel("pipeline.session_start", extra={"session_id": _session_id})
+    except Exception:
+        def _emit_tel(*_a, **_kw) -> None:  # type: ignore[misc]
+            pass
+
+    # ── PREFLIGHT: checkpoint recovery ────────────────────────────────────────
+    if _CHECKPOINT_JSON.exists():
+        try:
+            _ckpt = json.loads(_CHECKPOINT_JSON.read_text(encoding="utf-8"))
+            _ckpt_sid = _ckpt.get("session_id", "unknown")
+            _ckpt_state = _ckpt.get("last_completed_state", "unknown")
+            _ckpt_ts = _ckpt.get("created_at", "unknown")
+            print(
+                f"\u26a1 Checkpoint detected from session {_ckpt_sid}: "
+                f"last completed {_ckpt_state} (checkpoint written at {_ckpt_ts}). "
+                f"Options: (a) resume \u2014 pass --resume, or (b) restart normally.",
+                file=sys.stderr,
+            )
+            if resume:
+                try:
+                    _CHECKPOINT_JSON.unlink(missing_ok=True)  # type: ignore[call-arg]
+                except TypeError:
+                    if _CHECKPOINT_JSON.exists():  # Python 3.7 compat
+                        _CHECKPOINT_JSON.unlink()
+                _emit_tel(
+                    "pipeline.checkpoint_resume",
+                    extra={
+                        "session_id": _session_id,
+                        "resumed_from_session": _ckpt_sid,
+                        "resumed_from_state": _ckpt_state,
+                    },
+                )
+                print(f"\u26a1 Resuming from state: {_ckpt_state}", file=sys.stderr)
+            else:
+                _emit_tel(
+                    "pipeline.checkpoint_detected",
+                    extra={
+                        "session_id": _session_id,
+                        "checkpoint_session": _ckpt_sid,
+                        "checkpoint_state": _ckpt_state,
+                    },
+                )
+        except Exception:
+            pass  # Checkpoint recovery is non-fatal
+
+    # ── PREFLIGHT: idempotency prune + PENDING surface ───────────────────────
+    try:
+        from lib.idempotency import IdempotencyStore as _IStore  # type: ignore[import]
+        _istore = _IStore()
+        _pruned = _istore.prune_expired()
+        _pending_keys = _istore.list_pending()
+        if _pending_keys:
+            print(
+                f"\u26a0 {len(_pending_keys)} pending action(s) from a prior crashed session "
+                f"detected. Resolve before executing new actions.",
+                file=sys.stderr,
+            )
+            for _pk in _pending_keys:
+                print(
+                    f"  \u2022 {_pk.get('action_type', 'unknown')} "
+                    f"\u2014 created {_pk.get('created_at', '?')}",
+                    file=sys.stderr,
+                )
+        _emit_tel(
+            "preflight.idempotency_check",
+            extra={
+                "pruned": _pruned,
+                "pending": len(_pending_keys),
+                "session_id": _session_id,
+            },
+        )
+    except Exception:
+        pass  # Non-fatal
+
+    # ── PREFLIGHT: Wave 0 gate override (--force-wave0) ──────────────────────
+    if force_wave0_justification is not None:
+        try:
+            import importlib as _implib
+            _te = _implib.import_module("trust_enforcer")
+            _te._check_wave0_gate(force_wave0_justification)  # type: ignore[attr-defined]
+        except Exception:
+            pass  # Non-fatal; gate bypass proceeds regardless
+
+    # ── PREFLIGHT: prune old reasoning traces ─────────────────────────────────
+    _prune_old_traces()
 
     # Step 0 (EAR-8): Heartbeat preflight — surface agent fleet health alerts
     _agent_fleet_alerts: str = ""
@@ -569,6 +670,19 @@ def run_pipeline(
     if not work_items:
         return 3 if error_count > 0 else 0
 
+    # ── Blueprint 1: FETCH step enter + connector staleness TTL evaluation ─────
+    _emit_tel("pipeline.step_enter", extra={"step": "FETCH", "session_id": _session_id})
+    _fetch_t0 = time.monotonic()
+    for _wname, _, _, _, _ in work_items:
+        _stale = _check_connector_staleness(_wname)
+        if _stale:
+            _stale_msg = f"[pipeline] STALE:{_stale.upper()} {_wname} — connector state exceeds TTL"
+            print(_stale_msg, file=sys.stderr)
+            _emit_tel(
+                "pipeline.staleness",
+                extra={"connector": _wname, "severity": _stale, "session_id": _session_id},
+            )
+
     # Run all connectors in parallel using module-level _fetch_one()
     max_workers = min(len(work_items), 8)
     # AFW-1: One registry instance shared across all connector threads (thread-safe read-only)
@@ -617,6 +731,29 @@ def run_pipeline(
     pipeline_elapsed = round(time.monotonic() - pipeline_start, 2)
     timing["_total"] = pipeline_elapsed
 
+    # ── Blueprint 1: FETCH step exit + checkpoint write ────────────────────────
+    _emit_tel(
+        "pipeline.step_exit",
+        extra={
+            "step": "FETCH",
+            "session_id": _session_id,
+            "latency_ms": round((time.monotonic() - _fetch_t0) * 1000),
+            "total_records": total_records,
+            "error_count": error_count,
+        },
+    )
+    _write_checkpoint(
+        session_id=_session_id,
+        last_completed_state="FETCH",
+        state_outputs={
+            "FETCH": {
+                "signal_count": total_records,
+                "error_count": error_count,
+                "connectors_run": [n for n, *_ in work_items],
+            }
+        },
+    )
+
     # Emit timing summary to stderr
     print(
         f"[pipeline] Done: {total_records} records, {error_count} errors, "
@@ -663,7 +800,415 @@ def run_pipeline(
         except Exception as exc:
             print(f"[pipeline] WARNING: --output write failed: {exc}", file=sys.stderr)
 
+    # ── Session end: write reasoning trace ──────────────────────────────────────
+    _write_reasoning_trace(
+        session_id=_session_id,
+        connectors_run=[n for n, *_ in work_items],
+        signal_count=total_records,
+        error_count=error_count,
+        elapsed_secs=pipeline_elapsed,
+    )
+
+    # ── Session end: cost-to-intelligence ratio logging ─────────────────────────
+    _emit_cost_ratio_telemetry(_session_id)
+
+    # ── §2.1.6 CLASSIFY entry: Planner API availability probe + DEGRADED_MODE ──
+    # The spec §2.1.6 requires: if frontier model API is unavailable at CLASSIFY
+    # entry, emit DEGRADED_MODE to telemetry and notify the user.  The pipeline
+    # falls back to static TF-IDF classification (existing behaviour).
+    _planner_available = False
+    try:
+        _harness_cfg = cfg.get("harness", {})
+        _planner_cfg = _harness_cfg.get("planner", {})
+        _planner_available = bool(
+            _planner_cfg.get("enabled", False)
+            and _planner_cfg.get("model")
+        )
+    except Exception:  # noqa: BLE001
+        _planner_available = False
+
+    if not _planner_available:
+        _emit_tel(
+            "pipeline.degraded_mode",
+            extra={
+                "session_id": _session_id,
+                "reason": "planner_api_unavailable",
+                "fallback": "static_tfidf_classification",
+            },
+        )
+        print(
+            "[pipeline] ⚠ DEGRADED MODE: Planner API not configured. "
+            "Falling back to static TF-IDF classification (v5.1 behaviour). "
+            "Set harness.planner.enabled + harness.planner.model in artha_config.yaml "
+            "to enable FSM planner routing.",
+            file=sys.stderr,
+        )
+
+    _emit_tel("pipeline.step_enter", extra={"step": "CLASSIFY", "session_id": _session_id})
+
+    # ── Phase 2: UNCLASSIFIED queue display ─────────────────────────────────────
+    if all_classified_lines:
+        try:
+            from lib.tfidf_router import route_with_unclassified as _route_uc  # type: ignore[import]
+            _signals: list[dict] = []
+            for _ln in all_classified_lines:
+                try:
+                    _rec = json.loads(_ln)
+                    # Build minimal routing signal from whatever fields are available
+                    _text = " ".join(
+                        str(_rec.get(f, ""))
+                        for f in ("subject", "title", "summary", "body", "snippet")
+                        if _rec.get(f)
+                    ) or _ln[:200]
+                    _sig_id = (
+                        _rec.get("id")
+                        or _rec.get("messageId")
+                        or _rec.get("uid")
+                        or _ln[:32]
+                    )
+                    _signals.append({"signal_id": str(_sig_id), "text": _text})
+                except (json.JSONDecodeError, Exception):
+                    pass
+            if _signals:
+                _classified_sigs, _unclassified_sigs = _route_uc(_signals)
+                if _unclassified_sigs:
+                    print(
+                        f"\n\u00a7 Unclassified Signals ({len(_unclassified_sigs)} items)",
+                        file=sys.stderr,
+                    )
+                    for _uc in _unclassified_sigs:
+                        _conf = _uc.get("confidence", 0.0)
+                        _uid = _uc.get("signal_id") or _uc.get("id") or "?"
+                        print(
+                            f"  [{_conf:.2f}] {_uid} \u2014 no domain matched",
+                            file=sys.stderr,
+                        )
+                _emit_tel(
+                    "routing.unclassified_summary",
+                    extra={
+                        "session_id": _session_id,
+                        "total_signals": len(_signals),
+                        "classified": len(_classified_sigs),
+                        "unclassified": len(_unclassified_sigs),
+                    },
+                )
+        except Exception:
+            pass  # Non-fatal \u2014 routing summary never blocks pipeline
+
     return 3 if error_count > 0 else 0
+
+
+# ---------------------------------------------------------------------------
+# Blueprint 1 helpers — session_id, FSM telemetry, staleness check, checkpoint
+# ---------------------------------------------------------------------------
+
+def _generate_session_id() -> str:
+    """Generate a session ID per spec §2.1.2 format: YYYYMMDD_hex8."""
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d")
+    hex_part = uuid.uuid4().hex[:8]
+    return f"{date_part}_{hex_part}"
+
+
+def _check_connector_staleness(connector_name: str) -> str | None:
+    """Check staleness of connector state file.
+
+    Reads ``state/connectors/{connector_name}_state.yaml`` for a
+    ``last_fetched_at`` ISO-8601 field.  Returns a severity string
+    ("warn", "error", "critical") if the threshold is exceeded, else None.
+    """
+    try:
+        import re as _re
+        state_file = _CONNECTOR_STATE_DIR / f"{connector_name}_state.yaml"
+        if not state_file.exists():
+            return None
+        raw = state_file.read_text(encoding="utf-8")
+        m = _re.search(r"last_fetched_at:\s*['\"]?([^'\"\n]+)['\"]?", raw)
+        if not m:
+            return None
+        last_fetched = datetime.fromisoformat(m.group(1).strip().rstrip("Z").rstrip("+00:00"))
+        if last_fetched.tzinfo is None:
+            last_fetched = last_fetched.replace(tzinfo=timezone.utc)
+        age_secs = (datetime.now(timezone.utc) - last_fetched).total_seconds()
+        if age_secs >= _STALE_CRIT_SECS:
+            return "critical"
+        if age_secs >= _STALE_ERROR_SECS:
+            return "error"
+        if age_secs >= _STALE_WARN_SECS:
+            return "warn"
+    except Exception:
+        pass
+    return None
+
+
+def _write_checkpoint(
+    session_id: str,
+    last_completed_state: str,
+    state_outputs: dict,
+    interrupted_at: str | None = None,
+) -> None:
+    """Atomically write state/checkpoint.json per spec §2.1.3 schema."""
+    checkpoint: dict = {
+        "schema_version": 1,
+        "session_id": session_id,
+        "last_completed_state": last_completed_state,
+        "state_outputs": state_outputs,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+    }
+    if interrupted_at:
+        checkpoint["pipeline_interrupted_at"] = interrupted_at
+    try:
+        _CHECKPOINT_JSON.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = _CHECKPOINT_JSON.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(checkpoint, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(_CHECKPOINT_JSON)
+    except Exception:
+        pass  # Checkpoint is non-fatal; never halt pipeline on write failure
+
+
+class BoundaryBreachError(RuntimeError):
+    """Raised when tool boundary violations exceed 3 per session (spec §2.5.1)."""
+
+
+# Prohibited tool-call patterns per spec §2.5.1 Worker Tool Contract
+_BOUNDARY_PROHIBITED_PATTERNS: tuple[str, ...] = (
+    "send_message",
+    "execute_action",
+    "write_state",
+)
+_BOUNDARY_BREACH_THRESHOLD = 3
+
+
+def _check_tool_boundary(
+    worker_response: str,
+    domain: str,
+    session_id: str,
+    violation_count: list,  # Single-element mutable counter: [int]
+) -> bool:
+    """Inspect a Worker response for prohibited tool-call patterns.
+
+    This is the Orchestrator audit assertion (spec §2.5.1 compensating controls).
+    Deterministic gate — not an LLM judgment.
+
+    Args:
+        worker_response:  The raw textual response from the Worker/Planner.
+        domain:           Domain scope string (for telemetry).
+        session_id:       Current session_id (for telemetry).
+        violation_count:  Single-element list acting as a mutable int counter.
+                          Pass ``[0]`` from the caller; the function mutates it.
+
+    Returns:
+        ``True`` if the response is clean (no violations detected).
+        ``False`` if a violation was detected — caller must discard Worker output
+        and mark the domain as STALE.
+
+    Raises:
+        BoundaryBreachError: If violation_count[0] exceeds
+            ``_BOUNDARY_BREACH_THRESHOLD`` after incrementing.
+    """
+    import re as _re
+
+    found_violations: list[str] = []
+    for pattern in _BOUNDARY_PROHIBITED_PATTERNS:
+        # Match stand-alone function / tool name (word boundary)
+        if _re.search(r"\b" + _re.escape(pattern) + r"\b", worker_response):
+            found_violations.append(pattern)
+
+    if not found_violations:
+        return True  # Clean
+
+    # Violation detected — increment counter and emit to telemetry
+    violation_count[0] += 1
+    try:
+        from lib.telemetry import emit_tool_boundary_violation  # type: ignore[import]
+        emit_tool_boundary_violation(
+            domain=domain,
+            patterns_found=found_violations,
+            violation_number=violation_count[0],
+            session_id=session_id,
+        )
+    except Exception:
+        pass
+
+    if violation_count[0] > _BOUNDARY_BREACH_THRESHOLD:
+        try:
+            from lib.telemetry import emit  # type: ignore[import]
+            emit(
+                "pipeline.boundary_breach",
+                domain=domain,
+                extra={
+                    "session_id": session_id,
+                    "total_violations": violation_count[0],
+                },
+            )
+        except Exception:
+            pass
+        raise BoundaryBreachError(
+            f"Tool boundary violations ({violation_count[0]}) exceeded threshold "
+            f"({_BOUNDARY_BREACH_THRESHOLD}) in session {session_id}. "
+            "Session terminated — all pending actions held for next session."
+        )
+
+    return False  # Violation but threshold not yet exceeded
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 helpers — reasoning traces (§5.1) + cost ratio (§5.2)
+# ---------------------------------------------------------------------------
+
+_TRACES_DIR = _REPO_ROOT / "state" / "traces"
+_TRACE_RETENTION_DAYS = 30
+
+
+def _write_reasoning_trace(
+    session_id: str,
+    connectors_run: list,
+    signal_count: int,
+    error_count: int,
+    elapsed_secs: float,
+) -> None:
+    """Write session reasoning trace to state/traces/session_{session_id}.md.
+
+    PII-scrubbed before write per §5.1.  Non-fatal.
+    """
+    try:
+        import hashlib as _hl
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        connector_hashes = [
+            _hl.sha256(c.encode()).hexdigest()[:12] for c in connectors_run
+        ]
+        raw_content = (
+            f"# Reasoning Trace \u2014 session {session_id}\n\n"
+            f"- **timestamp**: {ts}\n"
+            f"- **session_id**: {session_id}\n"
+            f"- **signal_count**: {signal_count}\n"
+            f"- **error_count**: {error_count}\n"
+            f"- **elapsed_secs**: {elapsed_secs}\n"
+            f"- **connectors_run_hash**: {connector_hashes}\n\n"
+            f"## Worker Invocations\n\n"
+            f"*(Phase 2 \u2014 no domain workers active in this session. "
+            f"Worker trace records populate here in Phase 3.)*\n"
+        )
+        # PII scrub before write
+        safe_content = raw_content
+        try:
+            import pii_guard as _pii  # type: ignore[import]
+            safe_content, _ = _pii._apply_filter(raw_content)  # type: ignore[attr-defined]
+        except Exception:
+            pass  # Fallback: write as-is (no PII in metadata-only trace)
+        _TRACES_DIR.mkdir(parents=True, exist_ok=True)
+        trace_path = _TRACES_DIR / f"session_{session_id}.md"
+        tmp_path = trace_path.with_suffix(".tmp")
+        tmp_path.write_text(safe_content, encoding="utf-8")
+        tmp_path.replace(trace_path)
+    except Exception:
+        pass  # Non-fatal \u2014 trace write never blocks the pipeline
+
+
+def _prune_old_traces() -> None:
+    """Delete reasoning trace files older than _TRACE_RETENTION_DAYS.
+
+    Called at PREFLIGHT per §5.1 retention policy.
+    """
+    try:
+        if not _TRACES_DIR.exists():
+            return
+        import time as _time
+        cutoff = _time.time() - (_TRACE_RETENTION_DAYS * 86400)
+        pruned = 0
+        for trace_file in _TRACES_DIR.glob("session_*.md"):
+            try:
+                if trace_file.stat().st_mtime < cutoff:
+                    trace_file.unlink()
+                    pruned += 1
+            except OSError:
+                pass
+        if pruned:
+            try:
+                from lib.telemetry import emit as _tel_emit  # type: ignore[import]
+                _tel_emit("preflight.traces_pruned", extra={"pruned": pruned})
+            except Exception:
+                pass
+    except Exception:
+        pass  # Non-fatal
+
+
+def _emit_cost_ratio_telemetry(session_id: str) -> None:
+    """Compute and emit per-domain cost-to-intelligence ratios (§5.2).
+
+    Reads ``cost-per-domain`` events from state/telemetry.jsonl over a
+    rolling 30-day window.  Emits ``domain.cost_ratio`` per domain.
+    Surfaces a demotion recommendation if ratio < 0.5 for \u226514 sessions.
+    Non-fatal \u2014 never blocks the pipeline.
+    """
+    try:
+        telemetry_path = _REPO_ROOT / "state" / "telemetry.jsonl"
+        if not telemetry_path.exists():
+            return
+        cutoff_ts = (datetime.now(timezone.utc).timestamp() - (30 * 86400))
+        domain_totals: dict[str, dict] = {}
+        with telemetry_path.open(encoding="utf-8") as _fh:
+            for _line in _fh:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _ev = json.loads(_line)
+                except json.JSONDecodeError:
+                    continue
+                if _ev.get("event") != "cost-per-domain":
+                    continue
+                try:
+                    _ev_ts = datetime.fromisoformat(
+                        _ev.get("timestamp", "").rstrip("Z")
+                    ).timestamp()
+                    if _ev_ts < cutoff_ts:
+                        continue
+                except Exception:
+                    continue
+                _dom = _ev.get("domain", "unknown")
+                if _dom not in domain_totals:
+                    domain_totals[_dom] = {
+                        "actions_accepted": 0,
+                        "actions_proposed": 0,
+                        "estimated_cost_usd": 0.0,
+                        "session_count": 0,
+                    }
+                _t = domain_totals[_dom]
+                _t["actions_accepted"] += int(_ev.get("actions_accepted", 0))
+                _t["actions_proposed"] += int(_ev.get("actions_proposed", 0))
+                _t["estimated_cost_usd"] += float(_ev.get("estimated_cost_usd", 0.0))
+                _t["session_count"] += 1
+        if not domain_totals:
+            return
+        try:
+            from lib.telemetry import emit as _tel_emit  # type: ignore[import]
+        except Exception:
+            return
+        for _dom, _totals in domain_totals.items():
+            _value_score = _totals["actions_accepted"] / max(1, _totals["actions_proposed"])
+            _cost_score = _totals["estimated_cost_usd"]
+            _ratio = _value_score / _cost_score if _cost_score > 0 else 0.0
+            _tel_emit(
+                "domain.cost_ratio",
+                extra={
+                    "domain": _dom,
+                    "value_score": round(_value_score, 4),
+                    "cost_score": round(_cost_score, 6),
+                    "ratio": round(_ratio, 4),
+                    "session_count_30d": _totals["session_count"],
+                    "session_id": session_id,
+                },
+            )
+            if _ratio < 0.5 and _totals["session_count"] >= 14:
+                print(
+                    f"\u26a0 Recommendation: [{_dom}] domain has cost-to-intelligence "
+                    f"ratio {_ratio:.3f} < 0.5 over {_totals['session_count']} sessions "
+                    f"(est. ${_cost_score:.4f} cost, {_totals['actions_accepted']} accepted actions). "
+                    f"Consider switching it to Manual trigger.",
+                    file=sys.stderr,
+                )
+    except Exception:
+        pass  # Non-fatal
 
 
 def _classify_email_lines(lines: list[str], verbose: bool = False) -> list[str]:
@@ -931,6 +1476,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Write JSONL output to this file path inside tmp/ (fresh snapshot per run, atomic write)",
     )
+    p.add_argument(
+        "--force-wave0",
+        action="store_true",
+        dest="force_wave0",
+        help="Bypass Wave 0 gate for this session only (requires --justification)",
+    )
+    p.add_argument(
+        "--justification",
+        metavar="REASON",
+        default=None,
+        help="Override justification string required when using --force-wave0",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
+    )
     return p.parse_args(argv)
 
 
@@ -953,6 +1515,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
 
+    if args.force_wave0 and not args.justification:
+        print("ERROR: --force-wave0 requires --justification '<reason>'", file=sys.stderr)
+        return 2
+
     return run_pipeline(
         cfg,
         since=args.since,
@@ -960,6 +1526,8 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
         verbose=args.verbose,
         output_path=output_path,
+        force_wave0_justification=args.justification if args.force_wave0 else None,
+        resume=args.resume,
     )
 
 

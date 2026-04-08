@@ -2344,7 +2344,44 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 
 ---
 
-*Artha PRD v7.11.0 — End of Document*
+## 16. Architectural Hardening — Design Constraints & Principles
+
+> Sourced from `specs/harden.md` v1.6 (archived). These constraints are non-negotiable and inherited by all subsystems.
+
+### 16.1 Non-Negotiable Design Constraints
+
+| Constraint | Rationale |
+| :--- | :--- |
+| **Markdown is source of truth.** All world model lives in human-readable, git-diffable `.md` files. No second persistence layer. | Tech Spec — Architecture Pillars |
+| **Zero new infrastructure.** Add code only when Claude proves unreliable at a specific step. No databases, no frameworks. | Anti-Pattern #20 |
+| **`pipeline.py` is the entrypoint.** No new orchestration files. Refactors target the existing pipeline. | Codebase convention |
+| **Atomic writes everywhere.** All state mutations use `tempfile.mkstemp` + `os.replace`. Never partial-write. | Anti-Pattern #20 |
+| **Privacy by architecture.** No signal metadata sent to external routing APIs. Local TF-IDF only. | P5 |
+| **Progressive disclosure.** Never load all domains upfront. Fan-out only to domains with active signals. | AFW-2; Anti-Pattern #16 |
+| **Human-gated by default.** Artha reads everything, writes nothing without explicit approval. | P2 |
+| **Earned autonomy.** No domain advances past L1 without Shadow Mode validation and Wave 0 gate closure. | P6; §6.2 TrustEnforcer |
+| **Vector cache security.** `tmp/ext-agent-route-vectors.json` must never be committed to git; regenerable from `config/domain_registry.yaml`. | harden.md v1.5 R2 |
+
+### 16.2 Success Metrics (Architectural Hardening)
+
+| Metric | Target |
+| :--- | :--- |
+| Token efficiency | >35% reduction in average session tokens vs. Phase 0 baseline |
+| Duplicate action rate | 0% in a 1,000-signal corpus |
+| Data loss under concurrent writes | 0% — OCC version-conflict catches all collisions |
+| Routing UNCLASSIFIED rate | <5% of inbound signals after 30 days |
+| Session reliability | 0 silent failures — every failure mode surfaces to user or telemetry |
+| Action validator catch rate | 100% of PII-in-payload attempts blocked before `execute_action` |
+| Cost-to-intelligence ratio | Every domain maintains ratio ≥ 0.5 over rolling 30-day window |
+
+### 16.3 Phase Gating
+
+- **Phase 3 (FSM Orchestrator)** is gated on `harness.ear5.complete: true` and ≥80% Shadow Mode acceptance across all active domains. Do not begin until gate conditions are met.
+- **Wave 0 gate** is a hard block on L2 autonomy elevation. Override only via `--force-wave0 --justification "<reason>"` with mandatory audit trail.
+
+---
+
+*Artha PRD v7.12.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 
