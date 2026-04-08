@@ -506,6 +506,30 @@ def run_pipeline(
     except Exception:
         pass  # Heartbeat is non-blocking — never halt the pipeline
 
+    # Step 0a (A2.2): Sentinel-file preflight — detect in-progress agent DB writes
+    # If ~/.artha-local/.<domain>_writing exists and its mtime is <60 s old, the
+    # domain agent is mid-write.  We note the warning and continue using the last
+    # snapshot (state/<domain>.md) written by the agent before this run.
+    _SENTINEL_DOMAINS = [
+        ("readiness", ".readiness_writing"),
+        ("capital",   ".capital_writing"),
+        ("tribe",     ".tribe_writing"),
+        ("logistics", ".logistics_writing"),
+    ]
+    _local_dir = Path.home() / ".artha-local"
+    for _sentinel_domain, _sentinel_name in _SENTINEL_DOMAINS:
+        _sf = _local_dir / _sentinel_name
+        try:
+            if _sf.exists() and (time.time() - _sf.stat().st_mtime) < 60:
+                _warn = (
+                    f"\u26a0 {_sentinel_domain.capitalize()} database write in progress "
+                    f"\u2014 using last snapshot"
+                )
+                print(_warn, file=sys.stderr)
+                _agent_fleet_alerts += f"\n{_warn}"
+        except OSError:
+            pass  # Sentinel check is non-blocking
+
     connectors = _enabled_connectors(cfg, source_filter)
     if not connectors:
         print("[pipeline] No connectors enabled — nothing to do.", file=sys.stderr)

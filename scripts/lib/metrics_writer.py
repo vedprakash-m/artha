@@ -201,21 +201,23 @@ def write_invocation_trace(
     metrics_file: Path | None = None,
     trace_file: Path | None = None,
 ) -> None:
-    """Append a structured trace record to ``tmp/ext-agent-trace.jsonl``.
+    """Write a structured trace record to a per-session JSON file.
 
-    One record per completed pipeline invocation.  Used for post-mortem
-    correlation (especially under fan-out where multiple invocations overlap).
+    Writes to ``tmp/invocation-{invocation_id}.json`` (§15.8 requirement:
+    one file per session, not a shared append-only JSONL).  Also appends to
+    the legacy ``tmp/ext-agent-trace.jsonl`` for backwards-compat tooling.
 
     Fire-and-forget — never raises.
 
-    Ref: specs/ext-agent-reloaded.md §Phase 0 BLOCKING-1, Sonnet v2 R-12
+    Ref: specs/ext-agent-reloaded.md §Phase 0 BLOCKING-1, Sonnet v2 R-12, §15.8
     """
-    _TRACE_FILE: Path = (
+    _LEGACY_TRACE_FILE: Path = (
         Path(__file__).resolve().parent.parent.parent
         / "tmp"
         / "ext-agent-trace.jsonl"
     )
-    target = trace_file or _TRACE_FILE
+    _tmp_dir = Path(__file__).resolve().parent.parent.parent / "tmp"
+    _per_session_file: Path = _tmp_dir / f"invocation-{invocation_id}.json"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     record = {
         "timestamp": ts,
@@ -228,8 +230,16 @@ def write_invocation_trace(
         "latency_ms": float(latency_ms),
     }
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("a", encoding="utf-8") as fh:
+        _per_session_file.parent.mkdir(parents=True, exist_ok=True)
+        with _per_session_file.open("w", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass
+    # Also write to legacy shared JSONL for backwards-compat tooling
+    legacy = trace_file or _LEGACY_TRACE_FILE
+    try:
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        with legacy.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except (OSError, TypeError, ValueError):
         pass

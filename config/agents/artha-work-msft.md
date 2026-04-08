@@ -9,6 +9,9 @@ version: "0.1.0"
 # spec: .archive/specs/work.md (historical — merged into implementation)
 tier: msft
 audience: Microsoft employee
+autonomy: L1
+max_autonomy_level: 1
+max_context_bytes: 32768
 mcp-servers:
   workiq:
     type: local
@@ -37,6 +40,15 @@ tools:
   - bash
   - workiq/*
   - bluebird/*
+applyTo: "**"
+artifact_spec:
+  required_sections:
+    - "## Today's Focus"
+    - "## Open Items"
+  required_keywords:
+    - "priority:"
+  min_length_chars: 200
+  phase_gate: "phase1"
 ---
 
 # Artha Work OS — Microsoft Tier (M365 + ADO + WorkIQ + ICM + Bluebird)

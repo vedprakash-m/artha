@@ -192,12 +192,15 @@ class TestPromptInjectionGuardrail:
         assert out.result == TripwireResult.HALT
         assert "ignore_previous" in (out.message or "")
 
-    def test_pass_when_module_unavailable(self, monkeypatch):
+    def test_halt_when_module_unavailable(self, monkeypatch):
+        # Security regression guard: fail-safe HALT when injector is unavailable,
+        # never fail-open PASS.  Ref: specs/prd-reloaded.md §8.1 fail-safe mandate.
         _wave0_on(monkeypatch)
         with patch.dict("sys.modules", {"lib.injection_detector": None}):
             g = PromptInjectionGuardrail()
             out = g.check({}, "any input")
-        assert out.result == TripwireResult.PASS
+        assert out.result == TripwireResult.HALT
+        assert "fail-safe" in (out.message or "")
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +422,7 @@ class TestFrictionGateGuardrail:
 
 class TestGuardrailClassesRegistry:
     def test_all_seven_guardrails_registered(self):
+        # Updated from 7 → 15: includes EAR-3 domain guardrails (§8.2)
         expected = {
             "VaultAccessGuardrail",
             "PromptInjectionGuardrail",
@@ -427,6 +431,15 @@ class TestGuardrailClassesRegistry:
             "PiiOutputGuardrail",
             "DataQualityGuardrail",
             "FrictionGateGuardrail",
+            # EAR-3 domain guardrails
+            "LogisticsInjectionGR",
+            "LogisticsPIIBoundaryGR",
+            "CapitalSourceCitationGR",
+            "CapitalAmountConfirmGR",
+            "TribeRateLimitGR",
+            "TribeNoAutoSendGR",
+            "ReadinessFallbackGR",
+            "ReadinessNoInferenceGR",
         }
         assert set(GUARDRAIL_CLASSES.keys()) == expected
 

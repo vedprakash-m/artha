@@ -13,6 +13,8 @@ Commands:
   demote <name>         — manually demote trust tier one level
   refresh-cache <name>  — invalidate knowledge cache for an agent
   discover              — scan drop folder, show unregistered agent files
+  install <name>        — generate VS Code shim (.github/agents/) from drop folder spec
+  install --all         — generate VS Code shims for all agents in drop folder
   health [name]         — show health metrics (all agents or specific agent)
   validate              — validate registry YAML integrity
   delegate              — run post-invocation pipeline (verify + integrate + cache)
@@ -26,6 +28,8 @@ CLI:
   python scripts/agent_manager.py promote storage-deployment-expert
   python scripts/agent_manager.py refresh-cache storage-deployment-expert
   python scripts/agent_manager.py discover
+  python scripts/agent_manager.py install storage-deployment-expert
+  python scripts/agent_manager.py install --all
   python scripts/agent_manager.py health
   python scripts/agent_manager.py health storage-deployment-expert
   python scripts/agent_manager.py validate
@@ -352,6 +356,92 @@ def cmd_discover() -> int:
     except Exception:
         pass  # Non-blocking
     return 0
+
+
+def cmd_install(name: Optional[str] = None, all_agents: bool = False) -> int:
+    """Generate VS Code agent shim(s) from the AR-9 drop folder.
+
+    Reads config/agents/external/<name>.agent.md (single source of truth) and
+    writes a derived .github/agents/<name>.md that VS Code Copilot can discover.
+    The shim uses the verbatim system prompt body from the drop folder file, so
+    internal terminology (SDP, OneDeploy, XPF, etc.) is fully preserved.
+
+    The .github/agents/ file is a *generated* artifact — never hand-edit it.
+    Re-run `install` after modifying the drop folder spec.
+
+    CLI:
+        python scripts/agent_manager.py install storage-deployment-expert
+        python scripts/agent_manager.py install --all
+    """
+    _VSCODE_AGENTS_DIR = _REPO_ROOT / ".github" / "agents"
+
+    def _install_one(agent_name: str) -> bool:
+        source = _DROP_DIR / f"{agent_name}.agent.md"
+        if not source.exists():
+            print(f"✗ No drop folder spec found: {source.relative_to(_REPO_ROOT)}")
+            return False
+
+        raw = source.read_text(encoding="utf-8")
+        frontmatter: dict = {}
+        body = raw
+
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            if len(parts) >= 3:
+                try:
+                    import yaml  # noqa: PLC0415
+                    frontmatter = yaml.safe_load(parts[1]) or {}
+                except Exception:
+                    pass
+                body = parts[2]
+
+        # Build VS Code frontmatter — generic description (visible in Copilot picker),
+        # full body (system prompt, never shown in UI — keep full internal terminology).
+        vscode_name = frontmatter.get("name", agent_name)
+        # Use label as description — short, no internal service names
+        label = frontmatter.get("label", vscode_name.replace("-", " ").title())
+        version = "1.0.0"
+        tools = ["read", "search", "codebase"]
+
+        vscode_frontmatter = (
+            f"---\n"
+            f"name: {vscode_name}\n"
+            f"description: >\n"
+            f"  {label}.\n"
+            f"version: \"{version}\"\n"
+            f"tools:\n"
+        )
+        for tool in tools:
+            vscode_frontmatter += f"  - {tool}\n"
+        vscode_frontmatter += "---\n"
+
+        dest = _VSCODE_AGENTS_DIR / f"{agent_name}.md"
+        _VSCODE_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        dest.write_text(vscode_frontmatter + body, encoding="utf-8")
+        print(f"✓ Installed: {dest.relative_to(_REPO_ROOT)}")
+        return True
+
+    if all_agents:
+        if not _DROP_DIR.is_dir():
+            print(f"⚠ Drop folder not found: {_DROP_DIR}")
+            return 1
+        agent_files = sorted(_DROP_DIR.glob("*.agent.md"))
+        if not agent_files:
+            print("No .agent.md files found in drop folder.")
+            return 0
+        ok = 0
+        for f in agent_files:
+            agent_name = f.name.removesuffix(".agent.md")
+            if _install_one(agent_name):
+                ok += 1
+        print(f"\nInstalled {ok}/{len(agent_files)} agent(s).")
+        return 0 if ok == len(agent_files) else 1
+
+    if not name:
+        print("Usage: agent_manager.py install <name> | --all")
+        return 1
+
+    return 0 if _install_one(name) else 1
 
 
 def cmd_register(file_path: Optional[str] = None, force: bool = False) -> int:
@@ -855,12 +945,42 @@ def cmd_health(name: Optional[str] = None) -> int:
     return 0
 
 
+def _validate_agent_md_headers(path: Path) -> list[str]:
+    """Return a list of validation issues for a domain .agent.md file.
+
+    Enforces §13.1.2 (prd-reloaded.md): every domain agent .agent.md must
+    contain all three mandatory PM Skills Coach sections before it can be
+    installed.  Fails with a descriptive message if any are absent.
+
+    Required headers (exact):
+      ## Identity
+      ## Known Failure Modes
+      ## What to NEVER Do
+    """
+    _REQUIRED_HEADERS = [
+        "## Identity",
+        "## Known Failure Modes",
+        "## What to NEVER Do",
+    ]
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"Cannot read file: {exc}"]
+
+    issues: list[str] = []
+    for header in _REQUIRED_HEADERS:
+        if header.lower() not in content.lower():
+            issues.append(f"Missing required section: '{header}'")
+    return issues
+
+
 def cmd_validate() -> int:
-    """Validate registry YAML integrity."""
+    """Validate registry YAML integrity and domain agent .agent.md structure (§13.1.2)."""
     reg = _load_registry()
     if reg is None:
         return 1
 
+    registry_ok = True
     if hasattr(reg, "validate"):
         try:
             errors = reg.validate()
@@ -868,33 +988,61 @@ def cmd_validate() -> int:
                 print(f"⛔ Registry validation failed ({len(errors)} error(s)):")
                 for e in errors:
                     print(f"  • {e}")
-                return 1
-            print("✓ Registry valid")
-            return 0
+                registry_ok = False
+            else:
+                print("✓ Registry valid")
         except Exception as exc:
             print(f"⛔ Validation error: {exc}", file=sys.stderr)
-            return 1
+            registry_ok = False
+    else:
+        # Basic fallback validation
+        try:
+            agents = list(reg._agents.values()) if hasattr(reg, "_agents") else []
+            issues: list[str] = []
+            for agent in agents:
+                name = getattr(agent, "name", "")
+                if not name:
+                    issues.append("Agent with empty name")
+                if not getattr(agent, "routing", None):
+                    issues.append(f"{name}: missing routing config")
+            if issues:
+                print(f"⛔ {len(issues)} validation issue(s):")
+                for i in issues:
+                    print(f"  • {i}")
+                registry_ok = False
+            else:
+                print(f"✓ Registry valid ({len(agents)} agent(s))")
+        except Exception as exc:
+            print(f"⛔ Validation error: {exc}", file=sys.stderr)
+            registry_ok = False
 
-    # Basic fallback validation
-    try:
-        agents = list(reg._agents.values()) if hasattr(reg, "_agents") else []
-        issues: list[str] = []
-        for agent in agents:
-            name = getattr(agent, "name", "")
-            if not name:
-                issues.append("Agent with empty name")
-            if not getattr(agent, "routing", None):
-                issues.append(f"{name}: missing routing config")
-        if issues:
-            print(f"⛔ {len(issues)} validation issue(s):")
-            for i in issues:
-                print(f"  • {i}")
-            return 1
-        print(f"✓ Registry valid ({len(agents)} agent(s))")
-        return 0
-    except Exception as exc:
-        print(f"⛔ Validation error: {exc}", file=sys.stderr)
-        return 1
+    # §13.1.2 — Check domain .agent.md files (those with artifact_spec: frontmatter) for mandatory headers
+    agents_dir = _REPO_ROOT / "config" / "agents"
+    all_agent_md_files = sorted(agents_dir.glob("*.agent.md"))
+    # Only validate "domain agents" — files whose frontmatter includes artifact_spec: (§13.3 marker)
+    domain_agent_files = [
+        f for f in all_agent_md_files
+        if "artifact_spec:" in f.read_text(encoding="utf-8", errors="replace")
+    ]
+    header_issues: list[tuple[str, list[str]]] = []
+    for agent_file in domain_agent_files:
+        file_issues = _validate_agent_md_headers(agent_file)
+        if file_issues:
+            header_issues.append((agent_file.name, file_issues))
+
+    if header_issues:
+        print(
+            f"\n⛔ {len(header_issues)} .agent.md file(s) missing required §13.1 headers "
+            "(Identity, Known Failure Modes, What to NEVER Do):"
+        )
+        for filename, issues in header_issues:
+            for issue in issues:
+                print(f"  • {filename}: {issue}")
+    else:
+        checked = len(domain_agent_files)
+        print(f"✓ §13.1 headers valid ({checked} domain .agent.md file(s) checked)")
+
+    return 0 if (registry_ok and not header_issues) else 1
 
 
 # ---------------------------------------------------------------------------
@@ -1325,6 +1473,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     # discover
     subparsers.add_parser("discover", help="Scan drop folder for unregistered agents")
 
+    # install (VS Code shim generator)
+    p_install = subparsers.add_parser(
+        "install",
+        help="Generate VS Code agent shim in .github/agents/ from drop folder spec",
+    )
+    _install_group = p_install.add_mutually_exclusive_group(required=True)
+    _install_group.add_argument("name", nargs="?", default=None, help="Agent name")
+    _install_group.add_argument("--all", dest="all_agents", action="store_true",
+                                help="Install shims for all agents in drop folder")
+
     # register
     p_register = subparsers.add_parser("register", help="Register agents from drop folder")
     p_register.add_argument("--file", metavar="PATH", default=None,
@@ -1451,6 +1609,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cmd_list()
     elif args.command == "discover":
         return cmd_discover()
+    elif args.command == "install":
+        return cmd_install(
+            name=getattr(args, "name", None),
+            all_agents=getattr(args, "all_agents", False),
+        )
     elif args.command == "register":
         return cmd_register(file_path=getattr(args, "file", None),
                             force=getattr(args, "force", False))

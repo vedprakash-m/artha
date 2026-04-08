@@ -9,6 +9,9 @@ version: "0.1.0"
 # spec: .archive/specs/work.md (historical — merged into implementation)
 tier: enterprise
 audience: Corporate M365 user with Azure DevOps
+autonomy: L1
+max_autonomy_level: 1
+max_context_bytes: 32768
 mcp-servers: {}
   # ado: uncomment when available (agency mcp list)
   # ado:
@@ -20,6 +23,15 @@ tools:
   - read
   - search
   - bash
+applyTo: "**"
+artifact_spec:
+  required_sections:
+    - "## Today's Focus"
+    - "## Open Items"
+  required_keywords:
+    - "priority:"
+  min_length_chars: 200
+  phase_gate: "phase1"
 ---
 
 # Artha Work OS — Enterprise Agent (M365 + ADO Tier)

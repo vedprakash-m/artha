@@ -51,3 +51,81 @@ output:
     class: FrictionGateGuardrail
     enabled: true
     mode: blocking
+
+# ── Domain Guardrails (PRD-Reloaded §8, R4) ──────────────────────────────────
+# New domain guardrails for Readiness, Logistics, Tribe, and Capital.
+# Implemented in scripts/middleware/guardrails.py.
+# All domain guardrails are blocking by default.
+# Ref: PRD-Reloaded §8.2 (R4), §8.3, §8.4, §8.5, §8.6
+
+domain:
+  # Readiness domain
+  - name: readiness_fallback
+    class: ReadinessFallbackGR
+    enabled: true
+    mode: blocking
+    config:
+      # Surface graceful fallback when Apple Health export is absent or >36h stale
+      max_data_age_hours: 36
+
+  - name: readiness_no_inference
+    class: ReadinessNoInferenceGR
+    enabled: true
+    mode: blocking
+    config:
+      # Prohibit calendar change proposals when readiness_score is null or <20
+      min_score_for_proposals: 20
+
+  # Logistics domain
+  - name: logistics_injection
+    class: LogisticsInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # PII scrub THEN injection scan on all OCR/receipt output (§8.3, F1)
+      # fail_safe: true means HALT (not pass-through) on scan error
+      fail_safe: true
+
+  - name: logistics_pii_boundary
+    class: LogisticsPIIBoundaryGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block any logistics entity that leaks PII into Amazon deeplinks
+      block_pii_in_deeplinks: true
+
+  # Tribe domain
+  - name: tribe_rate_limit
+    class: TribeRateLimitGR
+    enabled: true
+    mode: blocking
+    config:
+      # Hard cap: max 5 outreach drafts per catch-up run (§8.6)
+      max_drafts_per_session: 5
+
+  - name: tribe_no_auto_send
+    class: TribeNoAutoSendGR
+    enabled: true
+    mode: blocking
+    config:
+      # Tribe domain MUST stage drafts via pr_manager.py — never auto-send
+      require_content_stage: true
+
+  # Capital domain
+  - name: capital_source_citation
+    class: CapitalSourceCitationGR
+    enabled: true
+    mode: blocking
+    config:
+      # Every Capital proposal must include state file + line citation (§8.4)
+      require_source_citation: true
+
+  - name: capital_amount_confirm
+    class: CapitalAmountConfirmGR
+    enabled: true
+    mode: blocking
+    config:
+      # Any action >$200 requires user to re-type the amount (anti-hallucination gate §8.4)
+      amount_threshold: 200
+      # Reject (not prompt-again) if typed amount doesn't match proposed amount
+      reject_on_mismatch: true

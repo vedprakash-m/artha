@@ -132,6 +132,7 @@ def mock_backup_env(temp_artha_dir, monkeypatch):
     monkeypatch.setitem(foundation._config, "LOCK_FILE",        temp_artha_dir / ".artha-decrypted")
     monkeypatch.setitem(foundation._config, "BACKUP_DIR",       backup_dir)
     monkeypatch.setitem(foundation._config, "BACKUP_MANIFEST",  backup_dir / "manifest.json")
+    monkeypatch.setitem(foundation._config, "ARTHA_LOCAL_DIR",  temp_artha_dir / ".artha-local")
 
     # Seed config/settings.md for get_public_key()
     config_dir.mkdir(parents=True, exist_ok=True)

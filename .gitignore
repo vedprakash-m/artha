@@ -14,6 +14,8 @@ config/channels.yaml
 # User-specific connector config — contains credential key names and token paths
 config/connectors.yaml
 config/connectors.yaml.bak
+# Per-domain autonomy levels — runtime user state (trip history, cooldown dates)
+config/domain_autonomy_state.yaml
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
@@ -81,8 +83,10 @@ outlook_*.jsonl
 *_err.txt
 # filesystem write probe
 test-write.txt
-# test runner output artifact
+# test runner output artifacts
 test_out.txt
+test_results.txt
+test_results2.txt
 # Work OS test artifacts — generated output, not source
 tests/work/_pytest_results.txt
 # Scratch test runner scripts (local dev tools, not part of public repo)
@@ -163,6 +167,19 @@ tests/work/
 config/agents/external/
 config/agents/external-registry.yaml
 config/agents/*.agent.md
+
+# --- VS Code agent discovery shims for internal/work-specific agents ---
+# .github/agents/ is scanned by VS Code for runSubagent() — files must exist locally.
+# Only artha-work-*.md (3 canonical files, already tracked) are public.
+# Any agent embedding internal service names (SDP, XPF, OneDeploy, IcM, etc.) is gitignored.
+.github/agents/storage-*.md
+.github/agents/*-expert.md
+.github/agents/*-advisor.md
+.github/agents/*-analyst.md
+.github/agents/icm-*.md
+.github/agents/xpf-*.md
+.github/agents/ado-*.md
+.github/agents/kusto-*.md
 
 # --- Decrypted state transient files ---
 .artha-decrypted

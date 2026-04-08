@@ -99,7 +99,7 @@ def load_backup_registry() -> list:
 
     Each entry is a dict with:
       name         — unique slug used as the manifest 'domain' field
-      source_type  — 'state_encrypted' | 'state_plain' | 'config'
+      source_type  — 'state_encrypted' | 'state_plain' | 'config' | 'local_db'
       source_path  — absolute Path to the live file
       restore_path — path relative to ARTHA_DIR for restoration
     """
@@ -167,6 +167,35 @@ def load_backup_registry() -> list:
                 "source_type":  "state_plain",
                 "source_path":  proc_file,
                 "restore_path": f"state/learned_procedures/{proc_file.name}",
+            })
+
+    # artha-local-dbs (R8): SQLite databases in ~/.artha-local/ are excluded from
+    # OneDrive sync to prevent WAL/SHM corruption, but must still be covered by GFS
+    # backup snapshots.  Each *.db file is encrypted on-the-fly (same as state_plain).
+    artha_local_dir = _config["ARTHA_LOCAL_DIR"]
+    if artha_local_dir.is_dir():
+        for db_file in sorted(artha_local_dir.glob("*.db")):
+            slug = "localdb__" + db_file.stem
+            entries.append({
+                "name":         slug,
+                "source_type":  "local_db",
+                "source_path":  db_file,
+                "restore_path": f".artha-local/{db_file.name}",
+            })
+
+    # §13.2 JSON state files (non-sensitive, not covered by state_files md list)
+    _JSON_STATE_FILES = [
+        "state/token_usage.json",
+    ]
+    for rel in _JSON_STATE_FILES:
+        src = artha_dir / rel
+        if src.exists():
+            slug = "json__" + src.stem
+            entries.append({
+                "name": slug,
+                "source_type": "state_plain",
+                "source_path": src,
+                "restore_path": rel,
             })
 
     return entries
@@ -290,12 +319,12 @@ def _zip_archive_path(entry: dict) -> str:
     """Return the path of this entry's file inside the backup ZIP archive.
 
     state_encrypted: restore_path is already '.age' — use as-is.
-    state_plain / config: restore_path ends in '.md' or has no '.age' suffix —
+    state_plain / config / local_db: restore_path ends without '.age' —
         append '.age' because we encrypt on-the-fly before storing.
     """
     if entry["source_type"] == "state_encrypted":
         return entry["restore_path"]      # e.g. 'state/finance.md.age'
-    return entry["restore_path"] + ".age" # e.g. 'state/goals.md.age'
+    return entry["restore_path"] + ".age" # e.g. 'state/goals.md.age' | '.artha-local/cashflow.db.age'
 
 
 # ---------------------------------------------------------------------------

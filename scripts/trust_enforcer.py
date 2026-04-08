@@ -35,6 +35,63 @@ from state_writer import write as _state_write  # noqa: PLC0415
 # "auto:" prefix in approved_by = autonomous approval (not human)
 _AUTO_APPROVER_PREFIX = "auto:"
 
+# Path to per-domain autonomy tracking file (§7.1)
+_DOMAIN_AUTONOMY_PATH = Path(__file__).resolve().parent.parent / "config" / "domain_autonomy_state.yaml"
+
+
+def _apply_domain_demotion(domain: str, reason: str) -> None:
+    """Demote domain autonomy level by one tier with 14-day cooldown.
+
+    PRD §7.1: Any guardrail HALT at level Ln immediately demotes the
+    domain to L(n-1) for a 14-day cooldown period.  Two demotion trips
+    during a cooldown window force the domain to L0 pending manual
+    re-elevation.
+
+    Non-fatal: if the YAML file is missing or malformed, the caller's
+    health-check.md update (the primary trust signal) still proceeds.
+    """
+    try:
+        import yaml  # noqa: PLC0415
+        from datetime import timedelta  # noqa: PLC0415
+
+        raw = _DOMAIN_AUTONOMY_PATH.read_text(encoding="utf-8") if _DOMAIN_AUTONOMY_PATH.exists() else "{}"
+        data = yaml.safe_load(raw) or {}
+        domains = data.setdefault("domains", {})
+        entry = domains.setdefault(domain, {
+            "current_level": "L0",
+            "base_level": "L0",
+            "last_promotion_date": None,
+            "cooldown_expires": None,
+            "trip_history": [],
+        })
+
+        current = entry.get("current_level", "L0")
+        try:
+            n = int(str(current).lstrip("L"))
+        except (ValueError, AttributeError):
+            n = 0
+        new_level = f"L{max(0, n - 1)}"
+
+        today = datetime.now(timezone.utc).date()
+        cooldown_expires = (today + timedelta(days=14)).isoformat()
+
+        entry["current_level"] = new_level
+        entry["cooldown_expires"] = cooldown_expires
+        trip_history = entry.setdefault("trip_history", [])
+        trip_history.append({
+            "date": today.isoformat(),
+            "from_level": current,
+            "to_level": new_level,
+            "reason": reason,
+        })
+
+        _DOMAIN_AUTONOMY_PATH.write_text(
+            yaml.dump(data, default_flow_style=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    except (OSError, Exception):  # noqa: BLE001
+        pass  # non-fatal: health-check.md is the primary trust signal
+
 
 class TrustEnforcer:
     """Enforces trust level gates on action proposal execution.
@@ -245,7 +302,7 @@ class TrustEnforcer:
                 "blocker": "Already at maximum trust level (Level 2)",
             }
 
-    def apply_demotion(self, reason: str = "") -> None:
+    def apply_demotion(self, reason: str = "", domain: str | None = None) -> None:
         """Immediately demote trust to Level 0 and log the incident.
 
         Called by ActionExecutor when a critical failure occurs (§6.4):
@@ -254,6 +311,8 @@ class TrustEnforcer:
           - Critical false positive (immigration/health)
 
         Updates the autonomy block in health-check.md atomically.
+        When ``domain`` is supplied, also updates per-domain autonomy
+        level in ``config/domain_autonomy_state.yaml`` (§7.1 demotion).
         Invalidates internal cache.
         """
         content = ""
@@ -284,6 +343,8 @@ class TrustEnforcer:
                 pii_check=False,
             )
         self._autonomy = None  # invalidate cache
+        if domain is not None:
+            _apply_domain_demotion(domain, reason)
 
     def update_autonomy_block(self, updates: dict[str, Any]) -> None:
         """Merge updates into the autonomy block in health-check.md.

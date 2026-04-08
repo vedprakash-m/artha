@@ -84,7 +84,7 @@ class ActionRateLimiter:
         with self._locks[action_type]:
             conn = sqlite3.connect(str(self._db_path), timeout=5.0)
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=3000")
+            conn.execute("PRAGMA busy_timeout=5000")  # blanket policy §5.2 A2.2
             try:
                 if max_per_hour is not None:
                     count_hour = self._count_executions(conn, action_type, hours=1)

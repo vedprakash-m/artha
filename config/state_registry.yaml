@@ -1,0 +1,326 @@
+# config/state_registry.yaml — State File Registry
+# Ref: specs/prd-reloaded.md §3.5 (A2)
+#
+# Every state file written by Artha or its domain agents must be registered here.
+# fields:
+#   path               — relative to project root; use ~ for home-dir paths
+#   owner_agent        — agent or pipeline step responsible for writing this file
+#   write_frequency    — human-readable description
+#   backup_tier        — tier used by scripts/backup.py: gfs-standard | artha-local-dbs | config | none
+#   max_staleness_hours — preflight.py warns if file mtime exceeds this
+#   sensitivity        — low | medium | high | critical
+
+state_files:
+
+  # ── Pipeline-managed state (written by scripts/pipeline.py steps) ─────
+
+  - path: "state/goals.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/open_items.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered or daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "low"
+
+  - path: "state/calendar.md"
+    owner_agent: "pipeline"
+    write_frequency: "daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  - path: "state/inbox.md"
+    owner_agent: "pipeline"
+    write_frequency: "daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  - path: "state/dashboard.md"
+    owner_agent: "pipeline"
+    write_frequency: "daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  - path: "state/audit.md"
+    owner_agent: "pipeline"
+    write_frequency: "every guardrail event"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+
+  - path: "state/pr_manager.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/gallery.yaml"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/memory.md"
+    owner_agent: "pipeline"
+    write_frequency: "every session"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "medium"
+
+  - path: "state/self_model.md"
+    owner_agent: "pipeline"
+    write_frequency: "weekly"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 192
+    sensitivity: "medium"
+
+  - path: "state/comms.md"
+    owner_agent: "pipeline"
+    write_frequency: "daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  # ── Encrypted / sensitive domain state ────────────────────────────────
+
+  - path: "state/finance.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "critical"
+
+  - path: "state/immigration.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "critical"
+
+  - path: "state/health.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "critical"
+
+  - path: "state/estate.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "critical"
+
+  - path: "state/insurance.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "high"
+
+  - path: "state/vehicle.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "high"
+
+  - path: "state/contacts.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "high"
+
+  - path: "state/transactions.md.age"
+    owner_agent: "pipeline"
+    write_frequency: "daily catch-up"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "critical"
+
+  # ── Standard domain state ─────────────────────────────────────────────
+
+  - path: "state/home.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+
+  - path: "state/employment.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "high"
+
+  - path: "state/kids.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "high"
+
+  - path: "state/learning.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/travel.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/social.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/relationships.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/wellness.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/boundary.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "low"
+
+  - path: "state/decisions.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/digital.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/shopping.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/pets.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "low"
+
+  - path: "state/caregiving.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "medium"
+
+  - path: "state/energy.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  - path: "state/research.md"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+
+  # ── New EAR-3 pre-computed domain state ───────────────────────────────
+
+  - path: "state/readiness.md"
+    owner_agent: "ReadinessAgent"
+    write_frequency: "daily (03:00 cron)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  - path: "state/logistics.md"
+    owner_agent: "LogisticsAgent"
+    write_frequency: "daily (03:05 cron)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "low"
+
+  - path: "state/logistics.yaml"
+    owner_agent: "pipeline"
+    write_frequency: "user-triggered (entity updates)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "low"
+
+  - path: "state/finance_forecast.md"
+    owner_agent: "CapitalAgent"
+    write_frequency: "daily (03:10 cron)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 26
+    sensitivity: "high"
+
+  # ── Token usage tracking ───────────────────────────────────────────────
+
+  - path: "state/token_usage.json"
+    owner_agent: "cost_tracker"
+    write_frequency: "per session (if log-parsing succeeds)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 48
+    sensitivity: "low"
+
+  # ── ~/.artha-local/ SQLite databases ──────────────────────────────────
+
+  - path: "~/.artha-local/biometrics.db"
+    owner_agent: "ReadinessAgent"
+    write_frequency: "daily (03:00 cron)"
+    backup_tier: "artha-local-dbs"
+    max_staleness_hours: 26
+    sensitivity: "medium"
+
+  - path: "~/.artha-local/cashflow.db"
+    owner_agent: "CapitalAgent"
+    write_frequency: "daily (03:10 cron)"
+    backup_tier: "artha-local-dbs"
+    max_staleness_hours: 26
+    sensitivity: "high"
+
+  - path: "~/.artha-local/tribe.db"
+    owner_agent: "TribeAgent"
+    write_frequency: "daily (03:30 cron)"
+    backup_tier: "artha-local-dbs"
+    max_staleness_hours: 26
+    sensitivity: "medium"

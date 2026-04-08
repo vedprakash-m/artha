@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.25.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.27.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.10.0
+> **Implements**: PRD v7.12.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,60 +11,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.25.0 | 2026-04-06 | EAR v2.0 — External Agent Reloaded (§27): 13 new `scripts/lib/` modules — `adaptive_context.py` (EAR-11 budget), `agent_chainer.py` (EAR-2 DAG), `agent_heartbeat.py` (EAR-8 probe), `agent_memory.py` (EAR-1 flat-file K→V), `correction_tracker.py` (EAR-12 FIFO), `evaluator_optimizer.py` (EAR-6 retry), `fan_out.py` (EAR-5 parallel), `health_shard.py` (R-14 sync), `knowledge_propagator.py` (EAR-10 propagation), `metrics_digest.py` (R-12 digest), `soul_allowlist.py` (EAR-9 SOUL), `tfidf_router.py` (EAR-4 lexical). `scripts/agent_scheduler.py` (EAR-3 cron). All 13 wired into `pipeline.py` (heartbeat Step 0), `prompt_composer.py` (compose Steps 1–6), `agent_manager.py` (cmd_delegate, 9 new CLI subcommands, reinstate retirement). TF-IDF auto-rebuild on `register`/`discover`. User correction auto-detection in `work_reader.py`. Audit file missing warning in `ext_agent_audit.py`. EAR-7 blueprint system: 8 YAML templates in `config/agents/blueprints/`, `cmd_blueprint_create()` renderer with placeholder substitution. 596 EAR unit tests (`tests/ext_agents/`). Zero regressions. 3,936 total. |
-| v3.24.0 | 2026-04-05 | AR-9 Safety Hardening (§23): template injection defense (`prompt_composer.py` — brace escaping + 8K query cap), atomic writes (`knowledge_extractor.py` — `tempfile.mkstemp` + `os.replace`), PII guard fail-safety (`context_scrubber.py` — strict mode blocks on guard failure), quality score clamping (`agent_health.py` — `[0,1]` enforcement), dead import cleanup (`agent_registry.py`). 16 safety invariant tests (`test_safety_invariants.py`). 270 AR-9 tests passing. |
-| v3.23.0 | 2026-04-05 | KB-LINT Cross-Domain Data Health (§26): `scripts/kb_lint.py` (~900 LOC) + `config/lint_rules.yaml` (8 built-in P5 rules). Six-pass pipeline (P1 frontmatter, P2 stale dates, P3 orphan refs, P4 contradictions, P5 cross-domain YAML rules, P6 custom rules). `--brief-mode` briefing integration; `--fix`, `--json`, `--init`, `--pass` CLI flags. `health_pct` = % P1-error-free files. 46 unit tests + 4 regression tests. 3,570 tests total. |
-| v3.22.0 | 2026-04 | AFW-10 Domain Training (`scripts/domain_training.py`): per-domain accuracy trend analysis over successive catch-up runs, correction compounding detection, training suggestions for underperforming domains, self-model writer integration. EV-12 Golden-Set Eval (`tests/eval/golden_set/`): parametrized regression framework with `fixtures.yaml` (10 fixtures — 4 golden, 6 anti-golden), dimension-level quality gates (actionability, specificity, completeness, signal_purity, calibration). `/work code` Bluebird MCP integration for ADO code search with golden-query fallback. 3,515+ tests. |
-| v3.21.0 | 2026-04 | Agent Framework v1 (§25): AFW-1 through AFW-11 (Waves 0–3 complete). Guardrails, middleware pipeline, progressive disclosure, context compaction, checkpointing, undo, flat-file memory (ADR-001), composite signal scoring, structured tracing. `.gitignore` hardened. 4,872+ tests. |
-| v3.19.0 | 2026-04 | Observability & Eval Framework (§21) + Knowledge Graph Architecture (§22, Work OS): `scripts/eval_runner.py`, `scripts/eval_scorer.py`, `scripts/lib/metric_store.py`, `scripts/correction_feeder.py`, `scripts/log_digest.py`, `scripts/lib/knowledge_graph.py`, `scripts/kb_bootstrap.py`. Closes 10 observability gaps (G1–G10). 127 eval tests. `.gitignore` hardened: machine-specific conflict-copy patterns replaced with generic `state/*.age`. |
-| v3.18.0 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 — Action Layer fully wired: `action_orchestrator.py` signal→compose→queue pipeline, email signal extractor (9 categories, 14+ regex patterns across `body` field), pattern engine integration, Step 12.5 in `Artha.md`, signal routing merge invariant (YAML overrides hardcoded fallback), handler-routing alignment invariant, platform-local `actions.db`, `--defer` horizons, `--show` content preview, burn-in mode. 4,014 tests. F15.20. |
-| v3.17.0 | 2026-03-28 | GOALS-RELOADED v6.3 — Goal Intelligence Engine Phase 1:.. |
-| v3.16.0 | 2026-03 | FW-19 Reflection Loop v1.5.0 — Full Implementation:.. |
-| v3.15.0 | 2026-03 | Work OS FW-18 Product Knowledge + FW-19 Reflection Loop (specs):.. |
-| v3.14.0 | 2026-03 | PAY-DEBT-RELOADED v2.0 — Infrastructure Hardening (WS-1–WS-9-B):.. |
-| v3.13.0 | 2026-03 | PR-3 AI Trend Radar. 52 tests. F11.12.. 52 tests. F11.12. |
-| v3.12.1 | 2026-03 | PR-2 Content Stage — Bug-fixes + Vault Policy Change:. 1922 tests.. 1922 tests. |
-| v3.12.0 | 2026-03 | PR-2 Content Stage v1.3.0 — Phase 0 + Phase 1.. |
-| v3.11.0 | 2026-03-21 | PR Manager v1.0 — Personal Narrative Engine.. |
-| v3.10.1 | 2026-03-21 | MEM v1.3.0. 1546 tests.. 1546 tests. |
-| v3.10.0 | 2026-03 | DUAL v1.3.0.. |
-| v3.9.8 | 2026-03-21 | New modules:. 1520 tests.. 1520 tests. |
-| v3.9.7 | 2026-03 | Action handler bug fixes: `scripts/actions/__init__.py` + `scripts/action_executor.py` `_HANDLER_MAP. 1229 tests. |
-| v3.9.6 | 2026-03 | Messaging connectors: `scripts/connectors/whatsapp_local.py` (dual-path — macOS reads `ChatStorage.s. |
-| v3.9.5 | 2026-03 | Utilization uplift (specs/util.md U-1–U-9): `RelationshipPulseSkill` (`scripts/skills/relationship_p. 1069 tests. |
-| v3.9.4 | 2026-03 | .. |
-| v3.9.4 | 2026-03 | Catch-up quality hardening: `scripts/email_classifier.py` (deterministic marketing tagger — whitelis. 1042 tests. |
-| v3.9.3 | 2026-03 | Agentic Reloaded (specs/agentic-reloaded.md AR-1–AR-8): `scripts/session_search.py` (grep-based cros. 1015 tests. |
-| v3.9.2 | 2026-03 | Operational safety hardening: `vault.py do_health()` 3-exit-code model (0=clean, 1=hard fail, 2=soft. 943 tests. |
-| v3.9.1 | 2026-03 | Patch: `_ComposedMiddleware.before_write` now accepts and forwards `ctx: Any.. |
-| v3.9 | 2026-03 | Agentic Intelligence (PRD F15.128–F15.132, specs/agentic-improve.md Phases 1–5): `scripts/artha_cont. 936 tests. F15.128, F15.132, F15.128, F15.132. |
-| v3.7 | 2026-03 | Cowork VM & Operational Hardening (PRD F15.119–F15.123, specs/vm-hardening.md): `scripts/detect_envi. 804 tests. F15.119, F15.123, F15.119, F15.123. |
-| v3.6 | 2026-03 | Deep Agents Option B — Core Harness Patterns (Phases 1–5, PRD F15.114–F15.118): `scripts/context_off. 698 tests. F15.114, F15.118, F15.114, F15.118. |
-| v3.5 | 2026-03 | Intelligence expansion + platform parity (PRD F15.100–113): `financial_resilience` skill (burn rate/. 541 tests. F15.100, F15.100. |
-| v3.4 | 2026-03 | OOBE polish audit (PRD F15.95–99): setup.sh brand mark + step counters, AI CLI auto-detection (`_det. 485 tests. F15.95, F15.95. |
-| v3.3 | 2026-03 | Interactive setup wizard + first-run friction fixes (PRD F15.89–94): `artha.py` wizard, starter prof. 485 tests. F15.89, F15.89. |
-| v3.2 | 2026-03 | 10-layer defense-in-depth (§8.5.1): advisory lock, sync fence, post-encrypt verify, deferred deletio. 501 tests. |
-| v3.0 | 2026-03 | Novice UX hardening (PRD F15.72–F15.77): Step 6 restored to README, age key deletion order fixed, `<. F15.72, F15.77, F15.72, F15.77. |
-| v2.9 | 2026-03 | Distribution audit: 15-issue hardening — git history PII purge, connector defaults (Gmail+GCal only). |
-| v2.8 | 2026-03 | Phase 1b: domain registry, household types, renter mode, pets, passport/subscription skills, RSS con. |
-| v2.7 | 2026-03 | ACB v2.1: Multi-LLM Q&A, ensemble mode, HCI command redesign, write commands, /diff, /goals.. |
-| v2.6 | 2026-03 | Three-module architecture: `foundation.py` + `backup.py` extracted from `vault.py`; `_config` dict p. |
-| v2.5 | 2026-03 | ZIP-per-snapshot backup architecture — root-level `backups/` dir, one ZIP per GFS tier-day, `vault.p. |
-| v2.4 | 2026-03 | Comprehensive Backup Registry (§8.5.2) — all 31 state files + config files, fresh-install restore.. |
-| v2.3 | 2026-03 | GFS Vault Backup (§8.5.2) — daily/weekly/monthly/yearly rotation with restore validation.. |
-| v2.3 | 2026-03 | Channel Bridge (ACB v2.0): `scripts/channels/`, `channel_push.py`, `channel_listener.py`.. |
-| v2.2 | 2026-03 | WorkIQ Calendar MCP, work calendar state schema.. |
-| v2.1 | 2026-03 | Intelligence amplification (29 enhancements), Canvas LMS, `/diff`.. |
-| v2.0 | 2026-02 | Supercharge: data integrity guard, bootstrap, coaching, dashboard.. |
-| v1.9 | 2026-02 | Phase 2A: relationship graph, decisions, scenarios, tiered context.. |
-| v1.8 | 2026-01 | MS Graph direct integration (email + calendar).. |
-| v1.7 | 2026-01 | Pre-flight gate, open items, To Do sync, email coverage.. |
-| v1.6 | 2025-12 | Critical assessment hardening, safe_cli, contacts encryption.. |
-| v1.5 | 2025-12 | Multi-LLM orchestration, action framework.. |
-| v1.4 | 2025-11 | Governance framework.. |
-| v1.3 | 2025-11 | PII guardrails, Claude Code capabilities.. |
-| v1.2 | 2025-10 | OneDrive sync layer, encrypted state.. |
-
+| v3.27.0 | 2026-04-08 | EAR-3 SHIPPED: `scripts/agents/` with 4 domain agents (capital, logistics, readiness, tribe). `config/agents/schedules.yaml` cron registry (≤8 agent slots, §27 R13). `config/state_registry.yaml` state-file registry (§3.5 A2). 4 domain-specific guardrails added to §8 (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Anti-golden routing test suite added. Spec compaction: §5.1 briefing example, §8.7 safe_cli.sh, §11.1 setup.sh, §12.1 registry — all replaced with pointers to canonical files. |
+| v3.26.0 | 2026-04-07 | SPEC CONSOLIDATION: Distilled 10 non-core spec files into core specs (§21–§28). §21.6–21.8 eval dimensions/scoring/SLAs from `eval.md`. §22.6–22.8 full entity model, API, performance targets from `kb-graph-design.md`. §23.6 AR-9 GA promotion from `ar9-completion-report.md`. §24.4–24.5 cross-reference rules and domain weight overrides from `data-quality-gate.md`. §25.11–25.14 baseline patterns, anti-patterns, context budgets, governance from `agent-fw.md`. NEW §27 EAR v2.0 Multi-Agent Composition (EAR-1–EAR-12) from `ext-agent-reloaded.md`. NEW §28 KB Population Strategy from `kb-population-plan.md`. Implements PRD v7.11.0. Originals archived to `.archive/specs/`. |
 Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
 ---
@@ -199,75 +147,10 @@ Do not proceed without reading Artha.md first.
 
 ### 2.1 Structure
 
-```markdown
-# Artha — Personal Intelligence System
+> See [config/Artha.md](../config/Artha.md) for the full instruction file loaded by Claude Code.
+> Key sections: **Identity** · **Core Behavior** · **Catch-Up Workflow** (Steps 1–11) · **Routing Rules** (see §2.2) · **Output Format** (see §5) · **Domain Prompts list** · **Privacy Rules**.
+> CLAUDE.md is a 3-line loader that auto-reads Artha.md. See §2.3 for design principles.
 
-## Identity
-You are Artha, a personal intelligence system for the family (defined in user_profile.yaml).
-You serve the primary user and their household.
-You run as an AI CLI session on the primary user's computer. You are not a chatbot —
-you are an operating system for personal life management.
-
-## Core Behavior
-- Be direct, specific, and actionable — not conversational
-- Surface what matters; suppress noise
-- When in doubt about urgency, err on the side of alerting
-- Never fabricate data — if a state file is empty, say so
-- All write actions (send email, add calendar event) require explicit user approval
-- Log all actions and recommendations to ~/OneDrive/Artha/state/audit.md
-
-## Catch-Up Workflow
-When the user says "catch me up" (or equivalent: "what did I miss",
-"morning briefing", "SITREP"):
-
-1. Run ./scripts/vault.sh decrypt (unlock sensitive state files)
-2. Read ~/OneDrive/Artha/state/health-check.md for last run timestamp
-3. Fetch emails + calendar IN PARALLEL:
-   - Gmail MCP: gmail_search(after:last_timestamp) + gmail_get_message per result
-   - Calendar MCP: calendar_list_events(today, +7 days)
-4. Run `python scripts/pii_guard.py filter` on email batch (Layer 1 PII defense)
-   ⚠ HALT if pii_guard.py exits non-zero
-5. For each email/event, route to the appropriate domain prompt:
-   - Match sender/subject against routing rules below
-   - Apply the domain prompt's extraction rules
-   - Apply §8.2 redaction rules (Layer 2 PII defense)
-   - Update the domain's state file
-   - Evaluate alert thresholds
-6. After all items processed, synthesize the briefing:
-   - 🔴 Critical alerts first
-   - 🟠 Urgent items
-   - 📅 Today's calendar
-   - 📬 Actionable emails by domain
-   - 🎯 Goal pulse (if weekly check-in due)
-   - 💡 ONE THING — the single most important insight
-7. Email the briefing to [configured address]
-8. Save briefing to ~/OneDrive/Artha/briefings/YYYY-MM-DD.md
-9. Update ~/OneDrive/Artha/state/health-check.md with current timestamp
-10. Log PII filter stats to audit.md
-11. Run ./scripts/vault.sh encrypt (re-lock sensitive state files)
-
-## Routing Rules
-[See Section 2.2 for complete routing table]
-
-## Output Format
-[See Section 5 for briefing format specification]
-
-## Domain Prompts
-The following prompt files define domain-specific behavior:
-- ~/OneDrive/Artha/prompts/immigration.md
-- ~/OneDrive/Artha/prompts/finance.md
-- ~/OneDrive/Artha/prompts/kids.md
-- [... one per FR]
-Read each prompt file when processing items for that domain.
-
-## Privacy Rules
-- Never store full email body text — extract structured data only
-- Immigration documents (passport numbers, A-numbers) use [REDACTED] in logs
-- Never send state files to any external service other than Claude API and OneDrive (the user's own cloud storage)
-- State files reside in the OneDrive-synced Artha directory. Sensitive state files (high/critical) are age-encrypted before sync — OneDrive only sees `.age` files for those domains
-- Never call external CLIs (Gemini, Copilot) with raw PII — always use `./scripts/safe_cli.sh` wrapper
-- Log every action to audit.md for traceability
-```
 
 ### 2.2 Routing Rules
 
@@ -1227,120 +1110,34 @@ Privacy: No IP addresses stored. Device names pass through PII guard. Presence s
 ### 5.1 Catch-Up Briefing
 
 ```markdown
-# Artha Catch-Up — March 7, 2026
+# Artha Catch-Up — [Date]
+**Last run**: [timestamp] | **Emails processed**: N | **Period**: Xh
 
-**Last run**: March 6, 2026 at 7:15 PM | **Emails processed**: 47 | **Period**: 23 hours
-
+## 🔴 Critical Alerts  ← high-urgency items (PII stripped)
+## 🟠 Urgent           ← time-sensitive across any domain
+## 📅 Today's Calendar  ← next 3 meaningful events
+## 📬 By Domain        ← Immigration · Kids · Finance · Home · [others]
+## 🤝 Relationship Pulse *(v1.9)* ← reconnect radar + upcoming dates
+## 🎯 Goal Pulse       ← goal table: Status · Trend · Leading Indicator
+## 💡 ONE THING        ← single most important synthesis (2-3 sentences)
+## 📅 Week Ahead *(v2.1 — Monday only)* ← day-by-day table Mon–Sun
+## 🛡️ PII Detection Stats *(v2.1)* ← redaction count + false-positive rate
+## ❓ Calibration Questions *(v2.1)* ← 2 post-briefing accuracy questions
 ---
-
-## 🔴 Critical Alerts
-(none — or items like "EAD renewal deadline in 28 days")
-
-## 🟠 Urgent
-- **[Immigration]** Visa Bulletin EB-2 India moved to 2019-01-15 — your PD (2019-04-15) is 3 months away
-- **[Finance]** PSE bill: $247 due March 20 (not on auto-pay)
-
-## 📅 Today's Calendar
-- 9:00 AM — Team standup (work)
-- 3:30 PM — Arjun orthodontist appointment
-- 6:00 PM — Ananya soccer practice pickup
-
-## 📬 By Domain
-
-### Immigration
-- [immigration attorney] email: H-1B extension paperwork timeline confirmed for Q2
-
-### Kids
-- Arjun: AP Language essay returned (B+), cumulative grade now B+
-- Ananya: Math quiz 92%, no action needed
-- ParentSquare: Spring pictures March 12 (both schools)
-
-### Finance
-- Chase statement: February spending $X,XXX (within budget)
-- Wells Fargo: Mortgage payment processed
-
-### Home
-- City Waste Services: Schedule change for next week (holiday)
-
-## 🤝 Relationship Pulse *(v1.9)*
-- Reconnect needed: Suresh Uncle (45 days, threshold 30)
-- Upcoming: Rahul’s birthday in 5 days → [action proposal queued]
-- Cultural: Holi celebration Mar 14 (temple community)
-
-## 🎯 Goal Pulse
-| Goal | Status | Trend | Leading Indicator *(v1.9)* |
-|---|---|---|---|
-| Net worth trajectory | On track | ↑ +2.1% YTD | Savings rate 18% (target 20%) |
-| Immigration readiness | ⚠️ Action needed | EAD renewal due | [immigration attorney] response time: 3 days avg |
-| Arjun GPA | On track | Stable at 3.7 | Assignment completion 95% ✔ |
-
-## 💡 ONE THING
-Your EAD renewal is 90 days out. Based on [immigration attorney]'s average processing time
-from your last two renewals (45 days), initiate attorney contact within 2 weeks
-to stay on the safe side.
-
-## 📅 Week Ahead *(v2.1 — Monday only)*
-> Shown only on Monday catch-ups. Previews the week's calendar, upcoming deadlines,
-> and goal milestones to enable proactive planning.
-
-| Day | Key Events | Deadlines |
-|---|---|---|
-| Mon | Team standup, Arjun ortho 3:30 PM | PSE bill due Wed |
-| Tue | (clear) | |
-| Wed | Ananya parent-teacher 4 PM | |
-| Thu | Arjun SAT prep class 6 PM | |
-| Fri | Family dinner 7 PM | College app milestone: rec letters |
-| Sat–Sun | Soccer tournament (Ananya) | |
-
-**⚠️ This week:** 3 deadlines, 1 goal milestone. Consider scheduling bill payment today.
-
----
-
-## 🛡️ PII Detection Stats *(v2.1)*
-> PII Guard: 47 emails scanned | 3 tokens redacted (2 account numbers, 1 SSN fragment) | 0 false positives
-> Coverage: 100% of emails pre-filtered | Last false positive: none
-
----
-
-## ❓ Calibration Questions *(v2.1)*
-> Post-briefing accuracy check. Answer 1–2 to help Artha improve.
-
-1. Was the ONE THING above actually the most important item today? [Y/N/Other: ___]
-2. Did I miss anything critical from your emails? [Y/N/What: ___]
-
----
-*Artha catch-up complete. 47 emails → 6 actionable items. Next recommended catch-up: tomorrow evening.*
+*Artha catch-up complete. N emails → M actionable items.*
 ```
 
-**Briefing sensitivity filter:** When the briefing is emailed (as opposed to displayed in terminal), domains with `sensitivity: high` or `critical` contribute **summary lines only**:
-
-```markdown
-## 📬 By Domain
-
-### Immigration
-✅ 1 item processed. No new alerts. (Details in terminal or next catch-up.)
-
-### Finance
-✅ 2 items processed. No new alerts. (Details in terminal or next catch-up.)
-
-### Kids
-- Arjun: AP Language essay returned (B+), cumulative grade now B+
-- Ananya: Math quiz 92%, no action needed
-- ParentSquare: Spring pictures March 12 (both schools)
-```
-
-The terminal output during the Mac session shows full detail for all domains regardless of sensitivity. This ensures sensitive financial and immigration data is never in transit via email.
+**Briefing sensitivity filter:** When the briefing is emailed, domains marked `sensitive: true` in `artha_config.yaml` are summarized as "✅ N items processed. No new alerts." The terminal output always shows full detail regardless of sensitivity setting.
 
 #### 5.1.1 Digest Mode *(v1.9)*
 
-Triggered when >48h gap since last catch-up. Groups by day (not domain), shows Critical/Urgent items individually, counts FYI items, consolidates and deduplicates action items across gap period. Standard sections (Goal Pulse, ONE THING) appear after gap summary.
+Triggered when >48h gap since last catch-up. Groups by day (not domain), shows Critical/Urgent items upfront, then domain items grouped under each day.
 
 #### 5.1.2 Flash Briefing *(v2.0)*
 
-Triggered by "quick update", `/catch-up flash`, or <4h since last run. Max 8 lines: 🔴/🟠 alerts only, today's calendar (one line), "IF YOU DON'T" consequence line, footer (goal count + signal ratio + volume).
+Triggered by "quick update", `/catch-up flash`, or <4h since last run. Max 8 lines: 🔴/🟠 alerts only, no calendar, no goal pulse.
 
-**Compression levels:** Flash (≤30s, 8 lines), Standard (2-3 min, 40-60 lines), Deep (5-8 min, 80-120 lines with cross-domain analysis).
-
+**Compression levels:** Flash (≤30s, 8 lines), Standard (2-3 min, 40-60 lines), Deep (5-8 min, 80-120 lines).
 ### 5.2 Weekly Summary
 
 Generated on Sunday catch-up (or first Monday catch-up if weekend skipped). Sections: Week in Numbers, Domain Summaries, Goal Progress, Accuracy Pulse *(v1.9)* (actions proposed/accepted/declined, domain accuracy), Leading Indicator Alerts *(v1.9)*, Artha Observations (cross-domain insights via extended thinking), Upcoming Week.
@@ -2558,33 +2355,7 @@ When Artha delegates tasks to Gemini CLI or Copilot CLI (§3.7), a wrapper scrip
 
 **Script: `~/OneDrive/Artha/scripts/safe_cli.sh`** (~30 lines, bash)
 
-```bash
-#!/bin/bash
-# safe_cli.sh — PII-safe wrapper for external CLI calls
-# Usage: safe_cli.sh <cli> "<query>"
-# Example: safe_cli.sh gemini "What is the current EB-2 India priority date?"
-set -euo pipefail
-
-CLI="$1"
-QUERY="$2"
-
-# Scan query for PII patterns (reuses pii_guard.sh detection)
-DETECTED=$(echo "$QUERY" | ./scripts/pii_guard.sh scan 2>&1) || {
-  echo "ERROR: PII detected in outbound query. Blocked." >&2
-  echo "Detected: $DETECTED" >&2
-  echo "[$(date -Iseconds)] OUTBOUND_PII_BLOCK | cli: $CLI | pii_types: $DETECTED" \
-    >> ~/OneDrive/Artha/state/audit.md
-  exit 1
-}
-
-# Log the outbound call (no PII present — safe to log query)
-echo "[$(date -Iseconds)] CLI_CALL | cli: $CLI | query_length: ${#QUERY}" \
-  >> ~/OneDrive/Artha/state/audit.md
-
-# Execute the CLI
-$CLI "$QUERY"
-```
-
+> See `scripts/safe_cli.sh` for the full PII-safe wrapper script (~30 lines bash). Key steps: validate args, strip PII via `pii_guard.sh`, log call, exec CLI with timeout.
 **Artha.md instruction:** "Never call `gemini` or `copilot` directly for queries that may contain user data. Always use `./scripts/safe_cli.sh gemini 'your query'` or `./scripts/safe_cli.sh copilot 'your query'`. The wrapper scans for PII patterns and blocks the call if any are detected."
 
 **Scope:** Applies to all external CLI calls from §3.7 — web research, script validation, ensemble reasoning queries. Does NOT apply to Gemini Imagen calls (which receive only descriptive text prompts, not user data).
@@ -3185,123 +2956,9 @@ Tasks delegated to Gemini CLI and Copilot CLI consume their free quotas instead 
 
 This is the one-time setup sequence (run manually):
 
-```bash
-# Create Artha directory structure in OneDrive
-mkdir -p ~/OneDrive/Artha/{prompts,state,briefings,summaries,config,scripts,visuals}
+> See [setup.sh](../setup.sh) and [setup.ps1](../setup.ps1) for the full cross-platform setup scripts.
+> The scripts perform: directory scaffolding; config/Artha.md + CLAUDE.md creation; config/channels.yaml + connectors.yaml initialization; vault key generation; Gmail MCP configuration; first-run validation. Run ash setup.sh (Mac/Linux) or .\setup.ps1 (Windows).
 
-# Create CLAUDE.md loader (thin — Claude Code auto-reads this)
-cat > ~/OneDrive/Artha/CLAUDE.md << 'EOF'
-# Artha Loader
-Read and follow ALL instructions in Artha.md in this directory.
-Do not proceed without reading Artha.md first.
-EOF
-
-# Create Artha.md (content from Section 2)
-# [Author manually based on Section 2 specification]
-
-# Create domain prompt files (content from Section 6)
-touch ~/OneDrive/Artha/prompts/{comms,immigration,finance,kids,travel,health,home,calendar,shopping,learning,social,digital,goals,boundary,insurance,vehicle,estate}.md
-
-# Create initial state files with empty frontmatter
-for domain in immigration finance kids health home calendar goals memory audit health-check; do
-  cat > ~/OneDrive/Artha/state/$domain.md << 'EOF'
----
-domain: DOMAIN_NAME
-last_updated: 1970-01-01T00:00:00-08:00
-last_catch_up: 1970-01-01T00:00:00-08:00
-alert_level: none
-version: 1
----
-
-## Current Status
-Not yet initialized. Run first catch-up to populate.
-
-## Recent Activity
-(none)
-EOF
-done
-
-# Create settings file with OneDrive sync config
-cat > ~/OneDrive/Artha/config/settings.md << 'EOF'
----
-briefing_email: raj.patel@example.com
-alert_email: raj.patel@example.com
-work_hours_start: "08:00"
-work_hours_end: "18:00"
-work_days: [Mon, Tue, Wed, Thu, Fri]
-timezone: America/Los_Angeles
-sync:
-  provider: onedrive
-  path: ~/OneDrive/Artha
-  encrypt_before_sync: true
-  encryption_key_location: keychain
----
-
-## Email Accounts
-- Primary Gmail (configured in user_profile.yaml — Gmail API)
-- Outlook email (configured in user_profile.yaml — MS Graph API, no forwarding needed)
-- iCloud (forwarding to Gmail — T-1B.1.2, Apple has no public API)
-EOF
-
-# Install age encryption
-brew install age
-
-# Generate age keypair and store in macOS Keychain
-AGE_KEY=$(age-keygen 2>/dev/null)
-AGE_PUBKEY=$(echo "$AGE_KEY" | grep 'public key:' | awk '{print $NF}')
-AGE_PRIVKEY=$(echo "$AGE_KEY" | grep -v '^#')
-echo "$AGE_PRIVKEY" | security add-generic-password -a artha -s age-key -w
-echo "age recipient (public key): $AGE_PUBKEY"
-echo "Add this to ~/OneDrive/Artha/config/settings.md under age_recipient"
-
-# Create pii_guard.sh pre-flight PII filter (see §8.6)
-cat > ~/OneDrive/Artha/scripts/pii_guard.sh << 'PIIEOF'
-#!/bin/bash
-# pii_guard.sh — pre-flight PII filter for Artha
-# Usage: pii_guard.sh [scan|filter] < input
-# scan  — detect only, exit 1 if PII found
-# filter — detect and replace with [PII-FILTERED-*] tokens
-# See §8.6 of artha-tech-spec.md for full specification
-set -euo pipefail
-# [Implementation per §8.6 detection patterns table]
-PIIEOF
-chmod +x ~/OneDrive/Artha/scripts/pii_guard.sh
-
-# Create vault.sh helper script
-cat > ~/OneDrive/Artha/scripts/vault.sh << 'VAULTEOF'
-#!/bin/bash
-# vault.sh — encrypt/decrypt sensitive state files for OneDrive sync
-set -euo pipefail
-STATE_DIR="$(dirname "$0")/../state"
-AGE_KEY=$(security find-generic-password -a artha -s age-key -w 2>/dev/null)
-SENSITIVE_FILES=(immigration finance insurance estate health audit)
-
-case "${1:-}" in
-  decrypt)
-    for f in "${SENSITIVE_FILES[@]}"; do
-      [[ -f "$STATE_DIR/$f.md.age" ]] && \
-        echo "$AGE_KEY" | age -d -i /dev/stdin "$STATE_DIR/$f.md.age" > "$STATE_DIR/$f.md"
-    done
-    echo "Decrypted ${#SENSITIVE_FILES[@]} sensitive state files."
-    ;;
-  encrypt)
-    PUBKEY=$(grep 'age_recipient:' "$(dirname "$0")/../config/settings.md" | awk '{print $2}')
-    for f in "${SENSITIVE_FILES[@]}"; do
-      [[ -f "$STATE_DIR/$f.md" ]] && \
-        age -r "$PUBKEY" "$STATE_DIR/$f.md" > "$STATE_DIR/$f.md.age" && \
-        rm "$STATE_DIR/$f.md"
-    done
-    echo "Encrypted ${#SENSITIVE_FILES[@]} sensitive state files."
-    ;;
-  *) echo "Usage: vault.sh [decrypt|encrypt]"; exit 1 ;;
-esac
-VAULTEOF
-chmod +x ~/OneDrive/Artha/scripts/vault.sh
-
-echo "Artha directory structure created at ~/OneDrive/Artha/"
-echo "OneDrive will sync to all connected devices."
-echo "Next: Author Artha.md, configure Gmail MCP, run first catch-up"
-```
 
 ### 11.2 Gmail MCP Setup
 
@@ -3426,86 +3083,15 @@ After inputs: writes `config/user_profile.yaml` as formatted YAML string (not `y
 
 Artha is a living system: new domains, data sources, MCP servers, and AI capabilities will be added as trust and utility grow. This section defines the lifecycle processes that keep the system coherent, extensible, and self-improving.
 
-### 12.1 Component Registry (`registry.md`)
+### 12.1 Component Registry (
+egistry.md)
 
-`~/OneDrive/Artha/config/registry.md` is the system manifest — a single source of truth for what Artha consists of. Artha reads it at startup to understand its own topology.
+~/OneDrive/Artha/config/registry.md is the system manifest — a single file listing every prompt, state file, script, MCP server, hook, slash command, external CLI, and action channel in the system.
 
-```markdown
----
-registry_version: 1
-last_reviewed: 2026-03-07
-next_review: 2026-06-07
----
+> See config/registry.md for the full registry. Sections: Prompts · State Files · MCP Servers · Hooks · Scripts · Slash Commands · External CLIs · Action Channels · Config Files.
 
-## Prompts
-| File | Domain | FR | Version | Status | Sensitivity | Last Updated |
-|---|---|---|---|---|---|---|
-| immigration.md | Immigration | FR-2 | 1.0 | active | critical | 2026-03-07 |
-| finance.md | Finance | FR-3 | 1.0 | active | high | 2026-03-07 |
-| kids.md | Kids & Education | FR-4 | 1.0 | active | standard | 2026-03-07 |
-| comms.md | Communications | FR-1 | 1.0 | active | standard | 2026-03-07 |
-
-## State Files
-| File | Encrypted | Sensitivity | Schema Version | Last Migrated |
-|---|---|---|---|---|
-| immigration.md | .age | critical | 1 | — |
-| finance.md | .age | high | 1 | — |
-| kids.md | no | standard | 1 | — |
-| health-check.md | no | standard | 1 | — |
-| memory.md | no | standard | 1 | — |
-| audit.md | .age | high | 1 | — |
-
-## MCP Servers
-| Server | Version | OAuth Scope | Status | Health Check | Added |
-|---|---|---|---|---|---|
-| Gmail MCP | [per TD-1] | gmail.readonly | active | connection test on each catch-up | Phase 1A |
-| Calendar MCP | [per setup] | calendar.readonly | active | connection test on each catch-up | Phase 1A |
-
-## Hooks
-| Hook | Trigger | Script/Action | Fallback | Status |
-|---|---|---|---|---|
-| vault-decrypt | PreToolUse (state/*) | vault.sh decrypt | CLAUDE.md instruction | active |
-| vault-encrypt | Stop | vault.sh encrypt | CLAUDE.md instruction | active |
-
-## Scripts
-| Script | Purpose | Version | Lines | Added | Removal Criteria |
-|---|---|---|---|---|---|
-| vault.sh | encrypt/decrypt sensitive state | 1.0 | ~30 | Phase 1A | N/A — permanent |
-| pii_guard.py | pre-flight PII filter (cross-platform Python) | 1.0.0 | ~460 | Phase 1A | N/A — permanent |
-
-## Slash Commands
-| Command | Function | Defined In |
-|---|---|---|
-| /catch-up | Full catch-up workflow | CLAUDE.md |
-| /status | Show health-check + per-domain freshness | CLAUDE.md |
-| /goals | Goal scorecard | CLAUDE.md |
-| /domain [name] | Deep-dive into single domain | CLAUDE.md |
-| /cost | API cost summary for current billing period | CLAUDE.md |
-
-## External CLIs
-| CLI | Purpose | Cost | Version | Status |
-|---|---|---|---|---|
-| gemini | Web research, URL summarization, Imagen visuals | Free quota | — | active |
-| copilot (gh copilot) | Script/config validation, code review | Free quota | — | active |
-
-## Action Channels
-| Channel | Mechanism | Human Gate | Trust Level |
-|---|---|---|---|
-| Email (briefing) | Gmail MCP `gmail.send` | Auto (catch-up) | Level 0+ |
-| Email (compose) | Gmail MCP `gmail.send` | Always | Level 1+ |
-| WhatsApp | URL scheme (`open "https://wa.me/..."`) | OS-enforced (user taps send) | Level 1+ |
-| Calendar (create) | Google Calendar MCP (write scope) | Approve | Level 1+ |
-| Visual (generate) | Gemini Imagen CLI | None (generation only) | Level 0+ |
-
-## Config Files
-| File | Purpose | Location |
-|---|---|---|
-| contacts.md | Contact lists for messaging/greetings | ~/OneDrive/Artha/config/ |
-| occasions.md | Festival/occasion calendar + visual styles | ~/OneDrive/Artha/config/ |
-```
-
-**Maintenance:** Update `registry.md` whenever a component is added, updated, or retired. The `next_review` date triggers a quarterly self-audit.
-
+**Maintenance:** Update 
+egistry.md whenever a component is added, updated, or removed. Registry drift = broken observability.
 ### 12.2 CLAUDE.md Change Management
 
 CLAUDE.md is the most critical file in the system — changes must be deliberate.
@@ -4855,6 +4441,46 @@ scripts/correction_feeder.py  ← turns user corrections → memory.md entries
 | `test_self_model_feedback.py` | 15 | Self-model update triggers |
 | `test_outcome_signals.py` | 20 | Signal → metric mapping |
 
+### 21.6 Evaluation Dimensions & Scoring Rubric
+
+Quality score composite: $Q = w_A \times A + w_F \times F + w_C \times C$
+
+**Accuracy (A)** — source reliability × conflict state × corroboration:
+- Source weights: `ado_sync`=0.90, `kusto_query`=0.85, `kb_file`=0.80, `manual`=0.75, `workiq`=0.70, `llm_extract`=0.50
+- Active provenance conflict → accuracy × 0.5 (halved)
+- Corroboration bonus: accuracy × (1 + 0.05 × `corroborating_sources`)
+- `providers_used` frontmatter stamps live-data provenance (→ A=0.90) vs. cached extractions (→ A=0.70)
+
+**Freshness (F)**: $F = \max(0.0, 1.0 - \text{age\_days} / \text{staleness\_ttl\_days})$
+- Domain TTLs: calendar/comms/incidents=1d, projects=7d, people=14d, decisions=14d, golden_queries=14d
+
+**Completeness (C)** — binary proxy:
+- Markdown files: C=1.0 if file >1000 bytes, else C=0.3
+- KB entities: required fields per entity type (e.g., system needs name + summary + domain + ≥1 relationship)
+- Placeholder detection: "TBD", "See notes", "TODO", "—", `null`, `""` all treated as empty
+
+**Sub-dimensions** within response quality (used by `eval_scorer.py`): consistency, relevance, specificity, factuality — rolled into Accuracy scoring.
+
+**Golden Dataset**: Synthetic briefing fixtures with hand-written quality references (≥4 high-quality baselines) + ≥5 anti-golden scenarios (known-bad briefings scoring <40). Located in `tests/eval/golden_set/fixtures.yaml`.
+
+### 21.7 Execution SLAs
+
+| Component | SLA |
+|-----------|-----|
+| `eval_scorer.py` | <100ms per briefing |
+| `log_digest.py` | <500ms on 3-day logs |
+| `eval_runner --accuracy` | <5s end-to-end |
+
+### 21.8 Regression Detection
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| Quality score drop | >20% over 7 days | Anomaly flag in briefing |
+| Connector error rate | >10% | Budget violation alert |
+| Consecutive null `quality_scores` | ≥5 | P1 self-diagnostic alert |
+
+**Config hash correlation**: SHA-256 of `(Artha.md + Artha.core.md + finalize.md)` truncated to 12 hex chars, stored in `catch_up_runs.yaml` for prompt-version → quality regression tracking.
+
 ---
 
 ## 22. Knowledge Graph Architecture (Work OS) *(v1.0)*
@@ -4923,6 +4549,91 @@ CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
 - `kb.sqlite` location: `knowledge/kb.sqlite` — gitignored at the `knowledge/` directory level.
 - Bootstrap: `python scripts/kb_bootstrap.py` (one-time or after new knowledge files are added).
 
+### 22.6 Extended Entity Model
+
+Beyond the core 6 types (Person, Project, System, Decision, Commitment, Topic), the full schema supports:
+
+| Entity Type | Key Fields | Purpose |
+|-------------|-----------|---------|
+| `Platform` | name, type, health | Infrastructure hosting layer |
+| `Program` | name, current_state, owner | Multi-project program tracking |
+| `Process` | name, applies_to | Standard operating procedures |
+| `Tool` | name, user_teams | Tooling inventory |
+| `Team` | name, owns, manages | Organizational units |
+| `Artifact` | name, belongs_to | Documents, decks, specs |
+| `Gap` | name, affects, severity | Capability gaps affecting systems |
+| `Event` | name, involves, date | Calendar events, retrospectives |
+| `Shadow` | uri, domain | URI pointers to personal domains (e.g., `artha://personal/immigration/passport`) — no data copied |
+
+**Additional tables** (beyond `entities`/`relationships`):
+
+| Table | Purpose |
+|-------|---------|
+| `entity_history` | Temporal versioning of entity attributes |
+| `entity_aliases` | Alternative names for entity resolution |
+| `kusto_queries` | Golden KQL queries cached per entity |
+| `decisions` | Extended decision metadata (rationale, outcome) |
+| `documents` | Document metadata for artifact tracking |
+| `document_entities` | Document↔entity join table |
+| `table_schemas` | ADO/Kusto table metadata |
+| `artifacts` | Work artifact registry |
+| `research_archive` | Archived deep-research outputs |
+| `source_weights` | Per-source reliability weights |
+| `community_summaries` | Connected-component cluster summaries |
+| `kb_search` | FTS5 full-text search index |
+| `kb_meta` | Schema version, last bootstrap timestamp |
+| `entity_context_cache` | Pre-assembled context per entity (TTL-invalidated) |
+| `episodes` | Discrete information ingestion events |
+
+### 22.7 Full Python API (`KnowledgeGraph` class)
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `get_entity` | `(id)` | Direct entity lookup |
+| `resolve_entity` | `(name)` | Best-match name resolution |
+| `resolve_entity_candidates` | `(name, limit=5)` | Top-N fuzzy name matches |
+| `search` | `(query, domain=None, limit=10)` | FTS5 full-text search |
+| `traverse` | `(entity_id, rel_types=None, direction='both', depth=1)` | Neighborhood walk |
+| `find_path` | `(from_id, to_id, max_depth=4)` | Shortest path between entities |
+| `context_for` | `(entity_id, token_budget=4000, depth=2, session_focus=None)` | **Primary entry point** — pre-assembled context with confidence/staleness filtering |
+| `get_context_as_of` | `(entity_id, timestamp, token_budget=4000)` | Point-in-time context reconstruction |
+| `global_context_for` | `(question, max_tokens=800)` | Cross-entity question answering |
+| `recent_episodes` | `(entity_mentions, since_days=30, limit=10)` | Recent information events |
+| `stale_entities` | `(domain=None)` | Entities past staleness TTL |
+| `recent_changes` | `(domain=None, days=30)` | Recently modified entities |
+| `upsert_entity` | `(entity, source, confidence=0.5, source_episode_id=None)` | Create or update entity |
+| `add_relationship` | `(from_id, to_id, rel_type, **kwargs)` | Create directed edge |
+| `deactivate_relationship` | `(rel_id, reason)` | Soft-delete with reason |
+| `add_episode` | `(episode_key, source_type, raw_content=None)` | Record ingestion event |
+| `add_alias` | `(alias, entity_id)` | Register alternative name |
+| `invalidate_cache` | `(entity_id)` | Clear context cache for entity |
+| `validate_integrity` | `()` | Referential integrity check |
+| `get_stats` | `()` | Entity/relationship/cache counts |
+| `rebuild_communities` | `()` | Connected-component clustering |
+| `vacuum` | `()` | SQLite VACUUM + FTS rebuild |
+| `backup` | `(tier='daily')` | Tiered backup (daily/weekly/monthly) |
+
+### 22.8 Performance Targets & Capacity
+
+| Metric | Target |
+|--------|--------|
+| `context_for()` cold start | <50ms |
+| FTS5 search query | <100ms |
+| 2-hop neighborhood walk | Within token budget, <200ms |
+| Max live entities | 500–1,000 (before degradation) |
+| Avg relationship density | 2–3 edges per entity |
+| Default context budget | 4,000 tokens (tunable) |
+| Entity staleness TTL | Configurable per domain (default 90 days) |
+| Community clustering trigger | 2,000+ entities (connected-component analysis, no ML) |
+
+**Relationship strength decay** (temporal validity):
+- <30d since validation → strong
+- 30–90d → moderate
+- 90–180d → weak
+- \>180d → historical
+
+Partial unique index enforces only 1 active edge per `(from, to, rel_type)` triple.
+
 ---
 
 ---
@@ -4986,6 +4697,23 @@ Deep audit of the 14-module AR-9 pipeline identified and resolved five safety is
 
 All five invariants enforced by 16 tests in `tests/ext_agents/test_safety_invariants.py`.
 
+### 23.6 GA Promotion Status
+
+AR-9 was promoted from burn-in to **General Availability** (EA-16a executed: `burn_in: true → false`).
+
+| Metric | Value |
+|--------|-------|
+| Total tests | 4,482 (210 AR-9 suite + 4,272 codebase) |
+| Failures | 0 |
+| Live E2E quality score | 0.95 (`storage-deployment-expert` agent invocation) |
+| Production config | `external_agents.enabled=true`, `burn_in=false`, `min_confidence=0.3` |
+| Architecture compliance | All components pass Rule 4 (no direct config reads — use `lib.config_loader`); all import boundaries correct |
+
+**Known V1 Limitations:**
+- Sequential invocation only (`max_concurrent=1`)
+- Live EA-15c burn-in requires interactive VS Code sessions (cannot fully automate)
+- `cmd_health` contract extended (additional health reporting surface)
+
 ---
 
 ## 24. Data Quality Gate *(v4.0)*
@@ -5016,6 +4744,44 @@ Pull-based quality assessment for the Work OS KB layer, assessed at read time (n
 - `scripts/lib/dq_gate.py` — `_pre_answer_quality_gate()` pure function; `QualityVerdict(IntEnum)` with explicit values.
 - `corroborating_sources` is a denormalized integer field on the `entities` table (updated by `kb_bootstrap.py` on each ingest run) — avoids N+1 queries at read time.
 - Domain-aware weights configurable in `dq_gate.py` — Work OS uses higher Freshness weight than personal domains.
+
+### 24.4 Cross-Reference Rules
+
+Twelve entity-level completeness rules enforce referential integrity at quality-gate time:
+
+| # | Rule |
+|---|------|
+| 1 | System must have ≥1 relationship (`hosts`, `depends_on`, etc.) |
+| 2 | Component must have ≥1 `part_of` edge to parent system |
+| 3 | Platform must have ≥1 entity hosted on it |
+| 4 | Program must have `current_state` field populated (not "TBD") |
+| 5 | Process must have ≥1 `used_by` or `applies_to` edge |
+| 6 | Tool must reference ≥1 user team |
+| 7 | Team must have ≥1 `owns`/`manages` edge OR ≥1 `works_on` person |
+| 8 | Person must have ≥1 `reports_to` OR `works_on` edge |
+| 9 | Artifact must have ≥1 `belongs_to` edge |
+| 10 | Gap must have ≥1 `affects` edge |
+| 11 | Event must have ≥1 `involves` edge |
+| 12 | Decision must have non-empty `rationale` field |
+
+### 24.5 Domain-Specific Weight Overrides
+
+| Domain | w_A (Accuracy) | w_F (Freshness) | w_C (Completeness) |
+|--------|:-:|:-:|:-:|
+| calendar | 0.10 | 0.80 | 0.10 |
+| comms | 0.10 | 0.80 | 0.10 |
+| incidents | 0.20 | 0.70 | 0.10 |
+| decisions | 0.70 | 0.10 | 0.20 |
+| accomplishments | 0.60 | 0.10 | 0.30 |
+| golden_queries | 0.60 | 0.20 | 0.20 |
+| people | 0.50 | 0.30 | 0.20 |
+| products | 0.60 | 0.10 | 0.30 |
+| *default* | 0.50 | 0.30 | 0.20 |
+
+**Additional implementation details:**
+- `changed_by` predicate on conflict view distinguishes true provenance conflicts from sequential same-pipeline updates
+- Per-section scoring for multi-domain commands (not min-based aggregation)
+- Stale-while-revalidate pattern: serve immediately with caveat, heal on next `/work refresh` (not block for background heal)
 
 ---
 
@@ -5180,6 +4946,62 @@ Every catch-up session generates a `trace_id` (UUID4) that propagates through al
 | AFW-11 | Structured Tracing | ✅ Complete | `scripts/log_digest.py` |
 | AFW-12 | Declarative Agent Definitions | 🔒 Gated on AFW-3 | Middleware adoption required |
 
+### 25.11 Baseline Agent Patterns
+
+Six composable patterns (Anthropic 5 + Artha extension) used across all agent interactions:
+
+| # | Pattern | Artha Usage |
+|---|---------|-------------|
+| 1 | **Routing** | Keyword-based single-agent selection via `agent_router.py` |
+| 2 | **Parallelization** | Fan-out independent agents via `fan_out.py` (EAR-5) |
+| 3 | **Orchestrator-Workers** | Artha is orchestrator; domain agents are specialist workers |
+| 4 | **Evaluator-Optimizer** | Low-quality response → retry with dimension feedback (EAR-6) |
+| 5 | **Prompt Chaining** | Agent output feeds next agent via `agent_chainer.py` (EAR-2) |
+| 6 | **Hierarchical Scoped Memory** | Per-agent learning across invocations via `agent_memory.py` (EAR-1) |
+
+### 25.12 Anti-Patterns (V2.1 Constraints)
+
+Eleven architectural constraints enforced by code review and runtime guardrails:
+
+1. **LLM-in-hot-path routing** — use keyword/TF-IDF fallback instead
+2. **Unbounded context growth** — enforce memory caps + TTLs
+3. **Silent feature bypass** — guardrails required; fail loud
+4. **Concurrent unsynchronized cache writes** — `threading.Lock()` keyed on `(agent_name, cache_path)`
+5. **Tool approval state not persisted** — sticky decisions via checkpoint
+6. **Recursive scrubbing not enforced** — every inter-agent handoff must scrub per receiving trust tier
+7. **Prompt-driven safety enforcement** — moved to runtime middleware
+8. **No inference cost tracking** — budget cap required on evaluator-optimizer retries
+9. **Dead middleware** — all 5 existing middleware must remain backward-compatible on new hooks
+10. **Orphaned subprocess on CLI exit** — no async heal fire-and-forget
+11. **Circular config import** — lazy import constraints: `dq_gate ← lib.knowledge_graph → work_reader`
+
+### 25.13 Context Budgeting
+
+| Scope | Budget |
+|-------|--------|
+| Default per-agent invocation | 12,000 tokens |
+| KB neighborhood walk (`context_for`) | 4,000 tokens |
+| Post-briefing sliding window | 6,000 tokens |
+| Chain-level context cap | 6,000 chars across all steps |
+| Memory injection per agent | 1,500 chars max (5 recent daily entries + full memory.md) |
+| Blueprint override example | `icm-triage` = 12,000 (needs 10+ KB sections vs. global 6,000) |
+
+### 25.14 Governance Rules
+
+| Rule | Constraint |
+|------|-----------|
+| Personal domain access | No agent ever accesses personal domains (finance, immigration, health, kids) — work-scoped only |
+| Write capability | All write-capable agents deferred to V2.1 (informational agents only in V2.0) |
+| Max concurrent invocations | 3 (configurable) |
+| Max chain steps | 5 |
+| Per-agent timeout | 60s default (configurable) |
+| Pool-level timeout | max(individual timeouts) + 10s synthesis overhead |
+| Max retries per invocation | 1 (evaluator-optimizer) |
+| Optimizer weekly budget | 50 retries (rolling 7-day cap, append-only JSONL counter) |
+| PII scrubbing | Applied per agent based on trust tier (not global redact-all) |
+| Injection detection | Mandatory on every agent prompt before dispatch |
+| Response verification | Entity-based KB check required for all responses |
+
 ---
 
 ## 26. KB-LINT — Cross-Domain Data Health *(v3.23.0)*
@@ -5267,7 +5089,75 @@ cross_domain_rules:
 
 ---
 
-*Artha Tech Spec v3.25.0 — End of Document*
+## 27. External Agent Reloaded (EAR v2.0) *(v3.25)*
+
+Multi-agent composition extending AR-9's single-agent invocation model to support chaining, scheduling, parallel fan-out, and compound learning. Twelve enhancements (EAR-1 through EAR-12) shipped as 13 new `scripts/lib/` modules. Canonical feature reference for the changelog entry in v3.25.0.
+
+### 27.1 Feature Summary
+
+| ID | Feature | Module | Key Spec |
+|----|---------|--------|----------|
+| EAR-1 | Agent Memory (Compound Learning) | `agent_memory.py` | Per-agent `memory.md` (max 4KB curated long-term) + `daily/` logs (auto-pruned >14d). Dedup on >0.85 TF-IDF similarity. Top 5 relevant entries loaded (1,500 char budget). Merge on contradiction: trust-tier-wins, else last-write-wins. |
+| EAR-2 | Agent Chaining (DAG) | `agent_chainer.py` | YAML-defined chains with `feeds_from` + gate conditions. Output N → verify → score → integrate → input N+1. `ChainStepState` carries prose+entities+key_assertions. Final quality = geometric mean of step scores. Max 5 steps/chain, max 3 active chains. |
+| EAR-3 | Scheduled Pre-Computation | `agent_scheduler.py` | Cron schedules in `schedules.yaml`, `--tick` runs past-due. Per-agent `staleness_tolerance_seconds` (default 3600, icm-triage=900, deployment=1800). Max 5 scheduled agents, max 4 runs/agent/day. 3 consecutive failures → suspend. |
+| EAR-4 | Enhanced Lexical Routing (TF-IDF) | `tfidf_router.py` | Two-tier: keyword match (<10ms) → if confidence <0.4, TF-IDF character-trigram fallback. Vectors pre-computed to `tmp/ext-agent-route-vectors.json`. Confidence margin instrumented; median <0.10 over 7d → heartbeat alert. |
+| EAR-5 | Parallel Fan-Out | `fan_out.py` | `ThreadPoolExecutor` max 3. Per-agent timeout; pool timeout = max(individual) + 10s. `threading.Lock()` per `(agent_name, cache_path)`. Degradation: pool timeout → return best single result. |
+| EAR-6 | Evaluator-Optimizer Loop | `evaluator_optimizer.py` | Trigger: Q <0.6 AND any dimension <0.45 AND min_dimension ≥0.2. Max 1 retry, accept max(Q1, Q2). Weekly budget: 50 retries (JSONL counter). Budget exhausted or min_dimension <0.2 → fallback cascade. |
+| EAR-7 | Agent Blueprints | `config/agents/blueprints/` | 8 templates: icm-triage, deployment-monitor, backlog-analyst, meeting-prep, knowledge-curator, escalation-drafter, fleet-health, code-reviewer. CLI: `agent_manager create --blueprint <name> --var <k=v>`. `capability_type`: informational/actionable (actionable deferred V2.1). |
+| EAR-8 | Heartbeat Health Monitor | `agent_heartbeat.py` | Checks: stale cache (age > TTL × 1.5), declining quality trend (5-score window), idle >7d, ≥3 consecutive failures, approaching auto-retirement (suspended >20d). Recovered via `reinstate` (reset quality to 0.5). Briefing section: `§ Agent Fleet Health`. |
+| EAR-9 | SOUL Principles | `soul_allowlist.py` | Per-agent declarative persona + guardrails injected into domain prompt. SOUL compliance checklist in response validator. |
+| EAR-10 | Cross-Agent Knowledge Propagation | `knowledge_propagator.py` | High-confidence facts (≥0.8) propagate to other agents' `daily/` logs (not curated `memory.md`). Contradiction merge: trust-tier-wins, else newer wins. Audit log records propagation. |
+| EAR-11 | Adaptive Context Budgeting | `adaptive_context.py` | Remaining token count → progressive domain loading (DAG topological sort). Pressure >0.8 → compress intermediates. Pressure >0.95 → skip low-priority domains. |
+| EAR-12 | Agent Feedback Loop | `correction_tracker.py` | User Step 19 correction triggers: (1) agent memory update, (2) KB entity upsert, (3) quality score downgrade, (4) audit record. Repeated corrections → routing confidence degradation. |
+
+### 27.2 Multi-Agent Composition Pipeline
+
+```
+Route → (Parallel fan-out if independent) → Compose → Invoke → Verify → Score
+  → Integrate → Cross-propagate → Cache
+```
+
+Chaining enables sequential output→input pipelines with gate conditions for cost/quality control. Each inter-agent handoff applies recursive scrubbing per the receiving agent's trust tier.
+
+### 27.3 Personal Domain Gates
+
+All agents subject to `work_scoped_only: true` — no agent can invoke personal domain skills or read personal encryption keys. Shadow entities in KB allow work graph to reference personal domains (e.g., `shadow-passport` pointing to `artha://personal/immigration/passport`) without copying data.
+
+### 27.4 Deferred to V2.1
+
+- **Streaming architecture**: Agent responses streamed token-by-token (vs. batch); interactive mid-response feedback
+- **Marketplace model**: Ed25519-signed agent packages for distribution/verification
+- **Write-capable agents**: Actionable agents that can modify state (vs. informational-only in V2.0)
+
+---
+
+## 28. KB Population Strategy *(Reference)*
+
+The Knowledge Base population strategy defines a 7-phase approach for bootstrapping KB entities from existing state files and connected data sources. The full operational procedure (17 deterministic parsers, 600+ target entities, 72 tasks / ~9 hours of work) is archived at `.archive/specs/kb-population-plan.md`.
+
+### 28.1 Phase Overview
+
+| Phase | Scope | Entity Target |
+|-------|-------|:---:|
+| 1 | Work state files (`state/work/*.md`) | ~200 |
+| 2 | Knowledge Markdown files (`knowledge/*.md`) | ~150 |
+| 3 | ADO/Kusto golden queries | ~50 |
+| 4 | Document metadata (specs, docs, archives) | ~80 |
+| 5 | People & team enrichment from meeting/comms data | ~60 |
+| 6 | Decision & commitment extraction from notes | ~40 |
+| 7 | Gap analysis & cross-reference integrity | ~20 |
+
+### 28.2 Key Implementation Constraints
+
+- All 17 parsers are **deterministic** (regex + structured parse, no LLM inference)
+- `kb_bootstrap.py` is **idempotent** — safe to re-run; hash-based dedup prevents duplicates
+- Entity confidence starts at 0.5 and converges via corroboration from multiple sources
+- Validation: `validate_integrity()` runs after each phase; referential integrity violations block next phase
+- Full plan archived at `.archive/specs/kb-population-plan.md` for implementation reference
+
+---
+
+*Artha Tech Spec v3.26.0 — End of Document*
 
 ---
 
@@ -5275,6 +5165,7 @@ cross_domain_rules:
 
 | Version | Changes |
 |---------|---------|
+| v3.26.0 | **SPEC CONSOLIDATION**: §21.6–21.8 (eval dimensions/scoring/SLAs), §22.6–22.8 (full entity model/API/performance), §23.6 (AR-9 GA status), §24.4–24.5 (cross-reference rules/domain weights), §25.11–25.14 (baseline patterns/anti-patterns/context budgets/governance), NEW §27 (EAR v2.0 multi-agent composition EAR-1–EAR-12), NEW §28 (KB Population Strategy reference). Implements PRD v7.11.0. |
 | v3.24.0 | **AR-9 Safety Hardening (§23.5)**: template injection defense in `prompt_composer.py` (brace escaping + 8K query cap); atomic writes in `knowledge_extractor.py` (`tempfile.mkstemp` + `os.replace`); PII guard fail-safety in `context_scrubber.py` (strict mode blocks on guard failure); quality score clamping in `agent_health.py` (`[0,1]` enforcement); dead import cleanup in `agent_registry.py`. 16 safety invariant tests. 270 AR-9 tests passing. |
 | v3.21.0 | **Agent Framework v1 — §25**: AFW-1 Tripwire Guardrails (7 guardrails, blocking + parallel modes, `guardrails.py` + `guardrail_registry.py`); AFW-3 Middleware Pipeline (`compose_middleware()`, 5 components, `config/middleware.yaml`); AFW-2 Progressive Disclosure (6 always-load domains, `domain_index.py`, ~80% token savings on `/status`/`/items`); AFW-4 Context Compaction (`session_summarizer.py`, `CompactionPolicy`, sliding window); AFW-5 Workflow Checkpointing (`state_snapshot.py`, 4h TTL, phase-resume); AFW-6 Session Undo (`/undo [domain]`, snapshot-before-write, diff confirm); AFW-7 Flat-File Memory / ADR-001 (`memory_provider.py`, YAML frontmatter, synonym expansion, scoped recall, dedup); AFW-9 Composite Signal Scoring (`signal_scorer.py`, urgency×impact×freshness, suppress<0.20/promote≥0.66); AFW-11 Structured Tracing (UUID4 trace_id propagation, JSONL, `log_digest.py`). `.gitignore` hardened: `.gemini_security/` + `.gemini/` added. Spec updates: PRD §9.10 + UX §10/§14/§16. |
 | v3.20.0 | **AR-9 External Agent Composition (§23) + Data Quality Gate (§24)**: `scripts/lib/agent_registry.py` (YAML-backed registry, drop-folder scan, content_hash dedup, shadow_mode flag, registered_at timestamp); `scripts/lib/agent_router.py` (geometric-mean confidence routing); `scripts/lib/context_classifier.py` (domain-scoped public/scoped/private tagging); `scripts/lib/context_scrubber.py` (outbound PII scrubbing per domain profile); `scripts/lib/injection_detector.py` (recursive injection decoder, confidence threshold); `scripts/lib/agent_invoker.py` (`runSubagent`, 60s timeout, stale-while-revalidate cache in `tmp/ext-agent-cache/`); `scripts/lib/response_verifier.py` (entity-based KB cross-check); `scripts/lib/response_integrator.py` (expert consensus format, fallback cascade: agent→KB→investigation→Cowork); `scripts/lib/knowledge_extractor.py` (response → cache); `scripts/lib/agent_scorer.py` (accuracy × freshness × honesty_bonus); `scripts/lib/agent_health.py` (availability/latency/quality/auto-retirement at 5 consecutive failures); `scripts/lib/ext_agent_audit.py` (JSONL audit trail); `scripts/lib/metrics_writer.py` (eval pipeline integration); `scripts/agent_manager.py` (CLI). DQ Gate: `scripts/lib/dq_gate.py` — pull-based Accuracy×Freshness×Completeness model; QualityVerdict(PASS/WARN/STALE/REFUSE); domain-aware weights; corroborating_sources denormalized field. `.gitignore` hardened: `config/agents/external/`, `config/agents/external-registry.yaml`, `config/agents/*.agent.md` excluded. 4,515 tests: `tests/ext_agents/` (121) + `tests/test_dq_gate.py`. |

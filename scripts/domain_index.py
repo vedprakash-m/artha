@@ -305,6 +305,79 @@ def get_prompt_load_list(
 # ---------------------------------------------------------------------------
 
 
+def _validate_domain_registry(registry: dict) -> None:  # noqa: C901
+    """Emit WARNING for domains violating the B1 keyword ordering convention.
+
+    B1 (§4.2): ``routing_keywords`` must list multi-word phrases FIRST.
+    Single-word first keywords reduce Stage 1 specificity and increase
+    multi-match routing collisions.  Advisory only — does not block routing.
+    Visible in preflight and session logs.
+    """
+    import logging as _logging  # noqa: PLC0415
+
+    _log = _logging.getLogger(__name__)
+    for name, cfg in (registry.get("domains") or {}).items():
+        if not cfg.get("enabled_by_default", True):
+            continue
+        keywords = cfg.get("routing_keywords") or []
+        if keywords:
+            first_kw = str(keywords[0])
+            if " " not in first_kw:
+                _log.warning(
+                    "Domain '%s': first routing keyword '%s' is single-word — "
+                    "move multi-word phrases first (B1 convention, "
+                    "domain_registry.yaml)",
+                    name,
+                    first_kw,
+                )
+
+
+def rank_domains_by_relevance(
+    query: str,
+    registry: dict,
+    top_n: int = 5,
+) -> list[tuple[str, float]]:
+    """EAR-4 Layer 2: rank candidate domains by TF-IDF-style token overlap.
+
+    Pure stdlib implementation using :class:`collections.Counter`.
+    Applied when Layer 1 keyword matching yields no match or multiple matches.
+    Returns a ranked list for tie-breaking; caller decides final selection.
+
+    Args:
+        query:    The user query or combined signal text.
+        registry: Parsed ``domain_registry.yaml`` dict.
+        top_n:    Maximum number of results to return (default 5).
+
+    Returns:
+        List of ``(domain_name, score)`` tuples sorted descending by score.
+        Score is normalised overlap count divided by query token count.
+    """
+    from collections import Counter  # noqa: PLC0415
+
+    query_tokens = Counter(query.lower().split())
+    if not query_tokens:
+        return []
+
+    scores: list[tuple[str, float]] = []
+    for name, cfg in (registry.get("domains") or {}).items():
+        if not cfg.get("enabled_by_default", True):
+            continue
+        desc = cfg.get("description", "")
+        keywords = cfg.get("routing_keywords") or []
+        doc_text = (desc + " " + " ".join(str(k) for k in keywords)).lower()
+        doc_tokens = Counter(doc_text.split())
+        overlap = sum(
+            min(query_tokens[t], doc_tokens[t])
+            for t in query_tokens
+            if t in doc_tokens
+        )
+        if overlap > 0:
+            score = overlap / max(len(query_tokens), 1)
+            scores.append((name, score))
+
+    return sorted(scores, key=lambda x: x[1], reverse=True)[:top_n]
+
+
 def load_domain_registry(artha_dir: Path | None = None) -> dict:
     """Load ``config/domain_registry.yaml`` and return the parsed dict.
 
@@ -323,7 +396,9 @@ def load_domain_registry(artha_dir: Path | None = None) -> dict:
             sys.path.insert(0, _scripts)
         from lib.config_loader import load_config  # noqa: PLC0415
 
-        return load_config("domain_registry", str(base / "config"))
+        result = load_config("domain_registry", str(base / "config"))
+        _validate_domain_registry(result)
+        return result
     except Exception:  # noqa: BLE001
         return {}
 

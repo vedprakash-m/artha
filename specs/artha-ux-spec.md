@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.11 | **Status**: Draft | **Date**: April 2026
+> **Version**: 3.13 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.10.0, Tech Spec v3.25.0
+> **Implements**: PRD v7.12.0, Tech Spec v3.27.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,41 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.11 | 2026-04-06 | EAR v2.0 UX — Fleet health alerts surface before briefing output when agents are degraded/offline. TF-IDF fallback badge ("matched via keyword similarity") displayed in routing transparency indicator when semantic match falls below threshold. Agent memory and correction commands: `artha agents clear-memory <agent>`, `show-corrections <agent>`. Chain and fanout output blocks with sequential/parallel structure indicators (`agent chain`, `agent fanout`). Blueprint rendering: `artha agents blueprint create <name>` produces a ready-to-register `.agent.md` with placeholder substitution. Correction auto-capture: silent on route match, visible via `show-corrections`. Reinstate UX: retired agents promoted to `degraded` (not `active`) with quality score displayed as 0.5 (reset). Audit file warning: stderr notice on first event if audit trail not yet initialized. |
-| v3.10 | 2026-04-05 | KB-LINT UX — §10.18: `lint` command added to command palette; `Data Health` briefing line with silent display on warnings and `⚠` escalation prefix on errors; interactive lint report format (findings table with severity icons, file, field, message, and inline fix hints); `--fix` confirmation UX (lists pending changes before applying). |
-| v3.9 | 2026-04-04 | AFW-10 Domain Training UX — `domain training` / `domain training --domain X` reports per-domain accuracy trends, correction compounding, and training suggestions. `/work code` Bluebird UX — natural-language code search and symbol lookup with golden-query catalog fallback. EV-12 Golden-Set Eval — `fixtures.yaml`-driven regression framework; dimension quality badges (actionability, specificity, completeness, signal_purity, calibration). |
-| v3.8 | 2026-04-02 | AR-9 External Agent Composition UX — §25: agent discovery (`agent list`), routing transparency indicator, expert consensus answer format with inline citation, data quality verdict badges (PASS/WARN/STALE/REFUSE) in briefing output, agent health dashboard (`agent health`), fallback cascade UX (agent → KB → investigation → Cowork). |
-| v3.7 | 2026-03-31 | ACTIONS-RELOADED v1.3.0 UX — §9 Action Proposals rewritten with queue-backed interaction model: `§ PENDING ACTIONS` briefing section, numbered proposal list with IDs and friction indicators, `--show` content preview requirement for email actions, `--defer` with preset horizons (`+1h`, `tomorrow`, `next-session`), `--approve-all-low` batch command, `--health` output design, burn-in debug section. |
-| v3.6 | 2026-03-28 | SKILLS-RELOADED v2.5 UX.. |
-| v3.5 | 2026-03-28 | GOALS-RELOADED v6.3 UX — Goal Intelligence Phase 1:.. |
-| v3.3 | 2026-03 | FW-19 Reflection Loop UX (§23.14):.. |
-| v3.2 | 2026-03 | PAY-DEBT-RELOADED v2.0 + PAY-DEBT v1.0 — Zero UX-visible changes:.. |
-| v2.7.3 | 2026-03 | DUAL v1.3.0 UX.. |
-| v3.1 | 2026-03 | Work OS v2.7.0 UX expansion.. |
-| v3.0 | 2026-03 | Work OS UX (§23).. |
-| v2.9 | 2026-03 | PR-3 AI Trend Radar UX.. |
-| v2.8 | 2026-03 | PR-2 Content Stage UX.. |
-| v2.7.2 | 2026-03-21 | Proactive nudges.. |
-| v2.7.1 | 2026-03 | ACT-RELOADED UX (initial): `/cost` command shows estimated per-session API cost based on pipeline me. |
-| v2.7 | 2026-03 | Utilization uplift UX: relationship pulse surfaces top-5 stale contacts with circle label and overdu. |
-| v2.6 | 2026-03 | Catch-up quality hardening UX: email classifier silently tags marketing records before they reach th. |
-| v2.5 | 2026-03 | Agentic Reloaded UX (agentic-reloaded.md AR-1–AR-8): bounded memory silently prevents `state/memory.. |
-| v2.4 | 2026-03 | Preflight UX hardening: orphaned `.bak` files displayed as P1 advisory (⚠, non-blocking) rather than. |
-| v2.3 | 2026-03 | Agentic Intelligence UX: briefings produced via structured OODA loop show cross-domain compound insi. F15.128, F15.132. |
-| v2.2 | 2026-03 | Agentic CLI Hardening UX: skill runner now directly executable (no silent failure when invoked from . F15.124, F15.127. |
-| v2.1 | 2026-03 | VM Hardening UX: `⚠️ READ-ONLY MODE` briefing header pattern, per-connector degradation notices, man. F15.119, F15.123. |
-| v2.0 | 2026-03 | Deep Agents UX: harness mode indicators, structured output format, session summarization progress in. F15.114, F15.118. |
-| v1.9 | 2026-03 | Intelligence expansion + platform parity: financial_resilience briefing block, gig income 1099-K ale. F15.100, F15.113. |
-| v1.8 | 2026-03 | Phase 1b UX: /domains command, household-aware briefings, renter mode, offline/degraded mode banners. |
-| v1.7 | 2026-03 | ACB v2.1 UX: Multi-LLM Q&A, HCI command redesign, write commands, thinking ack, structured output.. |
-| v1.6 | 2026-03 | Backup & Restore UX: `backup.py` CLI output format, session backup confirmation, cold-start workflow. |
-| v1.6 | 2026-03 | Channel Bridge UX: push format, interactive commands, scope-filtered output.. |
-| v1.5 | 2026-03 | WorkIQ work calendar UX, merged calendar view, Teams join actions.. |
-| v1.4 | 2026-03 | Intelligence amplification UX (29 enhancements), `/diff`, weekend planner.. |
-| v1.3 | 2026-02 | Supercharge UX: flash briefing, coaching engine, bootstrap, dashboard.. |
-| v1.2 | 2026-02 | Phase 2A: digest mode, relationship pulse, leading indicators.. |
-| v1.1 | 2026-01 | Pre-flight gate errors, `/items` command.. |
-
+| v3.12 | 2026-04-07 | SPEC CONSOLIDATION — Implements PRD v7.11.0 + Tech Spec v3.26.0. §3.2: 4 new domains added (Readiness, Logistics, Tribe, Capital) to domain presentation order (15→19). NEW §26: New Domain UX — interaction design patterns for all 4 new domains (Readiness daily score + energy flags, Logistics warranty/renewal alerts + shopping deeplinks, Tribe reconnect radar + outreach staging, Capital cash flow projection + amount-confirm gate). |
 Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
 ---
@@ -278,6 +244,10 @@ Domains are never presented alphabetically. They follow a consistent priority or
 | 13 | Social | Relationships |
 | 14 | Shopping | Low consequence |
 | 15 | Digital Life | Subscriptions |
+| 16 | Readiness | Energy management, context-switching |
+| 17 | Logistics | Warranty/renewal lifecycle |
+| 18 | Tribe | Relationship health, reconnect cadence |
+| 19 | Capital | Cash flow, investment pulse |
 
 **Exception:** If a lower-priority domain has a 🔴 or 🟠 alert, it promotes to the top of the list for that briefing. Domain order is *default* order — alerts override it.
 
@@ -2308,7 +2278,7 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 
 ---
 
-*Artha UX Spec v3.11 — End of Document*
+*Artha UX Spec v3.12 — End of Document*
 
 *"The best interface is the one you forget you're using. Artha speaks when it matters, is silent when it doesn't, and always tells you where you stand — in under 3 minutes."*
 
@@ -2928,7 +2898,173 @@ When weekly reflection is due, the daily briefing footer includes:
 
 ---
 
+---
+
+## 26. New Domain UX — Readiness, Logistics, Tribe, Capital *(v3.12)*
+
+> Implements PRD v7.11.0 FR-20–FR-23. All four domains start at **L1 — Propose** autonomy. No domain writes to external systems without explicit user approval.
+
+### 26.1 Readiness Intelligence UX
+
+**Briefing integration:** Readiness surfaces as a morning-briefing section when actionable (not every day). Tone shifts between two modes based on the daily readiness score:
+
+```
+# High-energy day (score ≥ 0.7)
+⚡ READINESS: Execution Mode
+  Today: 3 deep-work blocks available (9am–11am, 1pm–3pm, 4pm–5pm)
+  Energy: high — front-load complex tasks
+
+# Low-energy day (score < 0.5)
+🔋 READINESS: Recovery Mode
+  Today: 1 deep-work block (10am–11:30am), 4 meetings
+  Energy: low — reschedule non-critical 1:1s?
+  ⚠ Context switches: 6 (threshold: 4) — consider batching
+```
+
+**Calendar energy flags:** Meetings flagged with energy cost indicators:
+- `[deep]` — requires sustained focus
+- `[admin]` — low-cognitive, batch-friendly
+- `[social]` — relationship-building, flexible timing
+
+**Command:** `domain readiness` — shows weekly energy trend, context-switching index, and deep-work block availability.
+
+**Design rules:**
+- Readiness NEVER auto-reschedules calendar events — proposes only
+- Recovery mode is a tone shift, not an alert severity — no 🔴/🟠 prefix
+- Score source: calendar density + meeting clustering + recent sleep/wellness signals (if available)
+- Autonomy gate: ≥80% proposal acceptance over 14 shadow-mode days to advance to L2
+
+### 26.2 Logistics Intelligence UX
+
+**Briefing integration:** Logistics alerts surface only when deadlines approach (warranty expiry, renewal windows, maintenance cycles):
+
+```
+📦 LOGISTICS
+  ⚠ HVAC filter replacement due (MERV-13, 20×25×4) — last changed 87 days ago
+    → Shopping list: [Amazon deeplink]
+  ℹ Progressive home insurance renewal: May 15
+    → Comparison table ready — run `domain logistics --compare insurance`
+```
+
+**Comparison table format** (insurance renewal):
+
+```
+━━ INSURANCE COMPARISON (Home) ━━━━━━━━━━━━━━━━━━━━━
+| Provider     | Annual | Deductible | Coverage  | Source       |
+|──────────────|────────|────────────|───────────|──────────────|
+| Progressive  | $1,840 | $1,000     | $350K     | current      |
+| State Farm   | $1,620 | $1,500     | $350K     | web estimate |
+| Allstate     | $1,710 | $1,000     | $350K     | web estimate |
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Note: Web estimates are approximate. Click deeplinks to get binding quotes.
+```
+
+**Command:** `domain logistics` — shows warranty tracker, upcoming renewals, maintenance schedule.
+
+**Design rules:**
+- Shopping lists include deeplinks (Amazon, manufacturer) — never auto-purchase
+- Insurance comparisons sourced from public web search — clearly labeled "web estimate"
+- Receipt parsing (Vision AI) populates `state/logistics.yaml` — user confirms before save
+- Phase 1-2: No autonomous cart creation or broker API calls
+
+### 26.3 Tribe Intelligence UX
+
+**Briefing integration:** Tribe surfaces a reconnect radar when relationship decay scores cross thresholds:
+
+```
+👥 TRIBE
+  Reconnect radar (3 contacts past threshold):
+  • Rahul M. — last contact 47 days ago (close friend, threshold 30d)
+  • Priya S. — last contact 62 days ago (extended family, threshold 45d)
+  • Dev K. — last contact 91 days ago (professional, threshold 60d)
+  Draft outreach? [yes / skip]
+```
+
+**Outreach draft staging:** Drafts are placed in Content Stage (`state/content_stage.md`) — never auto-sent:
+
+```
+━━ OUTREACH DRAFT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+To:      Rahul M. (WhatsApp)
+Context: Last spoke about his new role at Google; your kids' birthdays
+         are 2 weeks apart
+Draft:   "Hey Rahul! Been thinking about you — how's the new gig
+         treating you? We should get the kids together soon."
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[send / edit / dismiss]
+```
+
+**Pre-meeting context brief:** Before meetings with known contacts, Artha injects relationship context:
+
+```
+📋 PRE-FLIGHT: Meeting with Rahul M. (2pm)
+  Relationship: close friend, 12 years
+  Last contact: 47 days ago (coffee at Starbucks, Jan 15)
+  Recent context: Started new role at Google Cloud (from LinkedIn)
+  Shared interests: kids' activities, hiking, tech career
+```
+
+**Command:** `domain tribe` — shows reconnect queue, relationship health scores, outreach history.
+
+**Design rules:**
+- Hard cap: **5 outreach drafts per catch-up run** — 6th and beyond silently dropped
+- Drafts are NEVER auto-sent — staged in Content Stage for manual send
+- Decay scoring is keyword-based over `social.md` interaction log
+- WhatsApp send deferred pending Business API evaluation
+- Autonomy gate: ≥80% draft acceptance to advance to L2
+
+### 26.4 Capital Intelligence UX
+
+**Briefing integration:** Capital surfaces cash flow projections and liquidity alerts:
+
+```
+💰 CAPITAL
+  90-day cash flow projection:
+    April: -$2,340 (property tax $8,059 due Apr 30)
+    May:   +$1,820
+    June:  +$2,150
+  ⚠ April shortfall projected — proposal ready
+```
+
+**Amount-confirm gate** (mandatory for proposals >$200):
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Action:    Pause April Vanguard VTSAX purchase
+Amount:    $500.00
+Source:    state/finance.md line 47 — "auto-invest: $500 on 15th"
+Rationale: Property tax $8,059 due April 30; projected shortfall $1,240
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Confirm amount to approve (type 500 or 'skip' to dismiss):
+```
+
+**Amount-confirmation mismatch behavior:**
+- If user types amount that does NOT match proposal → proposal **rejected**
+- Response: "Amount does not match proposal. Type CANCEL or the correct amount: $[amount]."
+- Close-but-not-exact values (e.g., `$499` for `$500`) trigger re-prompt — no partial acceptance
+
+**Low-confidence projection display:**
+
+```
+⚠ Low-confidence projection — 4 of 6 required months of data for 'dining'
+  Variable categories (dining, shopping, entertainment): ≥6 months required
+  Fixed categories (mortgage, utilities): ≥3 months required
+```
+
+**Command:** `domain capital` — shows 90-day projection, liquidity buffer status, investment pulse.
+
+**Design rules:**
+- >$200 proposals require user to re-type the exact dollar amount (not just `Y`) — anti-hallucination control
+- Source citation mandatory on every proposal (state file + line number)
+- If source cannot be cited, proposal is NOT generated
+- Low-confidence warnings displayed prominently (not as footnotes)
+- No account writes — L1 proposes only, user executes externally
+- Autonomy gate: ≥80% acceptance over 30 days + no false positives on liquidity alerts to advance to L2
+
+---
+
 **Cross-references:**
-- PRD v7.4.0: FR-19 Work Intelligence OS (FW-1–FW-19), Phase 2C; PRD v7.3.0: FW-18 Product Knowledge Domain; PRD v7.4.0: FW-19 Reflection Loop v1.5.0
-- Tech Spec v3.16.0: §19 Work OS Technical Architecture (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage, §19.10 Product Knowledge Domain, §19.11 Reflection Loop)
+- PRD v7.11.0: FR-20 Readiness Intelligence, FR-21 Logistics Intelligence, FR-22 Tribe Intelligence, FR-23 Capital Intelligence
+- PRD v7.11.0: FR-19 Work Intelligence OS (FW-1–FW-26), Phase 2C
+- Tech Spec v3.26.0: §19 Work OS Technical Architecture, §21 Evaluation Framework, §22 Knowledge Architecture, §25 Agent Framework
+- Tech Spec v3.16.0: §19 Work OS (§19.1 overview, §19.4 connector protocol, §19.7 state files, §19.9 test coverage, §19.10 Product Knowledge Domain, §19.11 Reflection Loop)
 - Tech Spec v3.6: §2 (Artha.md), §3.5 (Canvas LMS, Apple Health connector), §3.6 (Slash Commands + /diff), §4.4 (College Countdown schema), §4.10 (Decision Deadlines schema), §5.1 (Week Ahead, PII Footer, Calibration), §5.3 (Monthly Retrospective), §7.1–7.19 (pipeline steps), §8 (Security Model), §9.5 (Deep Agents Harness component reference), §18 (revision history)

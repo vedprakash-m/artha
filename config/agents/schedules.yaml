@@ -1,0 +1,41 @@
+# config/agents/schedules.yaml — EAR-3 Agent Schedule Registry
+# Ref: specs/prd-reloaded.md §3.2; scripts/agent_scheduler.py
+#
+# cron_group: agents in the same named group share one scheduler slot and
+# execute sequentially. Total active groups + ungrouped agents must not
+# exceed _MAX_SCHEDULED_AGENTS (currently 8 per R13).
+#
+# Schedule format: minute hour dom month dow (standard cron)
+# staleness_tolerance_seconds: if state file mtime < (now - tolerance), agent is rerun
+
+schedules:
+  # ── health-logistics cron group (slot 1 of 8) ─────────────────────────
+  - agent: "ReadinessAgent"
+    cron: "0 3 * * *"           # 03:00 daily
+    query: "Compute daily readiness score from Apple Health export and update state/readiness.md"
+    staleness_tolerance_seconds: 86400   # 24h — 1 cron cycle
+    cron_group: "health-logistics"
+
+  - agent: "LogisticsAgent"
+    cron: "5 3 * * *"           # 03:05 daily
+    query: "Rebuild state/logistics.md from state/logistics.yaml entity store"
+    staleness_tolerance_seconds: 86400
+    cron_group: "health-logistics"
+
+  # ── CapitalAgent (slot 2 of 8) ────────────────────────────────────────
+  - agent: "CapitalAgent"
+    cron: "10 3 * * *"          # 03:10 daily
+    query: "Compute 90-day cash-flow projection from ~/.artha-local/cashflow.db and update state/finance_forecast.md"
+    staleness_tolerance_seconds: 86400
+    cron_group: "capital"
+
+  # ── TribeAgent (slot 3 of 8) ─────────────────────────────────────────
+  - agent: "TribeAgent"
+    cron: "30 3 * * *"          # 03:30 daily
+    query: "Compute contact decay scores from ~/.artha-local/tribe.db and update ranked reconnect section in state/social.md"
+    staleness_tolerance_seconds: 86400
+    cron_group: "tribe"
+
+  # ── Slots 4–8 reserved for future domain agents ───────────────────────
+  # Do not register a 7th+ slot without first running the
+  # adversarial routing test (A1.3) per specs/prd-reloaded.md §3.2.

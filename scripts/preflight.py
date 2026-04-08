@@ -1363,6 +1363,157 @@ def check_ext_agent_health() -> CheckResult:
     )
 
 
+def check_state_registry_staleness() -> CheckResult:
+    """P1 non-blocking: Warn when state_registry entries exceed their max_staleness_hours.
+
+    Reads config/state_registry.yaml and checks os.path.getmtime() for each entry
+    that has a max_staleness_hours value.  Returns a single aggregate result.
+
+    EAR-3 / PRD §3.5 (A2).
+    """
+    from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+
+    registry_path = Path(os.path.join(ARTHA_DIR, "config", "state_registry.yaml"))
+    if not registry_path.exists():
+        return CheckResult(
+            "state registry staleness", "P1", True,
+            "config/state_registry.yaml absent — staleness check skipped ✓",
+        )
+
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        reg_data = _yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+        entries = reg_data.get("state_files", []) or []
+    except Exception as exc:
+        return CheckResult(
+            "state registry staleness", "P1", True,
+            f"Could not read state_registry.yaml ({exc}) — skipped ✓",
+        )
+
+    if not entries:
+        return CheckResult(
+            "state registry staleness", "P1", True,
+            "state_registry.yaml has no entries ✓",
+        )
+
+    now_ts = _dt.now(_tz.utc).timestamp()
+    stale: list[str] = []
+    missing: list[str] = []
+
+    for entry in entries:
+        path_str = entry.get("path", "")
+        max_hours = entry.get("max_staleness_hours")
+        if not path_str or not max_hours:
+            continue
+
+        resolved = Path(path_str).expanduser()
+        if not resolved.is_absolute():
+            resolved = Path(ARTHA_DIR) / path_str
+
+        if not resolved.exists():
+            missing.append(path_str)
+            continue
+
+        try:
+            age_hours = (now_ts - resolved.stat().st_mtime) / 3600
+            if age_hours > max_hours:
+                stale.append(f"{path_str} ({age_hours:.0f}h > {max_hours}h)")
+        except OSError:
+            missing.append(path_str)
+
+    if not stale and not missing:
+        return CheckResult(
+            "state registry staleness", "P1", True,
+            f"{len(entries)} tracked state file(s) within freshness bounds ✓",
+        )
+
+    parts: list[str] = []
+    if stale:
+        preview = stale[:3]
+        extra = len(stale) - 3
+        parts.append(
+            f"{len(stale)} stale: {', '.join(preview)}"
+            + (f" … +{extra} more" if extra > 0 else "")
+        )
+    if missing:
+        preview = missing[:3]
+        extra = len(missing) - 3
+        parts.append(
+            f"{len(missing)} missing: {', '.join(preview)}"
+            + (f" … +{extra} more" if extra > 0 else "")
+        )
+
+    return CheckResult(
+        "state registry staleness", "P1", False,
+        f"⚠️ State freshness issues — {'; '.join(parts)}",
+        fix_hint="Run scheduled agents: python scripts/agent_scheduler.py --tick",
+    )
+
+
+def check_heartbeat_zero_records() -> CheckResult:
+    """P1 non-blocking: Warn when a domain heartbeat reports records_written: 0.
+
+    Checks tmp/{domain}_last_run.json files written by agent_scheduler.py.
+    records_written: 0 means the scheduler wrote the stub but the agent script
+    never updated it with actual data (cold-start or agent-side failure).
+
+    EAR-3 / PRD §3.2.
+    """
+    import json as _json  # noqa: PLC0415
+
+    tmp_dir = Path(os.path.join(ARTHA_DIR, "tmp"))
+    if not tmp_dir.exists():
+        return CheckResult(
+            "agent heartbeat", "P1", True,
+            "No tmp/ directory — heartbeat check skipped ✓",
+        )
+
+    heartbeat_files = sorted(tmp_dir.glob("*_last_run.json"))
+    if not heartbeat_files:
+        return CheckResult(
+            "agent heartbeat", "P1", True,
+            "No agent heartbeat files found — pre-compute agents not yet run ✓",
+        )
+
+    zero_records: list[str] = []
+    failure_states: list[str] = []
+
+    for hb_path in heartbeat_files:
+        try:
+            data = _json.loads(hb_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+
+        domain = data.get("domain", hb_path.stem.replace("_last_run", ""))
+        status = data.get("status", "")
+        records_written = data.get("records_written", -1)
+
+        if status == "failure":
+            failure_states.append(domain)
+        elif records_written == 0:
+            zero_records.append(domain)
+
+    if not zero_records and not failure_states:
+        return CheckResult(
+            "agent heartbeat", "P1", True,
+            f"{len(heartbeat_files)} agent heartbeat(s) healthy ✓",
+        )
+
+    parts: list[str] = []
+    if failure_states:
+        parts.append(f"failed: {', '.join(failure_states)}")
+    if zero_records:
+        parts.append(f"zero records written: {', '.join(zero_records)}")
+
+    return CheckResult(
+        "agent heartbeat", "P1", False,
+        f"⚠️ Domain agent issues — {'; '.join(parts)}",
+        fix_hint=(
+            "Check agent logs or re-run: python scripts/agent_scheduler.py --tick"
+        ),
+    )
+
+
 def check_channel_config() -> CheckResult:
     """P1: Validate channels.yaml has no incomplete placeholder values.
 
@@ -1850,6 +2001,11 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_ext_agent_discovery())
     # EA-11b: external agent health status
     checks.append(check_ext_agent_health())
+
+    # ── P1 — EAR-3 state registry staleness (non-blocking) ────────────────
+    checks.append(check_state_registry_staleness())
+    # EAR-3 domain heartbeat: warn on zero-record writes
+    checks.append(check_heartbeat_zero_records())
 
     # ── P1 — Channel config (v5.1 — non-blocking) ──────────────────────────
     checks.append(check_channel_config())
