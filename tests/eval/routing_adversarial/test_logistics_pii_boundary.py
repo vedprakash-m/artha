@@ -1,3 +1,7 @@
+# pii-guard: ignore-file
+# Reason: contains synthetic PII fixtures (fake SSN, fake names) used to validate
+# that LogisticsPIIBoundaryGR correctly detects and halts on sensitive content.
+# All values are fabricated test data — no real personal information.
 """
 tests/eval/routing_adversarial/test_logistics_pii_boundary.py
 
