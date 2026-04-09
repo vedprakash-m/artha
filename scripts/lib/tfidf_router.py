@@ -264,7 +264,7 @@ def route_with_unclassified(
         router = TFIDFRouter()
 
     try:
-        from scripts.lib.telemetry import emit_routing  # lazy, non-fatal
+        from lib.telemetry import emit_routing  # lazy, non-fatal
         _emit = emit_routing
     except Exception:
         def _emit(*_a, **_kw) -> None:  # type: ignore[misc]

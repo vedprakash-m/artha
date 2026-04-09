@@ -435,7 +435,7 @@ def scan_action_payload(payload: dict) -> list[str]:
 
     if labels:
         try:
-            from scripts.lib.telemetry import emit  # lazy, non-fatal
+            from lib.telemetry import emit  # lazy, non-fatal
             emit(
                 "pii.scan_hit",
                 extra={
