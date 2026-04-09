@@ -100,8 +100,8 @@ def test_no_direct_connector_imports():
         "pipeline.py",
         "preflight.py",         # pre-flight health checker — lazy HA connector import only for
                                 # health_check(), not for data fetch; pre-dates WS-1 migration
-        "sharepoint_kb_sync.py",  # standalone KB sync orchestrator — spec-mandated to call
-                                  # msgraph_sharepoint.fetch() directly (NOT via pipeline.py);
+        "sharepoint_kb_sync.py",  # standalone KB sync orchestrator — spec-mandated to directly
+                                  # invoke msgraph_sharepoint.fetch() (NOT via pipeline.py);
                                   # see specs/kb-graph.md §sharepoint_kb_sync architecture note
     }
     violations: list[str] = []
