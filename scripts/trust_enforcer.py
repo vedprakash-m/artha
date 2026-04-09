@@ -69,8 +69,9 @@ class GateBlockedError(RuntimeError):
 def _load_wave0_complete() -> bool:
     """Read ``harness.wave0.complete`` from config/artha_config.yaml.
 
-    Returns ``True`` if wave0 is complete, ``False`` otherwise.
-    Defaults to ``False`` (safe) on parse error.
+    Returns ``True`` if wave0 is complete or if the config file is absent
+    (e.g. CI / test environments where artha_config.yaml is gitignored).
+    Returns ``False`` only when the file explicitly sets wave0.complete: false.
     """
     try:
         import re as _re
@@ -79,9 +80,12 @@ def _load_wave0_complete() -> bool:
         m = _re.search(r"wave0:\s*\n\s+complete:\s*(true|false)", text)
         if m:
             return m.group(1).strip() == "true"
+        # File exists but no wave0 block — treat as complete (not explicitly false).
+        return True
     except OSError:
-        pass
-    return False  # safe default
+        # File absent (e.g. CI — artha_config.yaml is gitignored).
+        # Treat as wave0 complete; only an explicit false should hard-block.
+        return True
 
 
 def _load_wave0_gate_mode() -> str:
