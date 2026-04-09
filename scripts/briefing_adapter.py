@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,8 @@ except ImportError:  # pragma: no cover
 _HEALTH_CHECK_FILE = _ROOT_DIR / "state" / "health-check.md"
 _CATCH_UP_RUNS_FILE = _ROOT_DIR / "state" / "catch_up_runs.yaml"  # primary run history
 _SKILLS_CACHE_FILE = _ROOT_DIR / "state" / "skills_cache.json"    # unified skill health
+_CONNECTORS_CONFIG_FILE = _ROOT_DIR / "config" / "connectors.yaml"
+_CONNECTOR_STATES_DIR = _ROOT_DIR / "state" / "connectors"
 
 # Minimum number of catch-up runs before any adaptive rules activate
 _MIN_RUNS_FOR_ADAPTATION = 10
@@ -374,6 +377,87 @@ def _r9_quality_regression(
         return None
 
 
+# ---------------------------------------------------------------------------
+# Connector staleness helpers (R23 / §4.12)
+# ---------------------------------------------------------------------------
+
+def _load_connector_config() -> dict[str, float]:
+    """Return {connector_name: cron_interval_hours} from config/connectors.yaml."""
+    if not _CONNECTORS_CONFIG_FILE.exists():
+        return {}
+    try:
+        data = yaml.safe_load(_CONNECTORS_CONFIG_FILE.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    intervals: dict[str, float] = {}
+    for name, cfg in (data.get("connectors") or {}).items():
+        if not isinstance(cfg, dict):
+            continue
+        h = (cfg.get("fetch") or {}).get("cron_interval_hours", 24)
+        try:
+            intervals[name] = float(h)
+        except (TypeError, ValueError):
+            intervals[name] = 24.0
+    return intervals
+
+
+def _load_connector_states() -> dict[str, dict]:
+    """Return {connector_name: state_dict} from state/connectors/*_state.yaml."""
+    states: dict[str, dict] = {}
+    if not _CONNECTOR_STATES_DIR.exists():
+        return states
+    for p in _CONNECTOR_STATES_DIR.glob("*_state.yaml"):
+        name = p.stem
+        if name.endswith("_state"):
+            name = name[: -len("_state")]
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            if isinstance(data, dict):
+                states[name] = data
+        except Exception:  # noqa: BLE001
+            pass
+    return states
+
+
+def check_agent_staleness(
+    connector_states: dict,
+    cron_intervals_hours: dict,
+) -> list[str]:
+    """Return warning strings for connectors overdue by more than 2× their interval.
+
+    PII guard: connector names only — no message content is read. (R23)
+
+    Args:
+        connector_states: {connector_name: state_dict} as returned by
+            _load_connector_states(). Each state_dict may contain a
+            ``last_run_at`` ISO-8601 string.
+        cron_intervals_hours: {connector_name: interval_hours} as returned by
+            _load_connector_config(). Missing entries default to 24 h.
+
+    Returns:
+        List of human-readable warning strings, one per overdue connector.
+        Empty list when all connectors are current or have no run history.
+    """
+    now = datetime.now(timezone.utc)
+    warnings: list[str] = []
+    for name, state in connector_states.items():
+        last_run_str = state.get("last_run_at")
+        if not last_run_str:
+            continue
+        interval_h = float(cron_intervals_hours.get(name, 24))
+        try:
+            last_run = datetime.fromisoformat(str(last_run_str))
+            if last_run.tzinfo is None:
+                last_run = last_run.replace(tzinfo=timezone.utc)
+            age_h = (now - last_run).total_seconds() / 3600
+            if age_h > 2 * interval_h:
+                warnings.append(
+                    f"{name}: last ran {age_h:.0f}h ago (limit {interval_h:.0f}h)"
+                )
+        except (ValueError, TypeError):
+            continue
+    return warnings
+
 
 class BriefingAdapter:
     """Analyse health-check history and return adjusted BriefingConfig.
@@ -466,6 +550,14 @@ class BriefingAdapter:
         # R9 — quality regression signal (eval layer)
         if r9:
             cfg.adaptive_adjustments.append(r9)
+
+        # R23 — connector staleness warnings (§4.12)
+        staleness_warnings = check_agent_staleness(
+            _load_connector_states(),
+            _load_connector_config(),
+        )
+        for w in staleness_warnings:
+            cfg.adaptive_adjustments.append(f"⚠️ Stale connector: {w}")
 
         return cfg
 

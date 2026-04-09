@@ -737,7 +737,7 @@ def artha_todo_sync(
 @mcp.tool()
 def artha_kb_query(
     entity_id: str,
-    token_budget: int = 4000,
+    token_budget: int = 950,
 ) -> str:
     """Return full context for a KB entity (2-hop BFS, capped at token_budget).
 
@@ -762,7 +762,7 @@ def artha_kb_query(
 def artha_kb_context(
     entity_name: str,
     depth: int = 2,
-    token_budget: int = 4000,
+    token_budget: int = 950,
 ) -> str:
     """Resolve an entity by name and return its neighbourhood context.
 
@@ -808,11 +808,29 @@ def artha_kb_search(
         kg = get_kb()
         results = kg.search(query, domain=domain or None, limit=min(limit, 50))
         _audit("artha_kb_search", params, "ok")
-        return json.dumps(
-            [r.__dict__ if hasattr(r, "__dict__") else r for r in results],
-            ensure_ascii=False,
-            default=str,
-        )
+        serialized = [
+            r.__dict__ if hasattr(r, "__dict__") else r for r in results
+        ]
+        # §4.14 append to LLM search log (no PII — entity IDs + scores only)
+        try:
+            _audit_dir = Path(__file__).resolve().parent.parent / "state" / "audit"
+            _audit_dir.mkdir(parents=True, exist_ok=True)
+            _log_entry = {
+                "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "query": query,
+                "n_results": len(results),
+                "entity_ids": [r.entity_id if hasattr(r, "entity_id") else r.get("entity_id", "") for r in results[:20]],
+                "top_confidence": float(results[0].score) if results and hasattr(results[0], "score") else None,
+                "lifecycle_stages": [
+                    getattr(r, "lifecycle_stage", None) or (r.get("lifecycle_stage") if isinstance(r, dict) else None)
+                    for r in results[:20]
+                ],
+            }
+            with open(_audit_dir / "kb_search_log.jsonl", "a", encoding="utf-8") as _lf:
+                _lf.write(json.dumps(_log_entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # observability must never block the search response
+        return json.dumps(serialized, ensure_ascii=False, default=str)
     except Exception as exc:
         _audit("artha_kb_search", params, f"error:{exc}")
         return json.dumps({"error": str(exc)})
