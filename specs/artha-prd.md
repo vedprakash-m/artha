@@ -1,6 +1,6 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.12.0
+## Product Requirements Document · v7.13.0
 
 **Author:** [Author]
 **Date:** April 8, 2026
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.13.0 | 2026-04-08 | Knowledge Graph v2.0 — FR-19 extended with Second Brain KB architecture. Five ingestion paths, entity lifecycle stages, SQLite schema v4, 7 MCP tools, Leiden clustering, 950-token context budget. Tech Spec §22 rewritten to v2.0. |
 | v7.12.0 | 2026-04-08 | EAR-3 SHIPPED — 4 domain pre-compute agents (CapitalAgent, LogisticsAgent, ReadinessAgent, TribeAgent) + cron-based agent scheduler (`config/agents/schedules.yaml`) + state file registry (`config/state_registry.yaml`) + 4 domain-specific guardrails (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Spec compaction: −539 lines · −56 KB across all 3 core specs. |
 | v7.11.0 | 2026-04-07 | SPEC CONSOLIDATION — 10 satellite specs merged into core PRD/Tech Spec/UX Spec. New: FR-20 Readiness Intelligence, FR-21 Logistics Intelligence, FR-22 Tribe Intelligence, FR-23 Capital Intelligence (4 new life domains). P10 Design Principle (PM Skills Coach mandatory pattern). §9 Autonomy Matrix extended with per-domain contract + work L1 permanent cap. §12 Roadmap gains Phase 0 (30 prerequisites). §14 NFRs gain data-quality SLA targets. FR-19 extended with 6 work automation agents (FW-21–FW-26). All satellite specs archived to `.archive/specs/`. |
 See [CHANGELOG.md](../CHANGELOG.md) for full version history.
@@ -986,6 +987,8 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 | FW-26 | **Connect Evidence Agent** *(v7.11.0)* — Performance review evidence assembly. `call_when:` Connect deadline <30 days OR user requests goal evidence. `do_directly_when:` single bullet format. Cross-references accomplishment ledger (FW-20) + career log (FW-4). **Permanently L1.** | P2 |
 
 > **Work Agent Autonomy Cap (v7.11.0):** All work automation agents (FW-21 through FW-26) are **permanently capped at Trust Level 1** (propose-only). They may never advance past L1 regardless of acceptance rate or tenure. This is a hard architectural constraint — work actions carry organizational risk that personal-domain autonomy graduation does not. Each agent has explicit `call_when` and `do_directly_when` dispatch contracts defining when the orchestrator invokes them.
+
+**Knowledge Graph (Second Brain) Layer.** The Work OS knowledge layer implements second-brain capabilities via a machine-local SQLite property graph (`knowledge/kb.sqlite`) populated from five ingestion paths: curated knowledge files (`knowledge/*.md`), inbox drop-folder (`inbox/work/`), SharePoint connector (Graph delta API), pipeline state synthesis (`state/work/*.md`), and ADO structured data. The graph supports FTS5 full-text search, 2-hop graph traversal, 7 MCP tools (`artha_kb_search`, `artha_kb_context`, `artha_kb_query`, `artha_kb_global`, `artha_kb_recent_changes`, `artha_kb_stale`, `artha_kb_episodes`), and context assembly within a 950-token budget. Entity lifecycle stages (`proposed`, `in_flight`, `shipped`, etc.) provide structured tracking of work artifact status. Ghost-entity detection prevents stale `in_flight` states for completed projects. See Tech Spec §22 for full schema and API.
 
 ---
 
@@ -2381,7 +2384,7 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 
 ---
 
-*Artha PRD v7.12.0 — End of Document*
+*Artha PRD v7.13.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

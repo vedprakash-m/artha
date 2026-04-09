@@ -655,12 +655,55 @@ def do_welcome() -> None:
     print()
     print(f"{_DIM}Other commands:{_RST}")
     print(f"  {_CYAN}•{_RST} python artha.py --doctor              — unified diagnostic (recommended)")
+    print(f"  {_CYAN}•{_RST} python artha.py --sync                — KB sync (inbox + SharePoint + pipeline)")
     print(f"  {_CYAN}•{_RST} python scripts/preflight.py        — detailed preflight checks")
     print(f"  {_CYAN}•{_RST} python scripts/pipeline.py --health — connector health")
     print(f"  {_CYAN}•{_RST} python artha.py --demo             — replay the demo briefing")
     print(f"  {_CYAN}•{_RST} python artha.py --setup            — re-run setup wizard")
     print(f"  {_DIM}🔒  Your data stays on this machine. See docs/security.md{_RST}")
     print()
+
+
+def do_sync() -> int:
+    """Run the 4-step KB sync pipeline (§10.7).
+
+    Steps:
+      1. inbox_process.py     — ingest drop-folder .md/.txt/.eml files
+      2. sharepoint_kb_sync.py — sync SharePoint/OneDrive docs (only if enabled)
+      3. pipeline.py            — refresh briefing signals from all connectors
+      4. kb_bootstrap.py --incremental — re-index changed knowledge files
+
+    Returns maximum return-code across all steps (0 = all green).
+    """
+    rc = 0
+
+    print(f"[sync] Step 1/4 — Processing inbox drop-folder …")
+    rc |= _run("inbox_process.py")
+
+    print(f"[sync] Step 2/4 — SharePoint / OneDrive sync …")
+    try:
+        import yaml as _yaml
+        with open(_CONFIG / "connectors.yaml", encoding="utf-8") as _fh:
+            _cfg = _yaml.safe_load(_fh) or {}
+        _top = _cfg if "sharepoint_docs" in _cfg else _cfg.get("connectors", _cfg)
+        if _top.get("sharepoint_docs", {}).get("enabled", False):
+            rc |= _run("sharepoint_kb_sync.py")
+        else:
+            print(f"[sync]   sharepoint_docs disabled — skipped.")
+    except Exception:
+        pass  # Missing config is non-fatal; stay on the happy path
+
+    print(f"[sync] Step 3/4 — Refreshing pipeline signals …")
+    rc |= _run("pipeline.py")
+
+    print(f"[sync] Step 4/4 — Incremental KB bootstrap …")
+    rc |= _run("kb_bootstrap.py", "--incremental")
+
+    if rc == 0:
+        print(f"[sync] ✓ All steps complete.")
+    else:
+        print(f"[sync] ⚠ Completed with errors (rc={rc}). Check output above.")
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -673,6 +716,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-wizard", action="store_true", help="With --setup: skip wizard, copy minimal profile")
     p.add_argument("--preflight", action="store_true", help="Run preflight checks and exit")
     p.add_argument("--doctor",    action="store_true", help="Run unified diagnostic and exit")
+    p.add_argument("--sync",      action="store_true", help="Run 4-step KB sync pipeline (inbox → SharePoint → pipeline → kb_bootstrap)")
     args = p.parse_args(argv)
 
     if args.demo:
@@ -688,6 +732,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.doctor:
         return do_doctor()
+
+    if args.sync:
+        return do_sync()
 
     # Auto-detect
     if not _is_configured():

@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.13 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.14 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.12.0, Tech Spec v3.27.0
+> **Implements**: PRD v7.13.0, Tech Spec v3.28.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
 | v3.12 | 2026-04-07 | SPEC CONSOLIDATION — Implements PRD v7.11.0 + Tech Spec v3.26.0. §3.2: 4 new domains added (Readiness, Logistics, Tribe, Capital) to domain presentation order (15→19). NEW §26: New Domain UX — interaction design patterns for all 4 new domains (Readiness daily score + energy flags, Logistics warranty/renewal alerts + shopping deeplinks, Tribe reconnect radar + outreach staging, Capital cash flow projection + amount-confirm gate). |
 Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
@@ -2287,6 +2288,8 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 ## 23. Work OS — Interaction Design
 
 > This section documents the UX patterns for the Work Intelligence OS (PRD FR-19, Tech Spec §19). The Work OS is a separate surface — separate vault, separate connectors, separate slash command namespace. No work content appears in personal briefings beyond the scalar boundary score. Full implementation: 25-command read-path CLI (`work_reader.py`), 9 Work OS scripts, 20 domain state files, 883 tests.
+>
+> **Knowledge Graph context.** The Work OS knowledge graph (Tech Spec §22) provides entity-aware responses: `artha_kb_context` assembles 950-token context packages for `/work prep` cards; `artha_kb_search` powers keyword lookups in `/work` commands; `artha_kb_episodes` surfaces recently synced data for `/work return`. Entity lifecycle stages (`in_flight`, `shipped`, `proposed`) surface in meeting prep cards and sprint views.
 
 ### 23.1 Command Palette
 

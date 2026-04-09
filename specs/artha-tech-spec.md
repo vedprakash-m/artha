@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.27.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.28.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.12.0
+> **Implements**: PRD v7.13.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.28.0 | 2026-04-08 | **Knowledge Graph v2.0 (§22)**: Second Brain Architecture. Five ingestion paths (knowledge/*.md, inbox/, SharePoint, state/work/*.md, ADO), eight governing principles, entity lifecycle stages, SQLite schema v4 (lifecycle_stage, excerpt_hash, change_source_ref, episodes table), source taxonomy with confidence contract, Leiden community clustering + Union-Find fallback, ghost entity detection & excerpt-hash staleness, 7 MCP tools surface, markdown stub contract, 950-token context budget (was 4,000). Implements PRD v7.13.0. |
 | v3.27.0 | 2026-04-08 | EAR-3 SHIPPED: `scripts/agents/` with 4 domain agents (capital, logistics, readiness, tribe). `config/agents/schedules.yaml` cron registry (≤8 agent slots, §27 R13). `config/state_registry.yaml` state-file registry (§3.5 A2). 4 domain-specific guardrails added to §8 (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Anti-golden routing test suite added. Spec compaction: §5.1 briefing example, §8.7 safe_cli.sh, §11.1 setup.sh, §12.1 registry — all replaced with pointers to canonical files. |
 | v3.26.0 | 2026-04-07 | SPEC CONSOLIDATION: Distilled 10 non-core spec files into core specs (§21–§28). §21.6–21.8 eval dimensions/scoring/SLAs from `eval.md`. §22.6–22.8 full entity model, API, performance targets from `kb-graph-design.md`. §23.6 AR-9 GA promotion from `ar9-completion-report.md`. §24.4–24.5 cross-reference rules and domain weight overrides from `data-quality-gate.md`. §25.11–25.14 baseline patterns, anti-patterns, context budgets, governance from `agent-fw.md`. NEW §27 EAR v2.0 Multi-Agent Composition (EAR-1–EAR-12) from `ext-agent-reloaded.md`. NEW §28 KB Population Strategy from `kb-population-plan.md`. Implements PRD v7.11.0. Originals archived to `.archive/specs/`. |
 Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
@@ -4483,107 +4484,140 @@ Quality score composite: $Q = w_A \times A + w_F \times F + w_C \times C$
 
 ---
 
-## 22. Knowledge Graph Architecture (Work OS) *(v1.0)*
+## 22. Knowledge Graph — Second Brain Architecture *(v2.0)*
 
-The Work OS knowledge layer stores a structured, queryable graph of entities — people, projects, systems, decisions, and their relationships — extracted from the work briefing pipeline. Unlike flat Markdown state files, the graph enables traversal queries: "who are the stakeholders of the project currently at risk?" or "which system is shared between two active work streams?"
+The Work OS knowledge layer is a **second brain** — a machine-local SQLite property graph providing total recall of work entities: people, projects, systems, decisions, programs, and their relationships. `knowledge/*.md` files are the cross-platform source of truth; the SQLite graph (`knowledge/kb.sqlite`) is the derived query index providing FTS5 search, graph traversal, temporal queries, and MCP tool access. The graph is an enhancement layer — Artha degrades gracefully to markdown-only mode if unavailable.
 
-### 22.1 Design Principles
+### 22.1 Eight Governing Principles
 
-1. **Derived, not authoritative.** The graph is populated from `state/work/*.md` and briefing pipeline outputs — not from external HR or CMDB systems. It reflects what Artha has observed, not a golden source.
-2. **Ephemeral identity, durable relationships.** Entity metadata (job title, team) can change; relationship edges (person→project, decision→system) accumulate over time.
-3. **Privacy-first.** The graph is local-only (SQLite in `knowledge/kb.sqlite`), gitignored, and never synced to GitHub. No entity data from the knowledge graph appears in public specs or logs.
-4. **Deterministic queries.** Graph queries use SQL + structured traversal, not LLM inference — ensuring reproducibility and testability.
-5. **Bootstrap from existing state.** `kb_bootstrap.py` populates the graph from the existing `knowledge/*.md` files; no manual curation required for an initial graph.
+**P1 — Markdown-First Invariant.** `knowledge/*.md` files are the permanent, human-readable source of truth. The SQLite graph is a derived index — always rebuildable from `.md` files via `kb_bootstrap.py --force`. Nothing important lives only in the graph.
 
-### 22.2 Entity Model
+**P2 — SQLite is machine-local.** `knowledge/kb.sqlite` MUST NOT be in any cloud-sync folder (OneDrive, iCloud, Dropbox). It is gitignored and never leaves the local machine. Cross-machine state lives in `knowledge/*.md` only.
 
-| Entity Type | Key Fields | Example Use |
-|-------------|-----------|-------------|
-| `Person` | alias, role, team, recency | Stakeholder lookup for meeting prep |
-| `Project` | name, status, phase, owner | Active project list for work briefing |
-| `System` | name, type, health | System health correlation with incidents |
-| `Decision` | title, outcome, date, domains | Decision history for context |
-| `Commitment` | description, due_date, owner | Commitment tracking for boundary alerts |
-| `Topic` | name, domain, frequency | Topic clustering for trend detection |
+**P3 — Graceful degradation.** `get_kb()` returns a `NullKnowledgeGraph` on failure. Pipeline, briefings, and all commands work without SQLite. The KB is an enhancement, never a hard dependency.
 
-### 22.3 Relationship Schema (SQLite)
+**P4 — Provenance on every entity.** Every upserted entity carries `source_type`, `source_ref`, and `source_episode_id`. The source is traceable to a specific document, connector, or inbox file.
 
-```sql
--- Core entity tables (one per entity type above)
-CREATE TABLE entities (
-    id       TEXT PRIMARY KEY,   -- UUID
-    type     TEXT NOT NULL,      -- 'person', 'project', 'system', etc.
-    name     TEXT NOT NULL,
-    attrs    TEXT,               -- JSON blob for type-specific fields
-    first_seen TEXT,             -- ISO timestamp
-    last_seen  TEXT
-);
+**P5 — Deterministic queries.** Graph queries use SQL + structured traversal, not LLM inference — ensuring reproducibility and testability.
 
--- Directed relationships
-CREATE TABLE relationships (
-    id          TEXT PRIMARY KEY,
-    from_id     TEXT REFERENCES entities(id),
-    to_id       TEXT REFERENCES entities(id),
-    rel_type    TEXT NOT NULL,   -- 'owns', 'depends_on', 'participates_in', etc.
-    confidence  REAL DEFAULT 1.0,
-    first_seen  TEXT,
-    last_seen   TEXT,
-    source      TEXT             -- e.g. 'work_briefing', 'kb_bootstrap'
-);
+**P6 — PII guard before write.** `pii_guard.scan_content()` MUST run before `add_episode()`. No PII-bearing content enters the graph. There is no safe post-write PII deletion path from an append-only episode log.
 
-CREATE INDEX idx_rel_from ON relationships(from_id, rel_type);
-CREATE INDEX idx_rel_to   ON relationships(to_id, rel_type);
+**P7 — Bootstrap from existing state.** All populated entities are derived from `knowledge/*.md` and connected sources. No manual curation required.
+
+**P8 — Token budget discipline.** `context_for()` enforces a hard 950-token budget. Drop order under pressure: god node summary → community summaries → historical relationships → recent episodes → entity attributes.
+
+### 22.2 Five Ingestion Paths
+
+```
+Path 1: knowledge/*.md  ──→  kb_bootstrap.py     (heuristic extraction, SHA256 cache)
+Path 2: inbox/work/     ──→  inbox_process.py    (drop-folder pipeline, PII-gated)
+Path 3: SharePoint      ──→  sharepoint_kb_sync.py (Graph delta API, incremental)
+Path 4: state/work/*.md ──→  KnowledgeEnricher   (via work_loop.py, NOT pipeline.py)
+Path 5: ADO connector   ──→  work_loop.py        (structured data upsert)
 ```
 
-### 22.4 Key Scripts
+All five paths terminate at `KnowledgeGraph.upsert_entity()` / `add_episode()`. `pipeline.py` MUST NOT have a direct SQLite dependency — it is a pure JSONL streaming orchestrator. KB ingestion via paths 2 and 3 runs as standalone scripts, orchestrated by `artha.py` before `pipeline.py`.
+
+### 22.3 Entity Lifecycle Stages
+
+Every entity carries a `lifecycle_stage` field tracking its canonical state:
+
+| Stage | Meaning |
+|-------|---------|
+| `proposed` | Suggested; not yet confirmed |
+| `approved` | Confirmed; in planning |
+| `in_flight` | Under active execution |
+| `shipped` | Completed and deployed |
+| `cancelled` | Shut down |
+| `superseded` | Replaced by another entity |
+| `on_hold` | Paused |
+| `unknown` | Default when stage cannot be determined |
+
+### 22.4 SQLite Schema (v4)
+
+```sql
+CREATE TABLE entities (
+    id                    TEXT PRIMARY KEY,
+    type                  TEXT NOT NULL,
+    name                  TEXT NOT NULL,
+    domain                TEXT,
+    current_state         TEXT DEFAULT 'active',
+    lifecycle_stage       TEXT DEFAULT 'unknown',
+    confidence            REAL DEFAULT 0.5,
+    staleness_ttl         INTEGER DEFAULT 90,
+    source_type           TEXT,
+    source_ref            TEXT,
+    source_episode_id     TEXT REFERENCES episodes(id),
+    excerpt_hash          TEXT,      -- SHA256 of source text; change → staleness reset
+    change_source_ref     TEXT,      -- URI of the document that caused last change
+    corroborating_sources TEXT,      -- JSON: list of source_refs
+    validation_method     TEXT,
+    attrs                 TEXT,      -- JSON blob for type-specific fields
+    created_at            TEXT,
+    updated_at            TEXT,
+    last_validated_at     TEXT
+);
+
+CREATE TABLE relationships (
+    id           TEXT PRIMARY KEY,
+    from_entity  TEXT REFERENCES entities(id),
+    to_entity    TEXT REFERENCES entities(id),
+    rel_type     TEXT NOT NULL,
+    confidence   REAL DEFAULT 1.0,
+    valid_from   TEXT,
+    valid_to     TEXT,   -- NULL = active; set by _negative_sync()
+    source       TEXT,
+    created_at   TEXT
+);
+
+CREATE TABLE episodes (
+    id           TEXT PRIMARY KEY,
+    episode_key  TEXT NOT NULL,
+    source_type  TEXT NOT NULL,  -- 'knowledge_md' | 'inbox' | 'sharepoint' | 'ado_sync' | 'state_md'
+    raw_content  TEXT,           -- PII-scrubbed by pii_guard before write
+    processed_at TEXT,
+    entity_count INTEGER DEFAULT 0
+);
+
+CREATE TABLE community_summaries (
+    community_id TEXT PRIMARY KEY,
+    entity_ids   TEXT NOT NULL,  -- JSON list of entity IDs
+    theme        TEXT,
+    summary      TEXT,
+    generated_at TEXT
+);
+
+CREATE VIRTUAL TABLE kb_search USING fts5(name, attrs, content=entities, content_rowid=rowid);
+CREATE TABLE kb_meta (key TEXT PRIMARY KEY, value TEXT);
+```
+
+**Additional tables**: `entity_history` (temporal versioning), `entity_aliases` (name resolution), `entity_context_cache` (TTL-invalidated context), `documents` + `document_entities` (artifact registry), `kusto_queries`, `source_weights`, `research_archive`.
+
+### 22.5 Source Taxonomy & Confidence Contract
+
+| Source | `source_type` | Default confidence | Notes |
+|--------|---------------|--------------------|-------|
+| ADO work items | `ado_sync` | 0.90 | Structured API data |
+| `knowledge/*.md` | `knowledge_md` | 0.85 | Curated by user |
+| SharePoint docs | `sharepoint` | 0.75 | High-quality structured docs |
+| Inbox markdown | `inbox` | 0.75 | Explicit user drop |
+| `state/work/*.md` | `state_md` | 0.55 | LLM-synthesized |
+| Inbox email (`.eml`) | `inbox_email` | 0.60 | Headers reliable; body noisy |
+| Inbox plaintext | `inbox_txt` | 0.50 | No structural signals |
+
+Entities with `confidence < 0.5` are excluded from `context_for()` output by default.
+
+### 22.6 Key Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/lib/knowledge_graph.py` | `KnowledgeGraph` class — `upsert_entity()`, `add_relationship()`, `query_neighbors()`, `find_path()`. Transactional writes. |
-| `scripts/kb_bootstrap.py` | Reads `knowledge/*.md` files, extracts entities and relationships via regex + structured parse, populates `knowledge/kb.sqlite`. Idempotent — safe to re-run. |
-
-### 22.5 Integration with Work OS Pipeline
-
-- `work_loop.py` Step 3 (enrich): after fetching work briefing data, `knowledge_graph.upsert_entity()` updates person and project nodes.
-- `work_reader.py` `graph` command: traversal query output for stakeholder/project relationships.
-- `kb.sqlite` location: `knowledge/kb.sqlite` — gitignored at the `knowledge/` directory level.
-- Bootstrap: `python scripts/kb_bootstrap.py` (one-time or after new knowledge files are added).
-
-### 22.6 Extended Entity Model
-
-Beyond the core 6 types (Person, Project, System, Decision, Commitment, Topic), the full schema supports:
-
-| Entity Type | Key Fields | Purpose |
-|-------------|-----------|---------|
-| `Platform` | name, type, health | Infrastructure hosting layer |
-| `Program` | name, current_state, owner | Multi-project program tracking |
-| `Process` | name, applies_to | Standard operating procedures |
-| `Tool` | name, user_teams | Tooling inventory |
-| `Team` | name, owns, manages | Organizational units |
-| `Artifact` | name, belongs_to | Documents, decks, specs |
-| `Gap` | name, affects, severity | Capability gaps affecting systems |
-| `Event` | name, involves, date | Calendar events, retrospectives |
-| `Shadow` | uri, domain | URI pointers to personal domains (e.g., `artha://personal/immigration/passport`) — no data copied |
-
-**Additional tables** (beyond `entities`/`relationships`):
-
-| Table | Purpose |
-|-------|---------|
-| `entity_history` | Temporal versioning of entity attributes |
-| `entity_aliases` | Alternative names for entity resolution |
-| `kusto_queries` | Golden KQL queries cached per entity |
-| `decisions` | Extended decision metadata (rationale, outcome) |
-| `documents` | Document metadata for artifact tracking |
-| `document_entities` | Document↔entity join table |
-| `table_schemas` | ADO/Kusto table metadata |
-| `artifacts` | Work artifact registry |
-| `research_archive` | Archived deep-research outputs |
-| `source_weights` | Per-source reliability weights |
-| `community_summaries` | Connected-component cluster summaries |
-| `kb_search` | FTS5 full-text search index |
-| `kb_meta` | Schema version, last bootstrap timestamp |
-| `entity_context_cache` | Pre-assembled context per entity (TTL-invalidated) |
-| `episodes` | Discrete information ingestion events |
+| `scripts/lib/knowledge_graph.py` | `KnowledgeGraph` class — full property graph engine. `NullKnowledgeGraph` fallback. |
+| `scripts/kb_bootstrap.py` | Reads `knowledge/*.md`; heuristic extraction; SHA256 incremental cache; `--force` bypasses cache. |
+| `scripts/lib/document_extractor.py` | Shared extraction engine (markdown, plaintext, `.docx`). Used by bootstrap, inbox, and SharePoint sync. |
+| `scripts/inbox_process.py` | Drop-folder ingestion: reads `inbox/work/` and `inbox/personal/`, PII-guards content, archives to `inbox/_processed/`. |
+| `scripts/sharepoint_kb_sync.py` | SharePoint delta sync via Graph API. Requires `Sites.Read.All` scope. Delta links for incremental queries. |
+| `scripts/connectors/msgraph_sharepoint.py` | SharePoint connector handler (same contract as `msgraph_email.py`). |
+| `scripts/kg_visualize.py` | Generates standalone vis.js HTML at `visuals/knowledge_graph.html`. Domain colors, degree-based sizing, community grouping. |
 
 ### 22.7 Full Python API (`KnowledgeGraph` class)
 
@@ -4595,10 +4629,10 @@ Beyond the core 6 types (Person, Project, System, Decision, Commitment, Topic), 
 | `search` | `(query, domain=None, limit=10)` | FTS5 full-text search |
 | `traverse` | `(entity_id, rel_types=None, direction='both', depth=1)` | Neighborhood walk |
 | `find_path` | `(from_id, to_id, max_depth=4)` | Shortest path between entities |
-| `context_for` | `(entity_id, token_budget=4000, depth=2, session_focus=None)` | **Primary entry point** — pre-assembled context with confidence/staleness filtering |
-| `get_context_as_of` | `(entity_id, timestamp, token_budget=4000)` | Point-in-time context reconstruction |
+| `context_for` | `(entity_id, token_budget=950, depth=2, session_focus=None)` | **Primary entry point** — pre-assembled context with staleness filtering; 950-token hard budget |
+| `get_context_as_of` | `(entity_id, timestamp, token_budget=950)` | Point-in-time context reconstruction |
 | `global_context_for` | `(question, max_tokens=800)` | Cross-entity question answering |
-| `recent_episodes` | `(entity_mentions, since_days=30, limit=10)` | Recent information events |
+| `recent_episodes` | `(entity_mentions, since_days=30, limit=10)` | Recent ingestion events |
 | `stale_entities` | `(domain=None)` | Entities past staleness TTL |
 | `recent_changes` | `(domain=None, days=30)` | Recently modified entities |
 | `upsert_entity` | `(entity, source, confidence=0.5, source_episode_id=None)` | Create or update entity |
@@ -4609,35 +4643,82 @@ Beyond the core 6 types (Person, Project, System, Decision, Commitment, Topic), 
 | `invalidate_cache` | `(entity_id)` | Clear context cache for entity |
 | `validate_integrity` | `()` | Referential integrity check |
 | `get_stats` | `()` | Entity/relationship/cache counts |
-| `rebuild_communities` | `()` | Connected-component clustering |
+| `rebuild_communities` | `()` | Leiden clustering (`graspologic>=3.4`) → `community_summaries`; falls back to Union-Find if not installed |
+| `god_nodes` | `(limit=10)` | Highest-degree entities — structural hubs with degree and domain-spread |
 | `vacuum` | `()` | SQLite VACUUM + FTS rebuild |
 | `backup` | `(tier='daily')` | Tiered backup (daily/weekly/monthly) |
 
-### 22.8 Performance Targets & Capacity
+### 22.8 MCP Tools Surface
+
+Seven MCP tools expose the knowledge graph to AI assistants (Copilot, Claude, Gemini):
+
+| Tool | Purpose |
+|------|---------|
+| `artha_kb_search` | FTS5 full-text search across all entities |
+| `artha_kb_context` | Per-entity context assembly (950-token budget, 2-hop BFS) |
+| `artha_kb_query` | Structured property query (filter by domain, type, confidence) |
+| `artha_kb_global` | Cross-entity question answering |
+| `artha_kb_recent_changes` | Entities changed in last N days |
+| `artha_kb_stale` | Entities past their staleness TTL |
+| `artha_kb_episodes` | Recent ingestion events (audit what was just synced) |
+
+All MCP tools call `get_kb()` and return graceful empty responses on unavailability.
+
+### 22.9 Markdown Stub Contract
+
+Connectors that generate new knowledge entries write stubs in this format:
+
+```markdown
+<!-- artha-kb-stub | source: sharepoint | id: <uuid> | synced: <ISO ts> -->
+## <Entity Name>
+- **Type**: <entity_type>
+- **Domain**: <domain>
+- **Status**: <lifecycle_stage>
+- **Source**: <web_url or file path>
+```
+
+| Connector | Stub path |
+|-----------|-----------|
+| SharePoint | `knowledge/sharepoint_notes/` |
+| Inbox | `knowledge/inbox_notes/` |
+| ADO sync | `knowledge/ado_notes/` |
+| Meeting notes | `knowledge/meeting_notes/` |
+
+Bootstrap reads all subdirectories of `knowledge/` — no separate registration needed for new stub locations.
+
+### 22.10 Ghost Entity Detection & Staleness
+
+**Ghost entities**: entities previously authoritative but now absent from all sources. When a source file is reprocessed and an entity is missing from the new version, `_negative_sync()` sets `valid_to` on all its relationships. This prevents stale `in_flight` states for completed projects.
+
+**Excerpt-level staleness**: each entity carries `excerpt_hash` (SHA256 of the source text chunk). If the source file changes but the excerpt hash is unchanged, the entity is not re-stamped as stale. Changed excerpt hash → `last_validated_at` updated, staleness TTL reset.
+
+**Agent staleness check**: `KnowledgeEnricher.enrich_briefing()` automatically runs `stale_entities()` and surfaces a "⚠ N entities overdue for review" warning if any active entities exceed their TTL.
+
+### 22.11 Performance Targets *(v2.0)*
 
 | Metric | Target |
 |--------|--------|
 | `context_for()` cold start | <50ms |
 | FTS5 search query | <100ms |
-| 2-hop neighborhood walk | Within token budget, <200ms |
-| Max live entities | 500–1,000 (before degradation) |
-| Avg relationship density | 2–3 edges per entity |
-| Default context budget | 4,000 tokens (tunable) |
+| 2-hop neighborhood walk | <200ms |
+| Default context budget | **950 tokens** (hard limit; was 4,000 in v1.0) |
+| God node summary | ≤150 tokens (first dropped under pressure) |
 | Entity staleness TTL | Configurable per domain (default 90 days) |
-| Community clustering trigger | 2,000+ entities (connected-component analysis, no ML) |
+| Community clustering | Leiden (`graspologic>=3.4`) optional; Union-Find fallback always available |
+| Leiden trigger threshold | Skip if < 20 entities |
+| `community_members` junction table | Replaces LIKE scan after KB exceeds ~5,000 entities |
 
 **Relationship strength decay** (temporal validity):
 - <30d since validation → strong
 - 30–90d → moderate
 - 90–180d → weak
-- \>180d → historical
+- >180d → historical
 
-Partial unique index enforces only 1 active edge per `(from, to, rel_type)` triple.
-
----
+Partial unique index enforces only 1 active edge per `(from_entity, to_entity, rel_type)` triple.
 
 ---
 
+---
 ## 23. External Agent Composition (AR-9) *(v1.4.0)*
 
 AR-9 extends AR-7's internal delegation protocol to support **externally-authored domain agents** — agents whose system prompts, tools, and behavior are owned by other teams or repositories. External agents are treated as **data sources**: discover → authenticate → fetch → validate → integrate → cache → observe.

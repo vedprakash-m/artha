@@ -64,6 +64,8 @@ state/*.db-wal
 state/traces/
 # Connector health/state subdirectory (harden.md §2.3.1; last_fetched_at timestamps)
 state/connectors/
+# KB audit log (LLM observability — machine-local, never committed)
+state/audit/
 !state/.gitkeep
 !state/templates/
 
@@ -75,6 +77,8 @@ briefings/
 summaries/
 
 # --- Email archives and raw review files ---
+# Inbox sync directory (raw email/calendar data ingested by inbox_process.py — personal, never committed)
+inbox/
 emails_*.jsonl
 review_*.txt
 *.jsonl
@@ -91,6 +95,8 @@ test-write.txt
 test_out.txt
 test_results.txt
 test_results2.txt
+test_results3.txt
+tests/_out.txt
 # Work OS test artifacts — generated output, not source
 tests/work/_pytest_results.txt
 # Scratch test runner scripts (local dev tools, not part of public repo)

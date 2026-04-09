@@ -40,7 +40,7 @@ _log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Schema version — increment on any DDL change
 # ---------------------------------------------------------------------------
-_SCHEMA_VERSION = "3"
+_SCHEMA_VERSION = "4"
 
 # ---------------------------------------------------------------------------
 # Source weight seed data (spec §4.10)
@@ -56,6 +56,9 @@ _SOURCE_WEIGHT_SEEDS = [
     ("reflection_yaml",   0.80, "Deterministic YAML frontmatter from weekly reflections"),
     ("reflection_body",   0.60, "Heuristic extraction from reflection body text"),
     ("llm_extract",       0.50, "LLM-extracted from prose, requires human review"),
+    ("sharepoint",        0.65, "SharePoint-ingested documents — medium-high confidence"),
+    ("inbox",             0.60, "Inbox drop-folder files — medium confidence, user-curated"),
+    ("state_md",          0.55, "LLM-synthesised state/*.md files — lower confidence due to hallucination risk"),
 ]
 
 # ---------------------------------------------------------------------------
@@ -102,6 +105,8 @@ CREATE TABLE IF NOT EXISTS entities (
     source                  TEXT,
     source_type             TEXT,
     corroborating_sources   INTEGER NOT NULL DEFAULT 0,
+    excerpt_hash            TEXT,
+    lifecycle_stage         TEXT NOT NULL DEFAULT 'unknown',
     source_episode_id       INTEGER,
     created_at              TEXT NOT NULL,
     updated_at              TEXT NOT NULL,
@@ -119,7 +124,8 @@ CREATE TABLE IF NOT EXISTS entity_history (
     old_value  TEXT,
     new_value  TEXT,
     changed_by TEXT,
-    session_id TEXT,
+    session_id        TEXT,
+    change_source_ref TEXT,
     FOREIGN KEY (entity_id) REFERENCES entities(id)
 );
 CREATE INDEX IF NOT EXISTS idx_history_entity ON entity_history(entity_id, changed_at);
@@ -206,7 +212,14 @@ CREATE TABLE IF NOT EXISTS documents (
     date_created       TEXT,
     date_last_modified TEXT,
     summary            TEXT,
-    source             TEXT
+    source             TEXT,
+    content_hash       TEXT,
+    drive_item_id      TEXT,
+    etag               TEXT,
+    ingestion_status   TEXT NOT NULL DEFAULT 'pending',
+    last_ingested      TEXT,
+    shared_by          TEXT,
+    share_context      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_doc_type   ON documents(doc_type);
 CREATE INDEX IF NOT EXISTS idx_doc_domain ON documents(domain);
@@ -318,6 +331,15 @@ CREATE TABLE IF NOT EXISTS community_summaries (
     generated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_community_theme ON community_summaries(theme);
+
+CREATE TABLE IF NOT EXISTS community_members (
+    community_id TEXT NOT NULL,
+    entity_id    TEXT NOT NULL,
+    PRIMARY KEY (community_id, entity_id),
+    FOREIGN KEY (entity_id) REFERENCES entities(id)
+);
+CREATE INDEX IF NOT EXISTS idx_cm_entity    ON community_members(entity_id);
+CREATE INDEX IF NOT EXISTS idx_cm_community ON community_members(community_id);
 
 -- Step 6
 CREATE TABLE IF NOT EXISTS kb_meta (
@@ -612,6 +634,8 @@ class Entity:
     effective_staleness: str  # computed: 'fresh' | 'aging' | 'stale' | 'expired'
     source_type: str = ""            # provenance tier (e.g. 'workiq', 'manual')
     corroborating_sources: int = 0   # distinct source count for accuracy scoring
+    lifecycle_stage: str = "unknown" # active | inactive | cancelled | archived | superseded
+    excerpt_hash: str | None = None  # SHA-256 of source excerpt for change detection
 
 
 @dataclass(frozen=True)
@@ -748,6 +772,8 @@ def _row_to_entity(row: sqlite3.Row) -> Entity:
         ),
         source_type=r.get("source_type") or "",
         corroborating_sources=int(r.get("corroborating_sources") or 0),
+        lifecycle_stage=r.get("lifecycle_stage") or "unknown",
+        excerpt_hash=r.get("excerpt_hash"),
     )
 
 
@@ -817,6 +843,7 @@ class NullKnowledgeGraph:
     def validate_integrity(self) -> list:                          return []
     def get_stats(self) -> dict:                                   return {}
     def rebuild_communities(self) -> int:                          return 0
+    def god_nodes(self, *args, **kwargs) -> list:                  return []
     def vacuum(self) -> None:                                      pass
     def backup(self, tier: str = "daily", dest_dir: Path | None = None) -> None:
         _log.warning("KG: backup() called on NullKnowledgeGraph — skipped")
@@ -834,7 +861,7 @@ class KnowledgeGraph:
     Usage:
         kg = KnowledgeGraph()
         entity = kg.resolve_entity("xKulfi")
-        ctx = kg.context_for(entity.id, token_budget=4000)
+        ctx = kg.context_for(entity.id, token_budget=950)
 
     Graceful degradation: if the DB is corrupt, __init__ returns a
     NullKnowledgeGraph (via get_kb() factory). Direct instantiation
@@ -901,17 +928,18 @@ class KnowledgeGraph:
 
     @staticmethod
     def _assert_not_cloud_synced(path: Path) -> None:
-        """Warn and do NOT use the path if it is under a cloud-sync folder."""
+        """Raise RuntimeError if the KB path is under a cloud-sync folder (§6.1 safety rule)."""
+        # CI/test environments may set ARTHA_ALLOW_CLOUD_DB=1 to bypass (§4.3).
+        # No other bypass is permitted.
+        if os.environ.get("ARTHA_ALLOW_CLOUD_DB", "").strip() == "1":
+            return
         path_str = str(path)
         for marker in _CLOUD_SYNC_MARKERS:
             if marker.lower() in path_str.lower():
-                _log.warning(
-                    "KB path is on a synced drive — this may corrupt the WAL: %s", path_str
+                raise RuntimeError(
+                    f"KB at {path_str!r} is inside a cloud-sync folder — "
+                    f"move to a local-only path. Markers: {_CLOUD_SYNC_MARKERS}"
                 )
-                # We warn but do NOT override here — the caller already validated.
-                # _resolve_db_path only calls this for the computed default,
-                # which should never be cloud-synced.
-                break
 
     # ------------------------------------------------------------------
     # Schema management
@@ -994,9 +1022,42 @@ class KnowledgeGraph:
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
+        elif current_version == "3":
+            # v3 → v4: add excerpt_hash, lifecycle_stage, change_source_ref, documents inventory
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for ddl in (
+                    "ALTER TABLE entities ADD COLUMN excerpt_hash TEXT",
+                    "ALTER TABLE entities ADD COLUMN lifecycle_stage TEXT NOT NULL DEFAULT 'unknown'",
+                    "ALTER TABLE entity_history ADD COLUMN change_source_ref TEXT",
+                    "ALTER TABLE documents ADD COLUMN content_hash TEXT",
+                    "ALTER TABLE documents ADD COLUMN drive_item_id TEXT",
+                    "ALTER TABLE documents ADD COLUMN etag TEXT",
+                    "ALTER TABLE documents ADD COLUMN ingestion_status TEXT NOT NULL DEFAULT 'pending'",
+                    "ALTER TABLE documents ADD COLUMN last_ingested TEXT",
+                    "ALTER TABLE documents ADD COLUMN shared_by TEXT",
+                    "ALTER TABLE documents ADD COLUMN share_context TEXT",
+                ):
+                    try:
+                        self._conn.execute(ddl)
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
+                # community_members already created by _SCHEMA_SQL IF NOT EXISTS
+                self._conn.execute(
+                    "UPDATE kb_meta SET value=? WHERE key='schema_version'",
+                    (_SCHEMA_VERSION,),
+                )
+                self._conn.execute("COMMIT")
+                _log.info("KB schema migrated: 3 → 4")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
         else:
-            _log.info("KB schema version: stored=%s, expected=%s — no migration needed",
-                      current_version, _SCHEMA_VERSION)
+            raise RuntimeError(
+                f"Unknown schema version {current_version!r} — cannot safely migrate. "
+                "Manual intervention required."
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1155,9 +1216,13 @@ class KnowledgeGraph:
             entity_name = row["entity_id"]
             entity_summary: str | None = None
             ent_row = self._conn.execute(
-                "SELECT name, summary FROM entities WHERE id=?", (row["entity_id"],)
+                "SELECT name, summary, lifecycle_stage FROM entities WHERE id=?",
+                (row["entity_id"],),
             ).fetchone()
             if ent_row:
+                ls = ent_row["lifecycle_stage"] or "unknown"
+                if ls in ("cancelled", "archived", "superseded"):
+                    continue
                 entity_name = ent_row["name"]
                 entity_summary = ent_row["summary"]
             results.append(SearchResult(
@@ -1273,17 +1338,46 @@ class KnowledgeGraph:
     def context_for(
         self,
         entity_id: str,
-        token_budget: int = 4000,
+        token_budget: int = 950,
         depth: int = 2,
         include_historical: bool = False,
         session_focus: list[str] | None = None,
+        intent: str = "deep",
     ) -> EntityContext | None:
         """One call → complete context bundle with neighbourhood walk.
 
         Performs a 2-hop BFS by default. Only traverses active edges
         (valid_to IS NULL) unless include_historical=True.
+
+        intent controls relationship pruning (§4.11b):
+          "status" → keep milestone/ownership/blocker; prune meeting/comms
+          "prep"   → keep people/decision/open_question; prune historical timeline
+          "deep"   → no pruning (default — fully backward-compatible)
+
         Returns NullEntityContext if entity not found.
         """
+        if token_budget > 2000:
+            raise ValueError(
+                f"context_for: token_budget {token_budget} exceeds safe limit of 2000"
+            )
+
+        # ── §4.11b intent-based pruning sets ─────────────────────────────────
+        _STATUS_KEEP = {"milestone", "ownership", "blocker"}
+        _STATUS_PRUNE = {"meeting", "comms"}
+        _PREP_KEEP = {"people", "decision", "open_question"}
+
+        def _keep_edge(edge: "Edge") -> bool:
+            rt = (edge.rel_type or "").lower()
+            if intent == "status":
+                if rt in _STATUS_PRUNE:
+                    return False
+                return True
+            if intent == "prep":
+                if edge.effective_strength == "historical":
+                    return False
+                return rt in _PREP_KEEP or not _PREP_KEEP  # include if type is relevant
+            return True  # "deep" — no pruning
+
         entity = self.get_entity(entity_id)
         if entity is None:
             return None
@@ -1308,6 +1402,8 @@ class KnowledgeGraph:
         for edge in hop1_edges:
             if used_tokens + _TOK_EDGE > token_budget:
                 break
+            if not _keep_edge(edge):
+                continue
             edges_to_include.append(edge)
             used_tokens += _TOK_EDGE
             other = edge.to_entity if edge.from_entity == entity_id else edge.from_entity
@@ -1338,6 +1434,8 @@ class KnowledgeGraph:
                 for edge in h2_edges:
                     if used_tokens + _TOK_EDGE > token_budget:
                         break
+                    if not _keep_edge(edge):
+                        continue
                     other = edge.to_entity if edge.from_entity == h1_id else edge.from_entity
                     if other in seen_ids:
                         continue
@@ -1648,11 +1746,14 @@ class KnowledgeGraph:
 
     def _community_context_for_entity(self, entity_id: str) -> str | None:
         """Return the community summary for the entity's community, if any."""
+        # Use community_members junction table (O(1) index lookup) instead of LIKE scan.
         rows = self._conn.execute(
-            "SELECT theme, summary FROM community_summaries"
-            " WHERE entity_ids LIKE ?"
-            " ORDER BY generated_at DESC LIMIT 1",
-            (f'%"{entity_id}"%',),
+            """SELECT cs.theme, cs.summary
+               FROM community_members cm
+               JOIN community_summaries cs ON cs.community_id = cm.community_id
+               WHERE cm.entity_id = ?
+               ORDER BY cs.generated_at DESC LIMIT 1""",
+            (entity_id,),
         ).fetchall()
         if not rows:
             return None
@@ -1775,8 +1876,9 @@ class KnowledgeGraph:
                     """INSERT INTO entities
                        (id, name, type, domain, domains, summary, detail, current_state,
                         confidence, last_validated, staleness_ttl_days, validation_method,
-                        source, source_episode_id, created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        source, source_type, lifecycle_stage, excerpt_hash,
+                        source_episode_id, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         eid,
                         entity.get("name", eid),
@@ -1791,6 +1893,9 @@ class KnowledgeGraph:
                         int(entity.get("staleness_ttl_days", 90)),
                         entity.get("validation_method"),
                         source,
+                        entity.get("source_type") or "",
+                        entity.get("lifecycle_stage") or "unknown",
+                        entity.get("excerpt_hash"),
                         source_episode_id,
                         now,
                         now,
@@ -1842,6 +1947,7 @@ class KnowledgeGraph:
                        name=?, type=?, domain=?, domains=?, summary=?, detail=?,
                        current_state=?, confidence=?, last_validated=?,
                        staleness_ttl_days=?, validation_method=?, source=?,
+                       source_type=?, lifecycle_stage=?, excerpt_hash=?,
                        source_episode_id=?, updated_at=?
                        WHERE id=?""",
                     (
@@ -1850,6 +1956,9 @@ class KnowledgeGraph:
                         new_vals["current_state"], new_vals["confidence"],
                         new_vals["last_validated"], new_vals["staleness_ttl_days"],
                         new_vals["validation_method"], source,
+                        entity.get("source_type") or e.get("source_type") or "",
+                        entity.get("lifecycle_stage") or e.get("lifecycle_stage") or "unknown",
+                        entity.get("excerpt_hash") or e.get("excerpt_hash"),
                         source_episode_id, now, eid,
                     ),
                 )
@@ -2173,11 +2282,36 @@ class KnowledgeGraph:
             "last_updated":           last_updated,
         }
 
-    def rebuild_communities(self) -> int:
-        """Re-cluster entities via connected components (Union-Find).
+    def god_nodes(self, degree_threshold: int = 10, limit: int = 20) -> list[dict]:
+        """Return high-degree (hub) entities that may be over-connected. §8.3
 
-        Regenerates community_summaries entries with entity membership + placeholder
-        summaries. Returns number of communities found.
+        Returns entities linked to >= *degree_threshold* active relationships.
+        Useful for identifying god-nodes that should be split or filtered from
+        context windows to avoid token budget bloat.
+        """
+        rows = self._conn.execute(
+            """SELECT e.id, e.name, e.type, e.domain, e.confidence,
+                      COUNT(r.id) AS degree
+               FROM entities e
+               JOIN relationships r
+                 ON (r.from_entity = e.id OR r.to_entity = e.id)
+                AND r.valid_to IS NULL
+               WHERE (e.lifecycle_stage NOT IN ('cancelled', 'archived', 'superseded')
+                      OR e.lifecycle_stage IS NULL)
+               GROUP BY e.id
+               HAVING degree >= ?
+               ORDER BY degree DESC
+               LIMIT ?""",
+            (degree_threshold, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def rebuild_communities(self) -> int:
+        """Re-cluster entities via Leiden algorithm (graspologic) with Union-Find fallback.
+
+        Leiden produces higher-quality communities by optimising modularity globally.
+        Falls back to connected-components (Union-Find) when graspologic is not installed.
+        Returns number of non-singleton communities written to community_summaries.
         Full LLM-generated narrative summaries are a v1.1 feature.
         """
         # Fetch all entities and active edges
@@ -2186,38 +2320,67 @@ class KnowledgeGraph:
             "SELECT from_entity, to_entity FROM relationships WHERE valid_to IS NULL"
         ).fetchall()
 
-        # Union-Find
-        parent: dict[str, str] = {row["id"]: row["id"] for row in entity_rows}
         entity_info: dict[str, dict] = {
             row["id"]: {"name": row["name"], "domain": row["domain"]}
             for row in entity_rows
         }
+        entity_ids: list[str] = [row["id"] for row in entity_rows]
 
-        def find(x: str) -> str:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]  # path compression
-                x = parent[x]
-            return x
-
-        def union(x: str, y: str) -> None:
-            rx, ry = find(x), find(y)
-            if rx != ry:
-                parent[rx] = ry
-
-        for row in edge_rows:
-            fe, te = row["from_entity"], row["to_entity"]
-            if fe in parent and te in parent:
-                union(fe, te)
-
-        # Group by community root
+        # ── Leiden clustering (graspologic optional) ──────────────────────────
         communities: dict[str, list[str]] = {}
-        for eid in parent:
-            root = find(eid)
-            communities.setdefault(root, []).append(eid)
+        _leiden_used = False
+        if len(entity_ids) >= 2 and edge_rows:
+            try:
+                import networkx as nx  # graspologic depends on networkx
+                from graspologic.partition import hierarchical_leiden
+
+                G = nx.Graph()
+                G.add_nodes_from(entity_ids)
+                for row in edge_rows:
+                    fe, te = row["from_entity"], row["to_entity"]
+                    if fe in entity_info and te in entity_info:
+                        G.add_edge(fe, te)
+
+                # hierarchical_leiden returns list of PartitionedGraph objects;
+                # the last level gives finest-grain communities.
+                partition_levels = hierarchical_leiden(G, max_cluster_size=max(10, len(entity_ids) // 10))
+                # Use the final (finest) partition level
+                final_partition = partition_levels[-1] if partition_levels else None
+                if final_partition is not None:
+                    for node, community_id in final_partition.final_level_hierarchical_community_id.items():
+                        communities.setdefault(str(community_id), []).append(node)
+                    _leiden_used = True
+            except Exception:
+                communities = {}  # fall through to Union-Find
+
+        # ── Union-Find fallback (connected components) ────────────────────────
+        if not _leiden_used:
+            parent: dict[str, str] = {eid: eid for eid in entity_ids}
+
+            def find(x: str) -> str:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]  # path compression
+                    x = parent[x]
+                return x
+
+            def union(x: str, y: str) -> None:
+                rx, ry = find(x), find(y)
+                if rx != ry:
+                    parent[rx] = ry
+
+            for row in edge_rows:
+                fe, te = row["from_entity"], row["to_entity"]
+                if fe in parent and te in parent:
+                    union(fe, te)
+
+            for eid in parent:
+                root = find(eid)
+                communities.setdefault(root, []).append(eid)
 
         now = _now_utc()
         self._conn.execute("BEGIN IMMEDIATE")
         try:
+            self._conn.execute("DELETE FROM community_members")
             self._conn.execute("DELETE FROM community_summaries")
             num = 0
             for i, (root, members) in enumerate(communities.items()):
@@ -2239,6 +2402,12 @@ class KnowledgeGraph:
                        VALUES (?,?,?,?,?)""",
                     (community_id, json.dumps(members), theme, summary, now),
                 )
+                for member_id in members:
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO community_members"
+                        " (community_id, entity_id) VALUES (?,?)",
+                        (community_id, member_id),
+                    )
                 num += 1
             self._conn.execute("COMMIT")
         except Exception:
@@ -2511,24 +2680,35 @@ class KnowledgeEnricher:
             return dict(context) if isinstance(context, dict) else {}
 
     def _format_context_block(self, ctx: EntityContext) -> str:
+        """Compact graph-markdown notation (§4.11a).
+
+        Each entity renders on one line:
+          - **<name>** [<type>|<lifecycle_stage>|<confidence:.2f>] → <rel_type>: <target>; ...
+        This achieves ~3× token density vs. the previous prose format.
+        """
         if ctx.entity is None:
             return ""
         e = ctx.entity
-        lines: list[str] = [f"### {e.name}"]
-        if e.current_state:
-            lines.append(f"**State:** {e.current_state}")
-        if e.summary:
-            lines.append(e.summary)
-        if ctx.edges:
-            edge_lines = []
-            for edge in ctx.edges[:5]:
-                other = edge.to_entity if edge.from_entity == e.id else edge.from_entity
-                edge_lines.append(f"  - {edge.rel_type} → {other}")
-            lines.append("**Key relationships:**\n" + "\n".join(edge_lines))
+        # Build relationship tail: "→ rel_type: target_name; ..."
+        rel_parts: list[str] = []
+        for edge in ctx.edges[:5]:
+            other_id = edge.to_entity if edge.from_entity == e.id else edge.from_entity
+            other_ent = self.get_entity(other_id)
+            other_name = other_ent.name if other_ent else other_id
+            rel_parts.append(f"{edge.rel_type}: {other_name}")
+        rel_tail = " → " + "; ".join(rel_parts) if rel_parts else ""
+        lc = e.lifecycle_stage or "unknown"
+        conf = f"{e.confidence:.2f}" if e.confidence is not None else "?"
+        line = f"- **{e.name}** [{e.type or 'entity'}|{lc}|{conf}]{rel_tail}"
+        extras: list[str] = []
         if ctx.gaps:
-            gap_names = [g.name for g in ctx.gaps[:3]]
-            lines.append(f"**Open gaps:** {', '.join(gap_names)}")
+            extras.append(f"gaps: {', '.join(g.name for g in ctx.gaps[:3])}")
         if ctx.decisions:
             d = ctx.decisions[0]
-            lines.append(f"**Latest decision:** {d.get('title', '')} ({d.get('decision_date', '')})")
-        return "\n".join(lines)
+            extras.append(f"last-decision: {d.get('title', '')}")
+        if e.current_state:
+            extras.append(f"state: {e.current_state}")
+        if extras:
+            line += "  (" + "; ".join(extras) + ")"
+        return line
+

@@ -292,7 +292,7 @@ class TestContextFor:
             source="test",
         )
         ctx_small = kg.context_for("root", token_budget=200)
-        ctx_large = kg.context_for("root", token_budget=8000)
+        ctx_large = kg.context_for("root", token_budget=2000)  # max allowed (>2000 raises ValueError)
         kg.close()
         # Both should return (not error), large may have more content
         assert ctx_small is not None

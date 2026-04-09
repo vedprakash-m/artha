@@ -25,8 +25,10 @@ Ref: specs/kb-graph-design.md §7
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -98,10 +100,113 @@ _DOMAIN_BY_PREFIX = {
 # Max entities extracted per file (guard against huge files)
 _MAX_ENTITIES_PER_FILE = 100
 
+# SHA-256 hash cache path (local machine only — not OneDrive)
+_HASH_CACHE_PATH = (
+    (Path(os.environ.get("LOCALAPPDATA", "")) / "Artha" / "state" / "kb_hash_cache.json")
+    if sys.platform == "win32"
+    else (Path.home() / ".artha-local" / "state" / "kb_hash_cache.json")
+)
+
 
 # ---------------------------------------------------------------------------
-# Heuristic extraction
+# Source-type classification (spec §4.7)
 # ---------------------------------------------------------------------------
+
+def _determine_source_type(file_path: Path, artha_dir: Path) -> str:
+    """Return the source_type tier for *file_path* relative to *artha_dir*."""
+    try:
+        rel = file_path.resolve().relative_to(artha_dir.resolve())
+    except ValueError:
+        return "kb_file"
+    parts = rel.parts
+    if not parts:
+        return "kb_file"
+    if parts[0] == "state":
+        if len(parts) > 1 and parts[1] == "connectors":
+            sub = parts[2].lower() if len(parts) > 2 else ""
+            if "sharepoint" in sub:
+                return "sharepoint"
+            if "inbox" in sub:
+                return "inbox"
+            if "ado" in sub:
+                return "ado_sync"
+            if "meeting" in sub:
+                return "meeting"
+        return "state_md"
+    if parts[0] == "knowledge":
+        return "kb_file"
+    return "kb_file"
+
+
+# ---------------------------------------------------------------------------
+# SHA-256 hash cache helpers (incremental bootstrap)
+# ---------------------------------------------------------------------------
+
+def _load_hash_cache() -> dict[str, str]:
+    """Load {abs_path: sha256hex} cache from disk."""
+    try:
+        return json.loads(_HASH_CACHE_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_hash_cache(cache: dict[str, str]) -> None:
+    """Persist hash cache atomically."""
+    try:
+        _HASH_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _HASH_CACHE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        tmp.replace(_HASH_CACHE_PATH)
+    except OSError as exc:
+        _log.warning("Could not save hash cache: %s", exc)
+
+
+def _file_sha256(path: Path) -> str:
+    """Return hex SHA-256 of *path*."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Ghost entity removal (negative sync)
+# ---------------------------------------------------------------------------
+
+def _negative_sync(kg: "KnowledgeGraph", seen_ids: set[str]) -> int:  # noqa: F821
+    """Archive KB/state_md entities whose source no longer exists.
+
+    Only run during ``--force`` rebuild to avoid accidentally archiving
+    entities that haven't been processed yet in the current run.
+    Returns count of archived entities.
+    """
+    try:
+        all_rows = kg._conn.execute(
+            "SELECT id FROM entities"
+            " WHERE (source_type IN ('kb_file', 'state_md') OR source_type IS NULL)"
+            " AND (lifecycle_stage NOT IN ('cancelled', 'archived', 'superseded')"
+            "      OR lifecycle_stage IS NULL)"
+        ).fetchall()
+    except Exception as exc:
+        _log.warning("_negative_sync: query failed: %s", exc)
+        return 0
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    archived = 0
+    for row in all_rows:
+        eid = row["id"]
+        if eid not in seen_ids:
+            try:
+                kg._conn.execute(
+                    "UPDATE entities SET lifecycle_stage='archived', updated_at=? WHERE id=?",
+                    (now, eid),
+                )
+                archived += 1
+            except Exception:
+                pass
+    if archived:
+        try:
+            kg._conn.execute("COMMIT")
+        except Exception:
+            pass
+    return archived
 
 class FileExtractor:
     """Extract entities and relationships from a KB markdown file."""
@@ -1392,6 +1497,7 @@ def bootstrap(
     files: list[Path] | None = None,
     dry_run: bool = False,
     verbose: bool = False,
+    force: bool = False,
 ) -> dict:
     """Run KB bootstrap from knowledge/ markdown files.
 
@@ -1399,7 +1505,28 @@ def bootstrap(
     """
     base     = artha_dir or _ARTHA
     kb_dir   = _KNOWLEDGE_DIR
-    files    = files or sorted(kb_dir.glob("*.md"))
+
+    if files is None:
+        # Collect all markdown files across all v2.0 scan paths (§4.13 stub contract)
+        scan_dirs = [
+            kb_dir,
+            kb_dir / "work-scrape",
+            base / "state" / "work",
+            base / "state" / "connectors" / "sharepoint_notes",
+            base / "state" / "connectors" / "inbox_notes",
+            base / "state" / "connectors" / "ado_notes",
+            base / "state" / "connectors" / "meeting_notes",
+        ]
+        _seen_paths: set[Path] = set()
+        files = []
+        for d in scan_dirs:
+            if d.is_dir():
+                for p in sorted(d.glob("*.md")):
+                    if p not in _seen_paths:
+                        _seen_paths.add(p)
+                        files.append(p)
+    else:
+        files = list(files)
 
     if verbose:
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -1411,22 +1538,43 @@ def bootstrap(
     else:
         kg = KnowledgeGraph(artha_dir=base)
 
+    # Load SHA-256 hash cache (skip unchanged files unless --force)
+    hash_cache: dict[str, str] = {} if (dry_run or force) else _load_hash_cache()
+    new_cache: dict[str, str] = dict(hash_cache)
+
     stats = {
         "files_processed": 0,
+        "files_skipped": 0,
         "entities_upserted": 0,
         "relationships_added": 0,
         "episodes_created": 0,
         "errors": [],
     }
 
+    seen_entity_ids: set[str] = set()
+
     for md_file in files:
         if not md_file.is_file() or md_file.suffix.lower() != ".md":
             continue
-        domain     = _infer_domain(md_file.stem)
-        now_iso    = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        # Incremental skip: unchanged files (unless --force)
+        abs_key = str(md_file.resolve())
+        if not force:
+            try:
+                current_hash = _file_sha256(md_file)
+                if hash_cache.get(abs_key) == current_hash:
+                    stats["files_skipped"] += 1
+                    continue
+                new_cache[abs_key] = current_hash
+            except OSError:
+                pass  # process anyway if we can't hash
+
+        domain      = _infer_domain(md_file.stem)
+        source_type = _determine_source_type(md_file, base)
+        now_iso     = datetime.now(timezone.utc).isoformat(timespec="seconds")
         episode_key = f"kb-bootstrap-{md_file.stem}-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
-        _log.info("Processing: %s (domain=%s)", md_file.name, domain)
+        _log.info("Processing: %s (domain=%s, source_type=%s)", md_file.name, domain, source_type)
 
         try:
             extractor = FileExtractor(md_file, domain, episode_key)
@@ -1452,6 +1600,8 @@ def bootstrap(
 
             # Upsert entities
             for entity in extractor.entities:
+                entity.setdefault("source_type", source_type)
+                seen_entity_ids.add(entity.get("id", ""))
                 kg.upsert_entity(
                     entity,
                     source=f"kb_file:{md_file.name}",
@@ -1484,6 +1634,16 @@ def bootstrap(
             stats["errors"].append(err_msg)
 
     if not dry_run and kg is not None:
+        # Negative sync: archive ghost entities (only during --force)
+        if force:
+            try:
+                archived = _negative_sync(kg, seen_entity_ids)
+                stats["entities_archived"] = archived
+                if archived:
+                    _log.info("Negative sync: archived %d ghost entities", archived)
+            except Exception as exc:
+                _log.warning("Negative sync failed: %s", exc)
+
         # Rebuild communities after all entities are loaded
         try:
             num_communities = kg.rebuild_communities()
@@ -1493,6 +1653,10 @@ def bootstrap(
             _log.warning("Community rebuild failed: %s", exc)
 
         kg.close()
+
+    # Persist updated hash cache
+    if not dry_run and new_cache != hash_cache:
+        _save_hash_cache(new_cache)
 
     return stats
 
@@ -1600,6 +1764,7 @@ def bootstrap_structured(
                     "name": row.get("name", entity_id),
                     "type": row.get("type", "concept"),
                     "domain": row.get("domain", "work"),
+                    "source_type": "state_md",
                 }
                 summary_parts = []
                 for k in ("summary", "question", "purpose", "rationale", "role",
@@ -1878,6 +2043,10 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show current KB stats and exit",
     )
     p.add_argument(
+        "--force", action="store_true",
+        help="Reprocess all files (bypass SHA-256 hash cache) and run negative sync",
+    )
+    p.add_argument(
         "--artha-dir", metavar="PATH",
         help="Override Artha root directory (default: auto-detected)",
     )
@@ -1932,6 +2101,7 @@ def main() -> None:
         files=files,
         dry_run=args.dry_run,
         verbose=args.verbose,
+        force=args.force,
     )
 
     # Print summary
