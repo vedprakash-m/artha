@@ -49,7 +49,12 @@ jobs:
 
       - name: Run Work OS tests
         run: |
-          python -m pytest tests/work/ -v --timeout=30 --tb=short
+          if [ -d tests/work ]; then
+            python -m pytest tests/work/ -v --timeout=30 --tb=short
+          else
+            echo "tests/work/ not present in this environment."
+            echo "Work OS tests are gitignored (contain employer-specific content) and only run locally."
+          fi
         env:
           PYTHONPATH: ${{ github.workspace }}
 

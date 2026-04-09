@@ -1,3 +1,7 @@
+# pii-guard: ignore-file
+# Reason: synthetic PII fixtures (fake SSN "123-45-6789") in mock return values
+# verify that msgraph_sharepoint rejects PII-containing content. Fabricated test
+# data only — no real personal information.
 """tests/unit/test_msgraph_sharepoint.py
 
 Unit tests for scripts/connectors/msgraph_sharepoint.py

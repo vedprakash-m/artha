@@ -1,3 +1,7 @@
+# pii-guard: ignore-file
+# Reason: synthetic PII fixture ("SSN: 123-45-6789") tests that inbox_processor
+# correctly detects and quarantines PII-containing documents. Fabricated test
+# data only — no real personal information.
 """tests/unit/test_inbox_processor.py
 
 Unit tests for scripts/lib/inbox_processor.py
