@@ -455,6 +455,48 @@ def send_nudge(nudge: NudgeItem, channels_config: dict, artha_dir: Path) -> bool
 
 
 # ---------------------------------------------------------------------------
+# Bridge nudge queue (spec §P1.4 — nudge_daemon.py)
+# ---------------------------------------------------------------------------
+
+def _append_bridge_nudge(artha_dir: Path, nudge: NudgeItem) -> None:
+    """Append an urgency≥3 nudge to tmp/bridge_nudge_queue.yaml.
+
+    export_bridge_context.py reads this queue and sends `announce` envelopes
+    to OpenClaw via the M2M bridge.  The queue is capped at 3 entries to
+    match _MAX_NUDGES_PER_DAY.  Failures are silently swallowed — never raise.
+    """
+    queue_file = artha_dir / "tmp" / "bridge_nudge_queue.yaml"
+    try:
+        entries: list[dict] = []
+        if queue_file.exists():
+            raw = queue_file.read_text(encoding="utf-8")
+            loaded = yaml.safe_load(raw)
+            if isinstance(loaded, list):
+                entries = loaded
+
+        if len(entries) >= _MAX_NUDGES_PER_DAY:
+            return  # Queue full — drop silently
+
+        new_entry = {
+            "nudge_type": nudge.nudge_type,
+            "domain": nudge.domain,
+            "urgency": nudge.urgency,
+            "triggered_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        entries.append(new_entry)
+
+        queue_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(queue_file, "w", encoding="utf-8") as fh:
+            if fcntl is not None:
+                fcntl.flock(fh, fcntl.LOCK_EX)
+            yaml.dump(entries, fh, default_flow_style=False)
+            if fcntl is not None:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+    except Exception:  # noqa: BLE001
+        pass  # Nudge daemon must never crash
+
+
+# ---------------------------------------------------------------------------
 # Main check loop
 # ---------------------------------------------------------------------------
 
@@ -513,6 +555,8 @@ def run_check_once(artha_dir: Path) -> int:
         if sent:
             _mark_sent(nudge.nudge_type, nudge.domain, tmp_dir)
             _audit_log(artha_dir, f"{nudge.nudge_type} domain={nudge.domain}")
+            if nudge.urgency >= 3:
+                _append_bridge_nudge(artha_dir, nudge)
 
     return 0
 

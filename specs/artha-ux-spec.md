@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.14 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.15 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.13.0, Tech Spec v3.28.0
+> **Implements**: PRD v7.14.0, Tech Spec v3.29.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.15 | 2026-04-09 | OpenClaw Home Bridge UX — §27: Home Events briefing section, WhatsApp approval workflow in Telegram, bridge health in `/status` output, kid-arrival presence notification, TTS announcement patterns. Implements PRD v7.14.0 + Tech Spec v3.29.0. |
 | v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
 | v3.12 | 2026-04-07 | SPEC CONSOLIDATION — Implements PRD v7.11.0 + Tech Spec v3.26.0. §3.2: 4 new domains added (Readiness, Logistics, Tribe, Capital) to domain presentation order (15→19). NEW §26: New Domain UX — interaction design patterns for all 4 new domains (Readiness daily score + energy flags, Logistics warranty/renewal alerts + shopping deeplinks, Tribe reconnect radar + outreach staging, Capital cash flow projection + amount-confirm gate). |
 Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
@@ -2279,8 +2280,6 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 
 ---
 
-*Artha UX Spec v3.12 — End of Document*
-
 *"The best interface is the one you forget you're using. Artha speaks when it matters, is silent when it doesn't, and always tells you where you stand — in under 3 minutes."*
 
 ---
@@ -3127,3 +3126,132 @@ When the deterministic validator rejects an action, the UX message is determinis
 | Friction floor (no current-session approval) | *"Action blocked: high-friction actions require explicit approval each session. Please review and confirm."* |
 
 **Rule:** Never include the rejected payload content in the error message. Never ask the LLM to fix a validation failure — the action must be re-proposed from scratch.
+
+---
+
+## 27. OpenClaw Home Bridge — Interaction Design *(v3.15)*
+
+The OpenClaw bridge produces three surfaces in the Artha UX: home events appearing in the catch-up briefing, WhatsApp draft approval in Telegram, and bridge health in `/status` output. All three surfaces follow Artha's core UX invariants: brief, actionable, and dismissable.
+
+### 27.1 Home Events in the Catch-Up Briefing
+
+When `state/home_events.md` contains unacknowledged events, they are surfaced as a `## 🏠 Home Events` section in the standard catch-up output, slotted after the `## 🔔 Alerts` block and before `## 📋 Open Items`:
+
+```
+## 🏠 Home Events
+
+▸ [Yesterday 6:42 PM] Arjun arrived home — presence confirmed by HA
+▸ [Yesterday 8:14 PM] Energy anomaly: HVAC drawing +40% above baseline
+  > Dismiss | Investigate
+
+No further home events in 24-hour window.
+```
+
+**UX rules:**
+- Home events are suppressed from briefing if `state/home_events.md` is empty or all events are >48h old
+- Each event shows relative time and source device/zone when available
+- `energy_event` entries always include the delta from baseline
+- Presence events show the `person` field if present in the OC envelope
+- Events are not auto-dismissed — user explicitly dismisses or they age out at 48h
+- Section is never shown if the bridge is disabled (`enabled: false` in `config/claw_bridge.yaml`)
+
+### 27.2 Kid-Arrival Notification Pattern
+
+When a `presence_detected` event fired while the user was away (e.g., during work), the event is promoted to the `## 🔔 Alerts` block rather than `## 🏠 Home Events`:
+
+```
+🟢 Arjun home since 3:17 PM — school day complete
+   > Dismiss
+```
+
+**UX rules:**
+- Promotion occurs when `person` field matches a configured kid name AND event time is within school-day window (configurable in `config/claw_bridge.yaml`)
+- Alert is green (informational), never amber/red
+- No action proposals are generated from presence events — information only
+- Dismissed automatically after user reads next non-promoted briefing
+
+### 27.3 WhatsApp Approval Workflow — Telegram Surface
+
+WhatsApp drafts created by Artha (`whatsapp_draft` command) are surfaced for human approval in the OpenClaw Telegram bot UI before wacli delivery. Artha's role ends at draft creation; the approval UX lives in OC's Telegram interface, not in Artha's chat surface.
+
+Artha-side representation (in briefing, if draft is pending >6h without action on OC side):
+
+```
+⏳ WhatsApp draft pending approval in OpenClaw
+   To: [Family Group]   Created: 6h 12m ago
+   Preview: "Flight confirmed — arrives Terminal 2, 4:15 PM..."
+   > Resend reminder | Cancel draft
+```
+
+**UX rules:**
+- Artha never sends WhatsApp directly — all delivery is through OC's wacli approval gate
+- `To:` field always displays a descriptive label (never a phone number)
+- Draft preview is truncated to 80 chars in briefing; full text available on OC side
+- If draft is cancelled by Artha (`Cancel draft`), OC is notified via `whatsapp_draft` with `action: cancel`
+- If >24h passes without OC action, draft is auto-expired and surfaced as a stale-draft alert
+
+### 27.4 Bridge Health in `/status` Output
+
+`/status` (or `status` in VS Code agent mode) includes a `Bridge` section when the OpenClaw bridge is enabled:
+
+```
+## Bridge
+
+OpenClaw Home Bridge    ✅ healthy
+  Last push:   14m ago          Last pong:  8m ago
+  Clock drift: 0.4s             DLQ depth:  0
+  Key version: v1               Messages:   ↑23 ↓11 (24h)
+```
+
+**Warning state** (any threshold exceeded):
+
+```
+OpenClaw Home Bridge    ⚠️ degraded
+  Last push:   26h ago  ⚠️ >24h threshold
+  Last pong:   3m ago
+  Clock drift: 0.2s
+  > Check bridge | Dismiss warning
+```
+
+**Critical / offline state**:
+
+```
+OpenClaw Home Bridge    🔴 offline
+  Last push:   52h ago  🔴 >48h threshold
+  Last pong:   unknown
+  > Re-enable bridge | View logs
+```
+
+**UX rules:**
+- Bridge section is suppressed from `/status` if `enabled: false` in `config/claw_bridge.yaml`
+- Staleness warnings do not block or delay the main briefing
+- `Check bridge` opens a brief diagnostic rundown (last error, retry count, DLQ contents summary)
+- DLQ depth warning always includes `> Flush DLQ | Inspect items` inline options
+
+### 27.5 TTS Announcement Confirmation
+
+When Artha queues a TTS announcement via the `announce` command, the briefing includes a confirmation line:
+
+```
+📢 Announced via home TTS: "Raj, 3 P1 items and a dentist appointment today."
+   Delivered 8:07 AM — presence confirmed
+```
+
+If announcement delivery failed (OC pong timed out before push):
+
+```
+📢 TTS announcement queued but not confirmed:
+   "Raj, 3 P1 items and a dentist appointment today."
+   Reason: No presence detected — sent to DLQ for retry
+   > Cancel announcement | Retry now
+```
+
+**UX rules:**
+- Announcement confirms are shown in briefing on the NEXT catch-up after delivery (not blocking)
+- Failed announcements surface immediately as a non-blocking alert
+- Text of announced content is shown verbatim (≤200 chars) — no summarization
+- Artha never announces if bridge is disabled or last pong is >2h old (condition checked before `announce` command fires)
+
+---
+
+*Artha UX Spec v3.15 — End of Document*

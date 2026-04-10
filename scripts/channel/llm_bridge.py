@@ -397,37 +397,42 @@ def _gather_context(domains: list[str], max_chars: int = _LLM_MAX_CONTEXT_CHARS)
 def _detect_llm_cli() -> tuple[str, list[str]] | None:
     """Detect available LLM CLI. Returns (executable, base_args) or None.
 
-    Preference order: claude (sonnet), gemini (flash), copilot (sonnet).
+    Preference order: copilot (sonnet-4-6), gemini (3.1-flash), claude (sonnet-4-6).
     """
-    # Claude Code — fastest, cleanest output
-    claude = shutil.which("claude")
-    if claude:
-        return claude, ["--dangerously-skip-permissions", "--model", "sonnet"]
-    # Gemini CLI — free, good quality
-    gemini = shutil.which("gemini")
-    if gemini:
-        return gemini, ["--yolo"]
-    # Copilot CLI — slowest, noisy output
+    # Copilot CLI — primary
     copilot = shutil.which("copilot")
     if copilot:
-        return copilot, ["--yolo", "-s", "--model", "claude-sonnet-4"]
+        return copilot, ["--yolo", "--model", "claude-sonnet-4-6"]
+    # Gemini CLI — first fallback
+    gemini = shutil.which("gemini")
+    if gemini:
+        return gemini, ["--yolo", "--model", "gemini-3.1-flash"]
+    # Claude — last resort
+    claude = shutil.which("claude")
+    if claude:
+        return claude, ["--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]
     return None
 
 
 # ── _detect_all_llm_clis ────────────────────────────────────────
 
 def _detect_all_llm_clis() -> list[tuple[str, str, list[str]]]:
-    """Return all available CLIs as (name, executable, base_args)."""
+    """Return all available CLIs as (name, executable, base_args).
+
+    Preference order: copilot (default model), gemini (2.5-pro), claude (sonnet-4-6).
+    """
     clis: list[tuple[str, str, list[str]]] = []
-    claude = shutil.which("claude")
-    if claude:
-        clis.append(("claude", claude, ["--dangerously-skip-permissions", "--model", "sonnet"]))
-    gemini = shutil.which("gemini")
-    if gemini:
-        clis.append(("gemini", gemini, ["--yolo"]))
     copilot = shutil.which("copilot")
     if copilot:
-        clis.append(("copilot", copilot, ["--yolo", "-s", "--model", "claude-sonnet-4"]))
+        # Do NOT pass --model: GitHub Copilot CLI uses its own model identifiers
+        # and "claude-sonnet-4-6" is not a valid name in that namespace.
+        clis.append(("copilot", copilot, ["--yolo"]))
+    gemini = shutil.which("gemini")
+    if gemini:
+        clis.append(("gemini", gemini, ["--yolo", "--model", "gemini-2.5-pro"]))
+    claude = shutil.which("claude")
+    if claude:
+        clis.append(("claude", claude, ["--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]))
     return clis
 
 
@@ -443,7 +448,7 @@ def _vault_relock_if_needed() -> None:
             log.warning("[vault] decrypted file found: %s — re-encrypting", plain.name)
             try:
                 _sp.run(
-                    [sys.executable, str(_ARTHA_DIR / "scripts" / "vault.py"), "encrypt"],
+                    [_sys.executable, str(_ARTHA_DIR / "scripts" / "vault.py"), "encrypt"],
                     cwd=str(_ARTHA_DIR),
                     timeout=30,
                     capture_output=True,
@@ -482,9 +487,9 @@ async def _call_single_llm(
             args_str = " ".join(base_args)
             shell_cmd = f'type "{prompt_file}" | "{executable}" -p "{instruction}" {args_str}'
         elif name == "copilot":
-            # Copilot reads files via --add-dir + tool use
+            # Copilot reads files via --add-dir + tool use; pass full path
             args_str = " ".join(base_args)
-            shell_cmd = f'"{executable}" -p "Read prompt.txt and {instruction}" {args_str} --add-dir "{tmpdir}"'
+            shell_cmd = f'"{executable}" -p "Read the file {prompt_file} and {instruction}" {args_str} --add-dir "{tmpdir}"'
         else:
             # Claude reads stdin — runs from workspace to access skills/CLAUDE.md
             args_str = " ".join(base_args)
@@ -513,6 +518,10 @@ async def _call_single_llm(
             if not result:
                 err = stderr.decode("utf-8", errors="replace").strip()
                 log.warning("[%s] stdout empty, stderr: %s", name, err[:200])
+                return ""
+            if proc.returncode != 0:
+                err = stderr.decode("utf-8", errors="replace").strip()
+                log.warning("[%s] exited with code %d (stderr: %s) — treating as failure", name, proc.returncode, err[:200])
                 return ""
             return result
         except asyncio.TimeoutError:

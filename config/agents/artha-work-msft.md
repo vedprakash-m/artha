@@ -23,6 +23,12 @@ mcp-servers:
     command: agency
     args: ["mcp", "bluebird"]
     tools: ["*"]
+  sharepoint:
+    type: local
+    command: python
+    args: ["scripts/mcp_sharepoint_server.py"]
+    description: "Work documents via local OneDrive for Business sync folder (no auth)"
+    tools: ["list_recent_documents", "search_documents", "read_document"]
   # ado and icm: uncomment when available (agency mcp list)
   # ado:
   #   type: local
@@ -40,6 +46,7 @@ tools:
   - bash
   - workiq/*
   - bluebird/*
+  - sharepoint/*
 applyTo: "**"
 artifact_spec:
   required_sections:

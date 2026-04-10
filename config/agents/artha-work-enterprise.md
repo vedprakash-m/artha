@@ -12,7 +12,13 @@ audience: Corporate M365 user with Azure DevOps
 autonomy: L1
 max_autonomy_level: 1
 max_context_bytes: 32768
-mcp-servers: {}
+mcp-servers:
+  sharepoint:
+    type: local
+    command: python
+    args: ["scripts/mcp_sharepoint_server.py"]
+    description: "Work documents via local OneDrive for Business sync folder (no auth)"
+    tools: ["list_recent_documents", "search_documents", "read_document"]
   # ado: uncomment when available (agency mcp list)
   # ado:
   #   type: local
@@ -23,6 +29,7 @@ tools:
   - read
   - search
   - bash
+  - sharepoint/*
 applyTo: "**"
 artifact_spec:
   required_sections:

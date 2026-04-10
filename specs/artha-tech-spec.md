@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.28.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.29.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.13.0
+> **Implements**: PRD v7.14.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.29.0 | 2026-04-09 | **OpenClaw Home Bridge (§29)**: 3-layer M2M transport (REST LAN / Telegram / file-buffer), HMAC-SHA256 security model, 4-command outbound + 4-event inbound contract, 7 new components, `bridge_health` observability block. Incorporated from `claw-bridge.md` v1.7.0 (archived). 61 bridge tests passing. Implements PRD v7.14.0. |
 | v3.28.0 | 2026-04-08 | **Knowledge Graph v2.0 (§22)**: Second Brain Architecture. Five ingestion paths (knowledge/*.md, inbox/, SharePoint, state/work/*.md, ADO), eight governing principles, entity lifecycle stages, SQLite schema v4 (lifecycle_stage, excerpt_hash, change_source_ref, episodes table), source taxonomy with confidence contract, Leiden community clustering + Union-Find fallback, ghost entity detection & excerpt-hash staleness, 7 MCP tools surface, markdown stub contract, 950-token context budget (was 4,000). Implements PRD v7.13.0. |
 | v3.27.0 | 2026-04-08 | EAR-3 SHIPPED: `scripts/agents/` with 4 domain agents (capital, logistics, readiness, tribe). `config/agents/schedules.yaml` cron registry (≤8 agent slots, §27 R13). `config/state_registry.yaml` state-file registry (§3.5 A2). 4 domain-specific guardrails added to §8 (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Anti-golden routing test suite added. Spec compaction: §5.1 briefing example, §8.7 safe_cli.sh, §11.1 setup.sh, §12.1 registry — all replaced with pointers to canonical files. |
 | v3.26.0 | 2026-04-07 | SPEC CONSOLIDATION: Distilled 10 non-core spec files into core specs (§21–§28). §21.6–21.8 eval dimensions/scoring/SLAs from `eval.md`. §22.6–22.8 full entity model, API, performance targets from `kb-graph-design.md`. §23.6 AR-9 GA promotion from `ar9-completion-report.md`. §24.4–24.5 cross-reference rules and domain weight overrides from `data-quality-gate.md`. §25.11–25.14 baseline patterns, anti-patterns, context budgets, governance from `agent-fw.md`. NEW §27 EAR v2.0 Multi-Agent Composition (EAR-1–EAR-12) from `ext-agent-reloaded.md`. NEW §28 KB Population Strategy from `kb-population-plan.md`. Implements PRD v7.11.0. Originals archived to `.archive/specs/`. |
@@ -5238,7 +5239,131 @@ The Knowledge Base population strategy defines a 7-phase approach for bootstrapp
 
 ---
 
-*Artha Tech Spec v3.26.0 — End of Document*
+## 29. OpenClaw Home Bridge *(v1.7.0)*
+
+> **Source spec archived at:** `.archive/specs/claw-bridge.md`
+> **Implementation status:** All phases complete; bridge gated by `config/claw_bridge.yaml` (`enabled: false` by default — requires Phase 0 keyring setup before enabling)
+
+The OpenClaw (OC) Home Bridge connects Artha (Mac intelligence hub) to the OpenClaw home automation system (Home Assistant + Mac mini + Windows relay) via a hardened M2M channel. The bridge lets Artha's daily context drive home TTS announcements, kid-arrival presence buffers, and WhatsApp-gated drafts; home presence and energy events flow back into Artha's briefing pipeline. All communication is secured with HMAC-SHA256 and strictly role-scoped — Artha never controls HA devices; OC never writes Artha state files.
+
+### 29.1 Role Clarity
+
+| Responsibility | Owner |
+|---|---|
+| Email intel, open items, finance, goals, briefings | **Artha** |
+| HA device control, presence detection, TTS playback, sensors | **OpenClaw** |
+| WhatsApp delivery (wacli), energy real-time data | **OpenClaw** |
+| TTS briefing content, kid-arrival context, energy alerts, WhatsApp draft text | **Collaborative** |
+| Exec allowlist (which scripts OC may invoke), HMAC key rotation initiation | **Artha** |
+
+Artha is **read-only** on the OC side. OC is **write-never** on Artha state files.
+
+### 29.2 Transport Topology
+
+Three-layer transport with automatic fallback:
+
+| Layer | Transport | Latency | Availability |
+|---|---|---|---|
+| 2 (primary) | REST POST `http://192.168.50.90:18789/artha-context` | <500 ms | LAN (Mac home) |
+| 1 (fallback) | Telegram M2M `@openclaw_home_bot` | 2–10 s | Universal |
+| 0 (buffer) | `tmp/home_events_buffer.jsonl` → `state/home_events.md` | async | Offline survival |
+
+LAN REST attempted first; failure triggers Telegram M2M; all inbound events also written to file buffer for DLQ recovery.
+
+### 29.3 Security Model
+
+- **HMAC-SHA256** on every message; envelope schema `claw-bridge/1.0`
+- Keys stored in OS keyring only (`keyring` library) — never in config files or environment variables
+- **Replay protection**: per-message `nonce` (uuid4) + `ts`; clock drift >2 min → message rejected
+- **Injection filter**: all inbound `cmd` and `data` fields scrubbed before any eval path
+- **PII on wire**: WhatsApp recipients encoded as TK-NNN tokens only; no phone numbers transmitted
+- **Key rotation**: version-keyed (`v1`/`v2`), dual-accept 24-hour overlap window; rotation requires all machines reachable and clock drift <2 min
+
+### 29.4 Message Contract
+
+Envelope fields: `schema`, `src`, `cmd`, `data`, `sig`, `ts`, `nonce`, `trace_id`.
+
+#### Outbound Commands (Artha → OC)
+
+| Command | Purpose | Cardinality Limits |
+|---|---|---|
+| `load_context` | Push daily briefing context for TTS/WhatsApp drafts | max 5 `p1_items`, 5 `deadlines_7d`, 4 `kid_flags`, 3 `goals_active` |
+| `announce` | Trigger TTS announcement immediately | ≤200 chars; requires presence buffer active |
+| `whatsapp_draft` | Surface approval-gated draft in OC UI | Recipient as TK-NNN token; no phone on wire |
+| `ping` | Health heartbeat | — |
+
+#### Inbound Events (OC → Artha)
+
+| Event | Purpose | Artha Handling |
+|---|---|---|
+| `presence_detected` | Person arrived home | Write to `state/home_events.md`; trigger kid-arrival buffer |
+| `energy_event` | Anomalous energy reading | Write to `state/home_events.md`; surface in next briefing |
+| `home_alert` | HA-generated sensor alert | Write to `state/home_events.md` |
+| `pong` | Heartbeat response | Update `bridge_health.last_pong` in `state/health-check.md` |
+
+`version_hash` is excluded from context envelopes (high churn → false diffs).
+
+### 29.5 Component Inventory
+
+#### New Components (7 files)
+
+| File | Role |
+|---|---|
+| `scripts/export_bridge_context.py` | Serialises pipeline state → bridge envelope (cardinality + PII + injection filter) |
+| `scripts/lib/hmac_signer.py` | HMAC-SHA256 sign/verify; keyring-only key storage; clock-drift guard |
+| `scripts/channel/m2m_handler.py` | Telegram M2M send/receive; DLQ retry with exponential back-off |
+| `config/claw_bridge.yaml` | Bridge configuration (`enabled: false` by default) |
+| `config/agents/artha-bridge.skill.md` | OC-facing Artha skill definition |
+| `state/home_events.md` | Inbound event log (home-local only; gitignored) |
+| `tests/unit/test_bridge_hmac.py`, `test_bridge_export.py`, `test_bridge_m2m.py` | Test suite (61 tests total) |
+
+#### Modified Components (4 files)
+
+| File | Change |
+|---|---|
+| `scripts/pipeline.py` | Calls `export_bridge_context.py` after REVIEW_GATE phase |
+| `scripts/router.py` | Routes `home_events` domain from `state/home_events.md` |
+| `scripts/channel/channel_listener.py` | Delegates `@openclaw_home_bot` messages to `m2m_handler.py` |
+| `scripts/nudge_daemon.py` | Checks bridge health; surfaces `bridge_health` staleness alerts |
+
+### 29.6 Observability
+
+A dedicated `bridge_health` block in `state/health-check.md` tracks:
+
+| Metric | Warning | Critical |
+|---|---|---|
+| `last_push` (Artha → OC) | >24 h | >48 h |
+| `last_pong` (OC heartbeat) | >2 h | >6 h |
+| `clock_drift_s` | >120 s | >300 s |
+| `dlq_depth` | >5 msgs | >20 msgs |
+
+Additional fields: `bridge_version`, `uptime_s`, `msgs_sent_24h`, `msgs_recv_24h`, `key_version`.
+
+### 29.7 Coexistence with `action_bridge.py`
+
+The two bridges are independent with non-overlapping transports, auth, and state models:
+
+| Dimension | `claw_bridge` (this section) | `action_bridge` (Work OS) |
+|---|---|---|
+| Transport | REST LAN + Telegram M2M | OneDrive file-based |
+| Auth | HMAC-SHA256 + keyring | Azure AD / MSI |
+| Participants | Artha ↔ Home Automation | Artha ↔ Work OS agents |
+| State model | `state/home_events.md` | `state/bridge/` |
+| Shared infrastructure | `audit.py`, `security.py`, `retry.py` | ← same |
+
+### 29.8 Test Coverage
+
+| Test File | Tests | Scope |
+|---|---|---|
+| `tests/unit/test_bridge_hmac.py` | 21 | Sign/verify, replay protection, clock drift, key rotation |
+| `tests/unit/test_bridge_export.py` | 20 | Context serialisation, cardinality limits, PII filter, injection filter |
+| `tests/unit/test_bridge_m2m.py` | 20 | Telegram send/recv, DLQ retry, fallback logic, offline buffer |
+
+**Run:** `pytest tests/unit/test_bridge_*.py` — all 61 passing as of v1.7.0.
+
+---
+
+*Artha Tech Spec v3.29.0 — End of Document*
 
 ---
 
@@ -5246,6 +5371,7 @@ The Knowledge Base population strategy defines a 7-phase approach for bootstrapp
 
 | Version | Changes |
 |---------|---------|
+| v3.29.0 | **OpenClaw Home Bridge (§29)**: M2M integration between Artha (intelligence hub) and OpenClaw (Home Assistant). 3-layer transport (REST LAN + Telegram M2M + file-buffer fallback). HMAC-SHA256 with keyring-only key storage, replay nonce, clock-drift guard, injection filter. Outbound: `load_context`, `announce`, `whatsapp_draft`, `ping`. Inbound: `presence_detected`, `energy_event`, `home_alert`, `pong`. 7 new files (`export_bridge_context.py`, `hmac_signer.py`, `m2m_handler.py`, `claw_bridge.yaml`, `artha-bridge.skill.md`, `state/home_events.md`); 4 modified (`pipeline.py`, `router.py`, `channel_listener.py`, `nudge_daemon.py`). `bridge_health` observability block in `state/health-check.md`. Feature-flagged (`enabled: false`). 61 tests passing. Implements PRD v7.14.0. |
 | v3.26.0 | **SPEC CONSOLIDATION**: §21.6–21.8 (eval dimensions/scoring/SLAs), §22.6–22.8 (full entity model/API/performance), §23.6 (AR-9 GA status), §24.4–24.5 (cross-reference rules/domain weights), §25.11–25.14 (baseline patterns/anti-patterns/context budgets/governance), NEW §27 (EAR v2.0 multi-agent composition EAR-1–EAR-12), NEW §28 (KB Population Strategy reference). Implements PRD v7.11.0. |
 | v3.24.0 | **AR-9 Safety Hardening (§23.5)**: template injection defense in `prompt_composer.py` (brace escaping + 8K query cap); atomic writes in `knowledge_extractor.py` (`tempfile.mkstemp` + `os.replace`); PII guard fail-safety in `context_scrubber.py` (strict mode blocks on guard failure); quality score clamping in `agent_health.py` (`[0,1]` enforcement); dead import cleanup in `agent_registry.py`. 16 safety invariant tests. 270 AR-9 tests passing. |
 | v3.21.0 | **Agent Framework v1 — §25**: AFW-1 Tripwire Guardrails (7 guardrails, blocking + parallel modes, `guardrails.py` + `guardrail_registry.py`); AFW-3 Middleware Pipeline (`compose_middleware()`, 5 components, `config/middleware.yaml`); AFW-2 Progressive Disclosure (6 always-load domains, `domain_index.py`, ~80% token savings on `/status`/`/items`); AFW-4 Context Compaction (`session_summarizer.py`, `CompactionPolicy`, sliding window); AFW-5 Workflow Checkpointing (`state_snapshot.py`, 4h TTL, phase-resume); AFW-6 Session Undo (`/undo [domain]`, snapshot-before-write, diff confirm); AFW-7 Flat-File Memory / ADR-001 (`memory_provider.py`, YAML frontmatter, synonym expansion, scoped recall, dedup); AFW-9 Composite Signal Scoring (`signal_scorer.py`, urgency×impact×freshness, suppress<0.20/promote≥0.66); AFW-11 Structured Tracing (UUID4 trace_id propagation, JSONL, `log_digest.py`). `.gitignore` hardened: `.gemini_security/` + `.gemini/` added. Spec updates: PRD §9.10 + UX §10/§14/§16. |
