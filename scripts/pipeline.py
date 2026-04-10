@@ -893,9 +893,319 @@ def run_pipeline(
                     },
                 )
         except Exception:
-            pass  # Non-fatal \u2014 routing summary never blocks pipeline
+            pass  # Non-fatal — routing summary never blocks pipeline
+
+    _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
+
+    # ── Home events buffer merge (spec §P2.4) ────────────────────────────────
+    # Merge tmp/home_events_buffer.jsonl → state/home_events.md before exit.
+    # state_writer is the sole write path for state files.
+    try:
+        _merge_home_events_buffer(_REPO_ROOT)
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: home_events merge failed: {_exc}", file=sys.stderr)
+
+    # ── OpenClaw bridge push (spec §P1.3 after_pipeline) ────────────────────
+    # Guard: only when bridge.push.after_pipeline is enabled in claw_bridge.yaml.
+    try:
+        _run_bridge_push(_REPO_ROOT, dry_run=dry_run)
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: bridge push failed: {_exc}", file=sys.stderr)
+
+    # ── Bridge Health section in health-check.md (spec §13) ─────────────────
+    try:
+        _write_bridge_health_section(_REPO_ROOT)
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: bridge health write failed: {_exc}", file=sys.stderr)
 
     return 3 if error_count > 0 else 0
+
+
+# ---------------------------------------------------------------------------
+# Bridge helpers (specs/claw-bridge.md §P2.4 + §P1.3)
+# ---------------------------------------------------------------------------
+
+def _merge_home_events_buffer(artha_dir: Path) -> None:
+    """Merge tmp/home_events_buffer.jsonl into state/home_events.md.
+
+    - Reads each JSONL line from the buffer.
+    - Appends new events to state/home_events.md via state_writer.write().
+    - Applies rolling_7d GC: retains only events from the last 7 days.
+    - Truncates the buffer file after a successful merge.
+    - Handles missing files gracefully (normal state before Phase 2 is live).
+    """
+    import json as _json
+    buffer_path = artha_dir / "tmp" / "home_events_buffer.jsonl"
+    state_path  = artha_dir / "state" / "home_events.md"
+
+    if not buffer_path.exists():
+        return
+
+    try:
+        raw_lines = buffer_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+
+    new_events = []
+    for raw in raw_lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ev = _json.loads(raw)
+            new_events.append(ev)
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+    if not new_events:
+        return
+
+    # ── Read existing events ───────────────────────────────────────────────
+    existing_lines: list[str] = []
+    if state_path.exists():
+        try:
+            content = state_path.read_text(encoding="utf-8")
+            # Strip YAML frontmatter
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                body = parts[2] if len(parts) >= 3 else ""
+            else:
+                body = content
+            for ln in body.splitlines():
+                ln = ln.strip()
+                if ln.startswith("- ts:"):
+                    existing_lines.append(ln)
+        except OSError:
+            pass
+
+    # ── Append new events ──────────────────────────────────────────────────
+    for ev in new_events:
+        ts    = ev.get("ts", "")
+        event = ev.get("event", "unknown")
+        parts_kv = [f"ts: {ts}", f"event: {event}"]
+        for k, v in ev.items():
+            if k not in ("ts", "event") and v is not None:
+                parts_kv.append(f"{k}: {v}")
+        existing_lines.append("- " + "  ".join(parts_kv))
+
+    # ── rolling_7d GC ─────────────────────────────────────────────────────
+    import re as _re
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    kept: list[str] = []
+    for ln in existing_lines:
+        m = _re.search(r"ts:\s*(\S+)", ln)
+        if m:
+            try:
+                ev_dt = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+                if ev_dt >= cutoff:
+                    kept.append(ln)
+                # else: drop (older than 7d)
+            except ValueError:
+                kept.append(ln)  # unparseable ts — keep to be safe
+        else:
+            kept.append(ln)
+
+    # ── Write via state_writer ─────────────────────────────────────────────
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    frontmatter = (
+        "---\n"
+        'schema_version: "1.0"\n'
+        f'last_updated: "{now_iso}"\n'
+        'description: "Append-only log of home events from OpenClaw."\n'
+        "---\n\n"
+        "## Events\n\n"
+    )
+    body_text = frontmatter + "\n".join(kept) + ("\n" if kept else "")
+
+    try:
+        from lib.state_writer import write as _sw_write  # type: ignore[import]
+        _sw_write(
+            str(state_path),
+            body_text,
+            domain="home",
+            source="pipeline",
+            snapshot=False,
+            pii_check=False,
+        )
+    except ImportError:
+        # state_writer not available (e.g., running tests without full install)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(body_text, encoding="utf-8")
+    except Exception as exc:
+        print(f"[pipeline] WARNING: state_writer failed for home_events.md: {exc}", file=sys.stderr)
+        return
+
+    # ── Truncate buffer after successful write ─────────────────────────────
+    try:
+        buffer_path.open("w").close()
+    except OSError:
+        pass
+
+
+def _run_bridge_push(artha_dir: Path, *, dry_run: bool = False) -> None:
+    """Push Artha context to OpenClaw if bridge.push.after_pipeline is enabled.
+
+    Failures are non-fatal and logged to stderr — never raise.
+    """
+    cfg_path = artha_dir / "config" / "claw_bridge.yaml"
+    if not cfg_path.exists():
+        return
+    try:
+        import yaml as _yaml
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            bridge_cfg = _yaml.safe_load(fh) or {}
+    except Exception:
+        return
+
+    if not bridge_cfg.get("enabled", False):
+        return
+    if not bridge_cfg.get("push", {}).get("after_pipeline", True):
+        return
+
+    try:
+        import sys as _sys
+        scripts_dir = str(artha_dir / "scripts")
+        if scripts_dir not in _sys.path:
+            _sys.path.insert(0, scripts_dir)
+        from export_bridge_context import run_bridge_push  # type: ignore[import]
+        run_bridge_push(artha_dir, bridge_cfg, dry_run=dry_run)
+    except ImportError:
+        print("[pipeline] WARNING: export_bridge_context.py not found — skipping bridge push",
+              file=sys.stderr)
+    except Exception as exc:
+        print(f"[pipeline] WARNING: bridge push failed: {exc}", file=sys.stderr)
+
+
+def _write_bridge_health_section(artha_dir: Path) -> None:
+    """Write/update the ## Bridge Health table in state/health-check.md (spec §13).
+
+    Reads audit.md for last BRIDGE_PUSH / BRIDGE_M2M_RECEIVED events,
+    counts DLQ entries, extracts last pong data (version, clock drift, uptime),
+    and reads hmac_key_version from config/claw_bridge.yaml.
+    Non-fatal: silently returns if health-check.md does not exist.
+    """
+    import re as _re
+    import json as _json
+
+    health_md = artha_dir / "state" / "health-check.md"
+    if not health_md.exists():
+        return
+
+    # ── Read claw_bridge.yaml for enabled flag + hmac_key_version ────────────
+    cfg_path = artha_dir / "config" / "claw_bridge.yaml"
+    try:
+        import yaml as _yaml
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            bridge_cfg = _yaml.safe_load(fh) or {}
+    except Exception:
+        bridge_cfg = {}
+
+    bridge_enabled = bridge_cfg.get("enabled", False)
+    hmac_version = bridge_cfg.get("hmac_key_version", "—")
+
+    # ── Parse audit.md for bridge events ─────────────────────────────────────
+    audit_path = artha_dir / "state" / "audit.md"
+    last_push_ts = "—"
+    last_received_ts = "—"
+    clock_drift_ms: str = "—"
+    peer_version: str = "—"
+    peer_uptime: str = "—"
+    sent_24h = 0
+    received_24h = 0
+
+    if audit_path.exists():
+        try:
+            audit_text = audit_path.read_text(encoding="utf-8")
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=24)
+
+            # Match lines like: 2026-04-09T12:34:56Z BRIDGE_PUSH ...
+            push_matches = _re.findall(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)\s+BRIDGE_PUSH", audit_text
+            )
+            if push_matches:
+                last_push_ts = push_matches[-1]
+            # Count those within last 24h
+            for ts_str in push_matches:
+                try:
+                    evt_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if evt_dt >= cutoff_dt:
+                        sent_24h += 1
+                except ValueError:
+                    pass
+
+            recv_matches = _re.findall(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)\s+BRIDGE_M2M_RECEIVED", audit_text
+            )
+            if recv_matches:
+                last_received_ts = recv_matches[-1]
+            # Count those within last 24h
+            for ts_str in recv_matches:
+                try:
+                    evt_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if evt_dt >= cutoff_dt:
+                        received_24h += 1
+                except ValueError:
+                    pass
+
+            # Pong data: BRIDGE_CLOCK_DRIFT lines carry drift_ms, version, uptime
+            pong_matches = _re.findall(
+                r"BRIDGE_CLOCK_DRIFT\s+drift_ms=(\S+).*?version=(\S+).*?uptime=(\S+)", audit_text
+            )
+            if pong_matches:
+                last_pong = pong_matches[-1]
+                clock_drift_ms = last_pong[0]
+                peer_version = last_pong[1]
+                peer_uptime = last_pong[2]
+        except OSError:
+            pass
+
+    # ── Count DLQ entries ─────────────────────────────────────────────────────
+    dlq_path = Path.home() / ".artha-local" / "bridge_dlq.yaml"
+    dlq_depth = 0
+    if dlq_path.exists():
+        try:
+            import yaml as _yaml
+            with dlq_path.open("r", encoding="utf-8") as fh:
+                dlq_data = _yaml.safe_load(fh) or []
+            if isinstance(dlq_data, list):
+                dlq_depth = len(dlq_data)
+        except Exception:
+            dlq_depth = -1  # unreadable
+
+    # ── Build the Bridge Health table ─────────────────────────────────────────
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    status_icon = "✅" if bridge_enabled else "⏸"
+    dlq_icon = "✅" if dlq_depth == 0 else ("⚠️" if dlq_depth < 5 else "❌")
+
+    section_lines = [
+        f"\n## Bridge Health — {ts}\n",
+        "\n",
+        "| Metric | Value |\n",
+        "|--------|-------|\n",
+        f"| Bridge enabled | `{bridge_enabled}` {status_icon} |\n",
+        f"| HMAC key version | `{hmac_version}` |\n",
+        f"| Last BRIDGE_PUSH | `{last_push_ts}` |\n",
+        f"| Last M2M received | `{last_received_ts}` |\n",
+        f"| Messages sent (24h) | `{sent_24h}` |\n",
+        f"| Messages received (24h) | `{received_24h}` |\n",
+        f"| DLQ depth | `{dlq_depth}` {dlq_icon} |\n",
+        f"| Peer version | `{peer_version}` |\n",
+        f"| Peer uptime | `{peer_uptime}` |\n",
+        f"| Clock drift (ms) | `{clock_drift_ms}` |\n",
+    ]
+
+    try:
+        # Replace any existing Bridge Health section, or append if absent
+        existing = health_md.read_text(encoding="utf-8")
+        # Strip old Bridge Health section (from its heading to next ## or EOF)
+        cleaned = _re.sub(
+            r"\n## Bridge Health[^\n]*\n.*?(?=\n## |\Z)", "", existing, flags=_re.DOTALL
+        )
+        with health_md.open("w", encoding="utf-8") as fh:
+            fh.write(cleaned.rstrip("\n"))
+            fh.writelines(section_lines)
+    except OSError:
+        pass  # Non-fatal
 
 
 # ---------------------------------------------------------------------------

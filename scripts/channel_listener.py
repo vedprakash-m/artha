@@ -30,6 +30,7 @@ if str(_ARTHA_DIR) not in sys.path:
 _STATE_DIR = _ARTHA_DIR / "state"
 _BRIEFINGS_DIR = _ARTHA_DIR / "briefings"
 _AUDIT_LOG = _STATE_DIR / "audit.md"
+_HEARTBEAT_FILE = _STATE_DIR / ".channel_listener.heartbeat"
 
 try:
     from lib.logger import get_logger as _get_logger
@@ -79,6 +80,7 @@ from channel.handlers import (
 from channel.catchup import cmd_catchup
 from channel.stage import cmd_stage, cmd_radar, cmd_radar_try, cmd_radar_skip
 from channel.router import _normalise_command, _COMMAND_ALIASES, ALLOWED_COMMANDS, _HANDLERS
+from channel import m2m_handler
 from channel._lock import _acquire_singleton_lock, _release_singleton_lock
 
 
@@ -166,6 +168,13 @@ async def process_message(
         sender=recipient_name,
         command=msg.command,
     )
+
+    # ── M2M bridge intercept (OpenClaw → Artha) ─────────────────────────
+    # Detect signed bridge envelopes before any user command routing.
+    # Ref: specs/claw-bridge.md §P2.3
+    if m2m_handler.is_m2m_message(msg.raw_text):
+        await m2m_handler.handle_m2m(msg.raw_text, msg.sender_id)
+        return
 
     # ── Callback query intercept: act:VERB:action_id (§5.3) ──────────────
     # Inline keyboard button presses arrive with raw_text = "act:VERB:uuid"
@@ -438,6 +447,14 @@ async def run_listener(
         # Brief sleep to avoid busy-looping when adapters return instantly
         await asyncio.sleep(0.1)
 
+        # Write heartbeat timestamp — lets watchdog / Task Scheduler detect a
+        # silent death even when the process is still technically alive
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            _HEARTBEAT_FILE.write_text(_dt.now(_tz.utc).isoformat())
+        except OSError:
+            pass
+
     log.info("Listener stopped cleanly")
 
 
@@ -566,7 +583,12 @@ def main() -> int:
     if not args.dry_run:
         if not _acquire_singleton_lock():
             log.info("Another listener instance is already running — exiting")
-            return 0
+            # Use os._exit() (not sys.exit) to avoid waiting for background
+            # threads that module-level imports may have started. Task Scheduler
+            # sees a non-zero exit code and treats it as expected "already running"
+            # behaviour. RestartCount=0 ensures no cascade restarts.
+            import os as _os
+            _os._exit(1)
         import atexit as _atexit
         _atexit.register(_release_singleton_lock)
 

@@ -324,3 +324,14 @@ state_files:
     backup_tier: "artha-local-dbs"
     max_staleness_hours: 26
     sensitivity: "medium"
+
+  # ── OpenClaw Bridge ──────────────────────────────────────────────────────
+
+  - path: "state/home_events.md"
+    owner_agent: "pipeline"
+    managed_by: "pipeline.py"
+    gc_policy: "rolling_7d"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "low"
+    description: "Append-only log of home events from OpenClaw (presence, energy, alerts). Written by pipeline.py on buffer merge."

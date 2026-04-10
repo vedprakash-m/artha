@@ -40,8 +40,9 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
 
 WORKIQ_VERSION_PIN = "0.x"
-SUBPROCESS_TIMEOUT = 90  # seconds — WorkIQ queries take 37-72s each
-PARSE_RETRY_ONCE = True  # retry once with explicit format reminder if 0 items parsed
+SUBPROCESS_TIMEOUT = 90   # seconds — WorkIQ queries take 37-72s each
+TEAMS_AI_TOTAL_TIMEOUT = 300  # seconds — hard wall-clock cap for all 6 channel queries
+PARSE_RETRY_ONCE = True   # retry once with explicit format reminder if 0 items parsed
 
 # Cache TTLs per mode (seconds)
 _CACHE_TTL: dict[str, int] = {
@@ -251,28 +252,67 @@ def _find_npx() -> Optional[str]:
 
 def _ask_workiq(question: str) -> str:
     """Invoke WorkIQ via npx and return the raw stdout response."""
+    import platform
     npx = _find_npx()
     if not npx:
         raise RuntimeError(
             "[workiq_bridge] npx not found — Node.js is required. "
             "Install from https://nodejs.org/"
         )
-    result = subprocess.run(
-        [npx, "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}", "ask", "-q", question],
-        capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT,
-    )
-    if result.returncode != 0:
-        stderr_snippet = result.stderr.strip()[:200]
+    cmd = [npx, "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}", "ask", "-q", question]
+
+    if platform.system() == "Windows":
+        # On Windows, subprocess.run(timeout=...) kills the direct process (npx)
+        # but its grandchildren (node.js) inherit pipe handles and keep them open,
+        # causing communicate() to deadlock after the timeout fires.
+        # Fix: use Popen + taskkill /F /T to kill the entire process tree.
+        # CREATE_NO_WINDOW prevents the npx/node.js grandchild processes from
+        # inheriting the pipeline's stdout/stderr pipe handles. Without this,
+        # grandchildren can hold the pipe open after npx exits, causing
+        # proc.communicate() to block indefinitely (CLASSIFY hang root cause).
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        try:
+            stdout_bytes, stderr_bytes = proc.communicate(timeout=SUBPROCESS_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            except Exception:
+                proc.kill()
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+            raise subprocess.TimeoutExpired(cmd, SUBPROCESS_TIMEOUT)
+        rc = proc.returncode
+        stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+    else:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
+        rc = result.returncode
+        stdout_text = result.stdout
+        stderr_text = result.stderr
+
+    if rc != 0:
+        stderr_snippet = stderr_text.strip()[:200]
         if "auth" in stderr_snippet.lower() or "login" in stderr_snippet.lower():
             raise RuntimeError(
                 "[workiq_bridge] WorkIQ M365 auth expired or not configured. "
                 "Run: npx workiq logout  then  npx workiq login"
             )
         raise RuntimeError(
-            f"[workiq_bridge] WorkIQ returned non-zero exit ({result.returncode}): "
+            f"[workiq_bridge] WorkIQ returned non-zero exit ({rc}): "
             f"{stderr_snippet}"
         )
-    return result.stdout
+    return stdout_text
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +686,15 @@ def fetch(
         # WorkIQ hit rate (combined topic+channel queries return 0 results).
         channels = kwargs.get("channels", _TEAMS_AI_CHANNELS)
         records: list[dict] = []
+        _teams_ai_deadline = datetime.now(timezone.utc).timestamp() + TEAMS_AI_TOTAL_TIMEOUT
         for ch_name in channels:
+            if datetime.now(timezone.utc).timestamp() > _teams_ai_deadline:
+                print(
+                    f"[workiq_bridge] teams_ai total timeout ({TEAMS_AI_TOTAL_TIMEOUT}s) "
+                    f"reached — skipping remaining channels after {len(records)} records.",
+                    file=sys.stderr,
+                )
+                break
             ch_query = _QUERIES["teams_ai"].format(
                 channel_name=ch_name, lookback_days=lookback_days,
             )

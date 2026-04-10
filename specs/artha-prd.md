@@ -1,6 +1,6 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.13.0
+## Product Requirements Document · v7.14.0
 
 **Author:** [Author]
 **Date:** April 8, 2026
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.14.0 | 2026-04-09 | OpenClaw Home Bridge — FR-24: M2M integration with home automation (3-layer transport, HMAC-SHA256, context push, presence events, TTS gate, WhatsApp approval, bridge observability). Incorporated from `claw-bridge.md` v1.7.0 (archived). |
 | v7.13.0 | 2026-04-08 | Knowledge Graph v2.0 — FR-19 extended with Second Brain KB architecture. Five ingestion paths, entity lifecycle stages, SQLite schema v4, 7 MCP tools, Leiden clustering, 950-token context budget. Tech Spec §22 rewritten to v2.0. |
 | v7.12.0 | 2026-04-08 | EAR-3 SHIPPED — 4 domain pre-compute agents (CapitalAgent, LogisticsAgent, ReadinessAgent, TribeAgent) + cron-based agent scheduler (`config/agents/schedules.yaml`) + state file registry (`config/state_registry.yaml`) + 4 domain-specific guardrails (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Spec compaction: −539 lines · −56 KB across all 3 core specs. |
 | v7.11.0 | 2026-04-07 | SPEC CONSOLIDATION — 10 satellite specs merged into core PRD/Tech Spec/UX Spec. New: FR-20 Readiness Intelligence, FR-21 Logistics Intelligence, FR-22 Tribe Intelligence, FR-23 Capital Intelligence (4 new life domains). P10 Design Principle (PM Skills Coach mandatory pattern). §9 Autonomy Matrix extended with per-domain contract + work L1 permanent cap. §12 Roadmap gains Phase 0 (30 prerequisites). §14 NFRs gain data-quality SLA targets. FR-19 extended with 6 work automation agents (FW-21–FW-26). All satellite specs archived to `.archive/specs/`. |
@@ -1096,6 +1097,31 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 | FR23.5 | **Reversible Sweep Proposals** — Phase 3: propose automated fund sweeps between accounts. All sweeps must be reversible within 24 hours. | P3 |
 
 **Artifact spec:** `required_sections:` `## 90-Day Projection`, `## Liquidity Alerts`, `## Proposed Actions`, `## Source Citations`. `required_keywords:` `source:`, `confidence:`. `min_length_chars: 400`.
+
+---
+
+### FR-24 · OpenClaw Home Bridge
+
+**Priority:** P2 (Phase 1+)
+**Summary:** M2M integration between Artha (personal intelligence hub) and the OpenClaw home automation system (Home Assistant + Mac mini + Windows relay). Artha pushes daily context (briefing excerpts, P1 items, kid flags, goals) to OpenClaw for TTS announcements and WhatsApp-gated drafts. OpenClaw streams home presence events (arrivals, energy anomalies, sensor alerts) back to Artha for briefing enrichment. All communication is HMAC-SHA256 secured; Artha never controls HA devices; OC never writes Artha state files.
+
+**Architecture:** `scripts/export_bridge_context.py` (serialiser), `scripts/lib/hmac_signer.py` (HMAC + keyring), `scripts/channel/m2m_handler.py` (Telegram M2M + DLQ), `config/claw_bridge.yaml` (feature flag, `enabled: false` by default), `state/home_events.md` (inbound event log, home-local only). Transport: 3-layer with automatic fallback (REST LAN → Telegram M2M → file-buffer offline survival).
+
+**Non-goals:** Artha does not control HA devices. Artha does not store real-time sensor streams. OC does not have write access to any Artha state file. WhatsApp is never sent without explicit user approval in OC UI.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR24.1 | **Context Push** — After daily briefing pipeline, push structured context envelope (≤5 P1 items, ≤5  7-day deadlines, ≤4 kid flags, ≤3 active goals) to OpenClaw via REST LAN with Telegram M2M fallback. | P2 |
+| FR24.2 | **Presence → Briefing Enrichment** — Inbound `presence_detected`/`energy_event`/`home_alert` events from OC are written to `state/home_events.md` and surfaced in the next briefing under a `## Home Events` section. | P2 |
+| FR24.3 | **TTS Announcement Gate** — Outbound `announce` command (≤200 chars) triggers OC TTS playback. Requires presence buffer active; Artha never sends TTS without OC confirming occupancy. | P2 |
+| FR24.4 | **WhatsApp Approval Workflow** — Artha sends a `whatsapp_draft` command with recipient encoded as TK-NNN token (no phone numbers on wire). OC surfaces the draft for user approval before wacli delivery. | P2 |
+| FR24.5 | **Bridge Observability** — `bridge_health` block in `state/health-check.md` tracks last push, last pong, clock drift, DLQ depth, message counts, and key version. Staleness alerts surface in briefing when thresholds exceeded (push >24h, pong >2h, drift >2min). | P2 |
+
+**Security invariants:** HMAC-SHA256 on every envelope; keyring-only key storage (never config files or env vars); per-message nonce + timestamp (clock drift >2min → reject); injection filter on all inbound fields; key rotation via version-keyed dual-accept 24h overlap window.
+
+**Feature flag:** Bridge is `enabled: false` by default. Activation requires Phase 0 keyring setup (see `.archive/specs/claw-bridge.md` §7.0).
 
 ---
 
@@ -2384,7 +2410,7 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 
 ---
 
-*Artha PRD v7.13.0 — End of Document*
+*Artha PRD v7.14.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

@@ -66,7 +66,7 @@ KC_ACCOUNT   = "artha"
 # via OneDrive so running setup on one machine makes creds available everywhere.
 _CLIENT_CREDS_FILE = os.path.join(TOKEN_DIR, "msgraph-client-creds.json")
 
-# Microsoft identity platform — personal accounts endpoint
+# ── Personal account (consumers endpoint) ──────────────────────────────────
 _AUTHORITY   = "https://login.microsoftonline.com/consumers"
 _SCOPES      = [
     "Tasks.ReadWrite",
@@ -77,6 +77,44 @@ _SCOPES      = [
     "Notes.Read",           # required for msgraph_onenote_fetch.py (T-1B.1.7)
     # NOTE: offline_access is a reserved OIDC scope — MSAL adds it automatically.
     # Do NOT include it explicitly or the token request will fail.
+]
+
+# ── Work / AAD account (organizations endpoint) ─────────────────────────────
+# Auth path for work accounts — uses MSAL with a **personal-tenant App Registration**
+# (registered in a free personal Azure AD, not the corporate tenant). This avoids
+# the "App Registration restricted" policy on Microsoft internal tenants, because
+# a third-party app registered in any tenant can receive delegated Files.Read consent
+# from users in any other AAD tenant — exactly how Slack, Notion, GitHub etc. work.
+#
+# Setup (one-time, ~5 minutes):
+#   1. portal.azure.com  → sign in with your PERSONAL Microsoft account (not @microsoft.com)
+#      If you have no personal Azure account: create a free tenant via
+#      https://azure.microsoft.com/free/ using any personal MSA.
+#   2. Azure Active Directory → App registrations → New registration
+#      • Name: "Artha Work Assistant"
+#      • Supported accounts: "Accounts in any organizational directory (Any Azure AD tenant)"
+#      • Redirect URI: Mobile/desktop applications → http://localhost:8401
+#      • API Permissions (delegated): Files.Read, Mail.Read, User.Read
+#        (no admin consent needed — Files.Read is user-level delegated)
+#   3. Copy Application (client) ID from the app's Overview page
+#   4. Store it:
+#      python -c "import keyring; keyring.set_password('msgraph-work-client-id','artha','<CLIENT_ID>')"
+#   5. Run:
+#      python scripts/setup_msgraph_oauth.py --work
+#      (Browser opens; sign in with vemishra@microsoft.com; consent once; done.)
+#
+# NOTE: Azure CLI (`az account get-access-token`) only provides directory/admin scopes
+#       in the Microsoft corporate tenant (AADSTS65002 blocks Files.Read). It cannot
+#       be used for SharePoint/Files endpoints — only the MSAL path above works.
+KC_WORK_CLIENT_ID  = "msgraph-work-client-id"
+WORK_TOKEN_FILE    = os.path.join(TOKEN_DIR, "msgraph-work-token.json")
+_WORK_AUTHORITY    = "https://login.microsoftonline.com/organizations"
+_WORK_SCOPES       = [
+    "Files.Read",   # OneDrive / "shared with me" — user-level delegated, no admin consent
+    "Mail.Read",    # work email (shared-with-me signals)
+    "User.Read",
+    # NOTE: offline_access is added automatically by MSAL.
+    # NOTE: Sites.Read.All requires admin consent — omit; Files.Read covers sharedWithMe+search.
 ]
 
 # ---------------------------------------------------------------------------
@@ -148,8 +186,8 @@ def _ensure_token_dir() -> None:
     os.makedirs(TOKEN_DIR, mode=0o700, exist_ok=True)
 
 
-def _save_token(token_response: dict, client_id: Optional[str] = None) -> None:
-    """Persist msal token response + metadata to {ARTHA_DIR}/.tokens/msgraph-token.json.
+def _save_token(token_response: dict, client_id: Optional[str] = None, *, work: bool = False) -> None:
+    """Persist msal token response + metadata to the appropriate token file.
     Embeds client_id in the file so Cowork VM can refresh without needing credential store.
     """
     _ensure_token_dir()
@@ -165,21 +203,23 @@ def _save_token(token_response: dict, client_id: Optional[str] = None) -> None:
         data["_artha_client_id"] = client_id
     elif "_artha_client_id" not in data:
         # Carry forward from previous save if not provided
-        existing = _load_token()
+        existing = _load_token(work=work)
         if existing and existing.get("_artha_client_id"):
             data["_artha_client_id"] = existing["_artha_client_id"]
-    with open(TOKEN_FILE, "w") as f:
+    dest = WORK_TOKEN_FILE if work else TOKEN_FILE
+    with open(dest, "w") as f:
         json.dump(data, f, indent=2)
-    os.chmod(TOKEN_FILE, 0o600) if os.name != "nt" else None
-    print(f"[msgraph] Token saved → {TOKEN_FILE}", file=sys.stderr)
+    os.chmod(dest, 0o600) if os.name != "nt" else None
+    print(f"[msgraph] Token saved → {dest}", file=sys.stderr)
 
 
-def _load_token() -> Optional[dict]:
+def _load_token(*, work: bool = False) -> Optional[dict]:
     """Load token dict from disk. Returns None if missing or unreadable."""
-    if not os.path.exists(TOKEN_FILE):
+    path = WORK_TOKEN_FILE if work else TOKEN_FILE
+    if not os.path.exists(path):
         return None
     try:
-        with open(TOKEN_FILE) as f:
+        with open(path) as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -189,22 +229,25 @@ def _load_token() -> Optional[dict]:
 # MSAL helpers
 # ---------------------------------------------------------------------------
 
-def _build_app(client_id: str):
+def _build_app(client_id: str, *, work: bool = False):
     """Build an msal.PublicClientApplication for interactive / silent auth."""
     import msal
+    authority = _WORK_AUTHORITY if work else _AUTHORITY
     return msal.PublicClientApplication(
         client_id,
-        authority=_AUTHORITY,
+        authority=authority,
         token_cache=None,  # we manage our own token file
     )
 
 
-def _acquire_token_interactive(client_id: str) -> dict:
+def _acquire_token_interactive(client_id: str, *, work: bool = False) -> dict:
     """Run the interactive OAuth browser flow and return the token response."""
-    app   = _build_app(client_id)
+    app    = _build_app(client_id, work=work)
+    scopes = _WORK_SCOPES if work else _SCOPES
+    port   = 8401 if work else 8400
     result = app.acquire_token_interactive(
-        scopes=_SCOPES,
-        port=8400,
+        scopes=scopes,
+        port=port,
         timeout=120,
     )
     if "access_token" not in result:
@@ -213,7 +256,50 @@ def _acquire_token_interactive(client_id: str) -> dict:
     return result
 
 
-def _acquire_token_silent(client_id: str, token_data: dict) -> Optional[dict]:
+def _acquire_token_via_azcli() -> dict | None:
+    """Get a Graph API access token from Azure CLI (no App Registration needed).
+
+    Returns a token dict compatible with the MSAL token-file format on success,
+    or None if AZ CLI is not installed / user is not logged in.
+    """
+    import shutil
+    import subprocess
+    az_cmd = shutil.which("az")  # finds az.cmd on Windows, az on Linux/macOS
+    if not az_cmd:
+        return None
+    try:
+        result = subprocess.run(
+            [az_cmd, "account", "get-access-token",
+             "--resource", "https://graph.microsoft.com",
+             "--output", "json"],
+            capture_output=True, text=True, timeout=20,
+        )
+        if result.returncode != 0:
+            _err = result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "unknown"
+            print(f"[msgraph] az CLI auth failed: {_err}", file=sys.stderr)
+            return None
+        data = json.loads(result.stdout)
+        access_token = data.get("accessToken")
+        if not access_token:
+            return None
+        # Build a token dict that matches what _save_token expects
+        from datetime import timezone as _tz
+        import time as _time
+        return {
+            "access_token":  access_token,
+            "token_type":    "Bearer",
+            "expires_in":    int(data.get("expiresOn") and
+                                 (datetime.fromisoformat(data["expiresOn"].replace(" ", "T"))
+                                  .replace(tzinfo=_tz.utc).timestamp() - _time.time())
+                                 or 3600),
+            "scope":         "Files.Read Mail.Read User.Read",
+            "_artha_auth":   "azcli",
+        }
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return None
+
+
+def _acquire_token_silent(client_id: str, token_data: dict, *, work: bool = False) -> Optional[dict]:
     """
     Attempt a silent refresh using the stored refresh_token.
     Returns a new token dict on success, None on failure.
@@ -223,11 +309,12 @@ def _acquire_token_silent(client_id: str, token_data: dict) -> Optional[dict]:
     if not refresh_token:
         return None
 
-    app = _build_app(client_id)
+    app    = _build_app(client_id, work=work)
+    scopes = _WORK_SCOPES if work else _SCOPES
     # MSAL PublicClientApplication can refresh via acquire_token_by_refresh_token
     result = app.acquire_token_by_refresh_token(
         refresh_token=refresh_token,
-        scopes=_SCOPES,
+        scopes=scopes,
     )
     if "access_token" in result:
         return result
@@ -370,6 +457,12 @@ def main() -> None:
     )
     parser.add_argument("--reauth", action="store_true",
                         help="Force a new interactive OAuth flow (discards existing token)")
+    parser.add_argument("--work", action="store_true",
+                        help=(
+                            "Authenticate with a work/school (AAD) account instead of "
+                            "personal. Uses a separate app registration and writes to "
+                            ".tokens/msgraph-work-token.json. Required for SharePoint."
+                        ))
     parser.add_argument("--health", action="store_true",
                         help="Check stored token status and connectivity")
     args = parser.parse_args()
@@ -378,45 +471,168 @@ def main() -> None:
         run_health_check()
         return
 
-    # Read client ID from Keychain
-    client_id = _keychain_read(KC_CLIENT_ID)
+    work = args.work
+
+    # Work flow — Microsoft Graph PowerShell (primary, no App Registration) or MSAL (advanced)
+    if work:
+        import shutil as _shutil
+        import subprocess as _subp
+
+        # ── Microsoft Graph PowerShell (Connect-MgGraph) ───────────────────────
+        # Uses Microsoft's own pre-registered PS app (14d82eec-204b-4c2f-b7e8-296a70dab67e).
+        # No custom App Registration needed. Caches tokens (MSAL/WAM) across sessions.
+        # Works in the Microsoft corporate tenant.
+        pwsh_cmd = _shutil.which("pwsh") or _shutil.which("powershell")
+        if pwsh_cmd:
+            # Check if already authenticated (silent Connect-MgGraph attempt)
+            check_script = (
+                'try { '
+                'Import-Module Microsoft.Graph.Authentication -ErrorAction Stop; '
+                'Connect-MgGraph -Scopes "Files.Read","Mail.Read","User.Read" '
+                '-NoWelcome -ErrorAction Stop 2>$null | Out-Null; '
+                '"authenticated" '
+                '} catch { "unauthenticated" }'
+            )
+            try:
+                chk = _subp.run(
+                    [pwsh_cmd, "-NonInteractive", "-NoProfile", "-Command", check_script],
+                    capture_output=True, text=True, timeout=20,
+                )
+                already_authed = chk.returncode == 0 and "authenticated" in chk.stdout
+            except (OSError, _subp.TimeoutExpired):
+                already_authed = False
+
+            if not already_authed or args.reauth:
+                print()
+                print("╔══════════════════════════════════════════════════════════════╗")
+                print("║  Microsoft Graph PowerShell — Device Code Login             ║")
+                print("╚══════════════════════════════════════════════════════════════╝")
+                print()
+                print("  Running: Connect-MgGraph -UseDeviceAuthentication")
+                print("  (No App Registration required — uses Microsoft's own PS app)")
+                print()
+                login_script = (
+                    'Import-Module Microsoft.Graph.Authentication; '
+                    'Connect-MgGraph -Scopes "Files.Read","Mail.Read","User.Read" '
+                    '-UseDeviceAuthentication -NoWelcome'
+                )
+                try:
+                    _subp.run(
+                        [pwsh_cmd, "-NoProfile", "-Command", login_script],
+                        check=True, timeout=300,
+                    )
+                    print("\n✓ Connect-MgGraph authentication successful.")
+                except (_subp.CalledProcessError, _subp.TimeoutExpired) as exc:
+                    print(f"\n✗ Connect-MgGraph failed: {exc}")
+                    sys.exit(1)
+
+            # Extract a snapshot token for the work token file
+            tok_script = (
+                'Connect-MgGraph -Scopes "Files.Read","Mail.Read","User.Read" '
+                '-NoWelcome 2>$null | Out-Null; '
+                '$resp = Invoke-MgGraphRequest -Uri "https://graph.microsoft.com/v1.0/me" '
+                '-OutputType HttpResponseMessage; '
+                '$resp.RequestMessage.Headers.Authorization.Parameter'
+            )
+            try:
+                tok_result = _subp.run(
+                    [pwsh_cmd, "-NonInteractive", "-NoProfile", "-Command", tok_script],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if tok_result.returncode == 0:
+                    raw_token = tok_result.stdout.strip()
+                    if raw_token and len(raw_token) > 50:
+                        snap = {"access_token": raw_token, "mggraph_managed": True}
+                        _save_token(snap, work=True)
+                        # Identity check
+                        try:
+                            import urllib.request as _req
+                            req = _req.Request(
+                                "https://graph.microsoft.com/v1.0/me",
+                                headers={"Authorization": f"Bearer {raw_token}"},
+                            )
+                            with _req.urlopen(req, timeout=10) as resp:
+                                profile = json.load(resp)
+                            name = profile.get("displayName", "?")
+                            upn  = profile.get("userPrincipalName", "?")
+                            print(f"\n✓ Connected as: {name} ({upn})")
+                        except Exception:
+                            print("\n✓ Token snapshot saved (identity check skipped).")
+                        print(f"  Token saved to: {WORK_TOKEN_FILE}")
+                        print()
+                        print("  SharePoint tools will call Connect-MgGraph silently at runtime.")
+                        return
+            except (OSError, _subp.TimeoutExpired):
+                pass
+            print("⚠  Token extraction failed. Run 'Connect-MgGraph' in PowerShell to refresh.")
+            sys.exit(1)
+
+        else:
+            # PowerShell not found (unusual on Windows)
+            print()
+            print("╔══════════════════════════════════════════════════════════════╗")
+            print("║  Work SharePoint Auth — PowerShell Required                 ║")
+            print("╚══════════════════════════════════════════════════════════════╝")
+            print()
+            print("  PowerShell (pwsh) not found. Install from:")
+            print("    https://aka.ms/powershell")
+            print()
+            print("  Then run once in PowerShell:")
+            print("    Connect-MgGraph -Scopes 'Files.Read','Mail.Read','User.Read' -UseDeviceAuthentication")
+            print()
+            print("  Microsoft Graph PowerShell uses Microsoft's own pre-registered app.")
+            print("  No custom App Registration required.")
+            sys.exit(1)
+
+        client_id  = None   # unreachable — all paths above return or sys.exit
+        token_file = WORK_TOKEN_FILE
+        scopes     = _WORK_SCOPES
+
+    else:
+        client_id  = _keychain_read(KC_CLIENT_ID)
+        token_file = TOKEN_FILE
+        scopes     = _SCOPES
+        acct_label = "personal Microsoft account"
+        port_label = "http://localhost:8400"
+        kc_cmd     = f"keyring.set_password('{KC_CLIENT_ID}','artha','<CLIENT_ID>')"
+        app_note   = (
+            "     • Supported accounts: 'Personal Microsoft accounts only'\n"
+            "     • Redirect URI: Mobile/desktop → http://localhost:8400"
+        )
+
     if not client_id:
         print("╔══════════════════════════════════════════════════════════════╗")
-        print("║  Microsoft Graph OAuth Setup — Artha                        ║")
+        tier = "Work (AAD)" if work else "Personal"
+        print(f"║  Microsoft Graph OAuth Setup — Artha [{tier:18s}]  ║")
         print("╚══════════════════════════════════════════════════════════════╝")
         print()
         print("Client ID not found in credential store.")
         print("Complete the pre-requisites first:")
         print()
         print("  1. Go to https://portal.azure.com → App registrations → New registration")
-        print("     • Name: 'Artha Personal Assistant'")
-        print("     • Supported accounts: 'Personal Microsoft accounts only'")
-        print("     • Redirect URI: Mobile/desktop → http://localhost:8400")
+        print(f"     • Name: 'Artha{' Work' if work else ' Personal'} Assistant'")
+        print(app_note)
         print()
         print("  2. Copy the Application (client) ID")
         print()
         print("  3. Run:")
-        print('     python -c "import keyring; keyring.set_password(\'msgraph-client-id\',\'artha\',\'<CLIENT_ID>\')"')
+        print(f'     python -c "import keyring; {kc_cmd}"')
         print()
-        print("  4. Re-run this script.")
+        print("  4. Re-run this script" + (" with --work" if work else "") + ".")
         sys.exit(1)
 
     # Check if token already exists (and not force-reauth)
-    if not args.reauth and os.path.exists(TOKEN_FILE):
-        token_data = _load_token()
+    if not args.reauth and os.path.exists(token_file):
+        token_data = _load_token(work=work)
         if token_data and token_data.get("access_token"):
-            print("[msgraph] Token already stored. Use --reauth to force a new flow.")
-            print(f"          Token file: {TOKEN_FILE}")
-            # Quick connectivity check
-            try:
-                token = ensure_valid_token()
-                print("[msgraph] ✓ Token valid")
-            except Exception as exc:
-                print(f"[msgraph] ⚠ Token check failed: {exc}")
+            label = "work" if work else "personal"
+            print(f"[msgraph] {label.capitalize()} token already stored. Use --reauth to force a new flow.")
+            print(f"          Token file: {token_file}")
             return
 
     if args.reauth:
-        print("[msgraph] Forcing new OAuth flow (--reauth)...")
+        tier = "work" if work else "personal"
+        print(f"[msgraph] Forcing new OAuth flow (--reauth, {tier})...")
 
     print()
     print("╔══════════════════════════════════════════════════════════════╗")
@@ -424,19 +640,19 @@ def main() -> None:
     print("╚══════════════════════════════════════════════════════════════╝")
     print()
     print("  This will request the following scopes:")
-    for s in _SCOPES:
+    for s in scopes:
         print(f"    • {s}")
     print()
-    print("  Sign in with your personal Microsoft account.")
+    print(f"  Sign in with your {acct_label}.")
     print("  (The browser will open automatically in a moment...)")
     print()
 
     try:
-        token_response = _acquire_token_interactive(client_id)
-        _save_token(token_response, client_id=client_id)
+        token_response = _acquire_token_interactive(client_id, work=work)
+        _save_token(token_response, client_id=client_id, work=work)
         print()
         print("✓ Authentication successful!")
-        print(f"  Token saved to: {TOKEN_FILE}")
+        print(f"  Token saved to: {token_file}")
 
         # Quick verify
         access_token = token_response.get("access_token")
@@ -455,7 +671,10 @@ def main() -> None:
                 print(f"  ⚠ Could not verify identity: {exc}")
 
         print()
-        print("Next step: run python scripts/setup_todo_lists.py to create domain task lists.")
+        if work:
+            print("Next step: run python scripts/sharepoint_kb_sync.py --dry-run --verbose")
+        else:
+            print("Next step: run python scripts/setup_todo_lists.py to create domain task lists.")
 
     except Exception as exc:
         print(f"\n✗ Authentication failed: {exc}")

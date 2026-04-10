@@ -28,12 +28,18 @@ def _acquire_singleton_lock() -> bool:
     try:
         import ctypes
         ERROR_ALREADY_EXISTS = 183
-        handle = ctypes.windll.kernel32.CreateMutexW(None, True, _SINGLETON_MUTEX_NAME)
-        err = ctypes.windll.kernel32.GetLastError()
-        if err == ERROR_ALREADY_EXISTS or handle == 0:
+        # Use use_last_error=True so ctypes captures GetLastError() atomically
+        # right after the Win32 call, before any Python/ctypes bookkeeping can
+        # clear it. Accessing ctypes.windll directly does NOT guarantee this.
+        _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _k32.CreateMutexW.restype = ctypes.c_void_p
+        _k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        handle = _k32.CreateMutexW(None, True, _SINGLETON_MUTEX_NAME)
+        err = ctypes.get_last_error()  # reads the captured value, always safe
+        if err == ERROR_ALREADY_EXISTS or not handle:
             # Mutex already exists — another instance owns it
             if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
+                ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
             return False
         # We own the mutex — keep the handle alive
         _singleton_mutex_handle = handle

@@ -11,6 +11,9 @@ config/routing.yaml
 config/Artha.identity.md
 # Channel bridge live config — contains recipient IDs (PII)
 config/channels.yaml
+# OpenClaw Home Bridge config — contains LAN endpoint URL and bot name (personal infra; never committed)
+config/claw_bridge.yaml
+config/claw_bridge.yaml.bak
 # User-specific connector config — contains credential key names and token paths
 config/connectors.yaml
 config/connectors.yaml.bak
@@ -19,6 +22,7 @@ config/domain_autonomy_state.yaml
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
+state/.channel_listener.heartbeat
 state/.pending_pushes/
 # Bridge drop-files (ephemeral; synced via OneDrive, not Git)
 state/.action_bridge/
