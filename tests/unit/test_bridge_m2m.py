@@ -18,7 +18,6 @@ sys.path.insert(0, str(_SCRIPTS))
 sys.path.insert(0, str(_SCRIPTS / "channel"))
 
 # Stub heavy dependencies before importing m2m_handler
-from unittest.mock import MagicMock
 import types
 
 # Stub channel.audit
