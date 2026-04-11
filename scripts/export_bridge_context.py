@@ -916,10 +916,11 @@ def _process_nudge_queue(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _announce_via_alexa(cfg: dict[str, Any], dry_run: bool = False) -> bool:
-    """Fire a TTS announcement on an Alexa device via HA notify service.
+    """Fire a TTS announcement on Alexa devices via HA notify service.
 
     Only called after a successful bridge push when on home LAN.
-    Uses notify.alexa_media_{device} which is the verified working method.
+    Uses notify.alexa_media_{device} — the verified working method.
+    Supports a list of devices (announce_devices) or single device (announce_device).
     Silently no-ops on any error — announcement is best-effort.
     """
     ha_cfg = cfg.get("ha") or {}
@@ -928,7 +929,8 @@ def _announce_via_alexa(cfg: dict[str, Any], dry_run: bool = False) -> bool:
 
     ha_url = ha_cfg.get("url", "http://homeassistant.local:8123").rstrip("/")
     token_key = ha_cfg.get("token_keyring_key", "artha-ha-token")
-    device = ha_cfg.get("announce_device", "everywhere")
+    # Support list (announce_devices) or single string (announce_device)
+    devices: list[str] = ha_cfg.get("announce_devices") or [ha_cfg.get("announce_device", "everywhere")]
     message = ha_cfg.get("announce_text", "Artha context updated")
     timeout = int(ha_cfg.get("announce_timeout_sec", 5))
 
@@ -943,20 +945,21 @@ def _announce_via_alexa(cfg: dict[str, Any], dry_run: bool = False) -> bool:
             return False
 
         if dry_run:
-            log.info("alexa_announce_dryrun device=%s message=%r", device, message)
+            log.info("alexa_announce_dryrun devices=%s message=%r", devices, message)
             return True
 
-        service_url = f"{ha_url}/api/services/notify/alexa_media_{device}"
         body = json.dumps({"message": message, "data": {"type": "tts"}}).encode()
-        req = urllib.request.Request(
-            service_url,
-            data=body,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout):
-            pass
-        log.info("alexa_announce_ok device=%s", device)
+        for device in devices:
+            service_url = f"{ha_url}/api/services/notify/alexa_media_{device}"
+            req = urllib.request.Request(
+                service_url,
+                data=body,
+                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout):
+                pass
+            log.info("alexa_announce_ok device=%s", device)
         return True
     except Exception as exc:  # noqa: BLE001
         log.debug("alexa_announce_failed device=%s error=%s", device, exc)
