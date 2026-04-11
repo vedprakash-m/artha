@@ -161,7 +161,11 @@ class TestProcessMessage:
     @pytest.mark.anyio
     async def test_unknown_sender_silently_rejected(self, tmp_path, monkeypatch):
         """Unknown senders: no response sent, CHANNEL_REJECT audit written."""
-        monkeypatch.setattr(cl, "_AUDIT_LOG", tmp_path / "audit.md")
+        # Intercept _audit_log at the module attribute level so this test is
+        # immune to sys.modules["channel.audit"] stubs installed by other test
+        # files (e.g. test_bridge_m2m.py) that bind cl._audit_log to a fake.
+        audit_events: list[str] = []
+        monkeypatch.setattr(cl, "_audit_log", lambda event_type, **kw: audit_events.append(event_type))
 
         adapter = MagicMock()
         msg = _make_inbound(sender_id="UNKNOWN_999")
@@ -174,8 +178,7 @@ class TestProcessMessage:
         # Adapter must not have been called (no response to unknown senders)
         adapter.send_message.assert_not_called()
         # Audit log should contain CHANNEL_REJECT
-        audit_text = (tmp_path / "audit.md").read_text() if (tmp_path / "audit.md").exists() else ""
-        assert "CHANNEL_REJECT" in audit_text
+        assert "CHANNEL_REJECT" in audit_events
 
     @pytest.mark.anyio
     async def test_known_sender_gets_help_response(self, tmp_path, monkeypatch):
