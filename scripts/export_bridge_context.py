@@ -3,7 +3,8 @@
 Spec: specs/claw-bridge.md §P1.3 (Phase 1)
 
 Transport stack (tried in order):
-  Layer 2 — REST  : POST https://192.168.50.90:18789 (Mac + home LAN only)
+  Layer 3 — SSH   : scp artha_context.json → RPi4 workspace (Mac + home LAN only)
+  Layer 2 — REST  : POST https://192.168.50.90:18790 /v1/chat/completions (Mac + home LAN only)
   Layer 1 — Telegram : urllib to api.telegram.org (all machines)
   Layer 0 — DLQ   : ~/.artha-local/bridge_dlq.yaml (local only, NOT OneDrive)
 
@@ -22,6 +23,7 @@ import json
 import logging
 import re
 import socket
+import subprocess
 import sys
 import time
 import urllib.error
@@ -488,6 +490,68 @@ def _should_skip_push(version_hash: str) -> tuple[bool, str]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Transport Layer 3 — SSH file write (fastest, home LAN only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _push_via_ssh(payload: dict[str, Any], cfg: dict[str, Any], dry_run: bool = False) -> bool:
+    """Write artha_context.json directly to RPi4 workspace via SSH.
+
+    Bypasses the bot polling direction problem entirely. Claw reads the file
+    from its workspace on next interaction. Home LAN only.
+    Returns True on success, False on any failure (never raises).
+    """
+    oc_cfg: dict = (cfg.get("openclaw") or {})
+    ssh_host: str = oc_cfg.get("ssh_host", "homeassistant.local")
+    ssh_user: str = oc_cfg.get("ssh_user", "root")
+    ssh_port: int = int(oc_cfg.get("ssh_port", 22))
+    remote_path: str = oc_cfg.get(
+        "workspace_context_path",
+        "/config/.openclaw/workspace/artha_context.json",
+    )
+
+    context_doc = {
+        "received_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "schema": _BRIDGE_SCHEMA,
+        "cmd": "load_context",
+        "payload": payload,
+    }
+    json_bytes = json.dumps(context_doc, indent=2, ensure_ascii=False).encode("utf-8")
+
+    if dry_run:
+        log.info("[DRY-RUN] Would SSH %s@%s:%s write %d bytes", ssh_user, ssh_host, remote_path, len(json_bytes))
+        return True
+
+    ssh_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout=5",
+        "-p", str(ssh_port),
+        f"{ssh_user}@{ssh_host}",
+        f"mkdir -p $(dirname {remote_path}) && cat > {remote_path}",
+    ]
+    try:
+        result = subprocess.run(
+            ssh_cmd,
+            input=json_bytes,
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode == 0:
+            log.info("bridge_push_ssh_ok host=%s path=%s bytes=%d", ssh_host, remote_path, len(json_bytes))
+            return True
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        log.warning("bridge_push_ssh_nonzero rc=%d stderr=%s", result.returncode, stderr[:120])
+        return False
+    except subprocess.TimeoutExpired:
+        log.warning("bridge_push_ssh_timeout host=%s", ssh_host)
+        return False
+    except OSError as exc:
+        log.warning("bridge_push_ssh_os_error error=%s", exc)
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Transport Layer 2 — REST
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -511,10 +575,24 @@ def _push_via_rest(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: bool 
         log.warning("rest_token_missing keyring_key=%s", token_key)
         return False
 
-    # Wrap as OpenAI-compatible chat completion request (artha-bridge skill invocation)
+    # Send as standard chat completions request — Claw reads ARTHA_BRIDGE.md from workspace.
+    # No custom model/skill needed; OpenClaw routes to its configured default LLM.
+    cmd = envelope.get("cmd", "load_context")
     body = {
-        "model": "artha-bridge",
-        "messages": [{"role": "system", "content": json.dumps(envelope)}],
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are OpenClaw on Home Assistant. "
+                    "Process the following Artha bridge message according to "
+                    "ARTHA_BRIDGE.md in your workspace."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"[artha-bridge cmd={cmd}]\n{json.dumps(envelope)}",
+            },
+        ],
         "stream": False,
     }
     body_bytes = json.dumps(body).encode("utf-8")
@@ -886,10 +964,17 @@ def run_bridge_push(artha_dir: Path, cfg: dict[str, Any], dry_run: bool = False)
     trace_id = envelope.get("trace_id", "?")
 
     # ── Step 6: Transport ─────────────────────────────────────────────────
+    # Priority: SSH (direct file write) → REST → Telegram → DLQ
+    # SSH and REST are home-LAN-only; Telegram is universal.
     ok = False
     transport_used = "none"
 
     if is_home_lan:
+        ok = _push_via_ssh(data, cfg, dry_run=dry_run)
+        if ok:
+            transport_used = "ssh"
+
+    if not ok and is_home_lan:
         ok = _push_via_rest(envelope, cfg, dry_run=dry_run)
         if ok:
             transport_used = "rest"
