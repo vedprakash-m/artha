@@ -101,12 +101,24 @@ def _keyring_get(key: str) -> str | None:
 def _detect_is_home_lan(cfg: dict[str, Any]) -> bool:
     """Return True if home LAN is reachable (socket probe, 1s timeout).
 
-    Uses the configured REST host:port. Returns False on any failure (no raises).
-    This is the correct check — sys.platform alone is insufficient because the
-    user could be on Mac but connected to a different network.
+    Probes HA (port 8123) — reliably reachable from Mac on home LAN.
+    Falls back to the OpenClaw REST host if HA URL is not configured.
+    Returns False on any failure (no raises).
     """
-    rest_url: str = (cfg.get("openclaw") or {}).get("rest_url", "https://192.168.50.90:18789")
-    # Extract host and port from URL
+    # Prefer HA URL — always accessible from Mac on home LAN
+    ha_url: str = (cfg.get("ha") or {}).get("url", "")
+    if ha_url:
+        host = ha_url.replace("https://", "").replace("http://", "").split("/")[0]
+        host_part, _, port_str = host.partition(":")
+        port = int(port_str) if port_str.isdigit() else 8123
+        try:
+            with socket.create_connection((host_part, port), timeout=1.0):
+                return True
+        except OSError:
+            pass
+
+    # Fallback: probe OpenClaw REST host
+    rest_url: str = (cfg.get("openclaw") or {}).get("rest_url", "https://192.168.50.90:18790")
     host = rest_url.replace("https://", "").replace("http://", "").split("/")[0]
     host_part, _, port_str = host.partition(":")
     port = int(port_str) if port_str.isdigit() else 443
@@ -900,6 +912,58 @@ def _process_nudge_queue(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Alexa announcement
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _announce_via_alexa(cfg: dict[str, Any], dry_run: bool = False) -> bool:
+    """Fire a TTS announcement on an Alexa device via HA notify service.
+
+    Only called after a successful bridge push when on home LAN.
+    Uses notify.alexa_media_{device} which is the verified working method.
+    Silently no-ops on any error — announcement is best-effort.
+    """
+    ha_cfg = cfg.get("ha") or {}
+    if not ha_cfg.get("announce_on_push", False):
+        return False
+
+    ha_url = ha_cfg.get("url", "http://homeassistant.local:8123").rstrip("/")
+    token_key = ha_cfg.get("token_keyring_key", "artha-ha-token")
+    device = ha_cfg.get("announce_device", "everywhere")
+    message = ha_cfg.get("announce_text", "Artha context updated")
+    timeout = int(ha_cfg.get("announce_timeout_sec", 5))
+
+    if _keyring is None:
+        log.debug("alexa_announce_skip reason=no_keyring")
+        return False
+
+    try:
+        token = _keyring.get_password("artha", token_key) or ""
+        if not token:
+            log.warning("alexa_announce_skip reason=no_ha_token key=%s", token_key)
+            return False
+
+        if dry_run:
+            log.info("alexa_announce_dryrun device=%s message=%r", device, message)
+            return True
+
+        service_url = f"{ha_url}/api/services/notify/alexa_media_{device}"
+        body = json.dumps({"message": message, "data": {"type": "tts"}}).encode()
+        req = urllib.request.Request(
+            service_url,
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout):
+            pass
+        log.info("alexa_announce_ok device=%s", device)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.debug("alexa_announce_failed device=%s error=%s", device, exc)
+        return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Main orchestrator
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -996,6 +1060,8 @@ def run_bridge_push(artha_dir: Path, cfg: dict[str, Any], dry_run: bool = False)
             deadlines_7d=len(data.get("deadlines_7d", [])),
         )
         log.info("bridge_push_ok transport=%s trace_id=%s", transport_used, trace_id)
+        if is_home_lan:
+            _announce_via_alexa(cfg, dry_run=dry_run)
         return 0
     else:
         # Both transports failed → DLQ
