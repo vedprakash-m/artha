@@ -7,6 +7,16 @@ import tempfile
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Standalone scripts — exclude from pytest collection.
+# These use sys.exit() at module level and run directly as: python tests/<name>.py
+# Collecting them via pytest would trigger module-level code and crash collection.
+# ---------------------------------------------------------------------------
+collect_ignore = [
+    "test_career_search.py",
+    "test_career_content.py",
+]
+
+# ---------------------------------------------------------------------------
 # Ensure:
 #   1. scripts/ is on sys.path so tests can import modules directly,
 #      e.g. ``from foundation import ...`` not ``from scripts.foundation import``
