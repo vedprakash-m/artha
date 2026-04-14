@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{COMPANY}} — {{ROLE}}</title>
+  <style>
+    /* ================================================================
+       Artha Career CV Template v1.0
+       ATS-optimized layout: single-column, no tables, no multi-column
+       Fonts: Space Grotesk (headings) + DM Sans (body) — self-hosted
+       Ref: specs/career-ops.md FR-CS-3, §9.1
+    ================================================================ */
+
+    /* Self-hosted fonts — no external CDN dependency.
+       SETUP: Run `make install-fonts` or `bash scripts/install_fonts.sh` to
+       download Space Grotesk and DM Sans woff2 files to fonts/.
+       If woff2 files are present, they take priority; local() is fallback. */
+    @font-face {
+      font-family: 'Space Grotesk';
+      src: url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2'),
+           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2'),
+           local('Space Grotesk'), local('SpaceGrotesk');
+      font-weight: 400 700;
+      font-style: normal;
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      src: url('../fonts/DMSans-Regular.woff2') format('woff2'),
+           url('../fonts/DMSans-Medium.woff2') format('woff2'),
+           url('../fonts/DMSans-Bold.woff2') format('woff2'),
+           local('DM Sans'), local('DMSans');
+      font-weight: 400 500 700;
+      font-style: normal;
+    }
+
+    /* Fallback font stack for ATS parsers without font rendering */
+    :root {
+      --font-heading: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      --font-body: 'DM Sans', 'Helvetica Neue', Arial, sans-serif;
+      --color-primary: #1a1a2e;
+      --color-accent: #2563eb;
+      --color-border: #e2e8f0;
+      --color-muted: #64748b;
+      --page-width: 8.5in;
+      --margin-h: 0.65in;
+      --margin-v: 0.55in;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: var(--page-width);
+      font-family: var(--font-body);
+      font-size: 10.5pt;
+      line-height: 1.5;
+      color: var(--color-primary);
+      background: #ffffff;
+    }
+
+    .page {
+      width: var(--page-width);
+      padding: var(--margin-v) var(--margin-h);
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    .header {
+      border-bottom: 2px solid var(--color-accent);
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+    }
+
+    .header h1 {
+      font-family: var(--font-heading);
+      font-size: 22pt;
+      font-weight: 700;
+      color: var(--color-primary);
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+
+    .header .subtitle {
+      font-family: var(--font-heading);
+      font-size: 11pt;
+      font-weight: 400;
+      color: var(--color-accent);
+      margin-top: 3px;
+    }
+
+    .header .contact {
+      font-size: 9pt;
+      color: var(--color-muted);
+      margin-top: 6px;
+    }
+
+    /* ── Section headings ───────────────────────────────────────── */
+    h2 {
+      font-family: var(--font-heading);
+      font-size: 10pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--color-accent);
+      border-bottom: 1px solid var(--color-border);
+      padding-bottom: 3px;
+      margin-top: 14px;
+      margin-bottom: 8px;
+    }
+
+    h3 {
+      font-family: var(--font-heading);
+      font-size: 10.5pt;
+      font-weight: 600;
+      color: var(--color-primary);
+      margin-top: 10px;
+      margin-bottom: 2px;
+    }
+
+    /* ── Body text ──────────────────────────────────────────────── */
+    p {
+      margin-bottom: 4px;
+      font-size: 10.5pt;
+    }
+
+    /* ── Lists — ATS-safe (single-column, no flex) ──────────────── */
+    ul {
+      list-style-type: disc;
+      padding-left: 16px;
+      margin-bottom: 6px;
+    }
+
+    li {
+      margin-bottom: 2px;
+      font-size: 10pt;
+      line-height: 1.45;
+    }
+
+    /* ── Experience entries ─────────────────────────────────────── */
+    .exp-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .exp-header .company-title {
+      font-weight: 600;
+      font-size: 10.5pt;
+    }
+
+    .exp-header .date-range {
+      font-size: 9.5pt;
+      color: var(--color-muted);
+      flex-shrink: 0;
+    }
+
+    .exp-role {
+      font-size: 10pt;
+      color: var(--color-muted);
+      margin-bottom: 4px;
+    }
+
+    /* ── Skills section ─────────────────────────────────────────── */
+    .skills-grid {
+      display: block; /* Single column for ATS */
+    }
+
+    .skill-category {
+      margin-bottom: 4px;
+    }
+
+    .skill-category strong {
+      font-weight: 600;
+    }
+
+    /* ── Footer metadata (for internal tracking — not ATS visible) */
+    .pdf-meta {
+      display: none; /* Hidden in PDF output */
+    }
+
+    /* ── Page break control ─────────────────────────────────────── */
+    .no-break {
+      page-break-inside: avoid;
+    }
+
+    /* ── Score badge (internal use — not shown to recruiter) ────── */
+    .score-badge {
+      display: none;
+    }
+
+    /* ── Print / PDF overrides ──────────────────────────────────── */
+    @media print {
+      .pdf-meta { display: none !important; }
+      .score-badge { display: none !important; }
+
+      html, body {
+        font-size: 10pt;
+      }
+
+      h2 {
+        font-size: 9.5pt;
+      }
+
+      /* Force black ink for ATS scanners */
+      h2 {
+        color: #000000 !important;
+      }
+    }
+
+    /* ── ATS keyword comment passthrough ────────────────────────── */
+    /* HTML comments injected by career_pdf_generator.py are preserved
+       as-is and ignored by browsers/PDF renderers. ATS parsers that
+       read raw HTML will surface the keyword list. */
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <!-- ══ HEADER ═══════════════════════════════════════════════════ -->
+    <div class="header">
+      <h1>{{CANDIDATE_NAME}}</h1>
+      <div class="subtitle">{{CANDIDATE_TITLE}}</div>
+      <div class="contact">
+        {{CANDIDATE_EMAIL}} · {{CANDIDATE_LOCATION}} · {{CANDIDATE_LINKEDIN}}
+      </div>
+    </div>
+
+    <!-- ══ CV CONTENT (injected by CareerPdfGenerator) ══════════════ -->
+    <div id="cv-body">
+      {{CV_CONTENT}}
+    </div>
+
+    <!-- ══ INTERNAL METADATA (hidden from PDF output) ════════════════ -->
+    <div class="pdf-meta">
+      Generated: {{DATE}} | Company: {{COMPANY}} | Role: {{ROLE}}
+      Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
+      ATS Keywords: {{KEYWORDS}}
+    </div>
+
+  </div>
+</body>
+</html>

@@ -325,3 +325,38 @@ skills:
       data sources via the Narrative Engine (§7.8). Outputs Markdown sections
       ready to paste into a deck — not PowerPoint files.
 
+  # ── Career Search Intelligence skills ──────────────────────────────────
+
+  career_pdf_generator:
+    class: "scripts.skills.career_pdf_generator.CareerPdfGenerator"
+    enabled: true        # Always enabled; skill guards on campaign.status internally
+    priority: P1
+    cadence: on-demand   # Triggered by /career pdf <NNN> or auto-proposed at score >= 4.0
+    requires_vault: false
+    safety_critical: false
+    command_namespace: career
+    requires_connectors: []
+    optional_connectors: []
+    requires_packages: [playwright]  # Run: pip install playwright && playwright install chromium
+    description: >
+      Generate ATS-optimized CV PDF from evaluation report and cv.md.
+      Uses Python playwright for HTML -> PDF rendering (Space Grotesk + DM Sans fonts).
+      Reads Block E personalization plan from evaluation report for per-JD tailoring.
+      Activation guard: skips if no active career campaign.
+
+  # Phase 2 — registered but disabled until Phase 2 implementation
+  portal_scanner:
+    class: "scripts.skills.portal_scanner.PortalScanner"
+    enabled: false       # Phase 2 — not yet implemented
+    priority: P1
+    cadence: every_3_days
+    requires_vault: false
+    safety_critical: false
+    command_namespace: career
+    requires_connectors: []
+    optional_connectors: []
+    description: >
+      Scan Greenhouse, Ashby, Lever portals for new matching listings.
+      Deduplicates against tracker entries using token-set ratio (Jaccard >=0.85).
+      Phase 2 — requires portal_scanner.py implementation.
+

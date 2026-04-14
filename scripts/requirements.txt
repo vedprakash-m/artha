@@ -36,6 +36,11 @@ vobject==0.9.8
 # ── Skills (background data pulls) ────────────────────────────────────────────
 beautifulsoup4==4.12.3
 
+# ── Career PDF generation ─────────────────────────────────────────────────────
+# playwright is optional — install manually then run: playwright install chromium
+# Only required for /career pdf command (career_pdf_generator.py skill)
+playwright>=1.40.0
+
 # ── Dev / test tools (included here so CI works with requirements.txt) ────────
 # For production-only installs, use: pip install -e ".[all]" (skips these)
 anyio[trio]>=4.0.0   # required for @pytest.mark.anyio in async tests

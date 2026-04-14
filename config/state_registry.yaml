@@ -327,6 +327,32 @@ state_files:
 
   # ── OpenClaw Bridge ──────────────────────────────────────────────────────
 
+  # ── Career Search Intelligence ──────────────────────────────────────────
+
+  - path: "state/career_search.md"
+    owner_agent: "artha-career"
+    write_frequency: "user-triggered (/career eval, /career pdf, /career tracker)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "high"
+    description: "Career search application tracker, CV config, story bank, campaign state. Active only during campaign."
+
+  - path: "state/career_audit.jsonl"
+    owner_agent: "artha-career"
+    write_frequency: "every career eval, guardrail event, story mutation"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+    description: "JSONL audit trail for career evaluations, guardrail events, story bank mutations. 90-day rolling retention."
+
+  - path: "~/.artha-local/career"
+    owner_agent: "artha-career"
+    write_frequency: "per portal scan / eval (fingerprints, dedup cache)"
+    backup_tier: "artha-local-dbs"
+    max_staleness_hours: 720
+    sensitivity: "medium"
+    description: "Local-only career fingerprint cache and portal scan history. Never committed to git (same pattern as cashflow.db)."
+
   - path: "state/home_events.md"
     owner_agent: "pipeline"
     managed_by: "pipeline.py"

@@ -235,8 +235,8 @@ security_alert:
   undo_window_sec: null
 
 school_action_needed:
-  action_type: reminder_create
-  friction: low
+  action_type: whatsapp_send
+  friction: standard
   min_trust: 0
   reversible: false
   undo_window_sec: null
@@ -356,5 +356,50 @@ document_property:
   action_type: instruction_sheet
   friction: standard
   min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+# Career Search (specs/career-ops.md §3.1 Phase 1, FR-CS-4)
+# interview_scheduled: friction=standard per TS-2 (escalated from low in v1.5.0)
+career_eval_complete:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+career_interview_scheduled:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+career_offer_received:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+career_offer_deadline:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+
+career_application_rejected:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+
+# Phase 2 — portal scanner signals (CareerSearchAgent)
+new_portal_match:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
   reversible: false
   undo_window_sec: null

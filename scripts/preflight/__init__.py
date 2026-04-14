@@ -152,6 +152,36 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
             fix_hint="pip install beautifulsoup4"
         ))
 
+    # Career PDF feature — Playwright + Chromium (P1, non-blocking)
+    # Spec FR-CS-3: "Preflight check validates Chromium binary availability"
+    try:
+        import playwright  # noqa: F401
+        # Chromium browser cache location (cross-platform)
+        if sys.platform == "darwin":
+            _pw_cache = pathlib.Path.home() / "Library" / "Caches" / "ms-playwright"
+        elif sys.platform == "win32":
+            _pw_cache = pathlib.Path.home() / "AppData" / "Local" / "ms-playwright"
+        else:
+            _pw_cache = pathlib.Path.home() / ".cache" / "ms-playwright"
+        _chromium_dirs = sorted(_pw_cache.glob("chromium-*")) if _pw_cache.exists() else []
+        if _chromium_dirs:
+            checks.append(CheckResult(
+                "Playwright Chromium", "P1", True,
+                f"playwright + Chromium ready ({_chromium_dirs[-1].name}) ✓",
+            ))
+        else:
+            checks.append(CheckResult(
+                "Playwright Chromium", "P1", False,
+                "playwright installed but Chromium browser not found — career PDF generation will fail",
+                fix_hint="Run: playwright install chromium  (or: make install-playwright)",
+            ))
+    except ImportError:
+        checks.append(CheckResult(
+            "Playwright", "P1", False,
+            "playwright not installed — career PDF generation unavailable (non-blocking)",
+            fix_hint="Run: make install-playwright  (or: pip install playwright && playwright install chromium)",
+        ))
+
     # MS Graph live connectivity via unified pipeline.py (P1)
     if not quiet:
         try:

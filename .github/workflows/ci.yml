@@ -93,6 +93,12 @@ jobs:
           pip install -r scripts/requirements.txt
           pip install pytest pytest-mock
 
+      - name: Create required runtime directories
+        run: |
+          # Career Search output directories (FR-25 — not committed, created at setup)
+          mkdir -p output/career briefings/career
+          echo "✓ Runtime directories created"
+
       - name: Debug environment
         run: |
           python --version

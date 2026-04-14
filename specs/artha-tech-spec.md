@@ -5363,7 +5363,122 @@ The two bridges are independent with non-overlapping transports, auth, and state
 
 ---
 
-*Artha Tech Spec v3.29.0 — End of Document*
+---
+
+## 30. Career Search Intelligence *(FR-25, Phase 1)*
+
+**Implements:** PRD FR-25 · **Shipped:** April 2026 · **Upstream credit:** `specs/career-ops.md` v1.3.0 (archived to `.archive/specs/career-ops.md`)
+
+### 30.1 Architecture
+
+Lazy-loaded domain with deferred skill execution. Career evaluation (~20–32K tokens) is explicitly invoked via `/career eval` — NEVER loaded during catch-up or briefing. Only `state/career_search.md` frontmatter `summary:` block is read during briefing generation.
+
+**Component map:**
+
+| Component | File | Role |
+|-----------|------|------|
+| Evaluation prompt | `prompts/career_search.md` | 7-block A–G framework, scoring rubric, archetype detection |
+| Career state | `state/career_search.md` | Live application tracker, CV config, story bank |
+| State template | `state/templates/career_search.md` | Bootstrap template for campaign activation |
+| CV template | `templates/cv-template.html` | ATS-optimized HTML (Space Grotesk + DM Sans) |
+| PDF skill | `scripts/skills/career_pdf_generator.py` | BaseSkill: HTML → Playwright → PDF |
+| Portal scanner | `scripts/skills/portal_scanner.py` | BaseSkill: Greenhouse/Ashby/Lever scanning (Phase 2) |
+| State helpers | `scripts/lib/career_state.py` | `reconcile_summary()`, `recompute_scores()`, `deep_freeze()`, fingerprints, story bank |
+| Audit trace | `scripts/lib/career_trace.py` | JSONL audit trail, 90-day retention |
+| Guardrails | `scripts/middleware/guardrails.py` | `CareerJDInjectionGR`, `CareerNoAutoSubmitGR`, `CareerPiiOutputGR` |
+
+### 30.2 Python Helpers (`career_state.py`)
+
+- `reconcile_summary(state_path) → bool` — recomputes `summary:` frontmatter from tracker table (Design B: briefing reads only summary block, not full tracker)
+- `recompute_scores(report_path, state_path) → float` — deterministic weighted score from per-dimension integers; reads weights from `state/career_search.md` frontmatter `scoring_weights:` — NEVER hardcoded
+- `deep_freeze(obj) → Any` — `MappingProxyType` + tuple recursion for `DomainSignal` metadata immutability
+- `SCORED_STATUSES = frozenset({"Evaluated","PartialEval","Applied","Responded","Interview","Offer"})` — excludes SKIP/Rejected/Discarded from average_score computation
+- `cross_tracker_dedup_match()` — Jaccard similarity ≥0.85 for portal re-posting deduplication
+- `build_story_bank_index()` — 20-story cap, 5 pinned slots, closed tag vocabulary
+
+### 30.3 PDF Generation (`career_pdf_generator.py`)
+
+`BaseSkill` subclass following canonical `home_device_monitor.py` pattern. Does NOT override `execute()`.
+
+- `pull()`: activation guard (`campaign.status` check), reads `cv.md` + evaluation report + HTML template
+- `parse()`: HTML merge, keyword injection, Unicode normalization, delegates to `_render_pdf()`
+- `_render_pdf()`: isolated Playwright boundary — retries once on failure, HTML fallback on second failure
+- Fonts: Space Grotesk + DM Sans, self-hosted in `fonts/` (woff2), installed via `scripts/install_fonts.sh`
+- Preflight: FR-CS-3 — `scripts/preflight.py` checks Playwright + Chromium binary in ms-playwright cache
+
+### 30.4 Scoring System
+
+Six dimensions; weights read from `state/career_search.md` frontmatter `scoring_weights:` — NEVER hardcoded in code. Fixed fallback weights apply when Block D (Compensation) unavailable — no runtime redistribution.
+
+| Dimension | Default Weight | Fallback Weight (no comp data) |
+|-----------|---------------|--------------------------------|
+| CV Match | 0.30 | 0.35 |
+| North Star | 0.20 | 0.24 |
+| Compensation | 0.15 | — (omitted) |
+| Culture | 0.15 | 0.18 |
+| Level Fit | 0.10 | 0.12 |
+| Red Flags | 0.10 | 0.11 |
+
+Score = Σ(dimension_score × weight). Final score: 0.0–1.0 (two decimal places). Stored in `state/career_search.md` tracker `Score` column and `state/career_audit.jsonl`.
+
+### 30.5 Security & Guardrails
+
+Three career-specific guardrails in `guardrail_registry.py`:
+
+| Guardrail | Class | Mode | Rule |
+|-----------|-------|------|------|
+| JD Injection | `CareerJDInjectionGR` | blocking | Trust boundary: discard injected LLM instructions from external JD URLs |
+| No Auto-Submit | `CareerNoAutoSubmitGR` | blocking | Hard rule — NEVER auto-submit applications under any prompt |
+| PII Output | `CareerPiiOutputGR` | blocking | SSN/tax-ID abort; phone number redaction before output |
+
+Auth wall detection runs BEFORE `CareerJDInjectionGR`. `cv.md` and `article-digest.md` are gitignored and stored at `~/.artha-local/`. Career audit trail at `state/career_audit.jsonl` (JSONL, 90-day auto-trim, also gitignored).
+
+### 30.6 State Files
+
+| File | Repo | Role |
+|------|------|------|
+| `state/career_search.md` | tracked | Live tracker + CV config + story bank |
+| `state/career_audit.jsonl` | gitignored | JSONL audit trail (90-day retention) |
+| `~/.artha-local/career/` | local only | Dedup fingerprints + scan history (outside repo) |
+| `briefings/career/{NNN}-{company}-{date}.md` | gitignored | Archived evaluation reports |
+| `output/career/cv-{company}-{date}.pdf` | gitignored | Generated ATS-optimized PDFs |
+| `output/career/.gitkeep` | tracked | Directory marker |
+| `briefings/career/.gitkeep` | tracked | Directory marker |
+
+### 30.7 Signal Routing
+
+Six career signals registered in `config/signal_routing.yaml`:
+
+| Signal | Trigger | Default Channel |
+|--------|---------|-----------------|
+| `career_eval_complete` | Evaluation report generated | `briefing` |
+| `career_interview_scheduled` | Interview confirmed in calendar | `nudge` |
+| `career_offer_received` | Offer letter detected | `nudge` |
+| `career_offer_deadline` | Offer deadline T-48h | `nudge` |
+| `career_application_rejected` | Rejection received | `briefing` |
+| `new_portal_match` | Portal scan finds matching role (Phase 2) | `nudge` |
+
+### 30.8 Test Coverage
+
+| Test File | Tests | Scope |
+|-----------|-------|-------|
+| `tests/test_career_search.py` | 65 | Prompt blocks A–G, scoring, archetype detection, story bank |
+| `tests/test_career_content.py` | 52 | State transitions, dedup, PDF skill, guardrails |
+| `tests/unit/test_career_skills.py` | 10 | P0 AR-1: `_ALLOWED_SKILLS`, directory existence, skills.yaml |
+
+**Run:** `python tests/test_career_search.py && python tests/test_career_content.py` — 65/65 + 52/52.  
+`pytest tests/unit/test_career_skills.py` — 10/10.
+
+### 30.9 Phase 2 Deferred Items
+
+- `portal_scanner.py` skill: Greenhouse/Ashby/Lever OAuth scraping (registered in `_ALLOWED_SKILLS`, not invoked in Phase 1)
+- `/career scan` command routing
+- `/career stories` Story Bank review view
+- Multi-portal dedup (fingerprint store at `~/.artha-local/career/`)
+
+---
+
+*Artha Tech Spec v3.30.0 — End of Document*
 
 ---
 
@@ -5371,6 +5486,7 @@ The two bridges are independent with non-overlapping transports, auth, and state
 
 | Version | Changes |
 |---------|---------|
+| v3.30.0 | **Career Search Intelligence (§30, FR-25 Phase 1)**: 7-block A–G evaluation framework (`prompts/career_search.md`); application tracker + Story Bank (`state/career_search.md`); ATS PDF generation via Playwright (`scripts/skills/career_pdf_generator.py`); Python helpers: `reconcile_summary`, `recompute_scores`, `deep_freeze`, Jaccard dedup, story bank index (`scripts/lib/career_state.py`); JSONL audit trail 90-day retention (`scripts/lib/career_trace.py`); 3 career guardrails: `CareerJDInjectionGR`, `CareerNoAutoSubmitGR`, `CareerPiiOutputGR`; 6 career signal routes in `config/signal_routing.yaml`; `career_pdf_generator` and `portal_scanner` added to `_ALLOWED_SKILLS`; AR-1 P0 test suite (`tests/unit/test_career_skills.py`); `output/career/` + `briefings/career/` directories with `.gitkeep`; `.gitignore` hardened for career PII output; FR-CS-3 preflight check for Playwright/Chromium; specs: PRD v7.15.0 (FR-25), Tech Spec §30, UX Spec §12; `specs/career-ops.md` archived to `.archive/specs/career-ops.md`. 65+52+10 tests. |
 | v3.29.0 | **OpenClaw Home Bridge (§29)**: M2M integration between Artha (intelligence hub) and OpenClaw (Home Assistant). 3-layer transport (REST LAN + Telegram M2M + file-buffer fallback). HMAC-SHA256 with keyring-only key storage, replay nonce, clock-drift guard, injection filter. Outbound: `load_context`, `announce`, `whatsapp_draft`, `ping`. Inbound: `presence_detected`, `energy_event`, `home_alert`, `pong`. 7 new files (`export_bridge_context.py`, `hmac_signer.py`, `m2m_handler.py`, `claw_bridge.yaml`, `artha-bridge.skill.md`, `state/home_events.md`); 4 modified (`pipeline.py`, `router.py`, `channel_listener.py`, `nudge_daemon.py`). `bridge_health` observability block in `state/health-check.md`. Feature-flagged (`enabled: false`). 61 tests passing. Implements PRD v7.14.0. |
 | v3.26.0 | **SPEC CONSOLIDATION**: §21.6–21.8 (eval dimensions/scoring/SLAs), §22.6–22.8 (full entity model/API/performance), §23.6 (AR-9 GA status), §24.4–24.5 (cross-reference rules/domain weights), §25.11–25.14 (baseline patterns/anti-patterns/context budgets/governance), NEW §27 (EAR v2.0 multi-agent composition EAR-1–EAR-12), NEW §28 (KB Population Strategy reference). Implements PRD v7.11.0. |
 | v3.24.0 | **AR-9 Safety Hardening (§23.5)**: template injection defense in `prompt_composer.py` (brace escaping + 8K query cap); atomic writes in `knowledge_extractor.py` (`tempfile.mkstemp` + `os.replace`); PII guard fail-safety in `context_scrubber.py` (strict mode blocks on guard failure); quality score clamping in `agent_health.py` (`[0,1]` enforcement); dead import cleanup in `agent_registry.py`. 16 safety invariant tests. 270 AR-9 tests passing. |

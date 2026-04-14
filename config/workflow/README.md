@@ -12,7 +12,7 @@ that execute together:
 |-------|-------|--------|---------|
 | **Preflight** | 0–2b | [preflight.md](preflight.md) | Gate checks, decrypt, health-check |
 | **Fetch** | 3–4d | [fetch.md](fetch.md) | Periodic triggers, data pull, context loading |
-| **Process** | 5–7b | [process.md](process.md) | PII filter, domain routing, state updates |
+| **Process** | 5–7b | [process.md](config/workflow/process.md) | PII filter, domain routing, state updates |
 | **Reason** | 8–11 | [reason.md](reason.md) | Cross-domain reasoning, research, briefing synthesis |
 | **Finalize** | 12–19b | [finalize.md](finalize.md) | Alerts, actions, email, re-encrypt, calibration |
 

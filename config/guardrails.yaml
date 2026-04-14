@@ -139,3 +139,47 @@ domain:
       amount_threshold: 200
       # Reject (not prompt-again) if typed amount doesn't match proposed amount
       reject_on_mismatch: true
+
+  # Career Search domain guardrails (specs/career-ops.md §14, N-F1)
+  # GUARDRAIL_CLASSES dict and __all__ registration required in scripts/middleware/guardrails.py
+  # P0 test: _ALLOWED_SKILLS must include career guardrails (AR-1)
+
+  - name: career_jd_injection
+    class: CareerJDInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block JD content containing LLM instructions, tool calls, or bash commands
+      # Auth wall detection runs BEFORE this guardrail (W-F5 ordering)
+      block_on_injection_patterns: true
+      # Patterns triggering injection flag
+      injection_signals:
+        - "<system>"
+        - "</system>"
+        - "Ignore previous instructions"
+        - "You are now"
+        - "bash -c"
+        - "os.system"
+        - "subprocess"
+      log_event: true   # Always write CAREER-GUARDRAIL trace entry (N-F4)
+
+  - name: career_no_auto_submit
+    class: CareerNoAutoSubmitGR
+    enabled: true
+    mode: blocking
+    config:
+      # Hard rule: Artha NEVER submits job applications (CS-2, career-ops ethical stance)
+      # Any action_proposal with action_type containing 'submit' or 'apply' is blocked
+      block_auto_submit: true
+      block_action_types: ["submit_application", "auto_apply", "application_submit"]
+
+  - name: career_pii_output
+    class: CareerPiiOutputGR
+    enabled: true
+    mode: blocking
+    config:
+      # Redact phone numbers in career output; block SSN / tax ID
+      redact_phone: true
+      block_ssn: true
+      allow_comp_data: true   # Compensation data permitted (needed for cross-domain)
+      allow_employer_name: true

@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.15 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.16 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.14.0, Tech Spec v3.29.0
+> **Implements**: PRD v7.15.0, Tech Spec v3.30.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -968,6 +968,16 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                  lint --json         Machine-readable findings output
                  lint --pass P1      Run a single pass only
                  lint --init         Bootstrap missing state templates
+/career          Career Search Intelligence *(FR-25, Phase 1)*    varies
+                 Backed by prompts/career_search.md + scripts/skills/career_pdf_generator.py
+                 /career eval <URL|JD>   Full A–G evaluation (~20–32K tokens, explicit invoke only)
+                                         NEVER loaded during catch-up or briefing
+                 /career tracker         Pipeline status view (from state/career_search.md)
+                 /career pdf <NNN>       Generate ATS-optimized CV PDF via Playwright
+                                         Output: output/career/cv-{company}-{date}.pdf
+                 /career stories         Story Bank review (20-story cap, 5 pinned)  *(Phase 2)*
+                 /career scan            Portal scan — Greenhouse/Ashby/Lever           *(Phase 2)*
+                 /career prep <company>  Interview prep from tracker + story bank       *(Phase 2)*
 ```
 
 **CLI diagnostic flag (not a slash command):**
@@ -3254,4 +3264,4 @@ If announcement delivery failed (OC pong timed out before push):
 
 ---
 
-*Artha UX Spec v3.15 — End of Document*
+*Artha UX Spec v3.16 — End of Document*
