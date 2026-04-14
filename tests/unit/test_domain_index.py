@@ -13,6 +13,7 @@ Coverage:
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -152,7 +153,9 @@ class TestBuildDomainIndex:
     def test_active_domain_classified_correctly(self, tmp_path):
         state_dir = tmp_path / "state"
         state_dir.mkdir()
-        _write_state_file(state_dir, "immigration", last_activity="2026-03-14")
+        # Use yesterday's date so it's always within the 30-day ACTIVE window
+        recent = (date.today() - timedelta(days=1)).isoformat()
+        _write_state_file(state_dir, "immigration", last_activity=recent)
 
         _, index_data = build_domain_index(tmp_path)
         assert index_data["immigration"]["status"] == "ACTIVE"
