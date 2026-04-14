@@ -918,6 +918,33 @@ def run_pipeline(
     except Exception as _exc:
         print(f"[pipeline] WARNING: bridge health write failed: {_exc}", file=sys.stderr)
 
+    # ── Action Layer: auto-invoke orchestrator (Phase 3 — specs/action.md) ──
+    # Runs after all connectors finish and pipeline_output.jsonl is written.
+    # Non-blocking: never fails the pipeline. Writes status to tmp/ for the AI.
+    _action_status_path = _REPO_ROOT / "tmp" / "action_layer_status.txt"
+    try:
+        import subprocess as _subprocess
+        _action_status_path.parent.mkdir(parents=True, exist_ok=True)
+        _ao_result = _subprocess.run(
+            [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--run"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(_REPO_ROOT),
+        )
+        _pending = sum(
+            1 for ln in _ao_result.stdout.splitlines()
+            if "PENDING" in ln or ("[" in ln and "]" in ln and "|" in ln)
+        )
+        _action_status_path.write_text(
+            f"OK | {_pending} proposals\n{_ao_result.stdout.strip()}"
+        )
+        if _ao_result.stdout.strip():
+            print(_ao_result.stdout, flush=True)
+    except Exception as _ao_exc:  # noqa: BLE001
+        _action_status_path.write_text(
+            f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}"
+        )
+        print(f"[pipeline] WARNING: action layer failed: {_ao_exc}", file=sys.stderr)
+
     return 3 if error_count > 0 else 0
 
 

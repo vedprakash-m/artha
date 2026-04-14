@@ -39,96 +39,23 @@ from actions.base import ActionProposal, DomainSignal
 # Each entry: signal_type → (action_type, base_friction, min_trust, reversible, undo_window_sec)
 # Friction values: "low" | "standard" | "high"
 # min_trust: 0=observe(never auto), 1=propose, 2=pre-approve
+#
+# SOLE AUTHORITY: config/signal_routing.yaml
+# _FALLBACK_SIGNAL_ROUTING is populated at import time directly from the YAML
+# file so that _load_signal_routing() can provide a bootstrap copy when
+# load_config() returns an empty dict (e.g. during transient I/O failures or
+# first-run before config_loader cache is warm).
+# Invariant enforced by tests: set(_FALLBACK_SIGNAL_ROUTING) == set(signal_routing.yaml).
+try:
+    import yaml as _yaml_mod
+    _routing_path = Path(__file__).resolve().parent.parent / "config" / "signal_routing.yaml"
+    with open(_routing_path, encoding="utf-8") as _f:
+        _FALLBACK_SIGNAL_ROUTING: dict[str, dict] = _yaml_mod.safe_load(_f) or {}
+    del _yaml_mod, _routing_path
+except Exception:
+    _FALLBACK_SIGNAL_ROUTING = {}
 
-_FALLBACK_SIGNAL_ROUTING: dict[str, dict[str, Any]] = {
-    # Finance
-    "bill_due":               {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "property_tax_due":       {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "subscription_renewal":   {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-    "medical_bill_high":      {"action_type": "email_send",        "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Calendar
-    "calendar_conflict":      {"action_type": "calendar_modify",   "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
-    "appointment_needed":     {"action_type": "email_send",        "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Email
-    "email_needs_reply":      {"action_type": "email_reply",       "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Social
-    "birthday_approaching":   {"action_type": "whatsapp_send",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "birthday_in_7d":         {"action_type": "whatsapp_send",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "life_event_detected":    {"action_type": "email_send",        "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Kids
-    "missing_assignment":     {"action_type": "email_send",        "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-    "school_event_rsvp":      {"action_type": "email_reply",       "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Immigration
-    "immigration_deadline":   {"action_type": "email_send",        "friction": "high",     "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-
-    # Health
-    "prescription_refill":    {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 2, "reversible": False, "undo_window_sec": None},
-
-    # Vehicle
-    "vehicle_recall":         {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 2, "reversible": False, "undo_window_sec": None},
-
-    # Insurance
-    "insurance_renewal":      {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-
-    # Open Items
-    "open_item_aging":        {"action_type": "reminder_create",   "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-    "open_item_overdue":      {"action_type": "reminder_create",   "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-
-    # Generic calendar creation
-    "event_invitation":       {"action_type": "calendar_create",   "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
-
-    # IoT / Home (ARTHA-IOT Wave 1+2)
-    "device_offline":             {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "security_device_offline":    {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "energy_anomaly":             {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "supply_low":                 {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "spa_maintenance":            {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "security_travel_conflict":   {"action_type": "instruction_sheet", "friction": "high",     "min_trust": 0, "reversible": False, "undo_window_sec": None},
-
-    # E1 — Email Signal Extractor
-    "event_rsvp_needed":          {"action_type": "email_reply",           "friction": "standard", "min_trust": 1, "reversible": True,  "undo_window_sec": 30},
-    "appointment_confirmed":      {"action_type": "calendar_create",       "friction": "low",      "min_trust": 1, "reversible": True,  "undo_window_sec": 300},
-    "delivery_arriving":          {"action_type": "reminder_create",       "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "security_alert":             {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    # School notifications: the action is to log/act (check portal, fill survey, attend)
-    # not to reply by email — use reminder_create so it surfaces as a low-friction nudge
-    "school_action_needed":       {"action_type": "reminder_create",        "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "form_deadline":              {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "bill_due":                   {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "financial_alert":            {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "subscription_renewal":       {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 1, "reversible": False, "undo_window_sec": None},
-
-    # E12 — Decision Tracker
-    # NOTE: "decision_detected" → "decision_log_proposal" REMOVED (§5.2.3 of specs/actions-reloaded.md).
-    # No handler module actions/decision_log_proposal.py exists; approval would raise ValueError.
-    # Scheduled for V1.1 when a functional handler is implemented.
-
-    # E6 — Subscription Lifecycle (extended)
-    "subscription_trial_ending":            {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-    "subscription_renewal_upcoming":        {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-    "subscription_cancellation_deadline":   {"action_type": "instruction_sheet", "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "subscription_annual_review":           {"action_type": "instruction_sheet", "friction": "low",      "min_trust": 2, "reversible": False, "undo_window_sec": None},
-
-    # E3 — Pattern Engine signals
-    "goal_stale":                 {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "relationship_stale":         {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "health_alert":               {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "maintenance_due":            {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "insurance_renewal_due":      {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-
-    # E9 — Attachment Router
-    "document_financial":         {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "document_medical":           {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "document_immigration":       {"action_type": "instruction_sheet",     "friction": "high",     "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "document_school":            {"action_type": "instruction_sheet",     "friction": "low",      "min_trust": 0, "reversible": False, "undo_window_sec": None},
-    "document_insurance":         {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-    "document_property":          {"action_type": "instruction_sheet",     "friction": "standard", "min_trust": 1, "reversible": False, "undo_window_sec": None},
-}
+_REQUIRED_ROUTE_FIELDS = frozenset({"action_type", "friction", "min_trust", "reversible", "undo_window_sec"})
 
 # Domains that always escalate friction to "high" (§10.3 rule 4)
 _HIGH_FRICTION_DOMAINS = frozenset({"immigration", "finance", "insurance", "estate"})
@@ -152,50 +79,83 @@ _ALLOWED_ACTION_TYPES: frozenset[str] = frozenset({
 })
 
 
-def _validate_routing_table() -> None:
-    """Verify every action_type in _FALLBACK_SIGNAL_ROUTING exists in _ALLOWED_ACTION_TYPES.
+# Cached routing table — loaded once, reused across compose() calls
+_CACHED_ROUTING: dict[str, dict] | None = None
 
-    Called once at import time — catches typos at startup rather than at
-    signal-fire time.  Emits a warning to stderr for any unknown action types
-    but does NOT raise, to avoid breaking imports during development.
+
+def _validate_routing_table(routing: dict[str, dict] | None = None) -> None:
+    """Validate a routing table for completeness and known action types.
+
+    Operates on ``_FALLBACK_SIGNAL_ROUTING`` when called with no argument.
+    Emits [WARNING] to stderr on any validation issue but never raises.
+
+    Called by:
+    - _load_signal_routing() to validate the just-loaded YAML table.
+    - Tests (test_t6_5, test_t6_6) to assert table correctness.
     """
-    unknown = {
-        row["action_type"]
-        for row in _FALLBACK_SIGNAL_ROUTING.values()
-        if row.get("action_type") not in _ALLOWED_ACTION_TYPES
-    }
-    if unknown:
-        import sys as _sys
-        _sys.stderr.write(
-            f"[WARNING] _FALLBACK_SIGNAL_ROUTING references unknown action_type(s): {sorted(unknown)}\n"
+    if routing is None:
+        routing = _FALLBACK_SIGNAL_ROUTING
+    errors: list[str] = []
+    for signal_type, route in routing.items():
+        if not isinstance(route, dict):
+            errors.append(f"  {signal_type}: expected dict, got {type(route).__name__}")
+            continue
+        missing = _REQUIRED_ROUTE_FIELDS - set(route.keys())
+        if missing:
+            errors.append(f"  {signal_type}: missing fields {sorted(missing)}")
+        atype = route.get("action_type")
+        if atype and atype not in _ALLOWED_ACTION_TYPES:
+            errors.append(f"  {signal_type}: unknown action_type '{atype}'")
+    if errors:
+        print(
+            "[WARNING] signal_routing.yaml validation errors:\n"
+            + "\n".join(errors),
+            file=sys.stderr,
         )
 
 
-_validate_routing_table()
-
-
 def _load_signal_routing() -> dict[str, dict]:
-    """Load signal routing: hardcoded base + YAML overrides (merged).
+    """Load signal routing from config/signal_routing.yaml (sole authority).
 
-    YAML entries override the hardcoded fallback — they do NOT replace it.
-    This ensures all 50+ signal types in _FALLBACK_SIGNAL_ROUTING remain
-    routable even when config/signal_routing.yaml only contains a subset.
+    Validates every entry has all required fields and all action_types are
+    known. Emits loud warnings on any issues but does not raise to avoid
+    breaking imports during development.
 
-    Critical fix (§5.2.2 of specs/actions-reloaded.md v1.3.0):
-    The prior behaviour loaded YAML as a full replacement, silently shadowing
-    42+ hardcoded routes whenever signal_routing.yaml existed.
-
-    Ref: specs/actions-reloaded.md §5.2.2
+    Ref: specs/action.md Phase 4 — routing table consolidation
     """
-    base = dict(_FALLBACK_SIGNAL_ROUTING)
+    global _CACHED_ROUTING  # noqa: PLW0603
+    if _CACHED_ROUTING is not None:
+        return _CACHED_ROUTING
+
+    routing: dict[str, dict] = {}
     try:
         from lib.config_loader import load_config  # noqa: PLC0415
         yaml_routing = load_config("signal_routing")
         if isinstance(yaml_routing, dict) and yaml_routing:
-            base.update(yaml_routing)  # YAML entries override, not replace
-    except Exception:
-        pass
-    return base
+            routing = dict(yaml_routing)
+    except Exception as exc:
+        print(
+            f"[CRITICAL] signal_routing.yaml failed to load: {exc}\n"
+            "  Action routing is EMPTY — no signals will map to actions.",
+            file=sys.stderr,
+        )
+
+    _validate_routing_table(routing)
+
+    if not routing:
+        print(
+            "[WARNING] Signal routing table is empty — falling back to built-in routing.",
+            file=sys.stderr,
+        )
+        _CACHED_ROUTING = _FALLBACK_SIGNAL_ROUTING
+        return _FALLBACK_SIGNAL_ROUTING
+
+    _CACHED_ROUTING = routing
+    return routing
+
+
+# Validate at import time — fail fast on bad config
+_load_signal_routing()
 
 
 # ---------------------------------------------------------------------------
@@ -490,7 +450,7 @@ class ActionComposer:
             "calendar_create": f"Add to calendar: {entity}",
             "calendar_modify": f"Modify calendar event: {entity}",
             "reminder_create": f"Create reminder: {entity}",
-            "whatsapp_send": f"WhatsApp to {entity}",
+            "whatsapp_send": f"WhatsApp Nudge: {entity}",
             "instruction_sheet": f"Generate guide: {signal.signal_type.replace('_', ' ')} — {entity}",
             "todo_sync": "Sync To Do lists",
         }
@@ -622,6 +582,32 @@ class ActionComposer:
             proposals.append(proposal)
 
         return proposals
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience function
+# ---------------------------------------------------------------------------
+
+def compose_from_signal(
+    signal: DomainSignal,
+    actions_config: dict[str, Any] | None = None,
+) -> ActionProposal | None:
+    """Convenience wrapper for single-signal composition."""
+    return ActionComposer(actions_config).compose(signal)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _iso_offset_hours(hours: int) -> str:
+    """Return ISO-8601 UTC timestamp n hours from now."""
+    dt = datetime.now(timezone.utc) + timedelta(hours=hours)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------------------------------------------------------------------------

@@ -87,3 +87,28 @@ Read `state/employment.md` first. Then:
 - **Health**: Employer wellness programs, HSA/FSA balances
 
 ---
+
+## Career Search Mode
+
+When the user has an active career search campaign (check `state/career_search.md`
+frontmatter: `campaign.status == "active"`), employment signals are cross-referenced
+with career search intelligence:
+
+- **Resignation signals**: If employment emails indicate layoff risk, severance,
+  or role elimination, escalate to 🔴 CRITICAL and note impact on career search
+  timeline. Cross-ref career search state for runway context.
+
+- **Non-compete / garden-leave**: Extract any non-compete or garden-leave clauses
+  from employment communications. Surface in career search evaluations as a
+  dealbreaker or timeline constraint.
+
+- **Benefits continuity**: When evaluating job offers, note COBRA timeline and
+  benefits gap risk between current and prospective employer. Cross-ref
+  `state/health.md.age` for active prescriptions or ongoing treatment.
+
+- **Background check / reference timing**: If offer involves background check or
+  reference requests, extract contact names and timing — surface in career search
+  tracker as a scheduling dependency.
+
+See `prompts/career_search.md` for full career evaluation protocol.
+

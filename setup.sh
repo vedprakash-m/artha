@@ -104,6 +104,24 @@ info "This takes ~30 seconds the first time (cached on subsequent runs)"
 pip install -q --disable-pip-version-check -r scripts/requirements.txt
 pass "Dependencies installed"
 
+# Career search output directories (FR-25 — created at setup so they're always present)
+mkdir -p output/career briefings/career
+pass "Career output directories ready"
+
+# Career feature: conditional Playwright Chromium install (specs/career-ops.md FR-CS-3)
+# Only installs if playwright package is present and chromium binary is missing.
+if pip show playwright &>/dev/null 2>&1; then
+  if ! python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.stop()" &>/dev/null 2>&1; then
+    info "Playwright package found — installing Chromium for career PDF generation..."
+    playwright install chromium --quiet 2>/dev/null && pass "Playwright Chromium installed" || \
+      info "Playwright Chromium install skipped (run 'make install-playwright' manually)"
+  else
+    pass "Playwright Chromium already available"
+  fi
+else
+  info "Career PDF feature: run 'make install-playwright' when you start a job search"
+fi
+
 # PII safety git hook
 if git rev-parse --git-dir &>/dev/null 2>&1; then
   git config core.hooksPath .githooks 2>/dev/null && pass "PII safety hook activated" || true

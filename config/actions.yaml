@@ -198,7 +198,7 @@ actions:
 
   todoist_sync:
     handler: "scripts/actions/todoist_sync.py"
-    enabled: true
+    enabled: false               # Ved does not use Todoist — disabled Apr 2026
     friction: standard
     min_trust: 1
     sensitivity: standard

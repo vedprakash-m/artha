@@ -4,7 +4,7 @@
 PYTHON ?= ~/.artha-venvs/.venv/bin/python
 PYTEST ?= $(PYTHON) -m pytest
 
-.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start
+.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start install-fonts install-playwright
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -95,6 +95,16 @@ lint-state-writes: ## AFW Wave 0: ban direct .write_text() on state files outsid
 
 check: lint ruff import-check lint-state-writes test pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"
+
+install-fonts: ## Download Space Grotesk + DM Sans woff2 fonts for CV PDF generation
+	@bash scripts/install_fonts.sh
+
+install-playwright: ## Install Playwright Chromium for CV PDF generation (career feature)
+	@if pip show playwright >/dev/null 2>&1; then \
+		playwright install chromium && echo "✓ Playwright Chromium installed"; \
+	else \
+		pip install playwright && playwright install chromium && echo "✓ Playwright + Chromium installed"; \
+	fi
 
 # ── Eval Layer Gates (specs/eval.md EV-16) ────────────────────────────────────
 

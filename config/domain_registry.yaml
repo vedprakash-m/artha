@@ -1365,6 +1365,46 @@ domains:
       yellow: "Reconnect opportunity identified"
       blue: "Tribe decay scores updated"
 
+  career_search:
+    label: "Career Search Intelligence"
+    description: "Structured job evaluation, ATS-optimized CV generation, application pipeline tracking — active during campaign only"
+    sensitivity: high
+    staleness_ttl_days: 7
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/career_search.md"
+    state_file: "state/career_search.md"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - goal_category: career
+        goal_status: active
+    setup_questions:
+      - "Are you actively searching for a new job?"
+    routing_keywords:
+      - job opportunity
+      - career search
+      - interview scheduled
+      - offer received
+      - job opening
+      - new role
+      - career eval
+      - apply for
+      - JD
+      - job description
+      - Greenhouse
+      - Lever
+      - Ashby
+      - careers page
+    alert_thresholds:
+      red: "Interview within 24h, offer received, offer deadline within 48h"
+      orange: "Interview within 48h, application deadline approaching"
+      yellow: "New portal matches, velocity below target"
+      blue: "Evaluation complete, PDF generated"
+
   capital:
     label: "Capital & Treasury"
     description: "90-day cash-flow projection, liquidity alerts, sweep proposals with amount-confirm gate"

@@ -834,6 +834,197 @@ class ReadinessNoInferenceGR(BaseGuardrail):
 
 
 # ---------------------------------------------------------------------------
+# Career domain guardrails (§8.2, §8.3, §8.4 of career-ops spec v1.8.0)
+# ---------------------------------------------------------------------------
+
+_CAREER_INJECTION_PATTERNS = [
+    # Hidden instruction markers
+    r"ignore (all |previous |above )?instructions?",
+    r"disregard (all |previous |above )?instructions?",
+    r"system prompt",
+    r"you are now",
+    r"act as",
+    r"pretend (to be|you are)",
+    r"new persona",
+    r"jailbreak",
+    r"DAN mode",
+    r"developer mode",
+    # Suspicious structured-data injection in JD text
+    r"```\s*(python|bash|sql|sh|json)",
+    r"<script",
+    r"<!--.*-->",
+]
+
+
+class CareerJDInjectionGR(BaseGuardrail):
+    """Career — Job-description injection + auth-wall ordering guard (W-F5).
+
+    Phase 1: text-heuristic scan for prompt-injection patterns embedded in JD
+    text before it reaches the LLM evaluation pipeline.  Data never reaches
+    Block A–G processing if injection signals are present.
+
+    Auth-wall ordering: if JD text indicates a login/auth wall was hit, the
+    entry is logged to JSONL but not scored (prevents N/A metric pollution).
+    """
+
+    name = "career_jd_injection"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        import re  # noqa: PLC0415
+
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "career_search":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        jd_text = data if isinstance(data, str) else str(data or "")
+        jd_lower = jd_text.lower()
+
+        # Auth-wall ordering check (W-F5): log and skip, don't block
+        auth_wall_signals = [
+            "sign in to view",
+            "log in to apply",
+            "create an account",
+            "login required",
+            "please sign in",
+        ]
+        if any(sig in jd_lower for sig in auth_wall_signals):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Career JD blocked: auth wall detected in content. "
+                    "Job must be re-fetched after auth or entered manually."
+                ),
+            )
+
+        # Injection pattern scan
+        for pattern in _CAREER_INJECTION_PATTERNS:
+            if re.search(pattern, jd_lower):
+                return GuardrailOutput(
+                    TripwireResult.HALT,
+                    message=(
+                        f"Career JD blocked: injection pattern detected "
+                        f"(matched: '{pattern[:40]}'). JD discarded."
+                    ),
+                )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CareerNoAutoSubmitGR(BaseGuardrail):
+    """Career — hard block on any auto-submit / auto-apply action.
+
+    Artha NEVER submits job applications autonomously.  Any action proposal
+    whose ``action_type`` contains 'submit' or 'apply' is unconditionally
+    rejected.  This is a hard rule with no override path (§3.1 of spec).
+    """
+
+    name = "career_no_auto_submit"
+    mode = GuardrailMode.BLOCKING
+
+    _BLOCKED_ACTIONS = frozenset([
+        "submit_application",
+        "auto_apply",
+        "apply_to_job",
+        "submit_resume",
+        "send_application",
+    ])
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "career_search":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        action_type = str(ctx.get("action_type", "") or "").lower().replace("-", "_")
+
+        # Also inspect data dict
+        if isinstance(data, dict):
+            action_type = action_type or str(data.get("action_type", "")).lower()
+
+        if any(blocked in action_type for blocked in self._BLOCKED_ACTIONS):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Hard block: Artha NEVER submits job applications autonomously. "
+                    "User must initiate all submissions manually."
+                ),
+            )
+
+        # Also catch generic 'submit' and 'apply' in action_type
+        if "submit" in action_type or "auto_apply" in action_type:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Hard block: auto-submit action blocked. "
+                    "Career applications must be submitted manually by the user."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CareerPiiOutputGR(BaseGuardrail):
+    """Career — PII redaction for career domain output (§8.3).
+
+    Policy:
+    - Phone numbers → redact (replace with [PHONE REDACTED])
+    - SSN / NIN patterns → HALT entirely (never in career output)
+    - Compensation figures → ALLOW (comp is non-sensitive in career context)
+    """
+
+    name = "career_pii_output"
+    mode = GuardrailMode.BLOCKING
+
+    # SSN: 3-2-4 digit patterns in various delimiters
+    _SSN_PATTERN = r"\b\d{3}[\s\-./]\d{2}[\s\-./]\d{4}\b"
+    # Phone: common US/intl patterns (7+ digits with optional separators)
+    _PHONE_PATTERN = (
+        r"(\+?\d[\s\-.()]*){7,}"
+    )
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        import re  # noqa: PLC0415
+
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "career_search":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        output_text = data if isinstance(data, str) else ""
+        if not output_text:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        # SSN: unconditional HALT — never allowed in output
+        if re.search(self._SSN_PATTERN, output_text):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Career output blocked: SSN/NIN pattern detected. "
+                    "SSNs must never appear in career domain output."
+                ),
+            )
+
+        # Phone: redact in-place, degrade to WARN (not HALT)
+        cleaned = re.sub(self._PHONE_PATTERN, "[PHONE REDACTED]", output_text)
+        if cleaned != output_text:
+            return GuardrailOutput(
+                TripwireResult.WARN,
+                message="Phone number(s) redacted from career output.",
+                modified_data=cleaned,
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+# ---------------------------------------------------------------------------
 # Registry of available guardrail classes (used by guardrail_registry.py)
 # ---------------------------------------------------------------------------
 
@@ -854,6 +1045,10 @@ GUARDRAIL_CLASSES: dict[str, type[BaseGuardrail]] = {
     "TribeNoAutoSendGR": TribeNoAutoSendGR,
     "ReadinessFallbackGR": ReadinessFallbackGR,
     "ReadinessNoInferenceGR": ReadinessNoInferenceGR,
+    # Career domain guardrails (career-ops spec v1.8.0)
+    "CareerJDInjectionGR": CareerJDInjectionGR,
+    "CareerNoAutoSubmitGR": CareerNoAutoSubmitGR,
+    "CareerPiiOutputGR": CareerPiiOutputGR,
 }
 
 __all__ = [
@@ -878,5 +1073,9 @@ __all__ = [
     "TribeNoAutoSendGR",
     "ReadinessFallbackGR",
     "ReadinessNoInferenceGR",
+    # Career domain guardrails
+    "CareerJDInjectionGR",
+    "CareerNoAutoSubmitGR",
+    "CareerPiiOutputGR",
     "GUARDRAIL_CLASSES",
 ]

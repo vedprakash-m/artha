@@ -172,6 +172,87 @@ _AI_SIGNAL_REQUIRED_FIELDS: frozenset[str] = frozenset(
 # AI signals MUST identify themselves as such (§SP-4 hardening step 1)
 _AI_SIGNAL_SOURCE_VALUE = "ai"
 
+# Signal types that route to communication actions (email_send / email_reply / whatsapp_send).
+# Entity values for these signals are validated against the trusted-contact whitelist (OWASP A03).
+# Source: config/signal_routing.yaml — regenerate if routing table changes.
+_COMM_SIGNAL_TYPES: frozenset[str] = frozenset({
+    "medical_bill_high", "appointment_needed", "email_needs_reply",
+    "birthday_approaching", "birthday_in_7d", "life_event_detected",
+    "missing_assignment", "school_event_rsvp", "immigration_deadline",
+    "event_rsvp_needed",
+})
+
+
+def _load_trusted_contacts(artha_dir: Path) -> dict[str, set[str]]:
+    """Build trusted email + phone whitelist from user_profile.yaml.
+
+    Returns a dict with two sets: 'emails' and 'phones'. Used by the AI signal
+    param whitelist validator (OWASP A03 — §SP-4 hardening step 4) to detect
+    adversarial entity values in communication-type signals.
+
+    Conservative: returns empty sets on any parse error so validation fails-open
+    (allows signal through) rather than blocking legitimate signals.
+    """
+    emails: set[str] = set()
+    phones: set[str] = set()
+    try:
+        from lib.config_loader import load_config as _lc  # noqa: PLC0415
+        profile = _lc("user_profile", _config_dir=str(artha_dir / "config")) or {}
+        family = profile.get("family", {})
+        # Primary user emails
+        primary = family.get("primary_user", {})
+        for addr in (primary.get("emails") or {}).values():
+            if isinstance(addr, str) and "@" in addr:
+                emails.add(addr.lower())
+        if isinstance(primary.get("phone"), str):
+            phones.add(primary["phone"])
+        # Spouse
+        spouse = family.get("spouse", {})
+        if isinstance(spouse.get("phone"), str):
+            phones.add(spouse["phone"])
+        if isinstance(spouse.get("email"), str) and "@" in spouse["email"]:
+            emails.add(spouse["email"].lower())
+        # Children
+        for child in family.get("children", []):
+            if isinstance(child.get("phone"), str):
+                phones.add(child["phone"])
+            school = child.get("school", {})
+            if isinstance(school.get("email_domain"), str):
+                # Accept any address at the school domain
+                emails.add(f"@{school['email_domain'].lower()}")
+    except Exception as exc:
+        print(
+            f"[action_orchestrator] trusted_contacts load failed (validation disabled): {exc}",
+            file=sys.stderr,
+        )
+    return {"emails": emails, "phones": phones}
+
+
+def _is_trusted_entity(entity: str, contacts: dict[str, set[str]]) -> bool:
+    """Return True if entity is a known contact or does not look like an email/phone.
+
+    Entities that don't contain '@' and don't look like a phone number are
+    assumed to be names or natural-language descriptions — not validated so as
+    to avoid false positives. Only explicit address/phone values are checked.
+    """
+    entity = entity.strip()
+    is_email = "@" in entity
+    is_phone = entity.replace("+", "").replace("-", "").replace(" ", "").isdigit() and len(entity) >= 7
+    if not is_email and not is_phone:
+        return True  # name/description — not an injection vector
+    if is_email:
+        email_lower = entity.lower()
+        # Exact match or domain suffix match
+        if email_lower in contacts["emails"]:
+            return True
+        for allowed in contacts["emails"]:
+            if allowed.startswith("@") and email_lower.endswith(allowed):
+                return True
+        return False
+    if is_phone:
+        return entity in contacts["phones"]
+    return False  # unreachable
+
 
 def _load_ai_signals(path: Path) -> list[Any]:
     """Load and validate AI-emitted signals from tmp/ai_signals.jsonl.
@@ -230,16 +311,34 @@ def _load_ai_signals(path: Path) -> list[Any]:
                     skipped += 1
                     continue
 
+                # Param whitelist validation — OWASP A03 (§SP-4 hardening step 4)
+                # For comm-type signals, entity must resolve to a trusted contact.
+                # Unknown email/phone entities are tagged INJECTION_SUSPECTED.
+                sig_type = str(record["signal_type"])
+                entity_val = str(record["entity"])
+                injection_suspected = False
+                if sig_type in _COMM_SIGNAL_TYPES:
+                    trusted = _load_trusted_contacts(path.parent.parent)
+                    if not _is_trusted_entity(entity_val, trusted):
+                        injection_suspected = True
+                        print(
+                            f"[action_orchestrator] INJECTION_SUSPECTED line {i}: "
+                            f"signal_type={sig_type!r} entity={entity_val!r} "
+                            f"not in trusted contacts — friction=blocked",
+                            file=sys.stderr,
+                        )
+
                 signals.append(SimpleNamespace(
-                    signal_type=str(record["signal_type"]),
+                    signal_type=sig_type,
                     domain=str(record["domain"]),
-                    entity=str(record["entity"]),
+                    entity=entity_val,
                     urgency=int(record.get("urgency", 5)),
                     impact=int(record.get("impact", 5)),
                     source=_AI_SIGNAL_SOURCE_VALUE,
                     detected_at=record.get("detected_at", ""),
                     metadata={},  # AI-emitted metadata never trusted
                     _ai_origin=True,  # Internal tag for friction escalation
+                    _injection_suspected=injection_suspected,  # OWASP A03 flag
                 ))
     except OSError:
         pass
@@ -252,18 +351,28 @@ def _load_ai_signals(path: Path) -> list[Any]:
     return signals
 
 
-def _apply_ai_signal_hardening(proposal: Any) -> Any:
-    """Escalate friction to 'high' for all AI-originated proposals.
+def _apply_ai_signal_hardening(proposal: Any, signal: Any = None) -> Any:
+    """Escalate friction for all AI-originated proposals.
 
     Security hardening step 2 (§SP-4, §7.2.1): AI signals must never produce
     low/standard friction proposals — batch-approve via --approve-all-low must
     not be usable for AI-originated actions. Human review is always required.
 
-    Returns a new ActionProposal with friction='high' using dataclasses.replace().
+    If the source signal was tagged _injection_suspected (OWASP A03 §SP-4 step 4),
+    friction is escalated to 'blocked' — the proposal remains visible in --list
+    output as INJECTION_SUSPECTED but cannot be approved via any code path.
+
+    Returns a new ActionProposal with friction='high' or 'blocked' using
+    dataclasses.replace().
     """
     import dataclasses
-    if getattr(proposal, "friction", "high") != "high":
-        proposal = dataclasses.replace(proposal, friction="high")
+    injection_suspected = getattr(signal, "_injection_suspected", False) if signal else False
+    if injection_suspected:
+        target_friction = "blocked"
+    else:
+        target_friction = "high"
+    if getattr(proposal, "friction", None) != target_friction:
+        proposal = dataclasses.replace(proposal, friction=target_friction)
     return proposal
 
 
@@ -580,6 +689,7 @@ def _print_summary(
     suppressed: int,
     expired: int,
     pending: list[Any],
+    recently_expired: list[Any] | None = None,
     burn_in: bool = False,
     verbose: bool = False,
 ) -> None:
@@ -639,6 +749,19 @@ def _print_summary(
         )
     else:
         print("\n(No pending actions)")
+
+    # Surface recently expired actions so the AI can inform the user
+    if recently_expired:
+        print(f"\n─── EXPIRED SINCE LAST SESSION ({len(recently_expired)}) ────────────────────")
+        for p in recently_expired[:5]:
+            action_type = p.get("action_type", "") if isinstance(p, dict) else getattr(p, "action_type", "")
+            domain = p.get("domain", "") if isinstance(p, dict) else getattr(p, "domain", "")
+            title = p.get("title", "") if isinstance(p, dict) else getattr(p, "title", "")
+            pid = (p.get("id", "") if isinstance(p, dict) else getattr(p, "id", ""))[:8]
+            print(f"  ⏰ [{pid}] {action_type} | {domain} | {title[:60]}")
+        if len(recently_expired) > 5:
+            print(f"  ... and {len(recently_expired) - 5} more")
+        print("  (These were proposed but not acted on within the 72h expiry window)")
 
     print("════════════════════════════════════════════════════════════════")
 
@@ -847,11 +970,12 @@ def run(
             if proposal is None:
                 continue
 
-            # Hardening step 2: Escalate friction to 'high' for all AI-origin proposals.
+            # Hardening step 2+4: Escalate friction for all AI-origin proposals.
+            # Injection-suspected signals get friction='blocked'; others get 'high'.
             # Prevents batch-approval via --approve-all-low for AI-generated actions.
             # Ref: specs/actions-reloaded.md §SP-4
             if is_ai_signal:
-                proposal = _apply_ai_signal_hardening(proposal)
+                proposal = _apply_ai_signal_hardening(proposal, signal=signal)
 
             # Pre-enqueue handler validation (catches structural issues before user sees proposal)
             try:
@@ -890,6 +1014,27 @@ def run(
     except Exception as exc:
         print(f"[action_orchestrator] expire_stale failed: {exc}", file=sys.stderr)
 
+    # 7b. Query recently expired actions (last 96h) for surfacing in briefing
+    recently_expired: list[dict[str, str]] = []
+    try:
+        import sqlite3 as _sqlite3
+        _db_path = artha_dir.parent / ".artha-local" / "actions.db"
+        if not _db_path.exists():
+            _db_path = Path.home() / ".artha-local" / "actions.db"
+        if _db_path.exists():
+            _conn = _sqlite3.connect(str(_db_path))
+            _conn.row_factory = _sqlite3.Row
+            _rows = _conn.execute(
+                "SELECT id, action_type, domain, title FROM actions "
+                "WHERE status = 'expired' "
+                "AND updated_at > datetime('now', '-96 hours') "
+                "ORDER BY updated_at DESC LIMIT 10"
+            ).fetchall()
+            recently_expired = [dict(r) for r in _rows]
+            _conn.close()
+    except Exception as exc:
+        print(f"[action_orchestrator] recently-expired query failed: {exc}", file=sys.stderr)
+
     # 8. Fetch pending for display
     pending: list[Any] = []
     try:
@@ -913,6 +1058,7 @@ def run(
         suppressed=suppressed,
         expired=expired,
         pending=pending,
+        recently_expired=recently_expired,
         burn_in=burn_in,
         verbose=verbose,
     )

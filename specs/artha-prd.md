@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.14.0
+## Product Requirements Document · v7.15.0
 
 **Author:** [Author]
-**Date:** April 8, 2026
+**Date:** April 13, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.15.0 | 2026-04-13 | Career Search Intelligence — FR-25: Phase 1 shipped. 7-block A–G evaluation framework, scoring system (6 dimensions), archetype detection, STAR+Reflection Story Bank, ATS PDF generation via Playwright, cross-domain enrichment (immigration × comp × calendar), application tracker, 3 career guardrails, briefing integration. Career-ops satellite spec archived. |
 | v7.14.0 | 2026-04-09 | OpenClaw Home Bridge — FR-24: M2M integration with home automation (3-layer transport, HMAC-SHA256, context push, presence events, TTS gate, WhatsApp approval, bridge observability). Incorporated from `claw-bridge.md` v1.7.0 (archived). |
 | v7.13.0 | 2026-04-08 | Knowledge Graph v2.0 — FR-19 extended with Second Brain KB architecture. Five ingestion paths, entity lifecycle stages, SQLite schema v4, 7 MCP tools, Leiden clustering, 950-token context budget. Tech Spec §22 rewritten to v2.0. |
 | v7.12.0 | 2026-04-08 | EAR-3 SHIPPED — 4 domain pre-compute agents (CapitalAgent, LogisticsAgent, ReadinessAgent, TribeAgent) + cron-based agent scheduler (`config/agents/schedules.yaml`) + state file registry (`config/state_registry.yaml`) + 4 domain-specific guardrails (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Spec compaction: −539 lines · −56 KB across all 3 core specs. |
@@ -50,6 +51,12 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-17: Vehicle Management
    - FR-18: Estate Planning & Legal Readiness
    - FR-19: Work Intelligence OS
+   - FR-20: Readiness Intelligence
+   - FR-21: Logistics Intelligence
+   - FR-22: Tribe Intelligence
+   - FR-23: Capital Intelligence
+   - FR-24: OpenClaw Home Bridge
+   - FR-25: Career Search Intelligence
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1122,6 +1129,50 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 **Security invariants:** HMAC-SHA256 on every envelope; keyring-only key storage (never config files or env vars); per-message nonce + timestamp (clock drift >2min → reject); injection filter on all inbound fields; key rotation via version-keyed dual-accept 24h overlap window.
 
 **Feature flag:** Bridge is `enabled: false` by default. Activation requires Phase 0 keyring setup (see `.archive/specs/claw-bridge.md` §7.0).
+
+---
+
+### FR-25 · Career Search Intelligence
+
+**Priority:** P0 (Phase 1 shipped April 2026)
+**Summary:** A time-bounded campaign intelligence layer for active job searches. Integrates a 7-block evaluation framework (adapted from career-ops v1.3.0, MIT), ATS-optimized PDF generation, application pipeline tracking, cross-domain enrichment (immigration × compensation × calendar), and briefing integration — all within Artha's existing architecture. Campaign-mode only: activates when a goal with `category: career` and `status: active` exists; archives cleanly when the goal resolves.
+
+**Design principles (CS-1 through CS-7):**
+- **CS-1 Campaign, not lifestyle** — Career search is a sprint, not always-on. Only a lightweight summary surfaces in briefings when active; the full evaluation prompt is never loaded during catch-up.
+- **CS-2 Quality over quantity** — Recommends against applying to roles scoring below 4.0/5. The system surfaces the recommendation but respects user decisions.
+- **CS-3 Deferred execution, never inline** — Evaluations (~20–32K tokens) are explicitly triggered via `/career eval`, never embedded in catch-up.
+- **CS-4 Cross-domain by default** — Every evaluation cross-references immigration (sponsorship), finance (comp floor), and calendar (interview slots).
+- **CS-5 CV is PII** — `cv.md` and `article-digest.md` are gitignored; stored at `~/.artha-local/` outside the repo.
+- **CS-6 Deterministic preprocessing** — `candidate_packet`, `job_packet`, `context_packet` are extracted before LLM reasoning. Full `cv.md` only used for one-time extraction and PDF render.
+- **CS-7 Sequential topology** — Phase 1 is sequential pipeline (ingest → screen → evaluate → persist). Agentic EAR-3 scanning deferred to Phase 2.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR25.1 | **7-Block Evaluation Pipeline** — Blocks A–G: Role Summary (archetype detection), CV Match (requirement mapping), Level & Strategy, Comp & Market (Gemini-routed if available), Personalization Plan, Interview Prep (STAR+Reflection Story Bank), Posting Legitimacy. Produces scored evaluation report in `briefings/career/{NNN}-{company}-{date}.md`. | P0 |
+| FR25.2 | **Scoring System** — 6-dimension weighted average (CV Match 30%, North Star 20%, Comp 15%, Culture 15%, Level Fit 10%, Red Flags 10%). Weights read from `state/career_search.md` frontmatter — never hardcoded. Deterministic fallback weights when Block D unavailable. Score interpretation: ≥4.5 apply immediately, 4.0–4.4 worth applying, <3.5 recommend against. | P0 |
+| FR25.3 | **Application Tracker** — Markdown table in `state/career_search.md` body. 9 canonical statuses. `reconcile_summary()` deterministically recomputes frontmatter `summary:` counts from tracker on every `/career *` invocation. `recompute_scores()` ensures composite score is never manually set. | P0 |
+| FR25.4 | **ATS PDF Generation** — `CareerPdfGenerator(BaseSkill)` renders Space Grotesk + DM Sans HTML template → PDF via Python playwright. Self-hosted fonts in `fonts/`. Auto-proposed after evaluations scoring ≥4.0. | P0 |
+| FR25.5 | **Cross-Domain Enrichment** — Immigration filter (H-1B/sponsorship blocks), comp floor check (finance state), calendar context (interview scheduling), goal velocity (applications/week vs target). All fail gracefully to "unavailable" rather than blocking evaluation. | P1 |
+| FR25.6 | **Briefing Integration** — When campaign active, `summary:` frontmatter block (≤5 lines) surfaces in daily catch-up. Full prompt never loaded during catch-up. Tier 1 alerts: interview within 24h, offer received, offer deadline within 48h. | P1 |
+| FR25.7 | **Story Bank** — Accumulating STAR+Reflection stories in `state/career_search.md`. Compact INDEX comment for zero-cost retrieval. 20-story cap; 5 pinned story slots. Closed tag vocabulary (archetype, capability, leadership, metric, recency). | P1 |
+| FR25.8 | **Security Guardrails** — `CareerJDInjectionGR` (JD content trust boundary), `CareerNoAutoSubmitGR` (hard rule: Artha never submits applications), `CareerPiiOutputGR` (SSN/phone redaction). Auth wall detection before content guardrail. | P0 |
+| FR25.9 | **Portal Scanner** — `PortalScanner(BaseSkill)` scans Greenhouse/Ashby/Lever APIs for new matching listings. Fuzzy dedup (Jaccard ≥0.85). Routes `new_portal_match` DomainSignals through action bus. | P1 · Phase 2 |
+| FR25.10 | **Career Search Agent** — `CareerSearchAgent` EAR-3 scheduled agent (cron: every 3 days). Activates/deactivates with campaign lifecycle. Permanently L1 (Advisor) — proposes portal matches, never auto-evaluates or auto-applies. | P1 · Phase 2 |
+
+**Architecture:**
+- Prompt: `prompts/career_search.md` (lazy-loaded on `/career` commands only)
+- State: `state/career_search.md` (YAML frontmatter + Markdown tracker)
+- Reports: `briefings/career/{NNN}-{company}-{date}.md`
+- PDF output: `output/career/cv-{company}-{date}.pdf`
+- Local cache: `~/.artha-local/career/` (fingerprints + scan history; outside repo)
+- Python helpers: `scripts/lib/career_state.py` (reconcile, score, fingerprint, story bank), `scripts/lib/career_trace.py` (JSONL audit trail, 90-day retention)
+- Skills: `scripts/skills/career_pdf_generator.py`, `scripts/skills/portal_scanner.py` (Phase 2)
+
+**Non-goals:** Automatic application submission (hard rule — Artha NEVER submits); Go TUI dashboard; batch `claude -p` workers; multi-language modes.
+
+**Upstream credit:** Evaluation framework (Blocks A–G), scoring system, archetype detection, and ATS template adapted from [career-ops](https://github.com/santifer/career-ops) by Santiago Fernández (MIT License, v1.3.0).
 
 ---
 
