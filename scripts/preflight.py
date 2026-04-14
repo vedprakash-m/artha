@@ -459,28 +459,6 @@ def check_state_directory() -> CheckResult:
         )
 
 
-def check_state_directory() -> CheckResult:
-    """Verify state/ directory exists and is writable."""
-    if not os.path.isdir(STATE_DIR):
-        return CheckResult(
-            "state directory", "P0", False,
-            f"State directory missing: {_rel(STATE_DIR)}",
-            fix_hint="Run: python scripts/preflight.py --fix",
-        )
-    test_path = os.path.join(STATE_DIR, ".preflight_write_test")
-    try:
-        with open(test_path, "w") as f:
-            f.write("ok")
-        os.remove(test_path)
-        return CheckResult("state directory", "P0", True, f"{_rel(STATE_DIR)} writable ✓")
-    except OSError as exc:
-        return CheckResult(
-            "state directory", "P0", False,
-            f"State directory not writable: {exc}",
-            fix_hint=f"Check OneDrive sync status and permissions on {_rel(STATE_DIR)}",
-        )
-
-
 def check_guardrails_yaml(force_no_guardrails: bool = False) -> CheckResult:
     """P0 (DEBT-004): Verify guardrails.yaml is present and parseable.
 
