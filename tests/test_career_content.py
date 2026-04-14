@@ -100,4 +100,5 @@ print(f"Results: {PASS} passed, {FAIL} failed")
 print("=" * 55)
 if FAIL == 0:
     print("ALL CONTENT VALIDATION CHECKS PASSED ✅")
-sys.exit(0 if FAIL == 0 else 1)
+if __name__ == "__main__":
+    sys.exit(0 if FAIL == 0 else 1)
