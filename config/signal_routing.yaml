@@ -1,6 +1,6 @@
 # Signal routing table — maps signal_type to action metadata.
 # Used by action_composer.py to convert DomainSignal → ActionProposal.
-# Fallback: hardcoded _FALLBACK_SIGNAL_ROUTING dict in action_composer.py.
+# Fallback: _FALLBACK_SIGNAL_ROUTING loaded from this YAML at import time by action_composer.py.
 #
 # Fields per entry:
 #   action_type:     The action to compose (must be in _ALLOWED_ACTION_TYPES)
@@ -8,6 +8,7 @@
 #   min_trust:       Minimum trust level required to auto-execute (0–2)
 #   reversible:      Whether the action can be undone
 #   undo_window_sec: Seconds to undo (null if irreversible)
+#   status:          Route lifecycle: active (has a producer) | stub (Phase 2 forward-declaration)
 #
 # Ref: specs/pay-debt-reloaded.md §7 WS-7
 
@@ -18,6 +19,7 @@ bill_due:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 financial_alert:
   action_type: instruction_sheet
@@ -25,6 +27,7 @@ financial_alert:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 property_tax_due:
   action_type: instruction_sheet
@@ -32,6 +35,7 @@ property_tax_due:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 subscription_renewal:
   action_type: instruction_sheet
@@ -39,6 +43,7 @@ subscription_renewal:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 medical_bill_high:
   action_type: email_send
@@ -46,6 +51,7 @@ medical_bill_high:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Calendar
 calendar_conflict:
@@ -54,6 +60,7 @@ calendar_conflict:
   min_trust: 1
   reversible: true
   undo_window_sec: 300
+  status: active
 
 appointment_needed:
   action_type: email_send
@@ -61,6 +68,7 @@ appointment_needed:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Email
 email_needs_reply:
@@ -69,6 +77,7 @@ email_needs_reply:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Social
 birthday_approaching:
@@ -77,6 +86,7 @@ birthday_approaching:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 birthday_in_7d:
   action_type: whatsapp_send
@@ -84,6 +94,7 @@ birthday_in_7d:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 life_event_detected:
   action_type: email_send
@@ -91,6 +102,7 @@ life_event_detected:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Kids
 missing_assignment:
@@ -99,6 +111,7 @@ missing_assignment:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 school_event_rsvp:
   action_type: email_reply
@@ -106,6 +119,7 @@ school_event_rsvp:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Immigration
 immigration_deadline:
@@ -114,6 +128,7 @@ immigration_deadline:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 # Health
 prescription_refill:
@@ -122,6 +137,7 @@ prescription_refill:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 # Vehicle
 vehicle_recall:
@@ -130,6 +146,7 @@ vehicle_recall:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 # Insurance
 insurance_renewal:
@@ -138,6 +155,7 @@ insurance_renewal:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 # Open Items
 open_item_aging:
@@ -146,6 +164,7 @@ open_item_aging:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 open_item_overdue:
   action_type: reminder_create
@@ -153,6 +172,7 @@ open_item_overdue:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 # Generic calendar creation
 event_invitation:
@@ -161,6 +181,7 @@ event_invitation:
   min_trust: 1
   reversible: true
   undo_window_sec: 300
+  status: active
 
 # IoT / Home (ARTHA-IOT Wave 1+2)
 device_offline:
@@ -169,6 +190,7 @@ device_offline:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 security_device_offline:
   action_type: instruction_sheet
@@ -176,6 +198,7 @@ security_device_offline:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 energy_anomaly:
   action_type: instruction_sheet
@@ -183,6 +206,7 @@ energy_anomaly:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 supply_low:
   action_type: instruction_sheet
@@ -190,6 +214,7 @@ supply_low:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 spa_maintenance:
   action_type: instruction_sheet
@@ -197,6 +222,7 @@ spa_maintenance:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 security_travel_conflict:
   action_type: instruction_sheet
@@ -204,6 +230,7 @@ security_travel_conflict:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 # E1 — Email Signal Extractor
 event_rsvp_needed:
@@ -212,6 +239,7 @@ event_rsvp_needed:
   min_trust: 1
   reversible: true
   undo_window_sec: 30
+  status: active
 
 appointment_confirmed:
   action_type: calendar_create
@@ -219,6 +247,7 @@ appointment_confirmed:
   min_trust: 1
   reversible: true
   undo_window_sec: 300
+  status: active
 
 delivery_arriving:
   action_type: reminder_create
@@ -226,6 +255,7 @@ delivery_arriving:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 security_alert:
   action_type: instruction_sheet
@@ -233,6 +263,7 @@ security_alert:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 school_action_needed:
   action_type: whatsapp_send
@@ -240,6 +271,7 @@ school_action_needed:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 form_deadline:
   action_type: instruction_sheet
@@ -247,6 +279,7 @@ form_deadline:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 # E12 — Decision Tracker (V1.1: decision_log_proposal handler not yet implemented)
 # decision_detected: removed in v1.3.0 — no handler exists; scheduled for V1.1
@@ -258,6 +291,7 @@ subscription_trial_ending:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 subscription_renewal_upcoming:
   action_type: instruction_sheet
@@ -265,6 +299,7 @@ subscription_renewal_upcoming:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 subscription_cancellation_deadline:
   action_type: instruction_sheet
@@ -272,6 +307,7 @@ subscription_cancellation_deadline:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 subscription_annual_review:
   action_type: instruction_sheet
@@ -279,6 +315,7 @@ subscription_annual_review:
   min_trust: 2
   reversible: false
   undo_window_sec: null
+  status: active
 
 # E3 — Pattern Engine signals
 goal_stale:
@@ -287,6 +324,7 @@ goal_stale:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 relationship_stale:
   action_type: instruction_sheet
@@ -294,6 +332,7 @@ relationship_stale:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 health_alert:
   action_type: instruction_sheet
@@ -301,6 +340,7 @@ health_alert:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 maintenance_due:
   action_type: instruction_sheet
@@ -308,6 +348,7 @@ maintenance_due:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 insurance_renewal_due:
   action_type: instruction_sheet
@@ -315,6 +356,7 @@ insurance_renewal_due:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 # E9 — Attachment Router
 document_financial:
@@ -323,6 +365,7 @@ document_financial:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 document_medical:
   action_type: instruction_sheet
@@ -330,6 +373,7 @@ document_medical:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 document_immigration:
   action_type: instruction_sheet
@@ -337,6 +381,7 @@ document_immigration:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 document_school:
   action_type: instruction_sheet
@@ -344,6 +389,7 @@ document_school:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: active
 
 document_insurance:
   action_type: instruction_sheet
@@ -351,6 +397,7 @@ document_insurance:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 document_property:
   action_type: instruction_sheet
@@ -358,6 +405,7 @@ document_property:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 # Career Search (specs/career-ops.md §3.1 Phase 1, FR-CS-4)
 # interview_scheduled: friction=standard per TS-2 (escalated from low in v1.5.0)
@@ -367,6 +415,7 @@ career_eval_complete:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: stub
 
 career_interview_scheduled:
   action_type: instruction_sheet
@@ -374,6 +423,7 @@ career_interview_scheduled:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 career_offer_received:
   action_type: instruction_sheet
@@ -381,6 +431,7 @@ career_offer_received:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 career_offer_deadline:
   action_type: instruction_sheet
@@ -388,6 +439,7 @@ career_offer_deadline:
   min_trust: 1
   reversible: false
   undo_window_sec: null
+  status: active
 
 career_application_rejected:
   action_type: instruction_sheet
@@ -395,6 +447,7 @@ career_application_rejected:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: stub
 
 # Phase 2 — portal scanner signals (CareerSearchAgent)
 new_portal_match:
@@ -403,3 +456,29 @@ new_portal_match:
   min_trust: 0
   reversible: false
   undo_window_sec: null
+  status: stub
+
+# DEBT-008: orphaned signals — no routing existed before; now routed
+automation_failure:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active
+
+goal_autopark_candidate:
+  action_type: todo_sync
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active
+
+slack_action_item:
+  action_type: todo_sync
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active

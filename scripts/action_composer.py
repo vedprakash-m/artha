@@ -228,12 +228,17 @@ class ActionComposer:
           - No routing entry for this signal_type.
           - The mapped action_type is disabled in actions.yaml.
           - The signal's metadata is insufficient to build a proposal.
-
-        Raises:
-          ValueError: If the signal itself is structurally invalid.
+          - DEBT-012: The signal fails structural validation (logged and skipped).
         """
-        if not signal.signal_type:
-            raise ValueError("DomainSignal.signal_type must not be empty")
+        # DEBT-012: Validate signal — __post_init__ already fires at construction,
+        # but catch defensive ValueError here for any deserialized / test-injected signals.
+        try:
+            if not signal.signal_type:
+                raise ValueError("DomainSignal.signal_type must not be empty")
+        except ValueError as exc:
+            import sys  # noqa: PLC0415
+            print(f"[ACTION_COMPOSER] Invalid signal skipped: {exc}", file=sys.stderr)
+            return None
 
         # Find routing entry
         route = _load_signal_routing().get(signal.signal_type)

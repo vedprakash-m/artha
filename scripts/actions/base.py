@@ -62,6 +62,29 @@ class DomainSignal:
     metadata: Dict[str, Any]
     detected_at: str
 
+    def __post_init__(self) -> None:
+        """DEBT-012: Validate structural invariants at construction time."""
+        if not isinstance(self.signal_type, str) or not self.signal_type.strip():
+            raise ValueError(
+                f"DomainSignal.signal_type must be a non-empty string; got {self.signal_type!r}"
+            )
+        if not isinstance(self.domain, str) or not self.domain.strip():
+            raise ValueError(
+                f"DomainSignal.domain must be a non-empty string; got {self.domain!r}"
+            )
+        if not isinstance(self.urgency, int) or not (0 <= self.urgency <= 3):
+            raise ValueError(
+                f"DomainSignal.urgency must be int 0–3; got {self.urgency!r}"
+            )
+        if not isinstance(self.impact, int) or not (0 <= self.impact <= 3):
+            raise ValueError(
+                f"DomainSignal.impact must be int 0–3; got {self.impact!r}"
+            )
+        if not isinstance(self.metadata, dict):
+            raise ValueError(
+                f"DomainSignal.metadata must be a dict; got {type(self.metadata).__name__}"
+            )
+
 
 @dataclass(frozen=True)
 class ActionProposal:

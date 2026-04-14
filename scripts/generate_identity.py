@@ -78,6 +78,35 @@ def _get(profile: dict, key_path: str, default: Any = None) -> Any:
     return node
 
 
+# DEBT-016: YAML injection sanitizer for user-supplied profile values
+_MAX_PROFILE_VALUE_LEN = 200
+
+
+def _sanitize_profile_value(value: str) -> str:
+    """Sanitize a user-supplied profile value before interpolation into the prompt.
+
+    Strips YAML/Markdown structural tokens that could break the prompt context or
+    allow a user to inject false framing into the identity block.
+
+    Mitigates: line-starting `#` headings, `---` document separators,
+    backtick code-fence injection, and oversized values.
+    """
+    if not isinstance(value, str):
+        return str(value) if value is not None else ""
+    # Strip YAML document separators (could end the YAML doc mid-prompt)
+    lines = [ln for ln in value.splitlines() if not ln.strip().startswith("---")]
+    value = "\n".join(lines)
+    # Strip Markdown heading tokens at line start (prompt-injection vector)
+    import re as _re
+    value = _re.sub(r"(?m)^#+\s*", "", value)
+    # Escape backticks (prevent code-fence injection)
+    value = value.replace("`", "\u2019")  # replace with right single quotation mark
+    # Truncate to safety cap
+    if len(value) > _MAX_PROFILE_VALUE_LEN:
+        value = value[:_MAX_PROFILE_VALUE_LEN].rstrip() + "…"
+    return value.strip()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation (blocking errors)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -203,8 +232,8 @@ def _build_identity_block(profile: dict) -> str:
     lines: list[str] = []
 
     primary = _get(profile, "family.primary_user", {}) or {}
-    p_name = primary.get("name", "User")
-    p_nick = primary.get("nickname", "")
+    p_name = _sanitize_profile_value(primary.get("name", "User"))
+    p_nick = _sanitize_profile_value(primary.get("nickname", ""))
     p_emails = primary.get("emails", {}) or {}
     p_gmail = p_emails.get("gmail", "")
 
@@ -215,10 +244,10 @@ def _build_identity_block(profile: dict) -> str:
     children: list[dict] = _get(profile, "family.children", []) or []
 
     location = _get(profile, "location", {}) or {}
-    city = location.get("city", "")
-    state = location.get("state", "")
-    county = location.get("county", "")
-    timezone = location.get("timezone", "")
+    city = _sanitize_profile_value(location.get("city", ""))
+    state = _sanitize_profile_value(location.get("state", ""))
+    county = _sanitize_profile_value(location.get("county", ""))
+    timezone = location.get("timezone", "")  # timezone validated structurally — sanitize only display
 
     cultural_ctx = _get(profile, "family.cultural_context", "")
     # Resolve cultural preset if the value is a preset name
@@ -230,14 +259,15 @@ def _build_identity_block(profile: dict) -> str:
                 cultural_ctx = preset.get("description", cultural_ctx)
             except Exception:
                 pass  # Fall back to raw value
+    cultural_ctx = _sanitize_profile_value(cultural_ctx)
 
     domains = _get(profile, "domains", {}) or {}
     enabled_domains = [d for d, v in domains.items() if isinstance(v, dict) and v.get("enabled", False)]
 
     imm_enabled = _get(profile, "domains.immigration.enabled", False)
-    imm_context = _get(profile, "domains.immigration.context", "")
-    imm_path = _get(profile, "domains.immigration.path", "")
-    imm_origin = _get(profile, "domains.immigration.origin_country", "")
+    imm_context = _sanitize_profile_value(_get(profile, "domains.immigration.context", ""))
+    imm_path = _sanitize_profile_value(_get(profile, "domains.immigration.path", ""))
+    imm_origin = _sanitize_profile_value(_get(profile, "domains.immigration.origin_country", ""))
 
     # ── Header ──────────────────────────────────────────────────────────────
     lines.append("## §1 — Identity & Context")
@@ -381,6 +411,24 @@ def _build_identity_block(profile: dict) -> str:
             if imm_origin:
                 ctx_parts.append(f"country of birth: {imm_origin}")
             lines.append(". ".join(ctx_parts) + ".")
+        lines.append("")
+
+    # DEBT-018: Interpolate alert thresholds from user_profile.yaml into identity block
+    thresholds = _get(profile, "alert_thresholds", {}) or {}
+    if thresholds:
+        lines.append("### Alert Thresholds (from config)")
+        if "passport_expiry_days" in thresholds:
+            tiers = thresholds["passport_expiry_days"]
+            lines.append(f"- Passport/Visa expiry tiers: {tiers} days before expiry (escalating urgency)")
+        if "sprint_ending_days" in thresholds:
+            lines.append(f"- Sprint ending warning: {thresholds['sprint_ending_days']} days before end")
+        if "connector_stale_hours" in thresholds:
+            lines.append(f"- Connector stale after: {thresholds['connector_stale_hours']}h; "
+                         f"critical after: {thresholds.get('connector_critical_hours', 72)}h")
+        if "open_item_overdue_days" in thresholds:
+            lines.append(f"- Open item overdue: immediate alert after {thresholds['open_item_overdue_days']} day(s)")
+        if "goal_no_progress_days" in thresholds:
+            lines.append(f"- Goal no-progress nudge: {thresholds['goal_no_progress_days']} days")
         lines.append("")
 
     return "\n".join(lines)

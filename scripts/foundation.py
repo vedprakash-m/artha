@@ -75,11 +75,13 @@ def _init_config() -> None:
         "CONFIG_DIR":   artha_dir / "config",
         "AUDIT_LOG":    artha_dir / "state" / "audit.md",
         "LOCK_FILE":    artha_dir / ".artha-decrypted",
-        # 10 entries — (domain, extension) tuples.
+        # 12 entries — (domain, extension) tuples.
         # Legacy plain strings are auto-coerced to (domain, ".md") by
         # _normalize_sensitive_files() for backward compatibility.
         # gallery + gallery_memory are NOT vaulted — they contain public
         # social-media drafts, not PII or financial data.
+        # DEBT-034: kids added — child activity, school, health data = high PII.
+        # DEBT-006: employment added — salary, RSU, comp data = high PII.
         "SENSITIVE_FILES": [
             ("immigration", ".md"),
             ("finance", ".md"),
@@ -91,6 +93,8 @@ def _init_config() -> None:
             ("contacts", ".md"),
             ("occasions", ".md"),
             ("transactions", ".md"),
+            ("kids", ".md"),
+            ("employment", ".md"),
         ],
         "ARTHA_LOCAL_DIR": Path.home() / ".artha-local",
         "KC_SERVICE":      "age-key",
@@ -377,6 +381,17 @@ def is_valid_age_file(age_file: Path) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
+def get_sensitive_domains() -> frozenset[str]:
+    """Return the set of domain names that require vault protection.
+
+    DEBT-002 / DEBT-034: Single source of truth for all vault protection
+    consumers.  Derived dynamically from _config["SENSITIVE_FILES"] so that
+    adding a new domain to _init_config() is the ONLY change required.
+    """
+    entries = _config.get("SENSITIVE_FILES", [])
+    return frozenset(domain for domain, _ext in _normalize_sensitive_files(entries))
+
+
 __all__ = [
     # Config dict (single patch point for test fixtures)
     "_config",
@@ -384,6 +399,10 @@ __all__ = [
     "ARTHA_DIR", "STATE_DIR", "CONFIG_DIR", "AUDIT_LOG", "LOCK_FILE",
     "SENSITIVE_FILES", "KC_SERVICE", "KC_ACCOUNT",
     "STALE_THRESHOLD", "LOCK_TTL",
+    # Domain helpers
+    "get_sensitive_domains",
+    # Internal normalizer (used by vault.py and tests)
+    "_normalize_sensitive_files",
     # Utilities
     "log", "die",
     # Key management

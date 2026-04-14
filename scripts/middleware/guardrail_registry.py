@@ -28,6 +28,7 @@ Ref: specs/agent-fw.md §3.1 (AFW-1)
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -43,22 +44,48 @@ from middleware.guardrails import (
 # Default config location — relative to Artha root
 _DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "guardrails.yaml"
 
+# DEBT-004: Module-level degraded flag.
+# Set to True when guardrails.yaml fails to load.  Consumers (briefing, pipeline)
+# check this flag to surface a SAFETY banner.  Reset between test cases by setting
+# guardrail_registry._GUARDRAILS_DEGRADED = False in setUp/tearDown.
+_GUARDRAILS_DEGRADED: bool = False
+
 
 def _load_yaml(path: Path) -> dict:
-    """Load a YAML file with minimal dependencies."""
-    try:
-        import yaml  # noqa: PLC0415
-        with open(path, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    except ImportError:
-        pass
+    """Load a YAML file with minimal dependencies.
 
-    # Fallback: lib/config_loader
-    try:
-        from lib.config_loader import load_config  # noqa: PLC0415
-        return load_config(path.stem) or {}
-    except Exception:  # noqa: BLE001
+    DEBT-004: Retry-once logic guards against transient OneDrive file locks.
+    On any failure, sets _GUARDRAILS_DEGRADED = True and returns {} so callers
+    can detect the degraded state.
+    """
+    global _GUARDRAILS_DEGRADED  # noqa: PLW0603
+
+    def _attempt(p: Path) -> dict | None:
+        try:
+            import yaml  # noqa: PLC0415
+            with open(p, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except ImportError:
+            pass  # yaml not available — fall through to config_loader
+        except Exception:  # noqa: BLE001  # FileNotFoundError, yaml.ParserError, etc.
+            return None
+        try:
+            from lib.config_loader import load_config  # noqa: PLC0415
+            return load_config(p.stem) or {}
+        except Exception:  # noqa: BLE001
+            return None
+
+    result = _attempt(path)
+    if result is None:
+        # Retry once after 1s (OneDrive transient lock mitigation)
+        time.sleep(1)
+        result = _attempt(path)
+
+    if result is None:
+        _GUARDRAILS_DEGRADED = True
         return {}
+
+    return result
 
 
 def _build_guardrail(spec: dict) -> BaseGuardrail | None:
@@ -96,6 +123,7 @@ class GuardrailRegistry:
     """
 
     def __init__(self, config_path: Path | None = None) -> None:
+        global _GUARDRAILS_DEGRADED  # noqa: PLW0603
         cfg_path = config_path or _DEFAULT_CONFIG
         config = _load_yaml(cfg_path)
 
@@ -121,6 +149,47 @@ class GuardrailRegistry:
                     else GuardrailMode.BLOCKING
                 )
                 chain.append((guardrail, mode))
+
+        # DEBT-004: Detect and surface guardrail degradation.
+        # Empty chains + degraded flag = guardrails.yaml failed to load.
+        # This is architecturally a hard failure: no PII scan, no injection
+        # detection, no rate limiting. Emit CRITICAL to stderr + audit log.
+        all_chains_empty = (
+            not self._input_chain
+            and not self._tool_chain
+            and not self._output_chain
+        )
+        if _GUARDRAILS_DEGRADED or (all_chains_empty and not config):
+            _GUARDRAILS_DEGRADED = True
+            print(
+                "\nCRITICAL: Guardrails failed to load from "
+                f"{cfg_path}\n"
+                "  All safety chains (PII scan, injection detection, rate limiting) are INACTIVE.\n"
+                "  This session is UNGUARDED. Fix guardrails.yaml before proceeding.\n"
+                "  Override (experts only): python scripts/preflight.py --force-no-guardrails\n",
+                file=sys.stderr,
+            )
+            self._emit_guardrail_degraded_audit(cfg_path)
+
+    def _emit_guardrail_degraded_audit(self, cfg_path: Path) -> None:
+        """Write GUARDRAIL_DEGRADED to state/audit.md (best-effort, non-fatal)."""
+        try:
+            from datetime import datetime, timezone  # noqa: PLC0415
+            artha_dir = Path(__file__).resolve().parents[2]
+            audit_log = artha_dir / "state" / "audit.md"
+            if audit_log.exists():
+                ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                entry = (
+                    f"[{ts}] GUARDRAIL_DEGRADED"
+                    f" | config: {cfg_path}"
+                    f" | chains: input={len(self._input_chain)}"
+                    f" tool={len(self._tool_chain)}"
+                    f" output={len(self._output_chain)}\n"
+                )
+                with open(audit_log, "a", encoding="utf-8") as f:
+                    f.write(entry)
+        except Exception:  # noqa: BLE001
+            pass  # audit write is best-effort; stderr alert is the primary signal
 
     # ------------------------------------------------------------------
     # Public runners

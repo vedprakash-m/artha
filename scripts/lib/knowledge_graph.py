@@ -933,7 +933,13 @@ class KnowledgeGraph:
         # No other bypass is permitted.
         if os.environ.get("ARTHA_ALLOW_CLOUD_DB", "").strip() == "1":
             return
-        path_str = str(path)
+        # DEBT-026: Resolve symlinks before checking — a symlink at ~/.artha-local/kb.sqlite
+        # pointing to an OneDrive path bypasses string matching on the unresolved path.
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path  # path may not exist yet; fall back to original
+        path_str = str(resolved)
         for marker in _CLOUD_SYNC_MARKERS:
             if marker.lower() in path_str.lower():
                 raise RuntimeError(
@@ -2475,12 +2481,34 @@ class KnowledgeGraph:
         os.close(tmp_fd)
 
         try:
+            # DEBT-035: Checkpoint WAL before backup to ensure consistent snapshot.
+            # TRUNCATE mode folds WAL into the main DB and discards the sidecar.
+            # If checkpoint is incomplete (busy_log > 0), skip backup this cycle.
+            wal_result = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if wal_result and len(wal_result) >= 3:
+                _blocked, _checkpointed, _remaining = wal_result
+                if _remaining > 0:
+                    _log.warning(
+                        "KB backup: WAL checkpoint incomplete (%d frames remaining) — "
+                        "skipping backup to avoid inconsistent snapshot",
+                        _remaining,
+                    )
+                    if tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                    return dest_path  # non-fatal skip
+
             # Step 2: Backup via Python stdlib — WAL-clean snapshot
             dest_conn = sqlite3.connect(str(tmp_path))
             try:
                 self._conn.backup(dest_conn)
             finally:
                 dest_conn.close()
+
+            # Verify: no .sqlite-wal sidecar was created for the backup file
+            wal_sidecar = tmp_path.with_suffix(".sqlite-wal")
+            if wal_sidecar.exists():
+                _log.warning("KB backup: unexpected WAL sidecar at %s — removing", wal_sidecar)
+                wal_sidecar.unlink(missing_ok=True)
 
             # Step 4: Atomic move to final path
             try:

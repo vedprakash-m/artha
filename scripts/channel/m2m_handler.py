@@ -5,7 +5,7 @@ Spec: specs/claw-bridge.md §P2.2
 Validates and routes inbound envelopes from OpenClaw:
   1. Schema detection (`is_m2m_message`)
   2. Envelope validation: allowlist → sender ID → timestamp → nonce replay → HMAC
-  3. Per-command routing → `tmp/home_events_buffer.jsonl` (JSONL append)
+  3. Per-command routing → `~/.artha-local/home_events_buffer.jsonl` (JSONL append, DEBT-037)
 
 Security invariants:
   - HMAC is the primary guard for all inbound messages.
@@ -56,7 +56,8 @@ log = logging.getLogger("artha.m2m_handler")
 # ── Constants ─────────────────────────────────────────────────────────────────
 _BRIDGE_SCHEMA          = "claw-bridge/1.0"
 _TIMESTAMP_TOLERANCE_SEC = 300          # ±5 minutes — must match hmac_signer
-_BUFFER_FILE            = "tmp/home_events_buffer.jsonl"
+# DEBT-037: Buffer lives in local-only ~/.artha-local/ to prevent OneDrive cloud-sync of IoT telemetry.
+_BUFFER_FILE            = "home_events_buffer.jsonl"
 _CLOCK_WARN_MIN         = 2            # log BRIDGE_CLOCK_DRIFT if drift > this
 _CLOCK_CRITICAL_MIN     = 5            # escalate to CRITICAL if drift > this
 
@@ -343,7 +344,7 @@ def _handle_pong(env: dict[str, Any], cfg: dict[str, Any]) -> None:
 # ── Buffer writer ──────────────────────────────────────────────────────────────
 
 def _append_to_buffer(artha_dir: Path, event_dict: dict[str, Any]) -> None:
-    """Append a JSON event line to tmp/home_events_buffer.jsonl.
+    """Append a JSON event line to ~/.artha-local/home_events_buffer.jsonl.
 
     Uses an advisory fcntl exclusive lock on macOS/Linux.
     If the lock cannot be acquired (another process holds it), the write is
@@ -351,9 +352,10 @@ def _append_to_buffer(artha_dir: Path, event_dict: dict[str, Any]) -> None:
     On Windows (_fcntl is None): the lock is skipped entirely — single-listener
     enforcement via channels.yaml is the guard on Windows (spec §P2.2).
 
-    tmp/ writes are exempt from state_writer.write() (spec §P2.4 mandate).
+    Local-only path writes are exempt from state_writer.write() (spec §P2.4 mandate).
     """
-    buf_path = artha_dir / _BUFFER_FILE
+    # DEBT-037: Write to ~/.artha-local/ (outside OneDrive) rather than artha_dir/tmp/
+    buf_path = Path.home() / ".artha-local" / _BUFFER_FILE
     buf_path.parent.mkdir(parents=True, exist_ok=True)
 
     line = json.dumps(event_dict, sort_keys=True, ensure_ascii=True) + "\n"

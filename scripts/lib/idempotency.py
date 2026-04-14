@@ -113,9 +113,11 @@ def _load_windows() -> dict[str, timedelta]:
             for line in block.splitlines():
                 kv = re.match(r"^\s+(\w+):\s*(.+)", line)
                 if kv:
-                    key, val = kv.group(1).strip(), kv.group(2).strip()
+                    key = kv.group(1).strip()
+                    # Strip inline YAML comments before parsing duration
+                    raw_val = kv.group(2).split("#")[0].strip()
                     try:
-                        defaults[key] = _parse_duration(val)
+                        defaults[key] = _parse_duration(raw_val)
                     except ValueError:
                         pass
     except (OSError, Exception):  # noqa: BLE001
@@ -125,19 +127,33 @@ def _load_windows() -> dict[str, timedelta]:
     return _WINDOW_CACHE
 
 
-def get_window(action_type: str) -> timedelta:
-    """Return the idempotency window for an action type.
+def get_window(action_type: str, domain: str = "") -> timedelta:
+    """Return the idempotency window for an action type, with optional domain refinement.
 
-    Falls back to ``default`` if action_type is not in guardrails.yaml.
+    DEBT-013: Domain-qualified lookup allows different dedup windows for the
+    same action_type depending on the originating domain.  For example,
+    ``instruction_sheet`` actions for ``immigration`` use a 30-day window
+    (annual-cadence events) while ``instruction_sheet`` for ``iot`` uses 4h.
+
+    Lookup priority:
+    1. ``{action_type}_{domain}`` qualified key (e.g. ``instruction_sheet_immigration``)
+    2. ``{action_type}`` unqualified key (e.g. ``instruction_sheet``)
+    3. ``default`` (24 hours)
 
     Args:
         action_type: One of ``scheduling``, ``financial``, ``communication``,
-                     or any custom type registered in guardrails.yaml.
+                     ``instruction_sheet``, or any custom type in guardrails.yaml.
+        domain:      Optional originating Artha domain (e.g. ``immigration``, ``iot``).
+                     When provided, a domain-qualified key is tried first.
 
     Returns:
         timedelta representing the deduplication window.
     """
     windows = _load_windows()
+    if domain:
+        qualified = f"{action_type}_{domain}"
+        if qualified in windows:
+            return windows[qualified]
     return windows.get(action_type, windows["default"])
 
 
@@ -433,3 +449,8 @@ def check_or_reserve(
     key = CompositeKey.compute(recipient, intent, action_type, date_window=date_window)
     status = get_default_store().check_or_reserve(key, action_type)
     return status, key
+
+
+def mark_completed(key: str) -> None:
+    """Convenience: mark a previously reserved key as completed. DEBT-036."""
+    get_default_store().mark_completed(key)

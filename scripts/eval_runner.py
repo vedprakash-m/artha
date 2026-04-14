@@ -668,7 +668,42 @@ def analyze_routing_audit(days: int = 7) -> dict[str, Any]:
     ]
 
     if not decisions:
-        return {"decisions": [], "total": 0}
+        # Still compute keyword_miss_rate even with no routing_decision records
+        margin_records_early = [
+            r for r in records
+            if r.get("record_type") == "routing_margin"
+            and r.get("timestamp", "") >= cutoff
+        ]
+        miss_rates_early = []
+        for r in margin_records_early:
+            rq = r.get("routing_quality") or {}
+            kmr = rq.get("keyword_miss_rate")
+            if kmr is not None:
+                miss_rates_early.append(float(kmr))
+        kmr_val: float | None = None
+        kmr_alert: str | None = None
+        if miss_rates_early:
+            kmr_val = sum(miss_rates_early) / len(miss_rates_early)
+            try:
+                import yaml as _yaml2  # type: ignore[import]
+                _mem_yaml2 = _ARTHA_DIR / "config" / "memory.yaml"
+                _mem_cfg2 = _yaml2.safe_load(_mem_yaml2.read_text(encoding="utf-8")) if _mem_yaml2.exists() else {}
+                threshold2 = float(
+                    (_mem_cfg2.get("upgrade_trigger") or {}).get("keyword_miss_rate_threshold", 0.10)
+                )
+            except Exception:  # noqa: BLE001
+                threshold2 = 0.10
+            if kmr_val > threshold2:
+                kmr_alert = (
+                    f"ALERT: keyword_miss_rate={kmr_val:.2%} exceeds threshold "
+                    f"{threshold2:.2%} — consider TF-IDF vocabulary upgrade (EAR-4)"
+                )
+        return {
+            "decisions": [],
+            "total": 0,
+            "keyword_miss_rate": kmr_val,
+            "keyword_miss_rate_alert": kmr_alert,
+        }
 
     by_agent: dict[str, int] = {}
     dispatched = 0
@@ -681,6 +716,39 @@ def analyze_routing_audit(days: int = 7) -> dict[str, Any]:
         else:
             declined += 1
 
+    # DEBT-020: compute 7-day rolling keyword_miss_rate from routing_margin records
+    margin_records = [
+        r for r in records
+        if r.get("record_type") == "routing_margin"
+        and r.get("timestamp", "") >= cutoff
+    ]
+    miss_rates = []
+    for r in margin_records:
+        rq = r.get("routing_quality") or {}
+        kmr = rq.get("keyword_miss_rate")
+        if kmr is not None:
+            miss_rates.append(float(kmr))
+
+    keyword_miss_rate: float | None = None
+    miss_rate_alert: str | None = None
+    if miss_rates:
+        keyword_miss_rate = sum(miss_rates) / len(miss_rates)
+        # Load threshold from memory.yaml (default 0.10)
+        try:
+            import yaml as _yaml  # type: ignore[import]
+            _mem_yaml = _ARTHA_DIR / "config" / "memory.yaml"
+            _mem_cfg = _yaml.safe_load(_mem_yaml.read_text(encoding="utf-8")) if _mem_yaml.exists() else {}
+            threshold = float(
+                (_mem_cfg.get("upgrade_trigger") or {}).get("keyword_miss_rate_threshold", 0.10)
+            )
+        except Exception:  # noqa: BLE001
+            threshold = 0.10
+        if keyword_miss_rate > threshold:
+            miss_rate_alert = (
+                f"ALERT: keyword_miss_rate={keyword_miss_rate:.2%} exceeds threshold "
+                f"{threshold:.2%} — consider TF-IDF vocabulary upgrade (EAR-4)"
+            )
+
     return {
         "total": len(decisions),
         "dispatched": dispatched,
@@ -688,6 +756,8 @@ def analyze_routing_audit(days: int = 7) -> dict[str, Any]:
         "by_agent": dict(sorted(by_agent.items(), key=lambda x: x[1], reverse=True)),
         "recent": decisions[-10:],
         "period_days": days,
+        "keyword_miss_rate": keyword_miss_rate,
+        "keyword_miss_rate_alert": miss_rate_alert,
     }
 
 
@@ -1164,6 +1234,12 @@ def main(argv: list[str] | None = None) -> int:
                 lines.append(f"  Total decisions : {data['total']}  (last {data['period_days']}d)")
                 lines.append(f"  Dispatched      : {data['dispatched']}")
                 lines.append(f"  Declined        : {data['declined']}")
+                kmr = data.get("keyword_miss_rate")
+                if kmr is not None:
+                    lines.append(f"  Keyword miss rt : {kmr:.2%}")
+                alert = data.get("keyword_miss_rate_alert")
+                if alert:
+                    lines.append(f"  ⚠  {alert}")
                 for agent, count in data.get("by_agent", {}).items():
                     lines.append(f"    {agent:<32}: {count}")
                 if data.get("recent"):

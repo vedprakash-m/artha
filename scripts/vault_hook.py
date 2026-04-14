@@ -21,9 +21,24 @@ STATE_DIR = os.path.join(ARTHA_DIR, "state")
 LOCK_FILE = os.path.join(ARTHA_DIR, ".artha-decrypted")
 VAULT_PY  = os.path.join(ARTHA_DIR, "scripts", "vault.py")
 
-SENSITIVE_DOMAINS = [
-    "immigration", "finance", "insurance", "estate", "health", "audit", "vehicle"
-]
+# DEBT-002: Single source of truth for sensitive domains.
+# Import from foundation.py (which now exports get_sensitive_domains()).
+# Fallback: full 11-entry static literal used when venv is unavailable
+# (bare Git hook context).
+try:
+    import sys as _sys
+    _scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    if _scripts_dir not in _sys.path:
+        _sys.path.insert(0, _scripts_dir)
+    from foundation import get_sensitive_domains as _get_sensitive_domains
+    SENSITIVE_DOMAINS = list(_get_sensitive_domains())
+except Exception:  # noqa: BLE001
+    # Static fallback — must enumerate ALL 11 domains explicitly.
+    # This list MUST be kept in sync with foundation.py SENSITIVE_FILES.
+    SENSITIVE_DOMAINS = [
+        "immigration", "finance", "insurance", "estate", "health",
+        "audit", "vehicle", "contacts", "occasions", "transactions", "kids",
+    ]
 
 
 def hook_decrypt() -> None:

@@ -19,6 +19,15 @@ idempotency_windows:
   financial:     30d  # Transfers, payments, subscriptions
   communication: 48h  # Email, calendar invites, messages
   default:       24h  # All other action types
+  # DEBT-013: Domain-qualified instruction_sheet windows
+  # Format: instruction_sheet_{domain}: <duration>
+  # Tried BEFORE the unqualified 'instruction_sheet' fallback.
+  instruction_sheet:             24h  # baseline for instruction_sheet (matches default)
+  instruction_sheet_immigration: 30d  # visa/passport events are annual cadence
+  instruction_sheet_finance:     30d  # tax and financial planning events
+  instruction_sheet_estate:      30d  # estate review and legal events
+  instruction_sheet_insurance:   30d  # policy reviews and renewals
+  instruction_sheet_iot:         4h   # smart home events are high-frequency
 
 input:
   - name: vault_access

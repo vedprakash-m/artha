@@ -26,6 +26,7 @@ import importlib
 import json
 import os
 import signal
+import sqlite3
 import sys
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -424,8 +425,20 @@ class ActionExecutor:
                 )
         except ValueError:
             raise
-        except Exception:  # noqa: BLE001
-            _idem_key = None  # idempotency store unavailable — fail-open, log best-effort
+        except (sqlite3.OperationalError, OSError, PermissionError) as _idem_exc:
+            # DEBT-003: Idempotency store unavailable.
+            # Policy: fail-LOUD, not fail-open.  Escalate friction to "high" so
+            # the existing friction-floor gate (L601+) forces explicit user
+            # confirmation before executing.  The action proceeds but is gated.
+            # This is distinct from DEBT-004 (guardrails absent = no safety net):
+            # here the human friction gate IS the safety net.
+            _idem_key = None
+            friction = "high"
+            _audit_log(
+                self._artha_dir,
+                f"IDEMPOTENCY_DEGRADED | reason: {type(_idem_exc).__name__}: {_idem_exc}"
+                f" | type:{action_type} | domain:{domain}",
+            )
 
         proposal = ActionProposal(
             id=str(uuid.uuid4()),

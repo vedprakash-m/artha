@@ -89,6 +89,34 @@ def execute(proposal: ActionProposal) -> ActionResult:
     service: str = params.get("service", "")
     domain = proposal.domain or "general"
 
+    # DEBT-036: Idempotency check — prevent duplicate instruction sheets within the window
+    try:
+        from lib.idempotency import check_or_reserve, mark_completed  # noqa: PLC0415
+        idem_status, idem_key = check_or_reserve(
+            recipient=f"{domain}:{service}",
+            intent=task,
+            action_type="instruction_sheet",
+        )
+        if idem_status == "duplicate":
+            return ActionResult(
+                status="skipped",
+                message=f"Duplicate instruction_sheet skipped (idempotency window active): {task}/{service}",
+                data={"idem_key": idem_key, "task": task, "service": service},
+                reversible=False,
+                reverse_action=None,
+            )
+        if idem_status == "pending":
+            return ActionResult(
+                status="skipped",
+                message=f"instruction_sheet already in-flight (pending): {task}/{service}",
+                data={"idem_key": idem_key, "task": task, "service": service},
+                reversible=False,
+                reverse_action=None,
+            )
+    except Exception as _idem_exc:
+        idem_key = None  # non-fatal — proceed without idempotency guard
+        print(f"[instruction_sheet] idempotency check failed (non-fatal): {_idem_exc}", file=sys.stderr)
+
     try:
         content = _generate_content(proposal, params)
 
@@ -106,18 +134,33 @@ def execute(proposal: ActionProposal) -> ActionResult:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / filename
 
+        # DEBT-036: Warn on overwrite — same filename already exists
+        _overwrite_warning = None
+        if output_path.exists():
+            _overwrite_warning = f"WARNING: overwriting existing instruction sheet: {filename}"
+            print(f"[instruction_sheet] {_overwrite_warning}", file=sys.stderr)
+
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+        # DEBT-036: Mark idempotency key completed after successful write
+        if idem_key is not None:
+            try:
+                mark_completed(idem_key)
+            except Exception:
+                pass  # non-fatal
+
         return ActionResult(
             status="success",
-            message=f"✅ Instruction sheet saved: tmp/instructions/{filename}",
+            message=f"✅ Instruction sheet saved: tmp/instructions/{filename}"
+                    + (f" [{_overwrite_warning}]" if _overwrite_warning else ""),
             data={
                 "file_path": str(output_path),
                 "filename": filename,
                 "char_count": len(content),
                 "task": task,
                 "service": service,
+                **({"overwrite_warning": _overwrite_warning} if _overwrite_warning else {}),
             },
             reversible=False,
             reverse_action=None,
