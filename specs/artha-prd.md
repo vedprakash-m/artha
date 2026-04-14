@@ -2459,9 +2459,40 @@ All resolved. Key decisions: **OQ-1** Email delivery (most portable). **OQ-2** T
 - **Phase 3 (FSM Orchestrator)** is gated on `harness.ear5.complete: true` and ≥80% Shadow Mode acceptance across all active domains. Do not begin until gate conditions are met.
 - **Wave 0 gate** is a hard block on L2 autonomy elevation. Override only via `--force-wave0 --justification "<reason>"` with mandatory audit trail.
 
+### 16.4 Security & Privacy Architecture
+
+These requirements are implemented and non-negotiable. Sources: `specs/debt.md` (archived) safety sprint.
+
+#### Vault Protection Domains
+
+All domains in `foundation.py SENSITIVE_FILES` are vault-encrypted at rest using `age`. The canonical list is 11 domains: `immigration`, `health`, `finance`, `insurance`, `estate`, `vehicle`, `contacts`, `occasions`, `transactions`, `employment`, `kids`. The `config/memory.yaml: high_sensitivity_domains` list must be a superset of this set; a drift-detection check in `tests/unit/test_sensitive_domain_consistency.py` enforces synchrony at CI.
+
+#### Memory Sensitivity Gap Prevention
+
+Facts extracted from vault-protected domains and written to `state/memory.md` are tagged `[SENSITIVE]` at write time. `scripts/lib/memory_writer.py` enforces:
+- Sensitivity tagging based on `memory.yaml: high_sensitivity_domains`
+- FIFO eviction at the configured `max_facts` cap (default: 30)
+- `MEMORY_EVICTION` audit log entries per eviction cycle
+
+#### PII Transit Controls
+
+- **Prompt injection defense**: `generate_identity.py._sanitize_profile_value()` strips leading `#` sequences, `---` separators, and multi-line code blocks from all `user_profile.yaml` values before interpolation into the generated identity prompt. Values are truncated to 200 characters.
+- **Telegram PII scrub**: `export_bridge_context.py` applies a secondary name-scrub layer using `user_profile.yaml` family names (not detectable by regex) before HMAC signing. P2/P3 urgency items are not forwarded over the Telegram transport.
+- **External agent block list**: `config/agents/external-registry.yaml` carries an explicit `block: [ssn, passport_number, bank_account, tax_id, medical_record]` deny-list per agent profile. The `block` check is applied after the `allow` gate; a blocked field is removed even if the allow-list passes it.
+
+#### Guardrail Fail-Closed
+
+`guardrail_registry.py` sets a module-level `_GUARDRAILS_DEGRADED` flag on any `config/guardrails.yaml` parse failure. `preflight.py` includes a P0 `check_guardrails_yaml()` gate that blocks the pipeline when guardrails are unloadable. Override via `--force-no-guardrails` writes `FORCE_NO_GUARDRAILS` to `state/audit.md`.
+
+#### Idempotency Layering
+
+Action deduplication occurs at two independent layers:
+1. **Pre-proposal** (`action_executor.py`): `idempotency.py.get_window(action_type, domain)` — domain-qualified windows (e.g., `instruction_sheet_immigration` → 30 days, `instruction_sheet_iot` → 4 hours) supersede the generic 24-hour default.
+2. **Execution** (`instruction_sheet.execute()`): `check_or_reserve` / `mark_completed` guards against direct-call bypasses and same-day overwrites. Duplicate executions return `status="skipped"` and log `INSTRUCTION_SHEET_DUPLICATE` to `state/audit.md`.
+
 ---
 
-*Artha PRD v7.14.0 — End of Document*
+*Artha PRD v7.15.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

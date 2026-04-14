@@ -143,7 +143,10 @@ class TestFetchSingleMockedHappyPath:
     def test_successful_fetch_returns_lines_and_no_error(self):
         """When auth loads and handler.fetch() succeeds, error should be None."""
         mock_handler = MagicMock()
-        mock_handler.fetch.return_value = ['{"id":1}', '{"id":2}']
+        mock_handler.fetch.return_value = [
+            {"id": "1", "source": "msgraph_calendar", "date_iso": "2025-01-01"},
+            {"id": "2", "source": "msgraph_calendar", "date_iso": "2025-01-01"},
+        ]
 
         cfg = _minimal_conn_cfg("msgraph_calendar", "connectors.msgraph_calendar")
 
@@ -163,7 +166,7 @@ class TestFetchSingleMockedHappyPath:
 
     def test_successful_fetch_records_have_string_type(self):
         mock_handler = MagicMock()
-        mock_handler.fetch.return_value = ['{"source":"calendar","id":"x"}']
+        mock_handler.fetch.return_value = [{"source": "calendar", "id": "x", "date_iso": "2025-01-01"}]
 
         cfg = _minimal_conn_cfg("msgraph_calendar", "connectors.msgraph_calendar")
         with (

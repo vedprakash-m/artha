@@ -244,27 +244,30 @@ class TestSecurityMandatory:
 
 class TestAppendToBuffer:
 
-    def test_writes_jsonl_entry(self, tmp_path):
+    def test_writes_jsonl_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         event = {"ts": _now_ts(), "event": "presence", "who": "vemishra", "state": "home"}
         m2m_handler._append_to_buffer(tmp_path, event)
-        buf = tmp_path / "tmp" / "home_events_buffer.jsonl"
+        buf = tmp_path / ".artha-local" / "home_events_buffer.jsonl"
         assert buf.exists()
         line = json.loads(buf.read_text(encoding="utf-8").strip())
         assert line["event"] == "presence"
         assert line["who"] == "vemishra"
 
-    def test_creates_tmp_dir_if_missing(self, tmp_path):
+    def test_creates_tmp_dir_if_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         event = {"ts": _now_ts(), "event": "energy_spike"}
-        assert not (tmp_path / "tmp").exists()
+        assert not (tmp_path / ".artha-local").exists()
         m2m_handler._append_to_buffer(tmp_path, event)
-        assert (tmp_path / "tmp").exists()
+        assert (tmp_path / ".artha-local").exists()
 
-    def test_appends_multiple_entries(self, tmp_path):
+    def test_appends_multiple_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
         e1 = {"ts": _now_ts(), "event": "presence"}
         e2 = {"ts": _now_ts(), "event": "energy_spike"}
         m2m_handler._append_to_buffer(tmp_path, e1)
         m2m_handler._append_to_buffer(tmp_path, e2)
-        buf = tmp_path / "tmp" / "home_events_buffer.jsonl"
+        buf = tmp_path / ".artha-local" / "home_events_buffer.jsonl"
         lines = [json.loads(l) for l in buf.read_text(encoding="utf-8").splitlines() if l.strip()]
         assert len(lines) == 2
         assert lines[0]["event"] == "presence"

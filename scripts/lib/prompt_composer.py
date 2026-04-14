@@ -183,7 +183,8 @@ class PromptComposer:
     ) -> None:
         self._agent = agent
         allow = agent.pii_profile.allow if agent.pii_profile else []
-        self._scrubber = scrubber or ContextScrubber(allowed_pii=allow)
+        block = agent.pii_profile.block if agent.pii_profile else []
+        self._scrubber = scrubber or ContextScrubber(allowed_pii=allow, blocked_pii=block)
         self._detector = detector or InjectionDetector()
 
     # ------------------------------------------------------------------

@@ -62,6 +62,7 @@ class RoutingResult(NamedTuple):
     all_candidates: list[RoutingMatch]  # All above-threshold candidates (for audit)
     routing_ms: float                    # Time taken (ms) for the routing call
     cache_hit: bool = False              # True if matched from knowledge cache
+    routing_ambiguity: bool = False      # True when top-2 margin < 0.05 (DEBT-032)
 
 
 # EAR-4: TF-IDF lexical fallback threshold (spec §EAR-4, §Phase 0 BLOCKING-3)
@@ -210,13 +211,14 @@ class AgentRouter:
         )
 
         # BLOCKING-3 (R-1): Emit confidence margin to metrics JSONL
-        _emit_routing_margin(candidates, elapsed_ms)
+        ambiguous = _emit_routing_margin(candidates, elapsed_ms)
 
         return RoutingResult(
             match=best,
             all_candidates=candidates,
             routing_ms=elapsed_ms,
             cache_hit=cache_hit,
+            routing_ambiguity=ambiguous,
         )
 
     def _tfidf_fallback(
@@ -385,18 +387,28 @@ class AgentRouter:
 # Helpers
 # ---------------------------------------------------------------------------
 
+_AMBIGUITY_THRESHOLD: float = 0.05  # DEBT-032: margin below which route is ambiguous
+
+
 def _emit_routing_margin(
     candidates: list[RoutingMatch],
     routing_ms: float,
-) -> None:
-    """Emit a routing_margin record. Fire-and-forget. (BLOCKING-3, R-1)"""
+) -> bool:
+    """Emit a routing_margin record. Fire-and-forget. (BLOCKING-3, R-1)
+
+    Returns True when the route is ambiguous (top-2 margin < _AMBIGUITY_THRESHOLD).
+    (DEBT-032)
+    """
     try:
         from lib.metrics_writer import write_routing_margin  # noqa: PLC0415
         top1 = candidates[0] if len(candidates) >= 1 else None
         top2 = candidates[1] if len(candidates) >= 2 else None
         if top1 is None:
-            return
-        margin = (top1.confidence - top2.confidence) if top2 else 0.0
+            return False
+        margin = (top1.confidence - top2.confidence) if top2 else 1.0
+        ambiguous = top2 is not None and margin < _AMBIGUITY_THRESHOLD
+        # keyword_miss_rate = fraction of query tokens NOT matched (DEBT-020)
+        keyword_miss_rate = max(0.0, 1.0 - top1.query_coverage)
         write_routing_margin(
             top1_agent=top1.agent_name,
             top1_confidence=top1.confidence,
@@ -404,9 +416,12 @@ def _emit_routing_margin(
             top2_confidence=top2.confidence if top2 else 0.0,
             confidence_margin=margin,
             routing_ms=routing_ms,
+            keyword_miss_rate=keyword_miss_rate,
         )
+        return ambiguous
     except Exception:   # noqa: BLE001
         pass  # Never block routing on metrics failure
+    return False
 
 def _query_in_agent_domain(query_lower: str, agent) -> bool:
     """Return True if the query touches any of the agent's declared domains."""

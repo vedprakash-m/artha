@@ -160,6 +160,7 @@ def write_routing_margin(
     top2_confidence: float,
     confidence_margin: float,
     routing_ms: float = 0.0,
+    keyword_miss_rate: Optional[float] = None,
     metrics_file: Path | None = None,
 ) -> None:
     """Append a ``routing_margin`` record to the metrics JSONL file.
@@ -187,6 +188,9 @@ def write_routing_margin(
         "top2_confidence": float(top2_confidence),
         "confidence_margin": float(confidence_margin),
         "routing_ms": float(routing_ms),
+        "routing_quality": {
+            "keyword_miss_rate": float(keyword_miss_rate) if keyword_miss_rate is not None else None,
+        },
     }
     _append(record, metrics_file)
 

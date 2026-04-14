@@ -127,6 +127,28 @@ if git rev-parse --git-dir &>/dev/null 2>&1; then
   git config core.hooksPath .githooks 2>/dev/null && pass "PII safety hook activated" || true
 fi
 
+# DEBT-001: vault watchdog — local data directory
+mkdir -p ~/.artha-local && pass "~/.artha-local directory ensured"
+
+# DEBT-001: vault watchdog — Linux systemd user timer (macOS uses plist; Windows uses .ps1)
+if [[ "$(uname -s)" == "Linux" ]]; then
+  SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+  mkdir -p "$SYSTEMD_USER_DIR"
+  chmod +x "$(pwd)/scripts/vault_watchdog_linux.sh"
+  # Copy the watchdog shell script to ~/.artha-local so it's outside OneDrive
+  cp "$(pwd)/scripts/vault_watchdog_linux.sh" ~/.artha-local/vault_watchdog_linux.sh
+  # Install systemd units
+  cp "$(pwd)/scripts/artha-vault-watchdog.service" "$SYSTEMD_USER_DIR/"
+  cp "$(pwd)/scripts/artha-vault-watchdog.timer"   "$SYSTEMD_USER_DIR/"
+  # Update ExecStart in the service unit to point at the local copy
+  sed -i "s|%h/.artha-local/vault_watchdog_linux.sh|${HOME}/.artha-local/vault_watchdog_linux.sh|g" \
+    "$SYSTEMD_USER_DIR/artha-vault-watchdog.service"
+  systemctl --user daemon-reload 2>/dev/null \
+    && systemctl --user enable --now artha-vault-watchdog.timer 2>/dev/null \
+    && pass "Linux systemd vault watchdog timer enabled (every 2 min)" \
+    || warn "systemctl not available — enable artha-vault-watchdog.timer manually"
+fi
+
 blank
 
 # ── [4/4] Demo briefing ────────────────────────────────────────────────────────

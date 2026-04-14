@@ -42,10 +42,16 @@ _DASHBOARD_DOMAINS = [
     "digital", "learning", "social", "boundary", "decisions",
 ]
 
-_SENSITIVE_DOMAINS = {
-    "immigration", "finance", "insurance", "estate",
-    "health", "audit", "vehicle", "contacts", "occasions",
-}
+# DEBT-002: Derive from foundation.py single source of truth.
+try:
+    from foundation import get_sensitive_domains as _get_sensitive_domains
+    _SENSITIVE_DOMAINS = _get_sensitive_domains()
+except Exception:  # noqa: BLE001
+    _SENSITIVE_DOMAINS = {
+        "immigration", "finance", "insurance", "estate",
+        "health", "audit", "vehicle", "contacts", "occasions",
+        "transactions", "kids",
+    }
 
 
 def _is_vault_unlocked() -> bool:

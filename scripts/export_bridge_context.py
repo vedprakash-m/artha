@@ -95,6 +95,60 @@ def _keyring_get(key: str) -> str | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# DEBT-015: Secondary PII name scrub for Telegram payloads
+# ══════════════════════════════════════════════════════════════════════════════
+# Threat model: pii_guard.filter_text() applies regex-only detection.
+# Contextual names (child names, spouse name, employer) survive regex scrubbing
+# and transit to Telegram servers in plaintext. This secondary scrub uses the
+# configured name list from user_profile.yaml as an exact-match token allowlist.
+# Only configured family names are scrubbed — not all proper nouns (to avoid
+# over-scrubbing common words). Telegram transport is additionally restricted
+# to P1+ urgency to minimize non-critical payloads transiting a third-party channel.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _load_family_names(artha_dir: Path) -> list[str]:
+    """Load family member names from user_profile.yaml for secondary PII scrub.
+
+    Returns a list of name tokens (non-empty strings, len >= 2) to scrub.
+    Falls back to empty list on any error (non-fatal).
+    """
+    try:
+        from lib.config_loader import load_config as _load_cfg  # noqa: PLC0415
+        profile = _load_cfg("user_profile", _config_dir=str(artha_dir / "config")) or {}
+        names: list[str] = []
+        family = profile.get("family", {}) or {}
+        # Primary user
+        primary_name = (family.get("primary_user") or {}).get("name", "")
+        if primary_name and len(primary_name) >= 2:
+            names.extend(primary_name.strip().split())
+        # Spouse
+        spouse_name = (family.get("spouse") or {}).get("name", "")
+        if spouse_name and len(spouse_name) >= 2:
+            names.extend(spouse_name.strip().split())
+        # Children
+        for child in (family.get("children") or []):
+            child_name = (child or {}).get("name", "")
+            if child_name and len(child_name) >= 2:
+                names.extend(child_name.strip().split())
+        # Deduplicate, filter placeholders (≥2 chars, no YAML examples)
+        _PLACEHOLDER_NAMES = {"Alex", "Child", "Child1", "Child2", "User", "Spouse"}
+        names = [n for n in dict.fromkeys(names) if len(n) >= 2 and n not in _PLACEHOLDER_NAMES]
+        return names
+    except Exception as exc:
+        log.debug("family_names_load_failed: %s", exc)
+        return []
+
+
+def _scrub_family_names(text: str, names: list[str]) -> str:
+    """Replace family name tokens in text with [REDACTED]. Case-insensitive, whole-word."""
+    import re as _re  # noqa: PLC0415
+    for name in names:
+        pattern = _re.compile(r"\b" + _re.escape(name) + r"\b", _re.IGNORECASE)
+        text = pattern.sub("[REDACTED]", text)
+    return text
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Network detection
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -436,7 +490,28 @@ def _build_payload(artha_dir: Path, cfg: dict[str, Any]) -> dict[str, Any]:
         "deadlines_7d": _read_deadlines_7d(artha_dir, deadlines_limit, cfg),
         "kid_flags": _read_kid_flags(artha_dir, kid_limit, cfg),
     }
+
+    # DEBT-015: Secondary name-scrub pass using family names from user_profile.yaml.
+    # pii_guard.filter_text() handles regex-detectable PII (SSN, phone, etc.).
+    # This pass scrubs contextual name tokens that survive regex-only filtering.
+    inj_filter = cfg.get("injection_filter") or {}
+    if inj_filter.get("scrub_names", False):
+        family_names = _load_family_names(artha_dir)
+        if family_names:
+            payload = _scrub_payload_names(payload, family_names)
+
     return payload
+
+
+def _scrub_payload_names(obj: Any, names: list[str]) -> Any:
+    """Recursively scrub family name tokens from all string fields in a payload."""
+    if isinstance(obj, str):
+        return _scrub_family_names(obj, names)
+    if isinstance(obj, dict):
+        return {k: _scrub_payload_names(v, names) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_payload_names(item, names) for item in obj]
+    return obj
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -849,6 +924,10 @@ def _process_nudge_queue(
         if urgency < 3:
             continue
 
+        # DEBT-015: Enforce telegram_min_urgency config gate for Telegram fallback
+        _tg_min = int((cfg.get("injection_filter") or {}).get("telegram_min_urgency", 3))
+        _tg_will_use = not is_home_lan  # If not on LAN, Telegram is the only transport
+
         nudge_type = str(entry.get("nudge_type", ""))
         domain = str(entry.get("domain", ""))
         triggered_at = str(entry.get("triggered_at", ""))
@@ -877,8 +956,15 @@ def _process_nudge_queue(
         ok = False
         if is_home_lan:
             ok = _push_via_rest(envelope, cfg, dry_run=dry_run)
-        if not ok:
+        # DEBT-015: Only fall back to Telegram if urgency meets the configured minimum
+        if not ok and urgency >= _tg_min:
             ok = _push_via_telegram(envelope, cfg, dry_run=dry_run)
+        elif not ok and urgency < _tg_min:
+            log.info(
+                "nudge_telegram_gate: urgency %d < min %d — queuing in DLQ (not sending via Telegram)",
+                urgency, _tg_min,
+            )
+            _audit_log("BRIDGE_NUDGE_TG_URGENCY_GATE", urgency=urgency, tg_min=_tg_min)
 
         if ok:
             pushed += 1

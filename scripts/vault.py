@@ -37,9 +37,11 @@ if _artha_dir not in sys.path:
 from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
+import atexit
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -47,6 +49,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import keyring
+
+# ---------------------------------------------------------------------------
+# DEBT-001: Re-entrancy guard for cleanup handlers
+# Prevents double-encrypt if both atexit and signal handler fire (e.g. SIGTERM
+# received during normal shutdown).  Module-level singleton — set to True
+# before encrypting, checked at handler entry.
+# ---------------------------------------------------------------------------
+_ENCRYPTING: bool = False
 
 # Advisory lock support (POSIX: fcntl, Windows: msvcrt)
 try:
@@ -607,14 +617,97 @@ def do_decrypt() -> None:
         die(f"{errors} file(s) failed to decrypt. Aborting catch-up.")
 
     # Create lock file with PID + timestamp + operation metadata
+    # DEBT-025: Use atomic tempfile+rename to prevent partial JSON on crash
+    import tempfile as _tempfile  # noqa: PLC0415
     lock_data = {
         "pid":       os.getpid(),
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "operation": "decrypt",
     }
-    LOCK_FILE.write_text(json.dumps(lock_data) + "\n", encoding="utf-8")
+    lock_content = json.dumps(lock_data) + "\n"
+    lock_dir = LOCK_FILE.parent
+    try:
+        with _tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(lock_dir),
+            prefix=".artha-decrypted-tmp-",
+            delete=False,
+        ) as _tmp:
+            _tmp.write(lock_content)
+            _tmp_path = _tmp.name
+        os.replace(_tmp_path, str(LOCK_FILE))  # atomic rename on POSIX + Windows
+    except Exception:  # noqa: BLE001
+        # Fallback to non-atomic write on unexpected filesystem error
+        LOCK_FILE.write_text(lock_content, encoding="utf-8")
     print("vault.py: Decrypt complete. Lock file created.")
     log(f"SESSION_START | lock_file: created | pid: {lock_data['pid']}")
+    _register_cleanup_handlers()
+
+
+# ---------------------------------------------------------------------------
+# DEBT-001: Cleanup handlers — re-encrypt on abnormal exit
+# ---------------------------------------------------------------------------
+
+def _atexit_encrypt() -> None:
+    """Re-encrypt vault on normal Python exit if a lock file is present.
+
+    Registered via atexit.register() after a successful decrypt so that
+    normal process exit (sys.exit, end-of-script) triggers re-encryption.
+    SIGKILL cannot be caught \u2014 the external watchdog handles that case.
+    """
+    global _ENCRYPTING  # noqa: PLW0603
+    if _ENCRYPTING:
+        return  # re-entrancy guard: another handler already encrypting
+    lock_file = _config["LOCK_FILE"]
+    if not lock_file.exists():
+        return  # nothing to do \u2014 already encrypted or no active session
+    _ENCRYPTING = True
+    try:
+        log("ATEXIT_ENCRYPT | trigger: normal_exit")
+        do_encrypt()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[VAULT] atexit encrypt failed: {exc}", file=sys.stderr)
+    finally:
+        _ENCRYPTING = False
+
+
+def _signal_encrypt_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+    """Re-encrypt vault on SIGTERM/SIGINT then exit with the conventional code.
+
+    Registered via signal.signal() after a successful decrypt.
+    """
+    global _ENCRYPTING  # noqa: PLW0603
+    if _ENCRYPTING:
+        sys.exit(128 + signum)
+    lock_file = _config["LOCK_FILE"]
+    if lock_file.exists():
+        _ENCRYPTING = True
+        try:
+            log(f"SIGNAL_ENCRYPT | trigger: signal={signum}")
+            do_encrypt()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[VAULT] signal encrypt failed: {exc}", file=sys.stderr)
+        finally:
+            _ENCRYPTING = False
+    sys.exit(128 + signum)
+
+
+def _register_cleanup_handlers() -> None:
+    """Register atexit + signal handlers after a successful decrypt.
+
+    Called at the END of do_decrypt() (after the lock file is written) so the
+    handlers are registered only when an active session exists.
+    signal.signal() is only valid on the main thread \u2014 do_decrypt() is always
+    called from a CLI main thread, so this is safe.
+    """
+    atexit.register(_atexit_encrypt)
+    try:
+        signal.signal(signal.SIGTERM, _signal_encrypt_handler)
+        signal.signal(signal.SIGINT, _signal_encrypt_handler)
+    except (OSError, ValueError):
+        # Non-main thread (shouldn't happen for CLI) or unsupported platform
+        pass
 
 
 # ---------------------------------------------------------------------------

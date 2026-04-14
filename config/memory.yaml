@@ -35,8 +35,29 @@ privacy:
   work_personal_isolation: true
 
   # Domains where memories are stored in encrypted scope (requires vault)
+  # DEBT-007: Expanded from 3 to 12 to match foundation.py SENSITIVE_FILES.
+  # Previously only immigration/health/finance were marked — facts from insurance,
+  # estate, vehicle, contacts, occasions, transactions, kids, employment were
+  # ingested into memory.md as plaintext (vault bypass via aggregation).
   high_sensitivity_domains:
     - immigration
     - health
     - finance
+    - insurance
+    - estate
+    - vehicle
+    - contacts
+    - occasions
+    - transactions
+    - kids
+    - employment
+    - audit
+
+# ---------------------------------------------------------------------------
+# Write-time capacity enforcement  (DEBT-017)
+# ---------------------------------------------------------------------------
+capacity:
+  max_facts: 30        # hard cap matching audit_compliance.py AR-1 threshold
+  max_chars: 3000      # char budget matching audit_compliance.py AR-1 threshold
+  eviction_policy: fifo  # oldest fact evicted first when cap is breached
 

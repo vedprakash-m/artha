@@ -47,10 +47,21 @@ _STATE_DIR = _ARTHA_DIR / "state"
 _TMP_DIR = _ARTHA_DIR / "tmp"
 
 _CHECKPOINT_GLOB = ".catchup_*_checksums.json"
-_SENSITIVE_DOMAINS = {
-    "immigration", "finance", "insurance", "estate",
-    "health", "audit", "vehicle", "contacts", "occasions",
-}
+# DEBT-002: Derive from foundation.py single source of truth.
+try:
+    import sys as _sys
+    import os as _os
+    _scripts_dir = str(Path(__file__).resolve().parent)
+    if _scripts_dir not in _sys.path:
+        _sys.path.insert(0, _scripts_dir)
+    from foundation import get_sensitive_domains as _get_sensitive_domains
+    _SENSITIVE_DOMAINS = _get_sensitive_domains()
+except Exception:  # noqa: BLE001
+    _SENSITIVE_DOMAINS = {
+        "immigration", "finance", "insurance", "estate",
+        "health", "audit", "vehicle", "contacts", "occasions",
+        "transactions", "kids",
+    }
 
 
 def _sha256(path: Path) -> str:

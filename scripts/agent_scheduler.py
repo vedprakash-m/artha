@@ -167,6 +167,22 @@ def _tick(dry_run: bool = False) -> int:
     for _s in schedules:
         _slot_key = _s.get("cron_group") or _s.get("agent", "")
         seen_slots.setdefault(_slot_key, []).append(_s)
+
+    # DEBT-022: Emit visible warning when slot cap is exceeded (silent truncation → fail-loud)
+    if len(seen_slots) > _MAX_SCHEDULED_AGENTS:
+        _dropped_slots = list(seen_slots.keys())[_MAX_SCHEDULED_AGENTS:]
+        _dropped_agents = [
+            agent.get("agent", slot)
+            for slot in _dropped_slots
+            for agent in seen_slots[slot]
+        ]
+        _cap_msg = (
+            f"[WARNING] Agent slot cap ({_MAX_SCHEDULED_AGENTS}) exceeded. "
+            f"{len(_dropped_slots)} slot(s) dropped: {_dropped_agents}"
+        )
+        print(_cap_msg, file=sys.stderr)
+        _log(f"AGENT_SLOT_CAP_EXCEEDED | cap:{_MAX_SCHEDULED_AGENTS} | dropped:{_dropped_agents}")
+
     slot_keys = list(seen_slots.keys())[:_MAX_SCHEDULED_AGENTS]
     schedules_by_slot = [seen_slots[k] for k in slot_keys]
 
@@ -326,6 +342,11 @@ def _status() -> None:
     schedules = _load_schedules()
     state = _load_state()
 
+    # DEBT-022: Show slot utilisation in header
+    total_slots = len(schedules)
+    active_slots = min(total_slots, _MAX_SCHEDULED_AGENTS)
+    print(f"\nAgent slots: {active_slots}/{_MAX_SCHEDULED_AGENTS} used"
+          + (f"  ⚠ {total_slots - _MAX_SCHEDULED_AGENTS} dropped (cap exceeded)" if total_slots > _MAX_SCHEDULED_AGENTS else ""))
     print(f"\n{'Agent':<35} {'Last Run':<22} {'Result':<10} {'Suspended'}")
     print("─" * 80)
     for sched in schedules[:_MAX_SCHEDULED_AGENTS]:

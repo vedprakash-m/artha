@@ -463,6 +463,40 @@ When an alert intersects with a goal, show the connection:
 
 This makes alerts meaningful rather than mechanical. The user doesn't just see a number — they see why it matters.
 
+### 6.4 Connector Health — Cross-Platform Freshness Display
+
+Platform-gated connectors (e.g., `outlook_email` runs only on Windows; `apple_reminders` runs only on macOS) show their last-fetched timestamp in the Connector Health briefing block when they are skipped on the current machine. Data is sourced from `state/connectors/connector_freshness.json` (OneDrive-synced).
+
+```
+📡 Connector Health
+   outlook_email   last fetched 14h ago on WINDOWS-PC   ✓
+   gmail           fetched this session                  ✓
+   apple_reminders fetched this session                  ✓
+   kusto           last fetched 3h ago on WINDOWS-PC    ✓
+   ⚠ outlook_calendar: last fetched 78h ago on WINDOWS-PC — consider syncing from Windows
+```
+
+UX rules:
+- Staleness > 18 hours: 🟡 in domain section
+- Staleness > 72 hours: 🟠 CRITICAL warning promoted to top of briefing
+- Never shown when the connector ran this session (no staleness concern)
+
+### 6.5 Routing Disambiguation
+
+When the TF-IDF router's top-2 confidence scores are within 0.08 of each other (`RoutingResult.routing_ambiguity == True`), Artha surfaces a clarification request instead of silently routing to one domain:
+
+```
+I found two possible interpretations of your request:
+  1. Finance — "mortgage payment update"
+  2. Home — "property tax next payment"
+Which did you mean? (or say both to address each)
+```
+
+UX rules:
+- Ambiguity prompt is shown only when confidence gap is < 0.08 — not on every near-tie
+- User can reply with the number, the domain name, or "both"
+- The chosen route is remembered for the session and influences future routing scores
+
 ---
 
 ## 7. On-Demand Chat — Conversational Patterns

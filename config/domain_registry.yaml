@@ -299,13 +299,13 @@ domains:
   employment:
     label: "Employment & Work"
     description: "Payroll, HR, benefits, performance reviews"
-    sensitivity: standard
+    sensitivity: high      # DEBT-006: salary, RSU, comp data = high PII; vault-protected
     staleness_ttl_days: 90
     always_load: false
     phase: existing
     prompt_file: "prompts/employment.md"
     state_file: "state/employment.md"
-    requires_vault: false
+    requires_vault: true   # DEBT-006: encrypted at rest like immigration/finance
     enabled_by_default: true
     household_types: [family, couple, single, multi_gen, roommates]
     requires_connectors: []
@@ -315,13 +315,13 @@ domains:
   kids:
     label: "Kids & School"
     description: "School events, homework, grades, activities"
-    sensitivity: standard
+    sensitivity: high      # DEBT-034: child data = high PII; vault-protected
     staleness_ttl_days: 30
     always_load: false
     phase: existing
     prompt_file: "prompts/kids.md"
     state_file: "state/kids.md"
-    requires_vault: false
+    requires_vault: true   # DEBT-034: encrypted at rest
     enabled_by_default: false
     household_types: [family, multi_gen]
     requires_connectors: []

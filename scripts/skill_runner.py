@@ -119,6 +119,40 @@ def load_cache() -> Dict[str, Any]:
         logging.error(f"Failed to load cache: {e}")
         return {}
 
+
+_CACHE_MAX_BYTES = 1_048_576  # 1MB — DEBT-028
+
+
+def _enforce_cache_size_cap(cache: Dict[str, Any]) -> Dict[str, Any]:
+    """Evict oldest skill entries (by last_run) until cache serialises to ≤ 1MB.
+
+    Only fires when the projected JSON size would exceed *_CACHE_MAX_BYTES*.
+    Evicted entries are logged at WARNING level.
+    """
+    encoded = json.dumps(cache, indent=2).encode("utf-8")
+    if len(encoded) <= _CACHE_MAX_BYTES:
+        return cache
+
+    # Build eviction order: skills with a last_run value sorted oldest first;
+    # skills without last_run are evicted last.
+    def _sort_key(item: tuple) -> tuple:
+        _, entry = item
+        ts = entry.get("last_run") if isinstance(entry, dict) else ""
+        return (ts or "", )
+
+    eviction_order = sorted(cache.items(), key=_sort_key)
+    cache = dict(cache)  # shallow copy — do not mutate caller's dict
+
+    for skill_name, _entry in eviction_order:
+        if len(json.dumps(cache, indent=2).encode("utf-8")) <= _CACHE_MAX_BYTES:
+            break
+        logging.warning(
+            "SKILLS_CACHE_EVICTION: removed %s to keep cache ≤ 1MB", skill_name
+        )
+        del cache[skill_name]
+
+    return cache
+
 def _cadence_elapsed(skill_name: str, cadence: str, cache: Dict[str, Any]) -> bool:
     """Return True if the skill is due to run under the given cadence."""
     if cadence == "every_run":
@@ -348,6 +382,9 @@ def main():
     logging.info(f"Skills: {len(enabled_skills)} executed in {total_elapsed}s (parallel)")
     for sname, t in sorted(skill_timing.items()):
         logging.info(f"  {sname}: {t:.2f}s")
+
+    # DEBT-028: evict oldest entries so the cache never exceeds 1MB on disk.
+    new_cache = _enforce_cache_size_cap(new_cache)
 
     # Write cache atomically (encrypted by vault.py in Step 18)
     # Uses fcntl.flock + tempfile + os.replace for concurrent write safety.

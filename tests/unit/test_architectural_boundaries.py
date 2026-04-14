@@ -239,6 +239,8 @@ def test_no_direct_config_yaml_open():
         "setup_todo_lists.py",      # write-path: reads then writes user_profile.yaml integrations
         "preflight.py",             # pre-flight health checker — reads config before system init;
                                     # diagnostic read path; pre-dates WS-2 config_loader migration
+        "vault_watchdog.py",        # standalone daemon (DEBT-001); runs as LaunchDaemon/systemd
+                                    # service outside project venv — cannot use lib.config_loader
     }
     _LOOKBACK = 12  # lines before yaml.safe_load to search for config file name
 

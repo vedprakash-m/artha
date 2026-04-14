@@ -459,7 +459,100 @@ def check_state_directory() -> CheckResult:
         )
 
 
-def _is_bootstrap_stub(path: str) -> bool:
+def check_state_directory() -> CheckResult:
+    """Verify state/ directory exists and is writable."""
+    if not os.path.isdir(STATE_DIR):
+        return CheckResult(
+            "state directory", "P0", False,
+            f"State directory missing: {_rel(STATE_DIR)}",
+            fix_hint="Run: python scripts/preflight.py --fix",
+        )
+    test_path = os.path.join(STATE_DIR, ".preflight_write_test")
+    try:
+        with open(test_path, "w") as f:
+            f.write("ok")
+        os.remove(test_path)
+        return CheckResult("state directory", "P0", True, f"{_rel(STATE_DIR)} writable ✓")
+    except OSError as exc:
+        return CheckResult(
+            "state directory", "P0", False,
+            f"State directory not writable: {exc}",
+            fix_hint=f"Check OneDrive sync status and permissions on {_rel(STATE_DIR)}",
+        )
+
+
+def check_guardrails_yaml(force_no_guardrails: bool = False) -> CheckResult:
+    """P0 (DEBT-004): Verify guardrails.yaml is present and parseable.
+
+    Guardrails provide PII scanning, injection detection, and rate limiting.
+    A missing or corrupt guardrails.yaml disables ALL safety chains — this is
+    a hard-block, not a warning.  Use --force-no-guardrails only if you have
+    a peer-reviewed reason and accept the audit trail entry.
+    """
+    cfg_path = os.path.join(ARTHA_DIR, "config", "guardrails.yaml")
+    if force_no_guardrails:
+        _audit_guardrail_force_override(cfg_path)
+        return CheckResult(
+            "guardrails.yaml", "P0", True,
+            "FORCE_NO_GUARDRAILS override active — safety chains bypassed (audit logged)",
+            fix_hint="Remove --force-no-guardrails to re-enable safety chains",
+        )
+
+    if not os.path.isfile(cfg_path):
+        return CheckResult(
+            "guardrails.yaml", "P0", False,
+            f"guardrails.yaml missing: {_rel(cfg_path)}",
+            fix_hint="Restore from git: git checkout config/guardrails.yaml",
+        )
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        with open(cfg_path, encoding="utf-8") as f:
+            data = _yaml.safe_load(f)
+        if not data or not isinstance(data, dict):
+            return CheckResult(
+                "guardrails.yaml", "P0", False,
+                "guardrails.yaml parsed as empty/non-dict — all safety chains would be inactive",
+                fix_hint="Restore from git: git checkout config/guardrails.yaml",
+            )
+        # Verify at least one enabled guardrail exists
+        chains_found = sum(
+            1 for section in ("input", "tool", "output")
+            for spec in data.get(section, [])
+            if spec.get("enabled", True)
+        )
+        if chains_found == 0:
+            return CheckResult(
+                "guardrails.yaml", "P0", False,
+                "guardrails.yaml has no enabled guardrails — all safety chains inactive",
+                fix_hint="Restore from git: git checkout config/guardrails.yaml",
+            )
+        return CheckResult(
+            "guardrails.yaml", "P0", True,
+            f"guardrails.yaml valid — {chains_found} enabled guardrail(s) ✓",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            "guardrails.yaml", "P0", False,
+            f"guardrails.yaml parse error: {exc}",
+            fix_hint="Restore from git: git checkout config/guardrails.yaml",
+        )
+
+
+def _audit_guardrail_force_override(cfg_path: str) -> None:
+    """Write FORCE_NO_GUARDRAILS entry to state/audit.md (best-effort)."""
+    try:
+        from datetime import datetime, timezone  # noqa: PLC0415
+        audit_log = os.path.join(ARTHA_DIR, "state", "audit.md")
+        if os.path.isfile(audit_log):
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            entry = f"[{ts}] FORCE_NO_GUARDRAILS | config: {cfg_path}\n"
+            with open(audit_log, "a", encoding="utf-8") as f:
+                f.write(entry)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+
     """Return True if the file is an unpopulated bootstrap placeholder.
 
     Bootstrap stubs are created by setup.sh/setup.ps1 and contain the exact
@@ -474,6 +567,66 @@ def _is_bootstrap_stub(path: str) -> bool:
         return "# Content\nsome: value" in raw
     except OSError:
         return False
+
+
+def _detect_conflict_files(state_dir: str) -> list[str]:
+    """DEBT-005: Scan state_dir for OneDrive conflict copies.
+
+    OneDrive conflict naming patterns (varies by OS locale and version):
+      - ``finance-DESKTOP-ABC.md``   (machine-name suffix)
+      - ``health (1).md``            (numbered copy)
+      - ``estate-conflict.md``       (explicit 'conflict' keyword)
+      - ``immigration-LAPTOP-XYZ.md``
+
+    Returns a list of absolute paths to detected conflict files.
+    """
+    import re  # noqa: PLC0415
+    # Patterns that reliably indicate a OneDrive conflict copy
+    _CONFLICT_PATTERNS = [
+        re.compile(r".*-DESKTOP-\w+\."),       # finance-DESKTOP-PC.md
+        re.compile(r".*-LAPTOP-\w+\."),         # health-LAPTOP-XYZ.md
+        re.compile(r".*-conflict\."),           # estate-conflict.md
+        re.compile(r".*\s\(\d+\)\."),           # health (1).md
+        re.compile(r".*-PC-\w+\."),             # misc Windows machine names
+    ]
+    conflicts: list[str] = []
+    try:
+        for entry in os.scandir(state_dir):
+            if not entry.is_file():
+                continue
+            name = entry.name
+            for pat in _CONFLICT_PATTERNS:
+                if pat.match(name):
+                    conflicts.append(entry.path)
+                    break
+    except OSError:
+        pass
+    return conflicts
+
+
+def check_onedrive_conflicts() -> CheckResult:
+    """P1 (DEBT-005): Detect OneDrive conflict copies in state/ directory.
+
+    Two machines writing simultaneously produce conflict copies
+    (e.g. ``finance-DESKTOP-ABC.md``).  These are NOT auto-merged; the
+    user must diff and resolve manually.  See docs/sync-conflicts.md.
+    """
+    conflicts = _detect_conflict_files(STATE_DIR)
+    if not conflicts:
+        return CheckResult(
+            "OneDrive conflicts", "P1", True,
+            "No OneDrive conflict copies detected in state/ ✓",
+        )
+    names = [os.path.basename(p) for p in conflicts]
+    return CheckResult(
+        "OneDrive conflicts", "P1", False,
+        f"⚠ {len(conflicts)} OneDrive conflict file(s) in state/: {', '.join(names)}",
+        fix_hint=(
+            "Diff the files, keep the one with the later updated_at timestamp, "
+            "merge unique entries, then delete the conflict copy. "
+            "See docs/sync-conflicts.md for step-by-step instructions."
+        ),
+    )
 
 
 def check_state_templates(auto_fix: bool = False) -> CheckResult:
@@ -1925,7 +2078,7 @@ def check_eval_p1_alerts() -> "CheckResult | None":
     )
 
 
-def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
+def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrails: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
 
@@ -1934,6 +2087,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
     checks.append(check_pii_guard())
+    checks.append(check_guardrails_yaml(force_no_guardrails=force_no_guardrails))  # DEBT-004
     checks.append(check_eval_alerts())  # EV-14: block on unacked P0 eval alerts
     p1_alert_result = check_eval_p1_alerts()
     if p1_alert_result is not None:
@@ -1971,6 +2125,8 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — State file population from templates (first-run) ─────────────
     checks.append(check_state_templates(auto_fix=auto_fix))
+    # ── P1 — OneDrive conflict detection (DEBT-005) ────────────────────────
+    checks.append(check_onedrive_conflicts())
 
     # ── P1 — Warnings only ────────────────────────────────────────────────
     checks.append(check_token_freshness("Gmail", "gmail-oauth-token.json"))
@@ -2272,6 +2428,15 @@ def main() -> None:
             "NEVER use on local machines."
         ),
     )
+    parser.add_argument(
+        "--force-no-guardrails",
+        action="store_true",
+        help=(
+            "DEBT-004: Override the guardrails P0 check. Exits 0 and writes "
+            "FORCE_NO_GUARDRAILS to audit log. FOR EXPERT USE ONLY — disables all "
+            "safety chain validation. Never use on production machines."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -2286,7 +2451,8 @@ def main() -> None:
         sys.exit(3)
 
     advisory = getattr(args, "advisory", False)
-    checks   = run_preflight(auto_fix=args.fix, quiet=args.quiet)
+    force_no_guardrails = getattr(args, "force_no_guardrails", False)
+    checks   = run_preflight(auto_fix=args.fix, quiet=args.quiet, force_no_guardrails=force_no_guardrails)
     all_ok   = advisory or all(c.passed for c in checks if c.severity == "P0")
 
     if args.json:

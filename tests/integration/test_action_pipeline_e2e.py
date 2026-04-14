@@ -165,9 +165,8 @@ class TestComposeEdgeCases:
         assert result is None
 
     def test_empty_signal_type_raises_value_error(self, composer):
-        signal = _make_signal(signal_type="")
         with pytest.raises(ValueError):
-            composer.compose(signal)
+            _make_signal(signal_type="")
 
     def test_reversible_and_undo_window_consistent(self, composer):
         """If reversible=True, undo_window_sec should not be None."""

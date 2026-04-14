@@ -5478,7 +5478,85 @@ Six career signals registered in `config/signal_routing.yaml`:
 
 ---
 
-*Artha Tech Spec v3.30.0 — End of Document*
+## 31. Safety & Governance Compendium *(v3.31.0)*
+
+> These patterns were codified during the debt-reduction sprint (see archived `specs/debt.md`). All items are implemented and covered by tests.
+
+### 31.1 Signal Routing Governance
+
+Every entry in `config/signal_routing.yaml` carries a `status: active|stub` field.
+
+- **`active`** — a Python producer emits this signal type in production code.
+- **`stub`** — forward declaration (e.g., Phase 2 career signals). No producer exists yet.
+
+`tests/unit/test_signal_routing_completeness.py` cross-references all signal emitters against the routing table and fails CI if any `status: active` entry has no Python producer, or if any entry is missing a `status` annotation. Stub entries are excluded from the producer-check but are verified to have the annotation.
+
+Three previously orphaned signal types (`automation_failure`, `goal_autopark_candidate`, `slack_action_item`) were added with routing entries in this sprint.
+
+### 31.2 Idempotency Windows — Domain-Qualified
+
+`scripts/lib/idempotency.py: get_window(action_type, domain='')` resolves windows with the following priority:
+
+1. `config/guardrails.yaml: idempotency_windows.<action_type>_<domain>` (most specific)
+2. `config/guardrails.yaml: idempotency_windows.<action_type>`
+3. Built-in default (24 hours)
+
+Configured overrides:
+
+| Key | Window |
+|-----|--------|
+| `instruction_sheet_immigration` | 30 days |
+| `instruction_sheet_finance` | 30 days |
+| `instruction_sheet_iot` | 4 hours |
+| `instruction_sheet` | 24 hours |
+| `financial` | 7 days |
+| `scheduling` | 48 hours |
+| `communication` | 24 hours |
+
+### 31.3 Execution-Layer Idempotency (`instruction_sheet`)
+
+`scripts/actions/instruction_sheet.execute()` calls `check_or_reserve` at entry and `mark_completed` after a successful file write. A duplicate call within the active window returns `ActionResult(status="skipped")` and logs `INSTRUCTION_SHEET_DUPLICATE` to `state/audit.md`. Same-day file overwrites emit a WARNING before writing. This is independent of the pre-proposal idempotency guard in `action_executor.py`.
+
+### 31.4 Memory Writer — FIFO Cap
+
+`scripts/lib/memory_writer.add_fact(fact, memory_path)` enforces the `config/memory.yaml: memory.max_facts` cap (default: 30) at write time:
+- If `len(current_facts) >= max_facts`, the oldest fact line is evicted (FIFO) before appending.
+- Eviction is logged to `state/audit.md` as `MEMORY_EVICTION`.
+- All memory write paths use `add_fact()` — no direct file appends.
+
+### 31.5 Skills Cache Size Governance
+
+`scripts/skill_runner._enforce_cache_size_cap()` is called after each skill result is cached. If the `tmp/skills_cache.json` file exceeds 1 MB, the oldest entries are evicted until the file is under the limit. The cap and eviction strategy are documented in inline comments.
+
+### 31.6 Connector Record Schema Validation
+
+`scripts/schemas/connector_record.py` defines `validate_record(record: dict)` — a lightweight (non-Pydantic) schema check applied to every record returned by connector `fetch()` calls. Required fields: `id`, `source`, `date_iso`. Malformed records are skipped with a WARNING; `tmp/pipeline_metrics.json` tracks `validation_errors` per run. The `--strict` pipeline flag exits with code 2 if any record fails validation.
+
+### 31.7 Routing Ambiguity Flag
+
+`scripts/lib/agent_router.RoutingResult` carries a `routing_ambiguity: bool` field. When the TF-IDF router's top-2 routing scores are within 0.08 of each other (configurable), `routing_ambiguity` is set to `True`. Callers can surface this to the user as a clarification request rather than silently picking one route. The field is included in `tmp/ext-agent-metrics.jsonl`.
+
+### 31.8 TF-IDF Routing Quality Metric
+
+`scripts/lib/agent_router._emit_routing_margin()` writes `routing_quality` events to `tmp/ext-agent-metrics.jsonl`. `eval_runner.py --routing-audit` computes a rolling 7-day `keyword_miss_rate` (fraction of query tokens not matched by the TF-IDF vocabulary). When the rate exceeds the threshold in `config/memory.yaml: routing.keyword_miss_rate_threshold` (default: 0.15), an upgrade-trigger recommendation is emitted in the briefing.
+
+### 31.9 KG Backup — WAL Safety
+
+`scripts/lib/knowledge_graph.KnowledgeGraph.backup()` uses Python's `sqlite3.Connection.backup()` which produces a fully checkpointed, WAL-free snapshot per the SQLite C API specification. The resulting backup file in `backups/{daily|weekly|monthly}/kb-*.sqlite` has no associated `.sqlite-wal` sidecar, preventing OneDrive from indexing incomplete WAL state. The backup path check also calls `Path(db_path).resolve()` (following symlinks) before applying the cloud-sync safety pattern check.
+
+### 31.10 Platform-Gated Connector Freshness
+
+After each pipeline run, `pipeline.py` writes per-connector timestamps to `state/connectors/connector_freshness.json`:
+
+```json
+{ "outlook_email": { "last_fetch": "2026-04-13T09:30:00Z", "machine": "WINDOWS-PC" } }
+```
+
+On a machine where a platform-gated connector is skipped (e.g., `outlook_email` is Windows-only; `apple_reminders` is macOS-only), the pipeline reads the freshness file from OneDrive and logs the staleness age. If `last_fetch` is >72 hours stale, a CRITICAL warning is included in the Connector Health briefing block.
+
+---
+
+*Artha Tech Spec v3.31.0 — End of Document*
 
 ---
 
@@ -5486,6 +5564,7 @@ Six career signals registered in `config/signal_routing.yaml`:
 
 | Version | Changes |
 |---------|---------|
+| v3.31.0 | **Safety & Governance Compendium (§31)**: Signal routing `status: active\|stub` field + completeness CI test (`test_signal_routing_completeness.py`); 3 orphaned signal routes added (`automation_failure`, `goal_autopark_candidate`, `slack_action_item`); domain-qualified idempotency windows (`get_window(action_type, domain)` — immigration 30d, iot 4h); execution-layer idempotency in `instruction_sheet.execute()` (`check_or_reserve`/`mark_completed`); memory writer FIFO cap at `max_facts` with `MEMORY_EVICTION` audit log; skills cache size governance (`_enforce_cache_size_cap()`, 1MB limit); connector record schema validation (`scripts/schemas/connector_record.py`); routing ambiguity flag (`RoutingResult.routing_ambiguity`); `keyword_miss_rate` metric + routing-audit eval mode; KG backup WAL-free via `Connection.backup()` + symlink-safe `Path.resolve()` in cloud-sync check; platform-gated connector freshness JSON (`state/connectors/connector_freshness.json`, 72h CRITICAL threshold). PRD §16.4 Security & Privacy Architecture added. `specs/debt.md` archived to `.archive/specs/debt.md`. |
 | v3.30.0 | **Career Search Intelligence (§30, FR-25 Phase 1)**: 7-block A–G evaluation framework (`prompts/career_search.md`); application tracker + Story Bank (`state/career_search.md`); ATS PDF generation via Playwright (`scripts/skills/career_pdf_generator.py`); Python helpers: `reconcile_summary`, `recompute_scores`, `deep_freeze`, Jaccard dedup, story bank index (`scripts/lib/career_state.py`); JSONL audit trail 90-day retention (`scripts/lib/career_trace.py`); 3 career guardrails: `CareerJDInjectionGR`, `CareerNoAutoSubmitGR`, `CareerPiiOutputGR`; 6 career signal routes in `config/signal_routing.yaml`; `career_pdf_generator` and `portal_scanner` added to `_ALLOWED_SKILLS`; AR-1 P0 test suite (`tests/unit/test_career_skills.py`); `output/career/` + `briefings/career/` directories with `.gitkeep`; `.gitignore` hardened for career PII output; FR-CS-3 preflight check for Playwright/Chromium; specs: PRD v7.15.0 (FR-25), Tech Spec §30, UX Spec §12; `specs/career-ops.md` archived to `.archive/specs/career-ops.md`. 65+52+10 tests. |
 | v3.29.0 | **OpenClaw Home Bridge (§29)**: M2M integration between Artha (intelligence hub) and OpenClaw (Home Assistant). 3-layer transport (REST LAN + Telegram M2M + file-buffer fallback). HMAC-SHA256 with keyring-only key storage, replay nonce, clock-drift guard, injection filter. Outbound: `load_context`, `announce`, `whatsapp_draft`, `ping`. Inbound: `presence_detected`, `energy_event`, `home_alert`, `pong`. 7 new files (`export_bridge_context.py`, `hmac_signer.py`, `m2m_handler.py`, `claw_bridge.yaml`, `artha-bridge.skill.md`, `state/home_events.md`); 4 modified (`pipeline.py`, `router.py`, `channel_listener.py`, `nudge_daemon.py`). `bridge_health` observability block in `state/health-check.md`. Feature-flagged (`enabled: false`). 61 tests passing. Implements PRD v7.14.0. |
 | v3.26.0 | **SPEC CONSOLIDATION**: §21.6–21.8 (eval dimensions/scoring/SLAs), §22.6–22.8 (full entity model/API/performance), §23.6 (AR-9 GA status), §24.4–24.5 (cross-reference rules/domain weights), §25.11–25.14 (baseline patterns/anti-patterns/context budgets/governance), NEW §27 (EAR v2.0 multi-agent composition EAR-1–EAR-12), NEW §28 (KB Population Strategy reference). Implements PRD v7.11.0. |

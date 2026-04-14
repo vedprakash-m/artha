@@ -78,9 +78,13 @@ class ContextScrubber:
         allowed_pii:    Agent-specific PII types that are allowed through
                         without replacement (e.g. ["IP_ADDRESS", "HOSTNAME"]).
                         Types listed here are still logged to audit.
+        blocked_pii:    PII types that are ALWAYS blocked regardless of
+                        the allow-list.  Block wins over allow on conflict.
+                        (DEBT-024: ssn, passport_number, bank_account, etc.)
     """
     strict_mode: bool = True
     allowed_pii: list[str] = field(default_factory=list)
+    blocked_pii: list[str] = field(default_factory=list)
 
     def scrub(self, text: str) -> ScrubResult:
         """Scrub PII from a context fragment.
@@ -159,6 +163,23 @@ class ContextScrubber:
             )
 
         # Step 2: Check if all found types are in the agent's allowlist
+        # DEBT-024: block list wins over allow list — check block first.
+        _blocked_set = {t.upper() for t in self.blocked_pii}
+        explicitly_blocked = {
+            pii_type: count
+            for pii_type, count in found_types.items()
+            if pii_type.upper() in _blocked_set
+        }
+        if explicitly_blocked:
+            # Block-list hit — block regardless of allow-list
+            return ScrubResult(
+                original_length=len(text),
+                scrubbed_text="",
+                pii_types_found=explicitly_blocked,
+                was_modified=True,
+                blocked=True,
+            )
+
         disallowed = {
             pii_type: count
             for pii_type, count in found_types.items()

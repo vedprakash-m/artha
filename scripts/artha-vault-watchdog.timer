@@ -1,0 +1,17 @@
+[Unit]
+Description=Artha Vault Watchdog Timer — runs every 2 minutes (DEBT-001)
+Requires=artha-vault-watchdog.service
+After=artha-vault-watchdog.service
+
+[Timer]
+# Run every 2 minutes (narrowed from 5 min per DEBT-001)
+OnUnitActiveSec=2min
+# Also fire once 30 seconds after boot (catches crashes before the first 2-minute mark)
+OnBootSec=30s
+# Persist across boots so a missed timer fires on next boot
+Persistent=true
+AccuracySec=10s
+Unit=artha-vault-watchdog.service
+
+[Install]
+WantedBy=timers.target

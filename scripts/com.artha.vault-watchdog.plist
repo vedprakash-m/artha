@@ -6,7 +6,7 @@
   Artha crash-recovery watchdog — auto-encrypts sensitive state if any AI CLI session dies.
 
   Logic (v2 — universal AI CLI detection):
-    1. Runs every 5 minutes via StartInterval
+    1. Runs every 2 minutes via StartInterval (DEBT-001: narrowed from 5 min)
     2. Checks for .artha-decrypted lock file (signal that vault.py decrypt was run)
     3. Checks if ANY Artha-associated AI CLI is currently running:
          - Claude Code:  claude process referencing Artha
@@ -91,9 +91,9 @@
         </string>
     </array>
 
-    <!-- Run every 5 minutes -->
+    <!-- DEBT-001: Run every 2 minutes (reduced from 5 min to narrow SIGKILL exposure window) -->
     <key>StartInterval</key>
-    <integer>300</integer>
+    <integer>120</integer>
 
     <!-- Start on login -->
     <key>RunAtLoad</key>

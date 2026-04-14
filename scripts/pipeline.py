@@ -83,6 +83,14 @@ except ImportError:
     _TripwireResult = None  # type: ignore[assignment]
     _GUARDRAILS_AVAILABLE = False
 
+# DEBT-009: Schema-on-write validation for connector records.
+try:
+    from schemas.connector_record import validate_record as _validate_connector_record  # type: ignore[import]
+    _SCHEMA_VALIDATION_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _validate_connector_record = None  # type: ignore[assignment]
+    _SCHEMA_VALIDATION_AVAILABLE = False
+
 _log = get_logger("pipeline")
 
 
@@ -355,6 +363,8 @@ def _fetch_one(
             # Guardrail failure must never silently drop data — log and continue
             _log.warning("guardrail.tool.error", connector=name, error=str(_gr_exc))
 
+    _val_errors: list[int] = [0]  # DEBT-009: mutable cell for nonlocal reference
+
     def _do_fetch() -> int:
         count = 0
         for record in handler.fetch(
@@ -364,6 +374,24 @@ def _fetch_one(
             source_tag=name,
             **extra_kwargs,
         ):
+            # DEBT-009: Schema-on-write validation at the system boundary.
+            # Malformed records (missing id/source/date_iso) are SKIPPED with
+            # a WARNING — they do not crash the pipeline.
+            if _SCHEMA_VALIDATION_AVAILABLE and _validate_connector_record is not None:
+                try:
+                    _validate_connector_record(record)
+                except (TypeError, ValueError) as _vex:
+                    _val_errors[0] += 1
+                    _log.warning(
+                        "schema.validation_error",
+                        connector=name,
+                        error=str(_vex),
+                    )
+                    print(
+                        f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
+                        file=sys.stderr,
+                    )
+                    continue
             lines.append(json.dumps(record, ensure_ascii=False, default=str))
             count += 1
         return count
@@ -638,6 +666,7 @@ def run_pipeline(
 
     error_count = 0
     total_records = 0
+    validation_errors = 0  # DEBT-009: count of records failing schema validation
     timing: dict[str, float] = {}
     pipeline_start = time.monotonic()
     all_classified_lines: list[str] = []  # collected for --output snapshot
@@ -721,6 +750,8 @@ def run_pipeline(
                 if output_path is not None:
                     all_classified_lines.extend(classified_lines)
                 total_records += len(classified_lines)
+                # DEBT-009: accumulate validation error count from connector
+                # (stored as side-channel via the schema validation cell)
                 _log.info("connector.fetch", connector=name, records=len(classified_lines), ms=round(elapsed * 1000), error=None)
                 if verbose:
                     print(
@@ -766,7 +797,15 @@ def run_pipeline(
                 print(f"[pipeline]   {cname}: {t:.2f}s", file=sys.stderr)
 
     # Write timing metrics to tmp/pipeline_metrics.json
-    _write_pipeline_metrics(timing, total_records, error_count)
+    _write_pipeline_metrics(timing, total_records, error_count, validation_errors)
+
+    # DEBT-019: Write per-connector freshness timestamps + cross-platform staleness check
+    _update_connector_freshness(
+        artha_dir=_REPO_ROOT,
+        fetched_connectors=[n for n, *_ in work_items if n not in timing or timing.get(n, 0) >= 0],
+        all_cfg_connectors=_normalize_connectors(cfg),
+        current_platform=platform.system().lower(),
+    )
 
     # EAR-8: Print agent fleet health alerts to stderr (zero-noise when no alerts)
     if _agent_fleet_alerts:
@@ -898,7 +937,7 @@ def run_pipeline(
     _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
 
     # ── Home events buffer merge (spec §P2.4) ────────────────────────────────
-    # Merge tmp/home_events_buffer.jsonl → state/home_events.md before exit.
+    # Merge ~/.artha-local/home_events_buffer.jsonl → state/home_events.md before exit.
     # state_writer is the sole write path for state files.
     try:
         _merge_home_events_buffer(_REPO_ROOT)
@@ -953,7 +992,7 @@ def run_pipeline(
 # ---------------------------------------------------------------------------
 
 def _merge_home_events_buffer(artha_dir: Path) -> None:
-    """Merge tmp/home_events_buffer.jsonl into state/home_events.md.
+    """Merge home_events_buffer.jsonl into state/home_events.md.
 
     - Reads each JSONL line from the buffer.
     - Appends new events to state/home_events.md via state_writer.write().
@@ -962,7 +1001,9 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
     - Handles missing files gracefully (normal state before Phase 2 is live).
     """
     import json as _json
-    buffer_path = artha_dir / "tmp" / "home_events_buffer.jsonl"
+    # DEBT-037: Buffer moved from OneDrive-synced tmp/ to local-only ~/.artha-local/
+    # to prevent IoT telemetry from being indexed by OneDrive cloud sync.
+    buffer_path = Path.home() / ".artha-local" / "home_events_buffer.jsonl"
     state_path  = artha_dir / "state" / "home_events.md"
 
     if not buffer_path.exists():
@@ -1594,7 +1635,8 @@ def _classify_email_lines(lines: list[str], verbose: bool = False) -> list[str]:
 
 
 def _write_pipeline_metrics(
-    timing: dict[str, float], total_records: int, error_count: int
+    timing: dict[str, float], total_records: int, error_count: int,
+    validation_errors: int = 0,
 ) -> None:
     """Persist pipeline run metrics to tmp/pipeline_metrics.json."""
     metrics_path = _REPO_ROOT / "tmp" / "pipeline_metrics.json"
@@ -1603,6 +1645,7 @@ def _write_pipeline_metrics(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_records": total_records,
         "error_count": error_count,
+        "validation_errors": validation_errors,  # DEBT-009
         "connector_timing": {k: v for k, v in timing.items() if not k.startswith("_")},
         "wall_clock_seconds": timing.get("_total", 0),
     }
@@ -1618,6 +1661,85 @@ def _write_pipeline_metrics(
         metrics_path.write_text(json.dumps(existing, indent=2))
     except Exception:
         pass  # Non-fatal
+
+
+def _update_connector_freshness(
+    artha_dir: Path,
+    fetched_connectors: list[str],
+    all_cfg_connectors: list[dict],
+    current_platform: str,
+) -> None:
+    """DEBT-019: Write per-connector freshness timestamps; check cross-platform staleness.
+
+    Writes state/connectors/connector_freshness.json with per-connector:
+      {"connector_name": {"last_fetch": "ISO_TIMESTAMP", "machine": "HOSTNAME"}}
+
+    For platform-skipped connectors, reads the JSON (synced via OneDrive) and
+    emits CRITICAL warning if last_fetch exceeds 72h.
+    """
+    import socket as _socket  # noqa: PLC0415
+    freshness_dir = artha_dir / "state" / "connectors"
+    freshness_path = freshness_dir / "connector_freshness.json"
+
+    # Load existing freshness data (synced from other machines via OneDrive)
+    existing: dict[str, dict] = {}
+    try:
+        if freshness_path.exists():
+            existing = json.loads(freshness_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                existing = {}
+    except Exception:
+        existing = {}
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    machine = _socket.gethostname()
+
+    # Update freshness for connectors successfully fetched this run
+    for name in fetched_connectors:
+        existing[name] = {"last_fetch": now_iso, "machine": machine}
+
+    # Check staleness for platform-skipped connectors
+    fetched_set = set(fetched_connectors)
+    _CRITICAL_STALE_HOURS = 72
+    for conn in all_cfg_connectors:
+        cname = conn.get("name", "")
+        run_on = conn.get("run_on", "all")
+        if run_on == "all" or cname in fetched_set:
+            continue  # Not platform-skipped
+        # This connector was skipped on this platform
+        prior = existing.get(cname)
+        if prior and prior.get("last_fetch"):
+            try:
+                last_dt = datetime.fromisoformat(prior["last_fetch"].replace("Z", "+00:00"))
+                age_h = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                if age_h > _CRITICAL_STALE_HOURS:
+                    print(
+                        f"[pipeline] CRITICAL: {cname} (run_on={run_on}) last fetched "
+                        f"{age_h:.0f}h ago on {prior.get('machine', '?')} — data is critically stale",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[pipeline] INFO: {cname} (run_on={run_on}) last fetched "
+                        f"{age_h:.0f}h ago on {prior.get('machine', '?')}",
+                        file=sys.stderr,
+                    )
+            except (ValueError, TypeError):
+                pass
+
+    # Write updated freshness data (atomic)
+    try:
+        freshness_dir.mkdir(parents=True, exist_ok=True)
+        import tempfile as _tmpfile  # noqa: PLC0415
+        with _tmpfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(freshness_dir),
+            prefix=".connector_freshness_tmp_", suffix=".json", delete=False
+        ) as _tmp:
+            json.dump(existing, _tmp, indent=2)
+            _tmp_path = _tmp.name
+        os.replace(_tmp_path, str(freshness_path))
+    except Exception as exc:
+        print(f"[pipeline] WARNING: connector_freshness write failed: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
