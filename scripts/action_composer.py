@@ -585,18 +585,6 @@ class ActionComposer:
 
 
 # ---------------------------------------------------------------------------
-# Module-level convenience function
-# ---------------------------------------------------------------------------
-
-def compose_from_signal(
-    signal: DomainSignal,
-    actions_config: dict[str, Any] | None = None,
-) -> ActionProposal | None:
-    """Convenience wrapper for single-signal composition."""
-    return ActionComposer(actions_config).compose(signal)
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
