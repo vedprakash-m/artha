@@ -8,17 +8,19 @@ Implements:
   - fingerprint_posting()        Generate posting deduplication fingerprint
   - fingerprint_action()         Generate action proposal deduplication key
 
-All writes MUST go through write_state_atomic() from scripts/work/helpers.py.
+All writes use the local write_state_atomic() helper (atomic tmp→rename).
 All Python state mutations are deterministic — zero LLM calls in this module.
 
-Ref: specs/career-ops.md §10.2, §5.2, §9.2
+Ref: specs/artha-tech-spec.md §30, specs/artha-prd.md FR-25
 """
 from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from types import MappingProxyType
@@ -29,13 +31,73 @@ _REPO_ROOT = _SCRIPTS_DIR.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from work.helpers import (  # noqa: E402
-    _read_frontmatter,
-    _read_body,
-    write_state_atomic,
-)
-
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Local file I/O helpers (inlined to avoid work.helpers cross-dependency)
+# ---------------------------------------------------------------------------
+
+def _read_frontmatter(path: Path) -> dict[str, Any]:
+    """Parse YAML frontmatter from a Markdown state file."""
+    if not path.exists():
+        return {}
+    try:
+        import yaml  # type: ignore[import]  # noqa: PLC0415
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end > 0:
+                return yaml.safe_load(text[3:end]) or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _read_body(path: Path) -> str:
+    """Return Markdown body (after frontmatter) of a state file."""
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+        if text.startswith("---"):
+            end = text.find("---", 3)
+            if end > 0:
+                return text[end + 3:].strip()
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def _validate_frontmatter(content: str) -> None:
+    """Raise ValueError if YAML frontmatter is malformed."""
+    import yaml  # noqa: PLC0415
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError("Malformed YAML frontmatter: missing closing '---'")
+    yaml.safe_load(parts[1])
+
+
+def write_state_atomic(path: Path, content: str) -> None:
+    """Write content to path atomically via tmp→validate→os.replace()."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=target.parent, suffix=".tmp", prefix=".career-"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        if content.startswith("---"):
+            _validate_frontmatter(content)
+        os.replace(tmp_path, target)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
 
 # ---------------------------------------------------------------------------
 # Constants
