@@ -162,6 +162,7 @@ class TFIDFRouter:
             self._vectors = {
                 name: {k: float(v) for k, v in vec.items()}
                 for name, vec in raw.items()
+                if isinstance(vec, dict)  # skip metadata keys like cache_built_ts
             }
             self._loaded = True
 
