@@ -328,12 +328,35 @@ def _load_ai_signals(path: Path) -> list[Any]:
                             file=sys.stderr,
                         )
 
+                # DEBT-SIG-006 (Sprint 1): Enforce urgency/impact range 0–3.
+                # Default was 5 (out of range) — reject instead of allowing priority inflation.
+                # Sprint 2: full migration to SignalEnvelope (DEBT-ARCH-002) replaces this check.
+                try:
+                    raw_urgency = int(record.get("urgency", 2))
+                    raw_impact = int(record.get("impact", 2))
+                except (ValueError, TypeError) as _range_exc:
+                    print(
+                        f"[action_orchestrator] ai_signals line {i}: non-integer urgency/impact "
+                        f"({record.get('urgency')!r}/{record.get('impact')!r}) — rejected",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+                if not (0 <= raw_urgency <= 3) or not (0 <= raw_impact <= 3):
+                    print(
+                        f"[action_orchestrator] ai_signals line {i}: urgency/impact out of range "
+                        f"({raw_urgency}/{raw_impact}, valid: 0–3) — rejected",
+                        file=sys.stderr,
+                    )
+                    skipped += 1
+                    continue
+
                 signals.append(SimpleNamespace(
                     signal_type=sig_type,
                     domain=str(record["domain"]),
                     entity=entity_val,
-                    urgency=int(record.get("urgency", 5)),
-                    impact=int(record.get("impact", 5)),
+                    urgency=raw_urgency,
+                    impact=raw_impact,
                     source=_AI_SIGNAL_SOURCE_VALUE,
                     detected_at=record.get("detected_at", ""),
                     metadata={},  # AI-emitted metadata never trusted

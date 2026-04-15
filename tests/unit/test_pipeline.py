@@ -384,3 +384,59 @@ class TestPipelineSubprocess:
             assert result.returncode == 0, (
                 f"{mod_name} failed to import as subprocess: {result.stderr}"
             )
+
+
+# ---------------------------------------------------------------------------
+# DEBT-SYNC-003: _FALLBACK_HANDLER_MAP parity test
+# ---------------------------------------------------------------------------
+
+class TestFallbackHandlerMapParity:
+    """Verify _FALLBACK_HANDLER_MAP and _ALLOWED_MODULES stay in sync (DEBT-SYNC-003).
+
+    If a developer adds an entry to the fallback map but forgets to add it to the
+    allowlist (or vice versa), the security boundary becomes inconsistent.
+    """
+
+    def test_fallback_map_keys_subset_of_allowed_modules(self):
+        """Every _FALLBACK_HANDLER_MAP value must appear in _ALLOWED_MODULES."""
+        if str(_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_SCRIPTS))
+        from pipeline import _FALLBACK_HANDLER_MAP, _ALLOWED_MODULES  # type: ignore[import]
+
+        for connector_type, module_path in _FALLBACK_HANDLER_MAP.items():
+            assert module_path in _ALLOWED_MODULES, (
+                f"_FALLBACK_HANDLER_MAP entry '{connector_type}' → '{module_path}' "
+                "is NOT in _ALLOWED_MODULES — security allowlist is out of sync (DEBT-SYNC-003). "
+                "Add it to both or neither."
+            )
+
+    def test_allowed_modules_subset_of_fallback_map_values(self):
+        """Every _ALLOWED_MODULES entry must appear in _FALLBACK_HANDLER_MAP values."""
+        if str(_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_SCRIPTS))
+        from pipeline import _FALLBACK_HANDLER_MAP, _ALLOWED_MODULES  # type: ignore[import]
+
+        fallback_values = set(_FALLBACK_HANDLER_MAP.values())
+        orphan_modules = _ALLOWED_MODULES - fallback_values
+        assert not orphan_modules, (
+            f"_ALLOWED_MODULES contains entries absent from _FALLBACK_HANDLER_MAP.values(): "
+            f"{orphan_modules} — parity broken (DEBT-SYNC-003). "
+            "Remove from allowlist or add to fallback map."
+        )
+
+    def test_fallback_handler_map_no_duplicate_values(self):
+        """_FALLBACK_HANDLER_MAP values must be unique (no two connector types → same module)."""
+        if str(_SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(_SCRIPTS))
+        from pipeline import _FALLBACK_HANDLER_MAP  # type: ignore[import]
+
+        values = list(_FALLBACK_HANDLER_MAP.values())
+        seen: set[str] = set()
+        dupes: list[str] = []
+        for v in values:
+            if v in seen:
+                dupes.append(v)
+            seen.add(v)
+        assert not dupes, (
+            f"_FALLBACK_HANDLER_MAP contains duplicate module paths: {dupes} (DEBT-SYNC-003)"
+        )

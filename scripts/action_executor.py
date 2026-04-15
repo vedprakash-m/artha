@@ -405,7 +405,7 @@ class ActionExecutor:
             )
             _idem_result = _idem_store.check_or_reserve(_idem_key, action_type)
             if _idem_result == "duplicate":
-                _idem_entry = _idem_store._load().get(_idem_key, {})  # noqa: SLF001
+                _idem_entry = _idem_store.get_entry(_idem_key)  # DEBT-EXEC-001: use public API
                 _idem_ts = _idem_entry.get("created_at", "unknown time")
                 _audit_log(
                     self._artha_dir,
@@ -416,7 +416,7 @@ class ActionExecutor:
                     "Ignoring duplicate."
                 )
             if _idem_result == "pending":
-                _idem_entry = _idem_store._load().get(_idem_key, {})  # noqa: SLF001
+                _idem_entry = _idem_store.get_entry(_idem_key)  # DEBT-EXEC-001: use public API
                 _idem_ts = _idem_entry.get("created_at", "unknown time")
                 raise ValueError(
                     f"A prior {action_type} action (created {_idem_ts}) is still PENDING "

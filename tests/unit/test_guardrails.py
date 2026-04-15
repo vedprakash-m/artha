@@ -532,3 +532,88 @@ class TestGuardrailRegistry:
         registry = self._registry_with_chain([])
         out = registry.run_input_guardrails({}, "data")
         assert out.result == TripwireResult.PASS
+
+
+# ---------------------------------------------------------------------------
+# DEBT-GUARD-001: Wave 0 gate — hard mode semantics (new tests)
+# Tests the real _wave0_ok() implementation without patching it away.
+# ---------------------------------------------------------------------------
+
+import middleware.guardrails as _gmod
+
+
+class _ConcreteGuardrail(BaseGuardrail):
+    """Minimal concrete guardrail for testing _wave0_ok() in isolation."""
+    name = "test_guardrail"
+
+    def check(self, context: dict, data: object) -> "GuardrailOutput":  # type: ignore[override]
+        from middleware.guardrails import GuardrailOutput, TripwireResult
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class TestWave0HardMode:
+    """Tests for DEBT-GUARD-001: _wave0_ok() hard-mode enforcement."""
+
+    def test_env_var_override_bypasses_gate(self, monkeypatch):
+        """ARTHA_WAVE0_OVERRIDE env var must allow through regardless of flag state."""
+        monkeypatch.setenv("ARTHA_WAVE0_OVERRIDE", "pytest")
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", None)
+        g = _ConcreteGuardrail()
+        result = g._wave0_ok()
+        assert result is True
+
+    def test_env_var_override_cleared_does_not_bypass(self, monkeypatch):
+        """When ARTHA_WAVE0_OVERRIDE is unset, the gate uses the flag."""
+        monkeypatch.delenv("ARTHA_WAVE0_OVERRIDE", raising=False)
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "hard")
+        import sys
+        fake_mod = type(sys)("context_offloader")
+        fake_mod.load_harness_flag = lambda key: True
+        monkeypatch.setitem(sys.modules, "context_offloader", fake_mod)
+        g = _ConcreteGuardrail()
+        result = g._wave0_ok()
+        assert result is True
+
+    def test_hard_mode_incomplete_flag_raises(self, monkeypatch):
+        """Hard mode + wave0.complete=False must raise RuntimeError."""
+        monkeypatch.delenv("ARTHA_WAVE0_OVERRIDE", raising=False)
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "hard")
+        import sys
+        fake_mod = type(sys)("context_offloader")
+        fake_mod.load_harness_flag = lambda key: False
+        monkeypatch.setitem(sys.modules, "context_offloader", fake_mod)
+        g = _ConcreteGuardrail()
+        with pytest.raises(RuntimeError, match="wave0_gate=hard"):
+            g._wave0_ok()
+
+    def test_hard_mode_flag_load_failure_raises(self, monkeypatch):
+        """Hard mode + harness unavailable must raise RuntimeError (no fail-open)."""
+        monkeypatch.delenv("ARTHA_WAVE0_OVERRIDE", raising=False)
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "hard")
+        import sys
+        monkeypatch.setitem(sys.modules, "context_offloader", None)
+        g = _ConcreteGuardrail()
+        with pytest.raises(RuntimeError):
+            g._wave0_ok()
+
+    def test_soft_mode_flag_load_failure_returns_true(self, monkeypatch):
+        """Soft mode + harness unavailable must warn and return True (fail-open)."""
+        monkeypatch.delenv("ARTHA_WAVE0_OVERRIDE", raising=False)
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "soft")
+        import sys
+        monkeypatch.setitem(sys.modules, "context_offloader", None)
+        g = _ConcreteGuardrail()
+        result = g._wave0_ok()
+        assert result is True
+
+    def test_soft_mode_incomplete_flag_returns_false(self, monkeypatch):
+        """Soft mode + wave0.complete=False must return False (advisory block only)."""
+        monkeypatch.delenv("ARTHA_WAVE0_OVERRIDE", raising=False)
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "soft")
+        import sys
+        fake_mod = type(sys)("context_offloader")
+        fake_mod.load_harness_flag = lambda key: False
+        monkeypatch.setitem(sys.modules, "context_offloader", fake_mod)
+        g = _ConcreteGuardrail()
+        result = g._wave0_ok()
+        assert result is False

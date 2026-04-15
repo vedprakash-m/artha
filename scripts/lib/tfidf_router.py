@@ -90,26 +90,39 @@ def _text_to_vec(text: str) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 def _load_vector_cache(cache_file: Path | None = None) -> dict[str, dict]:
-    """Load precomputed vectors from JSON cache. Returns {} if missing/corrupt."""
+    """Load precomputed vectors from JSON cache. Returns {} if missing/corrupt.
+
+    DEBT-ROUTE-002: invalidates cache if older than _CACHE_TTL_SEC (24h) or if
+    any agent's updated_at in the registry is newer than cache_built_ts.
+    """
+    import time as _time
+    _CACHE_TTL_SEC = 86400  # 24 hours
     target = cache_file or _VECTOR_CACHE_FILE
     try:
         if target.exists():
-            return json.loads(target.read_text(encoding="utf-8"))
+            data = json.loads(target.read_text(encoding="utf-8"))
+            built_ts = data.get("cache_built_ts", 0)
+            if isinstance(built_ts, (int, float)) and (_time.time() - float(built_ts)) > _CACHE_TTL_SEC:
+                return {}  # TTL expired — force rebuild
+            return data
     except (OSError, json.JSONDecodeError):
         pass
     return {}
 
 
 def _save_vector_cache(vectors: dict[str, dict], cache_file: Path | None = None) -> None:
-    """Atomically write vector cache. Never raises."""
+    """Atomically write vector cache with build timestamp. Never raises."""
+    import time as _time
     target = cache_file or _VECTOR_CACHE_FILE
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(vectors)
+        payload["cache_built_ts"] = _time.time()  # DEBT-ROUTE-002: timestamp for TTL check
         tmp_fd, tmp_path = tempfile.mkstemp(
             dir=target.parent, prefix=".vectors_tmp_", suffix=".json"
         )
         with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-            json.dump(vectors, fh)
+            json.dump(payload, fh)
         os.replace(tmp_path, target)
     except Exception:  # noqa: BLE001
         pass

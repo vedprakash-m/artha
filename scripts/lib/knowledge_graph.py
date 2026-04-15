@@ -2563,6 +2563,58 @@ class KnowledgeGraph:
         except Exception:
             pass
 
+    def _maybe_gc(self, ttl_days: int = 90) -> int:
+        """DEBT-KG-002: Prune ghost entities (no edges, no recent activity).
+
+        A 'ghost entity' is an entity with:
+          - zero edges in the KB
+          - last_seen / created_at older than *ttl_days*
+
+        Runs at most once per calendar day per process to avoid latency impact.
+        Returns the number of entities removed.
+
+        This is a best-effort cleanup — if the DB is busy or locked, we skip
+        silently and return 0.
+        """
+        import datetime as _dt_gc
+        # Rate-limit: at most once per day per process via a module-level sentinel
+        _today = _dt_gc.date.today().isoformat()
+        _gc_key = f"_kg_gc_last_{id(self)}"
+        if getattr(self, _gc_key, None) == _today:
+            return 0
+        setattr(self, _gc_key, _today)
+
+        cutoff_ts = (
+            _dt_gc.datetime.utcnow() - _dt_gc.timedelta(days=ttl_days)
+        ).isoformat()
+
+        try:
+            cur = self._conn.cursor()
+            # Find entities with no edges and older than cutoff
+            cur.execute(
+                """
+                SELECT e.id FROM entities e
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM edges ed
+                    WHERE ed.from_id = e.id OR ed.to_id = e.id
+                )
+                AND e.last_seen < ? AND e.created_at < ?
+                """,
+                (cutoff_ts, cutoff_ts),
+            )
+            ghost_ids = [row[0] for row in cur.fetchall()]
+            if not ghost_ids:
+                return 0
+            placeholders = ",".join("?" * len(ghost_ids))
+            cur.execute(f"DELETE FROM entities WHERE id IN ({placeholders})", ghost_ids)
+            self._conn.commit()
+            removed = len(ghost_ids)
+            _log.info("KG_GC: removed %d ghost entities (ttl=%dd) (DEBT-KG-002)", removed, ttl_days)
+            return removed
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("KG_GC: skipped — %s", exc)
+            return 0
+
 
 # ---------------------------------------------------------------------------
 # Factory — returns NullKnowledgeGraph on corruption (spec §6.5)

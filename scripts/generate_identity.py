@@ -35,6 +35,7 @@ _PROFILE_PATH = _ARTHA_DIR / "config" / "user_profile.yaml"
 _CORE_PATH = _ARTHA_DIR / "config" / "Artha.core.md"
 _IDENTITY_PATH = _ARTHA_DIR / "config" / "Artha.identity.md"
 _ASSEMBLED_PATH = _ARTHA_DIR / "config" / "Artha.md"
+_MIN_PATH = _ARTHA_DIR / "config" / "Artha.min.md"  # DEBT-PROMPT-004: Tier 0 compact output
 _ROUTING_EXAMPLE_PATH = _ARTHA_DIR / "config" / "routing.example.yaml"
 _ROUTING_PATH = _ARTHA_DIR / "config" / "routing.yaml"
 
@@ -81,6 +82,14 @@ def _get(profile: dict, key_path: str, default: Any = None) -> Any:
 # DEBT-016: YAML injection sanitizer for user-supplied profile values
 _MAX_PROFILE_VALUE_LEN = 200
 
+# DEBT-PROMPT-002: Unicode bidi/direction-override characters that can spoof
+# section boundaries in rendered output — strip these from all profile values.
+_BIDI_CHARS = frozenset([
+    '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',  # LRE, RLE, PDF, LRO, RLO
+    '\u2066', '\u2067', '\u2068', '\u2069',             # LRI, RLI, FSI, PDI
+    '\u200F', '\u200E',                                  # RLM, LRM
+])
+
 
 def _sanitize_profile_value(value: str) -> str:
     """Sanitize a user-supplied profile value before interpolation into the prompt.
@@ -89,7 +98,8 @@ def _sanitize_profile_value(value: str) -> str:
     allow a user to inject false framing into the identity block.
 
     Mitigates: line-starting `#` headings, `---` document separators,
-    backtick code-fence injection, and oversized values.
+    backtick code-fence injection, Unicode bidi/direction overrides (DEBT-PROMPT-002),
+    Artha structural markers (§), inline `---` sequences, and oversized values.
     """
     if not isinstance(value, str):
         return str(value) if value is not None else ""
@@ -101,6 +111,12 @@ def _sanitize_profile_value(value: str) -> str:
     value = _re.sub(r"(?m)^#+\s*", "", value)
     # Escape backticks (prevent code-fence injection)
     value = value.replace("`", "\u2019")  # replace with right single quotation mark
+    # DEBT-PROMPT-002: strip Unicode bidi override characters
+    value = "".join(c for c in value if c not in _BIDI_CHARS)
+    # DEBT-PROMPT-002: strip Artha structural markers
+    value = value.replace("\u00a7", "")  # §
+    # DEBT-PROMPT-002: normalize inline --- sequences (replace with em-dash)
+    value = _re.sub(r"-{3,}", "\u2014", value)
     # Truncate to safety cap
     if len(value) > _MAX_PROFILE_VALUE_LEN:
         value = value[:_MAX_PROFILE_VALUE_LEN].rstrip() + "…"
@@ -636,6 +652,87 @@ def _error(msg: str) -> None:
     print(f"ERROR: {msg}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------------------
+# DEBT-PROMPT-004: Tier stripping helpers for compact prompt generation
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+# Size gate for Tier 0 output (15 KB)
+_TIER0_SIZE_LIMIT_BYTES = 15_360
+
+
+def _strip_html_comments(text: str) -> str:
+    """Remove all HTML comments (<!-- ... -->) from *text*.
+
+    Handles multi-line comments.  Used by both Tier 0 and Tier 1 modes.
+    """
+    return _re.sub(r"<!--.*?-->", "", text, flags=_re.DOTALL)
+
+
+def _strip_tier1_only_sections(text: str) -> str:
+    """Remove blocks delimited by <!-- tier:1-only --> ... <!-- /tier:1-only -->.
+
+    Tier 0 mode strips these sections entirely.  Tier 1 keeps them (after
+    comment removal).  The delimiter comments themselves are also removed by
+    _strip_html_comments which runs first.
+    """
+    # Pattern: the opening tag, content, and closing tag (including surrounding
+    # blank lines to avoid leaving whitespace gaps).
+    return _re.sub(
+        r"<!--\s*tier:1-only\s*-->.*?<!--\s*/tier:1-only\s*-->",
+        "",
+        text,
+        flags=_re.DOTALL,
+    )
+
+
+def _strip_example_blocks(text: str) -> str:
+    """Remove markdown fenced code blocks labelled as examples (Tier 0).
+
+    Strips blocks of the form:
+        ```example
+        ...content...
+        ```
+    or preceded by a ``<!-- example -->`` HTML comment.  This keeps the
+    output under 15 KB by removing illustrative but non-instructional content.
+    """
+    # Remove fenced blocks with an 'example' language tag
+    text = _re.sub(
+        r"```example\n.*?```",
+        "",
+        text,
+        flags=_re.DOTALL,
+    )
+    # Remove code blocks immediately preceded by <!-- example -->
+    text = _re.sub(
+        r"<!--\s*example\s*-->\s*```[^\n]*\n.*?```",
+        "",
+        text,
+        flags=_re.DOTALL,
+    )
+    return text
+
+
+def _apply_tier_stripping(text: str, tier: int) -> str:
+    """Apply tier-appropriate stripping to *text*.
+
+    Tier 0: strip HTML comments + tier:1-only sections + example blocks.
+    Tier 1: strip HTML comments only.
+    Other values: return text unchanged.
+    """
+    if tier == 1:
+        return _strip_html_comments(text)
+    if tier == 0:
+        text = _strip_tier1_only_sections(text)  # must run before comment strip
+        text = _strip_html_comments(text)
+        text = _strip_example_blocks(text)
+        # Collapse runs of 3+ blank lines that stripping leaves behind
+        text = _re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+    return text
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate Artha identity section from user_profile.yaml"
@@ -663,6 +760,19 @@ def main(argv: list[str] | None = None) -> int:
             "Legacy mode: prepend identity to the full Artha.core.md (produces 78KB+ output). "
             "Use for rollback when config/workflow/ files are suspect. "
             "Default is compact mode (~15KB) with workflow steps in config/workflow/."
+        ),
+    )
+    parser.add_argument(
+        "--tier",
+        type=int,
+        choices=[0, 1],
+        default=None,
+        metavar="TIER",
+        help=(
+            "DEBT-PROMPT-004: Generate a tier-stripped output in addition to the standard build. "
+            "0 = strip HTML comments + tier:1-only sections + example blocks → config/Artha.min.md (≤15KB). "
+            "1 = strip HTML comments only → config/Artha.min.md. "
+            "Does not affect config/Artha.md (standard output)."
         ),
     )
     args = parser.parse_args(argv)
@@ -707,6 +817,21 @@ def main(argv: list[str] | None = None) -> int:
     _write_identity(identity_block)
     compact_mode = not getattr(args, "no_compact", False)
     _assemble_artha_md(identity_block, compact=compact_mode)
+
+    # DEBT-PROMPT-004: Tier-stripped build → config/Artha.min.md
+    if args.tier is not None:
+        standard_text = _ASSEMBLED_PATH.read_text(encoding="utf-8")
+        min_text = _apply_tier_stripping(standard_text, args.tier)
+        _MIN_PATH.write_text(min_text, encoding="utf-8")
+        size_bytes = len(min_text.encode("utf-8"))
+        size_kb = size_bytes / 1024
+        print(f"  Written: {_MIN_PATH.relative_to(_ARTHA_DIR)} ({size_kb:.1f} KB) [tier {args.tier}]")
+        if args.tier == 0 and size_bytes > _TIER0_SIZE_LIMIT_BYTES:
+            print(
+                f"  WARNING: Tier 0 output exceeds {_TIER0_SIZE_LIMIT_BYTES // 1024}KB size gate "
+                f"({size_bytes} bytes > {_TIER0_SIZE_LIMIT_BYTES} bytes). "
+                f"Review config/Artha.core.md for additional content to tier-gate."
+            )
 
     if not args.no_routing:
         print("Generating routing.yaml...")

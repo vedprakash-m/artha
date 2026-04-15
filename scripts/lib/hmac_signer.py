@@ -6,6 +6,8 @@ Security invariants:
 - Shared secret is NEVER read from a file, config, or env var — keyring only.
 - Signature covers: schema:src:cmd:ts:nonce:JSON(data)  (canonical order)
 - Replay prevention: ±5-minute timestamp window + per-nonce dedup cache (10 min TTL)
+  DEBT-HMAC-001: nonce cache is now persisted to ~/.artha-local/hmac_nonce_cache.jsonl
+  to survive process restarts. Cross-session replay is blocked within the 10-min TTL.
 - Key rotation: dual-accept window via hmac_key_version / hmac_key_previous_version
   (claw_bridge.yaml). Verify tries current version first, then previous.
 
@@ -18,11 +20,13 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -41,14 +45,97 @@ _HMAC_KEYRING_KEY = "artha-claw-bridge-hmac"
 
 # ── Nonce dedup cache (module-level singleton, thread-safe) ──────────────────
 
+# DEBT-HMAC-001: Persist nonces to disk so cross-session replay is blocked.
+# Machine-local directory (not OneDrive-synced): ~/.artha-local/
+_NONCE_CACHE_DIR = Path.home() / ".artha-local"
+_NONCE_CACHE_FILE = _NONCE_CACHE_DIR / "hmac_nonce_cache.jsonl"
+
+
 class _NonceCache:
-    """Thread-safe LRU + TTL nonce cache.  Entries are (nonce, expiry_monotonic)."""
+    """Thread-safe LRU + TTL nonce cache with cross-session persistence.
+
+    DEBT-HMAC-001: Entries are persisted to ~/.artha-local/hmac_nonce_cache.jsonl
+    so nonces remain rejected across process restarts within the TTL window.
+    Each process compacts the file once (removes expired entries) on first load.
+    """
 
     def __init__(self, max_size: int = _NONCE_DEDUP_MAX_SIZE, ttl_sec: float = _NONCE_DEDUP_WINDOW_SEC):
         self._store: deque[tuple[str, float]] = deque(maxlen=max_size)
         self._seen: set[str] = set()
         self._ttl = ttl_sec
         self._lock = threading.Lock()
+        self._compacted_this_session = False
+        self._load_persisted()
+
+    def _load_persisted(self) -> None:
+        """Load non-expired nonces from disk and compact the file once per process."""
+        if not _NONCE_CACHE_FILE.exists():
+            return
+        # Check file is not on a synced (OneDrive/iCloud) filesystem
+        try:
+            file_str = str(_NONCE_CACHE_FILE.resolve())
+            if "OneDrive" in file_str or "iCloud" in file_str or "Dropbox" in file_str:
+                log.warning("hmac_nonce_cache: file is on synced FS — in-memory only")
+                return
+        except Exception:
+            return
+
+        now = time.monotonic()
+        wall_now = time.time()
+        valid_entries: list[tuple[str, float]] = []
+        try:
+            with _NONCE_CACHE_FILE.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        nonce = entry["n"]
+                        wall_expiry = float(entry["e"])  # wall-clock expiry (Unix time)
+                        if wall_expiry > wall_now:
+                            # Convert wall-clock expiry to monotonic for in-memory store
+                            remaining = wall_expiry - wall_now
+                            mono_expiry = now + remaining
+                            valid_entries.append((nonce, mono_expiry))
+                    except (KeyError, ValueError, json.JSONDecodeError):
+                        continue
+        except OSError:
+            return
+
+        # Populate in-memory store
+        for nonce, mono_expiry in valid_entries:
+            self._store.append((nonce, mono_expiry))
+            self._seen.add(nonce)
+
+        # Compact: rewrite file with only valid entries (once per process)
+        if not self._compacted_this_session:
+            self._compacted_this_session = True
+            self._compact_file(valid_entries, wall_now)
+
+    def _compact_file(self, valid_entries: list[tuple[str, float]], wall_now: float) -> None:
+        """Rewrite the cache file with only non-expired entries."""
+        try:
+            _NONCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp_path = _NONCE_CACHE_FILE.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as fh:
+                for nonce, mono_expiry in valid_entries:
+                    remaining = max(0.0, mono_expiry - time.monotonic())
+                    wall_expiry = wall_now + remaining
+                    fh.write(json.dumps({"n": nonce, "e": round(wall_expiry, 3)}) + "\n")
+            os.replace(str(tmp_path), str(_NONCE_CACHE_FILE))
+        except OSError:
+            pass  # compaction failure is non-blocking
+
+    def _persist_nonce(self, nonce: str, wall_expiry: float) -> None:
+        """Append a single nonce entry to the JSONL file (best-effort)."""
+        try:
+            _NONCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            entry = json.dumps({"n": nonce, "e": round(wall_expiry, 3)}) + "\n"
+            with _NONCE_CACHE_FILE.open("a", encoding="utf-8") as fh:
+                fh.write(entry)
+        except OSError:
+            pass  # persistence failure is non-blocking; in-memory cache still works
 
     def _evict_expired(self) -> None:
         now = time.monotonic()
@@ -62,9 +149,11 @@ class _NonceCache:
             self._evict_expired()
             if nonce in self._seen:
                 return True
-            expiry = time.monotonic() + self._ttl
-            self._store.append((nonce, expiry))
+            mono_expiry = time.monotonic() + self._ttl
+            wall_expiry = time.time() + self._ttl
+            self._store.append((nonce, mono_expiry))
             self._seen.add(nonce)
+            self._persist_nonce(nonce, wall_expiry)
             return False
 
 

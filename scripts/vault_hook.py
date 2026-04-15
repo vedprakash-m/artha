@@ -23,8 +23,9 @@ VAULT_PY  = os.path.join(ARTHA_DIR, "scripts", "vault.py")
 
 # DEBT-002: Single source of truth for sensitive domains.
 # Import from foundation.py (which now exports get_sensitive_domains()).
-# Fallback: full 11-entry static literal used when venv is unavailable
+# Fallback: full 12-entry static literal used when venv is unavailable
 # (bare Git hook context).
+# AUTO-VALIDATED by tests/unit/test_vault.py::test_vault_hook_fallback_complete
 try:
     import sys as _sys
     _scripts_dir = os.path.dirname(os.path.abspath(__file__))
@@ -33,11 +34,13 @@ try:
     from foundation import get_sensitive_domains as _get_sensitive_domains
     SENSITIVE_DOMAINS = list(_get_sensitive_domains())
 except Exception:  # noqa: BLE001
-    # Static fallback — must enumerate ALL 11 domains explicitly.
+    # Static fallback — must enumerate ALL 12 domains explicitly.
     # This list MUST be kept in sync with foundation.py SENSITIVE_FILES.
+    # DEBT-VAULT-001: Added 'employment' (salary, RSU, comp data) — was missing.
     SENSITIVE_DOMAINS = [
         "immigration", "finance", "insurance", "estate", "health",
-        "audit", "vehicle", "contacts", "occasions", "transactions", "kids",
+        "audit", "vehicle", "contacts", "occasions", "transactions",
+        "kids", "employment",  # DEBT-006 — salary, RSU, comp data
     ]
 
 
@@ -62,12 +65,77 @@ def hook_stray_check() -> None:
             print(f"[VAULT-WARN] Stray plaintext: {plain} (no lock file)")
 
 
+def hook_contacts_integrity() -> None:
+    """DEBT-TRUST-001: Check contacts.yaml for tampering via modification timestamp.
+
+    Records the contacts.yaml mtime in state/.contacts_integrity_ts.json on
+    first call.  On subsequent calls, warns if the mtime has changed since the
+    last recorded value (indicating an out-of-vault edit).
+
+    Uses mtime only — does not read contact data, so no PII is accessed here.
+    """
+    import json as _json_ci
+    contacts_path = os.path.join(STATE_DIR, "contacts.yaml")
+    sentinel_path = os.path.join(STATE_DIR, ".contacts_integrity_ts.json")
+
+    if not os.path.exists(contacts_path):
+        return  # no contacts.yaml — nothing to check
+
+    try:
+        current_mtime = os.path.getmtime(contacts_path)
+    except OSError:
+        return
+
+    try:
+        if os.path.exists(sentinel_path):
+            sentinel = _json_ci.loads(open(sentinel_path).read())
+            recorded_mtime = float(sentinel.get("mtime", 0))
+            recorded_sha = sentinel.get("sha256", "")
+            if recorded_mtime and abs(current_mtime - recorded_mtime) > 1.0:
+                # mtime changed — compute sha256 to confirm actual content change
+                import hashlib
+                with open(contacts_path, "rb") as f:
+                    current_sha = hashlib.sha256(f.read()).hexdigest()
+                if current_sha != recorded_sha:
+                    print(
+                        f"[TRUST-WARN] contacts.yaml modified outside vault session "
+                        f"(DEBT-TRUST-001). Last known: {recorded_mtime:.0f}, "
+                        f"current: {current_mtime:.0f}. Verify no unauthorised edit."
+                    )
+                    # Update sentinel with new mtime+sha so we only warn once per change
+                    _write_contacts_sentinel(sentinel_path, current_mtime, current_sha)
+                    return
+        # First call or hash matched — record current state
+        import hashlib
+        with open(contacts_path, "rb") as f:
+            current_sha = hashlib.sha256(f.read()).hexdigest()
+        _write_contacts_sentinel(sentinel_path, current_mtime, current_sha)
+    except Exception:  # noqa: BLE001
+        pass  # integrity checks are best-effort — never block hooks
+
+
+def _write_contacts_sentinel(sentinel_path: str, mtime: float, sha256: str) -> None:
+    """Write contacts integrity sentinel atomically."""
+    import json as _json_ci
+    import tempfile as _tmp_ci
+    payload = {"mtime": mtime, "sha256": sha256}
+    try:
+        fd, tmp = _tmp_ci.mkstemp(dir=os.path.dirname(sentinel_path), suffix=".tmp")
+        with os.fdopen(fd, "w") as fh:
+            _json_ci.dump(payload, fh)
+        os.replace(tmp, sentinel_path)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "decrypt":
         hook_decrypt()
     elif cmd == "stray-check":
         hook_stray_check()
+    elif cmd == "contacts-integrity":
+        hook_contacts_integrity()
     # Always exit 0 — hooks must not block tool execution
     sys.exit(0)
 

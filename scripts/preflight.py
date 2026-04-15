@@ -459,6 +459,62 @@ def check_state_directory() -> CheckResult:
         )
 
 
+def check_vault_policy_enforcement() -> CheckResult:
+    """DEBT-VAULT-003 Phase 1: Verify requires_vault domains use .md.age state files.
+
+    Parses domain_registry.yaml and fails if any domain with requires_vault: true
+    has a state_file that does not end in '.md.age'.  Surfaced as P0 — these domains
+    contain salary, RSU, compensation, and job-search data that must be encrypted.
+    """
+    registry_path = os.path.join(ARTHA_DIR, "config", "domain_registry.yaml")
+    if not os.path.exists(registry_path):
+        return CheckResult(
+            "vault policy enforcement", "P0", False,
+            "config/domain_registry.yaml not found — cannot validate vault policy",
+            fix_hint="Ensure config/domain_registry.yaml exists",
+        )
+    try:
+        import yaml  # type: ignore[import]
+        with open(registry_path, encoding="utf-8") as fh:
+            registry = yaml.safe_load(fh) or {}
+    except Exception as exc:
+        return CheckResult(
+            "vault policy enforcement", "P0", False,
+            f"Failed to parse domain_registry.yaml: {exc}",
+        )
+
+    violations: list[str] = []
+    domains = registry.get("domains", {})
+    if not isinstance(domains, dict):
+        # Some registries use a list format
+        domains = {}
+    for domain, cfg in domains.items():
+        if not isinstance(cfg, dict):
+            continue
+        if cfg.get("requires_vault") and not str(cfg.get("state_file", "")).endswith(".md.age"):
+            state_file = cfg.get("state_file", "<missing>")
+            violations.append(
+                f"VAULT_POLICY_VIOLATION: domain '{domain}' requires_vault=true "
+                f"but state_file='{state_file}' (not .md.age)"
+            )
+
+    if violations:
+        detail = "; ".join(violations)
+        return CheckResult(
+            "vault policy enforcement", "P0", False,
+            f"Vault policy mismatch ({len(violations)} domain(s)): {detail}",
+            fix_hint=(
+                "Encrypt the state files with: age --encrypt ... state/<domain>.md > state/<domain>.md.age "
+                "then update state_file in domain_registry.yaml to .md.age. "
+                "Wait for DEBT-ARCH-001 (StateReader) before Phase 2 migration."
+            ),
+        )
+    return CheckResult(
+        "vault policy enforcement", "P0", True,
+        "All requires_vault domains have .md.age state files ✓",
+    )
+
+
 def check_guardrails_yaml(force_no_guardrails: bool = False) -> CheckResult:
     """P0 (DEBT-004): Verify guardrails.yaml is present and parseable.
 
@@ -2086,6 +2142,8 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
                 fix_hint="Check network connectivity and OAuth credentials",
             ))
     checks.append(check_state_directory())
+    # DEBT-VAULT-003 Phase 1: Verify vault-required domains are stored as .md.age
+    checks.append(check_vault_policy_enforcement())
 
     # ── P1 — Gmail / Calendar OAuth tokens (non-blocking: warn, skip source) ──
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json", severity="P1"))

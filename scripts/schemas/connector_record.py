@@ -24,8 +24,14 @@ Ref: specs/debt.md DEBT-009
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
+
+# DEBT-SCHEMA-001: ISO-8601 date/datetime format gate (YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS][Z])
+_DATE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$"
+)
 
 
 @dataclass(frozen=True)
@@ -88,5 +94,11 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
         )
     if not date_iso.strip():
         raise ValueError(f"Connector record 'date_iso' must be non-empty string, got: {date_iso!r}")
+    # DEBT-SCHEMA-001: enforce ISO-8601 format (not just non-empty string)
+    if not _DATE_RE.match(date_iso.strip()):
+        raise ValueError(
+            f"Connector record 'date_iso' does not match ISO-8601 format "
+            f"(e.g. '2026-04-14' or '2026-04-14T09:30:00Z'): {date_iso!r}"
+        )
 
     return ConnectorRecord(id=rec_id, source=source, date_iso=date_iso, raw=raw)

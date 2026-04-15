@@ -20,7 +20,10 @@ provider: flat_file  # permanent — see ADR-001 in specs/agent-fw.md §10.8
 # (specs/agent-fw.md §3.7.7)
 # ---------------------------------------------------------------------------
 upgrade_trigger:
-  min_facts_threshold: 150        # current hard cap is 30 via audit_compliance.py
+  # min_facts_threshold: 150 — REMOVED (DEBT-MEM-004): permanently unsatisfiable
+  # because the operational hard cap is max_facts: 30. The upgrade is driven by
+  # keyword_miss_rate_threshold, SQLite compatibility, and A14 constraints — not
+  # by raw fact count which can never exceed 30.
   keyword_miss_rate_threshold: 0.10  # >10% of queries return empty when facts exist
   a14_constraint_relaxed: false   # Artha must NOT require deps in VS Code Copilot
   onedrive_sqlite_resolved: false # WAL-mode incompatibility must have a restore path

@@ -25,7 +25,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
 Artha is a **pull-based personal intelligence system** built on four principles:
 
-1. **Claude Code IS the application.** There is no custom daemon, no web server, no background process. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application.
+1. **Claude Code IS the application.** There is no custom daemon or web server. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application. *Exception (DEBT-SPEC-001):* Three lightweight sidecar utilities run as opt-in OS cron jobs — not as persistent daemons: `scripts/agent_scheduler.py --tick` (scheduled pre-computation, EAR-3), `scripts/vault.py` (encrypt/decrypt on session open/close, §3.6.2), and `scripts/preflight.py` (system health check). These are invoked on-demand by cron, not running continuously, and have no network listeners.
 
 2. **Prompts are the logic layer.** Domain-specific behavior (what to extract from immigration emails, when to alert about a bill, how to score goal progress) lives in Markdown prompt files — not in code. Adding a new life domain = adding a new `.md` file. No compilation, no deployment, no restart.
 
@@ -5181,7 +5181,7 @@ Multi-agent composition extending AR-9's single-agent invocation model to suppor
 |----|---------|--------|----------|
 | EAR-1 | Agent Memory (Compound Learning) | `agent_memory.py` | Per-agent `memory.md` (max 4KB curated long-term) + `daily/` logs (auto-pruned >14d). Dedup on >0.85 TF-IDF similarity. Top 5 relevant entries loaded (1,500 char budget). Merge on contradiction: trust-tier-wins, else last-write-wins. |
 | EAR-2 | Agent Chaining (DAG) | `agent_chainer.py` | YAML-defined chains with `feeds_from` + gate conditions. Output N → verify → score → integrate → input N+1. `ChainStepState` carries prose+entities+key_assertions. Final quality = geometric mean of step scores. Max 5 steps/chain, max 3 active chains. |
-| EAR-3 | Scheduled Pre-Computation | `agent_scheduler.py` | Cron schedules in `schedules.yaml`, `--tick` runs past-due. Per-agent `staleness_tolerance_seconds` (default 3600, icm-triage=900, deployment=1800). Max 5 scheduled agents, max 4 runs/agent/day. 3 consecutive failures → suspend. |
+| EAR-3 | Scheduled Pre-Computation | `agent_scheduler.py` | Cron schedules in `schedules.yaml`, `--tick` runs past-due. Per-agent `staleness_tolerance_seconds` (default 3600, icm-triage=900, deployment=1800). Max 8 scheduled agents (slots; DEBT-SCHED-001 updated from 5→8 to match `config/agents/schedules.yaml` R13), max 4 runs/agent/day. 3 consecutive failures → suspend. |
 | EAR-4 | Enhanced Lexical Routing (TF-IDF) | `tfidf_router.py` | Two-tier: keyword match (<10ms) → if confidence <0.4, TF-IDF character-trigram fallback. Vectors pre-computed to `tmp/ext-agent-route-vectors.json`. Confidence margin instrumented; median <0.10 over 7d → heartbeat alert. |
 | EAR-5 | Parallel Fan-Out | `fan_out.py` | `ThreadPoolExecutor` max 3. Per-agent timeout; pool timeout = max(individual) + 10s. `threading.Lock()` per `(agent_name, cache_path)`. Degradation: pool timeout → return best single result. |
 | EAR-6 | Evaluator-Optimizer Loop | `evaluator_optimizer.py` | Trigger: Q <0.6 AND any dimension <0.45 AND min_dimension ≥0.2. Max 1 retry, accept max(Q1, Q2). Weekly budget: 50 retries (JSONL counter). Budget exhausted or min_dimension <0.2 → fallback cascade. |
@@ -5556,7 +5556,92 @@ On a machine where a platform-gated connector is skipped (e.g., `outlook_email` 
 
 ---
 
-*Artha Tech Spec v3.31.0 — End of Document*
+---
+
+## 32. April 2026 Security & Reliability Hardening *(v3.32.0)*
+
+> Exhaustive audit of 48 architectural debts across `scripts/`, `config/`, and `specs/` conducted April 2026. All items implemented and verified by tests. Key invariants established:
+
+### 32.1 Security Invariants
+
+**Plugin allowlist enforcement** (`DEBT-PLUG-001`): `_load_handler()` in `pipeline.py` enforces `_ALLOWED_MODULES` as a true security boundary with no filesystem plugin scan. Comment: `# DEBT-PLUG-001: Hard allowlist enforcement — no filesystem plugin scan.` Any connector not in the allowlist raises `ImportError`. The allowed set is enumerable from source code alone.
+
+**HMAC nonce persistence** (`DEBT-HMAC-001`): `_NonceCache` entries are persisted to `~/.artha-local/hmac_nonce_cache.jsonl` (machine-local, not OneDrive-synced). On init, all non-expired entries are loaded, providing replay protection across process restarts. Compaction (expire-and-rewrite) runs at most once per process. The "10-minute nonce TTL" guarantee is now true across session restarts.
+
+**AI signal urgency/impact range enforcement** (`DEBT-SIG-006`): `action_orchestrator._load_ai_signals()` rejects any AI signal with `urgency` or `impact` outside `[0, 3]` with a logged warning and skip. This prevents priority inflation over pipeline signals (max valid urgency=3). Default urgency is 2 (P2). Full `SignalEnvelope` migration (DEBT-ARCH-002) deferred to Sprint 2.
+
+**Prompt injection sanitization** (`DEBT-SIG-007`): `DomainSignal.__post_init__()` calls `_sanitize_metadata_value()` on all string metadata fields. Strips `{{`, `}}`, `[[`, `]]`, `<script`, `</script`, `<|`, `|>`, inline `---`, and Unicode direction-override characters (`U+202A-E`, `U+2066-9`). Active for all signals entering `ActionComposer`.
+
+**Wave 0 hard-gate enforcement** (`DEBT-GUARD-001`): `guardrails.py::_wave0_ok()` now honours `wave0_gate: hard` from `config/guardrails.yaml`. In hard mode, an incomplete or unloadable Wave 0 flag raises `RuntimeError` (blocking). Fail-open reserved for `soft` mode only. Override path: `ARTHA_WAVE0_OVERRIDE=<reason>` env var (writes audit entry on every use). Tests: `TestWave0HardMode` (6 tests).
+
+**Unicode bidi sanitization** (`DEBT-PROMPT-002`): `generate_identity.py::_sanitize_profile_value()` strips all Unicode bidirectional control characters (`_BIDI_CHARS` frozenset), `§`, and normalizes inline `---` to em-dash before injecting profile values into the system prompt.
+
+### 32.2 Memory & PII Invariants
+
+**Memory sensitivity isolation** (`DEBT-MEM-003`): `memory_writer.add_fact(text, memory_path, domain='general')` enforces `config/memory.yaml::privacy.high_sensitivity_domains`. Facts from high-sensitivity domains (finance, insurance, health, immigration, employment, estate, caregiving, career_search, vehicle) are blocked from `state/memory.md` and logged to `state/audit.md` as `MEMORY_FACT_SENSITIVITY_BLOCKED`. Work/personal isolation (Parts 2–3) tracked as follow-on.
+
+**Memory fact cap at read time** (`DEBT-MEM-001`): `fact_extractor.load_existing_facts()` enforces `config/memory.yaml::memory.max_facts` at read time. If the stored count exceeds the cap, only the most recent `max_facts` entries are returned, with a `MEMORY_CAP_EXCEEDED_AT_READ` warning.
+
+**Skills cache read-time cap** (`DEBT-MEM-002`): `skill_runner.load_cache()` calls `_enforce_cache_size_cap(cache)` at read time if the serialized cache exceeds 1 MB, logging `SKILLS_CACHE_CAP_ENFORCED_AT_READ`.
+
+**External agent PII block lists** (`DEBT-PII-001`): `config/agents/external-registry.yaml` block list extended to include `PHONE_NUMBER`, `INDIA_PAN`, `INDIA_AADHAAR`, and `EMAIL_ADDRESS` in addition to the existing NER types. Applied to all external agent output before it enters any pipeline state.
+
+### 32.3 Vault & State Invariants
+
+**Vault policy preflight** (`DEBT-VAULT-003 Phase 1`): `preflight.py::_check_vault_policy()` fails P0 if any `requires_vault: true` domain in `domain_registry.yaml` has a `state_file` not ending in `.md.age`. This makes the declared vault policy structurally visible at startup. Phase 2 (encryption migration) gated on `DEBT-ARCH-001` (`StateReader`) completion — direct `open('state/employment.md')` callsites must be migrated before the files can be safely encrypted.
+
+**StateReader abstraction** (`DEBT-ARCH-001`): `scripts/lib/state_reader.py` provides `StateReader.read(domain_name)` and `read_raw(path)` as the canonical vault-aware read path. Enforces `requires_vault` policy from `domain_registry.yaml`. Channel handlers (`scripts/channel/`) use `state_readers.py` throughout.
+
+**Vault fallback parity** (`DEBT-VAULT-001`): `vault_hook.py` static fallback list includes `employment` domain (matching `foundation.py::SENSITIVE_FILES`). Parity validated by `test_vault.py::test_vault_hook_fallback_complete`.
+
+**Contacts integrity monitoring** (`DEBT-TRUST-001`): `vault_hook.py::hook_contacts_integrity()` computes SHA-256 + mtime of `state/contacts.yaml` and compares against a sentinel at `state/.contacts_integrity_ts.json`. Any modification triggers an audit warning. Run via `python scripts/vault_hook.py contacts-integrity`.
+
+### 32.4 Signal & Routing Invariants
+
+**Content-stale signal routing** (`DEBT-SIG-001`): `config/signal_routing.yaml` includes a `content_stale` entry (active, social domain) wired to `instruction_sheet` with `task: content_gap`. PAT-PR-001 (14+ days without post) and PAT-PR-002 (21+ days) in `config/patterns.yaml` now produce routable proposals.
+
+**17 unproduced routes downgraded** (`DEBT-SIG-002`): Routes with no Python producer were changed from `status: active` to `status: stub`. `test_signal_routing_completeness.py` asserts every `status: active` route has a confirmed producer. Fails CI if violated.
+
+**TF-IDF cache TTL** (`DEBT-ROUTE-002`): `tfidf_router._load_vector_cache()` invalidates the cache if `cache_built_ts` is >86400s old. `_save_vector_cache()` writes `cache_built_ts: time.time()` into the payload.
+
+**Routing ambiguity tracking** (`DEBT-ROUTE-001`): `agent_router.compute_ambiguity_rate()` reads `state/routing_audit.jsonl`, computes the fraction of `routing_ambiguity=True` entries, and alerts if >20%. Results upserted to `state/eval_metrics.yaml`.
+
+**Platform-gated connector sentinels** (`DEBT-SYNC-001`): When a connector is skipped due to `run_on:` platform mismatch, `pipeline.py::_write_platform_skip_sentinel()` writes `state/connectors/<name>_platform_skipped.json` so cross-machine dashboards can distinguish "not run" from "stale".
+
+### 32.5 Idempotency & Action Invariants
+
+**Idempotency guard hardening** (`DEBT-IDEM-001`): `instruction_sheet.execute()` narrows the exception handler to specific types (`OSError`, `ValueError`, `KeyError`). When the idempotency store fails, behaviour is autonomy-level-gated: level ≥3 actions return `ActionResult(status="error")` (hard block); level ≤2 actions warn and proceed. Every guard failure writes `IDEMPOTENCY_GUARD_FAILED` or `IDEMPOTENCY_STORE_WARN_PROCEED` to `state/audit.md`. `mark_completed()` is only called when `idem_key is not None`.
+
+**IdempotencyStore public API** (`DEBT-EXEC-001`): `idempotency.IdempotencyStore.get_entry(key)` is now a public method. `action_executor.py` uses it instead of accessing private `_load()`.
+
+### 32.6 Architecture & Observability
+
+**Session preconditions** (`DEBT-ARCH-003`): `scripts/lib/session_preconditions.py::SessionPreconditions.evaluate()` runs Wave 0 check, vault check, preflight check, KG check, and action-layer check once per session start. Results propagate via a 3-bit degradation bitmask (VAULT_BIT, ACTION_BIT, KG_BIT).
+
+**Degradation map** (`DEBT-DEGRADE-001`): `DEGRADATION_MAP` in `session_preconditions.py` maps all 8 bitmask states to `{level, description, capabilities, user_notice}`. Level 0 = all-failed (emergency briefing only); level 4 = nominal.
+
+**LLM call tracing** (`DEBT-OBSERV-001`): `scripts/lib/observability.py::llm_trace()` appends JSONL records (caller, model, prompt_tokens, completion_tokens, latency_ms, error, metadata) to `tmp/llm_trace.jsonl` when `ARTHA_LLM_TRACE=1` env var is set. Never raises; no-ops when disabled.
+
+**SLA enforcement** (`DEBT-EVAL-002`): `config/sla.yaml` declares 5 SLA targets: `briefing_generation_p95 ≤30s`, `connector_error_rate ≤5%`, `action_acceptance_rate ≥70%`, `false_positive_rate <15%`, `stale_domains ≤3`. `eval_runner.py --assert-sla` evaluates each target (exit 0=pass, 2=breach, 1=config error).
+
+**KG ghost-entity GC** (`DEBT-KG-002`): `KnowledgeGraph._maybe_gc(ttl_days=90)` removes entities with no edges whose `last_seen` or `created_at` is older than the TTL. Rate-limited to once per day; commits atomically; returns removed count.
+
+**Telegram payload minimization** (`DEBT-IOT-001`): `export_bridge_context.py::_minimize_for_telegram()` strips `raw_signals`, `debug_context`, `connector_records`, and `full_briefing` keys before serializing the context envelope for Telegram transit, minimizing plaintext PII exposure.
+
+**"No LLM" module boundary tests** (`DEBT-EVAL-003`): `test_no_llm_in_signal_path.py::TestNoLLMModuleBoundary` patches `sys.modules` with `_BlockedModule` stubs for `anthropic`, `openai`, and `litellm`, then verifies `EmailSignalExtractor` and `PatternEngine` load and run without importing LLM clients.
+
+### 32.7 Signal Pipeline Integration Tests
+
+`tests/integration/test_signal_pipeline.py` + `tests/fixtures/email_signals.yaml` provide end-to-end coverage of the connector→signal pipeline:
+
+- **Precision tests**: Parametrized against fixture YAML; email inputs must produce the expected `signal_type`.
+- **Recall tests**: No-match emails must not produce false-positive signals.
+- **PII hygiene tests**: Signal metadata must not contain raw email snippet PII.
+- **No-LLM invariant**: All tests run with LLM modules blocked at the import layer.
+
+---
+
+*Artha Tech Spec v3.32.0 — End of Document*
 
 ---
 
@@ -5564,6 +5649,7 @@ On a machine where a platform-gated connector is skipped (e.g., `outlook_email` 
 
 | Version | Changes |
 |---------|---------|
+| v3.32.0 | **April 2026 Security & Reliability Hardening (§32)**: 48-item debt audit fully implemented. Security: plugin allowlist hard-enforced (PLUG-001); HMAC nonce persisted across restarts (HMAC-001); AI signal urgency/impact range-clamped 0–3 (SIG-006); DomainSignal metadata injection-sanitized (SIG-007); wave0_gate=hard now raises RuntimeError (GUARD-001); bidi chars stripped from profile values (PROMPT-002). Memory/PII: memory_writer blocks high-sensitivity domains with audit trail (MEM-003); fact cap + skills cache cap enforced at read time (MEM-001/002); external agent PII block list extended (PII-001). Vault: preflight P0 check for requires_vault policy (VAULT-003 Phase 1); StateReader abstraction wired in channel layer (ARCH-001); vault_hook fallback includes employment (VAULT-001); contacts integrity SHA-256 sentinel (TRUST-001). Signals: content_stale route added (SIG-001); 17 unproduced routes downgraded to stub (SIG-002); TF-IDF cache 24h TTL (ROUTE-002); routing ambiguity tracking (ROUTE-001); platform-skip sentinels (SYNC-001). Actions: idempotency guard autonomy-level-gated with mandatory audit trail (IDEM-001); IdempotencyStore public get_entry() (EXEC-001). Architecture: SessionPreconditions + 3-bit degradation map (ARCH-003/DEGRADE-001); LLM tracing JSONL (OBSERV-001); --assert-sla eval mode + config/sla.yaml (EVAL-002); KG ghost-entity GC (KG-002); Telegram payload minimization (IOT-001). Tests: signal pipeline integration suite + fixture YAML (EVAL-001); no-LLM module-boundary tests (EVAL-003); _FALLBACK_HANDLER_MAP parity tests (SYNC-003). `specs/debts.md` archived to `.archive/specs/debts.md`. 3424 tests passing. |
 | v3.31.0 | **Safety & Governance Compendium (§31)**: Signal routing `status: active\|stub` field + completeness CI test (`test_signal_routing_completeness.py`); 3 orphaned signal routes added (`automation_failure`, `goal_autopark_candidate`, `slack_action_item`); domain-qualified idempotency windows (`get_window(action_type, domain)` — immigration 30d, iot 4h); execution-layer idempotency in `instruction_sheet.execute()` (`check_or_reserve`/`mark_completed`); memory writer FIFO cap at `max_facts` with `MEMORY_EVICTION` audit log; skills cache size governance (`_enforce_cache_size_cap()`, 1MB limit); connector record schema validation (`scripts/schemas/connector_record.py`); routing ambiguity flag (`RoutingResult.routing_ambiguity`); `keyword_miss_rate` metric + routing-audit eval mode; KG backup WAL-free via `Connection.backup()` + symlink-safe `Path.resolve()` in cloud-sync check; platform-gated connector freshness JSON (`state/connectors/connector_freshness.json`, 72h CRITICAL threshold). PRD §16.4 Security & Privacy Architecture added. `specs/debt.md` archived to `.archive/specs/debt.md`. |
 | v3.30.0 | **Career Search Intelligence (§30, FR-25 Phase 1)**: 7-block A–G evaluation framework (`prompts/career_search.md`); application tracker + Story Bank (`state/career_search.md`); ATS PDF generation via Playwright (`scripts/skills/career_pdf_generator.py`); Python helpers: `reconcile_summary`, `recompute_scores`, `deep_freeze`, Jaccard dedup, story bank index (`scripts/lib/career_state.py`); JSONL audit trail 90-day retention (`scripts/lib/career_trace.py`); 3 career guardrails: `CareerJDInjectionGR`, `CareerNoAutoSubmitGR`, `CareerPiiOutputGR`; 6 career signal routes in `config/signal_routing.yaml`; `career_pdf_generator` and `portal_scanner` added to `_ALLOWED_SKILLS`; AR-1 P0 test suite (`tests/unit/test_career_skills.py`); `output/career/` + `briefings/career/` directories with `.gitkeep`; `.gitignore` hardened for career PII output; FR-CS-3 preflight check for Playwright/Chromium; specs: PRD v7.15.0 (FR-25), Tech Spec §30, UX Spec §12; `specs/career-ops.md` archived to `.archive/specs/career-ops.md`. 65+52+10 tests. |
 | v3.29.0 | **OpenClaw Home Bridge (§29)**: M2M integration between Artha (intelligence hub) and OpenClaw (Home Assistant). 3-layer transport (REST LAN + Telegram M2M + file-buffer fallback). HMAC-SHA256 with keyring-only key storage, replay nonce, clock-drift guard, injection filter. Outbound: `load_context`, `announce`, `whatsapp_draft`, `ping`. Inbound: `presence_detected`, `energy_event`, `home_alert`, `pong`. 7 new files (`export_bridge_context.py`, `hmac_signer.py`, `m2m_handler.py`, `claw_bridge.yaml`, `artha-bridge.skill.md`, `state/home_events.md`); 4 modified (`pipeline.py`, `router.py`, `channel_listener.py`, `nudge_daemon.py`). `bridge_health` observability block in `state/health-check.md`. Feature-flagged (`enabled: false`). 61 tests passing. Implements PRD v7.14.0. |

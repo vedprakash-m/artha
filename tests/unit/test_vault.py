@@ -1070,3 +1070,40 @@ class TestHealthKeyValidation:
             assert exc.value.code in (0, 2)
         out = capsys.readouterr().out
         assert "Key backup:" in out or "NEVER exported" in out
+
+
+# ---------------------------------------------------------------------------
+# DEBT-VAULT-001: vault_hook.py static fallback must include 'employment'
+# ---------------------------------------------------------------------------
+
+class TestVaultHookFallback:
+    """DEBT-VAULT-001: Verify employment is in the static SENSITIVE_DOMAINS fallback."""
+
+    def test_employment_in_fallback(self):
+        """vault_hook.SENSITIVE_DOMAINS must contain 'employment'."""
+        import importlib, sys
+        # Force reimport so we don't get a cached version
+        if "vault_hook" in sys.modules:
+            del sys.modules["vault_hook"]
+        import vault_hook
+        assert "employment" in vault_hook.SENSITIVE_DOMAINS, (
+            "DEBT-VAULT-001: 'employment' must be in vault_hook.SENSITIVE_DOMAINS fallback. "
+            "Salary, RSU, and comp data must be treated as sensitive at the hook level."
+        )
+
+    def test_fallback_minimum_domains(self):
+        """vault_hook.SENSITIVE_DOMAINS must include all 12 expected domains."""
+        import sys
+        if "vault_hook" in sys.modules:
+            del sys.modules["vault_hook"]
+        import vault_hook
+        required = {
+            "immigration", "finance", "insurance", "estate", "health",
+            "audit", "vehicle", "contacts", "occasions", "transactions",
+            "kids", "employment",
+        }
+        missing = required - set(vault_hook.SENSITIVE_DOMAINS)
+        assert not missing, (
+            f"vault_hook.SENSITIVE_DOMAINS missing domains: {sorted(missing)}. "
+            f"These domains contain sensitive data and must trigger stray-file warnings."
+        )

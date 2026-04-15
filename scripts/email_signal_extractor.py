@@ -367,6 +367,20 @@ class EmailSignalExtractor:
                     metadata=metadata,
                     detected_at=now_iso,
                 )
+                # DEBT-SIG-004: apply signal-layer PII scrub to all string metadata values.
+                # Structural keys (email_id, sensitivity) are exempted; user-visible
+                # fields (sender_org_name, deadline_date, amount) are scrubbed.
+                _PII_EXEMPT_KEYS = frozenset({"email_id", "sensitivity", "signal_origin", "source_id"})
+                try:
+                    from pii_guard import filter_text as _pii_filter  # lazy import
+                    clean_meta = {
+                        k: (_pii_filter(v) if isinstance(v, str) and k not in _PII_EXEMPT_KEYS else v)
+                        for k, v in sig.metadata.items()
+                    }
+                    import dataclasses as _dc
+                    sig = _dc.replace(sig, metadata=clean_meta)
+                except Exception:  # pii_guard unavailable — skip scrub, not a crash
+                    pass
                 signals.append(sig)
 
         return signals
