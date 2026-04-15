@@ -148,6 +148,22 @@ skills:
       offline (MONITORED), energy anomalies >30%, printer supply <20%, spa temp
       variance >5°F. Emits DomainSignals for ActionComposer routing.
 
+  home_intelligence:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    execution_after: pipeline
+    requires_vault: false
+    safety_critical: false
+    requires_connector: homeassistant
+    description: >
+      Always-on home awareness layer. Part 1: Ring motion triage with camera
+      classification, weather/presence context, and corroboration logic.
+      Part 2: Anomaly scan (Govee temp/humidity, camera offline, lights left on).
+      Part 3: Presence commands (who's home, where is everyone).
+
   # ── CONNECT v1.0.0 Phase 2 Skills ───────────────────────────────────────
 
   mental_health_utilization:
