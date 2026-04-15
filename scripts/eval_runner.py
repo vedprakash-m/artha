@@ -1192,6 +1192,107 @@ def render_text_report(
 # CLI
 # ---------------------------------------------------------------------------
 
+def _run_sla_assertion(as_json: bool = False) -> int:
+    """DEBT-EVAL-002: Load config/sla.yaml, evaluate metrics, exit 2 if any SLA breached.
+
+    Returns:
+        0 — all SLA targets met
+        2 — one or more targets breached
+        1 — sla.yaml missing or unreadable
+    """
+    _ARTHA_DIR_LOCAL = Path(__file__).resolve().parent.parent
+    sla_path = _ARTHA_DIR_LOCAL / "config" / "sla.yaml"
+    if not sla_path.exists():
+        msg = {"status": "ERROR", "error": f"config/sla.yaml not found at {sla_path}"}
+        if as_json:
+            print(json.dumps(msg, indent=2))
+        else:
+            print(f"[SLA] ERROR: config/sla.yaml not found — cannot assert SLA (DEBT-EVAL-002)")
+        return 1
+    try:
+        import yaml as _yaml_sla
+        sla_cfg = _yaml_sla.safe_load(sla_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        print(f"[SLA] ERROR: failed to parse config/sla.yaml: {exc}")
+        return 1
+
+    targets = sla_cfg.get("targets", {})
+    breaches: list[dict] = []
+    results: list[dict] = []
+
+    # Evaluate each defined target
+    for metric_name, target in targets.items():
+        threshold   = target.get("threshold")
+        comparator  = target.get("comparator", "lte")  # lte | gte | lt | gt | eq
+        description = target.get("description", metric_name)
+        source      = target.get("source")     # which analyze_* function to call
+        field       = target.get("field")      # dotted path into result dict
+
+        if threshold is None or not source or not field:
+            continue
+
+        try:
+            # Map source → function
+            _SOURCE_MAP = {
+                "performance": lambda: analyze_performance(7),
+                "accuracy":    analyze_accuracy,
+                "freshness":   analyze_freshness,
+            }
+            fn = _SOURCE_MAP.get(source)
+            if fn is None:
+                continue
+            data = fn()
+            # Traverse dotted field path
+            val: object = data
+            for part in field.split("."):
+                if isinstance(val, dict):
+                    val = val.get(part)
+                else:
+                    val = None
+                    break
+            if val is None:
+                results.append({"metric": metric_name, "status": "NO_DATA", "description": description})
+                continue
+
+            actual = float(val)
+            _CMP = {
+                "lte": actual <= threshold,
+                "gte": actual >= threshold,
+                "lt":  actual < threshold,
+                "gt":  actual > threshold,
+                "eq":  actual == threshold,
+            }
+            passed = _CMP.get(comparator, True)
+            entry = {
+                "metric": metric_name,
+                "status": "PASS" if passed else "BREACH",
+                "actual": actual,
+                "threshold": threshold,
+                "comparator": comparator,
+                "description": description,
+            }
+            results.append(entry)
+            if not passed:
+                breaches.append(entry)
+        except Exception as exc:
+            results.append({"metric": metric_name, "status": "ERROR", "error": str(exc)})
+
+    report = {"sla_results": results, "breaches": len(breaches), "overall": "PASS" if not breaches else "BREACH"}
+    if as_json:
+        print(json.dumps(report, indent=2))
+    else:
+        status_icon = "✓" if not breaches else "✗"
+        print(f"[SLA] {status_icon} Overall: {report['overall']} — {len(results)} metrics checked, {len(breaches)} breach(es)")
+        for r in results:
+            icon = {"PASS": "  ✓", "BREACH": "  ✗", "NO_DATA": "  ?", "ERROR": "  !"}.get(r["status"], "  ?")
+            if r["status"] in ("PASS", "BREACH"):
+                print(f"{icon} {r['metric']}: actual={r.get('actual')} {r.get('comparator')} {r.get('threshold')} [{r['status']}]")
+            else:
+                print(f"{icon} {r['metric']}: {r.get('error', r['status'])}")
+
+    return 2 if breaches else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Artha catch-up evaluation & performance analyzer"
@@ -1210,7 +1311,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cache-report", action="store_true", help="AR-9 ext-agent-cache size and hit rates")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--trend", type=int, default=7, metavar="DAYS", help="Trend window (default: 7)")
+    parser.add_argument(
+        "--assert-sla",
+        action="store_true",
+        help="DEBT-EVAL-002: enforce SLA targets from config/sla.yaml; exit 2 if any target breached",
+    )
     args = parser.parse_args(argv)
+
+    # --assert-sla: enforce SLA targets (DEBT-EVAL-002)
+    if args.assert_sla:
+        exit_code = _run_sla_assertion(as_json=args.json)
+        return exit_code
 
     # --agents / --agent: AR-9 external agent invocation metrics
     if args.agents or args.agent:

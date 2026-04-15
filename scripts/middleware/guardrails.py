@@ -22,10 +22,12 @@ Ref: specs/agent-fw.md §3.1 (AFW-1)
 """
 from __future__ import annotations
 
+import os
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 
@@ -78,6 +80,47 @@ class GuardrailOutput:
 
 
 # ---------------------------------------------------------------------------
+# DEBT-GUARD-001: Wave 0 mode helpers (module-level, cached at first call)
+# ---------------------------------------------------------------------------
+
+_WAVE0_MODE: str | None = None  # "hard" | "soft" | None (=soft)
+
+
+def _get_wave0_mode() -> str:
+    """Return the wave0_gate mode from guardrails.yaml. Cached at first call.
+
+    Returns "hard" or "soft".  Any other value (including missing key) defaults
+    to "soft" — safer for unknown deployments.
+    """
+    global _WAVE0_MODE
+    if _WAVE0_MODE is not None:
+        return _WAVE0_MODE
+    try:
+        import yaml  # noqa: PLC0415
+        _guardrails_yaml = Path(__file__).resolve().parents[2] / "config" / "guardrails.yaml"
+        with open(_guardrails_yaml) as fh:
+            cfg = yaml.safe_load(fh) or {}
+        _WAVE0_MODE = str(cfg.get("wave0_gate", "soft")).lower()
+    except Exception:  # noqa: BLE001
+        _WAVE0_MODE = "soft"
+    return _WAVE0_MODE
+
+
+def _guardrail_write_audit(event: str, data: dict) -> None:
+    """Append a structured audit line to state/audit.md (best-effort)."""
+    try:
+        from datetime import datetime, timezone  # noqa: PLC0415
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _audit = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+        fields = " | ".join(f"{k}:{v}" for k, v in data.items())
+        line = f"| {now} | {event} | {fields} |\n"
+        with _audit.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:  # noqa: BLE001
+        pass  # audit write failure is never blocking
+
+
+# ---------------------------------------------------------------------------
 # Base class
 # ---------------------------------------------------------------------------
 
@@ -107,29 +150,66 @@ class BaseGuardrail(ABC):
         return self._log
 
     def _wave0_ok(self) -> bool:
-        """Return True if wave0 is complete.
+        """Return True if wave0 is complete and guarded paths may proceed.
 
-        If wave0 is not complete, emit a WARNING and return False.
-        The caller should then return PASS immediately.
+        DEBT-GUARD-001: Honours wave0_gate mode from guardrails.yaml.
+        - "hard": raises RuntimeError when wave0 incomplete or flag unloadable.
+          Tests must set ARTHA_WAVE0_OVERRIDE=<reason> to bypass in CI.
+        - "soft": emits WARNING and returns False (legacy fail-open behaviour).
+
+        Override: set env ARTHA_WAVE0_OVERRIDE=<reason> to bypass hard block.
+          Every override is written to state/audit.md (mandatory audit trail).
         """
+        # Env-var override — always audited
+        override = os.environ.get("ARTHA_WAVE0_OVERRIDE", "")
+        if override:
+            _guardrail_write_audit(
+                "WAVE0_HARD_OVERRIDE",
+                {"guardrail": self.name, "reason": override[:120]},
+            )
+            return True
+
+        mode = _get_wave0_mode()
+
         try:
             from context_offloader import load_harness_flag  # noqa: PLC0415
-            if not load_harness_flag("wave0.complete"):
-                log = self._get_log()
-                msg = (
-                    f"[{self.name}] Wave 0 not complete "
-                    "(harness.wave0.complete=false) — guardrail bypassed. "
-                    "Activate guardrails only after all write-path bypass "
-                    "writers are migrated."
+            flag_complete = load_harness_flag("wave0.complete")
+        except Exception as exc:  # noqa: BLE001
+            if mode == "hard":
+                raise RuntimeError(
+                    f"[{self.name}] wave0_gate=hard: cannot load harness flag — "
+                    f"guardrail is blocking. ({exc}). "
+                    "Set ARTHA_WAVE0_OVERRIDE=<reason> to bypass with audit trail."
+                ) from exc
+            # soft mode: fail-open, log warning
+            log = self._get_log()
+            msg = f"[{self.name}] wave0 flag load failed — guardrail bypassed (soft mode)"
+            if log is not None:
+                log.warning("guardrail.wave0_flag_load_failed", guardrail=self.name)
+            else:
+                print(f"[WARN] {msg}", file=sys.stderr)
+            return True
+
+        if not flag_complete:
+            if mode == "hard":
+                raise RuntimeError(
+                    f"[{self.name}] wave0_gate=hard: Wave 0 incomplete "
+                    "(harness.wave0.complete=false) — guarded path blocked. "
+                    "Set ARTHA_WAVE0_OVERRIDE=<reason> to bypass with audit trail."
                 )
-                if log is not None:
-                    log.warning("guardrail.wave0_bypass", guardrail=self.name)
-                else:
-                    print(f"[WARN] {msg}", file=sys.stderr)
-                return False
-        except Exception:  # noqa: BLE001
-            # If we can't load the flag, fail open (Wave 0 guard is advisory).
-            pass
+            log = self._get_log()
+            msg = (
+                f"[{self.name}] Wave 0 not complete "
+                "(harness.wave0.complete=false) — guardrail bypassed. "
+                "Activate guardrails only after all write-path bypass "
+                "writers are migrated."
+            )
+            if log is not None:
+                log.warning("guardrail.wave0_bypass", guardrail=self.name)
+            else:
+                print(f"[WARN] {msg}", file=sys.stderr)
+            return False
+
         return True
 
     @abstractmethod

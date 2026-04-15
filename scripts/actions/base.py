@@ -30,6 +30,42 @@ from typing import Any, Dict, Protocol, runtime_checkable
 
 
 # ---------------------------------------------------------------------------
+# DEBT-SIG-007: Metadata injection sanitization
+# ---------------------------------------------------------------------------
+
+# Tokens that could break out of a fenced block or inject arbitrary content
+# into a template when metadata values are rendered into markdown/LLM prompts.
+_INJECTION_TOKENS: tuple[str, ...] = (
+    "```",          # fenced code block close
+    "~~~",          # alternate fenced block
+    "---",          # YAML front-matter delimiter
+    "===",          # document separator
+    "\x00",         # null byte
+    "\r",           # carriage return (normalized to \n by str processing)
+    "system:",      # role-injection prefix pattern
+    "human:",
+    "assistant:",
+    "<|im_start|>",
+    "<|im_end|>",
+    "[INST]",
+    "[/INST]",
+)
+
+
+def _sanitize_metadata_value(value: str) -> str:
+    """Remove injection tokens from a metadata string value (DEBT-SIG-007).
+
+    Replaces each occurrence of a known injection token with an underscore so
+    the surrounding text is preserved but the escape sequence is neutralised.
+    The replacement is visible (not silent) so downstream consumers can detect
+    that stripping occurred (e.g. by searching for the replacement character).
+    """
+    for token in _INJECTION_TOKENS:
+        value = value.replace(token, "_" * len(token))
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Core dataclasses
 # ---------------------------------------------------------------------------
 
@@ -84,6 +120,13 @@ class DomainSignal:
             raise ValueError(
                 f"DomainSignal.metadata must be a dict; got {type(self.metadata).__name__}"
             )
+        # DEBT-SIG-007: Sanitize string metadata values to block prompt injection.
+        # Frozen dataclass — must use object.__setattr__ to mutate after creation.
+        sanitized: Dict[str, Any] = {
+            k: _sanitize_metadata_value(v) if isinstance(v, str) else v
+            for k, v in self.metadata.items()
+        }
+        object.__setattr__(self, "metadata", sanitized)
 
 
 @dataclass(frozen=True)
@@ -159,8 +202,85 @@ class ActionResult:
 
 
 # ---------------------------------------------------------------------------
-# ActionHandler Protocol
+# DEBT-ARCH-002: SignalEnvelope — Pydantic v2 model for AI-generated signals
 # ---------------------------------------------------------------------------
+# Rationale: DomainSignal (frozen dataclass) is the canonical type for
+# skill-produced signals.  AI-generated signals come from tmp/ai_signals.jsonl
+# as raw JSON and need validated ingestion before conversion to DomainSignal.
+# SignalEnvelope is the parse/validate step; action_orchestrator converts to
+# SimpleNamespace (Sprint 1, per spec) until ARCH-002 is fully wired in Sprint 2.
+#
+# Sprint 2 migration: replace action_orchestrator SimpleNamespace with
+# DomainSignal(urgency=env.urgency, impact=env.impact, ...) after confirming
+# that all producer scripts emit the full required fields.
+# ---------------------------------------------------------------------------
+
+try:
+    from pydantic import BaseModel, Field, field_validator
+
+    class SignalEnvelope(BaseModel):
+        """Pydantic v2 model for parsing AI-generated signal JSON records.
+
+        Validates urgency and impact to the 0–3 range (DEBT-SIG-006 structural fix).
+        All fields except required ones have safe defaults for partial records.
+
+        This model is NOT a replacement for DomainSignal — it is the ingestion
+        layer before conversion.  After validation, callers should construct a
+        DomainSignal for downstream action composition.
+
+        DEBT-ARCH-002: Sprint 2 — wire action_orchestrator to use SignalEnvelope
+        instead of inline try/except + SimpleNamespace.
+        """
+        model_config = {"extra": "ignore", "str_strip_whitespace": True}
+
+        signal_type: str
+        domain: str = "general"
+        entity: str = ""
+        urgency: int = Field(default=2, ge=0, le=3)
+        impact: int = Field(default=2, ge=0, le=3)
+        source: str = "ai_signals"
+        metadata: Dict[str, Any] = Field(default_factory=dict)
+        detected_at: str = ""
+
+        @field_validator("urgency", "impact", mode="before")
+        @classmethod
+        def _coerce_int_range(cls, v: Any) -> int:
+            """Coerce urgency/impact to int; raise ValueError if out of range."""
+            try:
+                v_int = int(v)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"must be an integer, got {v!r}") from exc
+            return v_int  # ge/le constraints applied after this
+
+        @field_validator("signal_type", mode="before")
+        @classmethod
+        def _require_signal_type(cls, v: Any) -> str:
+            if not isinstance(v, str) or not str(v).strip():
+                raise ValueError("signal_type must be a non-empty string")
+            return str(v).strip()
+
+        def to_domain_signal(self) -> "DomainSignal":
+            """Convert this envelope to a validated DomainSignal.
+
+            Sanitizes metadata values for prompt injection (DEBT-SIG-007)
+            via DomainSignal.__post_init__.
+            """
+            return DomainSignal(
+                signal_type=self.signal_type,
+                domain=self.domain,
+                entity=self.entity,
+                urgency=self.urgency,
+                impact=self.impact,
+                source=self.source,
+                metadata=self.metadata,
+                detected_at=self.detected_at,
+            )
+
+except ImportError:
+    # Pydantic not available — SignalEnvelope is unavailable.
+    # action_orchestrator falls back to its inline validation (DEBT-SIG-006).
+    # Install with: pip install "pydantic>=2.5,<3.0"
+    SignalEnvelope = None  # type: ignore[assignment,misc]
 
 @runtime_checkable
 class ActionHandler(Protocol):

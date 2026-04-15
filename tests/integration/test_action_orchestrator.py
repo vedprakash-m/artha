@@ -737,13 +737,13 @@ def test_orchestrator_with_ai_signals_file(artha_dir):
         "    ai_signals: true\n"
     )
 
-    # Write a valid AI signal
+    # Write a valid AI signal (urgency/impact must be in range 0–3 per DEBT-SIG-006)
     ai_signal = {
         "signal_type": "goal_stale",
         "domain": "goals",
         "entity": "fitness-goal",
-        "urgency": 4,
-        "impact": 6,
+        "urgency": 2,
+        "impact": 3,
         "source": "ai",
     }
     (artha_dir / "tmp" / "ai_signals.jsonl").write_text(json.dumps(ai_signal) + "\n")

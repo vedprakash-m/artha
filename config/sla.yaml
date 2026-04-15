@@ -1,0 +1,53 @@
+# config/sla.yaml — Artha SLA enforcement targets (DEBT-EVAL-002)
+# Run: python scripts/eval_runner.py --assert-sla
+# Exit codes: 0=all pass, 1=config error, 2=one or more breaches
+#
+# Schema per target entry:
+#   threshold:   numeric threshold value
+#   comparator:  lte | gte | lt | gt | eq
+#   source:      performance | accuracy | freshness   (which analyze_* fn to call)
+#   field:       dotted path into the returned dict   (e.g. "avg_signal_latency_ms")
+#   description: human-readable label shown in breach report
+
+targets:
+
+  # --- Performance SLAs ---
+
+  briefing_generation_p95:
+    description: "Briefing generation p95 latency must be under 30s"
+    source: performance
+    field: p95_seconds
+    threshold: 30.0
+    comparator: lte
+
+  connector_error_rate:
+    description: "Connector error rate must be below 5%"
+    source: performance
+    field: error_budget_pct
+    threshold: 5.0
+    comparator: lte
+
+  # --- Accuracy SLAs ---
+
+  action_acceptance_rate:
+    description: "Action acceptance rate must be at or above 70%"
+    source: accuracy
+    field: acceptance_rate
+    threshold: 0.70
+    comparator: gte
+
+  false_positive_rate:
+    description: "False positive rate must be below 15%"
+    source: accuracy
+    field: false_positive_rate
+    threshold: 0.15
+    comparator: lte
+
+  # --- Freshness SLAs ---
+
+  stale_domains:
+    description: "Stale domain count must be 3 or fewer"
+    source: freshness
+    field: stale_domain_count
+    threshold: 3
+    comparator: lte

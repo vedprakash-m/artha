@@ -564,6 +564,24 @@ def load_existing_facts(artha_dir: Path) -> list[Fact]:
             result.append(Fact(**entry))
         except (TypeError, ValueError):
             continue
+
+    # DEBT-MEM-001: enforce max_facts cap at read time — OneDrive conflict copies
+    # or pre-cap writes can push fact count above 30; truncate to most recent.
+    try:
+        import yaml as _yaml_mem
+        _mem_cfg_path = artha_dir / "config" / "memory.yaml"
+        _mem_cfg = _yaml_mem.safe_load(_mem_cfg_path.read_text(encoding="utf-8")) if _mem_cfg_path.exists() else {}
+        _max_facts = (_mem_cfg.get("capacity") or {}).get("max_facts", 30)
+    except Exception:
+        _max_facts = 30
+    if len(result) > _max_facts:
+        import logging as _log_mem
+        _log_mem.getLogger("fact_extractor").warning(
+            "MEMORY_CAP_EXCEEDED_AT_READ: loaded %d facts, truncating to %d (DEBT-MEM-001)",
+            len(result), _max_facts,
+        )
+        result = result[-_max_facts:]  # keep most recent
+
     return result
 
 

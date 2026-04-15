@@ -477,3 +477,95 @@ def _get_cache_ttl(agent_name: str, registry) -> int:
     if agent:
         return agent.cache_ttl_days
     return 7
+
+
+# ---------------------------------------------------------------------------
+# DEBT-ROUTE-001: Ambient routing ambiguity tracking
+# ---------------------------------------------------------------------------
+
+def compute_ambiguity_rate(routing_log_path: "Path | None" = None) -> dict:
+    """Read the routing audit log and compute the ambient routing ambiguity rate.
+
+    Returns a dict with:
+      - total_decisions:  int  — total routing decisions logged
+      - ambiguous_count:  int  — decisions flagged routing_ambiguity=True
+      - ambiguity_rate:   float — ambiguous_count / total (0.0 if no data)
+      - alert:            str | None — human-readable alert if rate > 0.20
+
+    Writes the result to state/eval_metrics.yaml under the key
+    'routing_ambiguity_rate' so the eval runner and briefing system can surface it.
+
+    Never raises — returns empty structure on any error.
+    """
+    from pathlib import Path as _Path
+    import json as _json_ar
+    import time as _time_ar
+
+    _ALERT_THRESHOLD = 0.20   # warn if >20% of decisions are ambiguous
+
+    result: dict = {
+        "total_decisions": 0,
+        "ambiguous_count": 0,
+        "ambiguity_rate": 0.0,
+        "alert": None,
+        "computed_at": _time_ar.strftime("%Y-%m-%dT%H:%M:%SZ", _time_ar.gmtime()),
+    }
+
+    try:
+        _artha_dir = _Path(__file__).resolve().parent.parent.parent
+        log_path = routing_log_path or (_artha_dir / "state" / "routing_audit.jsonl")
+
+        if not log_path.exists():
+            return result
+
+        total = 0
+        ambiguous = 0
+        with log_path.open(encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json_ar.loads(line)
+                    total += 1
+                    if rec.get("routing_ambiguity"):
+                        ambiguous += 1
+                except Exception:
+                    continue
+
+        result["total_decisions"] = total
+        result["ambiguous_count"] = ambiguous
+        if total > 0:
+            rate = ambiguous / total
+            result["ambiguity_rate"] = round(rate, 4)
+            if rate > _ALERT_THRESHOLD:
+                result["alert"] = (
+                    f"Routing ambiguity rate {rate:.1%} exceeds threshold {_ALERT_THRESHOLD:.0%} "
+                    f"({ambiguous}/{total} decisions ambiguous) — review routing config."
+                )
+
+        # Write to eval_metrics.yaml for visibility in briefing footer
+        _write_ambiguity_metric(_artha_dir, result)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return result
+
+
+def _write_ambiguity_metric(artha_dir: "Path", data: dict) -> None:
+    """Upsert routing_ambiguity_rate into state/eval_metrics.yaml (DEBT-ROUTE-001)."""
+    from pathlib import Path as _Path
+    import yaml as _yaml_rm  # type: ignore[import]
+    metrics_path = artha_dir / "state" / "eval_metrics.yaml"
+    try:
+        existing: dict = {}
+        if metrics_path.exists():
+            existing = _yaml_rm.safe_load(metrics_path.read_text(encoding="utf-8")) or {}
+        existing["routing_ambiguity_rate"] = data
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        metrics_path.write_text(
+            _yaml_rm.dump(existing, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass

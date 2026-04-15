@@ -34,6 +34,40 @@ from actions.base import ActionProposal, ActionResult
 
 _REQUIRED_PARAMS = ("task", "service")
 
+
+# ---------------------------------------------------------------------------
+# DEBT-IDEM-001: Autonomy level mapping for idempotency guard failure handling.
+# Low-autonomy (1–2): warn and proceed when idempotency store unavailable.
+# High-autonomy (3–4): hard block — store unavailability is a safety risk.
+# Sprint 2 pre-step: populate from PRD §9 Autonomy Matrix for all action types.
+# Unknown action types default to level 2 (warn-and-proceed).
+# ---------------------------------------------------------------------------
+
+_AUTONOMY_LEVELS: dict[str, int] = {
+    "instruction_sheet": 1,  # file write, low friction, no external mutation
+    "reminder_create": 1,
+    "todo_sync": 1,
+    "calendar_create": 2,
+    "calendar_modify": 2,
+    "email_send": 3,        # external mutation — hard block on store failure
+    "email_reply": 3,
+    "whatsapp_send": 3,
+}
+
+_AUDIT_PATH = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+
+
+def _write_audit(event: str, **kwargs: Any) -> None:
+    """Append a structured audit line to state/audit.md (best-effort)."""
+    try:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fields = " | ".join(f"{k}:{str(v)[:80]}" for k, v in kwargs.items())
+        line = f"| {now} | {event} | {fields} |\n"
+        with _AUDIT_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:  # noqa: BLE001
+        pass  # audit write failure must never block execution
+
 _MAX_CONTENT_LENGTH = 64 * 1024  # 64 KB soft limit
 
 
@@ -90,12 +124,14 @@ def execute(proposal: ActionProposal) -> ActionResult:
     domain = proposal.domain or "general"
 
     # DEBT-036: Idempotency check — prevent duplicate instruction sheets within the window
+    # DEBT-IDEM-001: Narrowed exception handler; added audit trail; autonomy-proportionate blocking.
+    action_type = "instruction_sheet"
     try:
         from lib.idempotency import check_or_reserve, mark_completed  # noqa: PLC0415
         idem_status, idem_key = check_or_reserve(
             recipient=f"{domain}:{service}",
             intent=task,
-            action_type="instruction_sheet",
+            action_type=action_type,
         )
         if idem_status == "duplicate":
             return ActionResult(
@@ -113,9 +149,47 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 reversible=False,
                 reverse_action=None,
             )
-    except Exception as _idem_exc:
-        idem_key = None  # non-fatal — proceed without idempotency guard
-        print(f"[instruction_sheet] idempotency check failed (non-fatal): {_idem_exc}", file=sys.stderr)
+    except (ImportError, OSError, ValueError) as _idem_exc:
+        idem_key = None
+        _write_audit(
+            "IDEMPOTENCY_GUARD_FAILED",
+            action_type=action_type,
+            error=type(_idem_exc).__name__,
+            detail=str(_idem_exc)[:120],
+            task=task,
+            service=service,
+        )
+        # Autonomy-proportionate handling when store is unavailable:
+        autonomy_level = _AUTONOMY_LEVELS.get(action_type, 2)
+        if autonomy_level >= 3:
+            _write_audit(
+                "IDEMPOTENCY_STORE_HARD_BLOCK",
+                action_type=action_type,
+                autonomy_level=autonomy_level,
+                reason="idempotency_store_unavailable",
+            )
+            return ActionResult(
+                status="error",
+                message=(
+                    f"Idempotency store unavailable; action blocked "
+                    f"(autonomy level {autonomy_level} requires store). "
+                    f"Error: {_idem_exc}"
+                ),
+                data={"error": str(_idem_exc), "action_type": action_type},
+                reversible=False,
+                reverse_action=None,
+            )
+        # Low-autonomy (1–2): warn and proceed without guard
+        _write_audit(
+            "IDEMPOTENCY_STORE_WARN_PROCEED",
+            action_type=action_type,
+            autonomy_level=autonomy_level,
+            reason="idempotency_store_unavailable",
+        )
+        print(
+            f"[instruction_sheet] idempotency check failed (non-fatal, autonomy={autonomy_level}): {_idem_exc}",
+            file=sys.stderr,
+        )
 
     try:
         content = _generate_content(proposal, params)

@@ -714,6 +714,28 @@ def _push_via_rest(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: bool 
 # Transport Layer 1 — Telegram M2M
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _minimize_for_telegram(envelope: dict[str, Any]) -> dict[str, Any]:
+    """DEBT-IOT-001: Return a size-minimized copy of *envelope* for Telegram transport.
+
+    Drops high-volume / low-priority fields that inflate payload size but are
+    not required for OpenClaw to reconstruct bridge state:
+      - 'raw_signals': usually the largest field (full signal list)
+      - 'debug_context': internal diagnostics not needed at receiver
+      - 'connector_records': raw connector output (already merged into signals)
+      - 'full_briefing': long-form markdown text (not actionable at receiver)
+
+    Mandatory fields preserved: id, ts, version, domain_states, action_proposals,
+    signature, checksum, urgency, trace_id, source_platform.
+
+    This function never raises — returns the original envelope on any error.
+    """
+    _DROP_KEYS = frozenset({"raw_signals", "debug_context", "connector_records", "full_briefing"})
+    try:
+        return {k: v for k, v in envelope.items() if k not in _DROP_KEYS}
+    except Exception:
+        return envelope
+
+
 def _push_via_telegram(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: bool = False) -> bool:
     """Send signed envelope to OpenClaw via Telegram M2M bot.
 
@@ -744,6 +766,9 @@ def _push_via_telegram(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: b
         return False
 
     message_text = json.dumps(envelope, separators=(",", ":"))
+
+    # DEBT-IOT-001: minimize payload for Telegram transport (strip verbose fields)
+    message_text = json.dumps(_minimize_for_telegram(envelope), separators=(",", ":"))
 
     # Telegram max message length is 4096 chars; M2M envelopes are typically ~1KB
     if len(message_text) > 4096:

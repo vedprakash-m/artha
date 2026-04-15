@@ -12,6 +12,17 @@
 #
 # Ref: specs/pay-debt-reloaded.md §7 WS-7
 
+# Content / Social (DEBT-SIG-001: was silently dropped — no route existed)
+content_stale:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active
+  description: "Content posting gap exceeds threshold — prompt a post draft"
+  producer: config/patterns.yaml PAT-PR-001 PAT-PR-002
+
 # Finance
 bill_due:
   action_type: instruction_sheet
@@ -29,13 +40,15 @@ financial_alert:
   undo_window_sec: null
   status: active
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 property_tax_due:
   action_type: instruction_sheet
   friction: high
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
 subscription_renewal:
   action_type: instruction_sheet
@@ -45,22 +58,26 @@ subscription_renewal:
   undo_window_sec: null
   status: active
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 medical_bill_high:
   action_type: email_send
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD
 
 # Calendar
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 calendar_conflict:
   action_type: calendar_modify
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 300
-  status: active
+  status: stub
+  producer: TBD
 
 appointment_needed:
   action_type: email_send
@@ -71,82 +88,102 @@ appointment_needed:
   status: active
 
 # Email
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 email_needs_reply:
   action_type: email_reply
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD
 
 # Social
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 birthday_approaching:
   action_type: whatsapp_send
   friction: standard
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD (priority P0 — implement occasion_tracker.py skill)
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 birthday_in_7d:
   action_type: whatsapp_send
   friction: standard
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD (priority P0 — implement occasion_tracker.py skill)
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 life_event_detected:
   action_type: email_send
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD
 
 # Kids
+# DEBT-SIG-002/SIG-003: missing_assignment route unreachable — email_signal_extractor
+# emits school_action_needed for all school emails; no separate producer exists.
+# Downgraded to stub. school_action_needed covers this case.
 missing_assignment:
   action_type: email_send
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD (school_action_needed covers this — revisit when dedicated school skill built)
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 school_event_rsvp:
   action_type: email_reply
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD
 
 # Immigration
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub (priority P0 — high impact)
 immigration_deadline:
   action_type: email_send
   friction: high
   min_trust: 1
   reversible: true
   undo_window_sec: 30
-  status: active
+  status: stub
+  producer: TBD (priority P0 — implement immigration_monitor.py skill)
 
 # Health
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub (priority P0 — health)
 prescription_refill:
   action_type: instruction_sheet
   friction: standard
   min_trust: 2
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD (priority P0)
 
 # Vehicle
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub (priority P1)
 vehicle_recall:
   action_type: instruction_sheet
   friction: standard
   min_trust: 2
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD (priority P1)
 
 # Insurance
 insurance_renewal:
@@ -158,13 +195,15 @@ insurance_renewal:
   status: active
 
 # Open Items
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 open_item_aging:
   action_type: reminder_create
   friction: low
   min_trust: 2
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
 open_item_overdue:
   action_type: reminder_create
@@ -175,13 +214,15 @@ open_item_overdue:
   status: active
 
 # Generic calendar creation
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 event_invitation:
   action_type: calendar_create
   friction: standard
   min_trust: 1
   reversible: true
   undo_window_sec: 300
-  status: active
+  status: stub
+  producer: TBD
 
 # IoT / Home (ARTHA-IOT Wave 1+2)
 device_offline:
@@ -224,13 +265,15 @@ spa_maintenance:
   undo_window_sec: null
   status: active
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 security_travel_conflict:
   action_type: instruction_sheet
   friction: high
   min_trust: 0
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
 # E1 — Email Signal Extractor
 event_rsvp_needed:
@@ -285,13 +328,15 @@ form_deadline:
 # decision_detected: removed in v1.3.0 — no handler exists; scheduled for V1.1
 
 # E6 — Subscription Lifecycle (extended)
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 subscription_trial_ending:
   action_type: instruction_sheet
   friction: low
   min_trust: 2
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
 subscription_renewal_upcoming:
   action_type: instruction_sheet
@@ -417,29 +462,35 @@ career_eval_complete:
   undo_window_sec: null
   status: stub
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 career_interview_scheduled:
   action_type: instruction_sheet
   friction: standard
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 career_offer_received:
   action_type: instruction_sheet
   friction: high
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
+# DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 career_offer_deadline:
   action_type: instruction_sheet
   friction: high
   min_trust: 1
   reversible: false
   undo_window_sec: null
-  status: active
+  status: stub
+  producer: TBD
 
 career_application_rejected:
   action_type: instruction_sheet
@@ -482,3 +533,14 @@ slack_action_item:
   reversible: false
   undo_window_sec: null
   status: active
+
+# DEBT-SIG-005: forward declaration for planned work-life boundary detection via Slack timestamp
+slack_after_hours:
+  action_type: reminder_create
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: stub
+  producer: pipeline.py (timestamp-based, not pattern-based)
+  description: "Slack message received outside work_hours — work-life boundary alert"

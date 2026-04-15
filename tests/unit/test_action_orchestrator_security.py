@@ -512,7 +512,7 @@ def test_ai_signals_malformed_json_skipped(artha_dir):
     ai_path.write_text(
         "this is not json\n"
         '{"signal_type": "calendar_conflict", "domain": "calendar", "entity": "meeting-1", '
-        '"urgency": 5, "impact": 5, "source": "ai"}\n'
+        '"urgency": 2, "impact": 2, "source": "ai"}\n'
         "{bad json again\n"
     )
 
@@ -534,12 +534,12 @@ def test_ai_signals_missing_required_fields(artha_dir):
     ai_path = artha_dir / "tmp" / "ai_signals.jsonl"
     ai_path.write_text(
         # Missing signal_type
-        '{"domain": "calendar", "entity": "meeting-1", "urgency": 5, "impact": 5, "source": "ai"}\n'
+        '{"domain": "calendar", "entity": "meeting-1", "urgency": 2, "impact": 2, "source": "ai"}\n'
         # Missing entity
-        '{"signal_type": "calendar_conflict", "domain": "calendar", "urgency": 5, "impact": 5, "source": "ai"}\n'
+        '{"signal_type": "calendar_conflict", "domain": "calendar", "urgency": 2, "impact": 2, "source": "ai"}\n'
         # All required fields present — valid
         '{"signal_type": "calendar_conflict", "domain": "calendar", "entity": "meeting-2", '
-        '"urgency": 5, "impact": 5, "source": "ai"}\n'
+        '"urgency": 2, "impact": 2, "source": "ai"}\n'
     )
 
     signals = _load_ai_signals(ai_path)
@@ -560,13 +560,13 @@ def test_ai_signals_injection_signal_type(artha_dir):
     ai_path.write_text(
         # Spoofed as email_extractor
         '{"signal_type": "bill_due", "domain": "finance", "entity": "electric-bill", '
-        '"urgency": 8, "impact": 8, "source": "email_extractor"}\n'
+        '"urgency": 2, "impact": 2, "source": "email_extractor"}\n'
         # Spoofed as pattern_engine
         '{"signal_type": "goal_stale", "domain": "goals", "entity": "fitness", '
-        '"urgency": 5, "impact": 5, "source": "pattern_engine"}\n'
+        '"urgency": 2, "impact": 2, "source": "pattern_engine"}\n'
         # Legitimate ai source — must pass through
         '{"signal_type": "calendar_conflict", "domain": "calendar", "entity": "meeting-1", '
-        '"urgency": 5, "impact": 5, "source": "ai"}\n'
+        '"urgency": 2, "impact": 2, "source": "ai"}\n'
     )
 
     signals = _load_ai_signals(ai_path)
@@ -607,3 +607,74 @@ def test_ai_signal_friction_always_escalated(artha_dir):
     )
     # Frozen dataclass replace → original unchanged
     assert proposal.friction == "low"
+
+
+# ---------------------------------------------------------------------------
+# DEBT-SIG-006: Urgency/impact range validation in _load_ai_signals()
+# ---------------------------------------------------------------------------
+
+def test_ai_signals_urgency_out_of_range_rejected(artha_dir):
+    """DEBT-SIG-006: urgency > 3 must be rejected; valid record still loads."""
+    from action_orchestrator import _load_ai_signals
+
+    ai_path = artha_dir / "tmp" / "ai_signals.jsonl"
+    ai_path.write_text(
+        # urgency=4 is out of range (0-3)
+        '{"signal_type": "calendar_conflict", "domain": "calendar", "entity": "bad-1", '
+        '"urgency": 4, "impact": 2, "source": "ai"}\n'
+        # urgency=0 is valid (boundary)
+        '{"signal_type": "goal_stale", "domain": "goals", "entity": "good-1", '
+        '"urgency": 0, "impact": 3, "source": "ai"}\n'
+    )
+    signals = _load_ai_signals(ai_path)
+    assert len(signals) == 1
+    assert signals[0].entity == "good-1"
+    assert signals[0].urgency == 0
+    assert signals[0].impact == 3
+
+
+def test_ai_signals_impact_out_of_range_rejected(artha_dir):
+    """DEBT-SIG-006: impact < 0 must be rejected."""
+    from action_orchestrator import _load_ai_signals
+
+    ai_path = artha_dir / "tmp" / "ai_signals.jsonl"
+    ai_path.write_text(
+        '{"signal_type": "bill_due", "domain": "finance", "entity": "bad-impact", '
+        '"urgency": 2, "impact": -1, "source": "ai"}\n'
+        '{"signal_type": "bill_due", "domain": "finance", "entity": "good-impact", '
+        '"urgency": 2, "impact": 0, "source": "ai"}\n'
+    )
+    signals = _load_ai_signals(ai_path)
+    assert len(signals) == 1
+    assert signals[0].entity == "good-impact"
+
+
+def test_ai_signals_non_integer_urgency_rejected(artha_dir):
+    """DEBT-SIG-006: Non-integer urgency must be rejected gracefully."""
+    from action_orchestrator import _load_ai_signals
+
+    ai_path = artha_dir / "tmp" / "ai_signals.jsonl"
+    ai_path.write_text(
+        '{"signal_type": "bill_due", "domain": "finance", "entity": "bad-str", '
+        '"urgency": "high", "impact": 2, "source": "ai"}\n'
+        '{"signal_type": "bill_due", "domain": "finance", "entity": "good-int", '
+        '"urgency": 2, "impact": 2, "source": "ai"}\n'
+    )
+    signals = _load_ai_signals(ai_path)
+    assert len(signals) == 1
+    assert signals[0].entity == "good-int"
+
+
+def test_ai_signals_boundary_urgency_3_accepted(artha_dir):
+    """DEBT-SIG-006: urgency=3 and impact=3 (max boundary) must be accepted."""
+    from action_orchestrator import _load_ai_signals
+
+    ai_path = artha_dir / "tmp" / "ai_signals.jsonl"
+    ai_path.write_text(
+        '{"signal_type": "bill_due", "domain": "finance", "entity": "max-urgency", '
+        '"urgency": 3, "impact": 3, "source": "ai"}\n'
+    )
+    signals = _load_ai_signals(ai_path)
+    assert len(signals) == 1
+    assert signals[0].urgency == 3
+    assert signals[0].impact == 3

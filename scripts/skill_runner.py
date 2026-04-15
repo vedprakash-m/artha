@@ -114,7 +114,13 @@ def load_cache() -> Dict[str, Any]:
         return {}
     try:
         with open(CACHE_FILE, "r") as f:
-            return json.load(f)
+            cache = json.load(f)
+        # DEBT-MEM-002: enforce size cap at read time — a cache written before the cap
+        # existed (or grown via conflict copy) may exceed 1MB; trim it now.
+        if len(json.dumps(cache, indent=2).encode("utf-8")) > _CACHE_MAX_BYTES:
+            logging.warning("SKILLS_CACHE_CAP_ENFORCED_AT_READ: cache exceeds 1MB — trimming")
+            cache = _enforce_cache_size_cap(cache)
+        return cache
     except Exception as e:
         logging.error(f"Failed to load cache: {e}")
         return {}
@@ -406,6 +412,10 @@ def main():
     if "ai_trend_radar" in enabled_skills:
         write_radar_trend_scan_bridge()
 
+    # Bridge: seed gallery.yaml with LinkedIn ideas from radar backlog (runs always —
+    # backlog persists across radar cycles, so new cards can be seeded any run)
+    write_radar_content_cards()
+
     # Write timing metrics (deprecated — timing now in unified cache health sub-dict).
     # Kept for backward compatibility with any external tooling that reads the file.
     _write_skills_metrics(skill_timing, total_elapsed)
@@ -490,6 +500,132 @@ def write_radar_trend_scan_bridge(
         logging.warning("write_radar_trend_scan_bridge: could not write %s: %s", dst, e)
         return 0
     return len(trends)
+
+
+def write_radar_content_cards(
+    backlog_path: Path | None = None,
+    gallery_path: Path | None = None,
+    min_relevance: float = 0.50,
+    max_new_cards: int = 10,
+) -> int:
+    """Seed state/gallery.yaml with LinkedIn content ideas from state/radar_backlog.yaml.
+
+    Reads active radar signals that have a linkedin_angle set and relevance_score
+    above min_relevance, then inserts seed ContentCards so the `content` command
+    surfaces them for review.  Idempotent — deduplicates by occasion string.
+
+    Returns the number of new cards written.
+    """
+    src = backlog_path or (ARTHA_DIR / "state" / "radar_backlog.yaml")
+    dst = gallery_path or (ARTHA_DIR / "state" / "gallery.yaml")
+
+    if not src.exists():
+        logging.debug("write_radar_content_cards: no backlog at %s", src)
+        return 0
+
+    try:
+        raw = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
+        signals = raw.get("signals", [])
+    except Exception as e:
+        logging.warning("write_radar_content_cards: could not read %s: %s", src, e)
+        return 0
+
+    candidates = [
+        s for s in signals
+        if s.get("status") == "active"
+        and s.get("linkedin_angle", "").strip()
+        and s.get("relevance_score", 0.0) >= min_relevance
+    ]
+    if not candidates:
+        logging.debug("write_radar_content_cards: no qualifying signals (threshold=%.2f)", min_relevance)
+        return 0
+
+    gallery: dict = {"schema_version": "1.0", "last_updated": "", "cards": []}
+    if dst.exists():
+        try:
+            loaded = yaml.safe_load(dst.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                gallery = loaded
+        except Exception as e:
+            logging.warning("write_radar_content_cards: could not read %s: %s", dst, e)
+
+    existing_cards: list[dict] = gallery.get("cards") or []
+    existing_occasions = {c.get("occasion", "").lower() for c in existing_cards}
+
+    # Find max card sequence for current year to generate unique IDs
+    today = datetime.now(timezone.utc)
+    year = today.year
+    year_prefix = f"CARD-{year}-"
+    max_seq = 0
+    for c in existing_cards:
+        cid = c.get("id", "")
+        if cid.startswith(year_prefix):
+            try:
+                max_seq = max(max_seq, int(cid[len(year_prefix):]))
+            except ValueError:
+                pass
+
+    now_iso = today.isoformat()
+    new_cards: list[dict] = []
+
+    for sig in candidates[:max_new_cards]:
+        topic = sig.get("topic", "").strip()
+        angle = sig.get("linkedin_angle", "").strip()
+        occasion = f"AI trend: {topic}"
+
+        if occasion.lower() in existing_occasions:
+            continue
+
+        max_seq += 1
+        card: dict = {
+            "id":               f"CARD-{year}-{max_seq:03d}",
+            "occasion":         occasion,
+            "occasion_type":    "ai_trend",
+            "event_date":       today.date().isoformat(),
+            "created_at":       now_iso,
+            "status":           "seed",
+            "primary_thread":   angle,
+            "alt_threads":      [],
+            "convergence_score": round(sig.get("relevance_score", 0.5), 3),
+            "flags":            [],
+            "platform_exclude": [],
+            "personalization":  {
+                "source":      "radar",
+                "signal_id":   sig.get("id", ""),
+                "category":    sig.get("category", ""),
+                "source_url":  sig.get("best_source_url", ""),
+            },
+            "drafts":           {},
+            "visual":           {},
+            "posting_window":   {},
+            "archived_at":      None,
+            "dismissed_reason": "",
+            "reception":        {},
+        }
+        new_cards.append(card)
+        existing_occasions.add(occasion.lower())
+
+    if not new_cards:
+        logging.debug("write_radar_content_cards: all qualifying signals already in gallery")
+        return 0
+
+    existing_cards.extend(new_cards)
+    gallery["cards"] = existing_cards
+    gallery["last_updated"] = now_iso
+
+    try:
+        dst.write_text(
+            yaml.dump(gallery, default_flow_style=False, allow_unicode=True,
+                      sort_keys=False, width=120),
+            encoding="utf-8",
+        )
+        logging.info("RADAR_CONTENT_CARDS | added=%d seed card(s) to %s",
+                     len(new_cards), dst.name)
+    except OSError as e:
+        logging.warning("write_radar_content_cards: could not write %s: %s", dst, e)
+        return 0
+
+    return len(new_cards)
 
 
 def write_newsletter_jsonl(emails: List[Dict[str, Any]], output_path: Path | None = None) -> int:

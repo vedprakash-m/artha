@@ -390,6 +390,17 @@ class IdempotencyStore:
     # Private I/O
     # ------------------------------------------------------------------
 
+    def get_entry(self, key: str) -> dict:
+        """Return the store entry for *key*, or {} if not found. (DEBT-EXEC-001)
+
+        Public alternative to the private _load() pattern:
+            store._load().get(key, {})  ← breaks if _load() is renamed
+
+        Use this method anywhere you need to inspect a single entry's state
+        without owning the full store lifecycle.
+        """
+        return self._load().get(key, {})
+
     def _load(self) -> dict:
         """Load the store from disk.  Returns empty dict if file is missing/corrupt."""
         try:

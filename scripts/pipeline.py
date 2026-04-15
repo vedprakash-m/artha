@@ -83,13 +83,10 @@ except ImportError:
     _TripwireResult = None  # type: ignore[assignment]
     _GUARDRAILS_AVAILABLE = False
 
-# DEBT-009: Schema-on-write validation for connector records.
-try:
-    from schemas.connector_record import validate_record as _validate_connector_record  # type: ignore[import]
-    _SCHEMA_VALIDATION_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    _validate_connector_record = None  # type: ignore[assignment]
-    _SCHEMA_VALIDATION_AVAILABLE = False
+# DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation — hard import (never optional).
+# If schemas/ is missing from sys.path the ImportError surfaces at startup with a clear message.
+from schemas.connector_record import validate_record as _validate_connector_record  # noqa: E402
+_SCHEMA_VALIDATION_AVAILABLE = True  # kept for backward compat with any external references
 
 _log = get_logger("pipeline")
 
@@ -241,6 +238,34 @@ def _normalize_connectors(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _write_platform_skip_sentinel(
+    connector_name: str,
+    current_platform: str,
+    run_on: object,
+) -> None:
+    """DEBT-SYNC-001: Write a sentinel JSON to state/connectors/ when a connector is
+    platform-skipped.  Other machines (or preflight) can inspect the sentinel to
+    distinguish intentional-skip from stale-connector scenarios.
+
+    File: state/connectors/<name>_platform_skipped.json
+    """
+    import json as _json_sent
+    _artha_dir_sent = Path(__file__).resolve().parent.parent
+    sentinel_dir = _artha_dir_sent / "state" / "connectors"
+    try:
+        sentinel_dir.mkdir(parents=True, exist_ok=True)
+        sentinel_path = sentinel_dir / f"{connector_name}_platform_skipped.json"
+        payload = {
+            "connector": connector_name,
+            "skipped_on_platform": current_platform,
+            "run_on": run_on if isinstance(run_on, list) else [run_on],
+            "skipped_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        sentinel_path.write_text(_json_sent.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass  # sentinel writes are best-effort — never crash the pipeline
+
+
 def _enabled_connectors(
     cfg: dict[str, Any], source_filter: list[str] | None
 ) -> list[dict[str, Any]]:
@@ -261,6 +286,9 @@ def _enabled_connectors(
                     f"platform {current_platform} not in run_on: {run_on}",
                     file=sys.stderr,
                 )
+                # DEBT-SYNC-001: write a platform-skipped sentinel so other machines know
+                # this connector was intentionally skipped (not stale) on this platform.
+                _write_platform_skip_sentinel(conn["name"], current_platform, run_on)
                 continue
         result.append(conn)
     return result
@@ -291,27 +319,16 @@ def _load_handler(handler_path: str) -> Any:
         if not module_name.startswith(_CONNECTOR_PKG + "."):
             module_name = _CONNECTOR_PKG + "." + module_name.split(".")[-1]
 
-    # Also check for user-contributed plugins in ~/.artha-plugins/connectors/
-    _plugins_dir = Path.home() / ".artha-plugins" / "connectors"
-    _plugin_module = module_name.split(".")[-1]  # e.g. "google_email"
-    _plugin_path = _plugins_dir / f"{_plugin_module}.py"
-
-    if module_name not in _ALLOWED_MODULES and not _plugin_path.exists():
+    # DEBT-PLUG-001: Hard allowlist enforcement — no filesystem plugin scan.
+    # _ALLOWED_MODULES is a genuine security boundary; YAML cannot override it.
+    # To add a connector: register it in _ALLOWED_MODULES + connectors.yaml via PR.
+    if module_name not in _ALLOWED_MODULES:
         raise ImportError(
             f"Handler '{module_name}' is not in the connector allowlist. "
-            f"Allowed: {sorted(_ALLOWED_MODULES)}. "
-            f"Or place a plugin at {_plugin_path}."
+            f"To add a connector, register it in _ALLOWED_MODULES and connectors.yaml. "
+            f"Allowed: {sorted(_ALLOWED_MODULES)}."
         )
     try:
-        if module_name not in _ALLOWED_MODULES and _plugin_path.exists():
-            # Load user-contributed plugin from filesystem
-            import importlib.util as _ilu
-            spec = _ilu.spec_from_file_location(module_name, _plugin_path)
-            if spec is None or spec.loader is None:
-                raise ImportError(f"Cannot create module spec for plugin: {_plugin_path}")
-            mod = _ilu.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
         return importlib.import_module(module_name)
     except ImportError as exc:
         raise ImportError(
@@ -374,24 +391,22 @@ def _fetch_one(
             source_tag=name,
             **extra_kwargs,
         ):
-            # DEBT-009: Schema-on-write validation at the system boundary.
-            # Malformed records (missing id/source/date_iso) are SKIPPED with
-            # a WARNING — they do not crash the pipeline.
-            if _SCHEMA_VALIDATION_AVAILABLE and _validate_connector_record is not None:
-                try:
-                    _validate_connector_record(record)
-                except (TypeError, ValueError) as _vex:
-                    _val_errors[0] += 1
-                    _log.warning(
-                        "schema.validation_error",
-                        connector=name,
-                        error=str(_vex),
-                    )
-                    print(
-                        f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
-                        file=sys.stderr,
-                    )
-                    continue
+            # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
+            # Malformed records are SKIPPED with a WARNING (never crash pipeline).
+            try:
+                _validate_connector_record(record)
+            except (TypeError, ValueError) as _vex:
+                _val_errors[0] += 1
+                _log.warning(
+                    "schema.validation_error",
+                    connector=name,
+                    error=str(_vex),
+                )
+                print(
+                    f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
+                    file=sys.stderr,
+                )
+                continue
             lines.append(json.dumps(record, ensure_ascii=False, default=str))
             count += 1
         return count
@@ -950,6 +965,22 @@ def run_pipeline(
         _run_bridge_push(_REPO_ROOT, dry_run=dry_run)
     except Exception as _exc:
         print(f"[pipeline] WARNING: bridge push failed: {_exc}", file=sys.stderr)
+
+    # DEBT-WORK-001: Write last_personal_pipeline_run to bridge artifact so work
+    # OS can check personal freshness without reading personal state files directly.
+    try:
+        import json as _json_bp
+        _pulse_path = _REPO_ROOT / "state" / "bridge" / "work_load_pulse.json"
+        if _pulse_path.exists():
+            _pulse = _json_bp.loads(_pulse_path.read_text(encoding="utf-8"))
+        else:
+            _pulse = {}
+        _pulse["last_personal_pipeline_run"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _pulse["pipeline_status"] = "ok"
+        _pulse_path.parent.mkdir(parents=True, exist_ok=True)
+        _pulse_path.write_text(_json_bp.dumps(_pulse, indent=2), encoding="utf-8")
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: bridge freshness update failed: {_exc}", file=sys.stderr)
 
     # ── Bridge Health section in health-check.md (spec §13) ─────────────────
     try:

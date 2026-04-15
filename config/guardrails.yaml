@@ -8,8 +8,10 @@
 #
 # Ref: specs/agent-fw.md §3.1 (AFW-1)
 
-wave0_gate: hard  # Raise GateBlockedError if wave0.complete is false (hard block)
-                  # Override: --force-wave0 --justification "<reason>" (writes to telemetry + audit.md)
+wave0_gate: hard  # DEBT-GUARD-001: Now enforced. Raises RuntimeError in all guarded paths
+                  # when harness.wave0.complete=false (hard) or bypasses with WARNING (soft).
+                  # Override: set env ARTHA_WAVE0_OVERRIDE=<reason> — writes to state/audit.md.
+                  # Tests: set ARTHA_WAVE0_OVERRIDE=pytest in conftest.py fixture.
 
 # ── Idempotency Windows (specs/harden.md §2.3.2) ──────────────────────────────
 # Deduplication window per action type.  Parsed by scripts/lib/idempotency.py.
