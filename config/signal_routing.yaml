@@ -265,6 +265,39 @@ spa_maintenance:
   undo_window_sec: null
   status: active
 
+# Home Intelligence skill signals (Part 1: motion triage, Part 2: anomaly scan)
+motion_alert:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+
+temperature_anomaly:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+
+camera_offline:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+
+presence_anomaly:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 security_travel_conflict:
   action_type: instruction_sheet
