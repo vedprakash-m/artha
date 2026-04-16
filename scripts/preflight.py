@@ -175,7 +175,7 @@ def check_vault_health() -> CheckResult:
     )
 
 
-def check_vault_lock(auto_fix: bool = False) -> CheckResult:
+def check_vault_lock(auto_fix: bool = False) -> "CheckResult":
     """Check for active or stale session lock file.
 
     Stale locks (age > 30m OR locking PID no longer running) are auto-cleared

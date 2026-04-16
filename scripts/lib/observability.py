@@ -28,8 +28,22 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Env-gate: tracing is opt-in.  Set ARTHA_LLM_TRACE=1 to enable.
+# Env-gate: ARTHA_LLM_TRACE=1 enables tracing (opt-in via env).
+# RD-49: artha_config.yaml → observability.llm_trace_enabled also enables it (opt-out default).
 _TRACE_ENV = "ARTHA_LLM_TRACE"
+
+
+def _is_trace_enabled() -> bool:
+    """Return True if LLM tracing is enabled (env var OR config flag)."""
+    if os.environ.get(_TRACE_ENV, "").strip():
+        return True
+    # Config-based opt-out (RD-49): enabled by default unless explicitly disabled
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config")
+        return bool((cfg.get("pipeline") or {}).get("observability", {}).get("llm_trace_enabled", True))
+    except Exception:  # noqa: BLE001
+        return False
 
 # Resolved once at module import — immutable thereafter.
 def _default_trace_path() -> Path:
@@ -63,7 +77,7 @@ def llm_trace(
         metadata:           Additional key-value pairs to include in the record.
         trace_file:         Override default trace file path (for testing).
     """
-    if not os.environ.get(_TRACE_ENV, "").strip():
+    if not _is_trace_enabled():
         return
 
     record: dict[str, Any] = {

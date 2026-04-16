@@ -1109,6 +1109,99 @@ def analyze_freshness() -> dict[str, Any]:
     return result
 
 
+def _count_stub_signals() -> tuple[int, int]:
+    """RD-04: Count stub signals in config/signal_routing.yaml.
+
+    Returns (stub_count, p0_count) where:
+      - stub_count: total signals with status == "stub"
+      - p0_count:   stub signals also flagged as priority P0
+    """
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        _routing_path = Path(__file__).resolve().parent.parent / "config" / "signal_routing.yaml"
+        if not _routing_path.exists():
+            return 0, 0
+        routing = _yaml.safe_load(_routing_path.read_text(encoding="utf-8")) or {}
+        # Signal types are top-level keys (not nested under a 'signals' sub-key)
+        stub_count = 0
+        p0_count = 0
+        for _name, cfg in routing.items():
+            if not isinstance(cfg, dict):
+                continue
+            if cfg.get("status") == "stub":
+                stub_count += 1
+                if str(cfg.get("priority", "")).upper() == "P0":
+                    p0_count += 1
+        return stub_count, p0_count
+    except Exception:  # noqa: BLE001
+        return 0, 0
+
+
+def analyze_pipeline() -> dict[str, Any]:
+    """RD-43: Analyze signal pipeline funnel metrics.
+
+    Loads tmp/signal_metrics.json and tmp/orchestrator_metrics.json written
+    by email_signal_extractor.py and action_orchestrator.py respectively.
+
+    Returns:
+        Dict with conversion_rate, idempotency_hit_rate, signals_by_type,
+        orphan_alert (True if any signal type has 100% orphan rate).
+    """
+    import json as _json  # noqa: PLC0415
+    _artha_dir = Path(__file__).resolve().parent.parent
+    _tmp = _artha_dir / "tmp"
+
+    sig_metrics: dict[str, Any] = {}
+    orch_metrics: dict[str, Any] = {}
+
+    try:
+        sig_path = _tmp / "signal_metrics.json"
+        if sig_path.exists():
+            sig_metrics = _json.loads(sig_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        pass
+
+    try:
+        orch_path = _tmp / "orchestrator_metrics.json"
+        if orch_path.exists():
+            orch_metrics = _json.loads(orch_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        pass
+
+    if not sig_metrics and not orch_metrics:
+        return {"status": "no_data", "note": "Run pipeline first to generate metrics"}
+
+    signals_in = int(orch_metrics.get("signals_in", sig_metrics.get("signals_extracted", 0)))
+    proposals_queued = int(orch_metrics.get("proposals_queued", 0))
+    suppressed = int(orch_metrics.get("proposals_suppressed_duplicates", 0))
+
+    conversion_rate = round(proposals_queued / signals_in, 3) if signals_in > 0 else 0.0
+    orphan_rate = round(1.0 - conversion_rate, 3) if signals_in > 0 else 1.0
+
+    signals_by_type: dict[str, int] = sig_metrics.get("signals_by_type", {})
+
+    result: dict[str, Any] = {
+        "run_at": orch_metrics.get("run_at") or sig_metrics.get("run_at"),
+        "emails_processed": sig_metrics.get("emails_processed", 0),
+        "signals_extracted": sig_metrics.get("signals_extracted", 0),
+        "signals_in_orchestrator": signals_in,
+        "proposals_queued": proposals_queued,
+        "proposals_suppressed": suppressed,
+        "conversion_rate": conversion_rate,
+        "orphan_rate": orphan_rate,
+        "signals_by_type": signals_by_type,
+        # Alert: 100% orphan rate means zero proposals for any extracted signals
+        "orphan_alert": signals_in > 0 and proposals_queued == 0,
+    }
+
+    # RD-04: Stub signal inventory — track unimplemented signal coverage gaps
+    stub_count, p0_count = _count_stub_signals()
+    result["stub_signal_count"] = stub_count
+    result["stub_p0_count"] = p0_count
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
@@ -1304,6 +1397,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--quality", action="store_true", help="Quality score analysis (reads state/briefing_scores.json)")
     parser.add_argument("--log-health", action="store_true", help="Log digest + anomaly report (reads tmp/log_digest.json)")
     parser.add_argument("--memory", action="store_true", help="Memory pipeline health analysis")
+    parser.add_argument("--pipeline", action="store_true", help="RD-43: Signal pipeline funnel metrics (conversion rate, orphan rate)")
     parser.add_argument("--summary", action="store_true", help="Dashboard summary across all dimensions")
     parser.add_argument("--agents", action="store_true", help="AR-9 external agent invocation metrics")
     parser.add_argument("--agent", metavar="NAME", help="AR-9 filter metrics to a specific agent")
@@ -1476,6 +1570,34 @@ def main(argv: list[str] | None = None) -> int:
     perf = analyze_performance(args.trend) if not args.accuracy and not args.freshness else {}
     accuracy = analyze_accuracy() if not args.perf and not args.freshness else {}
     freshness = analyze_freshness() if not args.perf and not args.accuracy else {}
+
+    # --pipeline: RD-43 signal funnel metrics
+    if args.pipeline:
+        data = analyze_pipeline()
+        if args.json:
+            print(json.dumps(data, indent=2))
+        else:
+            lines = ["━━ SIGNAL PIPELINE METRICS (RD-43) ━━━━━━━━━━━━━━━━━━━━━━━━"]
+            if data.get("status") == "no_data":
+                lines.append("  No metrics data — run pipeline first.")
+            else:
+                lines.append(f"  Emails processed : {data.get('emails_processed', '?')}")
+                lines.append(f"  Signals extracted: {data.get('signals_extracted', '?')}")
+                lines.append(f"  Proposals queued : {data.get('proposals_queued', '?')}")
+                lines.append(f"  Suppressed dupes : {data.get('proposals_suppressed', '?')}")
+                lines.append(f"  Conversion rate  : {data.get('conversion_rate', 0):.1%}")
+                lines.append(f"  Orphan rate      : {data.get('orphan_rate', 0):.1%}")
+                if data.get("orphan_alert"):
+                    lines.append("  ⚠  ORPHAN ALERT: All signals produced zero proposals — check signal routing")
+                by_type = data.get("signals_by_type", {})
+                if by_type:
+                    lines.append("")
+                    lines.append("  Signals by type:")
+                    for stype, count in sorted(by_type.items()):
+                        lines.append(f"    {stype:<32}: {count}")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print("\n".join(lines))
+        return 0
 
     if args.json:
         output = {}

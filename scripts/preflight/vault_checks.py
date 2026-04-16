@@ -144,3 +144,53 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
     )
 
 
+def check_vault_watchdog() -> CheckResult:
+    """RD-40: P1 advisory — verify vault watchdog daemon is installed.
+
+    The watchdog (com.artha.vault-watchdog) re-encrypts plaintext within
+    5 minutes of a SIGKILL/OOM crash.  Without it plaintext may remain
+    exposed indefinitely after an unclean exit.
+    """
+    import platform as _platform  # noqa: PLC0415
+    check_name = "vault watchdog daemon"
+
+    if _platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["launchctl", "list", "com.artha.vault-watchdog"],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return CheckResult(check_name, "P1", True, "Vault watchdog loaded ✓")
+            return CheckResult(
+                check_name, "P1", False,
+                "Vault watchdog not loaded — plaintext may be exposed after SIGKILL",
+                fix_hint=(
+                    "Install: cp scripts/service/com.artha.vault-watchdog.plist "
+                    "~/Library/LaunchAgents/ && "
+                    "sed -i '' \"s|{{PYTHON_EXE}}|$(which python3)|g\" "
+                    "~/Library/LaunchAgents/com.artha.vault-watchdog.plist && "
+                    "launchctl load ~/Library/LaunchAgents/com.artha.vault-watchdog.plist"
+                ),
+            )
+        except Exception:  # noqa: BLE001
+            return CheckResult(check_name, "P1", False, "Could not check watchdog status (launchctl unavailable)")
+    elif _platform.system() == "Windows":
+        try:
+            result = subprocess.run(
+                ["schtasks", "/Query", "/TN", "ArthaVaultWatchdog"],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return CheckResult(check_name, "P1", True, "Vault watchdog scheduled task found ✓")
+            return CheckResult(
+                check_name, "P1", False,
+                "Vault watchdog scheduled task not found",
+                fix_hint="See scripts/service/artha-vault-watchdog.xml for installation instructions",
+            )
+        except Exception:  # noqa: BLE001
+            return CheckResult(check_name, "P1", False, "Could not check watchdog status (schtasks unavailable)")
+    else:
+        return CheckResult(check_name, "P1", True, "Platform not macOS/Windows — watchdog not applicable ✓")
+
+

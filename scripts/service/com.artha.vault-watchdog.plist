@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.artha.vault-watchdog.plist — macOS LaunchAgent for Artha Vault Watchdog.
+
+  RD-40: Vault watchdog daemon — runs every 5 minutes to detect and clean up
+  stale vault decrypt sessions caused by SIGKILL or OOM events.
+
+  If a stale lock file exists and the locking PID is no longer running,
+  this daemon triggers vault re-encryption BEFORE clearing the lock.
+  This bounds the plaintext exposure window to ≤5 minutes after a crash.
+
+  Install:
+    cp scripts/service/com.artha.vault-watchdog.plist \
+       ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+    # Replace {{PYTHON_EXE}} and {{ARTHA_ROOT}} with actual paths:
+    sed -i '' "s|{{PYTHON_EXE}}|$(which python3)|g" \
+       ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+    sed -i '' "s|{{ARTHA_ROOT}}|$HOME/OneDrive-Personal/Artha|g" \
+       ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+    launchctl load ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+
+  Verify:
+    launchctl list com.artha.vault-watchdog
+    # Logs written to ~/Library/Logs/artha-vault-watchdog.log
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+    rm ~/Library/LaunchAgents/com.artha.vault-watchdog.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.artha.vault-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{PYTHON_EXE}}</string>
+    <string>{{ARTHA_ROOT}}/scripts/vault.py</string>
+    <string>watchdog</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{ARTHA_ROOT}}</string>
+
+  <!-- Run every 5 minutes (300 seconds) -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <!-- Run immediately on load, not just on interval -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- Restart on crash (not expected, but safe default) -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>{{ARTHA_ROOT}}/tmp/vault-watchdog.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{ARTHA_ROOT}}/tmp/vault-watchdog.log</string>
+
+  <!-- Run as the current user (LaunchAgent, not LaunchDaemon) -->
+  <!-- No UserName key needed — LaunchAgents run as the loading user -->
+
+  <!-- Environment: ensure Python can find scripts/ and lib/ -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>{{ARTHA_ROOT}}/scripts</string>
+    <key>ARTHA_DIR</key>
+    <string>{{ARTHA_ROOT}}</string>
+  </dict>
+</dict>
+</plist>

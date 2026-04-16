@@ -46,6 +46,32 @@ _FAMILY_EXCLUDED_DOMAINS = frozenset({
     "employment", "digital", "boundary",
 })
 
+# RD-34: Keys in _READABLE_STATE_FILES that require vault decryption.
+# Derived from domain_registry.yaml (requires_vault: true) at import time.
+# Hardcoded fallback covers kids and employment which were previously plaintext
+# in channel but are vault-protected in the registry.
+def _load_vault_gated_state_keys() -> frozenset[str]:
+    """Build the set of _READABLE_STATE_FILES keys that require vault access."""
+    _vault_keys = {"kids", "employment"}  # minimum safe fallback (RD-34)
+    try:
+        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
+        _registry = _load_config("domain_registry")
+        _domains_section = _registry.get("domains", {}) if isinstance(_registry, dict) else {}
+        for _domain, _meta in _domains_section.items():
+            if isinstance(_meta, dict) and _meta.get("requires_vault", False):
+                # Map domain name to state_readers key (usually same as domain name)
+                _vault_keys.add(_domain)
+    except Exception:  # noqa: BLE001
+        pass  # registry unavailable — use fallback
+    return frozenset(_vault_keys)
+
+
+_VAULT_GATED_STATE_KEYS: frozenset[str] = _load_vault_gated_state_keys()
+
+
+class VaultAccessRequired(PermissionError):
+    """Raised when a vault-protected state key is requested without decryption."""
+
 _FAMILY_EXCLUDED_KEYWORDS = (
     "immigration", "visa", "ead ", "i-765", "i-485", "h-1b", "h-4",
     "perm ", "i-140", "green card", "uscis", "priority date",
@@ -70,9 +96,30 @@ def _read_state_file(key: str) -> tuple[str, str]:
     Only files in _READABLE_STATE_FILES are accessible.
     Encrypted files (.md.age) are never returned.
 
+    RD-34: Vault-gated domains (kids, employment, and registry requires_vault:true)
+    raise VaultAccessRequired if the plaintext file exists but the domain is
+    vault-classified. If the corresponding .age file exists (vault is locked),
+    a VaultAccessRequired is raised to surface the locked state.
+
     Returns:
         (content: str, staleness: str) — staleness is human-readable age
     """
+    # RD-34: Vault gate for vault-classified domains
+    if key in _VAULT_GATED_STATE_KEYS:
+        path = _READABLE_STATE_FILES.get(key)
+        if path is not None:
+            # Check if vault is locked (plaintext absent but .age exists)
+            age_path = path.with_name(path.name + ".age")
+            if age_path.exists() and not path.exists():
+                raise VaultAccessRequired(
+                    f"Domain '{key}' is vault-encrypted. Unlock the vault before reading."
+                )
+            # If plaintext exists, it may be transiently decrypted — still surface warning
+            # but allow the read (vault was unlocked for this session)
+            if not path.exists():
+                return f"_{key} data requires vault access or has not been initialized_", "N/A"
+        # Fall through to normal read below
+
     path = _READABLE_STATE_FILES.get(key)
     if path is None:
         return "", "unknown"

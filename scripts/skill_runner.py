@@ -127,14 +127,48 @@ def load_cache() -> Dict[str, Any]:
 
 
 _CACHE_MAX_BYTES = 1_048_576  # 1MB — DEBT-028
+_SKILLS_CACHE_TTL_DAYS = 7  # RD-45: evict entries older than 7 days
 
 
 def _enforce_cache_size_cap(cache: Dict[str, Any]) -> Dict[str, Any]:
-    """Evict oldest skill entries (by last_run) until cache serialises to ≤ 1MB.
+    """Evict stale (>TTL days) and oversized entries from the skills cache.
+
+    RD-45: Per-entry TTL — evict entries whose cached_at timestamp is older
+    than _SKILLS_CACHE_TTL_DAYS (default: 7). Only entries with a ``cached_at``
+    field are subject to TTL; entries without it are grandfathered (legacy
+    entries created before RD-45). TTL eviction runs first; then size cap
+    eviction if the cache still exceeds 1MB.
 
     Only fires when the projected JSON size would exceed *_CACHE_MAX_BYTES*.
     Evicted entries are logged at WARNING level.
     """
+    now = datetime.now(timezone.utc)
+    ttl_cutoff = now - timedelta(days=_SKILLS_CACHE_TTL_DAYS)
+    cache = dict(cache)  # shallow copy — do not mutate caller's dict
+
+    # RD-45 Phase 1: TTL-based eviction (cached_at only — not last_run)
+    # Entries without cached_at are grandfathered (pre-RD-45 format).
+    to_evict_ttl = []
+    for skill_name, entry in cache.items():
+        if not isinstance(entry, dict):
+            continue
+        ts_str = entry.get("cached_at")  # RD-45: only use cached_at, not last_run
+        if ts_str:
+            try:
+                ts = datetime.fromisoformat(ts_str)
+                if ts < ttl_cutoff:
+                    to_evict_ttl.append(skill_name)
+            except (ValueError, TypeError):
+                pass  # unparseable timestamp — keep the entry
+
+    for skill_name in to_evict_ttl:
+        logging.warning(
+            "SKILLS_CACHE_TTL_EVICTION: removed %s (older than %d days)",
+            skill_name, _SKILLS_CACHE_TTL_DAYS,
+        )
+        del cache[skill_name]
+
+    # Phase 2: Size-cap eviction (only if still over limit after TTL pass)
     encoded = json.dumps(cache, indent=2).encode("utf-8")
     if len(encoded) <= _CACHE_MAX_BYTES:
         return cache
@@ -147,7 +181,6 @@ def _enforce_cache_size_cap(cache: Dict[str, Any]) -> Dict[str, Any]:
         return (ts or "", )
 
     eviction_order = sorted(cache.items(), key=_sort_key)
-    cache = dict(cache)  # shallow copy — do not mutate caller's dict
 
     for skill_name, _entry in eviction_order:
         if len(json.dumps(cache, indent=2).encode("utf-8")) <= _CACHE_MAX_BYTES:
@@ -360,6 +393,7 @@ def main():
                 # Build cache entry (carry forward previous health counters)
                 base_entry: Dict[str, Any] = {
                     "last_run": now_iso,
+                    "cached_at": now_iso,  # RD-45: per-entry TTL timestamp
                     "current": res,
                     "previous": prev_skill_entry.get("current"),
                     "changed": is_changed,

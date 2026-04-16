@@ -357,6 +357,17 @@ class EmailSignalExtractor:
                 subject = str(record.get("subject", "") or "")[:60]
                 entity = f"{org_name}: {subject}" if subject else org_name
 
+                # RD-05: Apply PII filter to entity before it leaves the extractor.
+                # Email subjects routinely contain contextual PII (patient names,
+                # child names, case references) that pii_guard's regex does not
+                # cover via structured patterns alone. Scrub at the boundary.
+                try:
+                    from pii_guard import filter_text as _pii_filter_entity  # noqa: PLC0415
+                    entity = _pii_filter_entity(entity)
+                except Exception:  # noqa: BLE001
+                    # pii_guard unavailable — aggressive truncation as safety fallback
+                    entity = entity[:40]
+
                 sig = DomainSignal(
                     signal_type=signal_type,
                     domain=domain,
@@ -382,6 +393,27 @@ class EmailSignalExtractor:
                 except Exception:  # pii_guard unavailable — skip scrub, not a crash
                     pass
                 signals.append(sig)
+
+        # RD-43: Write signal funnel metrics for eval_runner and CI regression detection
+        try:
+            import json as _json  # noqa: PLC0415
+            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            _metrics_dir = Path(__file__).resolve().parent.parent / "tmp"
+            _metrics_dir.mkdir(parents=True, exist_ok=True)
+            _by_type: dict[str, int] = {}
+            for _s in signals:
+                _by_type[_s.signal_type] = _by_type.get(_s.signal_type, 0) + 1
+            _metrics = {
+                "run_at": _dt.now(tz=_tz.utc).isoformat(),
+                "emails_processed": len(email_records),
+                "signals_extracted": len(signals),
+                "signals_by_type": _by_type,
+            }
+            (_metrics_dir / "signal_metrics.json").write_text(
+                _json.dumps(_metrics, indent=2), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001
+            pass  # metrics write failure must never crash pipeline
 
         return signals
 

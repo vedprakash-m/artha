@@ -714,6 +714,78 @@ def _push_via_rest(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: bool 
 # Transport Layer 1 — Telegram M2M
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _classify_payload_key(key: str) -> str:
+    """Map an envelope key to its privacy-sensitivity category.
+
+    RD-08: Used by _filter_telegram_payload() to enforce Telegram category
+    allowlist. Returns a category string matching the telegram_allowed/blocked
+    categories in config/claw_bridge.yaml.
+    """
+    _KEY_CATEGORY: dict[str, str] = {
+        # always-allowed aggregate / structural fields
+        "id": "id",
+        "ts": "ts",
+        "version": "version",
+        "trace_id": "trace_id",
+        "urgency": "urgency",
+        "source_platform": "source_platform",
+        "signature": "signature",
+        "checksum": "checksum",
+        "payload_tier": "version",
+        "system_health": "system_health",
+        "iot_device_count": "iot_device_count",
+        # blocked — sensitive
+        "domain_states": "domain_states",
+        "action_proposals": "action_proposals",
+        "raw_signals": "raw_signals",
+        "debug_context": "debug_context",
+        "connector_records": "connector_records",
+        "full_briefing": "full_briefing",
+        "home_device_states": "home_presence",
+        "devices_on": "iot_device_names",
+        "presence": "home_presence",
+        "home_presence": "home_presence",  # direct key match
+        "schedule": "schedule_details",
+        "goals": "goal_text",
+        "goal_progress": "goal_text",
+        "open_items": "open_item_titles",
+        "urgency_items": "urgency_item_details",
+    }
+    return _KEY_CATEGORY.get(key, "debug_context")  # unknown keys → blocked by default (RD-08)
+
+
+def _filter_telegram_payload(payload: dict[str, Any], allowed: list[str]) -> dict[str, Any]:
+    """Retain only categories allowed for the untrusted Telegram transport.
+
+    RD-08: Replaces detailed content with aggregate counts for blocked
+    categories so the receiver can detect "data held at source" without
+    receiving sensitive content. Envelope structural fields are always included.
+
+    Args:
+        payload: Full bridge envelope or partial payload dict.
+        allowed: List of allowed category strings from claw_bridge.yaml.
+
+    Returns:
+        Filtered payload containing only allowed-category keys.
+    """
+    _always_allowed = frozenset({"id", "ts", "version", "trace_id", "signature", "checksum", "payload_tier"})
+    filtered: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in _always_allowed:
+            filtered[key] = value
+            continue
+        category = _classify_payload_key(key)
+        if category in allowed:
+            filtered[key] = value
+        else:
+            # Replace with count if iterable so receiver knows data exists at source
+            if isinstance(value, (list, dict)):
+                filtered[f"{key}_count"] = len(value)
+            # else: omit entirely (scalar sensitive values dropped)
+    filtered["payload_tier"] = "aggregate"
+    return filtered
+
+
 def _minimize_for_telegram(envelope: dict[str, Any]) -> dict[str, Any]:
     """DEBT-IOT-001: Return a size-minimized copy of *envelope* for Telegram transport.
 
@@ -768,6 +840,11 @@ def _push_via_telegram(envelope: dict[str, Any], cfg: dict[str, Any], dry_run: b
     message_text = json.dumps(envelope, separators=(",", ":"))
 
     # DEBT-IOT-001: minimize payload for Telegram transport (strip verbose fields)
+    # RD-08: Apply category filter before minimization — enforce allowed-only policy
+    _inj_filter: dict = (cfg.get("injection_filter") or {})
+    _tg_allowed: list[str] = _inj_filter.get("telegram_allowed_categories", [])
+    if _tg_allowed:
+        envelope = _filter_telegram_payload(envelope, _tg_allowed)
     message_text = json.dumps(_minimize_for_telegram(envelope), separators=(",", ":"))
 
     # Telegram max message length is 4096 chars; M2M envelopes are typically ~1KB

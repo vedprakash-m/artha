@@ -73,12 +73,15 @@ class TestEstimateTokens:
 
     def test_known_length(self):
         text = "a" * 400
-        assert _estimate_tokens(text) == 100  # 400 / 4
+        # RD-21: CHARS_PER_TOKEN changed from 4 → 3.5; 400 / 3.5 ≈ 114.28
+        import pytest as _pt
+        assert _estimate_tokens(text) == _pt.approx(400 / 3.5, abs=1.0)
 
     def test_non_ascii_chars(self):
         # Non-ASCII characters count by len(), not byte count
         text = "ñ" * 100
-        assert _estimate_tokens(text) == 25
+        import pytest as _pt
+        assert _estimate_tokens(text) == _pt.approx(100 / 3.5, abs=1.0)
 
 
 # ---------------------------------------------------------------------------

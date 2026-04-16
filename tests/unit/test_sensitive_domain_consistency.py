@@ -3,7 +3,7 @@ tests/unit/test_sensitive_domain_consistency.py
 =================================================
 DEBT-002 / DEBT-034 / DEBT-006 / DEBT-007:
 Verifies that all sensitive-domain consumers derive from a single source of
-truth (foundation.get_sensitive_domains()) and that the expected 12 domains
+truth (foundation.get_sensitive_domains()) and that the expected 16 domains
 are protected.
 """
 from __future__ import annotations
@@ -29,9 +29,9 @@ class TestSensitiveDomainConsistency:
     """A3 (DEBT-002): All consumers produce identical sensitive domain sets."""
 
     def test_foundation_has_12_domains(self):
-        """A1: foundation.py lists exactly 12 sensitive domains (DEBT-034 + DEBT-006)."""
+        """A1: foundation.py lists exactly 16 sensitive domains (DEBT-034 + DEBT-006 + RD-44)."""
         domains = _foundation_domains()
-        assert len(domains) == 12, f"Expected 12 domains, got {len(domains)}: {sorted(domains)}"
+        assert len(domains) == 16, f"Expected 16 domains, got {len(domains)}: {sorted(domains)}"
 
     def test_kids_in_foundation(self):
         """DEBT-034: kids domain is vault-protected."""
@@ -96,4 +96,34 @@ class TestSensitiveDomainConsistency:
         assert not missing, (
             f"memory.yaml high_sensitivity_domains missing: {missing}. "
             "All vault-protected domains must be high-sensitivity in memory."
+        )
+
+    def test_domain_registry_requires_vault_matches_foundation(self):
+        """RD-44: Every domain with requires_vault: true in domain_registry.yaml
+        must be present in foundation.py SENSITIVE_FILES.
+
+        This is the canonical cross-reference: domain_registry is the source of
+        truth for 'this domain is sensitive'; foundation.py is the source of truth
+        for 'these domains get encrypted at rest'. They must agree.
+        """
+        import yaml
+        registry_path = os.path.join(
+            os.path.dirname(__file__), "..", "..", "config", "domain_registry.yaml"
+        )
+        with open(registry_path, encoding="utf-8") as f:
+            registry = yaml.safe_load(f) or {}
+
+        domains_cfg = registry.get("domains") or {}
+        vault_required_in_registry: set[str] = set()
+        for domain_name, cfg in domains_cfg.items():
+            if isinstance(cfg, dict) and cfg.get("requires_vault") is True:
+                vault_required_in_registry.add(domain_name)
+
+        foundation = _foundation_domains()
+
+        missing_from_foundation = vault_required_in_registry - foundation
+        assert not missing_from_foundation, (
+            f"RD-44: Domains with requires_vault: true in domain_registry.yaml "
+            f"but absent from foundation.py SENSITIVE_FILES: {sorted(missing_from_foundation)}. "
+            f"Add them to SENSITIVE_FILES in scripts/foundation.py."
         )

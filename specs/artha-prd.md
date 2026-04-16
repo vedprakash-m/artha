@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.15.0
+## Product Requirements Document · v7.16.0
 
 **Author:** [Author]
-**Date:** April 13, 2026
+**Date:** April 16, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.16.0 | 2026-04-16 | RE-DEBTS Wave 2 — Formal degradation hierarchy (5 levels) + latency budget targets added to §14 NFRs and §16. 51-item architectural audit fully resolved. Tech Spec v3.33.0 + 119 new CI invariant tests. `specs/re-debts.md` archived. |
 | v7.15.0 | 2026-04-13 | Career Search Intelligence — FR-25: Phase 1 shipped. 7-block A–G evaluation framework, scoring system (6 dimensions), archetype detection, STAR+Reflection Story Bank, ATS PDF generation via Playwright, cross-domain enrichment (immigration × comp × calendar), application tracker, 3 career guardrails, briefing integration. Career-ops satellite spec archived. |
 | v7.14.0 | 2026-04-09 | OpenClaw Home Bridge — FR-24: M2M integration with home automation (3-layer transport, HMAC-SHA256, context push, presence events, TTS gate, WhatsApp approval, bridge observability). Incorporated from `claw-bridge.md` v1.7.0 (archived). |
 | v7.13.0 | 2026-04-08 | Knowledge Graph v2.0 — FR-19 extended with Second Brain KB architecture. Five ingestion paths, entity lifecycle stages, SQLite schema v4, 7 MCP tools, Leiden clustering, 950-token context budget. Tech Spec §22 rewritten to v2.0. |
@@ -2490,9 +2491,61 @@ Action deduplication occurs at two independent layers:
 1. **Pre-proposal** (`action_executor.py`): `idempotency.py.get_window(action_type, domain)` — domain-qualified windows (e.g., `instruction_sheet_immigration` → 30 days, `instruction_sheet_iot` → 4 hours) supersede the generic 24-hour default.
 2. **Execution** (`instruction_sheet.execute()`): `check_or_reserve` / `mark_completed` guards against direct-call bypasses and same-day overwrites. Duplicate executions return `status="skipped"` and log `INSTRUCTION_SHEET_DUPLICATE` to `state/audit.md`.
 
+### 16.5 Formal Degradation Hierarchy *(v7.16.0)*
+
+Artha defines five observable degradation levels. Each is a stable, user-visible state with defined behavior. Components must handle each level gracefully rather than crash or produce silent empty output.
+
+| Level | Name | Trigger Condition | Required Behavior |
+|-------|------|-------------------|-------------------|
+| **0** | Normal | All systems operational | Full briefing + action pipeline active |
+| **1** | Vault-Locked | `vault_hook.py` decrypt failure (sentinel file present at `~/.artha-local/.artha-decrypt-failed`) | Read-Only Mode: suppress vault-protected domain reads; prefix session with `⛔ VAULT LOCKED`; LLM-free commands still work |
+| **2** | Pipeline-Degraded | `email_signal_extractor.py`, `pattern_engine.py`, or connector fatal error | Partial briefing from last-known state with freshness timestamps; skip action composition; log `PIPELINE_DEGRADED` to audit |
+| **3** | LLM-Unavailable | `claude` subprocess error / binary not found | Deterministic partial response listing available LLM-free commands, last briefing age, and error reason; log `LLM_UNAVAILABLE` to audit via `LLMUnavailableError` exception |
+| **4** | Full-Offline | No network, no OneDrive sync, no connectors | Cache-only mode: serve last-written state files with ages; no new signal extraction; surface `FULL_OFFLINE` in cmd_health |
+
+**Implementation**: `scripts/lib/exceptions.py` (`LLMUnavailableError`), `scripts/lib/session_preconditions.py` (3-bit degradation bitmask for levels 1–3), sentinel-file pattern in `vault_hook.py`. Level 4 detection via `scripts/detect_environment.py`. Levels 0–4 are CI-testable via `tests/unit/test_re_debts_wave1/2/3.py`.
+
+### 16.6 Latency Budget Targets *(v7.16.0)*
+
+These targets are the spec-level SLA commitments enforced by `eval_runner.py --assert-sla` (exit 1 on breach):
+
+| Operation | Target | Enforcement |
+|-----------|--------|-------------|
+| Routing decision | ≤ 250 ms | `config/sla.yaml` |
+| Status / items read-only | ≤ 2 s | `config/sla.yaml` |
+| Work refresh acknowledgement | ≤ 2 s (async continuation) | `config/sla.yaml` |
+| Briefing first output | ≤ 5 s | `config/sla.yaml` |
+| Briefing full synthesis | ≤ 30 s | `config/sla.yaml` |
+
 ---
 
-*Artha PRD v7.15.0 — End of Document*
+*Artha PRD v7.16ve observable degradation levels. Each is a stable, user-visible state with defined behavior. Components must handle each level gracefully rather than crash or produce silent empty output.
+
+| Level | Name | Trigger Condition | Required Behavior |
+|-------|------|-------------------|-------------------|
+| **0** | Normal | All systems operational | Full briefing + action pipeline active |
+| **1** | Vault-Locked | `vault_hook.py` decrypt failure (sentinel file present at `~/.artha-local/.artha-decrypt-failed`) | Read-Only Mode: suppress vault-protected domain reads; prefix session with `⛔ VAULT LOCKED`; LLM-free commands still work |
+| **2** | Pipeline-Degraded | `email_signal_extractor.py`, `pattern_engine.py`, or connector fatal error | Partial briefing from last-known state with freshness timestamps; skip action composition; log `PIPELINE_DEGRADED` to audit |
+| **3** | LLM-Unavailable | `claude` subprocess error / binary not found | Deterministic partial response listing available LLM-free commands, last briefing age, and error reason; log `LLM_UNAVAILABLE` to audit via `LLMUnavailableError` exception |
+| **4** | Full-Offline | No network, no OneDrive sync, no connectors | Cache-only mode: serve last-written state files with ages; no new signal extraction; surface `FULL_OFFLINE` in cmd_health |
+
+**Implementation**: `scripts/lib/exceptions.py` (`LLMUnavailableError`), `scripts/lib/session_preconditions.py` (3-bit degradation bitmask for levels 1–3), sentinel-file pattern in `vault_hook.py`. Level 4 detection via `scripts/detect_environment.py`. Levels 0–4 are CI-testable via `tests/unit/test_re_debts_wave1/2/3.py`.
+
+### 16.6 Latency Budget Targets *(v7.16.0)*
+
+These targets are the spec-level SLA commitments enforced by `eval_runner.py --assert-sla` (exit 1 on breach):
+
+| Operation | Target | Enforcement |
+|-----------|--------|-------------|
+| Routing decision | ≤ 250 ms | `config/sla.yaml` |
+| Status / items read-only | ≤ 2 s | `config/sla.yaml` |
+| Work refresh acknowledgement | ≤ 2 s (async continuation) | `config/sla.yaml` |
+| Briefing first output | ≤ 5 s | `config/sla.yaml` |
+| Briefing full synthesis | ≤ 30 s | `config/sla.yaml` |
+
+---
+
+*Artha PRD v7.16.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

@@ -95,6 +95,8 @@ class AgentHealth:
     keyword_quality: dict[str, list[float]] = field(default_factory=dict)
     # EA-13a: known weak query patterns (recorded when quality < threshold)
     weak_queries: list[str] = field(default_factory=list)
+    # RD-30: weak_query_timestamps — {pattern: ISO timestamp} for 90-day TTL GC
+    weak_query_timestamps: dict[str, str] = field(default_factory=dict)
     # EA-14a: per-cluster cache hit count {cluster_keyword: hit_count}
     cache_hits_by_cluster: dict[str, int] = field(default_factory=dict)
 
@@ -444,6 +446,7 @@ def _parse_agent(name: str, entry: dict) -> ExternalAgent:
         cache_hit_rate=float(health_raw.get("cache_hit_rate", 0.0)),
         keyword_quality=dict(health_raw.get("keyword_quality") or {}),
         weak_queries=list(health_raw.get("weak_queries") or []),
+        weak_query_timestamps=dict(health_raw.get("weak_query_timestamps") or {}),
         cache_hits_by_cluster=dict(health_raw.get("cache_hits_by_cluster") or {}),
     )
 
@@ -550,6 +553,7 @@ def _agent_to_dict(agent: ExternalAgent) -> dict:
             "cache_hit_rate": agent.health.cache_hit_rate,
             "keyword_quality": agent.health.keyword_quality,
             "weak_queries": agent.health.weak_queries,
+            "weak_query_timestamps": agent.health.weak_query_timestamps,
             "cache_hits_by_cluster": agent.health.cache_hits_by_cluster,
         },
     }

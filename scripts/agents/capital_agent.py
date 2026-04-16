@@ -75,6 +75,59 @@ _VARIABLE_CATEGORIES = {"dining", "shopping", "entertainment", "groceries", "mis
 
 
 # ---------------------------------------------------------------------------
+# Vault state helpers (RD-03)
+# ---------------------------------------------------------------------------
+
+def _check_vault_plaintext_available(state_dir: Path, domain: str) -> bool:
+    """Return True if plaintext is accessible; False if vault-locked.
+
+    RD-03: Prevents silent data starvation when CapitalAgent runs outside
+    a Claude Code session and finance.md is not decrypted.
+    """
+    plain = state_dir / f"{domain}.md"
+    age   = state_dir / f"{domain}.md.age"
+    if plain.exists():
+        return True
+    if age.exists():
+        return False  # vault-locked — encrypted file exists, plaintext does not
+    return True  # neither file exists — not a vault issue (new domain)
+
+
+def _write_vault_skipped_annotation(forecast_path: Path, generated_at: str) -> None:
+    """Write a VAULT_LOCKED stub to finance_forecast.md.
+
+    Preserves any existing forecast content below a fresh front-matter block
+    so Claude surfaces the vault-locked notice during briefing while still
+    showing the last valid projection.
+    """
+    # Keep existing body (last valid forecast) if present
+    existing_body = ""
+    if forecast_path.exists():
+        raw = forecast_path.read_text(encoding="utf-8", errors="replace")
+        # Strip any previous front-matter (--- ... ---) and keep the rest
+        if raw.startswith("---"):
+            parts = raw.split("---", 2)
+            existing_body = parts[2].strip() if len(parts) >= 3 else ""
+        else:
+            existing_body = raw.strip()
+
+    header = (
+        "---\n"
+        f"generated_at: {generated_at}\n"
+        "data_quality: VAULT_LOCKED\n"
+        "vault_note: >\n"
+        "  state/finance.md is vault-encrypted and was not decrypted at agent run time.\n"
+        "  This forecast is STALE — data below is from the last successful run.\n"
+        "  To regenerate: run `python scripts/vault.py decrypt`, then\n"
+        "  `python scripts/agents/capital_agent.py`.\n"
+        "---\n"
+    )
+    body = f"\n{existing_body}\n" if existing_body else ""
+    forecast_path.parent.mkdir(parents=True, exist_ok=True)
+    forecast_path.write_text(header + body, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -317,6 +370,22 @@ def main() -> int:
     today_str = today.isoformat()
     iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     trace_id = f"pre-compute-capital-{iso_ts}"
+
+    # RD-03: Pre-flight vault state check — halt cleanly if finance.md is locked.
+    # This distinguishes cron runs during vault-locked sessions (exit 2) from
+    # genuine agent errors (exit 1), allowing cron / agent_scheduler to log the
+    # distinction rather than masking it as a generic failure.
+    if not _check_vault_plaintext_available(_STATE_DIR, "finance"):
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _write_vault_skipped_annotation(_STATE_FILE, generated_at)
+        _write_heartbeat("SKIPPED_VAULT_LOCKED", 0, trace_id)
+        print(
+            "[CapitalAgent] HALT: state/finance.md is vault-locked. "
+            "Run `python scripts/vault.py decrypt` before this agent runs. "
+            "Forecast annotated as VAULT_LOCKED; last valid data preserved.",
+            file=sys.stderr,
+        )
+        return 2  # distinct from error (1) — allows scheduler/cron to differentiate
 
     # Acquire sentinel (pipeline.py will skip DB reads while this exists)
     _LOCAL_DIR.mkdir(parents=True, exist_ok=True)

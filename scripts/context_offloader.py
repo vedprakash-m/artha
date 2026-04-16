@@ -36,7 +36,12 @@ from typing import Any, Callable
 
 from lib.common import ARTHA_DIR
 
-_CHARS_PER_TOKEN = 4  # heuristic: 1 token ≈ 4 chars
+# RD-50: Import from single source of truth (context_budget.py).
+# RD-21: Corrected estimate is 3.5 chars/token (was 4).
+try:
+    from lib.context_budget import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+except ImportError:
+    _CHARS_PER_TOKEN = 3.5  # fallback if lib not on path
 _MAX_CARD_TOKENS = 500  # summary card must never exceed this
 
 # ---------------------------------------------------------------------------

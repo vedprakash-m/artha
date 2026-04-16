@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.29.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.33.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.14.0
+> **Implements**: PRD v7.15.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -5641,7 +5641,132 @@ On a machine where a platform-gated connector is skipped (e.g., `outlook_email` 
 
 ---
 
-*Artha Tech Spec v3.32.0 — End of Document*
+## 33. April 2026 RE-DEBTS Wave 2 — Full Remediation Sprint *(v3.33.0)*
+
+> **Origin**: `specs/re-debts.md` v1.5.0 — 51-item architectural audit (April 14–15, 2026, three audit cycles). Canonical audit archived to `.archive/specs/re-debts.md`. All 51 items resolved or tracked. 119 new CI invariant tests in `tests/unit/test_re_debts_wave1/2/3.py`.
+
+### 33.1 Formal Degradation Hierarchy
+
+Five observable system degradation levels. Every component must handle transition to each level gracefully rather than crash or produce silent empty output.
+
+| Level | Name | Trigger | Required Behavior |
+|-------|------|---------|-------------------|
+| **0** | Normal | All systems operational | Full briefing + action pipeline |
+| **1** | Vault-Locked | `vault_hook.py` decrypt failure (sentinel present) | Read-Only Mode; suppress vault-protected domain reads; prefix session `⛔ VAULT LOCKED` |
+| **2** | Pipeline-Degraded | `email_signal_extractor.py`, `pattern_engine.py`, or connector fatal error | Partial briefing from last-known state with freshness timestamps; log `PIPELINE_DEGRADED` |
+| **3** | LLM-Unavailable | `claude` subprocess error / binary not found | Deterministic partial response listing available LLM-free commands; log `LLM_UNAVAILABLE` |
+| **4** | Full-Offline | No network, no OneDrive sync, no connectors | Cache-only mode: serve last-written state files with ages; surface `FULL_OFFLINE` in cmd_health |
+
+### 33.2 Latency Budget Targets (CI-enforced via `eval_runner.py --assert-sla`)
+
+| Operation | Target |
+|-----------|--------|
+| Routing decision | ≤ 250 ms |
+| Status / items read-only query | ≤ 2 s |
+| Work refresh acknowledgement | ≤ 2 s (async continuation) |
+| Briefing first output | ≤ 5 s |
+| Briefing full synthesis | ≤ 30 s |
+
+### 33.3 Typed Exception Hierarchy & LLM Unavailability (RD-51)
+
+**LLM typed exceptions** (`DEBT-RD-051`): `scripts/lib/exceptions.py` introduces `ArthaError` (base) and `LLMUnavailableError` (Level 3 degradation). `scripts/channel/llm_bridge.py::_call_single_llm()` now raises `LLMUnavailableError` on all failure paths rather than returning `""` silently. Callers surface a deterministic partial response to the user and log `LLM_UNAVAILABLE` to `state/audit.md`. CI test: `test_re_debts_wave1.py::TestRD51LLMUnavailableError`.
+
+### 33.4 Context Budget Single Source of Truth (RD-50, RD-21)
+
+**Token budget constants** (`DEBT-RD-050`): `scripts/lib/context_budget.py` is the single source of truth for `CHARS_PER_TOKEN = 3.5` (corrected from 4 — Claude tokenizer produces ~3.5 chars/token for English prose, fixing the ~14% underestimate). `scripts/session_summarizer.py`, `scripts/prompt_composer.py`, and `scripts/context_offloader.py` all import from `context_budget`. CI test: `test_re_debts_wave1.py::TestRD50CharPerTokenNotDuplicated` (AST-based — fails if any other module defines `_CHARS_PER_TOKEN` outside `context_budget.py`).
+
+### 33.5 Vault Sentinel & Sync Fence Hardening (RD-02, RD-06)
+
+**Vault sentinel** (`DEBT-RD-002`): `scripts/vault_hook.py::hook_decrypt()` writes `~/.artha-local/.artha-decrypt-failed` on any decrypt failure (instead of silently exiting 0). `config/Artha.core.md` Step 0 vault health gate reads this sentinel before any domain reads and enters Read-Only Mode if present. The sentinel is cleared at the start of each hook invocation before the decrypt attempt.
+
+**Sync fence quiescence loop** (`DEBT-RD-006`): `scripts/vault.py::_check_sync_fence()` replaces the fixed 2-second `time.sleep()` with a polling loop that waits for `.age` file mtime stability (3 consecutive stable samples at 0.5s intervals, 45s timeout). Timeout is configurable via `ARTHA_SYNC_FENCE_TIMEOUT` env var. On timeout: warning emitted to audit log; vault proceeds with `SYNC_FENCE_TIMEOUT` event. CI test: `test_re_debts_wave1.py::TestRD06SyncFence`.
+
+### 33.6 Signal Routing Completeness (RD-09, RD-33, RD-48)
+
+**`slack_after_hours` route active** (`DEBT-RD-009`): `config/signal_routing.yaml` now has `slack_after_hours` as `status: active` (was stub). Wired to `instruction_sheet` with `friction: standard`. CI test: `test_re_debts_wave1.py::TestRD09SlackAfterHoursRoute`.
+
+**Extended orphan signal fixes** (`DEBT-RD-033`): `content_moment_missed`, `content_staged_unreviewed`, and `address_update_notification` added as `status: active` routes. `decision_detected` route restored (was removed). CI test: `test_re_debts_wave3.py::TestRD33SignalOrphanFixes`.
+
+**Routing YAML merge strategy** (`DEBT-RD-048`): `scripts/action_composer.py::_load_signal_routing()` now merges user routing overrides from `config/routing.yaml` into the base `config/signal_routing.yaml` (dict merge), not replace. Tech spec §A.4 description updated to match live behavior. CI test: `test_re_debts_wave1.py::TestRD48RoutingMergeBehavior`.
+
+### 33.7 Idempotency Key Qualification (RD-07)
+
+**Signal-type in composite key** (`DEBT-RD-007`): `scripts/lib/idempotency.py::CompositeKey.compute()` now accepts `signal_type: str = ""` parameter. For `instruction_sheet` actions, `signal_type` is included in the SHA-256 hash. Two distinct signals for the same entity (e.g., `subscription_renewal` + `content_stale` both from "Netflix") now generate distinct idempotency keys. Migration note: one-cycle deduplication loss on first upgrade (user may see one re-proposed action). CI test: `test_re_debts_wave1.py::TestRD07IdempotencyKeyQualification`.
+
+### 33.8 PII in Signal Entity Field (RD-05)
+
+**Entity field PII scrub** (`DEBT-RD-005`): `scripts/email_signal_extractor.py` applies `pii_guard.filter_text()` to the `entity` field before it leaves the extractor. A new `NAME_IN_SUBJECT` pattern in `scripts/pii_guard.py` matches names-in-context (e.g., "Appointment for John Smith") and replaces with `[PII-NAME]`. Gated by `config/guardrails.yaml::pii_guard.contextual_name_scrubbing: true`. CI test: `test_re_debts_wave2.py::TestRD05EntityPIIScrub`.
+
+### 33.9 Telegram Payload Tiering (RD-08)
+
+**Full payload category filter** (`DEBT-RD-008`): `scripts/export_bridge_context.py::_filter_telegram_payload()` now applied to both the nudge path AND the `load_context` code path. Blocked categories: `home_device_states`, `open_items` (titles), `goal_progress` (text), `urgency_flags`. Allowed: `open_items_count`, `system_health`, `iot_device_count` (aggregate-only). Full payload queued to DLQ (7-day TTL) when Telegram is the only available transport. CI test: `test_re_debts_wave2.py::TestRD08TelegramPayloadTiering`.
+
+### 33.10 Sensitivity Model Drift Prevention (RD-34)
+
+**Vault protection consistency** (`DEBT-RD-034`): `scripts/channel/handlers.py` and `scripts/channel/state_readers.py` now use `StateReader.read()` (vault-aware) for all sensitive domains. The `kids` and `employment` domains — which were vault-protected in `domain_registry.yaml` but read as plaintext in channel handlers — are now consistently read through the vault path. CI test: `test_re_debts_wave2.py::TestRD34SensitivityDrift`.
+
+### 33.11 Work OS Agency Tool Isolation (RD-36)
+
+**Work OS tool allowlist** (`DEBT-RD-036`): `config/agents/work_refresh_tools.yaml` defines the allowed tool set for Work OS agency refresh. `scripts/work_reader.py::cmd_refresh()` now applies this allowlist, replacing `--allow-all-tools`. Personal state directories (`state/finance.md`, `state/immigration.md`, etc.) are path-blocked. `run_terminal` is blocked. CI test: `test_re_debts_wave2.py::TestRD36WorkOSIsolation`.
+
+### 33.12 Session Summarization Wiring (RD-37)
+
+**`should_summarize_now()` called in live command path** (`DEBT-RD-037`): `scripts/channel/catchup.py` and `scripts/channel/llm_bridge.py` now call `session_summarizer.should_summarize_now()` at the start of each invocation. When the threshold is exceeded, `get_context_card()` is prepended to the command output and a summarization recommendation is surfaced. Previously the function existed but had zero call sites. CI test: `test_re_debts_wave2.py::TestRD37SessionSummarizationWiring`.
+
+### 33.13 Vault Watchdog Daemon (RD-40)
+
+**Post-decrypt re-encryption watchdog** (`DEBT-RD-040`): `scripts/service/com.artha.vault-watchdog.plist` is a macOS LaunchAgent template that runs `scripts/vault.py watchdog` every 5 minutes. The watchdog detects stale vault decrypt sessions (SIGKILL/OOM events) by checking for a lock file whose PID is no longer running, triggers re-encryption before clearing the lock, and bounds plaintext exposure to ≤5 minutes post-crash. Template uses `{{PYTHON_EXE}}` and `{{ARTHA_ROOT}}` placeholders — see install instructions in the plist header. CI test: `test_re_debts_wave2.py::TestRD40VaultWatchdogService`.
+
+### 33.14 ActionProposal Schema Validation (RD-41)
+
+**Pydantic validation at enqueue boundary** (`DEBT-RD-041`): `scripts/action_composer.py::compose()` now validates `ActionProposal` against `ActionProposalSchema` (Pydantic model in `scripts/schemas/action.py`) before enqueuing. Field type errors (wrong type for `urgency`, missing required `intent`) are rejected with a logged `PROPOSAL_VALIDATION_ERROR` event rather than propagated as runtime exceptions downstream. CI test: `test_re_debts_wave2.py::TestRD41ActionProposalValidation`.
+
+### 33.15 Signal Pipeline Funnel Metrics (RD-43)
+
+**Signal funnel dimensions in eval_runner** (`DEBT-RD-043`): `scripts/eval_runner.py` signal_quality dimension now tracks `signals_detected`, `signals_suppressed`, `signals_orphaned`, and `signal_conversion_rate` (proposed/detected). These metrics appear in `--report` output and in `state/eval_metrics.yaml`. CI test: `test_re_debts_wave2.py::TestRD43SignalFunnelMetrics`.
+
+### 33.16 LLM Trace Call Sites (RD-49)
+
+**`llm_trace()` active call sites** (`DEBT-RD-049`): `scripts/lib/observability.py::llm_trace()` was implemented in v3.32.0 but had zero call sites. `scripts/channel/llm_bridge.py` now calls `llm_trace()` before and after every LLM invocation when `ARTHA_LLM_TRACE=1`. Traces include `caller`, `model`, `prompt_tokens`, `completion_tokens`, `latency_ms`, `error`. CI test: `test_re_debts_wave2.py::TestRD49LLMTraceCalled`.
+
+### 33.17 Canonical Agent Context Schema (RD-15)
+
+**CONTEXT_BUNDLE_FIELDS schema** (`DEBT-RD-015`): `scripts/schemas/agent_context.py` defines the canonical context bundle field list. `scripts/validate_pii_profiles.py` (`--strict` flag) validates that every field in the bundle is covered (allow or block) in `config/agents/external-registry.yaml` for each external agent. Runs as part of preflight and available as `python scripts/validate_pii_profiles.py`. CI test: `test_re_debts_wave3.py::TestRD15AgentContextSchema`.
+
+### 33.18 Multiline Prompt Injection Fix (RD-17)
+
+**Profile value newline normalization** (`DEBT-RD-017`): `scripts/generate_identity.py::_sanitize_profile_value()` now calls `.replace("\n", " ").replace("\r", "")` after all existing scrubs, flattening multi-line YAML values to single lines before injection into the generated identity prompt. Prevents heading injection via multi-line profile values. CI test: `test_re_debts_wave1.py::TestRD17MultilineSanitization`.
+
+### 33.19 Wave 0 Dual-Key Override (RD-47)
+
+**`ARTHA_WAVE0_OVERRIDE` requires `ARTHA_WAVE0_CONFIRM`** (`DEBT-RD-047`): `scripts/middleware/guardrails.py::_wave0_ok()` now requires both `ARTHA_WAVE0_OVERRIDE` (reason string) and `ARTHA_WAVE0_CONFIRM=yes` env vars to bypass the guardrail. Either alone is insufficient. Audit event `WAVE0_DUAL_KEY_OVERRIDE` is written for every use. CI test: `test_re_debts_wave1.py::TestRD47Wave0DualKey`.
+
+### 33.20 TF-IDF Fallback Parameter Fix (RD-31)
+
+**TF-IDF Tier 2 kwarg name corrected** (`DEBT-RD-031`): `scripts/lib/agent_router.py` called `tfidf_router.route()` with `query=` but the method signature uses `text=`. This caused a `TypeError` swallowed by a bare `except Exception`, making Tier 2 routing silently dead. Parameter name corrected; the bare except narrowed to log the error before re-raising. CI test: `test_re_debts_wave1.py::TestRD31TFIDFKwarg`.
+
+### 33.21 Executor Validation Gates (RD-32)
+
+**Composed proposals go through all gates** (`DEBT-RD-032`): `scripts/action_executor.py` now runs `ActionProposalSchema` validation and idempotency reservation for composed proposals (those generated by `action_composer.py`) — the same gates that interactive proposals go through. Previously, `compose()` could return proposals that bypassed these checks. CI test: `test_re_debts_wave2.py::TestRD32ExecutorValidationGates`.
+
+### 33.22 Remaining Open Items (Tracked)
+
+The following items are tracked as open (not yet implemented). They are surfaced in `eval_runner.py --report` and visible in the new signal funnel metrics.
+
+| ID | Severity | Status | Description |
+|----|----------|--------|-------------|
+| RD-03 | High | Open | CapitalAgent reads vault-protected state without decrypt — annotate forecast with `data_quality: VAULT_LOCKED` |
+| RD-04 | High | Open | 15 `status: stub` signal producers — P0 items (immigration_deadline, prescription_refill, birthday_approaching) |
+| RD-38 | High | Open | `config/Artha.md` is 106KB monolith; compact ≤20KB architecture not yet default (CI gate enforced locally) |
+| RD-39 | Med | Open | Domain index budget drifted; `### Active Domains` section requires compact `generate_identity.py` run |
+| RD-13 | Med | Open | Platform-gated connector staleness not surfaced in work_reader.py cmd_health |
+| RD-14 | Med | Open | No conflict resolution for concurrent multi-machine writes (ADR-001 pending) |
+| RD-42 | Med | Open | `state/memory.md` has no size cap or pruning; grows unbounded |
+| RD-44 | Med | Open | `career_search` missing `requires_vault: true` in `domain_registry.yaml` |
+
+---
+
+*Artha Tech Spec v3.33.0 — End of Document*
 
 ---
 
@@ -5649,6 +5774,7 @@ On a machine where a platform-gated connector is skipped (e.g., `outlook_email` 
 
 | Version | Changes |
 |---------|---------|
+| v3.33.0 | **RE-DEBTS Wave 2 Full Remediation Sprint (§33)**: 51-item architectural audit (April 14–15, 2026) fully resolved. Formal degradation hierarchy (5 levels, §33.1) + latency budget targets (§33.2). Typed exception hierarchy: `ArthaError` + `LLMUnavailableError` — no more silent `""` on LLM failure (RD-51). Context budget single source of truth: `context_budget.py` with `CHARS_PER_TOKEN=3.5` (RD-50, RD-21). Vault sentinel (`~/.artha-local/.artha-decrypt-failed`) + sync fence quiescence loop (RD-02, RD-06). Signal routing: `slack_after_hours` active, 3 more orphan signals fixed, YAML merge strategy corrected (RD-09, RD-33, RD-48). Idempotency: `signal_type` in composite key (RD-07). PII: entity field scrub + `NAME_IN_SUBJECT` pattern (RD-05). Telegram: `_filter_telegram_payload()` applied to all transports + DLQ (RD-08). Sensitivity drift: `kids`/`employment` reads through `StateReader` (RD-34). Work OS: tool allowlist in `work_refresh_tools.yaml` (RD-36). Session summarization wired into live command path (RD-37). Vault watchdog LaunchAgent plist (RD-40). ActionProposal Pydantic validation at enqueue (RD-41). Signal funnel metrics in eval_runner (RD-43). `llm_trace()` call sites wired (RD-49). Canonical CONTEXT_BUNDLE_FIELDS schema + validate_pii_profiles.py (RD-15). Multiline profile value flattening (RD-17). Wave 0 dual-key override (RD-47). TF-IDF kwarg fix (RD-31). Executor validation gates for composed proposals (RD-32). 8 items remain open (RD-03, RD-04, RD-38/39 local-only, RD-13, RD-14, RD-42, RD-44). New files: `scripts/lib/exceptions.py`, `scripts/lib/context_budget.py`, `scripts/schemas/agent_context.py`, `scripts/validate_pii_profiles.py`, `scripts/service/com.artha.vault-watchdog.plist`, `config/agents/work_refresh_tools.yaml`. 119 new CI invariant tests. `.gitignore` hardened: `*.skill`, `skills/`. `specs/re-debts.md` archived to `.archive/specs/re-debts.md`. 4462 tests passing. |
 | v3.32.0 | **April 2026 Security & Reliability Hardening (§32)**: 48-item debt audit fully implemented. Security: plugin allowlist hard-enforced (PLUG-001); HMAC nonce persisted across restarts (HMAC-001); AI signal urgency/impact range-clamped 0–3 (SIG-006); DomainSignal metadata injection-sanitized (SIG-007); wave0_gate=hard now raises RuntimeError (GUARD-001); bidi chars stripped from profile values (PROMPT-002). Memory/PII: memory_writer blocks high-sensitivity domains with audit trail (MEM-003); fact cap + skills cache cap enforced at read time (MEM-001/002); external agent PII block list extended (PII-001). Vault: preflight P0 check for requires_vault policy (VAULT-003 Phase 1); StateReader abstraction wired in channel layer (ARCH-001); vault_hook fallback includes employment (VAULT-001); contacts integrity SHA-256 sentinel (TRUST-001). Signals: content_stale route added (SIG-001); 17 unproduced routes downgraded to stub (SIG-002); TF-IDF cache 24h TTL (ROUTE-002); routing ambiguity tracking (ROUTE-001); platform-skip sentinels (SYNC-001). Actions: idempotency guard autonomy-level-gated with mandatory audit trail (IDEM-001); IdempotencyStore public get_entry() (EXEC-001). Architecture: SessionPreconditions + 3-bit degradation map (ARCH-003/DEGRADE-001); LLM tracing JSONL (OBSERV-001); --assert-sla eval mode + config/sla.yaml (EVAL-002); KG ghost-entity GC (KG-002); Telegram payload minimization (IOT-001). Tests: signal pipeline integration suite + fixture YAML (EVAL-001); no-LLM module-boundary tests (EVAL-003); _FALLBACK_HANDLER_MAP parity tests (SYNC-003). `specs/debts.md` archived to `.archive/specs/debts.md`. 3424 tests passing. |
 | v3.31.0 | **Safety & Governance Compendium (§31)**: Signal routing `status: active\|stub` field + completeness CI test (`test_signal_routing_completeness.py`); 3 orphaned signal routes added (`automation_failure`, `goal_autopark_candidate`, `slack_action_item`); domain-qualified idempotency windows (`get_window(action_type, domain)` — immigration 30d, iot 4h); execution-layer idempotency in `instruction_sheet.execute()` (`check_or_reserve`/`mark_completed`); memory writer FIFO cap at `max_facts` with `MEMORY_EVICTION` audit log; skills cache size governance (`_enforce_cache_size_cap()`, 1MB limit); connector record schema validation (`scripts/schemas/connector_record.py`); routing ambiguity flag (`RoutingResult.routing_ambiguity`); `keyword_miss_rate` metric + routing-audit eval mode; KG backup WAL-free via `Connection.backup()` + symlink-safe `Path.resolve()` in cloud-sync check; platform-gated connector freshness JSON (`state/connectors/connector_freshness.json`, 72h CRITICAL threshold). PRD §16.4 Security & Privacy Architecture added. `specs/debt.md` archived to `.archive/specs/debt.md`. |
 | v3.30.0 | **Career Search Intelligence (§30, FR-25 Phase 1)**: 7-block A–G evaluation framework (`prompts/career_search.md`); application tracker + Story Bank (`state/career_search.md`); ATS PDF generation via Playwright (`scripts/skills/career_pdf_generator.py`); Python helpers: `reconcile_summary`, `recompute_scores`, `deep_freeze`, Jaccard dedup, story bank index (`scripts/lib/career_state.py`); JSONL audit trail 90-day retention (`scripts/lib/career_trace.py`); 3 career guardrails: `CareerJDInjectionGR`, `CareerNoAutoSubmitGR`, `CareerPiiOutputGR`; 6 career signal routes in `config/signal_routing.yaml`; `career_pdf_generator` and `portal_scanner` added to `_ALLOWED_SKILLS`; AR-1 P0 test suite (`tests/unit/test_career_skills.py`); `output/career/` + `briefings/career/` directories with `.gitkeep`; `.gitignore` hardened for career PII output; FR-CS-3 preflight check for Playwright/Chromium; specs: PRD v7.15.0 (FR-25), Tech Spec §30, UX Spec §12; `specs/career-ops.md` archived to `.archive/specs/career-ops.md`. 65+52+10 tests. |

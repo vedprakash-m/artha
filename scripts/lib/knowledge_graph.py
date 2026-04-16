@@ -2615,6 +2615,65 @@ class KnowledgeGraph:
             _log.debug("KG_GC: skipped — %s", exc)
             return 0
 
+    def gc_stale_entities(self, ttl_days: int = 90, dry_run: bool = False) -> int:
+        """RD-18: Garbage-collect ghost entities from the knowledge graph.
+
+        A 'ghost entity' is one that:
+          - has no edges in the *relationships* table (orphaned node), AND
+          - has not been updated within *ttl_days*
+
+        Unlike the private `_maybe_gc()` (which rate-limits to once per day),
+        this public method runs unconditionally — it is designed to be called
+        from a weekly scheduled job or the ``--gc`` CLI flag.
+
+        Args:
+            ttl_days: Age threshold in days (default 90). Entities with
+                ``updated_at`` older than this and no relationships are removed.
+            dry_run:  If True, return the count without deleting anything.
+
+        Returns:
+            Number of entities removed (or that *would* be removed in dry_run).
+        """
+        import datetime as _dt  # noqa: PLC0415
+        cutoff_ts = (
+            _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=ttl_days)
+        ).isoformat()
+
+        try:
+            cur = self._conn.cursor()
+            # Relationships table uses from_entity / to_entity (not from_id / to_id)
+            cur.execute(
+                """
+                SELECT e.id FROM entities e
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM relationships r
+                    WHERE r.from_entity = e.id OR r.to_entity = e.id
+                )
+                AND e.updated_at < ?
+                AND e.created_at < ?
+                """,
+                (cutoff_ts, cutoff_ts),
+            )
+            ghost_ids = [row[0] for row in cur.fetchall()]
+            if not ghost_ids:
+                _log.info("KG_GC: no ghost entities found (ttl=%dd) (RD-18)", ttl_days)
+                return 0
+            if dry_run:
+                _log.info(
+                    "KG_GC dry_run: would remove %d ghost entities (ttl=%dd) (RD-18)",
+                    len(ghost_ids), ttl_days,
+                )
+                return len(ghost_ids)
+            placeholders = ",".join("?" * len(ghost_ids))
+            cur.execute(f"DELETE FROM entities WHERE id IN ({placeholders})", ghost_ids)
+            self._conn.commit()
+            removed = len(ghost_ids)
+            _log.info("KG_GC: removed %d ghost entities (ttl=%dd) (RD-18)", removed, ttl_days)
+            return removed
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("KG_GC: failed — %s (RD-18)", exc)
+            return 0
+
 
 # ---------------------------------------------------------------------------
 # Factory — returns NullKnowledgeGraph on corruption (spec §6.5)
@@ -2792,3 +2851,50 @@ class KnowledgeEnricher:
             line += "  (" + "; ".join(extras) + ")"
         return line
 
+
+# ---------------------------------------------------------------------------
+# CLI entry point — RD-18
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import argparse as _argparse  # noqa: PLC0415
+
+    _parser = _argparse.ArgumentParser(
+        description="Knowledge Graph utility commands",
+        prog="python -m lib.knowledge_graph",
+    )
+    _parser.add_argument(
+        "--gc",
+        action="store_true",
+        help=(
+            "RD-18: Garbage-collect ghost entities (no relationships, "
+            "updated_at older than --ttl-days). "
+            "Intended for weekly scheduled execution."
+        ),
+    )
+    _parser.add_argument(
+        "--ttl-days",
+        type=int,
+        default=90,
+        metavar="N",
+        help="Age threshold in days for GC (default: 90)",
+    )
+    _parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what GC would remove without actually deleting",
+    )
+    _args = _parser.parse_args()
+
+    if _args.gc:
+        import logging as _logging  # noqa: PLC0415
+        _logging.basicConfig(level=_logging.INFO, format="%(levelname)s %(message)s")
+        _kb = get_kb()
+        _removed = _kb.gc_stale_entities(ttl_days=_args.ttl_days, dry_run=_args.dry_run)
+        if _args.dry_run:
+            print(f"[kg-gc] dry_run: {_removed} ghost entities would be removed "
+                  f"(ttl={_args.ttl_days}d)")
+        else:
+            print(f"[kg-gc] removed {_removed} ghost entities (ttl={_args.ttl_days}d)")
+    else:
+        _parser.print_help()

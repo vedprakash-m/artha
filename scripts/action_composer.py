@@ -132,7 +132,13 @@ def _load_signal_routing() -> dict[str, dict]:
         from lib.config_loader import load_config  # noqa: PLC0415
         yaml_routing = load_config("signal_routing")
         if isinstance(yaml_routing, dict) and yaml_routing:
-            routing = dict(yaml_routing)
+            # RD-48: Merge YAML over fallback instead of replacing, so any
+            # signal types present in the fallback but accidentally omitted
+            # from the YAML file still get a route rather than silently
+            # disappearing.  YAML entries win on key collision (intended).
+            base = dict(_FALLBACK_SIGNAL_ROUTING)
+            base.update(yaml_routing)
+            routing = base
     except Exception as exc:
         print(
             f"[CRITICAL] signal_routing.yaml failed to load: {exc}\n"
@@ -274,7 +280,7 @@ class ActionComposer:
         # Expiry: default 72h from now
         expires_at = _iso_offset_hours(_DEFAULT_EXPIRY_HOURS)
 
-        return ActionProposal(
+        proposal = ActionProposal(
             id=str(uuid.uuid4()),
             action_type=action_type,
             domain=signal.domain,
@@ -291,6 +297,34 @@ class ActionComposer:
             source_skill=signal.source,
             linked_oi=signal.metadata.get("linked_oi"),
         )
+
+        # RD-41: Validate proposal against Pydantic schema before returning.
+        # Catches field type errors (wrong friction, invalid min_trust, etc.)
+        # at compose time rather than at DB-insert time.
+        try:
+            from schemas.action import ActionProposalSchema as _APSchema  # noqa: PLC0415
+            _APSchema.model_validate(proposal.__dict__)
+        except Exception as _schema_exc:  # noqa: BLE001
+            import sys as _sys  # noqa: PLC0415
+            print(
+                f"[ACTION_COMPOSER] Schema validation failed for {action_type} "
+                f"signal {signal.signal_type!r}: {_schema_exc}",
+                file=_sys.stderr,
+            )
+            # Audit log — best-effort (don't crash compose() if audit unavailable)
+            try:
+                from lib.logger import get_logger as _get_log  # noqa: PLC0415
+                _get_log().error(
+                    "PROPOSAL_SCHEMA_INVALID",
+                    action_type=action_type,
+                    signal_type=signal.signal_type,
+                    error=str(_schema_exc)[:200],
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+        return proposal
 
     def compose_workflow(self, trigger: str, context: dict[str, Any]) -> list[ActionProposal]:
         """Generate a list of independently approvable proposals for a workflow.

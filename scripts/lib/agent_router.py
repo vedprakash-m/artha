@@ -235,19 +235,22 @@ class AgentRouter:
         try:
             from lib.tfidf_router import TFIDFRouter  # noqa: PLC0415
             lexical = TFIDFRouter()
+            # RD-31: fixed parameter names (was query= / min_score= — wrong kwargs
+            # caused TypeError swallowed by broad except, making Tier 2 dead).
             matches = lexical.query(
-                query=query,
+                query_text=query,
                 top_n=1,
-                min_score=_LEXICAL_FALLBACK_THRESHOLD,
+                min_sim=_LEXICAL_FALLBACK_THRESHOLD,
             )
             if not matches:
                 return RoutingResult(match=None, all_candidates=[], routing_ms=elapsed_ms)
 
             best_lex = matches[0]
             # Convert LexicalMatch → RoutingMatch
+            # RD-31: fixed attribute (was best_lex.score — AttributeError; correct is .similarity)
             rm = RoutingMatch(
                 agent_name=best_lex.agent_name,
-                confidence=best_lex.score,
+                confidence=best_lex.similarity,
                 keyword_hits=0,
                 keyword_coverage=0.0,
                 query_coverage=0.0,
@@ -267,8 +270,12 @@ class AgentRouter:
                 routing_ms=(time.monotonic() - start_time) * 1000,
                 cache_hit=cache_hit,
             )
-        except (ImportError, Exception):
+        except ImportError:
+            # TF-IDF module not installed — acceptable graceful fallback.
             return RoutingResult(match=None, all_candidates=[], routing_ms=elapsed_ms)
+        # RD-31: Do NOT catch TypeError/AttributeError here. Those are programming
+        # bugs (interface mismatch), not availability failures. Let them propagate
+        # so they surface immediately rather than silently degrading to Tier 1 only.
 
     def route_multi(
         self,

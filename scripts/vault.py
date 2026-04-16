@@ -180,8 +180,23 @@ def check_lock_state() -> int:
         print("  Previous session exited uncleanly. Auto-clearing lock and proceeding.")
         if pid:
             print(f"  (locking PID was {pid})")
+        # RD-40: Attempt re-encryption BEFORE clearing the lock — ensures plaintext
+        # is not left exposed when a session terminates uncleanly (SIGKILL, OOM, etc.).
+        # do_encrypt() is safe to call multiple times (re-entrancy guard in place).
+        # Catch BaseException (including SystemExit) so failures never block lock cleanup.
+        _watchdog_encrypt_attempted = False
+        try:
+            print("  Attempting re-encryption of any plaintext domain files before clearing lock...")
+            do_encrypt()
+            _watchdog_encrypt_attempted = True
+            print("  Re-encryption complete.")
+        except BaseException as _enc_exc:  # noqa: BLE001 — best-effort; must not block lock cleanup
+            print(f"  ⚠ Re-encryption failed: {_enc_exc} — clearing lock anyway.")
         LOCK_FILE.unlink(missing_ok=True)
-        log(f"STALE_LOCK_CLEARED | age: {lock_age_m}m | reason: {reason} | pid: {pid} | action: auto-cleared")
+        log(
+            f"STALE_LOCK_CLEARED | age: {lock_age_m}m | reason: {reason} | pid: {pid} "
+            f"| reencrypt: {'ok' if _watchdog_encrypt_attempted else 'failed'} | action: auto-cleared"
+        )
         return 1
 
     # Active lock
@@ -313,6 +328,11 @@ def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
     smaller than the existing encrypted version.
     Returns True if safe, False if potentially corrupted/truncated.
 
+    RD-27: Per-domain thresholds read from config/guardrails.yaml
+    (net_negative_write_guard.domain_thresholds). Domains like finance
+    and health may have lower thresholds (e.g., 0.6) to reduce false positives
+    for legitimate summarization.
+
     Override: set ARTHA_FORCE_SHRINK=1 (all domains) or
     ARTHA_FORCE_SHRINK=<domain> to accept a legitimate shrink.
     The old .age is pinned to .age.pre-shrink for recovery (#5).
@@ -322,15 +342,29 @@ def is_integrity_safe(plain_file: Path, age_file: Path) -> bool:
 
     new_size = plain_file.stat().st_size
     # age files have header/metadata, so they are slightly larger than plaintext.
-    # We estimate based on file size. If new plaintext is < 80% of current .age,
+    # We estimate based on file size. If new plaintext is < threshold of current .age,
     # it might be a truncated write unless confirmed by user.
     old_size = age_file.stat().st_size
-    
-    # 20% loss threshold
-    if new_size < (old_size * 0.8):
-        domain = plain_file.stem  # e.g. "immigration"
+    domain = plain_file.stem  # e.g. "finance"
+
+    # RD-27: Read per-domain threshold from guardrails.yaml; fall back to 0.8
+    threshold = 0.8
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        _guardrails_path = CONFIG_DIR / "guardrails.yaml"
+        if _guardrails_path.exists():
+            _gr = _yaml.safe_load(_guardrails_path.read_text(encoding="utf-8")) or {}
+            _wr = _gr.get("net_negative_write_guard", {})
+            threshold = float(
+                _wr.get("domain_thresholds", {}).get(domain)
+                or _wr.get("default_threshold", 0.8)
+            )
+    except Exception:
+        threshold = 0.8
+
+    if new_size < (old_size * threshold):
         print(f"  ⚠ INTEGRITY ALERT: {plain_file.name} is significantly smaller than previous version.")
-        print(f"    New size: {new_size} bytes | Old size: {old_size} bytes")
+        print(f"    New size: {new_size} bytes | Old size: {old_size} bytes | Threshold: {threshold:.0%}")
 
         # Check for explicit override via environment variable
         force = os.environ.get("ARTHA_FORCE_SHRINK", "").strip()
@@ -429,26 +463,108 @@ def _is_cloud_synced() -> bool:
 
 
 def _check_sync_fence() -> bool:
-    """Check whether cloud sync is actively modifying state files.
+    """Wait until cloud-synced .age files are quiescent before decrypt.
 
-    Samples .age file mtimes, waits 2 seconds, then re-checks. If any file
-    changed during the window, sync is in flight and decrypt should be deferred.
+    RD-06: Replaces the 2-second fixed sleep with a quiescence detection loop
+    that polls mtime stability. Returns True if quiescent (safe to decrypt),
+    False if the timeout elapses before stability is reached (warn but proceed).
 
     No-op (returns True immediately) for non-cloud-synced workspaces.
     """
     if not _is_cloud_synced():
         return True
-    existing = []
-    for _domain, _ext, _plain, age_f in _iter_sensitive_files():
-        if age_f.exists():
-            existing.append((age_f, age_f.stat().st_mtime))
-    if not existing:
-        return True
-    time.sleep(2)
-    for f, mtime in existing:
-        if f.exists() and abs(f.stat().st_mtime - mtime) > 0.001:
-            return False
-    return True
+
+    def _snapshot() -> dict[str, float]:
+        return {
+            str(age_f): age_f.stat().st_mtime
+            for _, _, _, age_f in _iter_sensitive_files()
+            if age_f.exists()
+        }
+
+    current = _snapshot()
+    if not current:
+        return True  # no .age files — nothing to fence
+
+    timeout_sec = int(os.environ.get("ARTHA_SYNC_FENCE_TIMEOUT", "45"))
+    poll_interval = 2    # seconds between samples
+    stable_target = 3    # consecutive identical snapshots = quiescent
+    stable_count = 0
+    deadline = time.monotonic() + timeout_sec
+
+    while time.monotonic() < deadline:
+        time.sleep(poll_interval)
+        new = _snapshot()
+        if new == current:
+            stable_count += 1
+            if stable_count >= stable_target:
+                return True  # quiescent — safe to proceed
+        else:
+            stable_count = 0
+            current = new
+
+    # Timed out — log and proceed (best-effort; don't block decrypt)
+    try:
+        import datetime as _dt
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with AUDIT_LOG.open("a", encoding="utf-8") as _af:
+            _af.write(
+                f"\nSYNC_FENCE_TIMEOUT: {ts} | "
+                f"timeout_sec={timeout_sec} | "
+                f"files_monitored={len(current)}\n"
+            )
+    except OSError:
+        pass
+    print(
+        f"[VAULT-WARN] OneDrive sync appears incomplete after {timeout_sec}s. "
+        "Proceeding — decrypt may fail if sync is in-flight. "
+        "Re-run `python scripts/vault.py decrypt` if errors occur.",
+        file=sys.stderr,
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
+# RD-35 Phase 1: OneDrive selective-sync exclusion preflight
+# ---------------------------------------------------------------------------
+
+def _verify_sync_exclusion(path) -> bool:
+    """Return True if *path* has OneDrive selective-sync exclusion set (macOS).
+
+    Uses xattr to check for ``com.microsoft.OneDrive-Selective-Sync``.
+    Returns False on any error or if the attribute is absent.
+    Always returns True on non-macOS platforms (nothing to check).
+    """
+    import platform
+    if platform.system() != "Darwin":
+        return True  # Not macOS — no xattr check possible
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["xattr", "-p", "com.microsoft.OneDrive-Selective-Sync", str(path)],
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False  # conservative: assume not excluded
+
+
+def _warn_if_sync_not_excluded(state_dir) -> None:
+    """Emit a warning if state/ is not protected from OneDrive sync.
+
+    Non-blocking — we warn but do not abort the decrypt. This follows Phase 1
+    of the RD-35 fix: surface the configuration gap without breaking existing
+    workflows. Phase 2 (moving plaintext out of state/) requires an ADR.
+    """
+    if not _verify_sync_exclusion(state_dir):
+        print(
+            "[VAULT-WARN] state/ does not have OneDrive selective-sync exclusion set. "
+            "Decrypted sensitive files may sync to the cloud during the decrypt window. "
+            "Run setup.sh to configure selective sync exclusion on state/.",
+            file=sys.stderr,
+        )
+        log("VAULT_SYNC_EXCLUSION_MISSING | path: state/ | risk: cloud_sync_window")
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +653,9 @@ def do_decrypt() -> None:
         log("SYNC_FENCE_FAILED | reason: mtime_changed_during_fence")
         sys.exit(1)
 
+    # RD-35 Phase 1: warn if state/ is not excluded from OneDrive sync
+    _warn_if_sync_not_excluded(_config["STATE_DIR"])
+
     # Restore permissions if a prior encrypt failure locked down plaintext (#9)
     _unlock_plaintext()
 
@@ -619,10 +738,12 @@ def do_decrypt() -> None:
     # Create lock file with PID + timestamp + operation metadata
     # DEBT-025: Use atomic tempfile+rename to prevent partial JSON on crash
     import tempfile as _tempfile  # noqa: PLC0415
+    import socket as _socket  # noqa: PLC0415
     lock_data = {
         "pid":       os.getpid(),
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "operation": "decrypt",
+        "machine":   _socket.gethostname(),  # RD-14: machine identity for conflict detection
     }
     lock_content = json.dumps(lock_data) + "\n"
     lock_dir = LOCK_FILE.parent
@@ -738,12 +859,35 @@ def do_encrypt() -> None:
       - Post-encrypt size verification detects truncation from disk-full (#8)
       - Plaintext deletion is deferred until ALL encrypts succeed (#1)
       - On failure, remaining plaintext is locked down (permissions removed) (#9)
+      - RD-14: Machine conflict detection — warns if another machine holds the lock
     """
     _ensure_encryption_ready()  # transparent first-run setup (Part VII)
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
             "  Windows: winget install FiloSottile.age  (or scoop install age)")
+
+    # RD-14: Machine conflict detection — check if lock was created by this machine
+    try:
+        import socket as _socket  # noqa: PLC0415
+        lock_data = _read_lock_data()
+        lock_machine = lock_data.get("machine", "")
+        current_machine = _socket.gethostname()
+        if lock_machine and lock_machine != current_machine:
+            log(
+                f"CONCURRENT_VAULT_WARNING | lock_machine:{lock_machine} | "
+                f"current_machine:{current_machine} | pid:{os.getpid()} | "
+                f"risk:concurrent_write_last_writer_wins"
+            )
+            print(
+                f"[VAULT-WARN] Concurrent write detected: lock was created by machine "
+                f"'{lock_machine}', but this is '{current_machine}'. "
+                f"If both machines modified state/, the last to encrypt wins — "
+                f"manual reconciliation may be required. See audit.md for details.",
+                file=sys.stderr,
+            )
+    except Exception:  # noqa: BLE001
+        pass  # Machine check is best-effort; never block encrypt
 
     try:
         pubkey = get_public_key()
@@ -1167,6 +1311,21 @@ def main() -> None:
         do_release_lock()
     elif cmd in ("auto-lock", "auto_lock"):
         sys.exit(do_auto_lock())
+    elif cmd in ("watchdog",):
+        # RD-40: Vault watchdog — run by launchd every 5 minutes.
+        # Checks for stale locks and re-encrypts plaintext if the locking PID
+        # is no longer running. This bounds post-crash plaintext exposure to ≤5 min.
+        result = _check_stale_lock()
+        if result == 1:
+            # Stale lock was found and cleared; _check_stale_lock already called do_encrypt()
+            log("VAULT_WATCHDOG_ENCRYPT | trigger: stale_lock_cleared")
+            sys.exit(0)
+        elif result == 0:
+            # No lock — vault is clean (no active or stale session)
+            sys.exit(0)
+        else:
+            # result == 2: active lock (session in progress) — nothing to do
+            sys.exit(0)
     else:
         print(f"Unknown command: {cmd}", file=sys.stderr)
         _print_usage(exit_code=1)

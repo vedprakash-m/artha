@@ -295,11 +295,15 @@ async def cmd_catchup(args: list[str], scope: str) -> tuple[str, str]:
     # Step 6: Call LLM with failover
     briefing = ""
     for name, executable, base_args in clis:
-        briefing = await _call_single_llm(
-            name, executable, base_args, full_prompt,
-            "Produce the catch-up briefing now.",
-            timeout=_CATCHUP_TIMEOUT_SEC,
-        )
+        try:
+            briefing = await _call_single_llm(
+                name, executable, base_args, full_prompt,
+                "Produce the catch-up briefing now.",
+                timeout=_CATCHUP_TIMEOUT_SEC,
+            )
+        except Exception as _llm_exc:  # LLMUnavailableError or unexpected
+            log.warning("[catch-up] %s unavailable (%s), trying next CLI...", name, _llm_exc)
+            continue
         if briefing:
             log.info("[catch-up] Briefing produced by %s (%d chars)", name, len(briefing))
             break

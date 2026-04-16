@@ -40,8 +40,12 @@ _AUDIT_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Approximate chars-per-token (conservative estimate; 1 token ≈ 4 chars)
-_CHARS_PER_TOKEN = 4
+# RD-50: Import from single source of truth (context_budget.py).
+# RD-21: Corrected estimate is 3.5 chars/token (was 4).
+try:
+    from lib.context_budget import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
+except ImportError:
+    _CHARS_PER_TOKEN = 3.5  # fallback if lib not on path
 
 
 # ---------------------------------------------------------------------------

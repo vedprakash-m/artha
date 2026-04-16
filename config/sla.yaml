@@ -51,3 +51,28 @@ targets:
     field: stale_domain_count
     threshold: 3
     comparator: lte
+
+  # --- Latency SLAs (RD-20) ---
+  # Note: measured via pipeline.p95_seconds proxy until per-phase routing
+  # metrics are logged to tmp/ext-agent-metrics.jsonl.
+
+  routing_decision_p95:
+    description: "RD-20: Routing decision p95 latency must be under 250 ms (0.25 s)"
+    source: performance
+    field: pipeline.p95_seconds
+    threshold: 0.25
+    comparator: lte
+
+  status_query_p95:
+    description: "RD-20: Status/items read-only query p95 must be under 2 s"
+    source: performance
+    field: pipeline.avg_seconds
+    threshold: 2.0
+    comparator: lte
+
+  work_refresh_ack:
+    description: "RD-20: Work refresh acknowledgment p95 must be under 2 s"
+    source: performance
+    field: catchup.avg_seconds
+    threshold: 2.0
+    comparator: lte

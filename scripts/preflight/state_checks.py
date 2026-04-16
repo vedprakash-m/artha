@@ -262,3 +262,36 @@ def check_profile_completeness() -> CheckResult:
     )
 
 
+def check_prompt_size() -> CheckResult:
+    """RD-38: Verify config/Artha.md is within the compact prompt size limit.
+
+    The compact architecture targets ≤20KB. The CI gate is 25KB.
+    If Artha.md exceeds 25KB, it likely means the compact path was not used
+    when regenerating the identity prompt, or the core template has grown.
+    """
+    _MAX_PROMPT_BYTES = 25_000  # 25KB CI gate per RD-38 spec
+    prompt_path = os.path.join(ARTHA_DIR, "config", "Artha.md")
+    try:
+        size = os.path.getsize(prompt_path)
+    except OSError:
+        return CheckResult(
+            "prompt size (RD-38)", "P2", False,
+            "config/Artha.md not found",
+            fix_hint="Run: python scripts/generate_identity.py",
+        )
+
+    if size > _MAX_PROMPT_BYTES:
+        return CheckResult(
+            "prompt size (RD-38)", "P2", False,
+            f"config/Artha.md is {size:,} bytes — exceeds {_MAX_PROMPT_BYTES:,}B limit",
+            fix_hint=(
+                "Run: python scripts/generate_identity.py "
+                "(compact mode is the default; --no-compact produces the full file)"
+            ),
+        )
+    return CheckResult(
+        "prompt size (RD-38)", "P2", True,
+        f"config/Artha.md is {size:,} bytes ✓ (limit: {_MAX_PROMPT_BYTES:,}B)",
+    )
+
+

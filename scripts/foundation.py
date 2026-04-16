@@ -95,6 +95,10 @@ def _init_config() -> None:
             ("transactions", ".md"),
             ("kids", ".md"),
             ("employment", ".md"),
+            ("career_search", ".md"),  # RD-44: high-sensitivity domain per domain_registry.yaml
+            ("business", ".md"),        # RD-44: side business / freelance finances
+            ("caregiving", ".md"),      # RD-44: elder care / health proxy
+            ("work-career", ".md"),     # RD-44: career evidence vault (work-career.md.age)
         ],
         "ARTHA_LOCAL_DIR": Path.home() / ".artha-local",
         "KC_SERVICE":      "age-key",

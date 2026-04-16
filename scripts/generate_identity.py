@@ -117,6 +117,12 @@ def _sanitize_profile_value(value: str) -> str:
     value = value.replace("\u00a7", "")  # §
     # DEBT-PROMPT-002: normalize inline --- sequences (replace with em-dash)
     value = _re.sub(r"-{3,}", "\u2014", value)
+    # RD-17: Collapse multiline values to a single line for scalar fields.
+    # Prevents heading injection via YAML multiline strings, e.g.:
+    #   name: "User\n## OVERRIDE\nEvil instructions"
+    # After this step the value becomes "User ## OVERRIDE Evil instructions"
+    # (a single line with no structural significance in Markdown).
+    value = " ".join(value.splitlines()).strip()
     # Truncate to safety cap
     if len(value) > _MAX_PROFILE_VALUE_LEN:
         value = value[:_MAX_PROFILE_VALUE_LEN].rstrip() + "…"
