@@ -224,6 +224,8 @@ class TestWorkOsIsolation:
     def test_allow_all_tools_not_in_subprocess_call(self) -> None:
         """--allow-all-tools must not appear in the Popen args list."""
         work_loop_path = SCRIPTS_DIR / "work_loop.py"
+        if not work_loop_path.exists():
+            pytest.skip("scripts/work_loop.py is gitignored — not present in CI.")
         text = work_loop_path.read_text(encoding="utf-8")
         # Find lines that are NOT comments and check for --allow-all-tools
         non_comment_lines = [
@@ -238,6 +240,8 @@ class TestWorkOsIsolation:
     def test_isolation_violation_logged_on_state_write(self, tmp_path: Path) -> None:
         """WORK_ISOLATION_VIOLATION audit log must be in work_loop.py source."""
         work_loop_path = SCRIPTS_DIR / "work_loop.py"
+        if not work_loop_path.exists():
+            pytest.skip("scripts/work_loop.py is gitignored — not present in CI.")
         text = work_loop_path.read_text(encoding="utf-8")
         assert "WORK_ISOLATION_VIOLATION" in text, (
             "RD-36: WORK_ISOLATION_VIOLATION audit log entry must be present in work_loop.py"
