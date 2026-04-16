@@ -530,7 +530,7 @@ async def _call_single_llm(
             if proc.returncode != 0:
                 err = stderr.decode("utf-8", errors="replace").strip()
                 log.warning("[%s] exited with code %d (stderr: %s) — treating as failure", name, proc.returncode, err[:200])
-                # RD-49: trace failed LLM call
+                # RD-49: trace failed LLM invocation
                 try:
                     from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
                     _llm_trace(caller="llm_bridge._call_single_llm", model=name, latency_ms=_latency_ms, error=f"exit:{proc.returncode}")
@@ -554,7 +554,7 @@ async def _call_single_llm(
                     reason=f"empty_response:{err[:100]}" if err else "empty_response",
                     last_exit_code=proc.returncode or 0,
                 )
-            # RD-49: trace successful LLM call
+            # RD-49: trace successful LLM invocation
             try:
                 from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
                 _completion_tokens = len(result.split())  # word-count approx; real token count not available from CLI

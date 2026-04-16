@@ -241,6 +241,8 @@ class TestRD29KeywordMissRate:
 
     def test_keyword_miss_rate_in_settings(self):
         settings_path = _CONFIG_DIR / "settings.md"
+        if not settings_path.exists():
+            pytest.skip("config/settings.md is gitignored — not present in CI.")
         content = settings_path.read_text(encoding="utf-8")
         assert "keyword_miss_rate" in content, (
             "RD-29: keyword_miss_rate threshold not found in config/settings.md"
@@ -248,6 +250,8 @@ class TestRD29KeywordMissRate:
 
     def test_router_upgrade_recommended_event_mentioned(self):
         settings_path = _CONFIG_DIR / "settings.md"
+        if not settings_path.exists():
+            pytest.skip("config/settings.md is gitignored — not present in CI.")
         content = settings_path.read_text(encoding="utf-8")
         assert "ROUTER_UPGRADE_RECOMMENDED" in content, (
             "RD-29: ROUTER_UPGRADE_RECOMMENDED event not documented in settings.md"
