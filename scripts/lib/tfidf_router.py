@@ -94,6 +94,10 @@ def _load_vector_cache(cache_file: Path | None = None) -> dict[str, dict]:
 
     DEBT-ROUTE-002: invalidates cache if older than _CACHE_TTL_SEC (24h) or if
     any agent's updated_at in the registry is newer than cache_built_ts.
+
+    RD-46: Also invalidates if the agent registry file (external-registry.yaml)
+    has been modified after the cache was built — ensures route changes propagate
+    without waiting for the 24h TTL.
     """
     import time as _time
     _CACHE_TTL_SEC = 86400  # 24 hours
@@ -104,6 +108,15 @@ def _load_vector_cache(cache_file: Path | None = None) -> dict[str, dict]:
             built_ts = data.get("cache_built_ts", 0)
             if isinstance(built_ts, (int, float)) and (_time.time() - float(built_ts)) > _CACHE_TTL_SEC:
                 return {}  # TTL expired — force rebuild
+            # RD-46: Invalidate if agent registry was modified after cache build
+            registry_path = (
+                Path(__file__).resolve().parent.parent.parent
+                / "config" / "agents" / "external-registry.yaml"
+            )
+            if registry_path.exists():
+                registry_mtime = registry_path.stat().st_mtime
+                if isinstance(built_ts, (int, float)) and registry_mtime > float(built_ts):
+                    return {}  # Registry changed — force rebuild
             return data
     except (OSError, json.JSONDecodeError):
         pass
@@ -205,11 +218,19 @@ class TFIDFRouter:
         query_text: str,
         top_n: int = 3,
         min_sim: float = 0.1,
+        domain_weights: dict[str, int] | None = None,
     ) -> list[LexicalMatch]:
         """Query TF-IDF vectors for top-N similar agents.
 
         Returns list of LexicalMatch sorted by similarity DESC.
+
+        When the top two candidates have a margin < 0.05 (AMBIGUITY_THRESHOLD),
+        a deterministic tiebreaker is applied:
+          1. Prefer the domain with higher domain_weights (more established domain)
+          2. If weights tie, sort alphabetically by agent name (stable)
+        This eliminates non-deterministic routing across interpreter restarts (RD-10).
         """
+        _AMBIGUITY_THRESHOLD = 0.05
         self._ensure_loaded()
 
         if not self._vectors:
@@ -227,6 +248,20 @@ class TFIDFRouter:
                 ))
 
         scores.sort(key=lambda m: -m.similarity)
+
+        # RD-10: Apply deterministic tiebreaker when top candidates are within margin
+        if len(scores) >= 2:
+            top_sim = scores[0].similarity
+            if top_sim - scores[1].similarity < _AMBIGUITY_THRESHOLD:
+                _weights = domain_weights or {}
+                # Collect all candidates within the ambiguity margin
+                ambiguous = [m for m in scores if top_sim - m.similarity < _AMBIGUITY_THRESHOLD]
+                # Sort: (1) higher weight first, (2) alphabetical name as tiebreaker
+                ambiguous.sort(key=lambda m: (-_weights.get(m.agent_name, 0), m.agent_name))
+                # Reconstruct: tiebroken candidates first, remainder unchanged
+                remainder = [m for m in scores if top_sim - m.similarity >= _AMBIGUITY_THRESHOLD]
+                scores = ambiguous + remainder
+
         return scores[:top_n]
 
     def is_ready(self) -> bool:

@@ -22,8 +22,14 @@ class TestConnectorRecordSchema:
     """A1–A3 from DEBT-009."""
 
     def test_valid_record_passes(self):
-        """A1: A record with all required fields passes validation."""
-        raw = {"id": "r1", "source": "gmail", "date_iso": "2026-04-14", "subject": "Test"}
+        """A1: A record with all required fields passes validation.
+
+        RD-22: gmail source requires both subject and body top-level fields.
+        """
+        raw = {
+            "id": "r1", "source": "gmail", "date_iso": "2026-04-14",
+            "subject": "Test", "body": "Hello world",
+        }
         rec = validate_record(raw)
         assert isinstance(rec, ConnectorRecord)
         assert rec.id == "r1"

@@ -28,6 +28,10 @@ schedules:
     query: "Compute 90-day cash-flow projection from ~/.artha-local/cashflow.db and update state/finance_forecast.md"
     staleness_tolerance_seconds: 86400
     cron_group: "capital"
+    preconditions:
+      - vault_plaintext_available: finance
+      # RD-03: CapitalAgent must only run when state/finance.md is decrypted.
+      # If locked, agent_scheduler.py skips the agent and logs PRECONDITION_FAILED.
 
   # ── TribeAgent (slot 3 of 8) ─────────────────────────────────────────
   - agent: "TribeAgent"
@@ -36,6 +40,13 @@ schedules:
     staleness_tolerance_seconds: 86400
     cron_group: "tribe"
 
-  # ── Slots 4–8 reserved for future domain agents ───────────────────────
+  # ── KnowledgeGraphGC (slot 4 of 8) — RD-18 ─────────────────────────
+  - agent: "KnowledgeGraphGC"
+    cron: "0 4 * * 0"           # 04:00 Sunday weekly
+    query: "Run knowledge graph ghost entity GC — python -m lib.knowledge_graph --gc"
+    staleness_tolerance_seconds: 604800  # 7 days (1 cron cycle)
+    cron_group: "kg-maintenance"
+
+  # ── Slots 5–8 reserved for future domain agents ───────────────────────
   # Do not register a 7th+ slot without first running the
   # adversarial routing test (A1.3) per specs/prd-reloaded.md §3.2.

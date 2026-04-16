@@ -238,3 +238,9 @@ state/career_audit.jsonl
 
 # --- OneNote export folder (personal — never committed) ---
 OneNote/
+
+# --- AI Studio skill packages and local skill directory ---
+# home-intelligence.skill and skills/ contain personal entity names
+# (camera names, family member names from Home Assistant) — never committed
+*.skill
+skills/

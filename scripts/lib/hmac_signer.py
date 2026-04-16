@@ -65,7 +65,36 @@ class _NonceCache:
         self._ttl = ttl_sec
         self._lock = threading.Lock()
         self._compacted_this_session = False
+        self._replay_vulnerable_until: float = 0.0  # RD-26: monotonic timestamp
+        self._nonce_cache_integrity_check()
         self._load_persisted()
+
+    def _nonce_cache_integrity_check(self) -> None:
+        """RD-26: Warn and enter replay-vulnerable window if nonce cache is absent.
+
+        If the cache file is deleted between sessions (e.g., by a failed upgrade
+        or accidental rm), nonces from the previous session's TTL window will not
+        be rejected — creating a replay vulnerability window equal to the nonce TTL.
+        We enter a 10-minute elevated-vigilance window and log to audit.
+        """
+        import time as _time  # noqa: PLC0415
+        if not _NONCE_CACHE_FILE.exists():
+            # Cache is absent — log warning and set replay-vulnerable window
+            _REPLAY_VULNERABLE_WINDOW_SEC = 600  # 10 minutes
+            self._replay_vulnerable_until = _time.monotonic() + _REPLAY_VULNERABLE_WINDOW_SEC
+            log.warning(
+                "NONCE_CACHE_INTEGRITY: hmac_nonce_cache.jsonl not found at startup. "
+                "Entering %ds replay-vulnerable window — nonces from the previous session "
+                "cannot be rejected until new cache is populated. "
+                "Path: %s",
+                _REPLAY_VULNERABLE_WINDOW_SEC,
+                _NONCE_CACHE_FILE,
+            )
+
+    def is_replay_vulnerable(self) -> bool:
+        """Return True if we are currently in a replay-vulnerable window (RD-26)."""
+        import time as _time  # noqa: PLC0415
+        return _time.monotonic() < self._replay_vulnerable_until
 
     def _load_persisted(self) -> None:
         """Load non-expired nonces from disk and compact the file once per process."""

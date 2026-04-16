@@ -1086,6 +1086,25 @@ def run(
         verbose=verbose,
     )
 
+    # RD-43: Write orchestrator funnel metrics for eval_runner and CI
+    try:
+        import json as _json  # noqa: PLC0415
+        from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+        _metrics_dir = artha_dir / "tmp"
+        _metrics_dir.mkdir(parents=True, exist_ok=True)
+        _orch_metrics = {
+            "run_at": _dt.now(tz=_tz.utc).isoformat(),
+            "signals_in": len(all_signals),
+            "proposals_composed": proposed,
+            "proposals_suppressed_duplicates": suppressed,
+            "proposals_queued": proposed,
+        }
+        (_metrics_dir / "orchestrator_metrics.json").write_text(
+            _json.dumps(_orch_metrics, indent=2), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001
+        pass  # metrics write failure must never crash pipeline
+
     executor.close()
     return proposed
 
@@ -1262,6 +1281,11 @@ def cmd_defer(artha_dir: Path, action_id: str, until: str = "next-session") -> i
 def cmd_approve_all_low(artha_dir: Path) -> int:
     """Approve all low-friction pending proposals. High/standard friction untouched.
 
+    RD-11: Idempotency is checked BEFORE auto-approval — idempotency keys that
+    were reserved at enqueue time may have expired (TTL boundary) since then,
+    creating a window where the same action could be re-queued and re-approved.
+    This check re-validates the key at approval time to prevent duplicate execution.
+
     Ref: specs/actions-reloaded.md §T-U-19
     """
     _, ActionExecutor, _ = _import_action_modules()
@@ -1274,8 +1298,43 @@ def cmd_approve_all_low(artha_dir: Path) -> int:
             return 0
         approved = 0
         failed = 0
+        skipped_idem = 0
         for p in low_friction:
             pid = getattr(p, "id", "")
+            # RD-11: Re-run idempotency check at approval time to guard TTL boundary
+            _stored_key = getattr(p, "_idem_key", None)
+            if _stored_key:
+                try:
+                    from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
+                    _idem_store = _IdemStore(
+                        artha_dir / "state" / "idempotency_keys.json"
+                    )
+                    _idem_data = _idem_store._load()
+                    _entry = _idem_data.get(_stored_key)
+                    if _entry and _entry.get("status") == "COMPLETED":
+                        # Key still marked COMPLETED — this is a duplicate at TTL boundary
+                        from datetime import datetime, timezone as _tz  # noqa: PLC0415
+                        _expires = _entry.get("expires_at", "")
+                        _is_expired = False
+                        if _expires:
+                            try:
+                                _is_expired = datetime.now(_tz.utc) > datetime.fromisoformat(_expires)
+                            except ValueError:
+                                pass
+                        if not _is_expired:
+                            print(
+                                f"[action] ⟳ skipped {pid[:8]} (idempotency: already completed, "
+                                f"key not yet expired — TTL boundary guard)",
+                            )
+                            _audit_log(
+                                artha_dir,
+                                f"ACTION_IDEMPOTENCY_SKIP_AT_APPROVAL | id:{pid} | "
+                                f"key:{_stored_key[:8]} | reason:approve_all_low_ttl_boundary",
+                            )
+                            skipped_idem += 1
+                            continue
+                except Exception:
+                    pass  # Idempotency re-check is best-effort; never block approval
             try:
                 result = executor.approve(pid, approved_by="user:terminal")
                 status = getattr(result, "status", "unknown")
@@ -1289,6 +1348,7 @@ def cmd_approve_all_low(artha_dir: Path) -> int:
                 print(f"[action] ✗ {pid[:8]}: {exc}", file=sys.stderr)
                 failed += 1
         print(f"[action] approve-all-low: {approved} approved, {failed} failed, "
+              f"{skipped_idem} idempotency-blocked, "
               f"{len(pending) - len(low_friction)} high/standard skipped")
         return 0 if failed == 0 else 1
     finally:

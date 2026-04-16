@@ -22,6 +22,16 @@ except ImportError:
     def _get_error_message(code: str) -> str:  # type: ignore[misc]
         return f"Error: {code} — check your connector configuration."
 
+try:
+    from lib.exceptions import LLMUnavailableError  # RD-51
+except ImportError:
+    class LLMUnavailableError(RuntimeError):  # type: ignore[no-redef]
+        """Fallback stub when exceptions.py is not on path."""
+        def __init__(self, reason: str, last_exit_code: int = -1) -> None:
+            super().__init__(f"LLM unavailable: {reason} (exit {last_exit_code})")
+            self.reason = reason
+            self.last_exit_code = last_exit_code
+
 _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _STATE_DIR = _ARTHA_DIR / "state"
 _PROMPTS_DIR = _ARTHA_DIR / "prompts"
@@ -496,6 +506,7 @@ async def _call_single_llm(
             shell_cmd = f'type "{prompt_file}" | "{executable}" -p "{instruction}" {args_str}'
 
         try:
+            _t0 = time.monotonic()
             proc = await asyncio.create_subprocess_shell(
                 shell_cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -505,6 +516,7 @@ async def _call_single_llm(
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
             )
+            _latency_ms = (time.monotonic() - _t0) * 1000
             raw = stdout.decode("utf-8", errors="replace")
             raw = _re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw)
             lines = raw.splitlines()
@@ -515,14 +527,45 @@ async def _call_single_llm(
                 and l.strip()
             ]
             result = "\n".join(clean_lines).strip()
-            if not result:
-                err = stderr.decode("utf-8", errors="replace").strip()
-                log.warning("[%s] stdout empty, stderr: %s", name, err[:200])
-                return ""
             if proc.returncode != 0:
                 err = stderr.decode("utf-8", errors="replace").strip()
                 log.warning("[%s] exited with code %d (stderr: %s) — treating as failure", name, proc.returncode, err[:200])
-                return ""
+                # RD-49: trace failed LLM call
+                try:
+                    from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
+                    _llm_trace(caller="llm_bridge._call_single_llm", model=name, latency_ms=_latency_ms, error=f"exit:{proc.returncode}")
+                except Exception:  # noqa: BLE001
+                    pass
+                # RD-51: raise typed error so callers can detect LLM unavailability
+                raise LLMUnavailableError(
+                    reason=err[:200] if err else "non_zero_exit",
+                    last_exit_code=proc.returncode,
+                )
+            if not result:
+                err = stderr.decode("utf-8", errors="replace").strip()
+                log.warning("[%s] stdout empty, stderr: %s", name, err[:200])
+                # RD-49: trace empty response
+                try:
+                    from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
+                    _llm_trace(caller="llm_bridge._call_single_llm", model=name, latency_ms=_latency_ms, error="empty_response")
+                except Exception:  # noqa: BLE001
+                    pass
+                raise LLMUnavailableError(
+                    reason=f"empty_response:{err[:100]}" if err else "empty_response",
+                    last_exit_code=proc.returncode or 0,
+                )
+            # RD-49: trace successful LLM call
+            try:
+                from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
+                _completion_tokens = len(result.split())  # word-count approx; real token count not available from CLI
+                _llm_trace(
+                    caller="llm_bridge._call_single_llm",
+                    model=name,
+                    completion_tokens=_completion_tokens,
+                    latency_ms=_latency_ms,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return result
         except asyncio.TimeoutError:
             try:
@@ -530,10 +573,22 @@ async def _call_single_llm(
             except Exception:
                 pass
             log.warning("[%s] timed out after %ds", name, timeout)
-            return ""
+            # RD-49: trace timeout
+            try:
+                from lib.observability import llm_trace as _llm_trace  # noqa: PLC0415
+                _llm_trace(caller="llm_bridge._call_single_llm", model=name, latency_ms=float(timeout * 1000), error="timeout")
+            except Exception:  # noqa: BLE001
+                pass
+            # RD-51: raise typed error instead of returning ""
+            raise LLMUnavailableError(reason="subprocess_timeout", last_exit_code=-1)
+        except LLMUnavailableError:
+            raise  # propagate typed errors unchanged
+        except FileNotFoundError as exc:
+            log.error("[%s] binary not found: %s", name, exc)
+            raise LLMUnavailableError(reason="binary_not_found", last_exit_code=-1) from exc
         except Exception as exc:
             log.error("[%s] subprocess failed: %s", name, exc)
-            return ""
+            raise LLMUnavailableError(reason=f"subprocess_error:{type(exc).__name__}", last_exit_code=-1) from exc
         finally:
             # Safety net: if the CLI decrypted the vault (Claude skills),
             # re-encrypt immediately so plaintext never lingers on disk.
@@ -564,10 +619,14 @@ async def _ask_llm(question: str, context: str) -> str:
 
     # Try each CLI in order until one succeeds
     for name, executable, base_args in clis:
-        result = await _call_single_llm(
-            name, executable, base_args, full_prompt,
-            "Answer the question above.",
-        )
+        try:
+            result = await _call_single_llm(
+                name, executable, base_args, full_prompt,
+                "Answer the question above.",
+            )
+        except LLMUnavailableError as exc:
+            log.warning("[ask] %s unavailable (%s), trying next...", name, exc.reason)
+            continue
         if result:
             log.info("[ask] answered by %s (%d chars)", name, len(result))
             return result
@@ -608,12 +667,16 @@ async def _ask_llm_ensemble(question: str, context: str) -> str:
         _call_single_llm(name, exe, args, full_prompt, "Answer the question above.")
         for name, exe, args in clis
     ]
-    results = await asyncio.gather(*tasks)
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Collect successful responses with source labels
     responses: list[tuple[str, str]] = []
-    for (name, _, _), result in zip(clis, results):
-        if result:
+    for (name, _, _), result in zip(clis, raw_results):
+        if isinstance(result, LLMUnavailableError):
+            log.warning("[ask-all] %s unavailable (%s)", name, result.reason)
+        elif isinstance(result, Exception):
+            log.warning("[ask-all] %s error: %s", name, result)
+        elif result:
             responses.append((name, result))
 
     if not responses:
@@ -649,18 +712,24 @@ async def _ask_llm_ensemble(question: str, context: str) -> str:
     )
 
     if claude_exe:
-        final = await _call_single_llm(
-            "claude-haiku", claude_exe,
-            ["--dangerously-skip-permissions", "--model", "haiku"],
-            consolidation_prompt, "Synthesize the best answer now.",
-        )
+        try:
+            final = await _call_single_llm(
+                "claude-haiku", claude_exe,
+                ["--dangerously-skip-permissions", "--model", "haiku"],
+                consolidation_prompt, "Synthesize the best answer now.",
+            )
+        except LLMUnavailableError:
+            final = ""
     else:
         # Fallback: use primary CLI if Claude not available
         consolidator = clis[0]
-        final = await _call_single_llm(
-            consolidator[0], consolidator[1], consolidator[2],
-            consolidation_prompt, "Synthesize the best answer now.",
-        )
+        try:
+            final = await _call_single_llm(
+                consolidator[0], consolidator[1], consolidator[2],
+                consolidation_prompt, "Synthesize the best answer now.",
+            )
+        except LLMUnavailableError:
+            final = ""
     if not final:
         # Consolidation failed — return longest individual response
         final = max((r for _, r in responses), key=len)

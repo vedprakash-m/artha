@@ -320,19 +320,48 @@ class AgentHealthTracker:
 
         Patterns are stored verbatim and filtered against by the router
         (EA-13b) to avoid re-routing similar queries.
+
+        RD-30: Each pattern gets a registered_at timestamp. During this call,
+        patterns older than 90 days are garbage-collected from both the
+        weak_queries list and the weak_query_timestamps dict.
         """
+        from datetime import datetime, timezone  # noqa: PLC0415
         agent = self._registry.get(agent_name)
         if agent is None:
             return
         health = agent.health
         if health.weak_queries is None:
             health.weak_queries = []
-        # Avoid duplicates
+        if health.weak_query_timestamps is None:
+            health.weak_query_timestamps = {}
+
+        # RD-30: GC patterns older than 90 days
+        _GC_DAYS = 90
+        now = datetime.now(timezone.utc)
+        gc_cutoff = now.timestamp() - (_GC_DAYS * 86400)
+        patterns_to_gc = []
+        for pattern, ts_str in list(health.weak_query_timestamps.items()):
+            try:
+                ts = datetime.fromisoformat(ts_str).timestamp()
+                if ts < gc_cutoff:
+                    patterns_to_gc.append(pattern)
+            except (ValueError, TypeError):
+                pass
+        for p in patterns_to_gc:
+            health.weak_query_timestamps.pop(p, None)
+            if p in health.weak_queries:
+                health.weak_queries.remove(p)
+
+        # Avoid duplicates; update timestamp if already present
         if query_pattern not in health.weak_queries:
             health.weak_queries.append(query_pattern)
             # Keep a bounded list (at most 50 weak patterns)
             if len(health.weak_queries) > 50:
-                health.weak_queries = health.weak_queries[-50:]
+                oldest = health.weak_queries.pop(0)
+                health.weak_query_timestamps.pop(oldest, None)
+        # Always refresh the timestamp (last seen = most recent)
+        health.weak_query_timestamps[query_pattern] = now.isoformat()
+
         self._registry.update_health(agent_name, health)
         try:
             self._registry.save()

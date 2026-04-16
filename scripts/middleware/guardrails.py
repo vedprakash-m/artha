@@ -160,14 +160,57 @@ class BaseGuardrail(ABC):
         Override: set env ARTHA_WAVE0_OVERRIDE=<reason> to bypass hard block.
           Every override is written to state/audit.md (mandatory audit trail).
         """
-        # Env-var override — always audited
+        # RD-47: Dual-key confirmation for ARTHA_WAVE0_OVERRIDE.
+        # OVERRIDE alone is insufficient — ARTHA_WAVE0_CONFIRM must also be set
+        # to the current session hour (YYYYMMDDHH format) to prevent accidental
+        # bypass from stale or automated env vars.
         override = os.environ.get("ARTHA_WAVE0_OVERRIDE", "")
         if override:
-            _guardrail_write_audit(
-                "WAVE0_HARD_OVERRIDE",
-                {"guardrail": self.name, "reason": override[:120]},
-            )
-            return True
+            import datetime as _dt
+            confirm = os.environ.get("ARTHA_WAVE0_CONFIRM", "")
+            current_hour = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d%H")
+            if confirm != current_hour:
+                # Dual-key check failed — emit visible warning and do NOT bypass
+                _warning_msg = (
+                    f"⚠ [GUARDRAIL-SECURITY] ARTHA_WAVE0_OVERRIDE set but "
+                    f"ARTHA_WAVE0_CONFIRM is missing or stale. "
+                    f"Expected ARTHA_WAVE0_CONFIRM={current_hour} (current UTC hour). "
+                    f"Guardrail [{self.name}] NOT bypassed. "
+                    f"This prevents accidental bypass from stale env vars."
+                )
+                print(_warning_msg, file=sys.stderr)
+                _guardrail_write_audit(
+                    "WAVE0_OVERRIDE_REJECTED_NO_CONFIRM",
+                    {"guardrail": self.name, "override_reason": override[:120],
+                     "confirm_provided": confirm[:20] if confirm else "(none)",
+                     "expected": current_hour},
+                )
+            else:
+                # Both keys present and CONFIRM matches current hour — bypass granted
+                scope_raw = os.environ.get("ARTHA_WAVE0_OVERRIDE_SCOPE", "")
+                scope = [s.strip() for s in scope_raw.split(",") if s.strip()]
+                scope_ok = (not scope) or (self.name in scope)
+                if not scope_ok:
+                    # Scope restriction: this guardrail is not in the override scope
+                    print(
+                        f"⚠ [GUARDRAIL-BYPASS-SCOPED] {self.name} not in "
+                        f"ARTHA_WAVE0_OVERRIDE_SCOPE={scope_raw!r} — guardrail fires normally.",
+                        file=sys.stderr,
+                    )
+                    # Fall through to normal guardrail checks
+                else:
+                    print(
+                        f"⚠ [GUARDRAIL-BYPASS] wave0 gate overridden for [{self.name}]"
+                        f" | reason: {override[:80]}"
+                        f" | Audit: state/audit.md entry WAVE0_HARD_OVERRIDE",
+                        file=sys.stderr,
+                    )
+                    _guardrail_write_audit(
+                        "WAVE0_HARD_OVERRIDE",
+                        {"guardrail": self.name, "reason": override[:120],
+                         "scope": scope_raw[:80] or "all"},
+                    )
+                    return True
 
         mode = _get_wave0_mode()
 

@@ -55,6 +55,10 @@ privacy:
     - kids
     - employment
     - audit
+    - career_search  # RD-44
+    - business       # RD-44
+    - caregiving     # RD-44
+    - work-career    # RD-44
 
 # ---------------------------------------------------------------------------
 # Write-time capacity enforcement  (DEBT-017)

@@ -133,6 +133,8 @@ life_event_detected:
 # DEBT-SIG-002/SIG-003: missing_assignment route unreachable — email_signal_extractor
 # emits school_action_needed for all school emails; no separate producer exists.
 # Downgraded to stub. school_action_needed covers this case.
+# RD-25: Keeping stub to prevent accidental re-introduction of a dead route.
+# Do NOT activate until a dedicated school skill exists that emits this signal.
 missing_assignment:
   action_type: email_send
   friction: standard
@@ -140,6 +142,8 @@ missing_assignment:
   reversible: true
   undo_window_sec: 30
   status: stub
+  # RD-25: no dedicated producer; school_action_needed covers this case.
+  # Activate only when a dedicated school skill is built.
   producer: TBD (school_action_needed covers this — revisit when dedicated school skill built)
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -357,8 +361,18 @@ form_deadline:
   undo_window_sec: null
   status: active
 
-# E12 — Decision Tracker (V1.1: decision_log_proposal handler not yet implemented)
-# decision_detected: removed in v1.3.0 — no handler exists; scheduled for V1.1
+# E12 — Decision Tracker (RD-33: restored — decision_tracker.py consumer exists)
+decision_detected:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+  producer: pipeline.py Step 8d AI reasoning
+  notes: >-
+    Captured by DecisionTracker.capture_from_signal() — never auto-writes;
+    user must confirm via instruction_sheet proposal before persistence.
 
 # E6 — Subscription Lifecycle (extended)
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -567,13 +581,56 @@ slack_action_item:
   undo_window_sec: null
   status: active
 
-# DEBT-SIG-005: forward declaration for planned work-life boundary detection via Slack timestamp
+# RD-09: slack_after_hours — activated (was stub). Boundary protection signal.
+# Uses instruction_sheet (not reminder_create) to match the pattern of RD-01/07.
+# friction: low — surfaces to user as a low-friction proposal requiring review.
 slack_after_hours:
-  action_type: reminder_create
+  action_type: instruction_sheet
   friction: low
   min_trust: 0
   reversible: false
   undo_window_sec: null
-  status: stub
+  status: active
   producer: pipeline.py (timestamp-based, not pattern-based)
-  description: "Slack message received outside work_hours — work-life boundary alert"
+  notes: >-
+    Work-life boundary protection. Slack message received outside
+    work_hours.start/end from user_profile.yaml. friction: low so boundary
+    violations surface immediately without requiring extra approval steps.
+
+# RD-33: Content signals — previously absent from routing, silently discarded.
+content_moment_missed:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+  producer: config/patterns.yaml (content moment detection)
+  notes: >-
+    Triggered when a content opportunity window passes without a post.
+    Surfaces as instruction_sheet proposal for review.
+
+content_staged_unreviewed:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active
+  producer: config/patterns.yaml (staged content monitor)
+  notes: >-
+    Triggered when content has been staged but not reviewed within the
+    expected review window. friction: low — review reminder only.
+
+# RD-33: Address update workflow notification signal.
+address_update_notification:
+  action_type: email_send
+  friction: standard
+  min_trust: 1
+  reversible: true
+  undo_window_sec: 30
+  status: active
+  producer: scripts/action_composer.py _workflow_address_change()
+  notes: >-
+    Emitted for each contact in an address change workflow. Routes to
+    email_send handler to draft address update notification emails.

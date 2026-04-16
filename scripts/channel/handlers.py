@@ -451,7 +451,17 @@ async def cmd_domain(args: list[str], scope: str) -> tuple[str, str]:
         available = ", ".join(all_unencrypted) + "\n+ encrypted: " + ", ".join(sorted(encrypted_domains))
         return f"_Unknown domain '{domain_name}'._\nAvailable: {available}", "N/A"
 
-    content, staleness = _read_state_file(state_key)
+    try:
+        content, staleness = _read_state_file(state_key)
+    except Exception as _ve:
+        # RD-34: VaultAccessRequired — surface vault-locked notice
+        if "vault" in str(_ve).lower() or "VaultAccess" in type(_ve).__name__:
+            return (
+                f"_{domain_name.title()} domain is vault-protected. "
+                "Unlock the vault first (run `vault unlock`), then retry._",
+                "N/A",
+            )
+        raise
     # Use section-aware extraction for large files (Telegram limit: 4096 chars)
     if len(content) > 1000:
         content = _extract_section_summaries(content, max_total=3200)

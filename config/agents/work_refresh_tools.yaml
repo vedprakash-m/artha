@@ -1,0 +1,44 @@
+# config/agents/work_refresh_tools.yaml
+# RD-36: Allowed tool patterns for Work OS agency refresh.
+# Replaces the --allow-all-tools flag with a path-restricted allowlist.
+# The agent may read work-scoped config and write only to state/work/.
+# Personal state (state/finance.md, state/immigration.md, etc.) is blocked.
+
+read_file:
+  allowed: true
+  path_pattern: "^state/work/.*|^config/(channels|connectors|artha_config|domain_registry|actions)\\.yaml$"
+
+write_file:
+  allowed: true
+  path_pattern: "^state/work/.*"
+
+run_terminal:
+  allowed: false   # Agency may not spawn shell commands during refresh
+
+mcp_ado:
+  allowed: true   # Azure DevOps MCP (work data)
+
+mcp_m365:
+  allowed: true   # Microsoft 365 MCP (calendar, mail)
+
+mcp_workiq:
+  allowed: true   # WorkIQ MCP
+
+mcp_icm:
+  allowed: true   # ICM (incident management)
+
+mcp_bluebird:
+  allowed: true   # Bluebird MCP
+
+mcp_kusto:
+  allowed: true   # Kusto / ADX for golden queries
+
+mcp_github:
+  allowed: true   # GitHub MCP (work repos only)
+
+# All other MCPs and file paths default to blocked.
+# Violations are logged to state/audit.md as WORK_ISOLATION_VIOLATION.
+blocked_path_patterns:
+  - "^state/(?!work/).*"   # All state/ except state/work/
+  - "^config/user_profile" # Personal profile (vault, family data)
+  - "^config/guardrails"   # Security config is read-only

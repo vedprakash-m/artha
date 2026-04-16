@@ -20,6 +20,11 @@ Usage:
             continue
         process(record)
 
+RD-22: Extended raw field validation for email connectors.
+       Missing 'subject' or 'body' in email records now raises ValueError
+       at the schema boundary instead of producing silent regex misses in
+       email_signal_extractor.py.
+
 Ref: specs/debt.md DEBT-009
 """
 from __future__ import annotations
@@ -32,6 +37,14 @@ from typing import Any
 _DATE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$"
 )
+
+# RD-22: Required raw fields per source type — missing required fields raise ValueError
+_REQUIRED_RAW_FIELDS: dict[str, list[str]] = {
+    "gmail": ["subject", "body"],
+    "outlook_email": ["subject", "body"],
+    "email": ["subject", "body"],
+    "icloud_email": ["subject", "body"],
+}
 
 
 @dataclass(frozen=True)
@@ -60,6 +73,9 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
 
     All validation errors include the field name and actual value received
     so that the caller can log actionable diagnostics.
+
+    RD-22: For email connectors (source in _REQUIRED_RAW_FIELDS), validates
+    that required raw sub-fields (subject, body) are present and non-empty.
     """
     if not isinstance(raw, dict):
         raise TypeError(f"Connector record must be a dict, got {type(raw).__name__!r}")
@@ -100,5 +116,23 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
             f"Connector record 'date_iso' does not match ISO-8601 format "
             f"(e.g. '2026-04-14' or '2026-04-14T09:30:00Z'): {date_iso!r}"
         )
+
+    # --- raw sub-field validation (RD-22: email source required fields) ---
+    # Email fields (subject, body) are top-level in the connector record dict.
+    # Validate only when the source type requires them; non-email sources skip.
+    required_raw_fields = _REQUIRED_RAW_FIELDS.get(source, [])
+    for field_name in required_raw_fields:
+        field_val = raw.get(field_name)
+        if field_val is None:
+            raise ValueError(
+                f"Connector record raw['{field_name}'] missing for source={source!r} "
+                f"(id={rec_id!r}). Email extractors rely on this field — "
+                f"missing it causes silent regex misses."
+            )
+        if not isinstance(field_val, str):
+            raise ValueError(
+                f"Connector record raw['{field_name}'] must be str for source={source!r}, "
+                f"got {type(field_val).__name__!r} (id={rec_id!r})"
+            )
 
     return ConnectorRecord(id=rec_id, source=source, date_iso=date_iso, raw=raw)

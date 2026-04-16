@@ -399,7 +399,13 @@ class ActionExecutor:
                 or domain
             )
             _idem_intent = title.strip().lower()[:80]
-            _idem_key = _CK.compute(_idem_recipient, _idem_intent, action_type)
+            # RD-07: Pass signal_type so instruction_sheet keys are qualified
+            # per signal type, preventing cross-signal suppression collisions.
+            _signal_type = str(parameters.get("signal_type", ""))
+            _idem_key = _CK.compute(
+                _idem_recipient, _idem_intent, action_type,
+                signal_type=_signal_type,
+            )
             _idem_store = _IdemStore(
                 self._artha_dir / "state" / "idempotency_keys.json"
             )
@@ -927,19 +933,26 @@ class ActionExecutor:
         Used by ActionComposer.compose() workflow — the composer builds the
         complete proposal and this method enqueues it without re-validation.
 
+        RD-32: Now calls _pre_enqueue_gate() to enforce idempotency,
+        schema validation, and PII scan — the same gates as propose().
+        Only friction/approval workflow is skipped (it is the caller's
+        responsibility for composed proposals).
+
         Returns:
             The action ID (proposal.id) of the enqueued proposal.
         Raises:
-            ValueError: If PII is detected in non-allowlisted fields.
+            ValueError: If any pre-enqueue gate rejects the proposal.
         """
-        config = self._action_configs.get(proposal.action_type, {})
-        pii_allowlist = config.get("pii_allowlist", [])
-        if config.get("pii_check", True):
-            clean, findings = _pii_scan_params(proposal.parameters, pii_allowlist)
-            if not clean:
-                raise ValueError(
-                    f"PII firewall blocked enqueue.\nFindings: {'; '.join(findings)}"
-                )
+        # RD-32: Apply all safety gates before enqueue (was PII-only before).
+        gate_ok, gate_reason = self._pre_enqueue_gate(proposal)
+        if not gate_ok:
+            _audit_log(
+                self._artha_dir,
+                f"ACTION_PRE_ENQUEUE_REJECTED | id:{proposal.id} "
+                f"| type:{proposal.action_type} | reason:{gate_reason} | via:compose",
+            )
+            raise ValueError(f"Pre-enqueue gate rejected composed proposal: {gate_reason}")
+
         self._queue.propose(proposal, pubkey=self._get_pubkey())
         _audit_log(
             self._artha_dir,
@@ -951,6 +964,67 @@ class ActionExecutor:
         self._enqueue_and_maybe_export(proposal)
 
         return proposal.id
+
+    def _pre_enqueue_gate(
+        self,
+        proposal: ActionProposal,
+    ) -> tuple[bool, str]:
+        """Shared safety gate applied to ALL proposals before enqueue.
+
+        RD-32: Extracts the idempotency + schema + PII checks that were
+        previously duplicated between propose() and absent from propose_direct().
+        Both paths now call this single gate to enforce the same invariants.
+
+        Returns:
+            (True, "ok") if the proposal passes all gates.
+            (False, reason) if any gate rejects it.
+        """
+        # Gate 0: Schema validation (RD-41)
+        try:
+            from schemas.action import ActionProposalSchema as _APSchema  # noqa: PLC0415
+            _APSchema.model_validate(proposal.__dict__)
+        except Exception as _schema_exc:  # noqa: BLE001
+            return False, f"schema_invalid:{str(_schema_exc)[:120]}"
+
+        # Gate 1: Idempotency check & reservation (RD-07, RD-32)
+        try:
+            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
+            _idem_recipient = str(
+                proposal.parameters.get("recipient")
+                or proposal.parameters.get("to")
+                or proposal.parameters.get("payee")
+                or proposal.domain
+            )
+            _idem_intent = proposal.title.strip().lower()[:80]
+            _signal_type = str(proposal.parameters.get("signal_type", ""))
+            _idem_key = _CK.compute(
+                _idem_recipient, _idem_intent, proposal.action_type,
+                signal_type=_signal_type,
+            )
+            _idem_store = _IdemStore(
+                self._artha_dir / "state" / "idempotency_keys.json"
+            )
+            _idem_result = _idem_store.check_or_reserve(_idem_key, proposal.action_type)
+            if _idem_result in ("duplicate", "pending"):
+                _idem_entry = _idem_store.get_entry(_idem_key)
+                _idem_ts = _idem_entry.get("created_at", "unknown time")
+                return False, f"idempotency_{_idem_result}:{_idem_key[:8]}@{_idem_ts}"
+        except (ValueError, TypeError):
+            raise
+        except Exception:  # noqa: BLE001
+            # Idempotency store unavailable — let propose() handle its own
+            # friction-escalation policy; for pre_enqueue_gate we pass through.
+            pass
+
+        # Gate 2: PII scan
+        config = self._action_configs.get(proposal.action_type, {})
+        pii_allowlist = config.get("pii_allowlist", [])
+        if config.get("pii_check", True):
+            clean, findings = _pii_scan_params(proposal.parameters, pii_allowlist)
+            if not clean:
+                return False, f"pii_blocked:{'; '.join(findings)[:120]}"
+
+        return True, "ok"
 
     def expire_stale(self) -> int:
         """Sweep expired actions. Called at preflight Step 0c."""

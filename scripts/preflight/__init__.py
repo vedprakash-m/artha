@@ -21,12 +21,13 @@ import sys
 import types
 
 from preflight._types import ARTHA_DIR, SCRIPTS_DIR, STATE_DIR, TOKEN_DIR, LOCK_FILE, WORKIQ_CACHE_FILE, _rel, CheckResult, _REQUIRED_DEPS
-from preflight.vault_checks import check_keyring_backend, check_vault_health, check_vault_lock
+from preflight.vault_checks import check_keyring_backend, check_vault_health, check_vault_lock, check_vault_watchdog
 from preflight.oauth_checks import check_oauth_token, check_token_freshness, check_msgraph_token
 from preflight.api_checks import check_script_health, check_pii_guard
 from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
     check_briefings_directory, check_profile_completeness, _is_bootstrap_stub,
+    check_prompt_size,
 )
 from preflight.integration_checks import (
     check_bridge_health, check_workiq, check_ado_auth, check_ha_connectivity,
@@ -77,6 +78,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_keyring_backend())
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
+    checks.append(check_vault_watchdog())  # RD-40: advisory check for watchdog daemon
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
     checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json"))
     checks.append(check_pii_guard())
@@ -112,6 +114,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
     checks.append(check_profile_completeness())
+
+    # ── P2 — Prompt size ceiling (RD-38: compact Artha.md ≤ 25KB) ─────────
+    checks.append(check_prompt_size())
 
     # ── P1 — Action handler health checks + expiry sweep (Step 0c) ───────
     checks.append(check_action_handlers())

@@ -1768,6 +1768,20 @@ Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the too
 
 ## §5 Slash Commands
 
+### Pre-Command Context Health Check (RD-37)
+
+Before executing any user command in a session that has already completed a
+catch-up or domain deep-dive:
+
+1. **Estimate context usage**: `character_count / 700_000 ≈ pct`
+2. **If pct > 70%**: run `python scripts/session_summarizer.py --proactive`
+   to produce a compact session card, then continue with the command using
+   the compacted context. Log `SESSION_COMPACTED | trigger:proactive_threshold`
+   to the audit trail.
+3. **If pct ≤ 70%**: proceed normally.
+
+This prevents context saturation in long sessions with multiple passes.
+
 When the user invokes any slash command, read `config/commands.md` for the full command
 reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
 `/domain`, `/domains`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,

@@ -53,8 +53,11 @@ except ImportError:
             return kwargs.get("default", None)
 
 # Model context window size used for proactive triggering (chars)
-# Conservative estimate: 200K tokens × 4 chars/token
-_MODEL_CONTEXT_CHARS = 200_000 * 4
+# RD-50 / RD-21: Import from context_budget.py (3.5 chars/token, corrected from 4)
+try:
+    from lib.context_budget import MAX_CONTEXT_CHARS as _MODEL_CONTEXT_CHARS
+except ImportError:
+    _MODEL_CONTEXT_CHARS = int(200_000 * 3.5)  # fallback if lib not on path
 
 # Commands that trigger post-command summarization
 SUMMARIZE_AFTER_COMMANDS: frozenset[str] = frozenset({
@@ -463,3 +466,67 @@ def get_context_card(summary: "SessionSummary", artha_dir: Path | None = None) -
         + facts_note
         + "\n[END SESSION CONTEXT — full history in tmp/session_history_N.md]"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI: python scripts/session_summarizer.py [--proactive]
+
+    --proactive: RD-37 — check context saturation threshold and emit a
+                 compact session card to stdout if threshold is crossed.
+                 Returns 0 on success, 1 if threshold not met.
+    """
+    import argparse as _ap  # noqa: PLC0415
+    import sys as _sys  # noqa: PLC0415
+
+    parser = _ap.ArgumentParser(prog="session_summarizer")
+    parser.add_argument(
+        "--proactive",
+        action="store_true",
+        help="RD-37: Check context threshold; emit compact card to stdout if >70%% used",
+    )
+    args = parser.parse_args(argv)
+
+    if args.proactive:
+        # Estimate context from recent state files as a proxy for in-session context
+        from pathlib import Path as _Path  # noqa: PLC0415
+        _artha_dir = _Path(__file__).resolve().parent.parent
+        _state_files = [
+            _artha_dir / "state" / "finance.md",
+            _artha_dir / "state" / "open_items.md",
+            _artha_dir / "state" / "goals.md",
+        ]
+        _context_text = ""
+        for _sf in _state_files:
+            try:
+                _context_text += _sf.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+
+        if should_summarize_now(_context_text):
+            pct = estimate_context_pct(_context_text)
+            print(f"[SESSION_SUMMARIZER] Context at {pct:.0%} — proactive compaction triggered", file=_sys.stderr)
+            # Emit a minimal compact card; full summarization requires live session data
+            print(
+                f"[SESSION COMPACT CARD — proactive_threshold]\n"
+                f"Context usage: {pct:.0%} (threshold: {load_threshold_pct():.0%})\n"
+                f"Trigger: proactive_threshold\n"
+                f"Action: Compact context by summarizing accumulated state before next command.\n"
+                f"[END COMPACT CARD]"
+            )
+            return 0
+        else:
+            pct = estimate_context_pct(_context_text)
+            print(f"[SESSION_SUMMARIZER] Context at {pct:.0%} — below threshold, no compaction needed", file=_sys.stderr)
+            return 1
+
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

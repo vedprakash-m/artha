@@ -264,6 +264,18 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
         "[PII-FILTERED-AADHAAR]",
         "AADHAAR",
     ),
+    # ── Contextual name patterns (RD-05) ───────────────────────────────────
+    # DEBT-PII-003: Names in email subject context.
+    # Matches First [Middle] Last capitalized names after "for", "re:", etc.
+    # Gated by config/guardrails.yaml → pii_guard.contextual_name_scrubbing.
+    # Loaded dynamically by _maybe_add_name_in_subject_pattern() at first call.
+    # DO NOT activate unconditionally — may have FPs on org names.
+    # This placeholder entry is replaced when the config flag is enabled.
+    (
+        re.compile(r"(?!x)x"),  # Placeholder — replaced by _maybe_add_name_in_subject_pattern()
+        "[PII-NAME]",
+        "NAME_IN_SUBJECT",
+    ),
     # Known family names in Devanagari script — loaded dynamically at runtime
     # from user_profile.yaml (§10.1, P0-3). See _build_deva_name_pattern()
     # below. This placeholder entry is replaced at first scan() call.
@@ -328,6 +340,47 @@ def _build_deva_name_pattern() -> re.Pattern | None:
         pass
     return _DEVA_NAME_PATTERN
 
+
+_NAME_IN_SUBJECT_LOADED = False
+
+
+def _maybe_add_name_in_subject_pattern() -> None:
+    """Activate the NAME_IN_SUBJECT rule if config/guardrails.yaml enables it.
+
+    RD-05 / DEBT-PII-003: Contextual name scrubbing for email subjects.
+    Gated behind `pii_guard.contextual_name_scrubbing: true` in guardrails.yaml
+    to allow opt-out if FP rate on org names is too high.
+
+    Replaces the NAME_IN_SUBJECT placeholder in _PII_RULES with a live regex
+    that matches First [Middle] Last capitalized names preceded by contextual
+    keywords ("for", "re:", "fw:", "appointment for", etc.).
+    """
+    global _NAME_IN_SUBJECT_LOADED  # noqa: PLW0603
+    if _NAME_IN_SUBJECT_LOADED:
+        return
+    _NAME_IN_SUBJECT_LOADED = True
+
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        guardrails = load_config("guardrails")
+        enabled = (guardrails.get("pii_guard") or {}).get("contextual_name_scrubbing", False)
+    except Exception:  # noqa: BLE001
+        enabled = False
+
+    if not enabled:
+        return  # placeholder stays as never-matching pattern — no-op
+
+    name_re = re.compile(
+        r"(?:(?:for|re:|fw:|fwd:|appointment\s+for|scheduled\s+for)\s+)"
+        r"([A-Z][a-z]{1,15}(?:\s+[A-Z][a-z]{1,15}){1,2})\b",
+        re.IGNORECASE,
+    )
+    for idx, (_pat, _repl, ptype) in enumerate(_PII_RULES):
+        if ptype == "NAME_IN_SUBJECT":
+            _PII_RULES[idx] = (name_re, "[PII-NAME]", "NAME_IN_SUBJECT")
+            break
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Core filter function
 # ─────────────────────────────────────────────────────────────────────────────
@@ -353,6 +406,8 @@ def _apply_filter(text: str) -> tuple[str, dict[str, int]]:
         text = pattern.sub(_protect, text)
 
     # Step 2: apply PII substitutions (order matters — ITIN before SSN)
+    # RD-05: Activate contextual name pattern if guardrails.yaml enables it
+    _maybe_add_name_in_subject_pattern()
     found: dict[str, int] = {}
     for compiled_re, replacement, pii_type in _PII_RULES:
         new_text, n = compiled_re.subn(replacement, text)

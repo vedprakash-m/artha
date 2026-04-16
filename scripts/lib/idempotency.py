@@ -188,6 +188,7 @@ class CompositeKey:
         action_type: str = "default",
         *,
         date_window: str | None = None,
+        signal_type: str = "",
     ) -> str:
         """Compute a composite idempotency key.
 
@@ -200,12 +201,30 @@ class CompositeKey:
                           ``communication``, or ``default``.
             date_window:  Override date window string (default: auto-derived
                           from action_type + current date).
+            signal_type:  RD-07: For ``instruction_sheet`` actions, include
+                          the originating signal type in the key to prevent
+                          cross-signal suppression (e.g. subscription_renewal
+                          and form_deadline for the same entity must not share
+                          a key and suppress each other).
 
         Returns:
             64-character lowercase hex SHA-256 digest.
+
+        Migration note (RD-07): Keys previously computed without signal_type
+        for instruction_sheet actions will not match keys computed with it.
+        This causes one-cycle deduplication loss on first deployment — the
+        worst case is one extra action proposal per affected signal. The user
+        can decline it; it will be keyed correctly going forward.
         """
+        # RD-07: Qualify instruction_sheet keys by signal_type to prevent
+        # cross-signal collisions (subscription_renewal ≠ form_deadline).
+        qualifier = (
+            f"{signal_type}|" if (signal_type and action_type == "instruction_sheet")
+            else ""
+        )
         normalized = (
-            recipient.strip().lower()
+            qualifier
+            + recipient.strip().lower()
             + "|"
             + intent.strip().lower()
             + "|"

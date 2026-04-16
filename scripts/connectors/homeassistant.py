@@ -338,10 +338,12 @@ def fetch(
         attributes = _sanitize_attributes(entity_id, domain, raw_attrs)
 
         record = {
+            "id": entity_id,
             "entity_id": entity_id,
             "state": state,
             "attributes": attributes,
             "last_changed": last_changed,
+            "date_iso": last_changed,
             "domain": domain,
             "source": source_tag,
         }

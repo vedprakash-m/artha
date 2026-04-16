@@ -138,6 +138,30 @@ def _load_schedules() -> list[dict]:
         return []
 
 
+def _check_preconditions(sched: dict) -> tuple[bool, str]:
+    """Check any preconditions listed in a schedule entry before running the agent.
+
+    RD-03: Supports ``vault_plaintext_available: <domain>`` preconditions.
+    Returns (ok, reason). If ok=False, the scheduler skips the agent and logs
+    the reason.
+    """
+    preconditions = sched.get("preconditions", [])
+    if not preconditions:
+        return True, ""
+
+    for pc in preconditions:
+        if not isinstance(pc, dict):
+            continue
+        domain = pc.get("vault_plaintext_available")
+        if domain:
+            plain = _REPO_ROOT / "state" / f"{domain}.md"
+            age   = _REPO_ROOT / "state" / f"{domain}.md.age"
+            if age.exists() and not plain.exists():
+                return False, f"vault_locked:{domain}"
+
+    return True, ""
+
+
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
@@ -243,6 +267,22 @@ def _tick(dry_run: bool = False) -> int:
 
             if dry_run:
                 print(f"  [dry-run] Would run: {agent_name} [{session_trace_id}]")
+                continue
+
+            # RD-03: Check preconditions before dispatching the agent.
+            # This prevents silent data starvation (e.g. CapitalAgent running
+            # when vault is locked).
+            pc_ok, pc_reason = _check_preconditions(sched)
+            if not pc_ok:
+                print(
+                    f"  ⛔ {agent_name}: precondition failed ({pc_reason}) — skipped",
+                    file=sys.stderr,
+                )
+                _log(f"PRECONDITION_FAILED | agent:{agent_name} | reason:{pc_reason}")
+                ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+                entry["last_run"] = ts
+                entry["last_result"] = f"PRECONDITION_FAILED:{pc_reason}"
+                ran += 1  # counts as a scheduling decision (not a failure)
                 continue
 
             # Begin session trace so all log events within this domain run are correlated

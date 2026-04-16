@@ -30,6 +30,7 @@ idempotency_windows:
   instruction_sheet_estate:      30d  # estate review and legal events
   instruction_sheet_insurance:   30d  # policy reviews and renewals
   instruction_sheet_iot:         4h   # smart home events are high-frequency
+  instruction_sheet_comms:       48h  # RD-01: form deadline reminders (business day cadence)
 
 input:
   - name: vault_access
@@ -194,3 +195,25 @@ domain:
       block_ssn: true
       allow_comp_data: true   # Compensation data permitted (needed for cross-domain)
       allow_employer_name: true
+
+
+# RD-05: Contextual name scrubbing for email subject PII
+pii_guard:
+  contextual_name_scrubbing: true
+  # When true, pii_guard applies a NAME_IN_SUBJECT pattern that redacts
+  # human names appearing after "for", "re:", "fw:", or "appointment for"
+  # in email subjects.  May have false positives on org names like
+  # "For All Seasons" — review and set to false if too aggressive.
+
+# RD-27: Per-domain Net-Negative Write Guard thresholds.
+# The default vault integrity guard blocks encryption if the new plaintext
+# is < 80% of the existing .age file size. Some domains (e.g., finance, health)
+# regularly produce condensed summaries that legitimately reduce file size.
+# Set a lower threshold (e.g., 0.6) to reduce false positives for those domains.
+# Parsed by scripts/vault.py:is_integrity_safe() when encrypting.
+net_negative_write_guard:
+  default_threshold: 0.80     # 80% default — blocks encrypt if plaintext < 80% of .age
+  domain_thresholds:
+    finance: 0.60             # Financial summaries can legitimately condense ~40%
+    health: 0.65              # Health records often condensed from raw appointment notes
+    transactions: 0.55        # Transaction logs may be heavily summarised

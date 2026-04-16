@@ -10,6 +10,8 @@ Usage:
   python scripts/vault_hook.py stray-check   — warn about unprotected plaintext
 
 Ref: TS §3.6.2
+RD-02: Decrypt failures now write a sentinel file instead of being swallowed,
+       so Artha.core.md can enter Read-Only Mode for vault-protected domains.
 """
 
 import os
@@ -20,6 +22,13 @@ ARTHA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.join(ARTHA_DIR, "state")
 LOCK_FILE = os.path.join(ARTHA_DIR, ".artha-decrypted")
 VAULT_PY  = os.path.join(ARTHA_DIR, "scripts", "vault.py")
+
+# RD-02: Sentinel file path for vault decrypt failures.
+# Written on any decrypt failure so Artha.core.md can detect and enter
+# Read-Only Mode. Cleared on successful decrypt. Kept outside the
+# OneDrive-synced state/ dir to avoid cloud leakage.
+_LOCAL_DIR = os.path.expanduser(os.environ.get("ARTHA_LOCAL_DIR", "~/.artha-local"))
+_DECRYPT_FAILED_SENTINEL = os.path.join(_LOCAL_DIR, ".artha-decrypt-failed")
 
 # DEBT-002: Single source of truth for sensitive domains.
 # Import from foundation.py (which now exports get_sensitive_domains()).
@@ -45,14 +54,59 @@ except Exception:  # noqa: BLE001
 
 
 def hook_decrypt() -> None:
-    """Attempt to decrypt vault; always succeed for hook safety."""
+    """Attempt to decrypt vault; always succeed for hook safety.
+
+    RD-02: On any failure, writes a sentinel file so Artha.core.md can
+    detect vault failure and enter Read-Only Mode for protected domains.
+    On success, clears the sentinel. Always exits 0 (hook contract).
+    """
+    # Ensure local dir exists (may not exist on first run)
     try:
-        subprocess.run(
+        os.makedirs(_LOCAL_DIR, exist_ok=True)
+    except OSError:
+        pass
+
+    # Clear any prior failure sentinel before attempting decrypt
+    try:
+        if os.path.exists(_DECRYPT_FAILED_SENTINEL):
+            os.unlink(_DECRYPT_FAILED_SENTINEL)
+    except OSError:
+        pass
+
+    try:
+        result = subprocess.run(
             [sys.executable, VAULT_PY, "decrypt"],
-            capture_output=True, timeout=60, cwd=ARTHA_DIR,
+            capture_output=True, timeout=90, cwd=ARTHA_DIR,
         )
-    except Exception:
-        print("[VAULT] Decrypt skipped (non-fatal)")
+        if result.returncode != 0:
+            error_text = result.stderr.decode("utf-8", errors="replace")[:500]
+            _write_sentinel(f"returncode={result.returncode}\n{error_text}")
+            print(
+                f"[VAULT] Decrypt FAILED (rc={result.returncode}). "
+                f"Sentinel written to {_DECRYPT_FAILED_SENTINEL}. "
+                "Session will use READ-ONLY mode for vault-protected domains.",
+                file=sys.stderr,
+            )
+        else:
+            print("[VAULT] Decrypt succeeded.", file=sys.stderr)
+    except subprocess.TimeoutExpired:
+        _write_sentinel("TIMEOUT: decrypt subprocess exceeded 90s")
+        print("[VAULT] Decrypt TIMED OUT. Sentinel written.", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001
+        _write_sentinel(f"EXCEPTION: {exc}")
+        print(f"[VAULT] Decrypt ERROR: {exc}. Sentinel written.", file=sys.stderr)
+
+
+def _write_sentinel(content: str) -> None:
+    """Write the decrypt-failed sentinel file atomically."""
+    import tempfile as _tmp
+    try:
+        fd, tmp_path = _tmp.mkstemp(dir=_LOCAL_DIR, suffix=".tmp")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(content)
+        os.replace(tmp_path, _DECRYPT_FAILED_SENTINEL)
+    except OSError as exc:
+        print(f"[VAULT-WARN] Could not write sentinel: {exc}", file=sys.stderr)
 
 
 def hook_stray_check() -> None:

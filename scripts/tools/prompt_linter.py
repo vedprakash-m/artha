@@ -102,6 +102,18 @@ def lint_file(path: Path) -> list[str]:
     if "\n---\n" not in text and not text.startswith("---"):
         errors.append(f"{fname}: missing YAML frontmatter or `---` separator guard")
 
+    # 5. RD-28: schema_version required in frontmatter
+    # Parse frontmatter block (between first two --- delimiters)
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm_block = text[3:end]
+            if "schema_version" not in fm_block:
+                errors.append(
+                    f"{fname}: missing 'schema_version' in frontmatter "
+                    f"(RD-28 — add 'schema_version: \"1.0\"' to the frontmatter block)"
+                )
+
     return errors
 
 
