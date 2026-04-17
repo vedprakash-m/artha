@@ -86,7 +86,7 @@ class TestGuardrailDegraded:
     def test_retry_logic_present(self):
         """Retry-once logic (time.sleep) must be in _load_yaml."""
         gr_path = os.path.join(_SCRIPTS_DIR, "middleware", "guardrail_registry.py")
-        with open(gr_path) as f:
+        with open(gr_path, encoding="utf-8") as f:
             src = f.read()
         assert "time.sleep(1)" in src, \
             "DEBT-004: retry-once logic (time.sleep(1)) missing from _load_yaml"
@@ -116,7 +116,7 @@ class TestPreflightGuardrailsCheck:
     def test_check_guardrails_yaml_function_exists(self):
         """check_guardrails_yaml must be importable from preflight.py."""
         pf_path = os.path.join(_SCRIPTS_DIR, "preflight.py")
-        with open(pf_path) as f:
+        with open(pf_path, encoding="utf-8") as f:
             src = f.read()
         assert "def check_guardrails_yaml" in src, \
             "DEBT-004: check_guardrails_yaml() missing from preflight.py"
@@ -124,7 +124,7 @@ class TestPreflightGuardrailsCheck:
     def test_force_no_guardrails_arg_exists(self):
         """--force-no-guardrails argument must be in preflight.py argparse block."""
         pf_path = os.path.join(_SCRIPTS_DIR, "preflight.py")
-        with open(pf_path) as f:
+        with open(pf_path, encoding="utf-8") as f:
             src = f.read()
         assert "force-no-guardrails" in src, \
             "DEBT-004: --force-no-guardrails arg missing from preflight.py"
@@ -132,7 +132,7 @@ class TestPreflightGuardrailsCheck:
     def test_force_no_guardrails_audit_entry(self):
         """FORCE_NO_GUARDRAILS audit entry must be in the override path."""
         pf_path = os.path.join(_SCRIPTS_DIR, "preflight.py")
-        with open(pf_path) as f:
+        with open(pf_path, encoding="utf-8") as f:
             src = f.read()
         assert "FORCE_NO_GUARDRAILS" in src, \
             "DEBT-004: FORCE_NO_GUARDRAILS audit entry missing"

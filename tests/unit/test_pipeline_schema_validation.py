@@ -79,7 +79,7 @@ class TestConnectorRecordSchema:
     def test_validation_errors_in_pipeline_metrics(self):
         """pipeline_metrics.json schema must include validation_errors field (DEBT-009)."""
         pipeline_path = os.path.join(_SCRIPTS_DIR, "pipeline.py")
-        with open(pipeline_path) as f:
+        with open(pipeline_path, encoding="utf-8") as f:
             src = f.read()
         assert '"validation_errors"' in src or "'validation_errors'" in src, \
             "DEBT-009: validation_errors field missing from _write_pipeline_metrics"
@@ -87,7 +87,7 @@ class TestConnectorRecordSchema:
     def test_schema_validation_available_flag(self):
         """_SCHEMA_VALIDATION_AVAILABLE flag must be present in pipeline.py."""
         pipeline_path = os.path.join(_SCRIPTS_DIR, "pipeline.py")
-        with open(pipeline_path) as f:
+        with open(pipeline_path, encoding="utf-8") as f:
             src = f.read()
         assert "_SCHEMA_VALIDATION_AVAILABLE" in src, \
             "DEBT-009: _SCHEMA_VALIDATION_AVAILABLE flag missing from pipeline.py"

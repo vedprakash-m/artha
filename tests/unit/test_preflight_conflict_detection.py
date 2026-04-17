@@ -40,7 +40,7 @@ class TestConflictDetection:
     def test_detect_conflict_files_function_exists(self):
         """A2 precondition: _detect_conflict_files must exist in preflight.py."""
         pf_path = os.path.join(_SCRIPTS_DIR, "preflight.py")
-        with open(pf_path) as f:
+        with open(pf_path, encoding="utf-8") as f:
             src = f.read()
         assert "def _detect_conflict_files" in src, \
             "DEBT-005: _detect_conflict_files() missing from preflight.py"
@@ -80,7 +80,7 @@ class TestConflictDetection:
     def test_check_onedrive_conflicts_in_preflight(self):
         """check_onedrive_conflicts must be wired into preflight.py."""
         pf_path = os.path.join(_SCRIPTS_DIR, "preflight.py")
-        with open(pf_path) as f:
+        with open(pf_path, encoding="utf-8") as f:
             src = f.read()
         assert "def check_onedrive_conflicts" in src
         assert "check_onedrive_conflicts()" in src  # wired into run_preflight
