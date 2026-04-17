@@ -61,6 +61,8 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "career_pdf_generator",
     # FR-25 Career Search Intelligence (Phase 2 — portal scanning; deferred)
     "portal_scanner",
+    # KB Quality Check — Work KB health monitoring
+    "kb_quality_check",
 })
 
 # Short-name aliases (e.g. Claude passes "radar" → resolves to "ai_trend_radar")

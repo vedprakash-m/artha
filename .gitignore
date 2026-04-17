@@ -19,6 +19,8 @@ config/connectors.yaml
 config/connectors.yaml.bak
 # Per-domain autonomy levels — runtime user state (trip history, cooldown dates)
 config/domain_autonomy_state.yaml
+# Watch monitor keyword config — contains personal interest topics (immigration, finance, etc.)
+config/watches.yaml
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
@@ -244,3 +246,5 @@ OneNote/
 # (camera names, family member names from Home Assistant) — never committed
 *.skill
 skills/
+# But scripts/skills/ is the Python skill module (no PII) — commit it
+!scripts/skills/

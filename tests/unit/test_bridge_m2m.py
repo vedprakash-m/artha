@@ -343,3 +343,92 @@ class TestHandlePong:
         drift_events = [e for e in _audit_calls if "BRIDGE_CLOCK_DRIFT" in e[0]]
         assert len(drift_events) >= 1
         assert any(e[1].get("level", "").upper() == "CRITICAL" for e in drift_events)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _handle_query_artha — domain allowlist + security
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _make_query_cfg(allowed_domains=None, max_chars=200) -> dict:
+    cfg = _make_cfg(allowed_cmds=["query_artha", "brief_request"])
+    cfg["query_artha"] = {
+        "hmac_required": True,
+        "max_question_chars": max_chars,
+        "allowed_domains": allowed_domains or ["goals", "calendar", "open_items", "home", "learning"],
+    }
+    return cfg
+
+
+class TestHandleQueryArtha:
+    def _env(self, question: str) -> dict:
+        return _make_envelope(
+            cmd="query_artha",
+            data={"question": question, "correlation_id": "corr-001"},
+        )
+
+    def test_valid_question_returns_dict(self):
+        env = self._env("How many goals do I have active?")
+        cfg = _make_query_cfg()
+        result = m2m_handler._handle_query_artha(env, cfg)
+        assert result is not None
+        assert result["action"] == "query_artha"
+        assert "goal" in result["question"].lower()
+        assert result["correlation_id"] == "corr-001"
+
+    def test_empty_question_returns_none(self):
+        env = self._env("")
+        cfg = _make_query_cfg()
+        result = m2m_handler._handle_query_artha(env, cfg)
+        assert result is None
+
+    def test_whitespace_only_returns_none(self):
+        env = self._env("   ")
+        cfg = _make_query_cfg()
+        result = m2m_handler._handle_query_artha(env, cfg)
+        assert result is None
+
+    def test_question_truncated_to_max_chars(self):
+        long_q = "A" * 500
+        env = self._env(long_q)
+        cfg = _make_query_cfg(max_chars=50)
+        result = m2m_handler._handle_query_artha(env, cfg)
+        assert result is not None
+        assert len(result["question"]) == 50
+
+
+class TestQueryArthaHmacRequired:
+    """HMAC must be validated before query_artha is processed by handle_m2m."""
+
+    def test_tampered_query_artha_rejected(self):
+        """Envelope with tampered data must be rejected before routing."""
+        import asyncio
+        env = _make_envelope(
+            cmd="query_artha",
+            data={"question": "goals?", "correlation_id": "c"},
+            tamper_data={"question": "hacked question", "correlation_id": "c"},
+        )
+        cfg = _make_query_cfg()
+        with patch("channel.m2m_handler._load_m2m_cfg", return_value=cfg):
+            result = asyncio.run(
+                m2m_handler.handle_m2m(json.dumps(env), _FAKE_BOT_ID)
+            )
+        assert result is None
+
+
+class TestQueryAllowedDomains:
+    def test_allowed_domains_frozenset(self):
+        from channel.m2m_handler import QUERY_ALLOWED_DOMAINS, QUERY_BLOCKED_DOMAINS
+        assert "goals" in QUERY_ALLOWED_DOMAINS
+        assert "calendar" in QUERY_ALLOWED_DOMAINS
+        assert "home" in QUERY_ALLOWED_DOMAINS
+
+    def test_blocked_domains_frozenset(self):
+        from channel.m2m_handler import QUERY_ALLOWED_DOMAINS, QUERY_BLOCKED_DOMAINS
+        assert "finance" in QUERY_BLOCKED_DOMAINS
+        assert "health" in QUERY_BLOCKED_DOMAINS
+        assert "kids" in QUERY_BLOCKED_DOMAINS
+
+    def test_no_overlap_between_allowed_and_blocked(self):
+        from channel.m2m_handler import QUERY_ALLOWED_DOMAINS, QUERY_BLOCKED_DOMAINS
+        overlap = QUERY_ALLOWED_DOMAINS & QUERY_BLOCKED_DOMAINS
+        assert overlap == frozenset(), f"Overlap found: {overlap}"

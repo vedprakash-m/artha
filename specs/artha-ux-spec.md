@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.16 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.17 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.15.0, Tech Spec v3.30.0
+> **Implements**: PRD v7.17.0, Tech Spec v3.34.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.17 | 2026-04-16 | Artha Channel Integration UX — §28: workout logging trigger patterns + acknowledgement format with goal progress, watch alert notification design (immediate Telegram alert vs. daily digest vs. weekly digest), brief request via Claw stale-while-revalidate UX, query relay interaction design (question → 120s timeout expectation → answer). Implements PRD v7.17.0 + Tech Spec v3.34.0. |
 | v3.15 | 2026-04-09 | OpenClaw Home Bridge UX — §27: Home Events briefing section, WhatsApp approval workflow in Telegram, bridge health in `/status` output, kid-arrival presence notification, TTS announcement patterns. Implements PRD v7.14.0 + Tech Spec v3.29.0. |
 | v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
 | v3.12 | 2026-04-07 | SPEC CONSOLIDATION — Implements PRD v7.11.0 + Tech Spec v3.26.0. §3.2: 4 new domains added (Readiness, Logistics, Tribe, Capital) to domain presentation order (15→19). NEW §26: New Domain UX — interaction design patterns for all 4 new domains (Readiness daily score + energy flags, Logistics warranty/renewal alerts + shopping deeplinks, Tribe reconnect radar + outreach staging, Capital cash flow projection + amount-confirm gate). |
@@ -45,6 +46,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 21. [Structured Contact Profiles & Pre-Meeting Context UX](#21-structured-contact-profiles--pre-meeting-context-ux)
 22. [UX Gaps & Design Decisions](#22-ux-gaps--design-decisions)
 23. [Work OS — Interaction Design](#23-work-os--interaction-design)
+24. [Artha Channel Integration — ACI Interaction Design](#28-artha-channel-integration--aci-interaction-design)
 
 ---
 
@@ -3298,4 +3300,136 @@ If announcement delivery failed (OC pong timed out before push):
 
 ---
 
-*Artha UX Spec v3.16 — End of Document*
+## 28. Artha Channel Integration — ACI Interaction Design
+
+This section defines the UX patterns for all Artha Channel Integration (ACI) surfaces: workout logging via Telegram, watch alert delivery, brief request via OpenClaw, and query relay.
+
+### 28.1 Workout Logging — Trigger Patterns & Acknowledgement
+
+**Trigger:** User sends a workout message to `artha_ved_bot` Telegram bot.
+
+**Accepted formats (examples):**
+```
+Ran 5.2 miles in 48 min, HR 155
+Biked 12km, 1h 15m
+Gym: squats 3×8 @185lb, bench 3×6 @145lb
+Hiked 8 miles, 1400ft elevation, 3h 20m
+```
+
+**Parser behaviour:** Regex-based — zero LLM calls. Extracts: distance, duration, HR, elevation, weight/reps. Appends to `~/.artha-local/workouts.jsonl`. Dedup on `(sender_id, message_id)`.
+
+**Acknowledgement format:**
+```
+✅ Workout logged
+   Run · 5.2 mi · 48 min · HR 155
+
+🎯 Fitness goal: Exercise 4×/week
+   This week: 3 of 4 ✓ · Streak: 6 days
+```
+
+**Rules:**
+- Ack always sent, even on partial parse (unparsed fields silently omitted — not errored)
+- Goal progress lookup fails gracefully if `state/goals.md` is unavailable (ack without goal section)
+- Duplicate messages (same `message_id`) silently dropped — no duplicate ack sent
+- Workout data never stored in OneDrive-synced directories
+
+### 28.2 Watch Alert Notification Design
+
+**Delivery tiers (from watch_monitor.py urgency routing):**
+
+**Tier 1 — Immediate Telegram Alert** (`urgency: high` + score > 50):
+```
+🚨 WATCH ALERT · [Topic Name]
+──────────────────────────────
+r/[subreddit] · score 847 · 234 comments
+
+[Post title truncated to 80 chars]
+
+▶ reddit.com/r/.../
+```
+
+**Tier 2 — Daily Digest** (`urgency: high` + score 20–50): Batched into the morning briefing under a `## 👁 Watch Alerts` section. Not sent as a standalone Telegram message.
+
+**Tier 3 — Weekly Digest** (`urgency: medium` or `low`): Appears in Sunday summary only.
+
+**Rules:**
+- Tier 1 alerts fire immediately via `urllib` + keyring (not via bot polling loop)
+- Score displayed is the Reddit score at time of fetch
+- No LLM summarisation — title shown as-is (sanitised: 80-char cap, HTML stripped)
+- Same `post_id` not repeated across digest cycles
+
+### 28.3 Brief Request via Claw — Stale-While-Revalidate UX
+
+When OpenClaw sends a `brief_request` M2M command, Artha applies stale-while-revalidate semantics.
+
+**Fast path (< 5s):** Last briefing served immediately. Claw displays it with a `🔄 Refreshing...` footer while the pipeline runs asynchronously.
+
+**Next brief_request:** Returns the refreshed briefing.
+
+**Error states:**
+
+| Condition | Response |
+|-----------|----------|
+| HMAC failure | Hard reject — no briefing served |
+| No prior briefing | "No briefing available yet. Pipeline running..." + triggers fresh run |
+| Pipeline timeout | Last briefing served with `⚠️ Stale — pipeline did not complete` footer |
+
+**Rules:**
+- HMAC always required — unauthenticated callers receive rejection with no data
+- Stale threshold: serve if last briefing < 24h old; always trigger refresh
+- Full catch-up briefing output delivered (not summarised)
+
+### 28.4 Query Relay — Interaction Design
+
+Claw sends a natural-language question; Artha synthesises an answer from local state files.
+
+**Flow from user perspective (OpenClaw side):**
+1. User types domain question in Claw interface
+2. Claw sends `query_artha` M2M command
+3. Claw shows: `🔍 Asking Artha...` (up to 120s wait)
+4. Artha synthesises answer via LLM from local state
+5. Answer appears in Claw (≤ 600 chars)
+
+**Example interaction:**
+```
+User in Claw:
+  "What are my active goals and which ones are at risk?"
+
+[~15s later]
+
+Artha:
+  "3 active goals: Net Worth (on track, 62%), Exercise 4×/week
+  (at risk — 2/4 this week), ByteByteGo course (behind — need
+  2h this week). Exercise streak: 6 days."
+```
+
+**Blocked domain response:**
+```
+❌ That question touches health/finance data which isn't available
+via the bridge. Ask directly in an Artha session.
+```
+
+**Timeout response** (> 120s elapsed):
+```
+⏱ Artha is taking longer than expected. Try again in a moment.
+```
+
+**Rules:**
+- Questions touching ONLY vault-gated domains return the blocked response immediately (0 LLM calls)
+- Mixed questions (some allowed + some blocked): allowed domains answered, blocked domains noted
+- Answer always ≤ 600 chars — truncated with `...` if needed
+- Never includes raw YAML or file contents — synthesised prose only
+
+### 28.5 Error & Degradation Patterns
+
+| Scenario | User-facing message | Recovery |
+|----------|--------------------|-----------|
+| HMAC key not provisioned | `🔴 Bridge auth not configured. Contact setup.` | Provision `artha-claw-bridge-hmac` in Credential Manager |
+| artha_engine.py not running | No response to M2M commands | Check Task Scheduler; manual: `python scripts/artha_engine.py` |
+| Reddit connector dead | `⚠️ Watch Monitor: Reddit down 2+ days. Signals paused.` | Auto-recovers on next successful fetch |
+| All LLM providers timeout | `⚠️ Query timed out. Try again later.` | Retry; verify API keys |
+| workouts.jsonl write failure | `⚠️ Workout logged but storage error — check ~/.artha-local/` | Verify disk space + directory permissions |
+
+---
+
+*Artha UX Spec v3.17 — End of Document*

@@ -951,6 +951,13 @@ Prepend overdue open items from `open_items.md` (deadline < today, status: open)
 If on Mac with stale work-calendar.md (<12h): `💼 [N] work meetings detected via Windows (titles unavailable)`.
 If WorkIQ unavailable/failed: `⚠️ Work calendar unavailable — [reason]` (or silent on Mac if no stale data).
 
+**KB Quality footer (v1.0):** Non-blocking. Read `state/kb_quality_results.json` if it exists; skip silently if missing.
+Append after Work calendar footer (or after PII footer if no work calendar):
+- If `overall_avg >= 8.0`: `📚 KB: [overall_avg]/10 across [N] KBs ✅`
+- If `overall_avg < 8.0` and `improvement_triggered == true`: `📚 KB: [overall_avg]/10 ⚠️ — improvement running (below-threshold: [comma-list of below_threshold KBs])`
+- If `overall_avg < 8.0` and `improvement_triggered == false`: `📚 KB: [overall_avg]/10 ⚠️ — below threshold [threshold]; run \`python scripts/kb_improver.py --auto\` to fix`
+- If file missing or parse error: omit this line entirely (non-blocking)
+
 **📅 TODAY section (v2.2):** When work calendar data is available, merge personal and work events chronologically:
 - Personal events: display normally (no prefix)
 - Work events (non-merged): prefix with 💼 emoji

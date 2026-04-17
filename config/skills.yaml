@@ -200,6 +200,23 @@ skills:
 # command_namespace: work scopes them to the work surface.
 # ==========================================================================
 
+  # KB Quality Check — scores all domain KBs on 7 dimensions; triggers improvement ─────
+  kb_quality_check:
+    enabled: true
+    priority: P1
+    cadence: daily
+    class: background
+    requires_vault: false
+    safety_critical: false
+    command_namespace: work
+    quality_threshold: 9.5
+    description: >
+      Score all 12 domain KBs on 7 quality dimensions (accuracy, completeness,
+      freshness, structure, kusto, cross_refs, actionability) on a 0–10 scale.
+      Writes results to state/kb_quality_results.json. If any KB < threshold,
+      spawns kb_improver.py as a non-blocking background process.
+      Briefing surfaces overall_avg score and improvement status.
+
   # P0 — Background Connector Refresh (§8.7, §22) ────────────────────────
 
   work_background_refresh:
@@ -375,4 +392,46 @@ skills:
       Scan Greenhouse, Ashby, Lever portals for new matching listings.
       Deduplicates against tracker entries using token-set ratio (Jaccard >=0.85).
       Phase 2 — requires portal_scanner.py implementation.
+
+  # ── CONNECT Phase 4 — Watch Monitor (ac-int.md P4) ──────────────────────
+
+  watch_monitor:
+    class: "scripts.skills.watch_monitor.WatchMonitorSkill"
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class_label: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    command_namespace: watch
+    requires_connectors: []
+    optional_connectors: [reddit, rss_feed]
+    description: >
+      Keyword-filter watch_snapshot.jsonl against config/watches.yaml.
+      Routes high-urgency + score>50 matches to immediate Telegram alert
+      (max 3/watch/day via keyring). All other matches written to
+      state/watch_backlog.yaml for morning briefing digest. Zero LLM calls
+      (DP-3 deterministic). Ref: specs/ac-int.md §7.3.
+
+  # ── CONNECT Phase 6 — Fitness Coach (ac-int.md P6) ──────────────────────
+
+  fitness_coach:
+    class: "scripts.skills.fitness_coach.FitnessCoachSkill"
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class_label: operational
+    goal_refs: [G-001, G-002]
+    requires_vault: false
+    safety_critical: false
+    command_namespace: health
+    requires_connectors: []
+    optional_connectors: []
+    description: >
+      Read ~/.artha-local/workouts.jsonl and state/goals.md to compute
+      Mailbox Peak training goal progress (G-001 distance, G-002 elevation).
+      Provides ack context for workout_log Telegram handler. Best-effort:
+      silently omits goal section if goals.md absent or fields missing.
+      Ref: specs/ac-int.md §8.
 
