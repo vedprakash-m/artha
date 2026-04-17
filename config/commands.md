@@ -931,9 +931,12 @@ Appends `<text>` to `state/work/work-notes.md` with `[quick-capture YYYY-MM-DD]`
 
 ## `/work reflect` — Reflection Loop (Multi-Horizon Planning & Review)
 Auto-detects which horizon is due (daily/weekly/monthly/quarterly) and runs the full
-sweep → extract → score → reconcile → synthesize → draft pipeline. Reads all work state
-files + WorkIQ for comprehensive data collection. Produces structured reflection artifacts
-in `state/work/reflections/` with accomplishments, carry-forwards, and reconciliation.
+sweep → extract → score → reconcile → synthesize → draft pipeline.
+
+**MANDATORY in LLM context:** Before writing any state, you MUST execute the
+WorkIQ data collection protocol in `config/reflect-protocol.md`. This requires
+running 4 identity-scoped WorkIQ queries (emails, meetings, ADO items, IcM incidents)
+for the exact reflection window. Do NOT skip this step — state file quality depends on it.
 - `/work reflect daily` — force daily close
 - `/work reflect weekly` — force weekly reflection
 - `/work reflect monthly` — force monthly retrospective

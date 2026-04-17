@@ -73,6 +73,18 @@ _DEFAULT_TTL = 180  # final fallback
 
 BOOTSTRAP_THRESHOLD_PCT = 50  # trigger bootstrap mode when ≥50% of P1 files have errors
 
+# Cross-domain coherence rules (formerly config/lint_rules.yaml — Initiative 8 Phase 2)
+_EMBEDDED_LINT_RULES: list[dict[str, Any]] = [
+    {"id": "xref-immigration-travel", "domain_a": "immigration", "field_a": "visa_expiry", "domain_b": "travel", "field_b": "passport_expiry", "message": "Immigration visa_expiry set but travel.passport_expiry is missing", "severity": "WARNING"},
+    {"id": "xref-insurance-finance", "domain_a": "insurance", "field_a": "premium_monthly", "domain_b": "finance", "field_b": "monthly_budget", "message": "Insurance premiums tracked but finance.monthly_budget is missing", "severity": "WARNING"},
+    {"id": "xref-kids-health", "domain_a": "kids", "field_a": "children", "domain_b": "health", "field_b": "last_updated", "message": "Kids domain active but health.last_updated is missing", "severity": "INFO"},
+    {"id": "xref-employment-insurance", "domain_a": "employment", "field_a": "employer", "domain_b": "insurance", "field_b": "health_plan", "message": "Employment.employer set but insurance.health_plan is missing", "severity": "WARNING"},
+    {"id": "xref-health-insurance", "domain_a": "health", "field_a": "primary_care_provider", "domain_b": "insurance", "field_b": "health_plan", "message": "Health.primary_care_provider set but insurance.health_plan is missing", "severity": "WARNING"},
+    {"id": "xref-vehicle-insurance", "domain_a": "vehicle", "field_a": "vehicles", "domain_b": "insurance", "field_b": "auto_policy", "message": "Vehicle domain active but insurance.auto_policy is missing", "severity": "WARNING"},
+    {"id": "xref-home-insurance", "domain_a": "home", "field_a": "address", "domain_b": "insurance", "field_b": "home_policy", "message": "Home.address set but insurance.home_policy is missing", "severity": "WARNING"},
+    {"id": "xref-finance-items", "domain_a": "finance", "field_a": "monthly_budget", "domain_b": "decisions", "field_b": "last_updated", "message": "Finance.monthly_budget set but decisions state file has no last_updated", "severity": "INFO"},
+]
+
 # Frontmatter skeleton added by --init
 _FM_SKELETON_TEMPLATE = """\
 ---
@@ -197,43 +209,24 @@ def _load_domain_registry() -> dict[str, Any]:
 
 
 def _load_lint_rules() -> list[dict[str, Any]]:
-    """Load config/lint_rules.yaml. Returns [] on failure; warns on bad rules."""
-    rules_path = CONFIG_DIR / "lint_rules.yaml"
-    if not rules_path.exists():
-        return []
-    try:
-        import yaml  # noqa: PLC0415
-        with rules_path.open(encoding="utf-8") as fh:
-            data = yaml.safe_load(fh)
-        if not isinstance(data, dict) or "rules" not in data:
-            return []
-        valid: list[dict[str, Any]] = []
-        required_fields = {"id", "domain_a", "field_a", "domain_b", "field_b", "message"}
-        for rule in data.get("rules", []):
-            if not isinstance(rule, dict):
-                continue
-            missing = required_fields - set(rule.keys())
-            if missing:
-                rule_id = rule.get("id", "<unknown>")
-                print(
-                    f"kb_lint: WARN lint rule '{rule_id}' skipped: "
-                    f"missing fields: {sorted(missing)}",
-                    file=sys.stderr,
-                )
-                continue
-            sev = rule.get("severity")
-            if sev is not None and str(sev).upper() not in ("ERROR", "WARNING", "INFO"):
-                rule_id = rule.get("id", "<unknown>")
-                print(
-                    f"kb_lint: WARN lint rule '{rule_id}' has invalid severity "
-                    f"'{sev}' — defaulting to WARNING",
-                    file=sys.stderr,
-                )
-            valid.append(rule)
-        return valid
-    except Exception as exc:
-        print(f"kb_lint: WARN could not load lint_rules.yaml: {exc}", file=sys.stderr)
-        return []
+    """Return cross-domain coherence rules.
+
+    Returns the 8 built-in rules embedded as _EMBEDDED_LINT_RULES (P5), merged
+    with any user-defined rules in CONFIG_DIR/lint_rules.yaml (P6 custom rules).
+    The external file is optional — if absent, only embedded rules are used.
+    """
+    rules = list(_EMBEDDED_LINT_RULES)
+    external = CONFIG_DIR / "lint_rules.yaml"
+    if external.exists():
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(external.read_text(encoding="utf-8")) or {}
+            # Support both 'cross_domain_rules' (spec format) and 'rules' (legacy/test format)
+            extra = data.get("cross_domain_rules") or data.get("rules") or []
+            rules.extend(extra)
+        except Exception:
+            pass  # graceful degradation — embedded rules still returned
+    return rules
 
 
 # ---------------------------------------------------------------------------

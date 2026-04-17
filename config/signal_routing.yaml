@@ -634,3 +634,43 @@ address_update_notification:
   notes: >-
     Emitted for each contact in an address change workflow. Routes to
     email_send handler to draft address update notification emails.
+
+# ── Canonical signal types (Initiative 6, Phase 4 consolidation) ─────────────
+# These catch-all routes handle DomainSignal objects with canonical signal_type
+# but no subtype set (e.g., from non-extractor producers). The extractor always
+# populates subtype, so action_composer routes via subtype first.
+deadline:
+  action_type: instruction_sheet
+  friction: standard
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+  description: "Catch-all: any deadline-class signal without a specific subtype route"
+
+confirmation:
+  action_type: reminder_create
+  friction: low
+  min_trust: 0
+  reversible: false
+  undo_window_sec: null
+  status: active
+  description: "Catch-all: any confirmation-class signal without a specific subtype route"
+
+security:
+  action_type: instruction_sheet
+  friction: high
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+  description: "Catch-all: any security-class signal without a specific subtype route"
+
+informational:
+  action_type: instruction_sheet
+  friction: low
+  min_trust: 1
+  reversible: false
+  undo_window_sec: null
+  status: active
+  description: "Catch-all: any informational-class signal without a specific subtype route"

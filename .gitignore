@@ -166,6 +166,15 @@ visuals/
 # --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
 
+# --- Artha reference docs extracted from Artha.core.md (employer-specific tool references) ---
+config/Artha.reference.md
+
+# --- WorkIQ and platform overlays (employer-specific integration configs) ---
+config/overlays/*.md
+
+# --- Reflect protocol (contains PII: personal email alias, employer info) ---
+config/reflect-protocol.md
+
 # --- Work OS scripts (contain employer-specific config references) ---
 # The public repo ships example/framework code; actual work scripts with
 # employer-specific connector wiring are local-only.

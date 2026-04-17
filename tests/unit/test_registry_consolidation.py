@@ -182,26 +182,34 @@ def test_t6_7_derive_action_map_from_actions_config():
 
 
 # ---------------------------------------------------------------------------
-# T6-8: Malformed YAML falls back to _FALLBACK_HANDLER_MAP (not empty dict)
+# T6-8: Empty/disabled config returns empty dict (v3.35.0: no _FALLBACK_HANDLER_MAP)
 # ---------------------------------------------------------------------------
 
 def test_t6_8_malformed_config_falls_back_to_fallback():
-    """_derive_handler_map returns _FALLBACK_HANDLER_MAP on empty/malformed config."""
+    """_derive_handler_map returns {} (empty dict) on empty/malformed config (v3.35.0).
+
+    Prior to v3.35.0 (simplify.md Phase 6), this returned _FALLBACK_HANDLER_MAP.
+    After the cleanup, the fallback is fail-degraded (empty dict + [CRITICAL] to stderr)
+    rather than silently using a hardcoded map. _FALLBACK_HANDLER_MAP no longer exists.
+    """
     import pipeline as pl
 
-    # Empty config → fallback
-    result = pl._derive_handler_map({})
-    assert result == dict(pl._FALLBACK_HANDLER_MAP)
-    assert len(result) > 0
+    assert not hasattr(pl, "_FALLBACK_HANDLER_MAP"), (
+        "_FALLBACK_HANDLER_MAP was removed in v3.35.0. It must not be re-added."
+    )
 
-    # Config with 'connectors' but all disabled → fallback
+    # Empty config → empty dict (fail-degraded, [CRITICAL] emitted to stderr)
+    result = pl._derive_handler_map({})
+    assert result == {}
+
+    # Config with 'connectors' but all disabled → empty dict
     all_disabled = {
         "connectors": {
             "google_email": {"enabled": False, "module": "connectors.google_email"},
         }
     }
     result2 = pl._derive_handler_map(all_disabled)
-    assert result2 == dict(pl._FALLBACK_HANDLER_MAP)
+    assert result2 == {}
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +217,7 @@ def test_t6_8_malformed_config_falls_back_to_fallback():
 # ---------------------------------------------------------------------------
 
 def test_t6_9_fallback_emits_critical_on_exception(capsys, monkeypatch):
-    """_derive_handler_map emits [CRITICAL] and returns fallback on exception."""
+    """_derive_handler_map emits [CRITICAL] and returns {} on exception (v3.35.0)."""
     import pipeline as pl
 
     # Force an exception by passing a non-dict
@@ -218,6 +226,6 @@ def test_t6_9_fallback_emits_critical_on_exception(capsys, monkeypatch):
             raise RuntimeError("simulated YAML parse error")
 
     result = pl._derive_handler_map(_BadConfig())  # type: ignore[arg-type]
-    assert result == dict(pl._FALLBACK_HANDLER_MAP)
+    assert result == {}
     captured = capsys.readouterr()
     assert "[CRITICAL]" in captured.err

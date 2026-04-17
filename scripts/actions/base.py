@@ -97,6 +97,7 @@ class DomainSignal:
     source: str
     metadata: Dict[str, Any]
     detected_at: str
+    subtype: str = ""  # original specific type; signal_type holds the canonical type
 
     def __post_init__(self) -> None:
         """DEBT-012: Validate structural invariants at construction time."""

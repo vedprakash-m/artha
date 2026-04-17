@@ -11,7 +11,7 @@ Output:
   - state/work/ext-agent-health-digest.md   (human-readable Markdown)
   - tmp/ext-agent-digest-<YYYY-WNN>.json    (machine-readable JSON)
 
-Called by agent_scheduler.py on weekly tick, or standalone:
+Called by precompute.py on cron schedule, or standalone:
   python scripts/lib/metrics_digest.py [--weeks 1]
 
 Design:

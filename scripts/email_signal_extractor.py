@@ -61,6 +61,7 @@ except ImportError:  # pragma: no cover
         source: str
         metadata: dict
         detected_at: str
+        subtype: str = ""  # original specific type; signal_type holds the canonical type
 
 try:
     from context_offloader import load_harness_flag as _load_flag
@@ -71,6 +72,22 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Signal detection patterns
 # ---------------------------------------------------------------------------
+# Canonical signal type map: 10 specific types → 4 canonical types.
+# The canonical type goes in DomainSignal.signal_type; the specific type in .subtype.
+# Consumers that need specific routing use .subtype; top-level filters use .signal_type.
+_CANONICAL_TYPE_MAP: dict[str, str] = {
+    "event_rsvp_needed":    "deadline",
+    "bill_due":             "deadline",
+    "form_deadline":        "deadline",
+    "school_action_needed": "deadline",
+    "slack_action_item":    "deadline",
+    "appointment_confirmed": "confirmation",
+    "delivery_arriving":    "confirmation",
+    "subscription_renewal": "informational",
+    "financial_alert":      "informational",
+    "security_alert":       "security",
+}
+
 # Each entry: (compiled_regex_list, signal_type, domain, urgency, impact)
 # Patterns match against combined subject + from + snippet (lower-cased)
 
@@ -368,8 +385,9 @@ class EmailSignalExtractor:
                     # pii_guard unavailable — aggressive truncation as safety fallback
                     entity = entity[:40]
 
+                canonical_type = _CANONICAL_TYPE_MAP.get(signal_type, signal_type)
                 sig = DomainSignal(
-                    signal_type=signal_type,
+                    signal_type=canonical_type,
                     domain=domain,
                     entity=entity,
                     urgency=urgency,
@@ -377,6 +395,7 @@ class EmailSignalExtractor:
                     source="email_signal_extractor",
                     metadata=metadata,
                     detected_at=now_iso,
+                    subtype=signal_type,
                 )
                 # DEBT-SIG-004: apply signal-layer PII scrub to all string metadata values.
                 # Structural keys (email_id, sensitivity) are exempted; user-visible

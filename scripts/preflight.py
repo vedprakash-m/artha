@@ -1644,14 +1644,14 @@ def check_state_registry_staleness() -> CheckResult:
     return CheckResult(
         "state registry staleness", "P1", False,
         f"⚠️ State freshness issues — {'; '.join(parts)}",
-        fix_hint="Run scheduled agents: python scripts/agent_scheduler.py --tick",
+        fix_hint="Run scheduled agents: python scripts/precompute.py --all",
     )
 
 
 def check_heartbeat_zero_records() -> CheckResult:
     """P1 non-blocking: Warn when a domain heartbeat reports records_written: 0.
 
-    Checks tmp/{domain}_last_run.json files written by agent_scheduler.py.
+    Checks tmp/{domain}_last_run.json files written by precompute.py.
     records_written: 0 means the scheduler wrote the stub but the agent script
     never updated it with actual data (cold-start or agent-side failure).
 
@@ -1707,7 +1707,7 @@ def check_heartbeat_zero_records() -> CheckResult:
         "agent heartbeat", "P1", False,
         f"⚠️ Domain agent issues — {'; '.join(parts)}",
         fix_hint=(
-            "Check agent logs or re-run: python scripts/agent_scheduler.py --tick"
+            "Check agent logs or re-run: python scripts/precompute.py --all"
         ),
     )
 

@@ -27,7 +27,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
 Artha is a **pull-based personal intelligence system** built on four principles:
 
-1. **Claude Code IS the application.** There is no custom daemon or web server. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application. *Exception (DEBT-SPEC-001):* Three lightweight sidecar utilities run as opt-in OS cron jobs — not as persistent daemons: `scripts/agent_scheduler.py --tick` (scheduled pre-computation, EAR-3), `scripts/vault.py` (encrypt/decrypt on session open/close, §3.6.2), and `scripts/preflight.py` (system health check). These are invoked on-demand by cron, not running continuously, and have no network listeners.
+1. **Claude Code IS the application.** There is no custom daemon or web server. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application. *Exception (DEBT-SPEC-001):* Three lightweight sidecar utilities run as opt-in OS cron jobs — not as persistent daemons: `scripts/precompute.py --domain <x>` (scheduled domain pre-computation, EAR-3), `scripts/vault.py` (encrypt/decrypt on session open/close, §3.6.2), and `scripts/preflight.py` (system health check). These are invoked on-demand by cron, not running continuously, and have no network listeners.
 
 2. **Prompts are the logic layer.** Domain-specific behavior (what to extract from immigration emails, when to alert about a bill, how to score goal progress) lives in Markdown prompt files — not in code. Adding a new life domain = adding a new `.md` file. No compilation, no deployment, no restart.
 
@@ -5090,7 +5090,7 @@ Eleven architectural constraints enforced by code review and runtime guardrails:
 
 ## 26. KB-LINT — Cross-Domain Data Health *(v3.23.0)*
 
-**Script:** `scripts/kb_lint.py` | **Config:** `config/lint_rules.yaml` | **Tests:** `tests/test_kb_lint.py` (46), `tests/eval/test_lint_regression.py` (4)
+**Script:** `scripts/kb_lint.py` | **Config:** 8 cross-domain coherence rules embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py` (formerly `config/lint_rules.yaml` — embedded in v3.35.0); optional `config/lint_rules.yaml` still loaded if present (P6 custom extension) | **Tests:** `tests/test_kb_lint.py` (46), `tests/eval/test_lint_regression.py` (4)
 
 ### 26.1 Architecture
 
@@ -5115,8 +5115,8 @@ Core dataclasses: `LintFinding(severity, pass_id, file_name, field, message, fix
 | P2 | Stale Date Detector | Date fields older than per-domain thresholds (90d high-sensitivity, 180d standard) | WARNING |
 | P3 | Orphan Reference Checker | Every domain reference valid against `config/domain_registry.yaml` active slugs | WARNING |
 | P4 | Contradiction Scanner | Cross-file pattern pairs from `contradiction_patterns` in `lint_rules.yaml` | WARNING |
-| P5 | Cross-Domain Rules | 8 built-in declarative YAML rules (insurance↔vehicle, health↔kids, finance↔insurance, etc.) | per-rule |
-| P6 | Custom Rules | User-defined extensions in `config/lint_rules.yaml` | per-rule |
+| P5 | Cross-Domain Rules | 8 built-in declarative rules, embedded as `_EMBEDDED_LINT_RULES` in `kb_lint.py` (insurance↔vehicle, health↔kids, finance↔insurance, etc.) | per-rule |
+| P6 | Custom Rules | User-defined extensions — add rules directly to `_EMBEDDED_LINT_RULES` in `kb_lint.py` | per-rule |
 
 ### 26.3 CLI Interface
 
@@ -5140,8 +5140,18 @@ Data Health: 96% (24 files, 1 warning, 289ms)     # warnings only
 Data Health: ⚠ lint error — run `lint` manually   # crash fallback
 ```
 
-### 26.5 `config/lint_rules.yaml` Schema
+### 26.5 Rule Schema (formerly `config/lint_rules.yaml` — now embedded)
 
+As of v3.35.0, rules are embedded as `_EMBEDDED_LINT_RULES` in `scripts/kb_lint.py` (no external YAML file). Schema per rule entry:
+
+```python
+{"id": "xref-insurance-vehicle", "domain_a": "insurance", "field_a": "auto_policy",
+ "domain_b": "vehicle", "field_b": "vehicles",
+ "message": "Vehicle domain active but insurance.auto_policy is missing",
+ "severity": "WARNING"}
+```
+
+The former YAML format was:
 ```yaml
 version: "1.0"
 cross_domain_rules:
@@ -5183,7 +5193,7 @@ Multi-agent composition extending AR-9's single-agent invocation model to suppor
 |----|---------|--------|----------|
 | EAR-1 | Agent Memory (Compound Learning) | `agent_memory.py` | Per-agent `memory.md` (max 4KB curated long-term) + `daily/` logs (auto-pruned >14d). Dedup on >0.85 TF-IDF similarity. Top 5 relevant entries loaded (1,500 char budget). Merge on contradiction: trust-tier-wins, else last-write-wins. |
 | EAR-2 | Agent Chaining (DAG) | `agent_chainer.py` | YAML-defined chains with `feeds_from` + gate conditions. Output N → verify → score → integrate → input N+1. `ChainStepState` carries prose+entities+key_assertions. Final quality = geometric mean of step scores. Max 5 steps/chain, max 3 active chains. |
-| EAR-3 | Scheduled Pre-Computation | `agent_scheduler.py` | Cron schedules in `schedules.yaml`, `--tick` runs past-due. Per-agent `staleness_tolerance_seconds` (default 3600, icm-triage=900, deployment=1800). Max 8 scheduled agents (slots; DEBT-SCHED-001 updated from 5→8 to match `config/agents/schedules.yaml` R13), max 4 runs/agent/day. 3 consecutive failures → suspend. |
+| EAR-3 | Scheduled Pre-Computation | `precompute.py` | Single dispatcher replacing the former `agent_scheduler.py` + 4 domain agent files. CLI: `python3 scripts/precompute.py --domain capital|logistics|readiness|tribe` or `--all`. Cron-driven; exits 0 on success, 1 on logic error, 2 on vault-locked. Heartbeat files written to `tmp/{domain}_last_run.json`. Cron schedules in OS crontab (not YAML registry). External-agent control plane (`agent_manager.py`) is a separate concern and not affected. |
 | EAR-4 | Enhanced Lexical Routing (TF-IDF) | `tfidf_router.py` | Two-tier: keyword match (<10ms) → if confidence <0.4, TF-IDF character-trigram fallback. Vectors pre-computed to `tmp/ext-agent-route-vectors.json`. Confidence margin instrumented; median <0.10 over 7d → heartbeat alert. |
 | EAR-5 | Parallel Fan-Out | `fan_out.py` | `ThreadPoolExecutor` max 3. Per-agent timeout; pool timeout = max(individual) + 10s. `threading.Lock()` per `(agent_name, cache_path)`. Degradation: pool timeout → return best single result. |
 | EAR-6 | Evaluator-Optimizer Loop | `evaluator_optimizer.py` | Trigger: Q <0.6 AND any dimension <0.45 AND min_dimension ≥0.2. Max 1 retry, accept max(Q1, Q2). Weekly budget: 50 retries (JSONL counter). Budget exhausted or min_dimension <0.2 → fallback cascade. |
@@ -5959,6 +5969,7 @@ All ACI tests in `tests/unit/test_aci_*.py` and `tests/integration/test_aci_inte
 
 | Version | Changes |
 |---------|---------|
+| v3.35.0 | **Simplification & Token Optimization (specs/simplify.md v1.2)**: Compact `Artha.md` activated as default (21KB/~6,000 tokens vs. prior 110KB/~31,000 tokens) — `config/workflow/` files loaded per-command via `§R` routing table in all 3 entrypoints (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). WorkIQ overlay extracted to `config/overlays/workiq.md`. Domain agent unification: `scripts/precompute.py` (single dispatcher) replaces `agent_scheduler.py` + 4 domain agent entry-point files; external-agent control plane (`agent_manager.py`) preserved. Signal type consolidation: `DomainSignal` gains `subtype: str = ""` field; 10 email signal types map to 4 canonical types (`deadline`, `confirmation`, `security`, `informational`) via `_CANONICAL_TYPE_MAP` in `email_signal_extractor.py`; all 4 `signal_routing.yaml` consumers updated; 4 canonical catch-all entries added to `config/signal_routing.yaml`. Connector fallback cleanup: `_FALLBACK_HANDLER_MAP` removed from `pipeline.py`; `_ALLOWED_MODULES` made explicit 20-element frozenset; dead `_HANDLER_MAP` init removed; failure mode now emits `[CRITICAL]` + returns empty dict. Config stub cleanup: `config/lint_rules.yaml` embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py`; `config/implementation_status.yaml` deleted; `config/domain_autonomy_state.yaml` moved to `state/`. Pre-commit hook auto-regenerates `Artha.md` when `Artha.core.md` changes. New tests: `tests/test_signal_consolidation.py` (10), `tests/test_precompute.py` (15). Config YAMLs: 20→17. Per-session token savings: ~25,600 tokens. |
 | v3.34.0 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + `WindowsProactorEventLoopPolicy` + 3 async coroutines (`telegram_loop`, `schedule_loop`, `watchdog_loop`). Reddit public JSON connector (`scripts/connectors/reddit.py`). Watch Monitor deterministic keyword filter + urgency-tiered routing (`scripts/skills/watch_monitor.py`). Brief Request stale-while-revalidate bridge. Query Relay domain allowlist {goals, calendar, open_items, home, learning} + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude 30s each). Physiological Engine workout regex parser → `~/.artha-local/workouts.jsonl` (`scripts/skills/fitness_coach.py`). HMAC-SHA256 required on ALL M2M commands — no exceptions. `QUERY_ARTHA_MAX_CHARS = 15_000` added to `scripts/lib/context_budget.py`. `claw_bridge.yaml` extended with `query_artha` + `llm` config blocks. ADR-004 engine-vs-extend decision gate documented. `scripts/register_engine_task.ps1` written. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.33.0 | **RE-DEBTS Wave 2 Full Remediation Sprint (§33)**: 51-item architectural audit (April 14–15, 2026) fully resolved. Formal degradation hierarchy (5 levels, §33.1) + latency budget targets (§33.2). Typed exception hierarchy: `ArthaError` + `LLMUnavailableError` — no more silent `""` on LLM failure (RD-51). Context budget single source of truth: `context_budget.py` with `CHARS_PER_TOKEN=3.5` (RD-50, RD-21). Vault sentinel (`~/.artha-local/.artha-decrypt-failed`) + sync fence quiescence loop (RD-02, RD-06). Signal routing: `slack_after_hours` active, 3 more orphan signals fixed, YAML merge strategy corrected (RD-09, RD-33, RD-48). Idempotency: `signal_type` in composite key (RD-07). PII: entity field scrub + `NAME_IN_SUBJECT` pattern (RD-05). Telegram: `_filter_telegram_payload()` applied to all transports + DLQ (RD-08). Sensitivity drift: `kids`/`employment` reads through `StateReader` (RD-34). Work OS: tool allowlist in `work_refresh_tools.yaml` (RD-36). Session summarization wired into live command path (RD-37). Vault watchdog LaunchAgent plist (RD-40). ActionProposal Pydantic validation at enqueue (RD-41). Signal funnel metrics in eval_runner (RD-43). `llm_trace()` call sites wired (RD-49). Canonical CONTEXT_BUNDLE_FIELDS schema + validate_pii_profiles.py (RD-15). Multiline profile value flattening (RD-17). Wave 0 dual-key override (RD-47). TF-IDF kwarg fix (RD-31). Executor validation gates for composed proposals (RD-32). 8 items remain open (RD-03, RD-04, RD-38/39 local-only, RD-13, RD-14, RD-42, RD-44). New files: `scripts/lib/exceptions.py`, `scripts/lib/context_budget.py`, `scripts/schemas/agent_context.py`, `scripts/validate_pii_profiles.py`, `scripts/service/com.artha.vault-watchdog.plist`, `config/agents/work_refresh_tools.yaml`. 119 new CI invariant tests. `.gitignore` hardened: `*.skill`, `skills/`. `specs/re-debts.md` archived to `.archive/specs/re-debts.md`. 4462 tests passing. |
 | v3.32.0 | **April 2026 Security & Reliability Hardening (§32)**: 48-item debt audit fully implemented. Security: plugin allowlist hard-enforced (PLUG-001); HMAC nonce persisted across restarts (HMAC-001); AI signal urgency/impact range-clamped 0–3 (SIG-006); DomainSignal metadata injection-sanitized (SIG-007); wave0_gate=hard now raises RuntimeError (GUARD-001); bidi chars stripped from profile values (PROMPT-002). Memory/PII: memory_writer blocks high-sensitivity domains with audit trail (MEM-003); fact cap + skills cache cap enforced at read time (MEM-001/002); external agent PII block list extended (PII-001). Vault: preflight P0 check for requires_vault policy (VAULT-003 Phase 1); StateReader abstraction wired in channel layer (ARCH-001); vault_hook fallback includes employment (VAULT-001); contacts integrity SHA-256 sentinel (TRUST-001). Signals: content_stale route added (SIG-001); 17 unproduced routes downgraded to stub (SIG-002); TF-IDF cache 24h TTL (ROUTE-002); routing ambiguity tracking (ROUTE-001); platform-skip sentinels (SYNC-001). Actions: idempotency guard autonomy-level-gated with mandatory audit trail (IDEM-001); IdempotencyStore public get_entry() (EXEC-001). Architecture: SessionPreconditions + 3-bit degradation map (ARCH-003/DEGRADE-001); LLM tracing JSONL (OBSERV-001); --assert-sla eval mode + config/sla.yaml (EVAL-002); KG ghost-entity GC (KG-002); Telegram payload minimization (IOT-001). Tests: signal pipeline integration suite + fixture YAML (EVAL-001); no-LLM module-boundary tests (EVAL-003); _FALLBACK_HANDLER_MAP parity tests (SYNC-003). `specs/debts.md` archived to `.archive/specs/debts.md`. 3424 tests passing. |

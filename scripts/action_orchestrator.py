@@ -180,6 +180,8 @@ _COMM_SIGNAL_TYPES: frozenset[str] = frozenset({
     "birthday_approaching", "birthday_in_7d", "life_event_detected",
     "missing_assignment", "school_event_rsvp", "immigration_deadline",
     "event_rsvp_needed",
+    # Canonical types (Phase 4 consolidation — initiative 5)
+    "deadline", "confirmation", "security", "informational",
 })
 
 

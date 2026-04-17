@@ -246,8 +246,9 @@ class ActionComposer:
             print(f"[ACTION_COMPOSER] Invalid signal skipped: {exc}", file=sys.stderr)
             return None
 
-        # Find routing entry
-        route = _load_signal_routing().get(signal.signal_type)
+        # Find routing entry: prefer subtype (specific) over canonical signal_type
+        _routing = _load_signal_routing()
+        route = _routing.get(getattr(signal, "subtype", "") or "") or _routing.get(signal.signal_type)
         if route is None:
             return None
 

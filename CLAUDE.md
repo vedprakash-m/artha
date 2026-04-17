@@ -1,7 +1,9 @@
 # Artha — Your Personal Intelligence System
 
 Read `config/Artha.md` now and follow all instructions within it before
-responding to any message.
+responding to any message. After reading it, check the `§R — Command Router`
+table for the current command and load the listed `config/workflow/*.md` files
+in order before executing. Do NOT skip workflow file loading for catch-up commands.
 
 > **IMPORTANT — Claude Code:** The user types Artha commands as plain text
 > (e.g. `brief`, `work`, `items`) — **without** a leading `/` slash.
