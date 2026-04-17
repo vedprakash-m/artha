@@ -1,14 +1,31 @@
 """channel/router.py — Command alias resolution and handler dispatch."""
 from __future__ import annotations
+import re
 from channel.handlers import (
     cmd_status, cmd_alerts, cmd_tasks, cmd_quick, cmd_domain,
     cmd_dashboard, cmd_goals, cmd_diff, cmd_items_add, cmd_items_done,
     cmd_remember, cmd_cost, cmd_power, cmd_relationships, cmd_help,
     cmd_queue, cmd_approve, cmd_reject, cmd_undo, cmd_unlock,
+    cmd_workout_log,
 )
 from channel.catchup import cmd_catchup
 from channel.stage import cmd_stage, cmd_radar, cmd_radar_try, cmd_radar_skip
 from channel.llm_bridge import cmd_ask
+
+# ── Workout trigger detection ─────────────────────────────────────────────────
+# Matches messages that start with activity/log keywords so channel_listener
+# can route them to cmd_workout_log before the LLM fallback.
+_WORKOUT_TRIGGER_RE = re.compile(
+    r"^(log(?:ged)?|rest\s*day|weight\s|weigh\s|ran|run|hike[d]?|walk(?:ed)?|"
+    r"swim(?:ming)?|cycl(?:e[d]?|ing)|strength|lift(?:ed)?)",
+    re.IGNORECASE,
+)
+
+
+def is_workout_trigger(text: str) -> bool:
+    """Return True if message text looks like a workout log entry."""
+    return bool(_WORKOUT_TRIGGER_RE.match(text.strip()))
+
 
 _COMMAND_ALIASES: dict[str, str] = {
     "catchup":             "/catchup",
@@ -97,6 +114,7 @@ _HANDLERS = {
     "/radar": cmd_radar,
     "/radar_try": cmd_radar_try,
     "/radar_skip": cmd_radar_skip,
+    "/workout_log": cmd_workout_log,
 }
 
 

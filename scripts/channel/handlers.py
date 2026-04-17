@@ -1,6 +1,7 @@
 """channel/handlers.py — All Artha channel command implementations."""
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import re
 import time
@@ -1102,75 +1103,223 @@ async def _handle_callback_query(
         ))
 
 
-# ── _handle_callback_query ──────────────────────────────────────────────
+# ── cmd_workout_log ─────────────────────────────────────────────────────────
+# P6.1 — Physiological Engine (specs/ac-int.md §7.7)
+# Trigger: message starting with log/logged/weight/rest day or activity word.
+# Caller: channel_listener passes sender_id + message_id as keyword args.
 
-async def _handle_callback_query(
-    callback_data: str,
-    sender_id: str,
-    msg,
-    adapter,
-) -> None:
-    """Handle Telegram inline keyboard button presses for action approval.
+_LOCAL_WORKOUT_DIR = Path.home() / ".artha-local"
+_WORKOUTS_FILE = _LOCAL_WORKOUT_DIR / "workouts.jsonl"
+_WORKOUT_DEDUP_WINDOW = 50  # scan last N lines for (sender_id, message_id) dedup
 
-    callback_data format: "act:APPROVE:action_id" | "act:REJECT:action_id" | "act:DEFER:action_id"
+# Distance: "8km", "5mi", "4 miles", "4.5 km"
+_RE_DIST = re.compile(r"(\d+(?:\.\d+)?)\s*(km|mi(?:les?)?)", re.IGNORECASE)
+# Duration: "58min", "1h30m", "2h15m", "45 min", "1h"
+_RE_DUR = re.compile(r"(?:(\d+)h\s*)?(\d+)\s*min|(\d+)\s*h(?:our)?s?(?!\s*\d)", re.IGNORECASE)
+# HR: "HR 142", "avg hr 155", "hr142"
+_RE_HR = re.compile(r"(?:avg\s*)?hr\s*(\d{2,3})", re.IGNORECASE)
+# Elevation: "1100ft gain", "300m elev", "1100 ft"
+_RE_ELEV = re.compile(r"(\d+(?:\.\d+)?)\s*(ft|m)\s*(?:gain|elev(?:ation)?)?", re.IGNORECASE)
+# Activity type keywords
+_ACTIVITY_WORDS: dict[str, str] = {
+    "run": "run", "ran": "run", "running": "run",
+    "hike": "hike", "hiked": "hike", "hiking": "hike",
+    "walk": "walk", "walked": "walk", "walking": "walk",
+    "strength": "strength", "lift": "strength", "lifted": "strength",
+    "cycle": "cycle", "cycling": "cycle", "bike": "cycle", "biked": "cycle",
+    "swim": "swim", "swam": "swim", "swimming": "swim",
+    "rest": "rest",
+}
+# Weight: "weight 182", "weigh 181.5 lbs", "weight: 180"
+_RE_WEIGHT = re.compile(r"weigh[t]?\s*:?\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 
-    Ref: specs/act.md §5.3
-    """
-    from channels.base import ChannelMessage as _CM  # noqa: PLC0415
 
-    parts = callback_data.split(":", 2)
-    if len(parts) != 3 or parts[0] != "act":
-        return  # Not an action callback — ignore
+def _parse_workout(text: str) -> "dict[str, Any] | None":
+    """Parse workout text. Returns None if no recognizable fields found."""
+    lower = text.lower()
 
-    verb = parts[1].upper()
-    action_id = parts[2]
+    # Activity type
+    activity: "str | None" = None
+    for word, canonical in _ACTIVITY_WORDS.items():
+        if re.search(r"\b" + re.escape(word) + r"\b", lower):
+            activity = canonical
+            break
 
-    if not action_id:
-        return
+    # Distance
+    distance_km: "float | None" = None
+    m = _RE_DIST.search(text)
+    if m:
+        val = float(m.group(1))
+        unit = m.group(2).lower()
+        distance_km = round(val * 1.60934, 2) if unit.startswith("mi") else round(val, 2)
 
-    try:
-        from action_executor import ActionExecutor  # noqa: PLC0415
-        executor = ActionExecutor(_ARTHA_DIR)
-
-        if verb == "APPROVE":
-            result = executor.approve(action_id, approved_by="user:telegram")
-            if result.status == "success":
-                reply = f"✅ {result.message}"
-            elif result.status == "failure":
-                reply = f"❌ Failed: {result.message}"
-            else:
-                reply = f"ℹ️ {result.status}: {result.message}"
-
-        elif verb == "REJECT":
-            executor.reject(action_id, reason="user:telegram:button")
-            reply = f"❌ Action rejected."
-
-        elif verb == "DEFER":
-            executor.defer(action_id, until="+24h")
-            reply = f"⏰ Deferred 24 hours."
-
+    # Duration
+    duration_min: "int | None" = None
+    m = _RE_DUR.search(text)
+    if m:
+        if m.group(3):  # pure hours: "1h"
+            duration_min = int(m.group(3)) * 60
         else:
-            reply = f"⚠️ Unknown action verb: {verb}"
+            hrs = int(m.group(1)) if m.group(1) else 0
+            mins = int(m.group(2)) if m.group(2) else 0
+            duration_min = hrs * 60 + mins
 
-        _audit_log(
-            "CHANNEL_ACTION_CALLBACK",
-            sender=sender_id,
-            verb=verb,
-            action_id=action_id[:16],
-        )
-        adapter.send_message(_CM(text=reply, recipient_id=sender_id))
+    # Heart rate
+    hr_avg: "int | None" = None
+    m = _RE_HR.search(text)
+    if m:
+        hr_avg = int(m.group(1))
 
-    except ImportError:
-        adapter.send_message(_CM(
-            text="⚠️ Action layer not available.",
-            recipient_id=sender_id,
-        ))
-    except Exception as e:
-        log.error("[channel_listener] callback_query handler error: %s", e)
-        adapter.send_message(_CM(
-            text=f"⚠️ Action handler error: {e}",
-            recipient_id=sender_id,
-        ))
+    # Elevation (ft; convert m→ft if value >10 to avoid "8km" false matches)
+    elevation_ft: "int | None" = None
+    for em in _RE_ELEV.finditer(text):
+        unit = em.group(2).lower()
+        val = float(em.group(1))
+        if unit == "m" and val > 10:
+            elevation_ft = int(round(val * 3.28084))
+        elif unit == "ft":
+            elevation_ft = int(round(val))
+
+    # Weight
+    weight_lbs: "float | None" = None
+    m = _RE_WEIGHT.search(text)
+    if m:
+        weight_lbs = float(m.group(1))
+
+    # Must have at least one meaningful field to be a valid workout
+    has_data = any(x is not None for x in [activity, distance_km, duration_min, weight_lbs])
+    if not has_data:
+        return None
+
+    return {
+        "activity": activity,
+        "distance_km": distance_km,
+        "duration_min": duration_min,
+        "hr_avg": hr_avg,
+        "elevation_ft": elevation_ft,
+        "weight_lbs": weight_lbs,
+    }
+
+
+def _workout_already_logged(sender_id: str, message_id: str) -> bool:
+    """Scan last N entries in workouts.jsonl for (sender_id, message_id) dedup."""
+    if not _WORKOUTS_FILE.exists():
+        return False
+    try:
+        lines = _WORKOUTS_FILE.read_text(encoding="utf-8").splitlines()
+        for line in lines[-_WORKOUT_DEDUP_WINDOW:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                if (entry.get("sender_id") == sender_id
+                        and entry.get("message_id") == message_id):
+                    return True
+            except json.JSONDecodeError:
+                pass
+    except OSError:
+        pass
+    return False
+
+
+def _build_workout_ack(parsed: "dict[str, Any]") -> str:
+    """Build multi-line ack from parsed fields + optional Mailbox Peak goal line."""
+    lines: list[str] = []
+
+    activity = parsed.get("activity") or "Activity"
+    lines.append(f"✅ {activity.capitalize()} logged")
+
+    if parsed.get("distance_km") is not None:
+        dist = parsed["distance_km"]
+        dist_mi = round(dist * 0.621371, 1)
+        lines.append(f"• Distance: {dist} km ({dist_mi} mi)")
+
+    if parsed.get("duration_min") is not None:
+        mins = parsed["duration_min"]
+        if mins >= 60:
+            h, dm = divmod(mins, 60)
+            lines.append(f"• Duration: {h}h {dm}min" if dm else f"• Duration: {h}h")
+        else:
+            lines.append(f"• Duration: {mins} min")
+
+    if parsed.get("hr_avg") is not None:
+        lines.append(f"• Avg HR: {parsed['hr_avg']} bpm")
+
+    if parsed.get("elevation_ft") is not None:
+        lines.append(f"• Elevation: {parsed['elevation_ft']} ft gain")
+
+    if parsed.get("weight_lbs") is not None:
+        lines.append(f"• Weight: {parsed['weight_lbs']} lbs")
+
+    # Best-effort goal progress (absent/stale → omit silently)
+    try:
+        import importlib.util as _ilu  # noqa: PLC0415
+        _fc_path = _ARTHA_DIR / "scripts" / "skills" / "fitness_coach.py"
+        if _fc_path.exists():
+            _spec = _ilu.spec_from_file_location("fitness_coach", _fc_path)
+            if _spec and _spec.loader:
+                _mod = _ilu.module_from_spec(_spec)
+                _spec.loader.exec_module(_mod)  # type: ignore[union-attr]
+                goal_line = _mod.FitnessCoachSkill().goal_progress_line()
+                if goal_line:
+                    lines.append(f"• {goal_line}")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
+async def cmd_workout_log(
+    args: list[str],
+    scope: str,
+    *,
+    sender_id: str = "",
+    message_id: str = "",
+) -> tuple[str, str]:
+    """Parse workout Telegram message and append to ~/.artha-local/workouts.jsonl.
+
+    Returns (ack_text, "N/A"). On write failure returns ("", "N/A") — caller
+    must check for empty string and skip sending the ack.
+
+    Failure mode 1: unrecognized format  → ❓ hint, do NOT append.
+    Failure mode 2: write error          → audit log, return ("", "N/A").
+    Idempotency key: (sender_id, message_id) — checked in last 50 entries.
+    Ref: specs/ac-int.md §7.7, §8.1 tool boundaries.
+    """
+    raw_text = " ".join(args).strip()
+    if not raw_text:
+        return "❓ Couldn't parse — try: 8km run 58min HR142", "N/A"
+
+    parsed = _parse_workout(raw_text)
+    if parsed is None:
+        return "❓ Couldn't parse — try: 8km run 58min HR142", "N/A"
+
+    # Idempotency: skip write (but still ack) on exact duplicate
+    if sender_id and message_id and _workout_already_logged(sender_id, message_id):
+        log.info("[workout_log] duplicate (sender=%s msg=%s) — skip write", sender_id, message_id)
+        return _build_workout_ack(parsed), "N/A"
+
+    entry: "dict[str, Any]" = {
+        "sender_id": sender_id,
+        "message_id": message_id,
+        "logged_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **parsed,
+        "raw": raw_text[:200],
+    }
+
+    _LOCAL_WORKOUT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        with _WORKOUTS_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        _audit_log("WORKOUT_LOG_WRITE_ERROR", sender=sender_id, error=str(exc))
+        log.error("[workout_log] write failed: %s", exc)
+        return "", "N/A"
+
+    _audit_log("WORKOUT_LOGGED", sender=sender_id, activity=parsed.get("activity"))
+
+    return _build_workout_ack(parsed), "N/A"
 
 
 # ── _handle_callback_query ──────────────────────────────────────────────

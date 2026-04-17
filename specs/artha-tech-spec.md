@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.33.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.34.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.15.0
+> **Implements**: PRD v7.17.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.34.0 | 2026-04-16 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + WindowsProactorEventLoopPolicy + 3 async coroutines (telegram_loop, schedule_loop, watchdog_loop). Reddit public JSON connector. Watch Monitor deterministic keyword filter + urgency-tiered routing. Brief Request stale-while-revalidate bridge. Query Relay domain allowlist + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude). Physiological Engine workout regex parser + `~/.artha-local/workouts.jsonl`. HMAC-SHA256 on all M2M. `QUERY_ARTHA_MAX_CHARS = 15_000` in `scripts/lib/context_budget.py`. ADR-004 gate documented. `claw_bridge.yaml` extended with `query_artha` + `llm` blocks. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.29.0 | 2026-04-09 | **OpenClaw Home Bridge (§29)**: 3-layer M2M transport (REST LAN / Telegram / file-buffer), HMAC-SHA256 security model, 4-command outbound + 4-event inbound contract, 7 new components, `bridge_health` observability block. Incorporated from `claw-bridge.md` v1.7.0 (archived). 61 bridge tests passing. Implements PRD v7.14.0. |
 | v3.28.0 | 2026-04-08 | **Knowledge Graph v2.0 (§22)**: Second Brain Architecture. Five ingestion paths (knowledge/*.md, inbox/, SharePoint, state/work/*.md, ADO), eight governing principles, entity lifecycle stages, SQLite schema v4 (lifecycle_stage, excerpt_hash, change_source_ref, episodes table), source taxonomy with confidence contract, Leiden community clustering + Union-Find fallback, ghost entity detection & excerpt-hash staleness, 7 MCP tools surface, markdown stub contract, 950-token context budget (was 4,000). Implements PRD v7.13.0. |
 | v3.27.0 | 2026-04-08 | EAR-3 SHIPPED: `scripts/agents/` with 4 domain agents (capital, logistics, readiness, tribe). `config/agents/schedules.yaml` cron registry (≤8 agent slots, §27 R13). `config/state_registry.yaml` state-file registry (§3.5 A2). 4 domain-specific guardrails added to §8 (CapitalAmountConfirmGR, LogisticsPIIBoundaryGR, ReadinessNoInferenceGR, TribeRateLimitGR). Anti-golden routing test suite added. Spec compaction: §5.1 briefing example, §8.7 safe_cli.sh, §11.1 setup.sh, §12.1 registry — all replaced with pointers to canonical files. |
@@ -5766,7 +5767,207 @@ The following items are tracked as open (not yet implemented). They are surfaced
 
 ---
 
-*Artha Tech Spec v3.33.0 — End of Document*
+## 34. Artha Channel Integration *(FR-26, v3.34.0)*
+
+**Implements:** PRD FR-26 · **Shipped:** April 2026 · **Source spec:** `specs/ac-int.md` v1.3.0 (canonical)
+
+ACI (Artha Channel Integration) is a unified always-on engine for Windows that hosts the Telegram listener, daily 7am PT pipeline scheduler, and 30-minute health watchdog in a single PID-guarded process. It also provides the bidirectional M2M bridge between Artha and OpenClaw.
+
+### 34.1 Component Architecture
+
+| Component | File | Role |
+|-----------|------|------|
+| **A — Artha Engine** | `scripts/artha_engine.py` | Singleton host process: PID guard, `WindowsProactorEventLoopPolicy`, 3 async coroutines |
+| **B — Reddit Connector** | `scripts/connectors/reddit.py` | Community signals via public JSON API |
+| **C — Watch Monitor** | `scripts/skills/watch_monitor.py` | Deterministic keyword filter + urgency-tiered Telegram routing |
+| **D — Watchdog Module** | inline in `artha_engine.py` (`watchdog_loop`) | 5 health checks every 30 minutes |
+| **E — Brief Request** | `scripts/channel/m2m_handler.py` | Stale-while-revalidate briefing bridge |
+| **F — Query Relay** | `scripts/channel/m2m_handler.py` | Domain query → LLM synthesis → answer |
+| **G — Physiological Engine** | `scripts/skills/fitness_coach.py` | Regex workout parser + `~/.artha-local/workouts.jsonl` |
+
+### 34.2 Component A — artha_engine.py
+
+**Singleton guard:** PID lock at `~/.artha-local/artha_engine.pid`. On startup: check PID file, verify process alive (psutil), exit with message if running, else write PID and continue.
+
+**Event loop:** `asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())` required — set before `asyncio.run()`.
+
+**Three coroutines:**
+
+```python
+async def telegram_loop():   # Telegram Bot API polling (channel_listener.py)
+async def schedule_loop():   # 7am PT daily pipeline; datetime recompute on wake
+async def watchdog_loop():   # asyncio.sleep(1800) — 5 checks each cycle
+```
+
+**Registration:** `scripts/register_engine_task.ps1` registers two Task Scheduler entries:
+- `ArthaEngine` — trigger: `@startup`
+- `ArthaEngine_OnFailure` — trigger: `OnFailure`
+
+**ADR-004 gate:** Before Phase 2 features, `specs/adr/ADR-004-engine-vs-extend.md` must be written to document the Option A (extend channel_listener) vs Option B (artha_engine.py singleton) decision and rationale.
+
+### 34.3 Component B — Reddit Connector
+
+**API:** Reddit public JSON (`https://www.reddit.com/r/{sub}/top.json?t=day&limit=25`). No OAuth required.
+
+**Config:** `config/connectors.yaml` — subreddits as a list of dicts with `"name"` key (not plain strings):
+
+```yaml
+reddit:
+  subreddits:
+    - name: homeautomation
+    - name: personalfinance
+```
+
+**Output schema:** `id`, `source` ("reddit"), `subreddit`, `title`, `score`, `num_comments`, `url`, `created_utc`, `source_tag`.
+
+**Injection filter:** Before inserting into LLM context — title truncated to 80 chars, HTML unescaped and stripped, blocked patterns from `config/lint_rules.yaml` applied.
+
+**Rate limiting:** 2s `asyncio.sleep()` between requests.
+
+### 34.4 Component C — Watch Monitor
+
+**Design:** Zero LLM calls. Pure Python keyword matching.
+
+**Config:** `config/watches.yaml` — each watch has `name`, `keywords` (list), `urgency` (`high`/`medium`/`low`).
+
+**Urgency routing:**
+
+| Urgency | Score threshold | Destination |
+|---------|----------------|-------------|
+| `high` | > 50 | Immediate Telegram alert |
+| `high` | 20–50 | Daily digest |
+| `medium` | any | Daily digest |
+| `low` | any | Weekly digest |
+
+**State:** Matched items written to `state/watch_backlog.yaml` (append-only, cleared after delivery).
+
+### 34.5 Component D — Watchdog Module
+
+**Cycle:** `asyncio.sleep(1800)` (30 minutes). Five checks per cycle:
+
+| Check | Condition | Alert |
+|-------|-----------|-------|
+| 1 | Engine task liveness (all 3 coroutines running) | `COROUTINE_DEAD` |
+| 2 | `state/radar_backlog.yaml` mtime < 26h | `RADAR_STALE` |
+| 3 | `tmp/*.log` error keyword scan | `LOG_ERROR_DETECTED` |
+| 4 | `state/health-check.md` heartbeat age < 5min | `HEARTBEAT_STALE` |
+| 5 | 0 `reddit_*` pipeline entries for 2+ consecutive days | `REDDIT_CONNECTOR_DEAD` |
+
+### 34.6 Component E — Brief Request
+
+**Pattern:** Stale-while-revalidate.
+
+```
+Receive brief_request (HMAC verified)
+  └─ Last briefing age < 5s? → serve immediately; trigger async refresh
+  └─ else → run pipeline sync; serve result
+```
+
+**HMAC:** Required. If verification fails → hard fail (no fallback to unauthenticated mode).
+
+### 34.7 Component F — Query Relay
+
+**Flow:**
+
+```
+1. Receive query_artha M2M message (HMAC verified)
+2. Extract question text
+3. Detect domains: llm_bridge._detect_domains(question)  ← delegate, never duplicate
+4. Filter: intersection(detected_domains, QUERY_ARTHA_ALLOWLIST)
+5. If empty → "I can't answer questions about that domain via Claw."
+6. Gather context: context_budget.py QUERY_ARTHA_MAX_CHARS = 15_000
+7. LLM synthesis: gpt-5.4-mini (30s) → Gemini (30s) → Claude (35s) = 95s total
+8. Truncate to 600 chars max
+9. Send reply via Telegram
+```
+
+**Domain allowlist:** `{goals, calendar, open_items, home, learning}`
+**Domain blocklist (vault-gated):** `{health, kids, vehicle, travel, comms, finance, estate, insurance, immigration}`
+
+**Subprocess:** `asyncio.create_subprocess_exec` required — never `subprocess.run`.
+
+**Constant:** `QUERY_ARTHA_MAX_CHARS = 15_000` in `scripts/lib/context_budget.py`.
+
+### 34.8 Component G — Physiological Engine
+
+**Parser:** Regex-based. Handles distance (mi/km), duration (h/m/s), heart rate (bpm), elevation (ft/m), weight (lbs/kg). No LLM calls.
+
+**Storage:** `~/.artha-local/workouts.jsonl` — NOT OneDrive-synced (local-only by design — PII + performance).
+
+**Dedup key:** `(sender_id, message_id)`. Duplicate messages silently skipped.
+
+**Ack format:** Parses goal progress from `state/goals.md` and includes a one-line progress note in the Telegram reply.
+
+### 34.9 HMAC Security Policy
+
+All 7 M2M command types require HMAC-SHA256 verification:
+
+| Command | Direction | HMAC required |
+|---------|-----------|---------------|
+| `brief_request` | Claw → Artha | ✅ Required |
+| `query_artha` | Claw → Artha | ✅ Required |
+| `load_context` | Artha → Claw | ✅ Required |
+| `announce` | Artha → Claw | ✅ Required |
+| `whatsapp_draft` | Artha → Claw | ✅ Required |
+| `ping` | Artha → Claw | ✅ Required |
+| `pong` | Claw → Artha | ✅ Required |
+
+**Key:** `artha-claw-bridge-hmac` in Windows Credential Manager (keyring service=`"artha"`).
+
+**Keyring unavailable:** Hard fail. Never fail-open.
+
+### 34.10 LLM Model Selection
+
+For query_artha synthesis, the failover chain is:
+
+```
+gpt-5.4-mini (30s timeout) → Gemini (30s timeout) → Claude (35s timeout) → fail
+```
+
+Total budget: 95s. If all three fail → return "Unable to answer query — LLM unavailable."
+
+### 34.11 State File Ownership
+
+| File | Owner | Notes |
+|------|-------|-------|
+| `~/.artha-local/artha_engine.pid` | artha_engine.py | PID guard |
+| `~/.artha-local/workouts.jsonl` | fitness_coach.py | Not OneDrive-synced |
+| `state/watch_backlog.yaml` | watch_monitor.py | Append-only |
+| `state/health-check.md` | watchdog_loop | Updated each cycle |
+| `state/radar_backlog.yaml` | pipeline.py | Freshness checked by watchdog |
+
+### 34.12 Configuration Files
+
+**`config/claw_bridge.yaml`** — extended with:
+```yaml
+query_artha:
+  enabled: true
+  allowlist: [goals, calendar, open_items, home, learning]
+  max_answer_chars: 600
+llm:
+  primary: gpt-5.4-mini
+  fallback_1: gemini
+  fallback_2: claude
+  timeout_each_s: 30
+```
+
+**`config/watches.yaml`** — watch definitions:
+```yaml
+watches:
+  - name: immigration_news
+    keywords: [H-1B, green card, USCIS, visa bulletin]
+    urgency: high
+```
+
+### 34.13 Test Coverage
+
+All ACI tests in `tests/unit/test_aci_*.py` and `tests/integration/test_aci_integration.py`.
+
+**Run:** `pytest tests/ -k "aci or engine or watch_monitor or reddit or fitness or query_artha"` — all passing as of v3.34.0.
+
+---
+
+*Artha Tech Spec v3.34.0 — End of Document*
 
 ---
 
@@ -5774,6 +5975,7 @@ The following items are tracked as open (not yet implemented). They are surfaced
 
 | Version | Changes |
 |---------|---------|
+| v3.34.0 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + `WindowsProactorEventLoopPolicy` + 3 async coroutines (`telegram_loop`, `schedule_loop`, `watchdog_loop`). Reddit public JSON connector (`scripts/connectors/reddit.py`). Watch Monitor deterministic keyword filter + urgency-tiered routing (`scripts/skills/watch_monitor.py`). Brief Request stale-while-revalidate bridge. Query Relay domain allowlist {goals, calendar, open_items, home, learning} + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude 30s each). Physiological Engine workout regex parser → `~/.artha-local/workouts.jsonl` (`scripts/skills/fitness_coach.py`). HMAC-SHA256 required on ALL M2M commands — no exceptions. `QUERY_ARTHA_MAX_CHARS = 15_000` added to `scripts/lib/context_budget.py`. `claw_bridge.yaml` extended with `query_artha` + `llm` config blocks. ADR-004 engine-vs-extend decision gate documented. `scripts/register_engine_task.ps1` written. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.33.0 | **RE-DEBTS Wave 2 Full Remediation Sprint (§33)**: 51-item architectural audit (April 14–15, 2026) fully resolved. Formal degradation hierarchy (5 levels, §33.1) + latency budget targets (§33.2). Typed exception hierarchy: `ArthaError` + `LLMUnavailableError` — no more silent `""` on LLM failure (RD-51). Context budget single source of truth: `context_budget.py` with `CHARS_PER_TOKEN=3.5` (RD-50, RD-21). Vault sentinel (`~/.artha-local/.artha-decrypt-failed`) + sync fence quiescence loop (RD-02, RD-06). Signal routing: `slack_after_hours` active, 3 more orphan signals fixed, YAML merge strategy corrected (RD-09, RD-33, RD-48). Idempotency: `signal_type` in composite key (RD-07). PII: entity field scrub + `NAME_IN_SUBJECT` pattern (RD-05). Telegram: `_filter_telegram_payload()` applied to all transports + DLQ (RD-08). Sensitivity drift: `kids`/`employment` reads through `StateReader` (RD-34). Work OS: tool allowlist in `work_refresh_tools.yaml` (RD-36). Session summarization wired into live command path (RD-37). Vault watchdog LaunchAgent plist (RD-40). ActionProposal Pydantic validation at enqueue (RD-41). Signal funnel metrics in eval_runner (RD-43). `llm_trace()` call sites wired (RD-49). Canonical CONTEXT_BUNDLE_FIELDS schema + validate_pii_profiles.py (RD-15). Multiline profile value flattening (RD-17). Wave 0 dual-key override (RD-47). TF-IDF kwarg fix (RD-31). Executor validation gates for composed proposals (RD-32). 8 items remain open (RD-03, RD-04, RD-38/39 local-only, RD-13, RD-14, RD-42, RD-44). New files: `scripts/lib/exceptions.py`, `scripts/lib/context_budget.py`, `scripts/schemas/agent_context.py`, `scripts/validate_pii_profiles.py`, `scripts/service/com.artha.vault-watchdog.plist`, `config/agents/work_refresh_tools.yaml`. 119 new CI invariant tests. `.gitignore` hardened: `*.skill`, `skills/`. `specs/re-debts.md` archived to `.archive/specs/re-debts.md`. 4462 tests passing. |
 | v3.32.0 | **April 2026 Security & Reliability Hardening (§32)**: 48-item debt audit fully implemented. Security: plugin allowlist hard-enforced (PLUG-001); HMAC nonce persisted across restarts (HMAC-001); AI signal urgency/impact range-clamped 0–3 (SIG-006); DomainSignal metadata injection-sanitized (SIG-007); wave0_gate=hard now raises RuntimeError (GUARD-001); bidi chars stripped from profile values (PROMPT-002). Memory/PII: memory_writer blocks high-sensitivity domains with audit trail (MEM-003); fact cap + skills cache cap enforced at read time (MEM-001/002); external agent PII block list extended (PII-001). Vault: preflight P0 check for requires_vault policy (VAULT-003 Phase 1); StateReader abstraction wired in channel layer (ARCH-001); vault_hook fallback includes employment (VAULT-001); contacts integrity SHA-256 sentinel (TRUST-001). Signals: content_stale route added (SIG-001); 17 unproduced routes downgraded to stub (SIG-002); TF-IDF cache 24h TTL (ROUTE-002); routing ambiguity tracking (ROUTE-001); platform-skip sentinels (SYNC-001). Actions: idempotency guard autonomy-level-gated with mandatory audit trail (IDEM-001); IdempotencyStore public get_entry() (EXEC-001). Architecture: SessionPreconditions + 3-bit degradation map (ARCH-003/DEGRADE-001); LLM tracing JSONL (OBSERV-001); --assert-sla eval mode + config/sla.yaml (EVAL-002); KG ghost-entity GC (KG-002); Telegram payload minimization (IOT-001). Tests: signal pipeline integration suite + fixture YAML (EVAL-001); no-LLM module-boundary tests (EVAL-003); _FALLBACK_HANDLER_MAP parity tests (SYNC-003). `specs/debts.md` archived to `.archive/specs/debts.md`. 3424 tests passing. |
 | v3.31.0 | **Safety & Governance Compendium (§31)**: Signal routing `status: active\|stub` field + completeness CI test (`test_signal_routing_completeness.py`); 3 orphaned signal routes added (`automation_failure`, `goal_autopark_candidate`, `slack_action_item`); domain-qualified idempotency windows (`get_window(action_type, domain)` — immigration 30d, iot 4h); execution-layer idempotency in `instruction_sheet.execute()` (`check_or_reserve`/`mark_completed`); memory writer FIFO cap at `max_facts` with `MEMORY_EVICTION` audit log; skills cache size governance (`_enforce_cache_size_cap()`, 1MB limit); connector record schema validation (`scripts/schemas/connector_record.py`); routing ambiguity flag (`RoutingResult.routing_ambiguity`); `keyword_miss_rate` metric + routing-audit eval mode; KG backup WAL-free via `Connection.backup()` + symlink-safe `Path.resolve()` in cloud-sync check; platform-gated connector freshness JSON (`state/connectors/connector_freshness.json`, 72h CRITICAL threshold). PRD §16.4 Security & Privacy Architecture added. `specs/debt.md` archived to `.archive/specs/debt.md`. |

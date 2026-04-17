@@ -22,7 +22,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -61,6 +61,16 @@ _BUFFER_FILE            = "home_events_buffer.jsonl"
 _CLOCK_WARN_MIN         = 2            # log BRIDGE_CLOCK_DRIFT if drift > this
 _CLOCK_CRITICAL_MIN     = 5            # escalate to CRITICAL if drift > this
 
+# Domains that OpenClaw may query via query_artha (spec §9 + Appendix A).
+# SECURITY: blocked domains must NEVER appear in the allowed set.
+QUERY_ALLOWED_DOMAINS: frozenset[str] = frozenset({
+    "goals", "calendar", "open_items", "home", "learning",
+})
+QUERY_BLOCKED_DOMAINS: frozenset[str] = frozenset({
+    "health", "kids", "vehicle", "travel", "comms",
+    "finance", "estate", "insurance", "immigration",
+})
+
 # ── Module-level singletons ───────────────────────────────────────────────────
 # Rate limiter: 20 messages per hour per spec §6.3.
 _rate_limiter  = _RateLimiter(max_per_window=20, window_sec=3600.0, cooldown_sec=600.0)
@@ -83,10 +93,13 @@ def is_m2m_message(text: str) -> bool:
         return False
 
 
-async def handle_m2m(text: str, sender_id: str) -> None:
+async def handle_m2m(text: str, sender_id: str) -> Optional[dict[str, Any]]:
     """Entry point called from channel_listener.py for bridge envelopes.
 
     Validates the envelope then routes to per-command handlers.
+    Returns None  — handled internally (buffer write, pong, etc.).
+    Returns dict  — caller must act: {"action": "brief_request"} or
+                    {"action": "query_artha", "question": ..., "correlation_id": ...}.
     All failures are silently dropped + audited; never raises.
     """
     cfg = _load_m2m_cfg(_ARTHA_DIR)
@@ -115,17 +128,27 @@ async def handle_m2m(text: str, sender_id: str) -> None:
     try:
         if cmd == "presence_detected":
             _handle_presence_detected(env, cfg, _ARTHA_DIR)
+            return None
         elif cmd == "energy_event":
             _handle_energy_event(env, cfg, _ARTHA_DIR)
+            return None
         elif cmd == "home_alert":
             _handle_home_alert(env, cfg, _ARTHA_DIR)
+            return None
         elif cmd == "pong":
             _handle_pong(env, cfg)
+            return None
+        elif cmd == "brief_request":
+            return _handle_brief_request(env)
+        elif cmd == "query_artha":
+            return _handle_query_artha(env, cfg)
         else:
             # Allowlist check already rejected unknown cmds; shouldn't reach here
             log.warning("M2M unhandled cmd after allowlist check: %r", cmd)
+            return None
     except Exception as exc:  # noqa: BLE001
         log.exception("M2M handler error for cmd=%r: %s", cmd, exc)
+        return None
 
 
 # ── Configuration loader ───────────────────────────────────────────────────────
@@ -339,6 +362,62 @@ def _handle_pong(env: dict[str, Any], cfg: dict[str, Any]) -> None:
 
     except (ValueError, TypeError) as exc:
         log.debug("pong utc_now parse error: %s", exc)
+
+
+def _handle_brief_request(env: dict[str, Any]) -> dict[str, Any]:
+    """Handle a brief_request from OpenClaw.
+
+    Returns a dict that channel_listener.py acts on; no buffer write needed.
+    The caller (channel_listener) is responsible for generating and sending the briefing.
+    """
+    trace = env.get("trace_id", "")
+    _audit_log("BRIDGE_M2M_BRIEF_REQUEST", trace_id=trace)
+    log.info("M2M brief_request received (trace_id=%s)", trace)
+    return {"action": "brief_request"}
+
+
+def _handle_query_artha(
+    env: dict[str, Any], cfg: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    """Handle a query_artha command from OpenClaw.
+
+    Validates question length and domain allowlist, then returns a dict for
+    the caller (channel_listener) to execute the LLM query asynchronously.
+
+    Security:
+    - question is truncated to max_question_chars before returning.
+    - Only QUERY_ALLOWED_DOMAINS may be mentioned; QUERY_BLOCKED_DOMAINS are
+      rejected immediately (defence-in-depth; allowlist is the primary gate).
+    - If keyring is unavailable the envelope was already rejected by HMAC gate;
+      this function never needs to re-check keyring.
+
+    Returns None if the request is malformed / blocked (logged + audited).
+    Returns dict on success: {"action": "query_artha", "question": str, "correlation_id": str}.
+    """
+    data         = env.get("data", {})
+    trace        = env.get("trace_id", "")
+    question_raw = data.get("question", "")
+    correlation  = data.get("correlation_id", trace)
+
+    qa_cfg           = cfg.get("query_artha", {})
+    max_chars: int   = int(qa_cfg.get("max_question_chars", 200))
+
+    if not question_raw or not question_raw.strip():
+        _audit_log("BRIDGE_QUERY_INVALID", reason="empty_question", trace_id=trace)
+        return None
+
+    # Truncate to configured maximum before any further processing
+    question = question_raw.strip()[:max_chars]
+
+    _audit_log("BRIDGE_QUERY_ARTHA", question_len=len(question), trace_id=trace,
+               correlation_id=correlation)
+    log.info("M2M query_artha received (len=%d, trace=%s)", len(question), trace)
+
+    return {
+        "action":         "query_artha",
+        "question":       question,
+        "correlation_id": correlation,
+    }
 
 
 # ── Buffer writer ──────────────────────────────────────────────────────────────

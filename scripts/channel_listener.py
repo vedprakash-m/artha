@@ -79,10 +79,109 @@ from channel.handlers import (
 )
 from channel.catchup import cmd_catchup
 from channel.stage import cmd_stage, cmd_radar, cmd_radar_try, cmd_radar_skip
-from channel.router import _normalise_command, _COMMAND_ALIASES, ALLOWED_COMMANDS, _HANDLERS
+from channel.router import _normalise_command, _COMMAND_ALIASES, ALLOWED_COMMANDS, _HANDLERS, is_workout_trigger
 from channel import m2m_handler
 from channel._lock import _acquire_singleton_lock, _release_singleton_lock
+from lib.context_budget import QUERY_ARTHA_MAX_CHARS  # query_artha ceiling (Phase 5)
 
+
+
+_TG_MAX = 4000  # safe below Telegram's 4096 hard limit
+
+
+# ── M2M dispatch helpers ─────────────────────────────────────────────────────
+
+async def _send_query_response(
+    adapter: Any,
+    sender_id: str,
+    answer: str,
+    correlation_id: str,
+) -> None:
+    """Send an LLM answer back to OpenClaw as plain text over the M2M channel.
+
+    The correlation_id is prepended so OpenClaw can match response → request.
+    Message is split into ≤4000-char chunks to stay within Telegram limits.
+    """
+    from channels.base import ChannelMessage
+    text = f"[query_response cid={correlation_id}]\n{answer}"
+    chunks = _split_message(text, _TG_MAX) if len(text) > _TG_MAX else [text]
+    for chunk in chunks:
+        adapter.send_message(ChannelMessage(text=chunk, recipient_id=sender_id))
+
+
+async def _dispatch_brief_request(adapter: Any, sender_id: str) -> None:
+    """Retrieve the latest briefing and send it back over the M2M channel.
+
+    Called as an asyncio Task by the M2M intercept block.  Never raises.
+    """
+    from channels.base import ChannelMessage
+    from channel.audit import _audit_log as _al
+    try:
+        briefing_path = _get_latest_briefing_path()
+        if briefing_path is None or not briefing_path.exists():
+            adapter.send_message(ChannelMessage(
+                text="⚠️ No briefing available — run pipeline first.",
+                recipient_id=sender_id,
+            ))
+            return
+        text = briefing_path.read_text(encoding="utf-8")
+        text = _strip_frontmatter(text)
+        chunks = _split_message(text, _TG_MAX) if len(text) > _TG_MAX else [text]
+        for chunk in chunks:
+            adapter.send_message(ChannelMessage(text=chunk, recipient_id=sender_id))
+        _al("BRIDGE_BRIEF_SENT", chars=len(text), chunks=len(chunks))
+    except Exception as exc:  # noqa: BLE001
+        log.exception("_dispatch_brief_request error: %s", exc)
+
+
+async def _dispatch_query_artha(
+    result: dict[str, Any],
+    adapter: Any,
+    sender_id: str,
+) -> None:
+    """Execute a query_artha request and send the answer back to OpenClaw.
+
+    Steps:
+      1. Extract question + correlation_id from the validated result dict.
+      2. Detect relevant domains (REUSE _detect_domains — never duplicate).
+      3. Filter detected domains against QUERY_ALLOWED_DOMAINS allowlist.
+      4. Gather bounded context (QUERY_ARTHA_MAX_CHARS — imported constant, never hardcoded).
+      5. Call async LLM with failover chain.
+      6. Send answer via _send_query_response.
+
+    Never raises.  All errors are logged and a fallback error reply is sent.
+    """
+    from channel.audit import _audit_log as _al
+    from channels.base import ChannelMessage
+    question       = result["question"]
+    correlation_id = result.get("correlation_id", "")
+    try:
+        # Step 2: domain detection (REUSE — spec §P5.2)
+        detected_domains = _detect_domains(question)
+
+        # Step 3: filter to allowlist (defence-in-depth — QUERY_BLOCKED_DOMAINS never served)
+        allowed_domains = [
+            d for d in detected_domains
+            if d in m2m_handler.QUERY_ALLOWED_DOMAINS
+        ]
+        # Fallback: if no detected domain matches the allowlist, use all allowed domains
+        if not allowed_domains:
+            allowed_domains = sorted(m2m_handler.QUERY_ALLOWED_DOMAINS)
+
+        # Step 4: bounded context gather (QUERY_ARTHA_MAX_CHARS — never hardcode)
+        context = await _gather_context(allowed_domains, QUERY_ARTHA_MAX_CHARS)
+
+        # Step 5: LLM answer with failover
+        answer = await _ask_llm(question, context)
+        if not answer or not answer.strip():
+            answer = "No answer could be generated — please try again."
+
+        _al("BRIDGE_QUERY_ANSWERED", cid=correlation_id, chars=len(answer))
+    except Exception as exc:  # noqa: BLE001
+        log.exception("_dispatch_query_artha error: %s", exc)
+        answer = "⚠️ Query failed — internal error."
+
+    await _send_query_response(adapter, sender_id, answer, correlation_id)
 
 
 # ── process_message ─────────────────────────────────────────────────────
@@ -173,7 +272,13 @@ async def process_message(
     # Detect signed bridge envelopes before any user command routing.
     # Ref: specs/claw-bridge.md §P2.3
     if m2m_handler.is_m2m_message(msg.raw_text):
-        await m2m_handler.handle_m2m(msg.raw_text, msg.sender_id)
+        result = await m2m_handler.handle_m2m(msg.raw_text, msg.sender_id)
+        if result is None:
+            return
+        if result.get("action") == "brief_request":
+            asyncio.create_task(_dispatch_brief_request(adapter, msg.sender_id))
+        elif result.get("action") == "query_artha":
+            asyncio.create_task(_dispatch_query_artha(result, adapter, msg.sender_id))
         return
 
     # ── Callback query intercept: act:VERB:action_id (§5.3) ──────────────
@@ -225,8 +330,18 @@ async def process_message(
         response = "Unknown command. Send ? for commands."
         staleness = "N/A"
     elif not is_slash_command:
-        # Free-form question → context-aware LLM Q&A
-        response, staleness = await cmd_ask(msg.raw_text, scope)
+        if is_workout_trigger(msg.raw_text):
+            from channel.handlers import cmd_workout_log  # noqa: PLC0415
+            response, staleness = await cmd_workout_log(
+                [msg.raw_text], scope,
+                sender_id=msg.sender_id,
+                message_id=msg.message_id,
+            )
+            if not response:  # write failure — skip ack
+                return
+        else:
+            # Free-form question → context-aware LLM Q&A
+            response, staleness = await cmd_ask(msg.raw_text, scope)
     elif msg.command == "/unlock":
         response, staleness = await cmd_unlock(
             msg.args, scope, msg.sender_id, token_store
@@ -276,7 +391,6 @@ async def process_message(
 
     # 9. Send response — split into chunks if too long for Telegram (4096 limit)
     from channels.base import ChannelMessage
-    _TG_MAX = 4000  # leave margin below 4096
 
     chunks = _split_message(filtered, _TG_MAX) if len(filtered) > _TG_MAX else [filtered]
     for chunk in chunks:

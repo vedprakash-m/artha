@@ -1,6 +1,6 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.16.0
+## Product Requirements Document · v7.17.0
 
 **Author:** [Author]
 **Date:** April 16, 2026
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.17.0 | 2026-04-16 | Artha Channel Integration (ACI) — FR-26: Always-On Monitoring & Bidirectional Home Intelligence Bridge. `artha_engine.py` singleton host (Telegram listener + daily 7am PT scheduler + 30-min watchdog), Reddit community signals connector, Watch Monitor keyword filter, workout logging (Physiological Engine), brief_request stale-while-revalidate bridge, query_artha relay with domain allowlist. 7 components (A–G). HMAC required on all M2M commands. Implements `specs/ac-int.md` v1.3.0. |
 | v7.16.0 | 2026-04-16 | RE-DEBTS Wave 2 — Formal degradation hierarchy (5 levels) + latency budget targets added to §14 NFRs and §16. 51-item architectural audit fully resolved. Tech Spec v3.33.0 + 119 new CI invariant tests. `specs/re-debts.md` archived. |
 | v7.15.0 | 2026-04-13 | Career Search Intelligence — FR-25: Phase 1 shipped. 7-block A–G evaluation framework, scoring system (6 dimensions), archetype detection, STAR+Reflection Story Bank, ATS PDF generation via Playwright, cross-domain enrichment (immigration × comp × calendar), application tracker, 3 career guardrails, briefing integration. Career-ops satellite spec archived. |
 | v7.14.0 | 2026-04-09 | OpenClaw Home Bridge — FR-24: M2M integration with home automation (3-layer transport, HMAC-SHA256, context push, presence events, TTS gate, WhatsApp approval, bridge observability). Incorporated from `claw-bridge.md` v1.7.0 (archived). |
@@ -58,6 +59,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-23: Capital Intelligence
    - FR-24: OpenClaw Home Bridge
    - FR-25: Career Search Intelligence
+   - FR-26: Artha Channel Integration
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1177,6 +1179,33 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 
 ---
 
+### FR-26 · Artha Channel Integration (ACI)
+
+**Priority:** P2 (Phase 1 shipped April 2026)
+**Summary:** Always-on monitoring and bidirectional home intelligence bridge for Windows. A unified singleton process (`artha_engine.py`) hosts the Telegram listener, daily 7am PT pipeline scheduler, and 30-minute health watchdog — eliminating multiple Task Scheduler entries. Artha receives briefing requests and domain queries from OpenClaw via M2M, serves stale-while-revalidate briefings (<5s), relays domain answers via LLM synthesis, monitors community signals via Reddit, filters topic watches via keyword matching, and logs workouts via regex parsing. All M2M communication is HMAC-SHA256 secured.
+
+**Architecture:** `scripts/artha_engine.py` (singleton PID guard + 3 async coroutines), `scripts/connectors/reddit.py` (community signals), `scripts/skills/watch_monitor.py` (topic watches), `scripts/skills/fitness_coach.py` (workout parsing), `scripts/channel/m2m_handler.py` (M2M envelope + brief_request + query_artha), `config/watches.yaml` (watch definitions), `config/claw_bridge.yaml` (extended with `query_artha` + `llm` config blocks).
+
+**Non-goals:** No real-time push notifications. No voice transcription. Finance, health, kids, vehicle, travel, comms, estate, and insurance domains are blocked from query_artha (vault-gated). macOS/Linux not supported (Windows Task Scheduler dependency).
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR26.1 | **Always-On Engine** — `artha_engine.py` singleton process with PID guard, `WindowsProactorEventLoopPolicy`, and 3 concurrent async coroutines: Telegram listener, 7am PT daily pipeline scheduler (datetime-based catch-up on wake), 30-min watchdog. Registered as Windows Task Scheduler task with both `@startup` and `OnFailure` triggers via `scripts/register_engine_task.ps1`. | P2 |
+| FR26.2 | **Reddit Community Signals** — Public JSON API connector (`/top.json?t=day`). Configured subreddits in `config/connectors.yaml` (list of dicts with `"name"` key). Output schema: `id/source/subreddit/title/score/num_comments/url/created_utc/source_tag`. 80-char title cap + HTML strip + blocked pattern filter applied before LLM context. 2s inter-request delay. | P2 |
+| FR26.3 | **Watch Monitor** — Deterministic keyword filter (no LLM calls) on pipeline output. Watches defined in `config/watches.yaml`. Urgency-tiered routing: high urgency + score >50 → immediate Telegram alert; high + score 20–50 → daily digest; medium/low → digest/weekly. Results in `state/watch_backlog.yaml`. | P2 |
+| FR26.4 | **Brief Request Bridge** — Stale-while-revalidate pattern: serves last briefing synchronously within 5s; async background pipeline refresh completes separately. HMAC required — no exceptions. | P2 |
+| FR26.5 | **Query Relay** — Claw sends domain question via M2M → Artha detects domains (delegates to `llm_bridge._detect_domains()`) → filters by allowlist {goals, calendar, open_items, home, learning} → gathers context (≤`QUERY_ARTHA_MAX_CHARS` = 15,000 chars via `scripts/lib/context_budget.py`) → LLM synthesis (gpt-5.4-mini → Gemini → Claude, 30s each, 95s total timeout) → sends answer back. HMAC required. Vault-gated domains hard-blocked. | P2 |
+| FR26.6 | **Workout Logging (Physiological Engine)** — Regex-based parser for workout messages (distance/duration/HR/elevation/weight). Appends to `~/.artha-local/workouts.jsonl` (not OneDrive-synced). Dedup key: `(sender_id, message_id)`. Acknowledgement includes goal progress lookup. | P2 |
+| FR26.7 | **Health Watchdog** — 5 checks every 30 minutes: engine task liveness, `state/radar_backlog.yaml` freshness (<26h), error log scan, heartbeat age (<5min), Reddit connector liveness (0 `reddit_*` entries for 2+ consecutive days → `REDDIT_CONNECTOR_DEAD` alert). | P2 |
+
+**Security invariants:** HMAC-SHA256 required on ALL M2M commands (no exceptions); keyring-only key storage (Windows Credential Manager); nonce deduplication + ±5-minute timestamp window; injection filter (80-char cap + HTML strip + blocked patterns from `config/lint_rules.yaml`) applied before all LLM context; domain allowlist blocks vault-gated domains; sender ID allowlist enforced (reply_chat_id lookup fails hard if unconfigured).
+
+**Feature flag:** ACI is always-on once `artha_engine.py` is registered as a Task Scheduler task. Individual M2M commands require provisioning `artha-claw-bridge-hmac` in Windows Credential Manager.
+
+---
+
 ## 7. Goal Intelligence Engine — Deep Dive
 
 The Goal Intelligence Engine (FR-13) is the feature that most distinguishes Artha from a monitoring tool. Most personal finance and productivity apps track metrics. Artha connects metrics to meaning.
@@ -1402,6 +1431,8 @@ Lagging metrics tell you what already happened. Leading indicators tell you what
 Artha is a **pull-based personal intelligence system** built on Claude Code as the runtime. There is no custom daemon, no background process, and no always-on infrastructure. The user triggers Artha by opening a Claude Code session and saying "catch me up."
 
 > **v3.0 Architectural Pivot:** The v2.2 architecture assumed an always-on Mac with a macOS LaunchAgent daemon. In practice, the user's Mac is used only some weekday evenings and weekends. Combined with a hard privacy requirement (no cloud VMs, no cloud state storage), a pull-based model was adopted. Personal life obligations operate on days/weeks/months timescales — no personal domain in Artha requires sub-hour alerting. A daily or every-other-day pull cadence is architecturally sufficient for ALL 18 Functional Requirements.
+
+> **v5.0 ACI Supplement (Windows):** FR-26 (Artha Channel Integration) adds an always-on `artha_engine.py` singleton host for Windows daily-use machines. It handles the Telegram listener, daily 7am PT pipeline scheduling, and watchdog monitoring — eliminating the need for multiple Task Scheduler entries. This is a Windows-only supplement to the pull-based model. Claude Code / Claude.ai sessions remain the authoritative runtime; ACI enables the OpenClaw home automation bridge and community signal monitoring without a manual session start.
 
 ### 9.1 — System Overview
 
@@ -2276,7 +2307,7 @@ Artha succeeds when it materially changes how you navigate your life. The follow
 | Catch-up reliability | >= 95% complete | health-check.md |
 | Per-domain accuracy | >= 90% (30-day rolling) | health-check.md |
 | Action acceptance rate | >= 80% | audit.md |
-| Domain coverage | All 22 FRs active | Prompt count |
+| Domain coverage | All 23 FRs active | Prompt count |
 | Data integrity incidents | Zero | audit.md write guard log |
 | Signal:noise ratio | >= 60% per domain | health-check.md |
 | Session quick-start latency | <10s for non-catch-up | Time-to-first-response |
