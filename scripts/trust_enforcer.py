@@ -36,7 +36,7 @@ from state_writer import write as _state_write  # noqa: PLC0415
 _AUTO_APPROVER_PREFIX = "auto:"
 
 # Path to per-domain autonomy tracking file (§7.1)
-_DOMAIN_AUTONOMY_PATH = Path(__file__).resolve().parent.parent / "config" / "domain_autonomy_state.yaml"
+_DOMAIN_AUTONOMY_PATH = Path(__file__).resolve().parent.parent / "state" / "domain_autonomy_state.yaml"
 
 # Path to artha_config.yaml (wave0.complete source-of-truth)
 _ARTHA_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "artha_config.yaml"

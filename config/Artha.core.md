@@ -110,12 +110,6 @@ If `config/user_profile.yaml` does not exist:
 3. Run conversational bootstrap — read `config/bootstrap-interview.md` for the interview flow
 4. After profile created: "Ready. Say 'catch me up' for your first briefing."
 
-### Implementation Status
-Read `config/implementation_status.yaml` to know which features are implemented.
-Do NOT attempt to execute features with status: `not_started` or `partial`.
-If a user asks for an unimplemented feature, say:
-"That feature is specified but not yet implemented. Status: [status]."
-
 ### Data Quality Principle
 
 When answering any question from any source (briefing, refresh, reflect, NL query,
@@ -178,22 +172,10 @@ for provider in [gmail, msgraph, icloud]:
 ```
 Track in `health-check.md → oauth_health` section. Surface proactive warnings before tokens expire (MS Graph: <7 days, Gmail: on refresh failure pattern).
 
-**WorkIQ Calendar check (v2.2 — P1, non-blocking):**
-As part of preflight, run combined WorkIQ detection + auth:
-```
-if platform == Windows:
-    check tmp/.workiq_cache.json (24h TTL)
-    if cache miss/stale:
-        npx -y @microsoft/workiq@{version_pin} ask -q "What is my name?"
-        parse response → {available, auth_valid, user_name}
-        write cache to tmp/.workiq_cache.json
-    if available AND auth_valid: workiq_ready = true
-    if available AND NOT auth_valid: surface "⚠️ WorkIQ auth expired — npx workiq logout && retry"
-    if NOT available: log to health-check.md, continue silently
-else:
-    workiq_ready = false (Mac — skip silently, no error)
-```
-WorkIQ failure NEVER blocks catch-up. Personal calendar is always the primary source.
+## Platform Overlays
+If `integrations.workiq.enabled: true` in `config/user_profile.yaml`: load `config/overlays/workiq.md`
+into context before Step 0. All WorkIQ-specific steps (preflight check, Step 4 fetch,
+Steps 8o–8r cross-domain analysis) are defined in that overlay. On Mac: skip silently.
 
 ### Step 1 — Decrypt sensitive state
 ```bash
@@ -299,63 +281,9 @@ python3 scripts/skill_runner.py
 ```
 Output: `tmp/skills_cache.json`. Ingested in Step 5 to supplement email data with high-fidelity status (USCIS, Tax).
 
-**WorkIQ Work Calendar (v2.2 — Windows only, non-blocking):**
-Only runs if `workiq_ready == true` from Step 0 preflight. Skipped silently on Mac.
-```
-if workiq_ready:
-    # Build explicit date-range query (never relative dates like "this week")
-    # Query variant based on context pressure:
-    #   green/yellow → 7-day: TODAY through TODAY+6
-    #   red/critical → 2-day: TODAY through TODAY+1
-    # Read query_variant from user_profile.yaml → integrations.workiq.query_variant (default: auto)
-
-    query = "List all my calendar events from {YYYY-MM-DD} through {YYYY-MM-DD+N}. " \
-            "Format each event as one line: " \
-            "DATE | START_TIME | END_TIME | TITLE | ORGANIZER | LOCATION | TEAMS(yes/no)"
-
-    response = ask_work_iq(question=query)
-
-    # Parse: split by newlines, split by |, extract 7 fields
-    # Handle: extra whitespace, missing fields (default empty), header rows (skip),
-    #         non-conforming lines (skip with warning)
-    # If 0 events from non-empty response → retry once with explicit format reminder
-    # If still 0 → log "format_change_warning" to state/audit.md, skip WorkIQ this session
-
-    # Apply partial redaction from user_profile.yaml → integrations.workiq.redact_keywords:
-    # For each event title, replace matched keyword SUBSTRINGS with [REDACTED]
-    # Preserve meeting type words (Review, Standup, Interview) for trigger classification
-    # Example: "Project Cobalt Review" → "[REDACTED] Review"
-
-    # Save parsed+redacted events to tmp/work_calendar.json (ephemeral — deleted at Step 18)
-```
-
-**WorkIQ Work Comms (work-comms domain — opt-in, non-blocking):**
-Only runs if `workiq_ready == true` AND `domains.work-comms.enabled == true` in user_profile.yaml.
-```
-if workiq_ready and work_comms_enabled:
-    # Email triage query — surface inbox items needing response
-    email_query = "List emails in my inbox from the last 48 hours that need a response from me. " \
-                  "Format as one line per email: SENDER | SUBJECT | RECEIVED_DATE | NEEDS_RESPONSE(yes/no)"
-
-    # Teams query — surface DMs and channel messages needing action
-    teams_query = "List my Teams messages from the last 48 hours that need my attention. " \
-                  "Format as one line per message: SENDER | CHANNEL_OR_DM | MESSAGE_PREVIEW | NEEDS_ACTION(yes/no)"
-
-    # Run email and Teams queries; results route to work-comms domain (prompts/work-comms.md)
-    # Apply redact_keywords to all subjects/previews before writing to state/work/work-comms.md
-    # Pre-filter: suppress no-reply@, RSVP, automated pipeline notifications
-```
-
-**WorkIQ Work People (work-people domain — trigger-loaded, opt-in):**
-Loaded ON-DEMAND only — when work-calendar triggers attendee lookup, or user asks "who is [name]?"
-Not fetched on every catch-up. Each lookup uses the workiq_bridge connector's `people` mode.
-```
-if work_people_enabled and trigger_person_name:
-    people_query = "Who is {person_name}? Include: job title, department, manager, " \
-                   "how we have collaborated recently."
-    # Results enrich the meeting prep section of the work-calendar briefing
-    # Cache TTL: 7 days (org relationships change slowly)
-```
+**WorkIQ Work Calendar/Comms/People (v2.2 — Windows only, non-blocking):**
+All WorkIQ Step 4 fetch logic is defined in `config/overlays/workiq.md`.
+Only loaded when `integrations.workiq.enabled: true`. Skipped silently on Mac.
 
 **ADO Work Projects (work-projects domain — opt-in, non-blocking):**
 Only runs if `integrations.azure_devops.enabled == true` in user_profile.yaml.
@@ -367,17 +295,6 @@ if ado_enabled:
     # Results route to work-projects domain (prompts/work-projects.md)
     # Alert thresholds applied: P0/P1 bugs → 🔴, sprint ending <3d → 🟠
 ```
-
-**Parallel execution note (v3.0 — Work Domains):**
-When work domains are enabled, all WorkIQ queries run in parallel alongside personal data fetches.
-Typical wall-clock budget:
-  WorkIQ calendar  ~40s, email  ~47s, Teams  ~37s — all parallelized → wall time ~47s
-  ADO work items   ~3s (independent)
-  Gmail + Google Calendar  ~5s (unchanged)
-  Total pipeline: ~50s (limited by WorkIQ email query; within acceptable budget)
-WorkIQ failures are always non-blocking — personal data is fetched regardless.
-
-
 
 **Calendar deduplication rule:** After merging all calendar feeds (Google, Outlook, iCloud, WorkIQ), if two events match on (summary ± minor variation) AND (start time ± 5 minutes), keep one record and set `"source": "both"`. For WorkIQ↔personal matches specifically, use field-merge dedup: keep personal event as primary, merge in work title + Teams link from work event, set `"merged": true`. Merged events are excluded from cross-domain conflict detection. Do NOT deduplicate email feeds — each email source is a distinct inbox.
 
@@ -1034,234 +951,36 @@ After completing any of these commands, generate a session summary using
 **Proactive trigger:** If estimated context usage reaches `threshold_pct` at any point,
 trigger summarization immediately (do not wait for command completion).
 
-### AR-3: Pre-Compression Memory Flush
+### Memory Preservation (AR-3)
 
-**Before compressing context** (when usage crosses `threshold_pct`):
-
-1. **PAUSE** — do not compress yet.
-2. **SCAN** middle turns that will be summarised. Identify facts, user corrections, or
-   important context that exists ONLY in those turns (not in state files).
-3. **PERSIST** — if any valuable facts are found, extract them to `state/memory.md`
-   using the normal fact extraction protocol (Step 11c). Also update `state/self_model.md`
-   if relevant insights were gained.
-4. **THEN COMPRESS** — proceed with session summarisation.
-
-This is a one-turn insurance policy against knowledge loss during compression.
-
+Before context compression (when usage crosses `threshold_pct`): PAUSE — scan middle
+turns for facts not in state files — PERSIST to `state/memory.md` and `state/self_model.md`
+— THEN COMPRESS. Never compress during Step 7 or Step 8; wait for a step boundary.
 Config flag: `harness.agentic.pre_eviction_flush.enabled` (default: true)
 
-**Never summarize during:** Active Step 7 domain processing or Step 8 cross-domain
-reasoning — these require full context.  Defer to the nearest step boundary.
+---
 
-**Recovery:** If a subsequent command needs details from a summarized session,
-the context card includes the `tmp/session_history_{N}.md` path for re-reading.
+### Error & Retry Policy (AR-8)
+
+Classify errors before retrying: transient (retry once, different timing) |
+config (report, no retry) | logic (try different approach) | environmental
+(report, suggest fix). Never retry the same failing call twice unchanged.
+Anti-pattern 🚫: `call → error → retry same → error → retry same → give up`
+Correct pattern ✅: `call → error → diagnose → different approach → success`
 
 ---
 
-### AR-2: Self-Model (AI Metacognition)
+### Delegation & External Agents (AR-7, AR-9)
 
-> **Config flag:** `harness.agentic.self_model.enabled` (default: true).
-
-At session start, if `state/self_model.md` exists and is non-empty (not template-only):
-- Load it silently as calibration context.
-- For domains listed under "Domain Confidence": apply appropriate confidence level.
-- For items under "Known Blind Spots": proactively double-check before asserting.
-- For "Effective Strategies": apply preferred approach for this user.
-
-Self-model is part of the **frozen layer** — loaded once, never mutated mid-session.
-Updates to `state/self_model.md` are written at Step 11c and take effect next session.
-
-**Update trigger:** Only update when genuine insight about your own performance was
-gained this session (not every session). Max 1,500 chars — consolidate if approaching limit.
-
----
-
-### AR-6: Prompt Stability Architecture
-
-**Why this matters:** LLM providers (Anthropic, OpenAI) cache the system prompt prefix.
-A stable prefix = up to 90% reduction in input token cost on subsequent turns.
-Every mid-session mutation resets the cache (Anthropic: 5-min TTL minimum).
-
-**Frozen layer** (stable across entire session — never mutate mid-session):
-- `config/Artha.md` / `config/Artha.core.md` — the core instruction file
-- `config/user_profile.yaml` — user context loaded at session start
-- `state/memory.md` — persistent facts (loaded once; writes update disk only)
-- `state/self_model.md` — AI self-awareness (loaded once; writes update disk only)
-
-**Ephemeral layer** (per-command, injected dynamically, never persisted in prompt):
-- Domain prompts from `prompts/` (loaded via `domain_index.py` per-command)
-- Domain state files from `state/` (loaded per-command, eligible for eviction)
-- Session summaries from `tmp/session_history_N.md`
-- Cross-session search results from `scripts/session_search.py`
-- Learned procedures from `state/learned_procedures/`
-- Pipeline output / email data / calendar events
-
-**Rules:**
-1. NEVER modify `config/Artha.md` mid-session.
-2. Disk writes to `state/memory.md`, `state/self_model.md` take effect NEXT session.
-3. Domain context is ephemeral — eligible for eviction by `context_offloader.py`.
-4. When adding new context sources: classify as frozen or ephemeral first.
-
----
-
-### AR-8: Root-Cause Before Retry
-
-When ANY operation fails during a workflow step:
-
-1. **READ** the error completely. Do not skip error details.
-2. **DIAGNOSE** — form a hypothesis:
-   - Transient? (network, rate limit, timeout)
-   - Configuration? (missing credential, wrong path, wrong format)
-   - Logic error? (wrong input format, unexpected state)
-   - Environmental? (permissions, missing dependency, blocked network)
-3. **DECIDE** based on diagnosis:
-   - **Transient** → retry ONCE with backoff. If still failing, surface and continue.
-   - **Configuration** → report the specific misconfiguration. Do NOT retry.
-   - **Logic** → try a DIFFERENT approach. Do NOT retry the same call.
-   - **Environmental** → report and suggest remediation. Do NOT retry.
-4. **NEVER** retry the same failing operation more than once without changing
-   something (input, approach, or context).
-
-Anti-pattern (🚫): `call → error → retry same → error → retry same → give up`
-Correct pattern (✅): `call → error → diagnose → different approach → success`
-
-When root-cause resolution follows a non-obvious path, evaluate for procedure
-extraction (AR-5 — Step 11c).
-
----
-
-### Delegation Protocol (AR-7)
-
-When a task meets the delegation criteria, spawn an isolated sub-agent:
-
-**Criteria** (any of):
-- Task requires 5+ anticipated tool calls or file reads
-- Task is embarrassingly parallel (independent data gathering)
-- Task operates on an isolated domain with no cross-domain dependencies
-
-**Handoff composition:**
-1. Task description (what to accomplish, NOT how — let the sub-agent decide method)
-2. Minimal context excerpt (NOT full conversation — extract only relevant state)
-3. Budget: "Complete in ≤N tool calls. Return best partial result if budget reached."
-4. Output format: "Return a concise summary (≤500 chars). Do not include raw data."
-
-**Agent selection:**
-- Read-only research → `Explore` agent (safe, parallel-friendly)
-- State mutations required → default agent
-
-**Post-delegation:**
-- Receive summary-only result. Never import the sub-agent's full transcript.
-- If task was complex (5+ steps): evaluate for procedure extraction (AR-5).
-
-**Prompt-mode fallback** (when sub-agent API unavailable):
-```
---- DELEGATED TASK START ---
-Task: [description]
-Context: [minimal excerpt]
-Budget: [N tool calls max]
---- DELEGATED TASK END ---
-Result: [summary only — ≤500 chars]
-```
-
-Config flag: `harness.agentic.delegation.enabled` (default: true)
-
----
-
-### External Agent Composition (AR-9)
-
-AR-9 extends AR-7 by enabling delegation to **externally-authored agents** —
-agents maintained by other teams whose expertise Artha consults as a data source.
-
-> **Scope:** AR-9 routing is wired into `work_reader.py` (work commands only).
-> Personal briefing domains (finance, immigration, health, etc.) served by
-> `pipeline.py` do NOT use external agents — those rely on local state and
-> knowledge files. This is by design: external agents are enterprise-scoped.
-
-**⚡ AUTOMATIC ACTION REQUIRED — Delegation Protocol:**
-When `work_reader.py` output contains `⚡ Delegation ready`, you **MUST**:
-1. Extract the **Delegation Prompt** from the blockquote output
-2. Call `runSubagent` with the specified `agentName` and the delegation prompt
-3. Save the response to `tmp/ext-agent-last-response.md`
-4. Run the verify + integrate pipeline:
-   ```bash
-   python scripts/agent_manager.py delegate --agent <agent-name> --query "<original-query>" --response-file tmp/ext-agent-last-response.md
-   ```
-5. Present the pipeline's output (unified prose) in Artha's voice — **never** say "the external agent said"
-6. If the pipeline outputs `⚠️ Low quality ... consider fallback cascade`, proceed to **Fallback Protocol** below
-
-**Fallback Protocol** (when delegation fails or quality is low):
-1. **runSubagent failure** → Search `knowledge/` for relevant files and answer from local KB
-2. **KB insufficient** → Try direct Kusto/ADO investigation (if MCP available)
-3. **All blocked** → Advise user to check Copilot Cowork manually:
-   `https://m365.cloud.microsoft/chat/`
-4. Always disclose that the primary agent was unavailable
-
-**When to trigger AR-9 routing:**
-1. A query matches a recognized domain (e.g., deployment issues, fleet health, incident response)
-2. The local KB (`knowledge/`) is stale or insufficient for the specific detail needed
-3. Config flag `harness.agentic.external_agents.routing.enabled: true`
-
-**Routing is automatic** — `work_reader.py` probes the agent router on every
-query-bearing command. If a registered agent matches with sufficient confidence,
-the user is prompted for consent:
-```
-🤖 I can consult Storage Deployment Expert to help answer this. Proceed? [y/N]
-```
-If confirmed (or `auto_dispatch: true` in the agent definition), the full
-delegation pipeline runs inline:
-
-**Delegation flow:**
-1. **Route** — `AgentRouter.route(query)` selects the best-matching registered agent
-2. **Compose** — `PromptComposer` builds a scrubbed prompt at the agent's trust tier (PUBLIC / SCOPED — never PRIVATE)
-3. **Invoke** — `invoke_with_fallback()` calls the agent via `runSubagent` with automatic retry + fallback cascade
-4. **Verify** — `ResponseVerifier` runs injection scan + KB cross-check on the response
-5. **Integrate** — `ResponseIntegrator` enriches with Artha context (sprint impact, workitem IDs, deadlines) and builds Expert Consensus block
-6. **Deliver** unified answer in Artha's voice — **never** say "the external agent said"
-
-**Live orchestration (how AR-9 runs in practice):**
-Steps 1-2 happen automatically inside `work_reader.py` — when a query matches an
-external agent and the user consents, `work_reader.py` outputs a **Delegation Prompt**
-block.  Then:
-1. Call `runSubagent` with the agent name and the rendered Delegation Prompt
-2. Save the response to a temp file and run the post-invocation pipeline:
-   ```bash
-   python scripts/agent_manager.py delegate --agent <name> --query "<query>" --response-file /tmp/response.txt
-   ```
-   Or pipe it: `echo "<response>" | python scripts/agent_manager.py delegate --agent <name> --query "<query>"`
-3. The pipeline verifies (injection + KB), scores, integrates, caches, and records health
-4. Present the unified output in Artha's voice
-
-**Trust tiers (what context each agent receives):**
-- `owned` — full state access (e.g., `artha-work-msft`)
-- `trusted` — public + scoped work context (vetted team agents)
-- `verified` — public + limited scoped context
-- `external` — public context only; always prompt user before dispatching
-- `untrusted` — user question only (zero context)
-
-**Fallback cascade** (if agent unavailable or quality < threshold):
-1. External agent → (fail) → local KB files in `knowledge/`
-2. Local KB → (insufficient) → direct Kusto/ADO investigation
-3. Direct investigation → (blocked) → Cowork fallback (see `config/connectors.yaml`)
-
-**Agent management commands:**
-- `python scripts/agent_manager.py list` — show registered agents + health
-- `python scripts/agent_manager.py health` — detailed health status
-- `python scripts/agent_manager.py discover` — scan `config/agents/external/` for new agents
-- `python scripts/agent_manager.py retire <name>` — disable an agent
-- `python scripts/agent_manager.py refresh-cache <name>` — force fresh invocation
-- `python scripts/agent_manager.py delegate --agent <name> --query "<q>"` — post-invocation pipeline
-
-**Observability:**
-- `python scripts/eval_runner.py --agents` — invocation metrics per agent
-- `python scripts/eval_runner.py --routing-audit` — routing decision log
-- `python scripts/eval_runner.py --cache-report` — cache utilization
-- Invocation records written to `tmp/ext-agent-metrics.jsonl`
-- Audit trail appended to `state/work/work-audit.md`
-
-**Config flag:** `harness.agentic.external_agents.routing.enabled` (default: true)
-
-**Gate:** If `harness.agentic.external_agents.enabled: false`, skip AR-9 entirely
-and answer from local KB. Log: `⏭️ AR-9 skipped — external_agents disabled`
+Full specs: `config/Artha.reference.md`. Summary:
+- Delegate when task requires 5+ tool calls or is embarrassingly parallel.
+- AR-9 external agent routing is wired into `work_reader.py` (work commands only).
+- When `work_reader.py` outputs `⚡ Delegation ready`: call `runSubagent` with the
+  specified `agentName` and delegation prompt; pipe response through
+  `python scripts/agent_manager.py delegate --agent <name> --query "<q>"`.
+- Fallback cascade: external agent → local KB → Kusto/ADO → Cowork.
+- Config flag: `harness.agentic.external_agents.routing.enabled` (default: true)
+- Gate: If `harness.agentic.external_agents.enabled: false`, skip AR-9 entirely.
 
 ---
 
@@ -1956,6 +1675,23 @@ Read `config/observability.md` for post-session calibration, monthly retrospecti
 > Phase 2B features are specified but NOT implemented. Full specifications
 > moved to `specs/artha-prd.md` §14.B. See `config/implementation_status.yaml`
 > for current feature status. Do NOT attempt to execute Phase 2B features.
+
+## §15 Reflect Protocol (Mandatory WorkIQ Enforcement)
+
+When any `reflect`, `work reflect`, or deep-reflect is invoked in LLM agent context,
+you **MUST** execute the full protocol in `config/reflect-protocol.md` before writing
+any state file. This is non-negotiable — skipping WorkIQ queries is a quality failure.
+
+**Required steps (see reflect-protocol.md for full detail):**
+1. Compute exact window from `reflect-current.md → last_weekly_close`
+2. Run 4 WorkIQ queries in parallel: Q1 emails, Q2 meetings, Q3 ADO items, Q4 IcM incidents
+3. Build data-source table (✅/∅/⚠️/❌ per source)
+4. Write state files with provenance + data_gaps blocks
+5. Advance close timestamps only if Q1 (emails) + Q2 (meetings) both succeeded
+
+**Fail-closed rule:** If WorkIQ is unavailable, mark `low_confidence: true` and
+do NOT advance last_weekly_close or last_monthly_close. Log the gap. Suggest
+`python scripts/work_loop.py --mode refresh` as recovery action.
 
 ---
 

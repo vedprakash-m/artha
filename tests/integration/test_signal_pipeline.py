@@ -83,10 +83,12 @@ class TestSignalPipelinePrecision:
             return  # skip null-signal cases here
 
         signals = extractor.extract([email])
-        signal_types = [getattr(s, "signal_type", None) for s in signals]
-        assert expected_type in signal_types, (
-            f"fixture '{fixture['id']}': expected signal_type '{expected_type}' "
-            f"but got {signal_types!r}"
+        # After v3.35.0 consolidation: signal_type holds canonical type;
+        # subtype holds the original specific type. Check subtype first.
+        subtypes = [getattr(s, "subtype", s.signal_type) for s in signals]
+        assert expected_type in subtypes, (
+            f"fixture '{fixture['id']}': expected subtype '{expected_type}' "
+            f"but got {subtypes!r}"
         )
 
 

@@ -3,18 +3,22 @@ tests/unit/test_email_signal_extractor.py — Unit tests for scripts/email_signa
 
 Coverage:
   - EmailSignalExtractor.extract() returns DomainSignal list
-  - RSVP subject triggers event_rsvp_needed signal
-  - Delivery subject triggers delivery_arriving signal
-  - Security alert triggers security_alert with sensitivity=high
-  - Bill/invoice triggers bill_due signal
-  - Subscription renewal triggers subscription_renewal signal
-  - School action triggers school_action_needed signal
-  - Appointment confirmation triggers appointment_confirmed signal
+  - RSVP subject triggers event_rsvp_needed signal (subtype); canonical signal_type = deadline
+  - Delivery subject triggers delivery_arriving signal (subtype); canonical signal_type = confirmation
+  - Security alert triggers security_alert (subtype); canonical signal_type = security
+  - Bill/invoice triggers bill_due (subtype); canonical signal_type = deadline
+  - Subscription renewal triggers subscription_renewal (subtype); canonical signal_type = informational
+  - School action triggers school_action_needed (subtype); canonical signal_type = deadline
+  - Appointment confirmation triggers appointment_confirmed (subtype); canonical signal_type = confirmation
   - Form deadline triggers form_deadline signal
   - No match returns empty list
   - Feature flag disabled returns empty list
   - PII: sender email is NOT included in signal payload
   - Financial signals get sensitivity=high
+
+Signal type consolidation (v3.35.0 / simplify.md Phase 4):
+  - signal_type holds the 4 canonical types: deadline, confirmation, security, informational
+  - subtype holds the original specific type for debugging and subtype-first routing
 """
 from __future__ import annotations
 
@@ -34,6 +38,11 @@ def _make_email(subject: str, body: str = "", sender: str = "alice@example.com")
     return {"subject": subject, "body": body, "sender": sender, "email_id": "msg-001"}
 
 
+def _subtypes(signals) -> list[str]:
+    """Return the subtype (original specific type) for each signal."""
+    return [getattr(s, "subtype", s.signal_type) for s in signals]
+
+
 # ---------------------------------------------------------------------------
 # Basic extraction
 # ---------------------------------------------------------------------------
@@ -43,14 +52,14 @@ class TestExtractRsvp:
         record = _make_email("Please respond by March 28 for annual dinner")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "event_rsvp_needed" in types
+        # After consolidation, signal_type = "deadline"; subtype = "event_rsvp_needed"
+        assert any(getattr(s, "subtype", None) == "event_rsvp_needed" for s in signals)
 
     def test_rsvp_signal_has_no_sender_email(self):
         record = _make_email("Please respond by April 5", sender="bob@corp.com")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        rsvp = [s for s in signals if s.signal_type == "event_rsvp_needed"]
+        rsvp = [s for s in signals if getattr(s, "subtype", None) == "event_rsvp_needed"]
         assert rsvp
         payload_str = str(rsvp[0].metadata)
         assert "bob@corp.com" not in payload_str
@@ -61,15 +70,14 @@ class TestExtractDelivery:
         record = _make_email("Your order is out for delivery today")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "delivery_arriving" in types
+        # signal_type = "confirmation"; subtype = "delivery_arriving"
+        assert any(getattr(s, "subtype", None) == "delivery_arriving" for s in signals)
 
     def test_package_delivered(self):
         record = _make_email("Package delivered to your door")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "delivery_arriving" in types
+        assert any(getattr(s, "subtype", None) == "delivery_arriving" for s in signals)
 
 
 class TestExtractSecurity:
@@ -77,17 +85,16 @@ class TestExtractSecurity:
         record = _make_email("Security alert: unusual sign-in detected")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        sec = [s for s in signals if s.signal_type == "security_alert"]
+        # signal_type = "security"; subtype = "security_alert"
+        sec = [s for s in signals if getattr(s, "subtype", None) == "security_alert"]
         assert sec
-        # sensitivity is in metadata dict
         assert sec[0].metadata.get("sensitivity") == "high" or sec[0].urgency >= 3
 
     def test_password_changed_alert(self):
         record = _make_email("Password reset requested for your account")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "security_alert" in types
+        assert any(getattr(s, "subtype", None) == "security_alert" for s in signals)
 
 
 class TestExtractFinancial:
@@ -95,24 +102,23 @@ class TestExtractFinancial:
         record = _make_email("Your bill is ready — payment due by March 15")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        bill = [s for s in signals if s.signal_type == "bill_due"]
+        # signal_type = "deadline"; subtype = "bill_due"
+        bill = [s for s in signals if getattr(s, "subtype", None) == "bill_due"]
         assert bill
-        # sensitivity stored in metadata for financial signals
         assert bill[0].metadata.get("sensitivity") == "high"
 
     def test_amount_due_detected(self):
         record = _make_email("Amount due: $125.00 — pay by April 5")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "bill_due" in types
+        assert any(getattr(s, "subtype", None) == "bill_due" for s in signals)
 
     def test_subscription_renewal(self):
         record = _make_email("Your subscription renewing on March 20")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "subscription_renewal" in types
+        # signal_type = "informational"; subtype = "subscription_renewal"
+        assert any(getattr(s, "subtype", None) == "subscription_renewal" for s in signals)
 
 
 class TestExtractSchool:
@@ -120,15 +126,14 @@ class TestExtractSchool:
         record = _make_email("Permission slip required for field trip")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "school_action_needed" in types
+        # signal_type = "deadline"; subtype = "school_action_needed"
+        assert any(getattr(s, "subtype", None) == "school_action_needed" for s in signals)
 
     def test_school_parent_signature(self):
         record = _make_email("Parent signature needed — school event")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "school_action_needed" in types
+        assert any(getattr(s, "subtype", None) == "school_action_needed" for s in signals)
 
 
 class TestExtractAppointment:
@@ -136,8 +141,8 @@ class TestExtractAppointment:
         record = _make_email("Appointment confirmed: Dr Smith on Tuesday April 8")
         extractor = EmailSignalExtractor()
         signals = extractor.extract([record])
-        types = [s.signal_type for s in signals]
-        assert "appointment_confirmed" in types
+        # signal_type = "confirmation"; subtype = "appointment_confirmed"
+        assert any(getattr(s, "subtype", None) == "appointment_confirmed" for s in signals)
 
 
 # ---------------------------------------------------------------------------

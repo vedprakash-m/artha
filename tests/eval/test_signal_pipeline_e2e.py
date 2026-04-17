@@ -111,19 +111,21 @@ class TestSignalPipelineE2E:
 
     @pytest.mark.parametrize("test_id,email,expected_type,expected_domain", _FIXTURES, ids=[f[0] for f in _FIXTURES])
     def test_pattern_fires(self, test_id, email, expected_type, expected_domain):
-        """Each synthetic email must produce at least one signal of the expected type."""
+        """Each synthetic email must produce at least one signal of the expected subtype."""
         signals = self._extractor.extract([email])
-        signal_types = [s.signal_type for s in signals]
-        assert expected_type in signal_types, (
-            f"[{test_id}] Expected signal_type='{expected_type}' but got {signal_types}"
+        # After v3.35.0 consolidation: signal_type holds canonical type (4 values);
+        # subtype holds the original specific type for routing/debugging.
+        subtypes = [getattr(s, "subtype", s.signal_type) for s in signals]
+        assert expected_type in subtypes, (
+            f"[{test_id}] Expected subtype='{expected_type}' but got {subtypes}"
         )
 
     @pytest.mark.parametrize("test_id,email,expected_type,expected_domain", _FIXTURES, ids=[f[0] for f in _FIXTURES])
     def test_domain_correct(self, test_id, email, expected_type, expected_domain):
         """Signals must have the correct domain."""
         signals = self._extractor.extract([email])
-        matching = [s for s in signals if s.signal_type == expected_type]
-        assert matching, f"[{test_id}] No signals of type '{expected_type}' found"
+        matching = [s for s in signals if getattr(s, "subtype", s.signal_type) == expected_type]
+        assert matching, f"[{test_id}] No signals of subtype '{expected_type}' found"
         assert matching[0].domain == expected_domain, (
             f"[{test_id}] Expected domain='{expected_domain}', got '{matching[0].domain}'"
         )
@@ -132,7 +134,7 @@ class TestSignalPipelineE2E:
     def test_signal_fields_valid(self, test_id, email, expected_type, expected_domain):
         """DomainSignal fields must pass structural invariants."""
         signals = self._extractor.extract([email])
-        matching = [s for s in signals if s.signal_type == expected_type]
+        matching = [s for s in signals if getattr(s, "subtype", s.signal_type) == expected_type]
         assert matching
         sig = matching[0]
         assert 0 <= sig.urgency <= 3, f"[{test_id}] urgency out of range: {sig.urgency}"
@@ -160,5 +162,6 @@ class TestSignalPipelineE2E:
             "snippet": "Amount due is $50. Please pay by March 1.",
         }
         signals = self._extractor.extract([email, email])
-        bill_signals = [s for s in signals if s.signal_type == "bill_due"]
+        # After v3.35.0: signal_type = "deadline", subtype = "bill_due"
+        bill_signals = [s for s in signals if getattr(s, "subtype", s.signal_type) == "bill_due"]
         assert len(bill_signals) == 1, f"Expected 1 deduped signal, got {len(bill_signals)}"

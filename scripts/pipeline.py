@@ -105,45 +105,40 @@ _STALE_WARN_SECS  = 4  * 3600   # >4 h  → warn
 _STALE_ERROR_SECS = 24 * 3600   # >24 h → error
 _STALE_CRIT_SECS  = 72 * 3600   # >72 h → critical
 
-# Frozen fallback handler map — used if connectors.yaml is unreadable.
-# Kept in sync with connectors.yaml; last updated 2026-03-26.
-# IMPORTANT: update this whenever a connector is added or removed.
-from typing import Final
-_FALLBACK_HANDLER_MAP: Final[dict[str, str]] = {
-    "connectors.google_email": "connectors.google_email",
-    "connectors.msgraph_email": "connectors.msgraph_email",
-    "connectors.imap_email": "connectors.imap_email",
-    "connectors.google_calendar": "connectors.google_calendar",
-    "connectors.msgraph_calendar": "connectors.msgraph_calendar",
-    "connectors.caldav_calendar": "connectors.caldav_calendar",
-    "connectors.canvas_lms": "connectors.canvas_lms",
-    "connectors.onenote": "connectors.onenote",
-    # Work domain connectors (opt-in — Wave 1)
-    "connectors.workiq_bridge": "connectors.workiq_bridge",
-    "connectors.ado_workitems": "connectors.ado_workitems",
-    # Work domain connectors (opt-in — Wave 2)
-    "connectors.outlookctl_bridge": "connectors.outlookctl_bridge",
-    # Messaging connectors (local DB — opt-in)
-    "connectors.whatsapp_local": "connectors.whatsapp_local",
-    "connectors.imessage_local": "connectors.imessage_local",
-    # IoT connector (LAN-only, opt-in — ARTHA-IOT Wave 1)
-    "connectors.homeassistant": "connectors.homeassistant",
-    # Messaging connectors (cloud API — opt-in — CONNECT Phase 1)
-    "connectors.slack": "connectors.slack",
-    # Task manager connectors (opt-in — CONNECT Phase 3)
-    "connectors.todoist": "connectors.todoist",
-    "connectors.apple_reminders": "connectors.apple_reminders",
-    # Financial connectors (opt-in — CONNECT Phase 5)
-    "connectors.plaid_connector": "connectors.plaid_connector",
-    # Feed connectors (stdlib-only, no auth — PR-3 AI Radar)
-    "connectors.rss_feed": "connectors.rss_feed",
-    # API discovery connector (stdlib-only, no auth — PR-3 AI Radar)
-    "connectors.api_discovery": "connectors.api_discovery",
-}
-
 # Security allowlist — only these module paths may ever be loaded dynamically.
 # YAML cannot override this; it is a hard-coded security boundary.
-_ALLOWED_MODULES: frozenset[str] = frozenset(_FALLBACK_HANDLER_MAP.values())
+# To add a connector: register it here AND in connectors.yaml via PR.
+_ALLOWED_MODULES: frozenset[str] = frozenset({
+    "connectors.google_email",
+    "connectors.msgraph_email",
+    "connectors.imap_email",
+    "connectors.google_calendar",
+    "connectors.msgraph_calendar",
+    "connectors.caldav_calendar",
+    "connectors.canvas_lms",
+    "connectors.onenote",
+    # Work domain connectors (opt-in — Wave 1)
+    "connectors.workiq_bridge",
+    "connectors.ado_workitems",
+    # Work domain connectors (opt-in — Wave 2)
+    "connectors.outlookctl_bridge",
+    # Messaging connectors (local DB — opt-in)
+    "connectors.whatsapp_local",
+    "connectors.imessage_local",
+    # IoT connector (LAN-only, opt-in — ARTHA-IOT Wave 1)
+    "connectors.homeassistant",
+    # Messaging connectors (cloud API — opt-in — CONNECT Phase 1)
+    "connectors.slack",
+    # Task manager connectors (opt-in — CONNECT Phase 3)
+    "connectors.todoist",
+    "connectors.apple_reminders",
+    # Financial connectors (opt-in — CONNECT Phase 5)
+    "connectors.plaid_connector",
+    # Feed connectors (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.rss_feed",
+    # API discovery connector (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.api_discovery",
+})
 
 
 def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
@@ -152,13 +147,16 @@ def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
     Each top-level entry may specify a 'module' field; if absent, defaults to
     'connectors.<connector_name>'.  Only modules in _ALLOWED_MODULES are loaded.
 
-    Falls back to _FALLBACK_HANDLER_MAP if config is empty or malformed, emitting
-    a [CRITICAL] warning — fail-degraded, not fail-dead.
+    Emits [CRITICAL] and returns an empty dict if config is empty or malformed.
     """
     try:
         raw = config.get("connectors", {})
         if not raw:
-            return dict(_FALLBACK_HANDLER_MAP)
+            print(
+                "[CRITICAL] connectors.yaml empty or missing 'connectors' key — no connectors loaded.",
+                file=sys.stderr,
+            )
+            return {}
         result: dict[str, str] = {}
         for name, cfg in raw.items():
             if not isinstance(cfg, dict):
@@ -185,18 +183,19 @@ def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
                 )
                 continue
             result[name] = module
-        return result if result else dict(_FALLBACK_HANDLER_MAP)
+        if not result:
+            print(
+                "[CRITICAL] connectors.yaml parsed but no enabled+allowlisted connectors found.",
+                file=sys.stderr,
+            )
+        return result
     except Exception as exc:
         print(
-            f"[CRITICAL] connectors.yaml unreadable — using frozen fallback. Fix YAML and re-run. ({exc})",
+            f"[CRITICAL] connectors.yaml unreadable — no connectors loaded. Fix YAML and re-run. ({exc})",
             file=sys.stderr,
         )
-        return dict(_FALLBACK_HANDLER_MAP)
+        return {}
 
-
-# Handler map derived at startup from connectors.yaml via _derive_handler_map().
-# No type annotation here — avoids matching the legacy '^_HANDLER_MAP:' grep gate.
-_HANDLER_MAP = _derive_handler_map({})
 
 
 # ---------------------------------------------------------------------------
