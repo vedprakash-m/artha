@@ -663,6 +663,17 @@ def check_onedrive_conflicts() -> CheckResult:
     )
 
 
+def _is_bootstrap_stub(filepath: str) -> bool:
+    """Return True if the state file looks like an unfilled bootstrap stub."""
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            content = f.read(512)
+        # A stub typically has placeholder markers or is nearly empty
+        return "{{" in content or content.strip() == "" or content.strip().startswith("# TODO")
+    except OSError:
+        return False
+
+
 def check_state_templates(auto_fix: bool = False) -> CheckResult:
     """P1: Populate missing state files from state/templates/ on first run."""
     templates_dir = os.path.join(STATE_DIR, "templates")

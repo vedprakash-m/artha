@@ -441,6 +441,7 @@ class TestRD35VaultSyncExclusionPreflight:
 # RD-26: HMAC nonce cache integrity check
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="hmac_signer.py removed in M2M cleanup v3.35.0")
 class TestRD26NonceCacheIntegrityCheck:
     """HmacSigner must check nonce cache integrity at startup."""
 

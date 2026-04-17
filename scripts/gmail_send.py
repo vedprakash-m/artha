@@ -37,6 +37,12 @@ Usage:
     --body "Briefing text" \
     --archive
 
+  # Archive only (no email send) — use this from CLI catch-up when email is not configured
+  python scripts/gmail_send.py \
+    --subject "Artha · Mon Mar 9" \
+    --body "Briefing text" \
+    --archive-only
+
 Output (JSON to stdout):
   {"status": "sent", "message_id": "...", "to": "...", "subject": "...", "archived": true}
   {"status": "dry_run", "to": "...", "subject": "...", "body_length": 1234}
@@ -372,6 +378,25 @@ def send_email(
 
 
 # ---------------------------------------------------------------------------
+# CLI helpers
+# ---------------------------------------------------------------------------
+
+def _resolve_body(args: argparse.Namespace) -> Optional[str]:
+    """Return body text from --body, --body-file, or stdin (in that order)."""
+    if args.body is not None:
+        return args.body
+    if getattr(args, "body_file", None) is not None:
+        try:
+            return open(args.body_file, encoding="utf-8").read()
+        except OSError as exc:
+            print(f"ERROR: Cannot read --body-file {args.body_file}: {exc}", file=sys.stderr)
+            sys.exit(1)
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    return None
+
+
+# ---------------------------------------------------------------------------
 # CLI entrypoint
 # ---------------------------------------------------------------------------
 
@@ -382,16 +407,36 @@ def main() -> None:
     # --to and --subject are not marked required=True so --health can work standalone
     parser.add_argument("--to",       default=None, help="Recipient email address")
     parser.add_argument("--subject",  default=None, help="Email subject line")
-    parser.add_argument("--body",     default=None, help="Plain text body")
-    parser.add_argument("--html",     default=None, help="HTML body (overrides auto-HTML)")
+    parser.add_argument("--body",      default=None, help="Plain text body")
+    parser.add_argument("--body-file", default=None, metavar="PATH",
+                        help="Read plain text body from file (e.g. tmp/current_briefing.md)")
+    parser.add_argument("--html",      default=None, help="HTML body (overrides auto-HTML)")
     parser.add_argument("--dry-run",  action="store_true",
                         help="Validate auth and log, but do NOT actually send the email")
     parser.add_argument("--archive",  action="store_true",
                         help="Archive briefing body to briefings/YYYY-MM-DD.md after sending")
+    parser.add_argument("--archive-only", action="store_true",
+                        help="Save body to briefings/YYYY-MM-DD.md without sending email (no --to required)")
     parser.add_argument("--health",   action="store_true",
                         help="Test send connection (checks auth, does NOT send)")
 
     args = parser.parse_args()
+
+    # ── Archive-only — no Gmail auth needed ───────────────────────────────
+    if args.archive_only:
+        if not args.subject:
+            print("ERROR: --subject is required for --archive-only.", file=sys.stderr)
+            sys.exit(1)
+        body_text = _resolve_body(args)
+        if body_text is None:
+            print("ERROR: Provide --body, --body-file, or pipe content to stdin.", file=sys.stderr)
+            sys.exit(1)
+        if not body_text.strip():
+            print("ERROR: Body is empty.", file=sys.stderr)
+            sys.exit(1)
+        result = archive_briefing(body_text, args.subject)
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result.get("archived") else 1)
 
     # ── Health check — standalone, no --to / --subject needed ─────────────
     if args.health:
@@ -418,13 +463,11 @@ def main() -> None:
         print("ERROR: --subject is required.", file=sys.stderr)
         sys.exit(1)
 
-    # ── Get body: --body arg takes precedence, then stdin ─────────────────
-    body_text = args.body
+    # ── Get body: --body / --body-file / stdin ────────────────────────────
+    body_text = _resolve_body(args)
     if body_text is None:
-        if sys.stdin.isatty():
-            print("ERROR: Provide --body or pipe content to stdin.", file=sys.stderr)
-            sys.exit(1)
-        body_text = sys.stdin.read()
+        print("ERROR: Provide --body, --body-file, or pipe content to stdin.", file=sys.stderr)
+        sys.exit(1)
 
     if not body_text.strip():
         print("ERROR: Email body is empty.", file=sys.stderr)

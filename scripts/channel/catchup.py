@@ -312,6 +312,12 @@ async def cmd_catchup(args: list[str], scope: str) -> tuple[str, str]:
     if not briefing:
         return "Catch-up produced empty output. Try again.", "N/A"
 
+    # Strip Claude narration preamble (e.g. "Now I have all the data...") that
+    # appears before the actual formatted briefing (which starts with ━━━).
+    if "\u2501\u2501" in briefing:
+        idx = briefing.find("\u2501\u2501")
+        briefing = briefing[idx:]
+
     # Step 7: Save briefing
     saved_path = _save_briefing(briefing)
     log.info("[catch-up] Briefing saved to %s (%d chars)", saved_path.name, len(briefing))

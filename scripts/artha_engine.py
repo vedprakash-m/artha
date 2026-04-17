@@ -4,7 +4,6 @@
 
 Decision: ADR-004 (Option B) — single process host.
   - Singleton PID guard blocks duplicate launch.
-  - One import of m2m_handler → one _rate_limiter + _nonce_dedup instance (§6.3 security invariant).
   - Old channel_listener.py Task Scheduler task MUST be disabled before enabling this task.
 
 Coroutines (run concurrently via asyncio.gather):
