@@ -404,15 +404,25 @@ def _gather_context(domains: list[str], max_chars: int = _LLM_MAX_CONTEXT_CHARS)
 
 # ── _detect_llm_cli ─────────────────────────────────────────────
 
+def _which_copilot() -> str | None:
+    """shutil.which('copilot') + WinGet fallback path."""
+    exe = shutil.which("copilot")
+    if exe:
+        return exe
+    import os as _os
+    fallback = Path(_os.path.expanduser(r"~\AppData\Local\Microsoft\WinGet\Links\copilot.exe"))
+    return str(fallback) if fallback.is_file() else None
+
+
 def _detect_llm_cli() -> tuple[str, list[str]] | None:
     """Detect available LLM CLI. Returns (executable, base_args) or None.
 
-    Preference order: copilot (sonnet-4-6), gemini (3.1-flash), claude (sonnet-4-6).
+    Preference order: copilot (gpt-4.5-mini), gemini (3.1-flash), claude (sonnet-4-6).
     """
     # Copilot CLI — primary
-    copilot = shutil.which("copilot")
+    copilot = _which_copilot()
     if copilot:
-        return copilot, ["--yolo", "--model", "claude-sonnet-4-6"]
+        return copilot, ["--yolo", "--model", "gpt-5.4-mini", "--no-custom-instructions", "-s"]
     # Gemini CLI — first fallback
     gemini = shutil.which("gemini")
     if gemini:
@@ -432,11 +442,11 @@ def _detect_all_llm_clis() -> list[tuple[str, str, list[str]]]:
     Preference order: copilot (default model), gemini (2.5-pro), claude (sonnet-4-6).
     """
     clis: list[tuple[str, str, list[str]]] = []
-    copilot = shutil.which("copilot")
+    copilot = _which_copilot()
     if copilot:
-        # Do NOT pass --model: GitHub Copilot CLI uses its own model identifiers
-        # and "claude-sonnet-4-6" is not a valid name in that namespace.
-        clis.append(("copilot", copilot, ["--yolo"]))
+        # gpt-5.4-mini via Copilot CLI; --no-custom-instructions prevents AGENTS.md
+        # tool-use traces; -s (silent) outputs only the agent response for scripting.
+        clis.append(("copilot", copilot, ["--yolo", "--model", "gpt-5.4-mini", "--no-custom-instructions", "-s"]))
     gemini = shutil.which("gemini")
     if gemini:
         clis.append(("gemini", gemini, ["--yolo", "--model", "gemini-2.5-pro"]))
@@ -518,12 +528,23 @@ async def _call_single_llm(
             )
             _latency_ms = (time.monotonic() - _t0) * 1000
             raw = stdout.decode("utf-8", errors="replace")
-            raw = _re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw)
+            # Strip all ANSI escape sequences (CSI, OSC, and bare ESC sequences)
+            raw = _re.sub(r'\x1b(?:\[[0-9;]*[a-zA-Z]|\][^\x07]*\x07|.)', '', raw)
             lines = raw.splitlines()
+            # Regex that matches Claude tool-use trace lines:
+            #   ● Read prompt.txt       (tool call header)
+            #   │ path/to/file         (continuation with box-drawing vertical)
+            #   └ N lines read         (continuation with box-drawing corner)
+            #   ├ ...                  (continuation with box-drawing tee)
+            _TRACE_RE = _re.compile(
+                r'^[\s\u25cf\u2022\u2023]'   # starts with ●/•/‣ (after optional whitespace)
+                r'|^\s+[\u2502\u2514\u251c\u2518\u250c]'  # or indented box-drawing chars
+            )
             clean_lines = [
                 l for l in lines
                 if not l.startswith("Loaded cached credentials")
                 and not l.startswith("YOLO mode")
+                and not _TRACE_RE.match(l)
                 and l.strip()
             ]
             result = "\n".join(clean_lines).strip()

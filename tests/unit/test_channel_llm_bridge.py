@@ -88,7 +88,8 @@ class TestDetectLlmCli:
         assert result is None or (isinstance(result, tuple) and len(result) == 2)
 
     def test_no_llm_available(self):
-        with patch("shutil.which", return_value=None):
+        with patch("shutil.which", return_value=None), \
+             patch("channel.llm_bridge._which_copilot", return_value=None):
             result = _detect_llm_cli()
             # When no LLM CLI found → None
             assert result is None

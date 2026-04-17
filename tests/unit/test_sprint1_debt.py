@@ -304,6 +304,7 @@ class TestSignalEnvelope:
 # DEBT-HMAC-001: _NonceCache persistence — structural validation
 # ===========================================================================
 
+@pytest.mark.skip(reason="hmac_signer.py removed in M2M cleanup v3.35.0")
 class TestNonceCachePersistence:
     """_NonceCache must persist nonces to ~/.artha-local/ and load them on init."""
 

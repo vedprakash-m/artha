@@ -927,7 +927,24 @@ For **immigration**, **finance**, or **estate** decisions with ambiguity:
 **Goal Review (weekly summary only):** When `generate_weekly_summary == true`, include a **§ Goal Review** subsection within the weekly summary per the template in `config/briefing-formats.md` §8.X. Use STALE / NEEDS_ACTION / ON TRACK / OFF PACE labels per goal. For Habit goals, check streak status. Fold the coaching nudge from Step 8s into this section.
 
 ### Step 11 — Synthesize briefing
-Assemble the catch-up briefing using the format in §8.1. Display in terminal.
+Assemble the catch-up briefing using the format in §8.1.
+
+**MANDATORY — write to disk BEFORE displaying:**
+Write the complete briefing to `briefings/YYYY-MM-DD.md` (today's date) with this frontmatter:
+```
+---
+date: YYYY-MM-DD
+subject: Artha · $DAY_OF_WEEK, $DATE
+archived: $ISO8601_TIMESTAMP
+sensitivity: standard
+source: cli
+---
+
+```
+If the file already exists today (second catch-up), append with `\n\n---\n# Second Run ($TIME)\n\n`.
+**Do not skip this write — it is not optional and not gated on any config flag or environment mode (except explicit read-only environments per §1).**
+
+Then display the briefing in terminal.
 
 Prepend overdue open items from `open_items.md` (deadline < today, status: open) as a `🔴 OVERDUE ITEMS` block above the critical alerts section.
 
@@ -1345,17 +1362,33 @@ The §9 format is for human-initiated ad-hoc requests only.
 
 WhatsApp messages: use URL scheme → `open "https://wa.me/[PHONE]?text=[ENCODED_TEXT]"`. User must manually tap Send. Never auto-send.
 
-### Step 14 — Email briefing
-Send the briefing to the configured `briefing_email` using:
+### Step 14 — Archive briefing + optional email delivery
+
+**At the end of Step 11 (synthesis), write the final briefing directly to:**
+```
+briefings/YYYY-MM-DD.md
+```
+Use today's date. Include this frontmatter header:
+```
+---
+date: YYYY-MM-DD
+subject: Artha · $DAY_OF_WEEK, $DATE
+archived: $ISO8601_TIMESTAMP
+sensitivity: standard
+---
+
+```
+Write the full briefing body after the frontmatter. If the file already exists (second catch-up today), append with a `---` separator and a timestamp header. **This step must always run — it is not gated on email config or read-only mode exceptions (only skip in true read-only environments per §1).**
+
+**Then, if `briefing_email` is configured in `config/settings.md`, also send via email:**
 ```bash
 python3 scripts/gmail_send.py \
   --to "$BRIEFING_EMAIL" \
   --subject "Artha · $DAY_OF_WEEK, $DATE" \
-  --body "$BRIEFING_TEXT" \
-  --archive
+  --body-file briefings/YYYY-MM-DD.md
 ```
-The `--archive` flag saves the briefing to `briefings/YYYY-MM-DD.md` automatically.
 Use the sensitivity-filtered format for sensitive domains (§8.5). The script handles markdown → HTML conversion automatically. Confirm with `status: sent` in the JSON output before logging success.
+Email send failure is **non-blocking** — the briefing file is already saved.
 
 ### Step 15 — Push new items to Microsoft To Do
 If MS Graph OAuth is configured (`.tokens/msgraph-token.json` exists):

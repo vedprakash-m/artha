@@ -31,10 +31,6 @@ MAX_CONTEXT_TOKENS: int = 200_000
 #: Total context window in characters (derived).
 MAX_CONTEXT_CHARS: int = int(MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN)
 
-#: Maximum gathered-context characters for query_artha M2M responses (§9.2).
-#: ~4,300 tokens — keeps bridge LLM calls fast and cost-bounded.
-QUERY_ARTHA_MAX_CHARS: int = 15_000
-
 
 # ---------------------------------------------------------------------------
 # Utility functions

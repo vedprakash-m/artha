@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.17 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.18 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.17.0, Tech Spec v3.34.0
+> **Implements**: PRD v7.18.0, Tech Spec v3.35.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.18 | 2026-04-16 | **ACI M2M Cleanup** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_ved_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
 | v3.17 | 2026-04-16 | Artha Channel Integration UX — §28: workout logging trigger patterns + acknowledgement format with goal progress, watch alert notification design (immediate Telegram alert vs. daily digest vs. weekly digest), brief request via Claw stale-while-revalidate UX, query relay interaction design (question → 120s timeout expectation → answer). Implements PRD v7.17.0 + Tech Spec v3.34.0. |
 | v3.15 | 2026-04-09 | OpenClaw Home Bridge UX — §27: Home Events briefing section, WhatsApp approval workflow in Telegram, bridge health in `/status` output, kid-arrival presence notification, TTS announcement patterns. Implements PRD v7.14.0 + Tech Spec v3.29.0. |
 | v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
@@ -3302,7 +3303,7 @@ If announcement delivery failed (OC pong timed out before push):
 
 ## 28. Artha Channel Integration — ACI Interaction Design
 
-This section defines the UX patterns for all Artha Channel Integration (ACI) surfaces: workout logging via Telegram, watch alert delivery, brief request via OpenClaw, and query relay.
+This section defines the UX patterns for Artha Channel Integration (ACI) surfaces: workout logging via Telegram, watch alert delivery, and free-form Q&A via the Telegram listener. The original OpenClaw M2M bridge patterns (Brief Request via Claw, Query Relay) have been removed in v3.18 — those components were deleted in the M2M cleanup.
 
 ### 28.1 Workout Logging — Trigger Patterns & Acknowledgement
 
@@ -3358,46 +3359,17 @@ r/[subreddit] · score 847 · 234 comments
 - No LLM summarisation — title shown as-is (sanitised: 80-char cap, HTML stripped)
 - Same `post_id` not repeated across digest cycles
 
-### 28.3 Brief Request via Claw — Stale-While-Revalidate UX
+### 28.3 ~~Brief Request via Claw~~ (Removed)
 
-When OpenClaw sends a `brief_request` M2M command, Artha applies stale-while-revalidate semantics.
+> **Removed in v3.18.** The OpenClaw M2M bridge (`m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py`) has been deleted. The `brief_request` stale-while-revalidate UX pattern documented in v3.17 is no longer applicable.
 
-**Fast path (< 5s):** Last briefing served immediately. Claw displays it with a `🔄 Refreshing...` footer while the pipeline runs asynchronously.
+Briefing delivery continues to work via Telegram push at end of each `scripts/pipeline.py` run (Layer 1 channel).
 
-**Next brief_request:** Returns the refreshed briefing.
+### 28.4 ~~Query Relay via M2M~~ (Removed)
 
-**Error states:**
+> **Removed in v3.18.** The `query_artha` M2M command and the 120s wait interaction design have been removed.
 
-| Condition | Response |
-|-----------|----------|
-| HMAC failure | Hard reject — no briefing served |
-| No prior briefing | "No briefing available yet. Pipeline running..." + triggers fresh run |
-| Pipeline timeout | Last briefing served with `⚠️ Stale — pipeline did not complete` footer |
-
-**Rules:**
-- HMAC always required — unauthenticated callers receive rejection with no data
-- Stale threshold: serve if last briefing < 24h old; always trigger refresh
-- Full catch-up briefing output delivered (not summarised)
-
-### 28.4 Query Relay — Interaction Design
-
-Claw sends a natural-language question; Artha synthesises an answer from local state files.
-
-**Flow from user perspective (OpenClaw side):**
-1. User types domain question in Claw interface
-2. Claw sends `query_artha` M2M command
-3. Claw shows: `🔍 Asking Artha...` (up to 120s wait)
-4. Artha synthesises answer via LLM from local state
-5. Answer appears in Claw (≤ 600 chars)
-
-**Example interaction:**
-```
-User in Claw:
-  "What are my active goals and which ones are at risk?"
-
-[~15s later]
-
-Artha:
+Free-form Telegram Q&A continues to work: messages sent to `artha_ved_bot` that do not match a command alias are routed through the multi-LLM chain (Copilot `gpt-5.4-mini` → Gemini → Claude) in `channel_listener.py`. Responses arrive in the same Telegram session, typically within 30–95s.
   "3 active goals: Net Worth (on track, 62%), Exercise 4×/week
   (at risk — 2/4 this week), ByteByteGo course (behind — need
   2h this week). Exercise streak: 6 days."
@@ -3432,4 +3404,4 @@ via the bridge. Ask directly in an Artha session.
 
 ---
 
-*Artha UX Spec v3.17 — End of Document*
+*Artha UX Spec v3.18 — End of Document*

@@ -1,6 +1,6 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.17.0
+## Product Requirements Document · v7.18.0
 
 **Author:** [Author]
 **Date:** April 16, 2026
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.18.0 | 2026-04-16 | **ACI M2M Cleanup + LLM Primary Switch** — FR-26 simplified: OpenClaw M2M bridge components removed (`m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py` deleted; `claw_bridge.yaml` disabled; `telegram_m2m` channel removed). Telegram listener operates standalone (no M2M dependency). LLM failover chain reordered: Copilot CLI (`gpt-5.4-mini --no-custom-instructions -s`) is now primary for all Telegram Q&A; Gemini and Claude remain fallbacks. `_which_copilot()` helper adds WinGet fallback detection. Claude tool-use trace filter added (`_TRACE_RE` regex + preamble stripper in `catchup.py`). Single authorized bot: `artha_ved_bot`. `specs/ac-int.md` + `specs/ts.md` archived. |
 | v7.17.0 | 2026-04-16 | Artha Channel Integration (ACI) — FR-26: Always-On Monitoring & Bidirectional Home Intelligence Bridge. `artha_engine.py` singleton host (Telegram listener + daily 7am PT scheduler + 30-min watchdog), Reddit community signals connector, Watch Monitor keyword filter, workout logging (Physiological Engine), brief_request stale-while-revalidate bridge, query_artha relay with domain allowlist. 7 components (A–G). HMAC required on all M2M commands. Implements `specs/ac-int.md` v1.3.0. |
 | v7.16.0 | 2026-04-16 | RE-DEBTS Wave 2 — Formal degradation hierarchy (5 levels) + latency budget targets added to §14 NFRs and §16. 51-item architectural audit fully resolved. Tech Spec v3.33.0 + 119 new CI invariant tests. `specs/re-debts.md` archived. |
 | v7.15.0 | 2026-04-13 | Career Search Intelligence — FR-25: Phase 1 shipped. 7-block A–G evaluation framework, scoring system (6 dimensions), archetype detection, STAR+Reflection Story Bank, ATS PDF generation via Playwright, cross-domain enrichment (immigration × comp × calendar), application tracker, 3 career guardrails, briefing integration. Career-ops satellite spec archived. |
@@ -283,7 +284,7 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 | F1.4 | **Newsletter Digest** — Consolidate learning newsletters (ByteByteGo, System Design, Big Technology, TED Recommends) into a weekly reading digest. Suppress individual deliveries. | P1 |
 | F1.5 | **Subscription Radar** — Detect renewal notices, price change notifications, and new subscription activations from email. Flag for review. | P1 |
 | F1.6 | **USPS Informed Delivery Integration** — Parse daily mail scans. Flag important physical mail (legal documents, checks, government notices). | P2 |
-| F1.7 | **Channel Bridge (ACB v2.1)** *(v5.1)* — Platform-agnostic channel bridge with three layers. **Layer 1 (Push):** automated flash briefing push to Telegram after each catch-up. **Layer 2 (Interactive Commands):** 45+ command aliases with single-letter shortcuts (`s/a/t/q/d/g/?`), slash-optional, flexible normaliser. Read commands for all 18 domains (encrypted domains route through LLM). Write commands: `items add`, `done OI-NNN`. New commands: `/goals`, `/diff` (state changes since last catch-up). **Layer 3 (Multi-LLM Q&A):** free-form questions routed through Claude → Gemini → Copilot failover chain with workspace context (prompts + state + vault). Ensemble mode (`aa` prefix) sends to all CLIs in parallel, consolidated via Haiku. CLIs run from Artha workspace directory with auto vault relock. Structured output: numbered lists, Unicode bullets, one-line direct answers. Thinking ack ("💭 Thinking…") shown during LLM calls, auto-deleted on response. PII redaction on every outbound byte. Sender whitelist. Auto-start via Windows Startup. Message splitting for Telegram 4096-char limit. | P0 |
+| F1.7 | **Channel Bridge (ACB v2.1)** *(v5.1)* — Platform-agnostic channel bridge with three layers. **Layer 1 (Push):** automated flash briefing push to Telegram after each catch-up. **Layer 2 (Interactive Commands):** 45+ command aliases with single-letter shortcuts (`s/a/t/q/d/g/?`), slash-optional, flexible normaliser. Read commands for all 18 domains (encrypted domains route through LLM). Write commands: `items add`, `done OI-NNN`. New commands: `/goals`, `/diff` (state changes since last catch-up). **Layer 3 (Multi-LLM Q&A):** free-form questions routed through Copilot (gpt-5.4-mini, primary) → Gemini → Claude failover chain with workspace context (prompts + state + vault). Ensemble mode (`aa` prefix) sends to all CLIs in parallel, consolidated via Haiku. CLIs run from Artha workspace directory with auto vault relock. Structured output: numbered lists, Unicode bullets, one-line direct answers. Thinking ack ("💭 Thinking…") shown during LLM calls, auto-deleted on response. PII redaction on every outbound byte. Sender whitelist. Auto-start via Windows Startup. Message splitting for Telegram 4096-char limit. | P0 |
 
 ---
 
@@ -1181,12 +1182,12 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 
 ### FR-26 · Artha Channel Integration (ACI)
 
-**Priority:** P2 (Phase 1 shipped April 2026)
-**Summary:** Always-on monitoring and bidirectional home intelligence bridge for Windows. A unified singleton process (`artha_engine.py`) hosts the Telegram listener, daily 7am PT pipeline scheduler, and 30-minute health watchdog — eliminating multiple Task Scheduler entries. Artha receives briefing requests and domain queries from OpenClaw via M2M, serves stale-while-revalidate briefings (<5s), relays domain answers via LLM synthesis, monitors community signals via Reddit, filters topic watches via keyword matching, and logs workouts via regex parsing. All M2M communication is HMAC-SHA256 secured.
+**Priority:** P2 (Phase 1 shipped April 2026; M2M components removed April 2026)
+**Summary:** Always-on Telegram listener and pipeline scheduler for Windows. A unified singleton process (`artha_engine.py`) hosts the Telegram bot listener, daily 7am PT pipeline scheduler, and 30-minute health watchdog — eliminating multiple Task Scheduler entries. Monitors community signals via Reddit, filters topic watches via keyword matching, logs workouts via regex parsing, and answers free-form Telegram questions via multi-LLM failover (Copilot gpt-5.4-mini → Gemini → Claude). The original OpenClaw M2M bridge components (brief_request, query_artha, HMAC) have been removed — Artha now operates as a standalone Telegram channel without a home automation dependency.
 
-**Architecture:** `scripts/artha_engine.py` (singleton PID guard + 3 async coroutines), `scripts/connectors/reddit.py` (community signals), `scripts/skills/watch_monitor.py` (topic watches), `scripts/skills/fitness_coach.py` (workout parsing), `scripts/channel/m2m_handler.py` (M2M envelope + brief_request + query_artha), `config/watches.yaml` (watch definitions), `config/claw_bridge.yaml` (extended with `query_artha` + `llm` config blocks).
+**Architecture:** `scripts/artha_engine.py` (singleton PID guard + 3 async coroutines), `scripts/connectors/reddit.py` (community signals), `scripts/skills/watch_monitor.py` (topic watches), `scripts/skills/fitness_coach.py` (workout parsing), `scripts/channel/llm_bridge.py` (multi-LLM failover for Telegram Q&A), `config/watches.yaml` (watch definitions).
 
-**Non-goals:** No real-time push notifications. No voice transcription. Finance, health, kids, vehicle, travel, comms, estate, and insurance domains are blocked from query_artha (vault-gated). macOS/Linux not supported (Windows Task Scheduler dependency).
+**Non-goals:** No real-time push notifications. No voice transcription. No OpenClaw/home-automation M2M (removed). macOS/Linux not supported (Windows Task Scheduler dependency).
 
 **Core features:**
 
@@ -1195,14 +1196,14 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 | FR26.1 | **Always-On Engine** — `artha_engine.py` singleton process with PID guard, `WindowsProactorEventLoopPolicy`, and 3 concurrent async coroutines: Telegram listener, 7am PT daily pipeline scheduler (datetime-based catch-up on wake), 30-min watchdog. Registered as Windows Task Scheduler task with both `@startup` and `OnFailure` triggers via `scripts/register_engine_task.ps1`. | P2 |
 | FR26.2 | **Reddit Community Signals** — Public JSON API connector (`/top.json?t=day`). Configured subreddits in `config/connectors.yaml` (list of dicts with `"name"` key). Output schema: `id/source/subreddit/title/score/num_comments/url/created_utc/source_tag`. 80-char title cap + HTML strip + blocked pattern filter applied before LLM context. 2s inter-request delay. | P2 |
 | FR26.3 | **Watch Monitor** — Deterministic keyword filter (no LLM calls) on pipeline output. Watches defined in `config/watches.yaml`. Urgency-tiered routing: high urgency + score >50 → immediate Telegram alert; high + score 20–50 → daily digest; medium/low → digest/weekly. Results in `state/watch_backlog.yaml`. | P2 |
-| FR26.4 | **Brief Request Bridge** — Stale-while-revalidate pattern: serves last briefing synchronously within 5s; async background pipeline refresh completes separately. HMAC required — no exceptions. | P2 |
-| FR26.5 | **Query Relay** — Claw sends domain question via M2M → Artha detects domains (delegates to `llm_bridge._detect_domains()`) → filters by allowlist {goals, calendar, open_items, home, learning} → gathers context (≤`QUERY_ARTHA_MAX_CHARS` = 15,000 chars via `scripts/lib/context_budget.py`) → LLM synthesis (gpt-5.4-mini → Gemini → Claude, 30s each, 95s total timeout) → sends answer back. HMAC required. Vault-gated domains hard-blocked. | P2 |
+| FR26.4 | ~~**Brief Request Bridge (removed)**~~ — OpenClaw M2M brief_request removed. Telegram briefing push is handled by `scripts/channel_push.py` (Layer 1, triggered at end of each `scripts/pipeline.py` run). | — |
+| FR26.5 | ~~**Query Relay via M2M (removed)**~~ — OpenClaw `query_artha` M2M removed. Free-form Telegram Q&A continues to work via Layer 3 in `scripts/channel_listener.py` — messages not matching a command alias are routed through the multi-LLM chain (Copilot gpt-5.4-mini → Gemini → Claude). | — |
 | FR26.6 | **Workout Logging (Physiological Engine)** — Regex-based parser for workout messages (distance/duration/HR/elevation/weight). Appends to `~/.artha-local/workouts.jsonl` (not OneDrive-synced). Dedup key: `(sender_id, message_id)`. Acknowledgement includes goal progress lookup. | P2 |
 | FR26.7 | **Health Watchdog** — 5 checks every 30 minutes: engine task liveness, `state/radar_backlog.yaml` freshness (<26h), error log scan, heartbeat age (<5min), Reddit connector liveness (0 `reddit_*` entries for 2+ consecutive days → `REDDIT_CONNECTOR_DEAD` alert). | P2 |
 
-**Security invariants:** HMAC-SHA256 required on ALL M2M commands (no exceptions); keyring-only key storage (Windows Credential Manager); nonce deduplication + ±5-minute timestamp window; injection filter (80-char cap + HTML strip + blocked patterns from `config/lint_rules.yaml`) applied before all LLM context; domain allowlist blocks vault-gated domains; sender ID allowlist enforced (reply_chat_id lookup fails hard if unconfigured).
+**Security invariants:** Sender ID allowlist enforced (reply_chat_id lookup fails hard if unconfigured); injection filter (80-char cap + HTML strip + blocked patterns from `config/lint_rules.yaml`) applied before all LLM context; vault auto-relock after every LLM call; PII redaction on every outbound byte. M2M/HMAC requirements removed (M2M components deleted).
 
-**Feature flag:** ACI is always-on once `artha_engine.py` is registered as a Task Scheduler task. Individual M2M commands require provisioning `artha-claw-bridge-hmac` in Windows Credential Manager.
+**Feature flag:** ACI is always-on once `artha_engine.py` is registered as a Task Scheduler task via `scripts/register_engine_task.ps1`.
 
 ---
 
@@ -1432,7 +1433,7 @@ Artha is a **pull-based personal intelligence system** built on Claude Code as t
 
 > **v3.0 Architectural Pivot:** The v2.2 architecture assumed an always-on Mac with a macOS LaunchAgent daemon. In practice, the user's Mac is used only some weekday evenings and weekends. Combined with a hard privacy requirement (no cloud VMs, no cloud state storage), a pull-based model was adopted. Personal life obligations operate on days/weeks/months timescales — no personal domain in Artha requires sub-hour alerting. A daily or every-other-day pull cadence is architecturally sufficient for ALL 18 Functional Requirements.
 
-> **v5.0 ACI Supplement (Windows):** FR-26 (Artha Channel Integration) adds an always-on `artha_engine.py` singleton host for Windows daily-use machines. It handles the Telegram listener, daily 7am PT pipeline scheduling, and watchdog monitoring — eliminating the need for multiple Task Scheduler entries. This is a Windows-only supplement to the pull-based model. Claude Code / Claude.ai sessions remain the authoritative runtime; ACI enables the OpenClaw home automation bridge and community signal monitoring without a manual session start.
+> **v5.0 ACI Supplement (Windows):** FR-26 (Artha Channel Integration) adds an always-on `artha_engine.py` singleton host for Windows daily-use machines. It handles the Telegram listener, daily 7am PT pipeline scheduling, watchdog monitoring, and Reddit community signal monitoring — eliminating the need for multiple Task Scheduler entries. This is a Windows-only supplement to the pull-based model. Claude Code / Claude.ai sessions remain the authoritative runtime. The original OpenClaw M2M bridge has been removed; ACI operates as a standalone Telegram channel.
 
 ### 9.1 — System Overview
 

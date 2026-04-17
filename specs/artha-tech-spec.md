@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.34.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.35.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.17.0
+> **Implements**: PRD v7.18.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.35.0 | 2026-04-16 | **ACI M2M Cleanup + LLM Primary Switch**: deleted `m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py`; removed `telegram_m2m` channel; disabled `claw_bridge.yaml`; removed `QUERY_ARTHA_MAX_CHARS` from `context_budget.py`; cleaned `channel_listener.py` and `artha_engine.py`. LLM failover chain reordered: Copilot CLI (`gpt-5.4-mini --no-custom-instructions -s`) is now primary (first) for all Telegram Q&A + catch-up; `_which_copilot()` helper adds WinGet fallback path. Claude tool-use trace filter added (`_TRACE_RE` regex + preamble stripper in `catchup.py`). §34 HMAC security policy removed; §34.9–34.12 updated to reflect standalone Telegram-only ACI. Implements PRD v7.18.0. |
 | v3.34.0 | 2026-04-16 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + WindowsProactorEventLoopPolicy + 3 async coroutines (telegram_loop, schedule_loop, watchdog_loop). Reddit public JSON connector. Watch Monitor deterministic keyword filter + urgency-tiered routing. Brief Request stale-while-revalidate bridge. Query Relay domain allowlist + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude). Physiological Engine workout regex parser + `~/.artha-local/workouts.jsonl`. HMAC-SHA256 on all M2M. `QUERY_ARTHA_MAX_CHARS = 15_000` in `scripts/lib/context_budget.py`. ADR-004 gate documented. `claw_bridge.yaml` extended with `query_artha` + `llm` blocks. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.29.0 | 2026-04-09 | **OpenClaw Home Bridge (§29)**: 3-layer M2M transport (REST LAN / Telegram / file-buffer), HMAC-SHA256 security model, 4-command outbound + 4-event inbound contract, 7 new components, `bridge_health` observability block. Incorporated from `claw-bridge.md` v1.7.0 (archived). 61 bridge tests passing. Implements PRD v7.14.0. |
 | v3.28.0 | 2026-04-08 | **Knowledge Graph v2.0 (§22)**: Second Brain Architecture. Five ingestion paths (knowledge/*.md, inbox/, SharePoint, state/work/*.md, ADO), eight governing principles, entity lifecycle stages, SQLite schema v4 (lifecycle_stage, excerpt_hash, change_source_ref, episodes table), source taxonomy with confidence contract, Leiden community clustering + Union-Find fallback, ghost entity detection & excerpt-hash staleness, 7 MCP tools surface, markdown stub contract, 950-token context budget (was 4,000). Implements PRD v7.13.0. |
@@ -873,8 +874,8 @@ connectors/caldav_calendar.fetch(from=today, to=today+7d) → JSONL (source: "ic
 
 **Layer 3 — Multi-LLM Q&A** *(v2.4)*:
 - **Free-form questions:** any message not matching a command alias is treated as a natural language question
-- **LLM failover chain:** Claude Code CLI (~16.5s) → Gemini CLI (~26.1s) → Copilot CLI (~39.1s). Priority order based on benchmarked latency.
-- **CLI configuration:** Claude `--model sonnet`, Gemini `--yolo`, Copilot `--model claude-sonnet-4 --yolo -s`
+- **LLM failover chain:** Copilot CLI (`gpt-5.4-mini`, primary) → Gemini CLI → Claude Code CLI. Priority order: Copilot first (lightweight model optimised for Q&A, `--no-custom-instructions` prevents AGENTS.md tool-use traces, `-s` silent mode for clean output), then Gemini, then Claude as last resort.
+- **CLI configuration:** Copilot `--yolo --model gpt-5.4-mini --no-custom-instructions -s`, Gemini `--yolo --model gemini-2.5-pro`, Claude `--dangerously-skip-permissions --model claude-sonnet-4-6`
 - **Workspace context:** CLIs invoked from `cwd=_ARTHA_DIR` (Artha workspace), giving them access to CLAUDE.md, skills, prompt files, and vault
 - **Context assembly:** domain prompts (processing rules) + state file summaries + open items assembled into system prompt for each query
 - **Vault safety:** `_vault_relock_if_needed()` called in `finally` block after every CLI call — checks for decrypted .md siblings of .age files, runs `vault.py encrypt` if found
@@ -5900,31 +5901,19 @@ Receive brief_request (HMAC verified)
 
 ### 34.9 HMAC Security Policy
 
-All 7 M2M command types require HMAC-SHA256 verification:
-
-| Command | Direction | HMAC required |
-|---------|-----------|---------------|
-| `brief_request` | Claw → Artha | ✅ Required |
-| `query_artha` | Claw → Artha | ✅ Required |
-| `load_context` | Artha → Claw | ✅ Required |
-| `announce` | Artha → Claw | ✅ Required |
-| `whatsapp_draft` | Artha → Claw | ✅ Required |
-| `ping` | Artha → Claw | ✅ Required |
-| `pong` | Claw → Artha | ✅ Required |
-
-**Key:** `artha-claw-bridge-hmac` in Windows Credential Manager (keyring service=`"artha"`).
-
-**Keyring unavailable:** Hard fail. Never fail-open.
+> **Removed in v3.35.0.** All 7 M2M command types (brief_request, query_artha, load_context, announce, whatsapp_draft, ping, pong) required HMAC-SHA256 verification. These commands have been removed along with `m2m_handler.py`, `export_bridge_context.py`, and `hmac_signer.py`. HMAC policy no longer applies.
 
 ### 34.10 LLM Model Selection
 
-For query_artha synthesis, the failover chain is:
+For Telegram Q&A and catch-up briefings, the failover chain is:
 
 ```
-gpt-5.4-mini (30s timeout) → Gemini (30s timeout) → Claude (35s timeout) → fail
+Copilot gpt-5.4-mini (30s timeout) → Gemini gemini-2.5-pro (30s timeout) → Claude claude-sonnet-4-6 (35s timeout) → fail
 ```
 
 Total budget: 95s. If all three fail → return "Unable to answer query — LLM unavailable."
+
+**Copilot flags:** `--yolo --model gpt-5.4-mini --no-custom-instructions -s` — `--no-custom-instructions` prevents AGENTS.md tool-use traces from leaking into output; `-s` silent mode omits preamble banners. `_which_copilot()` in `llm_bridge.py` probes `shutil.which("copilot")` then WinGet fallback `~\AppData\Local\Microsoft\WinGet\Links\copilot.exe`.
 
 ### 34.11 State File Ownership
 
@@ -5938,17 +5927,12 @@ Total budget: 95s. If all three fail → return "Unable to answer query — LLM 
 
 ### 34.12 Configuration Files
 
-**`config/claw_bridge.yaml`** — extended with:
+**`config/claw_bridge.yaml`** — disabled (M2M removed):
 ```yaml
+bridge:
+  enabled: false  # OpenClaw M2M disabled in v3.35.0
 query_artha:
-  enabled: true
-  allowlist: [goals, calendar, open_items, home, learning]
-  max_answer_chars: 600
-llm:
-  primary: gpt-5.4-mini
-  fallback_1: gemini
-  fallback_2: claude
-  timeout_each_s: 30
+  enabled: false
 ```
 
 **`config/watches.yaml`** — watch definitions:
@@ -5963,11 +5947,11 @@ watches:
 
 All ACI tests in `tests/unit/test_aci_*.py` and `tests/integration/test_aci_integration.py`.
 
-**Run:** `pytest tests/ -k "aci or engine or watch_monitor or reddit or fitness or query_artha"` — all passing as of v3.34.0.
+**Run:** `pytest tests/ -k "aci or engine or watch_monitor or reddit or fitness"` — all passing as of v3.35.0.
 
 ---
 
-*Artha Tech Spec v3.34.0 — End of Document*
+*Artha Tech Spec v3.35.0 — End of Document*
 
 ---
 

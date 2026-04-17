@@ -120,6 +120,7 @@ class TestEmailEntityPiiScrub:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="export_bridge_context.py removed in M2M cleanup v3.35.0")
 class TestTelegramPayloadFilter:
     """RD-08: Telegram must only receive aggregate-tier (non-sensitive) data."""
 
