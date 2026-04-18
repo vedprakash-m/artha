@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.35.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.36.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.18.0
+> **Implements**: PRD v7.20.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.36.0 | 2026-04-17 | **Universal Briefing Archival (§35)**: Single canonical `scripts/lib/briefing_archive.py` — `save()` with SHA-256 normalized dedup, POSIX `fcntl.flock` on sidecar `.lock` file, per-entry YAML frontmatter (`date`, `source`, `session_id`, `model_version`, `content_hash`), `InjectionDetector` binary gate, PII guard (non-blocking), audit.md + health-check.md observability. `--archive-brief` early-exit subcommand in `pipeline.py` with path-traversal guard; `session_id`/`model_version` added to `_write_pipeline_metrics()` output. `gmail_send.py` default flipped to `archive=True`; `--no-archive` flag added. `catchup.py._save_briefing()` delegates to canonical helper. `post_catchup_memory.py._detect_parser_format()` updated to discriminate on `source:` field. `config/Artha.core.md` Step 14 consolidated into terminal archive block with `💾` verification token. `preflight.check_briefings_archive_coverage()` P1 check: (a) briefing exists by 10 AM; (b) `source: vscode` present when `session_history` marker found. 44 new tests (24 archive unit, 10 pipeline subcommand, 10 preflight coverage). 3,372 passing. Implements PRD v7.20.0. |
 | v3.35.0 | 2026-04-16 | **ACI M2M Cleanup + LLM Primary Switch**: deleted `m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py`; removed `telegram_m2m` channel; disabled `claw_bridge.yaml`; removed `QUERY_ARTHA_MAX_CHARS` from `context_budget.py`; cleaned `channel_listener.py` and `artha_engine.py`. LLM failover chain reordered: Copilot CLI (`gpt-5.4-mini --no-custom-instructions -s`) is now primary (first) for all Telegram Q&A + catch-up; `_which_copilot()` helper adds WinGet fallback path. Claude tool-use trace filter added (`_TRACE_RE` regex + preamble stripper in `catchup.py`). §34 HMAC security policy removed; §34.9–34.12 updated to reflect standalone Telegram-only ACI. Implements PRD v7.18.0. |
 | v3.34.0 | 2026-04-16 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + WindowsProactorEventLoopPolicy + 3 async coroutines (telegram_loop, schedule_loop, watchdog_loop). Reddit public JSON connector. Watch Monitor deterministic keyword filter + urgency-tiered routing. Brief Request stale-while-revalidate bridge. Query Relay domain allowlist + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude). Physiological Engine workout regex parser + `~/.artha-local/workouts.jsonl`. HMAC-SHA256 on all M2M. `QUERY_ARTHA_MAX_CHARS = 15_000` in `scripts/lib/context_budget.py`. ADR-004 gate documented. `claw_bridge.yaml` extended with `query_artha` + `llm` blocks. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.29.0 | 2026-04-09 | **OpenClaw Home Bridge (§29)**: 3-layer M2M transport (REST LAN / Telegram / file-buffer), HMAC-SHA256 security model, 4-command outbound + 4-event inbound contract, 7 new components, `bridge_health` observability block. Incorporated from `claw-bridge.md` v1.7.0 (archived). 61 bridge tests passing. Implements PRD v7.14.0. |
@@ -1243,7 +1244,7 @@ Full domain prompts live in `prompts/*.md`. Above are condensed schema reference
 
 **Step 7:** Synthesize briefing per §5.1 format. Run structured output validation (Phase 5): populate `BriefingOutput` schema, write `tmp/briefing_structured.json`, log validation errors non-blocking. Calibration questions (post-briefing accuracy check). Decision deadline check (expired→🔴, ≤14d→nudge, open >14d→set deadline).
 
-**Step 8:** Email briefing, save to briefings/, update health-check (include `harness_metrics` block), log to audit, push/pull To Do, rebuild dashboard.md, update work-calendar.md (count+duration only), meeting-triggered OIs.
+**Step 8:** Email briefing, archive to `briefings/` via `pipeline.py --archive-brief tmp/briefing_draft.md` (calls canonical `briefing_archive.save(source="vscode")` — idempotent, flock-safe, injection-gated; deletes draft on success; emits `💾 Briefing archived.` token). update health-check (include `harness_metrics` block), log to audit, push/pull To Do, rebuild dashboard.md, update work-calendar.md (count+duration only), meeting-triggered OIs. Gmail send: `gmail_send.py` archives automatically (`archive=True` default) via same helper.
 
 **Step 8b:** Net-negative write guard (now part of `WriteGuardMiddleware` in Phase 4 middleware stack) — blocks write if state file would lose >20% of fields.
 
@@ -5961,7 +5962,81 @@ All ACI tests in `tests/unit/test_aci_*.py` and `tests/integration/test_aci_inte
 
 ---
 
-*Artha Tech Spec v3.35.0 — End of Document*
+*Artha Tech Spec v3.36.0 — End of Document*
+
+---
+
+## 35. Universal Briefing Archival *(v3.36.0)*
+
+### 35.1 Problem & Root Cause
+
+Briefings generated via VS Code (Artha's primary interface) were invisible to every downstream consumer (`state_readers.py`, `channel_push.py`, `bootstrap_memory.py`, `post_catchup_memory.py`, `eval_scorer.py`) because the LLM silently skipped the archive step under context pressure. Root cause: mid-body MANDATORY instructions in `Artha.core.md` lose attentional weight under context saturation.
+
+### 35.2 Canonical Archive Library
+
+**`scripts/lib/briefing_archive.py`** — single public function, stdlib-only:
+
+```python
+def save(text, *, source, subject=None, session_id=None,
+         briefing_format=None, model_version=None) -> dict:
+    # Returns {"status": "ok"|"skipped"|"failed", "path": str, ...}
+```
+
+**Guarantees:**
+- **Idempotency**: SHA-256 of normalized text (strip trailing whitespace, normalize CRLF, mask `archived:` timestamp) checked before write; duplicate → `{"status": "skipped"}`
+- **Process-safety**: `fcntl.flock(LOCK_EX)` on sidecar `.lock` file (Windows: sentinel fallback)
+- **Observability**: failure logs to `state/audit.md` + increments `state/health-check.md` counter
+- **Security**: `InjectionDetector` binary gate (any signal → refuse, log); `pii_guard.scan()` (non-blocking warning)
+- **Self-cleanup**: `source="vscode"` deletes `tmp/briefing_draft.md` on success; `gc_stale_drafts()` GCs files >24h old
+
+**Frontmatter per entry:**
+```yaml
+---
+date: YYYY-MM-DD
+source: vscode|telegram|email|mcp
+subject: Artha Brief · Day Mon DD
+archived: YYYY-MM-DDTHH:MM:SSZ
+sensitivity: standard
+session_id: YYYYMMDD_hex8
+briefing_format: flash|standard|deep
+model_version: gpt-4o-...
+content_hash: sha256:<hex>
+---
+```
+
+### 35.3 Per-Surface Integration
+
+| Surface | Script | Integration |
+|---|---|---|
+| VS Code | `pipeline.py --archive-brief tmp/briefing_draft.md` | Early-exit subcommand; path-traversal guard (must be inside `tmp/`); reads `session_id` + `model_version` from `pipeline_metrics.json` (4h window); deletes draft on success |
+| Telegram | `channel/catchup.py._save_briefing()` | Delegates to `save(source="telegram")`; inline frontmatter logic removed |
+| Gmail | `gmail_send.py` | `archive=True` default; `--no-archive` flag; delegates to `save(source="email")` |
+| MCP | `mcp_server.py` | Default stays `archive=False`; caller passes `archive=True` explicitly (tool-safety invariant) |
+| Demo | `demo_catchup.py` | Excluded — demo output intentionally ephemeral |
+
+### 35.4 Prompt Consolidation
+
+`config/Artha.core.md` Step 14 consolidated into a single **terminal archive block** at the end of the `brief` command section. The VS Code path requires:
+```bash
+write complete briefing → tmp/briefing_draft.md
+python scripts/pipeline.py --archive-brief tmp/briefing_draft.md
+```
+The `brief` command is only complete when this returns `"status": "ok"` or `"skipped"`. Verification token `💾 Briefing archived.` is emitted only on success — giving immediate user visibility into archive adherence.
+
+### 35.5 Preflight Coverage Audit (P1)
+
+`preflight.check_briefings_archive_coverage()` added to `scripts/preflight/state_checks.py`:
+- **(a)** After 10 AM: warn if no `briefings/YYYY-MM-DD.md` exists today
+- **(b)** If `tmp/session_history_*.md` modified today exists (VS Code session evidence) but today's briefing has no `source: vscode` entry: warn (R1 Mitigation D; R9 correlation)
+
+### 35.6 Deferred Items
+
+| Item | Priority | Target |
+|---|---|---|
+| R9 transcript audit: correlate `💾` token with `source: vscode` entry | P2 | Commit 3+ |
+| R8 OneDrive/flock validation under active sync | P2 | Commit 3+ |
+| P3 Stop hook (Claude Code) — deterministic archive regardless of LLM adherence | P2 | Commit 4 (stretch) |
+| A4 three-way LLM shadow mode (Copilot + Gemini + Claude; segment by `model_version`) | P1 | Before Commit 2 rollout |
 
 ---
 

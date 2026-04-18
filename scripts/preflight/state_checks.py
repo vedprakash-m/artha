@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 from preflight._types import (
@@ -171,6 +173,90 @@ def check_briefings_directory() -> CheckResult:
         return CheckResult("briefings directory", "P1", True, f"{_rel(briefings_dir)} writable ✓")
     except OSError as exc:
         return CheckResult("briefings directory", "P1", False, f"briefings/ not writable: {exc}")
+
+
+def check_briefings_archive_coverage() -> CheckResult:
+    """P1: Per-source archive coverage audit (specs/brief.md §5 Step 7 / Commit 3).
+
+    Two sub-checks run in order; the first failure wins:
+
+    (a) Existence check — after 10:00 AM local time, warn if no briefings/YYYY-MM-DD.md
+        exists for today.  This catches the case where the LLM skipped the archive step
+        entirely (R1 mitigation D).
+
+    (b) VS Code source check — if today's briefing file exists AND at least one
+        tmp/session_history_*.md file was modified today (evidence of a VS Code catch-up
+        session), warn if the briefing file has no ``source: vscode`` entry.
+        This detects the drift scenario where a catch-up ran but the LLM emitted
+        ``💾 Briefing archived.`` without actually running ``--archive-brief``.
+
+    Both sub-checks are P1 (non-blocking) — they surface a warning in the preflight
+    report and log to state/audit.md but never halt catch-up.
+
+    Ref: specs/brief.md §5 Step 7, §6 R1 Mitigation D, §6 R9
+    """
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    briefings_dir = Path(ARTHA_DIR) / "briefings"
+    today_path = briefings_dir / f"{today}.md"
+
+    # ── (a) Existence check (after 10 AM) ──────────────────────────────────
+    if now.hour >= 10 and not today_path.exists():
+        _write_audit_event_sc(
+            "briefings_archive_missing",
+            {"date": today, "check": "existence", "hour": str(now.hour)},
+        )
+        return CheckResult(
+            "briefing archive coverage", "P1", False,
+            f"No briefing archived for today ({today}) — did the LLM skip --archive-brief?",
+            fix_hint="Run: python scripts/pipeline.py --archive-brief tmp/briefing_draft.md",
+        )
+
+    # ── (b) VS Code source check ────────────────────────────────────────────
+    if today_path.exists():
+        tmp_dir = Path(ARTHA_DIR) / "tmp"
+        session_files = list(tmp_dir.glob("session_history_*.md")) if tmp_dir.exists() else []
+        session_today = [
+            f for f in session_files
+            if datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d") == today
+        ]
+        if session_today:
+            try:
+                content = today_path.read_text(encoding="utf-8")
+                has_vscode = bool(re.search(r"^source:\s*vscode\s*$", content, re.MULTILINE))
+            except OSError:
+                has_vscode = False
+            if not has_vscode:
+                _write_audit_event_sc(
+                    "briefings_vscode_source_missing",
+                    {"date": today, "session_files": str(len(session_today))},
+                )
+                return CheckResult(
+                    "briefing archive coverage", "P1", False,
+                    f"VS Code session detected today ({len(session_today)} session file(s)) "
+                    f"but no 'source: vscode' entry in briefings/{today}.md — "
+                    f"LLM may have emitted 💾 token without running --archive-brief",
+                    fix_hint="Run: python scripts/pipeline.py --archive-brief tmp/briefing_draft.md",
+                )
+
+    return CheckResult(
+        "briefing archive coverage", "P1", True,
+        f"briefings/{today}.md archive coverage OK ✓",
+    )
+
+
+def _write_audit_event_sc(event: str, fields: dict) -> None:
+    """Best-effort audit.md append (avoids importing briefing_archive from state_checks)."""
+    try:
+        audit_log = Path(ARTHA_DIR) / "state" / "audit.md"
+        from datetime import timezone
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        field_str = " | ".join(f"{k}:{v}" for k, v in fields.items())
+        audit_log.parent.mkdir(parents=True, exist_ok=True)
+        with audit_log.open("a", encoding="utf-8") as fh:
+            fh.write(f"| {now_utc} | {event} | {field_str} |\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def check_profile_completeness() -> CheckResult:

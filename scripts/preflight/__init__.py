@@ -26,7 +26,8 @@ from preflight.oauth_checks import check_oauth_token, check_token_freshness, che
 from preflight.api_checks import check_script_health, check_pii_guard
 from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
-    check_briefings_directory, check_profile_completeness, _is_bootstrap_stub,
+    check_briefings_directory, check_briefings_archive_coverage,
+    check_profile_completeness, _is_bootstrap_stub,
     check_prompt_size,
 )
 from preflight.integration_checks import (
@@ -110,6 +111,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_token_freshness("Calendar", "gcal-oauth-token.json"))
     checks.append(check_open_items(auto_fix=auto_fix))
     checks.append(check_briefings_directory())
+    checks.append(check_briefings_archive_coverage())  # specs/brief.md §5 Step 7 (Commit 3)
     checks.append(check_msgraph_token())  # T-1B.6.1: non-blocking, To Do sync optional
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────

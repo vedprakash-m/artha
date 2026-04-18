@@ -197,23 +197,15 @@ def _read_briefing_template() -> str:
 # ── _save_briefing ──────────────────────────────────────────────
 
 def _save_briefing(text: str) -> Path:
-    """Save briefing to briefings/YYYY-MM-DD.md. Appends if file exists."""
+    """Save briefing to briefings/YYYY-MM-DD.md via canonical archive helper."""
+    from lib.briefing_archive import save as _archive_save  # noqa: PLC0415
+    result = _archive_save(
+        text,
+        source="telegram",
+        subject="Artha Telegram Catch-Up",
+    )
     today = datetime.now().strftime("%Y-%m-%d")
-    path = _BRIEFINGS_DIR / f"{today}.md"
-    _BRIEFINGS_DIR.mkdir(parents=True, exist_ok=True)
-
-    header = f"""---\ndate: {today}\nsubject: Artha Telegram Catch-Up\narchived: {datetime.now(timezone.utc).isoformat()}\nsensitivity: standard\n---\n\n"""
-
-    if path.exists():
-        # Append as a new run
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n---\n# Telegram Catch-Up ({datetime.now().strftime('%I:%M %p')})\n\n")
-            f.write(text)
-    else:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(header)
-            f.write(text)
-    return path
+    return _BRIEFINGS_DIR / f"{today}.md"
 
 
 # ── cmd_catchup ─────────────────────────────────────────────────

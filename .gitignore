@@ -82,6 +82,7 @@ backups/
 # --- Briefing and summary archives ---
 # Daily briefing files are personal (never committed)
 briefings/*.md
+briefings/*.lock
 briefings/career/
 summaries/
 

@@ -105,20 +105,37 @@ class TestReadBriefingTemplate:
 # ---------------------------------------------------------------------------
 
 class TestSaveBriefing:
-    def test_writes_file(self, tmp_path, monkeypatch):
+    def _patch_archive(self, tmp_path, monkeypatch):
+        """Patch both catchup._BRIEFINGS_DIR and briefing_archive paths to tmp_path."""
+        import lib.briefing_archive as _ba
         monkeypatch.setattr(catchup_mod, "_BRIEFINGS_DIR", tmp_path)
+        monkeypatch.setattr(_ba, "_BRIEFINGS_DIR", tmp_path)
+        state = tmp_path / "_state"
+        state.mkdir(exist_ok=True)
+        (state / "audit.md").write_text("")
+        (state / "health-check.md").write_text("")
+        monkeypatch.setattr(_ba, "_STATE_DIR", state)
+        monkeypatch.setattr(_ba, "_AUDIT_LOG", state / "audit.md")
+        monkeypatch.setattr(_ba, "_HEALTH_CHECK", state / "health-check.md")
+        monkeypatch.setattr(_ba, "_TMP_DIR", tmp_path)
+        monkeypatch.setattr(_ba, "_DRAFT_PATH", tmp_path / "briefing_draft.md")
+        monkeypatch.setattr(_ba, "_run_injection_check", lambda text: False)
+        monkeypatch.setattr(_ba, "_run_pii_warning", lambda text, source: None)
+
+    def test_writes_file(self, tmp_path, monkeypatch):
+        self._patch_archive(tmp_path, monkeypatch)
         saved_path = _save_briefing("Hello briefing content")
         assert saved_path.exists()
         file_text = saved_path.read_text()
         assert "Hello briefing content" in file_text
 
     def test_returns_path(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(catchup_mod, "_BRIEFINGS_DIR", tmp_path)
+        self._patch_archive(tmp_path, monkeypatch)
         result = _save_briefing("test")
         assert isinstance(result, Path)
 
     def test_filename_has_date(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(catchup_mod, "_BRIEFINGS_DIR", tmp_path)
+        self._patch_archive(tmp_path, monkeypatch)
         saved_path = _save_briefing("dated content")
         # Filename should include a date component
         assert saved_path.name.startswith("20")  # year prefix like "2026-..."
