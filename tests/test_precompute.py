@@ -77,7 +77,10 @@ def test_logistics_writes_heartbeat():
     heartbeat = _TMP / "logistics_last_run.json"
     assert heartbeat.exists(), "logistics must write tmp/logistics_last_run.json"
     data = json.loads(heartbeat.read_text())
-    assert data.get("status") == "success", f"Expected success, got: {data.get('status')}"
+    # "no-yaml" is expected in CI where state/logistics.yaml is gitignored
+    assert data.get("status") in ("success", "no-yaml"), (
+        f"Unexpected heartbeat status: {data.get('status')}"
+    )
 
 
 def test_logistics_writes_state_file():
@@ -100,7 +103,10 @@ def test_tribe_writes_heartbeat():
     heartbeat = _TMP / "tribe_last_run.json"
     assert heartbeat.exists(), "tribe must write tmp/tribe_last_run.json"
     data = json.loads(heartbeat.read_text())
-    assert data.get("status") == "success", f"Expected success, got: {data.get('status')}"
+    # "no-yaml" is expected in CI where state/tribe.yaml is gitignored
+    assert data.get("status") in ("success", "no-yaml"), (
+        f"Unexpected heartbeat status: {data.get('status')}"
+    )
 
 
 # ---------------------------------------------------------------------------
