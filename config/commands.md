@@ -1019,3 +1019,123 @@ P2  xConfig            → Architecture learning for Armada
 - Phase: Active
 
 ---
+
+## `/career` — Career Search Intelligence
+
+Manages the active job search campaign: evaluates job descriptions, tracks the application pipeline, generates tailored CV PDFs, and seeds interview prep. Requires `state/career_search.md` and `~/.artha-local/cv.md` (outside repo — never committed).
+
+Natural language triggers: "career eval", "evaluate this JD", "career tracker", "what's my pipeline", "generate CV", "career pdf".
+
+**Active when:** A goal with `category: career` and `status: active` exists in `state/goals.md`.
+
+### `/career eval <URL|JD text>` — Evaluate a Job Description
+
+Full A–G evaluation of a job posting against the campaign profile and CV.
+
+**Flow:**
+1. JD ingestion: navigate URL via browser or accept pasted text
+2. JD content validation: verify it's a real JD (not auth wall / login page)
+3. Packet extraction: `job_packet` (from JD) + `candidate_packet` (from `~/.artha-local/cv.md`) + `context_packet` (from immigration / finance state)
+4. Pre-evaluation confirmation gate: "Ready to evaluate: {title} @ {company} ({location}) — Proceed? [Y/n]"
+5. Pre-screen: hard dealbreaker check (sponsorship) + location mismatch flag
+6. A–G block evaluation per `prompts/career_search.md`
+7. Write report to `briefings/career/{NNN}-{company}-{date}.md`
+8. Append tracker row to `state/career_search.md` Applications table
+9. Propose PDF generation (auto-proposed if score ≥ 4.0)
+
+**Evaluation blocks:**
+- **A** — Archetype Classification: detect primary archetype(s) from JD signals
+- **B** — CV Match: requirement-to-CV mapping with gap analysis
+- **C** — Compensation Assessment: stated vs. comp_floor; total comp estimate
+- **D** — Culture & Team Fit: leadership signals, eng culture, growth environment
+- **E** — Personalization Plan: per-JD CV and cover letter customization strategy
+- **F** — Interview Prep: STAR story bank entries relevant to this role
+- **G** — Composite Score & Recommendation: weighted 6-dimension score (1–5)
+
+**Scoring dimensions (weights from `state/career_search.md`):**
+- CV Match: 0.30 · North Star: 0.20 · Compensation: 0.15 · Culture: 0.15 · Level Fit: 0.10 · Red Flags: 0.10
+
+**Output:**
+```
+━━ Evaluation: Senior AI PM @ Anthropic ━━━━━━
+Archetype: Technical AI PM (Primary) · Agentic/Automation (Secondary)
+Score: 4.2/5 · Recommendation: ✅ Apply
+B CV Match:      4/5  Strong PRD + platform alignment
+C Compensation:  4/5  Estimated $380K–$450K TC (above floor)
+D Culture:       4/5  Research-first; written communication emphasis
+E North Star:    5/5  AI native, frontier model context
+F Level Fit:     4/5  Principal-equivalent; verify IC vs management track
+G Red Flags:     4/5  Sponsorship: likely (Anthropic history); confirm
+Report: briefings/career/001-anthropic-2026-04-17.md
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### `/career tracker` — Application Pipeline View
+
+Reconciles `state/career_search.md` frontmatter summary block and renders the Applications table with status counts.
+
+**Output:**
+```
+━━ Career Pipeline ━━━━━━━━━━━━━━━━━━━━━━━━━
+Status counts:  Evaluated: N · Applied: N · Interview: N · Offer: N
+Average score:  N.N/5 (over evaluated + applied)
+Velocity:       N apps/week (target: 3/week)
+─────────────────────────────────────────────
+# | Date | Company | Role | Score | Status | PDF
+[table rows]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### `/career pdf <NNN>` — Generate Tailored CV PDF
+
+Invokes `CareerPdfGenerator` skill for report number NNN.
+
+**Flow:**
+1. Read evaluation report (`briefings/career/NNN-*.md`) for Block E personalization plan
+2. Read `~/.artha-local/cv.md` for base CV content
+3. Read `templates/cv-template.html` for layout (Space Grotesk + DM Sans fonts)
+4. Inject JD keywords into CV sections (ATS optimization)
+5. Render HTML → PDF via Python Playwright (`page.pdf()`)
+6. Save to `output/career/cv-{company-slug}-{date}.pdf`
+
+**Prerequisite:** `playwright install chromium` (one-time; preflight check validates Chromium binary).
+
+### `/career scan` — Portal Scan (Phase 2)
+
+Scans configured portals (LinkedIn, Anthropic, OpenAI, Wellfound, YC) for new matching listings.
+Trigger: manual or scheduled via `CareerSearchAgent` (EAR-3). Results appear in `state/career_search.md` Pipeline section.
+
+*Phase 2 — not yet active.*
+
+### `/career prep <company>` — Interview Preparation (Phase 2)
+
+Loads `state/interview_prep.md` Story Bank + role evaluation report; generates role-specific STAR story selection and question preparation. *Phase 2.*
+
+### `/career stories` — Story Bank View (Phase 2)
+
+Displays indexed Story Bank entries from `state/interview_prep.md` and `state/career_search.md`. *Phase 2.*
+
+### `/career start` — Activate Campaign
+
+Idempotency-guarded: checks `campaign.status` before writing. Sets `status: active` and `started: <today>`.
+
+### `/career pause` — Pause Campaign
+
+Sets `campaign.status: paused`. Career briefing block suppressed during briefings while paused.
+
+### `/career done` — Complete Campaign
+
+Lifecycle state machine: `active` → `completed`. Sets `campaign.status: completed`, records `ended` date.
+Re-activation path: `campaign.status: completed` → `/career start` → `status: active` (new `started` date, existing history preserved).
+
+---
+
+### Campaign Profile Summary
+
+State: `state/career_search.md` (sensitivity: high — to be vault-encrypted)
+CV: `~/.artha-local/cv.md` (outside repo)
+Portals: LinkedIn · Anthropic · OpenAI · Wellfound · YC Work at a Startup
+Target tier_a: Anthropic · OpenAI · Scale AI · Databricks · Cohere
+Comp floor: $310,000 total; comp_ceiling_stretch: $550,000
+Goal ref: G-005 ("Land Senior AI role by 2026-Q3")
+

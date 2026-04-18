@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 import sys
 import time
@@ -120,9 +121,19 @@ def _append_run_log(record: dict, artha_dir: Path) -> None:
 
 
 def _detect_parser_format(briefing_path: Path) -> str:
-    """Detect the parser format from briefing content."""
+    """Detect the parser format from briefing content.
+
+    Precedence:
+    1. `source:` frontmatter field (canonical — written by briefing_archive.py)
+    2. ━━ box-drawing glyph (legacy Telegram format, pre-canonical-frontmatter)
+    """
     try:
         raw = briefing_path.read_text(encoding="utf-8", errors="replace")
+        # Check for canonical frontmatter source field first
+        m = re.search(r"^source:\s*(\S+)", raw, re.MULTILINE)
+        if m:
+            return m.group(1)  # "telegram", "vscode", "email", "mcp"
+        # Legacy fallback: Telegram ━━ glyph
         return "telegram" if "\u2501\u2501" in raw else "markdown"
     except OSError:
         return "unknown"

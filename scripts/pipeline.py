@@ -138,6 +138,8 @@ _ALLOWED_MODULES: frozenset[str] = frozenset({
     "connectors.rss_feed",
     # API discovery connector (stdlib-only, no auth — PR-3 AI Radar)
     "connectors.api_discovery",
+    # Reddit connector (added manually)
+    "connectors.reddit",
 })
 
 
@@ -811,7 +813,8 @@ def run_pipeline(
                 print(f"[pipeline]   {cname}: {t:.2f}s", file=sys.stderr)
 
     # Write timing metrics to tmp/pipeline_metrics.json
-    _write_pipeline_metrics(timing, total_records, error_count, validation_errors)
+    _write_pipeline_metrics(timing, total_records, error_count, validation_errors,
+                            session_id=_session_id)
 
     # DEBT-019: Write per-connector freshness timestamps + cross-platform staleness check
     _update_connector_freshness(
@@ -1118,7 +1121,7 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
     try:
         from lib.state_writer import write as _sw_write  # type: ignore[import]
         _sw_write(
-            str(state_path),
+            state_path,
             body_text,
             domain="home",
             source="pipeline",
@@ -1667,11 +1670,13 @@ def _classify_email_lines(lines: list[str], verbose: bool = False) -> list[str]:
 def _write_pipeline_metrics(
     timing: dict[str, float], total_records: int, error_count: int,
     validation_errors: int = 0,
+    session_id: str | None = None,
+    model_version: str | None = None,
 ) -> None:
     """Persist pipeline run metrics to tmp/pipeline_metrics.json."""
     metrics_path = _REPO_ROOT / "tmp" / "pipeline_metrics.json"
     metrics_path.parent.mkdir(exist_ok=True)
-    entry = {
+    entry: dict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "total_records": total_records,
         "error_count": error_count,
@@ -1679,6 +1684,10 @@ def _write_pipeline_metrics(
         "connector_timing": {k: v for k, v in timing.items() if not k.startswith("_")},
         "wall_clock_seconds": timing.get("_total", 0),
     }
+    if session_id is not None:
+        entry["session_id"] = session_id
+    if model_version is not None:
+        entry["model_version"] = model_version
     try:
         # Append to metrics log (keep last 50 runs)
         existing = []
@@ -1982,11 +1991,105 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
     )
+    p.add_argument(
+        "--archive-brief",
+        metavar="PATH",
+        default=None,
+        dest="archive_brief",
+        help=(
+            "Early-exit subcommand: read briefing prose from PATH inside tmp/, "
+            "archive to briefings/YYYY-MM-DD.md, delete PATH, print JSON result. "
+            "Does not load connector machinery."
+        ),
+    )
     return p.parse_args(argv)
+
+
+def _cmd_archive_brief(raw_path: str) -> int:
+    """Early-exit subcommand: read prose from PATH, archive, delete PATH.
+
+    Returns 0 (ok/skipped), 1 (failed), 2 (bad path).
+    Prints JSON result to stdout for LLM verification.
+
+    PATH must be inside tmp/ (strict path traversal guard).
+    """
+    import json as _json  # noqa: PLC0415 — local import to keep early-exit clean
+
+    artha_dir = _REPO_ROOT
+    try:
+        target = (artha_dir / raw_path).resolve()
+        allowed = (artha_dir / "tmp").resolve()
+        if not target.is_relative_to(allowed):
+            raise ValueError(f"path must be inside tmp/ (got {raw_path!r})")
+    except ValueError as exc:
+        print(_json.dumps({"status": "failed", "error": str(exc)}))
+        return 2
+
+    if not target.exists():
+        # Check whether today already has an entry — if so, treat as skipped
+        today = datetime.now().strftime("%Y-%m-%d")  # local time (user-facing date)
+        today_path = artha_dir / "briefings" / f"{today}.md"
+        if today_path.exists():
+            print(_json.dumps({
+                "status": "skipped",
+                "reason": "path_missing_but_today_exists",
+                "path": str(today_path),
+            }))
+            return 0
+        print(_json.dumps({
+            "status": "failed",
+            "error": "tmp/briefing_draft.md not found and no today entry in briefings/",
+        }))
+        return 1
+
+    # Read session_id + model_version from most-recent pipeline_metrics entry (best-effort)
+    session_id: str | None = None
+    model_version: str | None = None
+    metrics_path = artha_dir / "tmp" / "pipeline_metrics.json"
+    try:
+        if metrics_path.exists():
+            import json as _mj  # noqa: PLC0415
+            entries = _mj.loads(metrics_path.read_text(encoding="utf-8"))
+            if isinstance(entries, list) and entries:
+                latest = entries[0]
+                # Verify timestamp is within 4 hours
+                ts_str = latest.get("timestamp", "")
+                if ts_str:
+                    from datetime import timezone as _tz  # noqa: PLC0415
+                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    age_h = (datetime.now(_tz.utc) - ts).total_seconds() / 3600
+                    if age_h <= 4:
+                        session_id = latest.get("session_id")
+                        model_version = latest.get("model_version")
+    except Exception:  # noqa: BLE001
+        pass  # Best-effort — save() will generate a fallback session_id
+
+    try:
+        from lib.briefing_archive import save as _save  # noqa: PLC0415
+        text = target.read_text(encoding="utf-8")
+        result = _save(
+            text,
+            source="vscode",
+            session_id=session_id,
+            model_version=model_version,
+        )
+        # Always delete the draft on success (save() also tries, belt-and-suspenders)
+        if result["status"] in ("ok", "skipped"):
+            target.unlink(missing_ok=True)
+        print(_json.dumps(result))
+        return 0 if result["status"] in ("ok", "skipped") else 1
+    except Exception as exc:  # noqa: BLE001
+        print(_json.dumps({"status": "failed", "error": str(exc)}))
+        return 1
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+
+    # ── Early-exit: --archive-brief (no connector machinery loaded) ───────
+    if args.archive_brief is not None:
+        return _cmd_archive_brief(args.archive_brief)
+
     cfg = load_connectors_config()
 
     if args.list_connectors:

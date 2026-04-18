@@ -240,34 +240,19 @@ def _markdown_to_html(markdown_body: str) -> str:
 
 def archive_briefing(body_text: str, subject: str) -> dict:
     """
-    Save briefing body to briefings/YYYY-MM-DD.md.
+    Save briefing body to briefings/YYYY-MM-DD.md via canonical archive helper.
     Returns {"archived": True, "path": "..."} or {"archived": False, "error": "..."}
     """
     try:
-        os.makedirs(BRIEFINGS_DIR, exist_ok=True)
-        today = datetime.now().strftime("%Y-%m-%d")
-        archive_path = os.path.join(BRIEFINGS_DIR, f"{today}.md")
-
-        # Build a clean archive file with metadata header
-        header = (
-            f"---\n"
-            f"date: {today}\n"
-            f"subject: {subject}\n"
-            f"archived: {datetime.now().isoformat()}\n"
-            f"sensitivity: standard\n"
-            f"---\n\n"
-        )
-
-        # If file already exists today (e.g. second catch-up), append with separator
-        if os.path.exists(archive_path):
-            with open(archive_path, "a") as f:
-                f.write(f"\n\n---\n# Second Run\n\n{body_text}\n")
-        else:
-            with open(archive_path, "w") as f:
-                f.write(header + body_text + "\n")
-
-        return {"archived": True, "path": archive_path}
-    except OSError as exc:
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from lib.briefing_archive import save as _archive_save  # noqa: PLC0415
+        result = _archive_save(body_text, source="email", subject=subject)
+        if result["status"] in ("ok", "skipped"):
+            return {"archived": True, "path": result.get("path", "")}
+        return {"archived": False, "error": result.get("error", "unknown")}
+    except Exception as exc:  # noqa: BLE001
         return {"archived": False, "error": str(exc)}
 
 
@@ -277,7 +262,7 @@ def send_email(
     body_text: str,
     body_html: Optional[str] = None,
     dry_run: bool = False,
-    archive: bool = False,
+    archive: bool = True,
 ) -> dict:
     """
     Send an email via Gmail API.
@@ -413,8 +398,10 @@ def main() -> None:
     parser.add_argument("--html",      default=None, help="HTML body (overrides auto-HTML)")
     parser.add_argument("--dry-run",  action="store_true",
                         help="Validate auth and log, but do NOT actually send the email")
-    parser.add_argument("--archive",  action="store_true",
-                        help="Archive briefing body to briefings/YYYY-MM-DD.md after sending")
+    parser.add_argument("--archive",  action="store_true", default=True,
+                        help="Archive briefing body to briefings/YYYY-MM-DD.md after sending (default: on)")
+    parser.add_argument("--no-archive", action="store_false", dest="archive",
+                        help="Suppress archival to briefings/ (overrides --archive default)")
     parser.add_argument("--archive-only", action="store_true",
                         help="Save body to briefings/YYYY-MM-DD.md without sending email (no --to required)")
     parser.add_argument("--health",   action="store_true",
