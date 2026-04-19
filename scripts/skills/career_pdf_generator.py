@@ -26,6 +26,7 @@ Ref: specs/career-ops.md §9.1, FR-CS-3, §13
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -58,7 +59,12 @@ log = logging.getLogger(__name__)
 
 _STATE_FILE = _REPO_ROOT / "state" / "career_search.md"
 _TEMPLATE_FILE = _REPO_ROOT / "templates" / "cv-template.html"
+_TEMPLATE_FILES: dict[str, Path] = {
+    "ats": _REPO_ROOT / "templates" / "cv-template.html",
+    "visual": _REPO_ROOT / "templates" / "cv-template-visual.html",
+}
 _CV_CANDIDATES: list[Path] = [
+    Path.home() / ".artha-local" / "cv-short.md",  # concise 2-page version (preferred)
     Path.home() / ".artha-local" / "cv.md",
     _REPO_ROOT / "cv.md",
 ]
@@ -104,9 +110,14 @@ class CareerPdfGenerator(BaseSkill):
         name: str = "career_pdf_generator",
         priority: str = "P1",
         report_number: Optional[str] = None,
+        variant: str = "ats",
     ) -> None:
         super().__init__(name=name, priority=priority)
         self.report_number = report_number
+        # "ats" = single-column ATS-safe (default); "visual" = two-column for LinkedIn/portfolio
+        if variant not in _TEMPLATE_FILES:
+            raise ValueError(f"variant must be one of {list(_TEMPLATE_FILES)}; got {variant!r}")
+        self.variant = variant
         self._pdf_path: Optional[Path] = None
         self._html_fallback_path: Optional[Path] = None
         self._trace = CareerTrace()
@@ -180,17 +191,18 @@ class CareerPdfGenerator(BaseSkill):
                 "error": f"Evaluation report {self.report_number} not found in briefings/career/",
             }
 
-        # Template
-        if not _TEMPLATE_FILE.exists():
+        # Template (variant-aware)
+        template_file = _TEMPLATE_FILES[self.variant]
+        if not template_file.exists():
             return {
                 "status": "failed",
-                "error": f"CV template missing: {_TEMPLATE_FILE}. Check templates/cv-template.html.",
+                "error": f"CV template missing: {template_file}.",
             }
 
         # Read all content
         cv_text = cv_path.read_text(encoding="utf-8")
         report_text = report_path.read_text(encoding="utf-8")
-        template_html = _TEMPLATE_FILE.read_text(encoding="utf-8")
+        template_html = template_file.read_text(encoding="utf-8")
 
         # Optional: article-digest.md for additional proof points
         article_digest = ""
@@ -251,14 +263,26 @@ class CareerPdfGenerator(BaseSkill):
         # 7. Apply Block E CV changes (deterministic string replacements + annotations)
         cv_final = _apply_personalization(cv_with_keywords, personalization)
 
-        # 8. Convert CV markdown → HTML
-        cv_html = _md_to_html(cv_final)
-
-        # 9. Inject into template
+        # 8. Render body — branch on variant
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         slug = _slug(company)
         rendered_html = template_html
-        rendered_html = rendered_html.replace("{{CV_CONTENT}}", cv_html)
+
+        if self.variant == "visual":
+            fragments = _render_visual_fragments(cv_final)
+            rendered_html = rendered_html.replace("{{NAME_FIRST}}", fragments["name_first"])
+            rendered_html = rendered_html.replace("{{NAME_LAST}}", fragments["name_last"])
+            rendered_html = rendered_html.replace("{{TAGLINE}}", fragments["tagline"])
+            rendered_html = rendered_html.replace("{{CONTACT_HTML}}", fragments["contact_html"])
+            rendered_html = rendered_html.replace("{{EDUCATION_HTML}}", fragments["education_html"])
+            rendered_html = rendered_html.replace("{{SKILLS_HTML}}", fragments["skills_html"])
+            rendered_html = rendered_html.replace("{{MAIN_HTML}}", fragments["main_html"])
+        else:
+            cv_html = _md_to_html(cv_final)
+            cv_html = _format_role_headers(cv_html)
+            rendered_html = rendered_html.replace("{{CV_CONTENT}}", cv_html)
+
+        # 9. Fill common metadata placeholders
         rendered_html = rendered_html.replace("{{COMPANY}}", company)
         rendered_html = rendered_html.replace("{{ROLE}}", role)
         rendered_html = rendered_html.replace("{{SCORE}}", str(score))
@@ -272,8 +296,50 @@ class CareerPdfGenerator(BaseSkill):
 
         # 11. Render PDF via Playwright
         _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        pdf_filename = f"cv-{slug}-{date_str}.pdf"
+        variant_suffix = "-visual" if self.variant == "visual" else ""
+        pdf_filename = f"cv-{slug}-{date_str}{variant_suffix}.pdf"
         pdf_path = _OUTPUT_DIR / pdf_filename
+
+        # 11a. Idempotency check — skip regen if inputs unchanged.
+        # Hash spans the fully-rendered HTML (post-normalize, post-keyword-inject,
+        # post-template-merge) so any material change busts the cache. Sidecar
+        # lives next to the PDF as `{filename}.inputhash`. The date tag in
+        # pdf_filename means one PDF per report per day — same-day reruns hit
+        # cache; next-day regenerates under the new filename. This addresses
+        # the 10× same-day regeneration pattern observed 2026-04-18.
+        input_hash = hashlib.sha256(rendered_html.encode("utf-8")).hexdigest()[:32]
+        hash_sidecar = pdf_path.with_suffix(pdf_path.suffix + ".inputhash")
+        if pdf_path.exists() and hash_sidecar.exists():
+            try:
+                if hash_sidecar.read_text(encoding="utf-8").strip() == input_hash:
+                    log.info(
+                        "career_pdf_generator: input unchanged — reusing existing PDF at %s",
+                        pdf_path,
+                    )
+                    self._pdf_path = pdf_path
+                    self._trace.write_pdf_event(
+                        op="cached",
+                        report_number=self.report_number,
+                        output_path=str(pdf_path),
+                    )
+                    try:
+                        _TMP_RENDER.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    return {
+                        "status": "success",
+                        "pdf_path": str(pdf_path),
+                        "html_fallback_path": None,
+                        "company": company,
+                        "role": role,
+                        "score": score,
+                        "keywords_injected": len(keywords),
+                        "template_version": _TEMPLATE_VERSION,
+                        "cached": True,
+                        "error": None,
+                    }
+            except Exception as e:
+                log.warning("career_pdf_generator: sidecar hash read failed (%s) — regenerating", e)
 
         pdf_result = self._render_pdf(_TMP_RENDER, pdf_path)
 
@@ -285,6 +351,13 @@ class CareerPdfGenerator(BaseSkill):
 
         self._pdf_path = pdf_result.get("pdf_path")
         self._html_fallback_path = pdf_result.get("html_path")
+
+        # 12a. Persist hash sidecar on successful render.
+        if pdf_result.get("success") and self._pdf_path:
+            try:
+                hash_sidecar.write_text(input_hash, encoding="utf-8")
+            except Exception as e:
+                log.warning("career_pdf_generator: failed to write hash sidecar (non-fatal): %s", e)
 
         # 13. Trace event
         event_op = "generated" if pdf_result.get("success") else "failed"
@@ -359,11 +432,17 @@ class CareerPdfGenerator(BaseSkill):
                     page = context.new_page()
                     page.goto(f"file://{html_path.resolve()}")
                     page.wait_for_load_state("networkidle")
+                    # Visual variant: zero PDF margin so dark sidebar bleeds to edge.
+                    # ATS variant: tight margins around the single-column body.
+                    if self.variant == "visual":
+                        pdf_margin = {"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"}
+                    else:
+                        pdf_margin = {"top": "0.22in", "bottom": "0.22in", "left": "0.35in", "right": "0.35in"}
                     page.pdf(
                         path=str(pdf_path),
                         format="Letter",
                         print_background=True,
-                        margin={"top": "0.5in", "bottom": "0.5in", "left": "0.6in", "right": "0.6in"},
+                        margin=pdf_margin,
                     )
                     browser.close()
                 return {"success": True, "pdf_path": pdf_path}
@@ -545,11 +624,15 @@ def _md_to_html(md_text: str) -> str:
     """Convert Markdown CV to HTML.
 
     Uses `markdown` package if available; falls back to basic conversion.
-    HTML comments (ATS annotations) are preserved.
+    HTML comments are stripped before conversion — they are ATS annotations
+    for human review only and must never appear in the rendered PDF.
     """
+    # Strip HTML comments before any conversion — prevents annotation bleed
+    import re as _re
+    md_text = _re.sub(r"<!--.*?-->", "", md_text, flags=_re.DOTALL)
+
     try:
         import markdown  # type: ignore[import]
-        # Preserve HTML comments through markdown processing
         html = markdown.markdown(
             md_text,
             extensions=["tables", "fenced_code"],
@@ -594,6 +677,45 @@ def _basic_md_to_html(md_text: str) -> str:
     return "\n".join(html_lines)
 
 
+def _format_role_headers(html: str) -> str:
+    """Convert <h3>Role | Company | Date</h3> into semantic role-block divs.
+
+    Renders company-first (the brand is the primary scan target for senior roles):
+        Microsoft Corporation                     Aug 2024 – Present
+        Senior Technical Program Manager, Azure Storage
+
+    Falls back to original <h3> if the pipe-delimited pattern isn't matched.
+    """
+    def _replace(m: re.Match) -> str:
+        content = m.group(1).strip()
+        parts = [p.strip() for p in content.split(" | ")]
+        if len(parts) == 3:
+            role, company, date = parts
+            return (
+                '<div class="role-block">'
+                '<div class="role-meta">'
+                f'<span class="company">{company}</span>'
+                f'<span class="role-date">{date}</span>'
+                "</div>"
+                f'<div class="role-title">{role}</div>'
+                "</div>"
+            )
+        if len(parts) == 2:
+            # No company — treat first part as company/role combined
+            role, date = parts
+            return (
+                '<div class="role-block">'
+                '<div class="role-meta">'
+                f'<span class="company">{role}</span>'
+                f'<span class="role-date">{date}</span>'
+                "</div>"
+                "</div>"
+            )
+        return m.group(0)  # unrecognised — leave as h3
+
+    return re.sub(r"<h3>(.*?)</h3>", _replace, html, flags=re.DOTALL)
+
+
 def _slug(text: str) -> str:
     """Convert company name to URL-safe slug."""
     s = text.lower()
@@ -615,3 +737,162 @@ def _is_git_tracked(path: Path) -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+# ---------------------------------------------------------------------------
+# Visual variant — two-column sidebar/main layout for LinkedIn/portfolio.
+# Not ATS-safe. Parses cv-short.md sections and routes them to template slots.
+# ---------------------------------------------------------------------------
+
+def _render_visual_fragments(cv_md: str) -> Dict[str, str]:
+    """Parse cv-short.md and produce HTML fragments for the visual template."""
+    name, contact, sections = _parse_cv_sections(cv_md)
+
+    first, last = _split_name(name)
+    summary = sections.get("Summary", "")
+    tagline = _extract_tagline(summary)
+
+    main_parts: list[str] = []
+    if summary:
+        main_parts.append("<h2>Professional Summary</h2>")
+        main_parts.append(_md_to_html(summary))
+    # Core Competencies intentionally suppressed in visual — Skills sidebar covers keywords.
+    if sections.get("Professional Experience"):
+        main_parts.append("<h2>Experience</h2>")
+        exp_html = _md_to_html(sections["Professional Experience"])
+        exp_html = _format_role_headers(exp_html)
+        main_parts.append(exp_html)
+    if sections.get("Projects"):
+        main_parts.append("<h2>Projects</h2>")
+        proj_html = _md_to_html(sections["Projects"])
+        proj_html = _format_role_headers(proj_html)
+        main_parts.append(proj_html)
+
+    return {
+        "name_first": first.upper(),
+        "name_last": last.upper(),
+        "tagline": tagline,
+        "contact_html": _render_contact_html(contact),
+        "education_html": _render_education_html(sections.get("Education", "")),
+        "skills_html": _render_skills_html(sections.get("Skills", "")),
+        "main_html": "\n".join(main_parts),
+    }
+
+
+def _parse_cv_sections(md: str) -> tuple[str, str, Dict[str, str]]:
+    """Split cv-short.md into (name, contact_line, {h2_title: body})."""
+    name = ""
+    contact = ""
+    sections: Dict[str, str] = {}
+    current: Optional[str] = None
+    buf: list[str] = []
+    state = "header"
+
+    for line in md.splitlines():
+        if state == "header" and line.startswith("# "):
+            name = line[2:].strip()
+            continue
+        if state == "header" and line.strip() and not line.startswith("#"):
+            contact = line.strip()
+            state = "body"
+            continue
+        if line.startswith("## "):
+            if current is not None:
+                sections[current] = "\n".join(buf).strip()
+            current = line[3:].strip()
+            buf = []
+            continue
+        if current is not None:
+            buf.append(line)
+
+    if current is not None:
+        sections[current] = "\n".join(buf).strip()
+    return name, contact, sections
+
+
+def _split_name(name: str) -> tuple[str, str]:
+    """Split name on last whitespace into (first/middle, last)."""
+    parts = name.strip().split()
+    if len(parts) >= 2:
+        return " ".join(parts[:-1]), parts[-1]
+    return name, ""
+
+
+def _extract_tagline(summary: str) -> str:
+    """Extract role tagline from first line of summary if it looks like a title."""
+    first_line = summary.strip().split("\n")[0].strip()
+    # Only match if line starts with a capitalized title (not a number, bold marker, etc.)
+    m = re.match(r"^([A-Z][a-zA-Z\s,]+?)\s*[—–·.]", first_line)
+    if m:
+        return m.group(1).strip()
+    return "Technical Program Manager"
+
+
+def _render_contact_html(contact_line: str) -> str:
+    """Render 'A · B · C' contact line as icon-prefixed divs."""
+    parts = [p.strip() for p in re.split(r"\s*·\s*", contact_line) if p.strip()]
+    out: list[str] = []
+    for p in parts:
+        if "@" in p:
+            icon = "\U0001F4E7"  # 📧 email
+        elif "linkedin" in p.lower():
+            icon = "\U0001F517"  # 🔗 linkedin
+        elif re.search(r"\.(net|com|io|org|ai|dev|co|me)(/|$)", p.lower()):
+            icon = "\U0001F310"  # 🌐 web
+        else:
+            icon = "\U0001F4CD"  # 📍 location
+        out.append(
+            f'<div class="contact-line"><span class="contact-icon">{icon}</span>{p}</div>'
+        )
+    return "\n".join(out)
+
+
+def _render_education_html(edu_md: str) -> str:
+    """Render education bullets as styled degree/institution/year blocks.
+
+    Expected bullet format: `- **Degree** · Institution · Year [· extras]`
+    """
+    out: list[str] = []
+    for line in edu_md.splitlines():
+        line = line.strip()
+        if not line.startswith("- "):
+            continue
+        content = line[2:].strip()
+        parts = [p.strip() for p in re.split(r"\s*·\s*", content) if p.strip()]
+        if not parts:
+            continue
+        degree = re.sub(r"\*\*(.+?)\*\*", r"\1", parts[0])
+        institution = parts[1] if len(parts) > 1 else ""
+        year = parts[2] if len(parts) > 2 else ""
+        extras = parts[3:] if len(parts) > 3 else []
+        year_line = year
+        if extras:
+            year_line = f"{year} · {' · '.join(extras)}" if year else " · ".join(extras)
+        out.append(
+            '<div class="edu-entry">'
+            f'<span class="edu-degree">{degree}</span>'
+            f'<span class="edu-institution">{institution}</span>'
+            f'<span class="edu-year">{year_line}</span>'
+            "</div>"
+        )
+    return "\n".join(out)
+
+
+def _render_skills_html(skills_md: str) -> str:
+    """Render '**Label:** value' paragraph blocks as grouped sidebar entries."""
+    # Match each bolded label + its paragraph value up to the next bolded label or end.
+    pattern = re.compile(
+        r"\*\*([^*]+?):\*\*\s*(.+?)(?=\n\s*\*\*[^*]+?:\*\*|\Z)",
+        re.DOTALL,
+    )
+    out: list[str] = []
+    for m in pattern.finditer(skills_md):
+        label = m.group(1).strip()
+        value = re.sub(r"\s+", " ", m.group(2)).strip()
+        out.append(
+            '<div class="skill-group">'
+            f'<span class="skill-label">{label}</span>'
+            f'<div class="skill-value">{value}</div>'
+            "</div>"
+        )
+    return "\n".join(out)
