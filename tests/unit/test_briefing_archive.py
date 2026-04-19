@@ -358,3 +358,67 @@ class TestFlockConcurrency:
 
         # .lock file must not persist after the context manager exits
         assert not lock_path.exists(), f".lock file was not cleaned up: {lock_path}"
+
+
+# ---------------------------------------------------------------------------
+# rebrief.md §3.1a — runtime param written to frontmatter
+# ---------------------------------------------------------------------------
+
+class TestSaveRuntimeField:
+    def test_runtime_added_to_frontmatter(self, patched_ba, tmp_path):
+        """save() with runtime='gemini' writes runtime: gemini to frontmatter."""
+        result = _ba.save(
+            "Gemini catch-up content.",
+            source="interactive_cli",
+            runtime="gemini",
+        )
+        assert result["status"] == "ok"
+        today = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+        content = (tmp_path / "briefings" / f"{today}.md").read_text()
+        assert "runtime: gemini" in content
+        assert "source: interactive_cli" in content
+
+    def test_runtime_omitted_when_none(self, patched_ba, tmp_path):
+        """save() without runtime= does not write runtime: to frontmatter (backward compat)."""
+        _ba.save("Telegram briefing content.", source="telegram")
+        today = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+        content = (tmp_path / "briefings" / f"{today}.md").read_text()
+        assert "runtime:" not in content
+
+    def test_runtime_variants(self, patched_ba, tmp_path):
+        """All valid runtime values are stored verbatim."""
+        for runtime in ("vscode", "claude", "copilot"):
+            _ba.save(f"Briefing from {runtime}", source="interactive_cli", runtime=runtime)
+            today = __import__("datetime").datetime.now().strftime("%Y-%m-%d")
+            content = (tmp_path / "briefings" / f"{today}.md").read_text()
+            assert f"runtime: {runtime}" in content
+
+
+# ---------------------------------------------------------------------------
+# rebrief.md §3.1b — _run_injection_check fail-closed
+# ---------------------------------------------------------------------------
+
+class TestInjectionCheckFailClosed:
+    def test_raises_on_import_error(self, monkeypatch):
+        """_run_injection_check() raises RuntimeError when detector module is missing."""
+        import types
+        monkeypatch.setitem(sys.modules, "lib.injection_detector", None)
+
+        with pytest.raises(RuntimeError, match="Injection detector unavailable"):
+            _ba._run_injection_check("any text")
+
+    def test_raises_on_scan_exception(self, monkeypatch):
+        """_run_injection_check() raises RuntimeError when detector.scan() raises."""
+        import types
+
+        class _BrokenDetector:
+            def scan(self, _text: str):
+                raise ValueError("scan exploded")
+
+        fake_mod = types.ModuleType("lib.injection_detector")
+        fake_mod.InjectionDetector = _BrokenDetector  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "lib.injection_detector", fake_mod)
+
+        with pytest.raises(RuntimeError, match="Injection check failed"):
+            _ba._run_injection_check("any text")
+

@@ -275,6 +275,25 @@ For each recommended action from domain processing:
 - All write actions require explicit human approval before execution
 - Actions: send_email, add_calendar_event, todo_sync, update_state
 
+### Step 13.5 — Stage briefing for archival
+
+**SKIP in read-only mode** → log `⏭️ Step 13.5 skipped — read-only mode`
+
+Write the complete briefing text to `tmp/briefing_incoming_<runtime>.md`
+where `<runtime>` is your surface identifier:
+
+| Surface | `<runtime>` value |
+|---|---|
+| VS Code / Copilot | `vscode` |
+| Gemini CLI | `gemini` |
+| Claude Code | `claude` |
+| Copilot CLI | `copilot` |
+
+Output `💾 Briefing staged.` after the write succeeds.
+The pipeline will ingest this file on the next run via `_ingest_pending_briefs()`.
+
+**The `brief` command is only complete when `💾 Briefing staged.` is output.**
+
 ### Step 14 — Email briefing
 
 **SKIP in read-only mode** → log `⏭️ Step 14 skipped — read-only mode`

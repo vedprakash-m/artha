@@ -186,14 +186,16 @@ def check_briefings_archive_coverage() -> CheckResult:
 
     (b) VS Code source check — if today's briefing file exists AND at least one
         tmp/session_history_*.md file was modified today (evidence of a VS Code catch-up
-        session), warn if the briefing file has no ``source: vscode`` entry.
+        session), warn if the briefing file has no ``source: vscode`` OR ``runtime: vscode``
+        entry.  (VS Code sessions now write ``source: interactive_cli, runtime: vscode``
+        via the staging pickup pattern.)
         This detects the drift scenario where a catch-up ran but the LLM emitted
-        ``💾 Briefing archived.`` without actually running ``--archive-brief``.
+        ``💾 Briefing staged.`` without actually writing the staging file.
 
     Both sub-checks are P1 (non-blocking) — they surface a warning in the preflight
     report and log to state/audit.md but never halt catch-up.
 
-    Ref: specs/brief.md §5 Step 7, §6 R1 Mitigation D, §6 R9
+    Ref: specs/brief.md §5 Step 7, §6 R1 Mitigation D, §6 R9; specs/rebrief.md §2
     """
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
@@ -208,8 +210,8 @@ def check_briefings_archive_coverage() -> CheckResult:
         )
         return CheckResult(
             "briefing archive coverage", "P1", False,
-            f"No briefing archived for today ({today}) — did the LLM skip --archive-brief?",
-            fix_hint="Run: python scripts/pipeline.py --archive-brief tmp/briefing_draft.md",
+            f"No briefing archived for today ({today}) — did the LLM skip staging to tmp/briefing_incoming_<runtime>.md?",
+            fix_hint="Write briefing to tmp/briefing_incoming_vscode.md, then run: python scripts/pipeline.py (ingests on startup)",
         )
 
     # ── (b) VS Code source check ────────────────────────────────────────────
@@ -223,7 +225,11 @@ def check_briefings_archive_coverage() -> CheckResult:
         if session_today:
             try:
                 content = today_path.read_text(encoding="utf-8")
-                has_vscode = bool(re.search(r"^source:\s*vscode\s*$", content, re.MULTILINE))
+                # Accept either legacy source: vscode OR new staging-pattern runtime: vscode
+                has_vscode = bool(
+                    re.search(r"^source:\s*vscode\s*$", content, re.MULTILINE)
+                    or re.search(r"^runtime:\s*vscode\s*$", content, re.MULTILINE)
+                )
             except OSError:
                 has_vscode = False
             if not has_vscode:
@@ -234,9 +240,9 @@ def check_briefings_archive_coverage() -> CheckResult:
                 return CheckResult(
                     "briefing archive coverage", "P1", False,
                     f"VS Code session detected today ({len(session_today)} session file(s)) "
-                    f"but no 'source: vscode' entry in briefings/{today}.md — "
-                    f"LLM may have emitted 💾 token without running --archive-brief",
-                    fix_hint="Run: python scripts/pipeline.py --archive-brief tmp/briefing_draft.md",
+                    f"but no 'source: vscode' or 'runtime: vscode' entry in briefings/{today}.md — "
+                    f"LLM may have emitted \U0001f4be token without writing the staging file",
+                    fix_hint="Write briefing to tmp/briefing_incoming_vscode.md, then run: python scripts/pipeline.py",
                 )
 
     return CheckResult(
