@@ -1991,104 +1991,70 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
     )
-    p.add_argument(
-        "--archive-brief",
-        metavar="PATH",
-        default=None,
-        dest="archive_brief",
-        help=(
-            "Early-exit subcommand: read briefing prose from PATH inside tmp/, "
-            "archive to briefings/YYYY-MM-DD.md, delete PATH, print JSON result. "
-            "Does not load connector machinery."
-        ),
-    )
     return p.parse_args(argv)
 
 
-def _cmd_archive_brief(raw_path: str) -> int:
-    """Early-exit subcommand: read prose from PATH, archive, delete PATH.
+def _ingest_pending_briefs() -> None:
+    """Ingest any staged briefings from interactive surfaces.
 
-    Returns 0 (ok/skipped), 1 (failed), 2 (bad path).
-    Prints JSON result to stdout for LLM verification.
+    Scans tmp/briefing_incoming_<runtime>.md files written by LLM sessions
+    (VS Code, Gemini CLI, Claude Code, Copilot CLI) and archives them into
+    briefings/ via briefing_archive.save() with all safety gates intact.
 
-    PATH must be inside tmp/ (strict path traversal guard).
+    Called at the top of main() before connector machinery loads, so ingestion
+    runs on every pipeline startup regardless of --dry-run or other flags.
+    Files that fail ingestion are renamed to .failed for manual inspection.
     """
-    import json as _json  # noqa: PLC0415 — local import to keep early-exit clean
+    from lib import briefing_archive  # noqa: PLC0415
 
-    artha_dir = _REPO_ROOT
     try:
-        target = (artha_dir / raw_path).resolve()
-        allowed = (artha_dir / "tmp").resolve()
-        if not target.is_relative_to(allowed):
-            raise ValueError(f"path must be inside tmp/ (got {raw_path!r})")
-    except ValueError as exc:
-        print(_json.dumps({"status": "failed", "error": str(exc)}))
-        return 2
-
-    if not target.exists():
-        # Check whether today already has an entry — if so, treat as skipped
-        today = datetime.now().strftime("%Y-%m-%d")  # local time (user-facing date)
-        today_path = artha_dir / "briefings" / f"{today}.md"
-        if today_path.exists():
-            print(_json.dumps({
-                "status": "skipped",
-                "reason": "path_missing_but_today_exists",
-                "path": str(today_path),
-            }))
-            return 0
-        print(_json.dumps({
-            "status": "failed",
-            "error": "tmp/briefing_draft.md not found and no today entry in briefings/",
-        }))
-        return 1
-
-    # Read session_id + model_version from most-recent pipeline_metrics entry (best-effort)
-    session_id: str | None = None
-    model_version: str | None = None
-    metrics_path = artha_dir / "tmp" / "pipeline_metrics.json"
-    try:
-        if metrics_path.exists():
-            import json as _mj  # noqa: PLC0415
-            entries = _mj.loads(metrics_path.read_text(encoding="utf-8"))
-            if isinstance(entries, list) and entries:
-                latest = entries[0]
-                # Verify timestamp is within 4 hours
-                ts_str = latest.get("timestamp", "")
-                if ts_str:
-                    from datetime import timezone as _tz  # noqa: PLC0415
-                    ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                    age_h = (datetime.now(_tz.utc) - ts).total_seconds() / 3600
-                    if age_h <= 4:
-                        session_id = latest.get("session_id")
-                        model_version = latest.get("model_version")
+        from lib.telemetry import emit as _emit_tel  # type: ignore[import]  # noqa: PLC0415
     except Exception:  # noqa: BLE001
-        pass  # Best-effort — save() will generate a fallback session_id
+        def _emit_tel(*_a: object, **_kw: object) -> None:  # type: ignore[misc]
+            pass
 
-    try:
-        from lib.briefing_archive import save as _save  # noqa: PLC0415
-        text = target.read_text(encoding="utf-8")
-        result = _save(
-            text,
-            source="vscode",
-            session_id=session_id,
-            model_version=model_version,
-        )
-        # Always delete the draft on success (save() also tries, belt-and-suspenders)
-        if result["status"] in ("ok", "skipped"):
-            target.unlink(missing_ok=True)
-        print(_json.dumps(result))
-        return 0 if result["status"] in ("ok", "skipped") else 1
-    except Exception as exc:  # noqa: BLE001
-        print(_json.dumps({"status": "failed", "error": str(exc)}))
-        return 1
+    tmp_dir = _REPO_ROOT / "tmp"
+    if not tmp_dir.exists():
+        return
+
+    for path in sorted(tmp_dir.glob("briefing_incoming_*.md")):
+        runtime = path.stem.replace("briefing_incoming_", "")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue  # Vanished between glob and read — skip silently
+        _emit_tel("briefing.archive_attempt", extra={"runtime": runtime, "bytes": len(text)})
+        try:
+            result = briefing_archive.save(
+                text,
+                source="interactive_cli",
+                runtime=runtime,
+                session_id=None,  # auto-generated by save() via _generate_session_id_fallback()
+            )
+            if result["status"] in ("ok", "skipped"):
+                path.unlink(missing_ok=True)
+                _emit_tel(f"briefing.archive_{result['status']}", extra={"runtime": runtime})
+            else:
+                path.rename(path.with_suffix(".failed"))
+                _emit_tel(
+                    "briefing.archive_failed",
+                    extra={"runtime": runtime, "error": result.get("error")},
+                )
+        except Exception as exc:  # noqa: BLE001
+            try:
+                path.rename(path.with_suffix(".failed"))
+            except OSError:
+                pass
+            _emit_tel(
+                "briefing.archive_failed",
+                extra={"runtime": runtime, "error": str(exc)},
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    # ── Early-exit: --archive-brief (no connector machinery loaded) ───────
-    if args.archive_brief is not None:
-        return _cmd_archive_brief(args.archive_brief)
+    _ingest_pending_briefs()
 
     cfg = load_connectors_config()
 

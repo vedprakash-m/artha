@@ -1,10 +1,10 @@
 """scripts/lib/briefing_archive.py — Canonical briefing archive helper.
 
 Single source of truth for writing briefings to briefings/YYYY-MM-DD.md
-across all surfaces: Telegram, VS Code, Gmail, MCP.
+across all surfaces: Telegram, VS Code, Gemini CLI, Claude Code, Gmail, MCP.
 
 Public API:
-    save(text, *, source, subject, session_id, briefing_format, model_version) -> dict
+    save(text, *, source, runtime, subject, session_id, briefing_format, model_version) -> dict
 
 Idempotency: SHA-256 hash of *normalized* text is checked before writing.
 Normalization: strip trailing whitespace per line, normalize line endings to \\n,
@@ -213,14 +213,21 @@ def _generate_session_id_fallback() -> str:
 # ---------------------------------------------------------------------------
 
 def _run_injection_check(text: str) -> bool:
-    """Return True if injection detected. Binary gate: any signal → True."""
+    """Return True if injection detected. Binary gate: any signal → True.
+
+    Fail-closed: raises RuntimeError if the detector cannot be imported or
+    raises an unexpected exception. This ensures injection-check failures
+    block the write rather than silently pass potentially injected content.
+    """
     try:
         sys.path.insert(0, str(_ARTHA_DIR / "scripts"))
         from lib.injection_detector import InjectionDetector  # noqa: PLC0415
         result = InjectionDetector().scan(text)
         return result.injection_detected
-    except Exception:  # noqa: BLE001
-        return False  # Fail open: don't block on detector import failure
+    except ImportError as exc:
+        raise RuntimeError(f"Injection detector unavailable: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Injection check failed: {exc}") from exc
 
 
 def _run_pii_warning(text: str, source: str) -> None:
@@ -251,6 +258,7 @@ def save(
     text: str,
     *,
     source: str,
+    runtime: Optional[str] = None,
     subject: Optional[str] = None,
     session_id: Optional[str] = None,
     briefing_format: Optional[str] = None,
@@ -265,7 +273,10 @@ def save(
 
     Args:
         text:             Full briefing prose (required).
-        source:           "telegram" | "vscode" | "email" | "mcp"
+        source:           "telegram" | "vscode" | "email" | "mcp" | "interactive_cli"
+        runtime:          LLM client identity: "vscode" | "gemini" | "claude" | "copilot".
+                          Stamped by pipeline code from filename — not self-reported by
+                          the model. Optional; omitted from frontmatter if None.
         subject:          Optional subject line for frontmatter.
         session_id:       Pipeline session ID; auto-generated if None.
         briefing_format:  "flash" | "standard" | "deep" (optional).
@@ -326,6 +337,8 @@ def save(
                 "sensitivity: standard",
                 f"session_id: {session_id}",
             ]
+            if runtime is not None:
+                fm_lines.append(f"runtime: {runtime}")
             if briefing_format is not None:
                 fm_lines.append(f"briefing_format: {briefing_format}")
             if model_version is not None:

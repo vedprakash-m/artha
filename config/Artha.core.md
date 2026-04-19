@@ -1068,17 +1068,7 @@ WhatsApp messages: use URL scheme → `open "https://wa.me/[PHONE]?text=[ENCODED
 
 ### Step 14 — Final archive (always required)
 
-Write the complete briefing to `tmp/briefing_draft.md`, then run:
-
-```bash
-python scripts/pipeline.py --archive-brief tmp/briefing_draft.md
-```
-
-The command prints JSON: `{"status": "ok", "path": "briefings/YYYY-MM-DD.md", "bytes_written": N}`.
-Confirm `"status": "ok"` before proceeding. If status is `"failed"`, log the error and notify the user.
-
-**The `brief` command is only complete when this command returns `"status": "ok"` or `"skipped"`.**
-Output the confirmation token `💾 Briefing archived.` after a successful archive (`"status": "ok"`), or `💾 Briefing skipped (duplicate).` if `"status": "skipped"`. Do not output this token if the command fails.
+**Archive:** See Step 13.5 in `config/workflow/finalize.md`.
 
 **Then, if `briefing_email` is configured in `config/settings.md`, also send via email:**
 ```bash
@@ -1527,7 +1517,27 @@ When the user invokes any slash command, read `config/commands.md` for the full 
 reference and execute accordingly. Available commands: `/catch-up`, `/status`, `/goals`,
 `/domain`, `/domains`, `/cost`, `/health`, `/items`, `/bootstrap`, `/dashboard`, `/scorecard`,
 `/relationships`, `/decisions`, `/scenarios`, `/diff`, `/privacy`, `/teach`, `/power`,
-`/pr`, `/stage`, `/radar`.
+`/pr`, `/stage`, `/radar`, `/career`.
+
+**`/career` — Career Search Intelligence (FR-25):** Requires active career goal
+(`state/goals.md` with `category: career` + `status: active`) AND `~/.artha-local/cv.md`
+or `~/.artha-local/cv-short.md` outside the repo. Loads `prompts/career_search.md`
+ONLY on invocation — never during `/catch-up`. State: `state/career_search.md` (vault-
+encrypted, `sensitivity: high`). Trace: `state/career_audit.jsonl`.
+
+- `/career eval <URL|JD text>` — Run 7-block A–G evaluation, write report to
+  `briefings/career/{NNN}-{slug}-{date}.md`, append tracker row, run
+  `reconcile_summary()`, emit `career_eval_started` and `career_eval_completed`
+  trace events. Proposes PDF if score ≥ 4.0.
+- `/career tracker` — Render Applications table + summary counts from
+  `state/career_search.md` frontmatter summary block.
+- `/career pdf <NNN>` — Generate ATS-optimized CV PDF via
+  `scripts.skills.career_pdf_generator.CareerPdfGenerator(report_number="<NNN>")`.
+  Idempotent: skips regen if input hash unchanged.
+- `/career story [append|list]` — Surface or append STAR+Reflection entries in
+  the Story Bank (validates against closed-vocabulary tags per FR-CS-7).
+
+Full behavior: `prompts/career_search.md` + `config/commands.md §/career`.
 
 **`/pr` — PR Manager:** Run `python3 scripts/pr_manager.py --view` (or `--threads` / `--voice`
 for subcommands). Requires `enhancements.pr_manager: true`. See `prompts/social.md §PR Manager Commands`
