@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{COMPANY}} — {{ROLE}} (Visual)</title>
+  <style>
+    /* ================================================================
+       Artha Career CV Template — Visual variant
+       Two-column layout for LinkedIn / portfolio display.
+       NOT ATS-safe (table columns break many parsers).
+       Use for Workday/Greenhouse applications → cv-template.html instead.
+       Self-hosted fonts resolved from fonts/ (no CDN).
+    ================================================================ */
+
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-weight: 400;
+      font-display: swap;
+      src: local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-weight: 700;
+      font-display: swap;
+      src: local('Space Grotesk Bold'), local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-weight: 400;
+      font-display: swap;
+      src: local('DM Sans'),
+           url('../fonts/DMSans-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-weight: 500;
+      font-display: swap;
+      src: local('DM Sans Medium'), local('DM Sans'),
+           url('../fonts/DMSans-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-weight: 700;
+      font-display: swap;
+      src: local('DM Sans Bold'), local('DM Sans'),
+           url('../fonts/DMSans-Bold.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      font-family: 'DM Sans', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.35;
+      color: #1f2937;
+      background: #fff;
+      width: 8.5in;
+    }
+
+    /* Two-column layout */
+    table.layout {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      min-height: 11in;
+    }
+    td.sidebar {
+      width: 32%;
+      background: #0a192f;
+      color: #cbd5e1;
+      padding: 0.32in 0.25in 0.22in 0.28in;
+      vertical-align: top;
+    }
+    td.main {
+      width: 68%;
+      padding: 0.32in 0.32in 0.22in 0.32in;
+      vertical-align: top;
+      background: #fff;
+    }
+
+    /* Sidebar — name */
+    td.sidebar h1 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 19pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #fff;
+      line-height: 1.02;
+      margin-bottom: 4px;
+    }
+    td.sidebar h1 .name-last {
+      display: block;
+      color: #7dd3fc;
+    }
+    td.sidebar .tagline {
+      font-family: 'DM Sans';
+      font-size: 9pt;
+      color: #93c5fd;
+      font-style: italic;
+      margin-bottom: 12px;
+      letter-spacing: 0.3px;
+    }
+
+    /* Sidebar — section headings */
+    td.sidebar h2 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 7.75pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #fff;
+      margin-top: 16px;
+      margin-bottom: 6px;
+      padding-bottom: 2px;
+      border-bottom: 0.75px solid rgba(147, 197, 253, 0.5);
+    }
+
+    /* Sidebar — contact lines */
+    td.sidebar .contact-line {
+      font-size: 8.5pt;
+      color: #e2e8f0;
+      margin-bottom: 4px;
+      padding-left: 17px;
+      position: relative;
+      line-height: 1.35;
+    }
+    td.sidebar .contact-icon {
+      position: absolute;
+      left: 0;
+      top: 0;
+      color: #7dd3fc;
+    }
+
+    /* Sidebar — bullets */
+    td.sidebar ul { list-style: none; padding-left: 0; margin: 0 0 4px 0; }
+    td.sidebar li {
+      padding-left: 12px;
+      position: relative;
+      font-size: 8.5pt;
+      line-height: 1.38;
+      margin-bottom: 3px;
+      color: #e2e8f0;
+    }
+    td.sidebar li::before {
+      content: "▸";
+      color: #7dd3fc;
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+    td.sidebar strong { color: #fff; font-weight: 700; }
+    td.sidebar p {
+      font-size: 8.5pt;
+      line-height: 1.38;
+      margin-bottom: 4px;
+      color: #e2e8f0;
+    }
+
+    /* Sidebar — education entry */
+    td.sidebar .edu-entry {
+      margin-bottom: 10px;
+      padding-left: 0;
+    }
+    td.sidebar .edu-degree {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 8.75pt;
+      font-weight: 700;
+      color: #fff;
+      display: block;
+      margin-bottom: 1px;
+    }
+    td.sidebar .edu-institution {
+      font-size: 8pt;
+      color: #cbd5e1;
+      display: block;
+      line-height: 1.3;
+    }
+    td.sidebar .edu-year {
+      font-size: 7.75pt;
+      color: #93c5fd;
+      display: block;
+      margin-top: 1px;
+    }
+
+    /* Sidebar — skill group */
+    td.sidebar .skill-group { margin-bottom: 10px; }
+    td.sidebar .skill-label {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 8pt;
+      font-weight: 700;
+      color: #7dd3fc;
+      display: block;
+      margin-bottom: 1px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    td.sidebar .skill-value {
+      font-size: 8.25pt;
+      color: #e2e8f0;
+      line-height: 1.35;
+    }
+
+    /* Main column — section headings */
+    td.main h2 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 9pt;
+      font-weight: 700;
+      color: #0a192f;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-top: 8px;
+      margin-bottom: 4px;
+      padding-bottom: 3px;
+      border-bottom: 1.5px solid #0a192f;
+    }
+    td.main h2:first-of-type { margin-top: 0; }
+
+    /* Main — role block */
+    .role-block { margin-top: 8px; margin-bottom: 2px; page-break-inside: avoid; }
+    .role-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .company {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 10.25pt;
+      font-weight: 700;
+      color: #0a192f;
+      line-height: 1.2;
+    }
+    .role-date {
+      font-size: 8.5pt;
+      color: #6b7280;
+      white-space: nowrap;
+      margin-left: 12px;
+    }
+    .role-title {
+      font-size: 9.25pt;
+      color: #374151;
+      font-style: italic;
+      margin-top: 1px;
+      line-height: 1.25;
+      margin-bottom: 2px;
+    }
+
+    td.main p {
+      font-size: 9.25pt;
+      margin-bottom: 2px;
+      color: #1f2937;
+    }
+    td.main strong { color: #0a192f; font-weight: 700; }
+    td.main ul {
+      list-style-type: disc;
+      padding-left: 16px;
+      margin-top: 3px;
+      margin-bottom: 3px;
+    }
+    td.main li {
+      font-size: 9.25pt;
+      line-height: 1.38;
+      margin-bottom: 2px;
+      color: #1f2937;
+    }
+    td.main li::marker { color: #0a192f; }
+
+    /* Core-competencies keyword strip under summary */
+    .keyword-strip {
+      font-size: 8.5pt;
+      color: #1e3a5f;
+      background: #eff6ff;
+      padding: 5px 8px;
+      margin-top: 4px;
+      border-left: 2px solid #93c5fd;
+      line-height: 1.4;
+    }
+
+    hr { display: none; }
+    h2, .role-block { page-break-after: avoid; }
+    ul, p { page-break-inside: avoid; }
+    .pdf-meta { display: none !important; }
+  </style>
+</head>
+<body>
+  <table class="layout">
+    <tr>
+      <td class="sidebar">
+        <h1>{{NAME_FIRST}}<span class="name-last">{{NAME_LAST}}</span></h1>
+        <div class="tagline">{{TAGLINE}}</div>
+
+        <h2>Contact</h2>
+        {{CONTACT_HTML}}
+
+        <h2>Education</h2>
+        {{EDUCATION_HTML}}
+
+        <h2>Skills</h2>
+        {{SKILLS_HTML}}
+      </td>
+      <td class="main">
+        {{MAIN_HTML}}
+      </td>
+    </tr>
+  </table>
+  <div class="pdf-meta">
+    Generated: {{DATE}} | Company: {{COMPANY}} | Role: {{ROLE}}
+    | Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
+    | ATS Keywords: {{KEYWORDS}}
+  </div>
+</body>
+</html>
