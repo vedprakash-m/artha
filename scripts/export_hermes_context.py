@@ -39,6 +39,8 @@ import keyring
 import requests
 import yaml
 
+from lib.config_loader import load_config
+
 log = logging.getLogger("export_hermes_context")
 
 # ---------------------------------------------------------------------------
@@ -405,10 +407,9 @@ def export_hermes_context(
         log.warning("artha-ha-token not found in keyring — skipping Hermes context export")
         return False
 
-    # HA URL from connectors.yaml
-    cfg_path = artha_dir / "config" / "connectors.yaml"
+    # HA URL from connectors.yaml via config_loader (WS-4 Rule 4)
     try:
-        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        cfg = load_config("connectors", _config_dir=str(artha_dir / "config"))
         ha_url = (
             cfg.get("connectors", {})
                .get("homeassistant", {})
@@ -417,7 +418,7 @@ def export_hermes_context(
                .rstrip("/")
         )
     except Exception as exc:
-        log.warning("Could not read connectors.yaml: %s — skipping", exc)
+        log.warning("Could not read connectors config: %s — skipping", exc)
         return False
 
     if not ha_url:
