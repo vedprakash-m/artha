@@ -1012,9 +1012,11 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                  /career tracker         Pipeline status view (from state/career_search.md)
                  /career pdf <NNN>       Generate ATS-optimized CV PDF via Playwright
                                          Output: output/career/cv-{company}-{date}.pdf
-                 /career stories         Story Bank review (20-story cap, 5 pinned)  *(Phase 2)*
-                 /career scan            Portal scan — Greenhouse/Ashby/Lever           *(Phase 2)*
-                 /career prep <company>  Interview prep from tracker + story bank       *(Phase 2)*
+                 /career stories         Story Bank review (20-story cap, 5 pinned)
+                 /career scan            Portal scan — Greenhouse/Ashby/Lever
+                 /career prep <NNN|co>   Interview prep packet from Block F + KB
+                 /career apply <NNN>     Record submission (Evaluated → Applied)
+                 /career cover <NNN>     Generate 1-page cover letter (markdown + PDF)
 ```
 
 **CLI diagnostic flag (not a slash command):**

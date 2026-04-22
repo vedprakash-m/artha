@@ -1355,6 +1355,92 @@ def check_ha_connectivity() -> CheckResult:
 
 
 
+def check_hermes_context_staleness() -> CheckResult:
+    """P1 non-blocking: Warn if sensor.artha_context is absent or older than 48h.
+
+    Implements spec FR-HI §12 R-5 mitigation. Only runs on macOS where Artha
+    has LAN access to HA. Silently passes when off-LAN or HA is not enabled.
+    """
+    _name = "Hermes Context (sensor.artha_context)"
+
+    import platform as _platform
+    if _platform.system() != "Darwin":
+        return CheckResult(_name, "P1", True, "Not on macOS — skipped ✓")
+
+    _connectors_path = os.path.join(ARTHA_DIR, "config", "connectors.yaml")
+    if not os.path.exists(_connectors_path):
+        return CheckResult(_name, "P1", True, "connectors.yaml not found — skipped ✓")
+
+    try:
+        import yaml as _yaml
+        with open(_connectors_path, encoding="utf-8") as _f:
+            _cfg = _yaml.safe_load(_f) or {}
+        _ha = (_cfg.get("connectors") or {}).get("homeassistant") or {}
+    except Exception as exc:
+        return CheckResult(_name, "P1", True, f"Could not read connectors.yaml ({exc}) — skipped ✓")
+
+    if not _ha.get("enabled", False):
+        return CheckResult(_name, "P1", True, "HA connector not enabled — skipped ✓")
+
+    _ha_url = ((_ha.get("fetch") or {}).get("ha_url") or "").rstrip("/")
+    if not _ha_url:
+        return CheckResult(_name, "P1", True, "ha_url not set — skipped ✓")
+
+    try:
+        import keyring as _keyring
+        _token = _keyring.get_password("artha-ha-token", "artha") or ""
+    except Exception:
+        _token = ""
+
+    if not _token:
+        return CheckResult(_name, "P1", True, "artha-ha-token not in keyring — skipped ✓")
+
+    try:
+        import requests as _requests
+        _r = _requests.get(
+            f"{_ha_url}/api/states/sensor.artha_context",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=3,
+        )
+    except Exception as exc:
+        _msg = str(exc)
+        if "connect" in _msg.lower() or "timeout" in _msg.lower():
+            return CheckResult(_name, "P1", True, f"HA not reachable (off-LAN?) — skipped ✓")
+        return CheckResult(_name, "P1", True, f"HA request error ({_msg[:80]}) — skipped ✓")
+
+    if _r.status_code == 404:
+        return CheckResult(
+            _name, "P1", False,
+            "sensor.artha_context does not exist in HA — context has never been written",
+            fix_hint="Run pipeline on Mac or: python scripts/export_hermes_context.py --dry-run",
+        )
+    if _r.status_code != 200:
+        return CheckResult(_name, "P1", True, f"HA returned HTTP {_r.status_code} — skipped ✓")
+
+    try:
+        import json as _json
+        from datetime import datetime, timezone as _tz
+        _data = _json.loads(_r.text)
+        _generated = (_data.get("attributes") or {}).get("generated", "")
+        if not _generated:
+            return CheckResult(
+                _name, "P1", False,
+                "sensor.artha_context exists but has no 'generated' timestamp",
+            )
+        _ts = datetime.fromisoformat(_generated.replace("Z", "+00:00"))
+        _age_h = (datetime.now(_tz.utc) - _ts).total_seconds() / 3600
+        if _age_h > 48:
+            return CheckResult(
+                _name, "P1", False,
+                f"HERMES_CONTEXT_EXPORT_FAIL: sensor.artha_context is {_age_h:.0f}h old "
+                f"(generated: {_generated}). Hermes context is stale.",
+                fix_hint="Run pipeline on Mac or: python scripts/export_hermes_context.py",
+            )
+        return CheckResult(_name, "P1", True, f"sensor.artha_context is fresh ({_age_h:.1f}h old) ✓")
+    except Exception as exc:
+        return CheckResult(_name, "P1", True, f"Could not parse context entity ({exc}) — skipped ✓")
+
+
 # Minimal set of importable module names that must exist in the venv.
 # Keys are the import name; values are the install package name.
 _REQUIRED_DEPS: dict[str, str] = {
@@ -2196,6 +2282,8 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
 
     # ── P1 — Home Assistant (ARTHA-IOT Wave 1 — non-blocking) ────────────
     checks.append(check_ha_connectivity())
+    # ── P1 — Hermes context staleness (FR-HI §12 R-5 — non-blocking) ──────
+    checks.append(check_hermes_context_staleness())
 
     # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
     checks.append(check_ado_auth())

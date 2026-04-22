@@ -111,6 +111,143 @@ class CareerTrace:
             entry.update(extra)
         self._append(entry)
 
+    def write_eval_started(
+        self,
+        *,
+        report_number: str,
+        company: str,
+        role: str,
+        archetype: str,
+        posting_fingerprint: str,
+        cv_content_hash: str,
+    ) -> None:
+        """Write a lifecycle start event for a /career eval run.
+
+        Emitted before Block A begins. Paired with write_eval_completed() on
+        successful end. Absence of the completed event after a started event
+        indicates an aborted or crashed evaluation — surfaces via audit review.
+        """
+        entry: dict[str, Any] = {
+            "schema_version": EVAL_TRACE_SCHEMA_VERSION,
+            "event": "career_eval_started",
+            "timestamp": _utcnow(),
+            "report_number": report_number,
+            "company": company,
+            "role": role,
+            "archetype": archetype,
+            "posting_fingerprint": posting_fingerprint,
+            "cv_content_hash": cv_content_hash,
+        }
+        self._append(entry)
+
+    def write_eval_completed(
+        self,
+        *,
+        report_number: str,
+        company: str,
+        score: Optional[float],
+        blocks_completed: list[str],
+        duration_seconds: Optional[float] = None,
+        outcome: str = "success",       # "success" | "aborted" | "error"
+        error: Optional[str] = None,
+    ) -> None:
+        """Write a lifecycle completion event for a /career eval run.
+
+        Emitted after tracker reconcile + cv_content_hash persistence. Pairs
+        with write_eval_started() to bound total duration and confirm the
+        full post-evaluation protocol executed.
+        """
+        entry: dict[str, Any] = {
+            "schema_version": EVAL_TRACE_SCHEMA_VERSION,
+            "event": "career_eval_completed",
+            "timestamp": _utcnow(),
+            "report_number": report_number,
+            "company": company,
+            "score": score,
+            "blocks_completed": blocks_completed,
+            "outcome": outcome,
+        }
+        if duration_seconds is not None:
+            entry["duration_seconds"] = duration_seconds
+        if error:
+            entry["error"] = error
+        self._append(entry)
+
+    def write_apply_event(
+        self,
+        *,
+        report_number: str,
+        company: str,
+        role: str,
+        portal: str = "",
+        referrer: str = "",
+        closed_open_item: str = "",
+    ) -> None:
+        """Write a submission (apply) event.
+
+        Emitted by scripts/career_apply.py when a tracker row transitions
+        Evaluated → Applied. Captures the submission channel and whether an
+        auto-close cascade fired on the open_items list.
+        """
+        entry: dict[str, Any] = {
+            "schema_version": EVAL_TRACE_SCHEMA_VERSION,
+            "event": "career_apply",
+            "timestamp": _utcnow(),
+            "report_number": report_number,
+            "company": company,
+            "role": role,
+            "portal": portal,
+            "referrer": referrer,
+            "closed_open_item": closed_open_item,
+        }
+        self._append(entry)
+
+    def write_cover_event(
+        self,
+        *,
+        op: str,                      # "generated" | "cached" | "failed"
+        report_number: str,
+        output_path: str,
+        error: Optional[str] = None,
+    ) -> None:
+        """Write a cover-letter generation trace entry."""
+        entry: dict[str, Any] = {
+            "schema_version": EVAL_TRACE_SCHEMA_VERSION,
+            "event": "career_cover",
+            "timestamp": _utcnow(),
+            "op": op,
+            "report_number": report_number,
+            "output_path": output_path,
+        }
+        if error:
+            entry["error"] = error
+        self._append(entry)
+
+    def write_prep_event(
+        self,
+        *,
+        op: str,                      # "generated" | "cached" | "failed"
+        report_number: str,
+        output_path: str,
+        stories_included: int = 0,
+        questions_included: int = 0,
+        error: Optional[str] = None,
+    ) -> None:
+        """Write an interview-prep packet generation trace entry."""
+        entry: dict[str, Any] = {
+            "schema_version": EVAL_TRACE_SCHEMA_VERSION,
+            "event": "career_prep",
+            "timestamp": _utcnow(),
+            "op": op,
+            "report_number": report_number,
+            "output_path": output_path,
+            "stories_included": stories_included,
+            "questions_included": questions_included,
+        }
+        if error:
+            entry["error"] = error
+        self._append(entry)
+
     def write_guardrail_event(
         self,
         *,

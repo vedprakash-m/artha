@@ -1,0 +1,116 @@
+# config/career_portals.yaml — Career portal scanner config (career-ops §9.2)
+#
+# Portal URLs are public information (company ATS APIs) — no vault encryption needed.
+# portal_scanner.py reads this file first; falls back to career_search.md frontmatter
+# portals: section if this file is absent (for backwards compatibility).
+#
+# ATS auto-detection by URL pattern:
+#   Greenhouse: boards.greenhouse.io/{slug} → boards-api.greenhouse.io/v1/boards/{slug}/jobs
+#   Lever:      jobs.lever.co/{slug}         → api.lever.co/v0/postings/{slug}?mode=json
+#   Ashby:      jobs.ashbyhq.com/{slug}      → api.ashbyhq.com/posting-api/job-board/{slug}
+#
+# enabled: true  — scanner will attempt API fetch on each run (subject to 72h TTL)
+# enabled: false — skipped (unverified slug, no direct API, or auth-gated)
+#
+# To validate a slug before enabling:
+#   curl -s "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs" | python3 -m json.tool | head -20
+
+schema_version: "1.0"
+
+companies:
+  # ── Tier A — primary targets ───────────────────────────────────────────
+  - company: Anthropic
+    tier: A
+    careers_url: https://boards.greenhouse.io/anthropic
+    enabled: true
+
+  - company: OpenAI
+    tier: A
+    careers_url: https://boards.greenhouse.io/openai
+    enabled: false  # 404 on greenhouse/ashby/lever as of 2026-04-18 — no public ATS API; use manual /career eval
+
+  - company: Scale AI
+    tier: A
+    careers_url: https://boards.greenhouse.io/scaleai
+    enabled: true  # validated 2026-04-18 (Greenhouse)
+
+  - company: Databricks
+    tier: A
+    careers_url: https://boards.greenhouse.io/databricks
+    enabled: true
+
+  - company: Cohere
+    tier: A
+    careers_url: https://jobs.ashbyhq.com/cohere
+    enabled: true  # migrated Lever → Ashby 2026 (validated 2026-04-18)
+
+  # ── Tier B — strong secondary targets ─────────────────────────────────
+  - company: Adept
+    tier: B
+    careers_url: https://boards.greenhouse.io/adeptai
+    enabled: false  # acquired by Amazon 2024 — brand defunct; skip
+
+  - company: Perplexity
+    tier: B
+    careers_url: https://jobs.ashbyhq.com/perplexity
+    enabled: true  # validated 2026-04-18 (Ashby)
+
+  - company: Hugging Face
+    tier: B
+    careers_url: https://apply.workable.com/huggingface/
+    enabled: false  # Workable ATS — no public JSON API; scanner does not support
+
+  - company: Mistral
+    tier: B
+    careers_url: https://jobs.lever.co/mistral
+    enabled: true  # validated 2026-04-18 (Lever)
+
+  - company: Glean
+    tier: B
+    careers_url: https://www.glean.com/careers
+    enabled: false  # custom site — no public ATS API
+
+  - company: LangChain
+    tier: B
+    careers_url: https://jobs.ashbyhq.com/langchain
+    enabled: true  # validated 2026-04-18 (Ashby)
+
+  # ── Tier C — large companies; no direct Greenhouse/Ashby/Lever APIs ───
+  - company: Google DeepMind
+    tier: C
+    careers_url: https://careers.google.com/
+    enabled: false  # no direct API — manual check only
+
+  - company: Meta AI
+    tier: C
+    careers_url: https://www.metacareers.com/
+    enabled: false  # no direct API
+
+  - company: Amazon AGI
+    tier: C
+    careers_url: https://www.amazon.jobs/
+    enabled: false  # no direct API
+
+  - company: NVIDIA
+    tier: C
+    careers_url: https://www.nvidia.com/en-us/about-nvidia/careers/
+    enabled: false  # no direct API
+
+  - company: Snowflake
+    tier: C
+    careers_url: https://careers.snowflake.com/
+    enabled: false  # no direct API
+
+# Aggregators (auth-gated — manual use only; Phase 2 does not scrape these)
+aggregators:
+  - name: Wellfound
+    url: https://wellfound.com/jobs
+    enabled: false
+
+  - name: LinkedIn
+    url: https://www.linkedin.com/jobs/
+    enabled: false
+
+  - name: Y Combinator Work at a Startup
+    url: https://www.workatastartup.com/
+    enabled: false

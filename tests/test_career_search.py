@@ -259,6 +259,77 @@ check("Exact match found", match == "001")
 no_match = cross_tracker_dedup_match("Other Corp", "Data Scientist", "NYC", existing)
 check("No match returns None", no_match is None)
 
+# ── Test 19: career_apply helper (Evaluated → Applied) ───────
+print("\n[19] career_apply helper module")
+try:
+    from career_apply import apply as _apply_fn, _find_row_index, _update_tracker_row
+    check("career_apply imports cleanly", callable(_apply_fn))
+    sample_body = (
+        "| 999 | 2026-04-18 | TestCo | TPM | 4.5 | Evaluated | — | report | notes |\n"
+    )
+    idx = _find_row_index(sample_body, "999")
+    check("_find_row_index locates row by padded num", idx == 0)
+    new_body, row = _update_tracker_row(sample_body, "999", "Applied", "applied 2026-04-18")
+    check("_update_tracker_row flips status to Applied", "| Applied |" in new_body)
+    check("_update_tracker_row preserves company", row["company"] == "TestCo")
+    try:
+        _update_tracker_row(new_body, "999", "Applied", "")
+        check("re-apply guard fires ValueError", False, "expected ValueError")
+    except ValueError:
+        check("re-apply guard fires ValueError", True)
+except Exception as e:
+    check("career_apply import", False, f"{type(e).__name__}: {e}")
+
+# ── Test 20: CareerCoverLetter skill extractors ──────────────
+print("\n[20] CareerCoverLetter extractors")
+try:
+    from skills.career_cover_letter import (
+        CareerCoverLetter,
+        _extract_frontmatter,
+        _extract_block_e_headlines,
+        _extract_keywords,
+        _compose_letter_md,
+    )
+    s = CareerCoverLetter(report_number="001")
+    check("CareerCoverLetter init", s.report_number == "001")
+    check("compare_fields includes md_path + pdf_path",
+          "md_path" in s.compare_fields and "pdf_path" in s.compare_fields)
+    fm = _extract_frontmatter("---\ncompany: Acme\nurl: https://a.com/b---c/d\nscore: 4.2\n---\nbody")
+    check("frontmatter terminates at line-anchored ---", fm.get("company") == "Acme")
+    check("frontmatter skips --- inside URL values", fm.get("score") == 4.2)
+    letter = _compose_letter_md(
+        company="Acme", role="Sr TPM", archetype="AI Platform",
+        contact="ved@example.com", headline_phrases=["directly matches your roadmap"],
+        cv_match_evidence=["- Req X → evidence Y"], proof_points=[],
+        posture="I bring the right fit", keywords=["ml", "tpm"],
+    )
+    check("letter renders 3 paragraphs", letter.count("\n\n") >= 4)
+    check("letter omits empty-archetype parens", "()" not in letter)
+except Exception as e:
+    check("CareerCoverLetter extractors", False, f"{type(e).__name__}: {e}")
+
+# ── Test 21: career_prep CLI extractors ──────────────────────
+print("\n[21] career_prep helpers")
+try:
+    from career_prep import (
+        _extract_frontmatter as _prep_fm,
+        _extract_section,
+        _extract_story_titles,
+        _count_questions,
+        _tokens,
+    )
+    body = "## F) Interview Prep\n\n### Recommended STAR Stories for This Role\n\n| # | Story | Maps To | Status |\n|---|---|---|---|\n| 1 | XPF Ramp | migration | Pinned ✅ |\n| 2 | DataOps build | DX | Pinned ✅ |\n\n### Red-Flag Questions to Prepare For\n\n1. **\"q1\"**\n   → A\n\n2. **\"q2\"**\n   → B\n\n## G) Posting Legitimacy\n\nOK"
+    sec = _extract_section(body, "F")
+    check("_extract_section(F) returns body", "XPF Ramp" in sec)
+    check("_extract_section strips trailing ---", not sec.rstrip().endswith("---"))
+    titles = _extract_story_titles(sec)
+    check("_extract_story_titles parses 2 rows", len(titles) == 2 and titles[0] == "XPF Ramp")
+    check("_count_questions counts bold-numbered", _count_questions(sec) == 2)
+    toks = _tokens("Amazon Relay Load Board — Middle Mile")
+    check("_tokens strips stopwords + short words", "relay" in toks and "a" not in toks)
+except Exception as e:
+    check("career_prep helpers", False, f"{type(e).__name__}: {e}")
+
 # ── Summary ──────────────────────────────────────────────────
 print("\n" + "=" * 55)
 print(f"Results: {PASS} passed, {FAIL} failed")

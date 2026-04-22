@@ -122,6 +122,7 @@ scripts/_run_tests_internal.py
 # --- Virtual environments ---
 .venv/
 .venv-win/
+.venv-docx/
 
 # --- Python bytecode ---
 __pycache__/
@@ -222,6 +223,12 @@ state/*.lock
 state/*.yaml.age.*
 state/*.md.age.*
 
+# --- macOS LaunchAgent plists (contain machine-specific paths and username) ---
+# hermes-home.skill is already covered by *.skill above
+# The plist has hardcoded venv + repo paths; users create from the spec template.
+artha.hermes-context.plist
+*.launchagent.plist
+
 # --- OneDrive conflict copies ---
 # OneDrive git-shadow directory (sync artefact)
 .git 2/
@@ -230,6 +237,10 @@ state/*.md.age.*
 # --- Career Search PII files (specs/career-ops.md §7.4 security requirements) ---
 # cv.md, cv-short.md, and article-digest.md contain PII — NEVER commit to git
 # Store at ~/.artha-local/ (outside repo). Root-level fallback locations protected here.
+# career_cover_letter.py contains hardcoded full name, location, and immigration status.
+# imessage_appointments.py contains hardcoded phone numbers and medical provider names.
+scripts/skills/career_cover_letter.py
+scripts/skills/imessage_appointments.py
 cv.md
 cv-short.md
 article-digest.md

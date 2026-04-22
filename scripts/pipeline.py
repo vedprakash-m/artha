@@ -687,6 +687,14 @@ def run_pipeline(
     pipeline_start = time.monotonic()
     all_classified_lines: list[str] = []  # collected for --output snapshot
 
+    # §15.3: sentinel so standalone hermes export defers if pipeline is mid-run
+    _sentinel_path = _REPO_ROOT / "tmp" / ".pipeline_running"
+    try:
+        _sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+        _sentinel_path.touch()
+    except Exception:
+        _sentinel_path = None  # type: ignore[assignment]  # best-effort
+
     # Pre-validate: build work items (handler + auth loaded before threading)
     work_items: list[tuple[str, Any, dict, dict, dict]] = []  # (name, handler, auth, fetch_cfg, retry_cfg)
     for conn in connectors:
@@ -713,6 +721,12 @@ def run_pipeline(
         work_items.append((name, handler, auth_ctx, conn.get("fetch", {}), conn.get("retry", {})))
 
     if not work_items:
+        # §15.3: clean up sentinel on this early-exit path too
+        try:
+            if _sentinel_path is not None:
+                _sentinel_path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return 3 if error_count > 0 else 0
 
     # ── Blueprint 1: FETCH step enter + connector staleness TTL evaluation ─────
@@ -961,12 +975,38 @@ def run_pipeline(
     except Exception as _exc:
         print(f"[pipeline] WARNING: home_events merge failed: {_exc}", file=sys.stderr)
 
-    # ── OpenClaw bridge push (spec §P1.3 after_pipeline) ────────────────────
-    # Guard: only when bridge.push.after_pipeline is enabled in claw_bridge.yaml.
+    # ── Step 22: Hermes context export (spec FR-HI §7.3, Mac-only) ──────────
+    # Writes sensor.artha_context to HA after every successful pipeline run.
+    # Non-blocking: failure is logged but never aborts pipeline completion.
+    _t0_hermes = time.monotonic()
     try:
-        _run_bridge_push(_REPO_ROOT, dry_run=dry_run)
+        from export_hermes_context import export_hermes_context as _hermes_export  # noqa: PLC0415
+        _hermes_ok = _hermes_export(_REPO_ROOT, dry_run=dry_run)
+        _hermes_ms = int((time.monotonic() - _t0_hermes) * 1000)
+        _emit_tel(
+            "hermes.context_export",
+            extra={"status": "ok" if _hermes_ok else "skip", "ms": _hermes_ms},
+        )
+        if _hermes_ok:
+            print("[pipeline] Hermes context exported to HA sensor.artha_context",
+                  flush=True)
     except Exception as _exc:
-        print(f"[pipeline] WARNING: bridge push failed: {_exc}", file=sys.stderr)
+        _hermes_ms = int((time.monotonic() - _t0_hermes) * 1000)
+        _emit_tel("hermes.context_export",
+                  extra={"status": "fail", "ms": _hermes_ms, "error": str(_exc)[:200]})
+        print(f"[pipeline] WARNING: Hermes context export failed (non-blocking): {_exc}",
+              file=sys.stderr)
+        try:
+            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            _now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _audit = _REPO_ROOT / "state" / "audit.md"
+            with _audit.open("a", encoding="utf-8") as _fh:
+                _fh.write(
+                    f"| {_now} | HERMES_CONTEXT_EXPORT_FAIL"
+                    f" | error:{str(_exc)[:200]} |\n"
+                )
+        except Exception:  # noqa: BLE001
+            pass  # audit write failure is never blocking
 
     # DEBT-WORK-001: Write last_personal_pipeline_run to bridge artifact so work
     # OS can check personal freshness without reading personal state files directly.
@@ -1016,6 +1056,13 @@ def run_pipeline(
             f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}"
         )
         print(f"[pipeline] WARNING: action layer failed: {_ao_exc}", file=sys.stderr)
+
+    # §15.3: remove pipeline sentinel before exit (hermes standalone may now proceed)
+    try:
+        if _sentinel_path is not None:
+            _sentinel_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
     return 3 if error_count > 0 else 0
 
@@ -1141,40 +1188,6 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
         buffer_path.open("w").close()
     except OSError:
         pass
-
-
-def _run_bridge_push(artha_dir: Path, *, dry_run: bool = False) -> None:
-    """Push Artha context to OpenClaw if bridge.push.after_pipeline is enabled.
-
-    Failures are non-fatal and logged to stderr — never raise.
-    """
-    cfg_path = artha_dir / "config" / "claw_bridge.yaml"
-    if not cfg_path.exists():
-        return
-    try:
-        import yaml as _yaml
-        with cfg_path.open("r", encoding="utf-8") as fh:
-            bridge_cfg = _yaml.safe_load(fh) or {}
-    except Exception:
-        return
-
-    if not bridge_cfg.get("enabled", False):
-        return
-    if not bridge_cfg.get("push", {}).get("after_pipeline", True):
-        return
-
-    try:
-        import sys as _sys
-        scripts_dir = str(artha_dir / "scripts")
-        if scripts_dir not in _sys.path:
-            _sys.path.insert(0, scripts_dir)
-        from export_bridge_context import run_bridge_push  # type: ignore[import]
-        run_bridge_push(artha_dir, bridge_cfg, dry_run=dry_run)
-    except ImportError:
-        print("[pipeline] WARNING: export_bridge_context.py not found — skipping bridge push",
-              file=sys.stderr)
-    except Exception as exc:
-        print(f"[pipeline] WARNING: bridge push failed: {exc}", file=sys.stderr)
 
 
 def _write_bridge_health_section(artha_dir: Path) -> None:
