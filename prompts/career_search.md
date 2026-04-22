@@ -31,16 +31,32 @@ Loading this full prompt during catch-up violates CS-3 (deferred execution, neve
 
 ## Sources of Truth
 
+Two CV variants are maintained. Know which one to use for each task:
+
+| File | Role | When to use |
+|------|------|-------------|
+| `~/.artha-local/cv.md` | **Narrative source** — full work history, all quantified metrics, long-form bullets | Packet extraction (Block A–F); source of `candidate_packet.top_proof_points`; reference for Block F Story Bank grounding |
+| `~/.artha-local/cv-short.md` | **PDF render source** — 2-page ATS-tight version of the same history | `/career pdf` rendering; what a recruiter actually sees |
+| `~/.artha-local/article-digest.md` | **Proof-point index** — capability-tagged metrics w/ source refs | Block F story anchoring; cross-reference to validate metrics cited in Block E personalization |
+
+Authoritative resolution order for the PDF skill: (a) `profile.cv_path` in
+`state/career_search.md` frontmatter, (b) `~/.artha-local/cv-short.md`, (c)
+`~/.artha-local/cv.md`, (d) `cv.md` at repo root (test fixture location).
+
 Read in this order on each `/career eval` invocation:
-1. `~/.artha-local/cv.md` — User's CV (fallback: `cv.md` at repo root)
-2. `~/.artha-local/article-digest.md` — Proof points (optional companion; overrides cv.md metrics)
+1. `~/.artha-local/cv.md` — User's narrative CV (fallback: `cv.md` at repo root)
+2. `~/.artha-local/article-digest.md` — Proof points (optional companion; overrides cv.md metrics when they disagree)
 3. `state/career_search.md` — Archetypes, scoring weights, campaign profile, Story Bank INDEX
 4. `state/immigration.md.age` — Visa/sponsorship constraints (vault-gated; mark "unavailable" if locked)
 5. `state/finance.md.age` — Financial runway/comp context (vault-gated; mark "unavailable" if locked)
 6. `state/calendar.md` — Interview scheduling context (optional)
 7. `state/goals.md` — Career search goal velocity and trajectory
 
-Security check: If `cv.md` is tracked by git (`git ls-files --error-unmatch cv.md` exits 0),
+`cv-short.md` is NOT read during `/career eval` — it's a render-only artifact.
+The PDF skill reads it directly via the resolution order above.
+
+Security check: If `cv.md` OR `cv-short.md` is tracked by git
+(`git ls-files --error-unmatch cv.md cv-short.md` exits 0 for either),
 emit 🔴 "CV file tracked by git — PII exposure risk" and abort evaluation.
 
 ## Pre-Evaluation Guard: Campaign Activation Check (W-F3 — Idempotency)
@@ -158,6 +174,26 @@ Remote Policy: [On-site / Hybrid / Remote]
 - If `job_packet.sponsorship_policy == "silent"`:
   → Append 🔵 **Manual Verification Required**: JD is silent on sponsorship. Verify directly
   with recruiter before investing evaluation tokens. Never assume eligibility from silence.
+  → **Auto-open-item**: after Block A completes, append a YAML entry to the
+  `## Active` section of `state/open_items.md` matching the file's existing
+  schema. Use the next sequential `OI-NNN` id (read the current max from the
+  file; never reuse ids). Template:
+  ```
+  - id: OI-{next_id}
+    date_added: {today}
+    source_domain: career
+    description: "Verify H-1B sponsorship policy with {company} recruiter for {role_title} (report {NNN}). JD silent on sponsorship; do not invest interview time without confirmation."
+    deadline: {today + 5 business days}
+    priority: P1
+    status: open
+    todo_id: ""
+    source: "briefings/career/{NNN}-{company-slug}-{date}.md"
+  ```
+  Dedup on `{company} + {role_title}`: if an existing entry's `description`
+  contains both tokens AND `status == open`, do NOT create a duplicate —
+  update its `source` and `deadline` fields instead.
+  Creating this item is mandatory when `sponsorship_policy == "silent"` — do not defer
+  to user confirmation; silence is precisely when the user needs a concrete reminder.
 - If cross-domain source unavailable: note "Immigration context unavailable — verify manually."
 
 ---
@@ -435,19 +471,31 @@ If user aborts at this gate:
 - Do NOT create a tracker entry or save any partial report
 - Return to idle state cleanly
 
-## Post-Evaluation Protocol
+## Evaluation Lifecycle Protocol
 
-After all 7 blocks complete:
+Every `/career eval` run MUST be bracketed by lifecycle trace events so aborted
+or crashed evaluations are detectable in the audit trail.
+
+**Pre-Evaluation (before Block A begins):**
+- Emit `write_eval_started(report_number, company, role, archetype,
+  posting_fingerprint, cv_content_hash)` to `state/career_audit.jsonl`.
+
+**Post-Evaluation (after all 7 blocks complete):**
 
 1. **Save report** to `briefings/career/{NNN}-{company-slug}-{date}.md` with frontmatter schema (§7.3)
 2. **Update tracker table** in `state/career_search.md` body — add new row with status `Evaluated`
 3. **Run `reconcile_summary()`** — recompute `summary:` frontmatter block from tracker table
 4. **Run `recompute_scores()`** — deterministic Python recomputation of composite score
-5. **Update `cv_content_hash`** in frontmatter — SHA-256 of `cv.md` at eval time (audit-only)
-6. **Write trace** to `state/career_audit.jsonl` via `career_trace.py`
+5. **Update `cv_content_hash`** in frontmatter — SHA-256 of CV source (see §Sources of Truth) at eval time
+6. **Write eval trace** to `state/career_audit.jsonl` via `career_trace.write_eval_entry()`
 7. **Write atomic** — all state mutations via `write_state_atomic()` from `scripts/work/helpers.py`
 8. **Propose PDF** if score ≥ 4.0: "Score qualifies for PDF generation. Run `/career pdf {NNN}` to generate tailored CV."
 9. **Update Story Bank INDEX** if new stories were appended in Block F
+10. **Emit lifecycle completion** — call `write_eval_completed(report_number,
+    company, score, blocks_completed, duration_seconds, outcome="success")`.
+    If the eval aborts (user cancels, fatal error), emit with
+    `outcome="aborted"` or `outcome="error"` and an `error` message — still
+    bracket the started event.
 
 **Deduplication check:** Before creating a tracker entry, check if
 `company + role_title + location + URL_hash` already exists. If yes, update existing row — do not duplicate.

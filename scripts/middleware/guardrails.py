@@ -1135,13 +1135,140 @@ class CareerPiiOutputGR(BaseGuardrail):
                 ),
             )
 
-        # Phone: redact in-place, degrade to WARN (not HALT)
+        # Phone: redact in-place (REDACT, not HALT — content is salvageable)
         cleaned = re.sub(self._PHONE_PATTERN, "[PHONE REDACTED]", output_text)
         if cleaned != output_text:
             return GuardrailOutput(
-                TripwireResult.WARN,
+                TripwireResult.REDACT,
                 message="Phone number(s) redacted from career output.",
                 modified_data=cleaned,
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CareerEthicsGR(BaseGuardrail):
+    """Career — ethics guardrail: suppress apply-recommendation for low-score postings.
+
+    Spec §14.3 / CS-2: Artha must not actively recommend applying to a role
+    with a composite score below the ethics floor (default 4.0). This prevents
+    wasting the user's effort on poor-fit roles.
+    """
+
+    name = "career_ethics"
+    mode = GuardrailMode.BLOCKING
+
+    _ETHICS_SCORE_FLOOR: float = 4.0
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "career_search":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        action_type = str(ctx.get("action_type", "") or "").lower()
+        if "apply" not in action_type and "recommend_apply" not in action_type:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        score = ctx.get("career_score")
+        if score is None and isinstance(data, dict):
+            score = data.get("composite_score") or data.get("score")
+
+        try:
+            score_float = float(score)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return GuardrailOutput(TripwireResult.PASS)  # no score → defer to user
+
+        if score_float < self._ETHICS_SCORE_FLOOR:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Ethics block: composite score {score_float:.1f} is below "
+                    f"floor {self._ETHICS_SCORE_FLOOR}. Apply recommendation suppressed. "
+                    "User may override by explicitly requesting /career apply."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CvModificationGR(BaseGuardrail):
+    """Career — block writes to cv.md without explicit user approval.
+
+    cv.md is the canonical CV source of truth. Any proposed modification must
+    be surfaced as a diff-preview and require explicit_approval=True in context
+    before the write proceeds (§14.3 / CS-5).
+    """
+
+    name = "career_cv_modification"
+    mode = GuardrailMode.BLOCKING
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        target_path = str(ctx.get("target_path", "") or "")
+
+        if "cv.md" not in target_path:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        if not ctx.get("explicit_approval", False):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "CV modification blocked: explicit user approval required. "
+                    "Show a diff preview and await confirmation before writing to cv.md."
+                ),
+            )
+
+        return GuardrailOutput(TripwireResult.PASS)
+
+
+class CareerOutreachGR(BaseGuardrail):
+    """Career — outreach rate-limiting and mandatory preview enforcement.
+
+    Limits outreach drafts to max 5/session and requires preview_shown=True
+    in context before any draft is finalized (§14.3 / CS-7).
+    No outreach is ever sent autonomously — user must copy/send manually.
+    """
+
+    name = "career_outreach"
+    mode = GuardrailMode.BLOCKING
+
+    _MAX_DRAFTS_PER_SESSION: int = 5
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        if not self._wave0_ok():
+            return GuardrailOutput(TripwireResult.PASS)
+
+        ctx = context or {}
+        if ctx.get("domain") != "career_search":
+            return GuardrailOutput(TripwireResult.PASS)
+
+        action_type = str(ctx.get("action_type", "") or "").lower()
+        if "outreach" not in action_type and "draft_message" not in action_type:
+            return GuardrailOutput(TripwireResult.PASS)
+
+        if not ctx.get("preview_shown", False):
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    "Outreach blocked: preview must be shown to user before finalizing draft. "
+                    "Set preview_shown=True in context after user reviews the message."
+                ),
+            )
+
+        outreach_count = int(ctx.get("outreach_count", 0) or 0)
+        if outreach_count >= self._MAX_DRAFTS_PER_SESSION:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Outreach rate limit reached: {outreach_count} drafts this session "
+                    f"(max {self._MAX_DRAFTS_PER_SESSION}). Start a new session to continue."
+                ),
             )
 
         return GuardrailOutput(TripwireResult.PASS)
@@ -1172,6 +1299,9 @@ GUARDRAIL_CLASSES: dict[str, type[BaseGuardrail]] = {
     "CareerJDInjectionGR": CareerJDInjectionGR,
     "CareerNoAutoSubmitGR": CareerNoAutoSubmitGR,
     "CareerPiiOutputGR": CareerPiiOutputGR,
+    "CareerEthicsGR": CareerEthicsGR,
+    "CvModificationGR": CvModificationGR,
+    "CareerOutreachGR": CareerOutreachGR,
 }
 
 __all__ = [
@@ -1200,5 +1330,8 @@ __all__ = [
     "CareerJDInjectionGR",
     "CareerNoAutoSubmitGR",
     "CareerPiiOutputGR",
+    "CareerEthicsGR",
+    "CvModificationGR",
+    "CareerOutreachGR",
     "GUARDRAIL_CLASSES",
 ]

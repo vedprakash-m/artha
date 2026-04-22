@@ -196,6 +196,31 @@ domain:
       allow_comp_data: true   # Compensation data permitted (needed for cross-domain)
       allow_employer_name: true
 
+  - name: career_ethics
+    class: CareerEthicsGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block apply recommendations when composite score < ethics_score_floor
+      ethics_score_floor: 4.0
+
+  - name: career_cv_modification
+    class: CvModificationGR
+    enabled: true
+    mode: blocking
+    config:
+      # Require explicit_approval=True in context before any write to cv.md
+      require_explicit_approval: true
+
+  - name: career_outreach
+    class: CareerOutreachGR
+    enabled: true
+    mode: blocking
+    config:
+      # Max outreach drafts per session; preview_shown=True required before finalizing
+      max_drafts_per_session: 5
+      require_preview: true
+
 
 # RD-05: Contextual name scrubbing for email subject PII
 pii_guard:

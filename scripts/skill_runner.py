@@ -57,12 +57,14 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "mental_health_utilization",
     # PR-3 — AI Trend Radar
     "ai_trend_radar",
-    # FR-25 Career Search Intelligence (Phase 1 — PDF generation)
+    # FR-25 Career Search Intelligence — CV PDF, cover letters, portal scanning
     "career_pdf_generator",
-    # FR-25 Career Search Intelligence (Phase 2 — portal scanning; deferred)
+    "career_cover_letter",
     "portal_scanner",
     # KB Quality Check — Work KB health monitoring
     "kb_quality_check",
+    # iMessage Appointment Tracker — surfaces provider reminder texts as calendar events/OIs
+    "imessage_appointments",
 })
 
 # Short-name aliases (e.g. Claude passes "radar" → resolves to "ai_trend_radar")

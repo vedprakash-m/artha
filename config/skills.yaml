@@ -380,9 +380,9 @@ skills:
   # Phase 2 — registered but disabled until Phase 2 implementation
   portal_scanner:
     class: "scripts.skills.portal_scanner.PortalScanner"
-    enabled: false       # Phase 2 — not yet implemented
+    enabled: true
     priority: P1
-    cadence: every_3_days
+    cadence: on_demand   # Triggered by career_search_agent.py (precompute --domain career)
     requires_vault: false
     safety_critical: false
     command_namespace: career
@@ -391,7 +391,7 @@ skills:
     description: >
       Scan Greenhouse, Ashby, Lever portals for new matching listings.
       Deduplicates against tracker entries using token-set ratio (Jaccard >=0.85).
-      Phase 2 — requires portal_scanner.py implementation.
+      Reads config from config/career_portals.yaml.
 
   # ── CONNECT Phase 4 — Watch Monitor (ac-int.md P4) ──────────────────────
 
@@ -434,4 +434,30 @@ skills:
       Provides ack context for workout_log Telegram handler. Best-effort:
       silently omits goal section if goals.md absent or fields missing.
       Ref: specs/ac-int.md §8.
+
+  # ── iMessage Appointment Tracker ─────────────────────────────────────────
+  # Closes the gap where provider appointment reminders arrive via SMS/iMessage
+  # and are never seen by Gmail or Google Calendar connectors.
+
+  imessage_appointments:
+    enabled: true
+    priority: P0
+    cadence: every_run
+    class_label: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: true
+    command_namespace: calendar
+    requires_connectors: []
+    optional_connectors: [imessage_local]
+    run_on: darwin
+    description: >
+      Read ~/Library/Messages/chat.db (macOS only, lookback 14 days).
+      Detect appointment reminder and confirmation texts from medical,
+      dental, therapy, school, and other provider senders. Extract date,
+      time, provider name, and recipient (Parth/Trisha/Archana/Ved).
+      Surface as 🔴 CRITICAL (today), 🟠 URGENT (tomorrow/day-after),
+      or 🟡 STANDARD (within 7 days). Output feeds directly into catch-up
+      Step 7b OI creation — any appointment within 48h that lacks an OI
+      must have one created immediately. Skipped silently on Windows/Linux.
 

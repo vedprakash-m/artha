@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.22.0 | 2026-04-21 | **Hermes Home Intelligence Layer (FR-28)** — Artha writes a compact Personal OS context snapshot to Home Assistant `sensor.artha_context` after each pipeline run and every 4 hours via a Mac LaunchAgent. Hermes (HA add-on) reads this entity to answer life-context-aware home queries without any real-time M2M protocol. Work OS data is never exported (domain allowlist + defense-in-depth signal scan). Context entity carries `goals_active`, `goals_parked`, `open_items_p1/p2`, `today_events`, `week_events`. Graceful degradation: Hermes operates fully when context is stale or absent. New files: `scripts/export_hermes_context.py`, `config/hermes_context_allowlist.yaml`, `hermes-home.skill`, `artha.hermes-context.plist`. Pipeline Step 22 hook. Preflight staleness check. 41 unit tests. `specs/h-int.md` archived. |
 | v7.21.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (FR-27 amendment)** — Replaces the `--archive-brief` CLI hop with a staging pickup pattern (`specs/rebrief.md`). LLM writes `tmp/briefing_incoming_<runtime>.md`; `pipeline.py` ingests at startup via `_ingest_pending_briefs()` with all safety gates (injection, dedup, flock). `source` field stamped by pipeline code (not self-reported); new `runtime` frontmatter field identifies LLM client (`vscode`/`gemini`/`claude`/`copilot`). Preflight updated: accepts `source: vscode` OR `runtime: vscode`. `specs/rebrief.md` archived. See Tech Spec v3.37.0 §35. |
 | v7.20.0 | 2026-04-17 | **Universal Briefing Archival (FR-27)** — Every catch-up from any surface (VS Code, Telegram, Gmail, MCP) now writes to `briefings/YYYY-MM-DD.md` via a single canonical `briefing_archive.save()` function. Guarantees: idempotent (SHA-256 normalized dedup), process-safe (flock), injection-gated, observable (audit.md + health-check.md). `pipeline.py --archive-brief` early-exit subcommand. `gmail_send.py` archive-by-default. Preflight P1 coverage check (existence by 10 AM; `source: vscode` when VS Code session detected). 44 new tests. See Tech Spec v3.36.0 §35. |
 | v7.19.0 | 2026-04-17 | **Simplification & Token Optimization (specs/simplify.md v1.2)** — Compact `Artha.md` activated as default (~21KB/~6,000 tokens). WorkIQ overlay extracted. Domain agents unified into `precompute.py`. Signal types consolidated 10→4 canonical. Connector fallback map cleaned. Config stubs removed. See Tech Spec v3.35.0. `specs/simplify.md` archived. |
@@ -64,6 +65,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-24: OpenClaw Home Bridge
    - FR-25: Career Search Intelligence
    - FR-26: Artha Channel Integration
+   - FR-28: Hermes Home Intelligence Layer
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -497,7 +499,7 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 | F7.1 | **Utility Bill Calendar** — All utility bills (Metro Electric, Water, Sangamon County) parsed from email. Consolidated view, 5-day due date alerts. Metro Electric enrolled in autopay — confirm each month. | P0 |
 | F7.2 | **Mortgage Tracker** — Outstanding balance, monthly payment, interest rate, payoff date. Annual refinance check trigger. FICO trend connected. | P1 |
 | F7.3 | **Home Maintenance Scheduler** — Annual and seasonal maintenance calendar: HVAC filter (quarterly), gutter cleaning (fall), furnace service (fall), exterior painting (estimate cycle), smoke detectors (annual test). | P1 |
-| F7.4 | **Home Assistant Integration** — Read device status, energy usage, and automation logs from Home Assistant local API. Surface anomalies (device offline, unusual energy consumption) in daily briefing. **✅ IMPLEMENTED v8.2.0** — Connector (`scripts/connectors/homeassistant.py`), skill (`scripts/skills/home_device_monitor.py`), 7-step setup wizard (`scripts/setup_ha_token.py`). LAN-only, token in macOS Keychain. Covers 28 devices across 6 ecosystems (Ring, Apple, Amazon, Google, Sonos, Gecko) via single HA REST API. Deterministic alerting: security device offline → 🔴, energy spike >30% → 🟠, supply <20% → 🟡. State stored in `state/home_iot.md`. | P1 |
+| F7.4 | **Home Assistant Integration** — Read device status, energy usage, and automation logs from Home Assistant local API. Surface anomalies (device offline, unusual energy consumption) in daily briefing. **✅ IMPLEMENTED v8.2.0** — Connector (`scripts/connectors/homeassistant.py`), skill (`scripts/skills/home_device_monitor.py`), 7-step setup wizard (`scripts/setup_ha_token.py`). LAN-only, token in macOS Keychain. Covers 28 devices across 6 ecosystems (Ring, Apple, Amazon, Google, Sonos, Gecko) via single HA REST API. Deterministic alerting: security device offline → 🔴, energy spike >30% → 🟠, supply <20% → 🟡. State stored in `state/home_iot.md`. Complemented by FR-28 (Hermes context writer) which pushes life context to `sensor.artha_context` for Hermes home-intelligence queries. | P1 |
 | F7.5 | **Energy Usage Tracker** — Track Metro Electric bills month-over-month. Alert on unusual spikes. Compare against local seasonal averages. | P2 |
 | F7.6 | **Home Value Signal** — Periodic Zillow/Redfin estimate for 62704 comparable sales. Not investment advice — context for net worth calculation in FR-3. | P2 |
 | F7.7 | **Service Provider Rolodex** — Maintain a curated list of trusted service providers (plumber, electrician, HVAC, landscaper) with last-used dates and notes. | P2 |
@@ -1180,6 +1182,44 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 **Non-goals:** Automatic application submission (hard rule — Artha NEVER submits); Go TUI dashboard; batch `claude -p` workers; multi-language modes.
 
 **Upstream credit:** Evaluation framework (Blocks A–G), scoring system, archetype detection, and ATS template adapted from [career-ops](https://github.com/santifer/career-ops) by Santiago Fernández (MIT License, v1.3.0).
+
+---
+
+### FR-28 · Hermes Home Intelligence Layer
+
+**Priority:** P1 (Phase 1 shipped April 2026)
+**Summary:** Integrates Artha's life intelligence (goals, open items, calendar) into the Hermes always-on Home Assistant agent so Hermes can answer life-context-aware home queries — without any bidirectional real-time protocol. Artha writes a compact Personal OS context snapshot to `sensor.artha_context` in HA after each pipeline run (and every 4 hours via a Mac LaunchAgent). Hermes reads this entity on its own schedule; no callback, no handshake, no simultaneous connectivity required. The integration is structurally simpler than the abandoned M2M bridge (FR-24) because it requires only the already-proven Mac → HA REST write path.
+
+**Architecture:**
+- `scripts/export_hermes_context.py` — Context writer (~300 LOC). Reads `state/goals.md`, `state/open_items.md`, `state/calendar.md`. Posts to `sensor.artha_context`. Mac-only (LAN gate). 2-second TCP probe before POST. Single retry. Auth: `artha-ha-token` keyring key.
+- `config/hermes_context_allowlist.yaml` — Authoritative domain allowlist. Only Personal OS `source_domain` values may appear in the entity. Work OS domains permanently excluded.
+- `hermes-home.skill` — Hermes HA add-on skill. Three skills: `home-context` (life-context Q&A), `presence-journal` (2h schedule, 7-day rolling memory), `weekly-home-digest` (Sunday 8am). Explicit graceful degradation for 5 failure modes.
+- `artha.hermes-context.plist` — macOS LaunchAgent. Runs every 4 hours (`StartInterval=14400`). Ensures entity stays alive even on non-catch-up days and after HA restarts.
+- Pipeline Step 22 hook in `pipeline.py` — Non-blocking; failure is logged to `state/audit.md` but never aborts the catch-up.
+- Preflight check — `check_hermes_context_staleness()` in `scripts/preflight.py` warns if entity is absent or `generated` > 48h old.
+
+**Privacy invariants (hard architectural boundary):**
+- Only Personal OS data from allowlisted `source_domain` values is exported. Work OS data (`state/work/`, WorkIQ, ADO, M365) is **never** exported.
+- Primary guard: domain allowlist in `config/hermes_context_allowlist.yaml`.
+- Secondary guard: `_validate_no_work_data()` defense-in-depth signal scan (10 work OS keywords) — logs `HERMES_WORK_SIGNAL_WARNING` but never blocks the export.
+- Sensitive personal data excluded: no financial account numbers, immigration case numbers, medical details, GPS data, or career comp details.
+- `sensor.artha_context` payload: `goals_active` (max 3), `goals_parked` (max 3), `open_items_p1` (max 3), `open_items_p2` (max 5), `today_events`, `week_events` (max 5). Payload size guard: truncates `week_events` to 3 if total JSON > 4096 bytes.
+
+**OpenClaw boundary:** Hermes and OpenClaw have non-overlapping responsibilities. OpenClaw owns all reactive alerts (Ring motion, anomaly, morning/evening briefing). Hermes owns cross-session aggregation, life-context Q&A, and weekly digest. `hermes-home.skill` is authored without any per-event alert path.
+
+**Core features:**
+
+| Feature ID | Feature | Priority |
+|---|---|---|
+| FR28.1 | **Context Writer** — `export_hermes_context.py` posts `sensor.artha_context` to HA after every successful pipeline run (Step 22) and every 4 hours via LaunchAgent. Non-blocking. | P1 |
+| FR28.2 | **Life-Context Q&A** — `home-context` Hermes skill answers queries like "what does the user have today?" using `sensor.artha_context`. Staleness check: if age > 36h, qualifies answer. If absent, answers from HA data only. Routes sensitive queries (immigration, finance, medical) back to the Artha bot. | P1 |
+| FR28.3 | **Presence Journal** — `presence-journal` Hermes skill runs every 2 hours. Appends presence log to Hermes persistent memory. Prunes entries > 7 days. Survives memory loss gracefully. | P2 |
+| FR28.4 | **Weekly Home Digest** — `weekly-home-digest` Hermes skill runs Sunday 8am. Summary: presence by person, camera battery alerts (<80%), Govee upstairs temp, Artha context age. Delivered via Hermes Telegram gateway. | P2 |
+| FR28.5 | **Staleness Alerting** — `check_hermes_context_staleness()` in preflight warns if entity absent or `generated` > 48h old. Category: `HERMES_CONTEXT_EXPORT_FAIL`. | P1 |
+
+**Non-goals:** Hermes → Artha real-time queries (Telegram bot-to-bot blocked). Artha controlling HA devices (read-only policy). Migrating OpenClaw's reactive skills to Hermes (working, stay in OpenClaw). Windows artha_engine.py changes.
+
+**Test coverage:** 41 unit tests in `tests/unit/test_export_hermes_context.py` covering all §16.5 requirements: work OS exclusion, calendar source filtering, work directory isolation, signal scan, clean personal export, PII absence, calendar source tag sync, dry-run, standalone mode, payload size guard, goals_parked round-trip, week_events cap.
 
 ---
 

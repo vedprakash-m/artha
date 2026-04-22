@@ -1534,8 +1534,24 @@ encrypted, `sensitivity: high`). Trace: `state/career_audit.jsonl`.
 - `/career pdf <NNN>` — Generate ATS-optimized CV PDF via
   `scripts.skills.career_pdf_generator.CareerPdfGenerator(report_number="<NNN>")`.
   Idempotent: skips regen if input hash unchanged.
+- `/career cover <NNN>` — Generate a 1-page cover letter (markdown + PDF) via
+  `scripts.skills.career_cover_letter.CareerCoverLetter(report_number="<NNN>")`.
+  Deterministic composition from Block E/B + article-digest; hash-idempotent.
+- `/career apply <NNN> [--portal X] [--referrer Y]` — Transition tracker row
+  Evaluated → Applied. Records timestamp + portal + referrer, auto-closes
+  matching sponsorship-verify OI, emits `career_apply` trace event.
+  Invokes `scripts/career_apply.py`.
+- `/career prep <NNN|company>` — Assemble interview-prep packet (Block F
+  stories + counters + case study + matched KB deep-dives from
+  `state/interview_prep.md`) to `briefings/career/{NNN}-interview-prep.md`.
+  Invokes `scripts/career_prep.py`.
+- `/career scan` — Run 72h-TTL sweep of configured ATS portals
+  (`config/career_portals.yaml`) via
+  `scripts.skills.portal_scanner.PortalScanner`; appends new matches as
+  `New` tracker rows and emits `portal_scan` trace events.
 - `/career story [append|list]` — Surface or append STAR+Reflection entries in
   the Story Bank (validates against closed-vocabulary tags per FR-CS-7).
+- `/career stories` — Alias for `/career story list`.
 
 Full behavior: `prompts/career_search.md` + `config/commands.md §/career`.
 
