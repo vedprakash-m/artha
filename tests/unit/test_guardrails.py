@@ -422,7 +422,7 @@ class TestFrictionGateGuardrail:
 
 class TestGuardrailClassesRegistry:
     def test_all_seven_guardrails_registered(self):
-        # Updated from 7 → 15 (EAR-3 domain guardrails §8.2) → 18 (career search §8.2)
+        # Updated from 7 → 15 (EAR-3 domain guardrails §8.2) → 18 (career search §8.2) → 21 (career ethics/CV/outreach)
         expected = {
             "VaultAccessGuardrail",
             "PromptInjectionGuardrail",
@@ -444,6 +444,10 @@ class TestGuardrailClassesRegistry:
             "CareerJDInjectionGR",
             "CareerNoAutoSubmitGR",
             "CareerPiiOutputGR",
+            # Phase 2 Career guardrails (ethics, CV modification, outreach)
+            "CareerEthicsGR",
+            "CvModificationGR",
+            "CareerOutreachGR",
         }
         assert set(GUARDRAIL_CLASSES.keys()) == expected
 

@@ -448,12 +448,33 @@ def fingerprint_action(signal_type: str, entity: str, date: str) -> str:
 
 
 def _compute_cv_hash(cv_path: Optional[Path] = None) -> str:
-    """Compute SHA-256 of cv.md content. Returns 'unknown' if file missing."""
-    candidates = [
-        cv_path,
+    """Compute SHA-256 of the CV source. Returns 'unknown' if no file resolves.
+
+    Resolution order (first match wins):
+      1. Explicit ``cv_path`` argument
+      2. ``profile.cv_path`` from state/career_search.md frontmatter (expanded)
+      3. ``~/.artha-local/cv-short.md`` (PDF render source, preferred)
+      4. ``~/.artha-local/cv.md`` (narrative source)
+      5. ``{repo}/cv.md`` (fallback / test fixture location)
+    """
+    candidates: list[Optional[Path]] = [cv_path]
+
+    state_file = _REPO_ROOT / "state" / "career_search.md"
+    if state_file.exists():
+        try:
+            fm = _read_frontmatter(state_file)
+            custom = (fm.get("profile") or {}).get("cv_path")
+            if custom:
+                candidates.append(Path(str(custom)).expanduser())
+        except Exception:
+            pass  # frontmatter read is advisory only; fall through to defaults
+
+    candidates.extend([
+        Path.home() / ".artha-local" / "cv-short.md",
         Path.home() / ".artha-local" / "cv.md",
         _REPO_ROOT / "cv.md",
-    ]
+    ])
+
     for p in candidates:
         if p and p.exists():
             return hashlib.sha256(p.read_bytes()).hexdigest()[:16]

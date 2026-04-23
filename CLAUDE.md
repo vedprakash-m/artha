@@ -23,7 +23,8 @@ Do NOT require a `/` prefix — bare words are the primary invocation form.
 | `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** | Read `state/goals.md`, display goal progress |
 | `domain <X>`, `tell me about <X>`, `<X> status` | **domain** | Read `prompts/<X>.md` + `state/<X>.md`, produce deep dive |
 | `content`, `what should I post`, `draft a post` | **content** | Read `state/pr_manager.md` + `state/gallery.yaml`, show content calendar |
-| `guide`, `what can you do`, `show commands` | **guide** | Show the seven commands above with brief descriptions |
+| `career`, `career eval <URL>`, `career tracker`, `career pdf <NNN>`, `career story` | **career** | Load `prompts/career_search.md` + `state/career_search.md`; execute per `config/Artha.core.md §5` and `config/commands.md §/career` |
+| `guide`, `what can you do`, `show commands` | **guide** | Show the eight commands above with brief descriptions |
 | `health`, `system status`, `is everything OK` | **health** | Run `python scripts/preflight.py`, display system status |
 
 For full command reference with sub-commands, read `config/commands.md`.
