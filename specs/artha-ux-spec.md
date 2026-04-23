@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.18 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.19 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.18.0, Tech Spec v3.35.0
+> **Implements**: PRD v7.22.0, Tech Spec v3.38.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,7 +12,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.18 | 2026-04-16 | **ACI M2M Cleanup** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_ved_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
+| v3.19 | 2026-04-22 | **DataCopilot Reflect Quality UX (§29)** — DC-5 anti-sycophancy pushback interaction patterns (6 trigger templates + response language), evidence tier labels in briefing output (`[state]`, `[signaled]`, `[inferred]`, `[live]`, `[user-confirmed]`), DC-3 audit gate feedback format (blocking check failure messages + rollback notice), `deep reflect` command UX (4 phases, 300s constraint, opt-in only). Implements PRD v7.22.0 FR-28 + Tech Spec v3.38.0 §36. |
+| v3.18 | 2026-04-16 | **ACI M2M Cleanup**** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_ved_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
 | v3.17 | 2026-04-16 | Artha Channel Integration UX — §28: workout logging trigger patterns + acknowledgement format with goal progress, watch alert notification design (immediate Telegram alert vs. daily digest vs. weekly digest), brief request via Claw stale-while-revalidate UX, query relay interaction design (question → 120s timeout expectation → answer). Implements PRD v7.17.0 + Tech Spec v3.34.0. |
 | v3.15 | 2026-04-09 | OpenClaw Home Bridge UX — §27: Home Events briefing section, WhatsApp approval workflow in Telegram, bridge health in `/status` output, kid-arrival presence notification, TTS announcement patterns. Implements PRD v7.14.0 + Tech Spec v3.29.0. |
 | v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
@@ -48,6 +49,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 22. [UX Gaps & Design Decisions](#22-ux-gaps--design-decisions)
 23. [Work OS — Interaction Design](#23-work-os--interaction-design)
 24. [Artha Channel Integration — ACI Interaction Design](#28-artha-channel-integration--aci-interaction-design)
+25. [Work Reflect — Response Quality UX](#29-work-reflect--response-quality-ux)
 
 ---
 
@@ -1012,9 +1014,11 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                  /career tracker         Pipeline status view (from state/career_search.md)
                  /career pdf <NNN>       Generate ATS-optimized CV PDF via Playwright
                                          Output: output/career/cv-{company}-{date}.pdf
-                 /career stories         Story Bank review (20-story cap, 5 pinned)  *(Phase 2)*
-                 /career scan            Portal scan — Greenhouse/Ashby/Lever           *(Phase 2)*
-                 /career prep <company>  Interview prep from tracker + story bank       *(Phase 2)*
+                 /career stories         Story Bank review (20-story cap, 5 pinned)
+                 /career scan            Portal scan — Greenhouse/Ashby/Lever
+                 /career prep <NNN|co>   Interview prep packet from Block F + KB
+                 /career apply <NNN>     Record submission (Evaluated → Applied)
+                 /career cover <NNN>     Generate 1-page cover letter (markdown + PDF)
 ```
 
 **CLI diagnostic flag (not a slash command):**
@@ -3404,4 +3408,76 @@ via the bridge. Ask directly in an Artha session.
 
 ---
 
-*Artha UX Spec v3.18 — End of Document*
+## 29. Work Reflect — Response Quality UX *(v3.19)*
+
+Artha's reflect pipeline enforces quality guardrails (FR-28) that produce observable, user-facing UX patterns. This section specifies those patterns.
+
+### 29.1 Evidence Tier Labels
+
+Every factual claim in a reflect output is labeled inline. These labels signal the source and confidence of the claim:
+
+| Label | Meaning | Example |
+|-------|---------|---------|
+| `[state]` | Read directly from a state file | "Sleep avg: 6.2h `[state]`" |
+| `[signaled]` | Inferred from a signal in this session | "3 late starts this week `[signaled]`" |
+| `[inferred]` | Pattern inferred across multiple sessions | "Stress tracks Monday meetings `[inferred]`" |
+| `[live]` | Real-time data from a connector | "BTC: $94,320 `[live]`" |
+| `[user-confirmed]` | Explicitly acknowledged by user | "Gym membership cancelled `[user-confirmed]`" |
+
+**User expectation:** If you see a claim without a label, it is a protocol violation — ask Artha to re-label.
+
+### 29.2 Anti-Sycophancy Pushback Language
+
+When Artha detects a sycophancy trigger (DC-5), it pushes back with firm but non-hostile language. Standard templates:
+
+| Trigger | Artha response pattern |
+|---------|------------------------|
+| New goal without plan | "You've added this goal before without implementation steps. What's specifically different this time? `[state: logged 2× before without follow-through]`" |
+| Positive reframe without evidence | "I don't see supporting data for that conclusion. The state file shows [evidence]. Are you working from information I don't have?" |
+| Effort praise (effort ≠ outcome) | "I hear that you've been working hard. The metric hasn't moved — should we look at whether the effort is pointed at the right lever?" |
+| No-signal-means-resolved | "I'm not seeing a resolution signal for this item. Silence doesn't equal done — has this actually closed?" |
+| Binary framing | "That's framed as all-or-nothing. What would a partial win look like here?" |
+| Inconsistency with prior state | "This contradicts what you told me [N sessions ago]. What changed? `[state: prior reflect entry]`" |
+
+If you provide counter-evidence after pushback, Artha accepts it and flags the claim as `[user-confirmed]` with reduced confidence.
+
+### 29.3 Audit Gate Feedback
+
+When the self-audit gate blocks an output (DC-3), Artha surfaces the blocking check that failed rather than retrying silently:
+
+```
+⚠️ Reflect output blocked — audit check failed:
+  Blocking check 3: Unresolved contradiction found
+  [Claim A] conflicts with [prior state evidence]
+  Retrying... (iteration 2 of 2)
+```
+
+On iteration-limit exceeded, Artha emits:
+
+```
+⚠️ Reflect audit gate exceeded 2 iterations. Rolled back to last valid state.
+  Run `deep reflect` for a full 4-pass analysis.
+```
+
+### 29.4 Deep Reflect Command UX
+
+**Invocation:** Type `deep reflect` in any work session.
+
+**User-visible phases:**
+```
+[P1] Re-reading full state... ✓
+[P2] Building contradiction map... ✓
+[P3] Checking narrative consistency... ✓
+[P4] Synthesizing... ✓
+```
+
+**Constraints visible to user:**
+- 300-second maximum wall-time
+- Opt-in only — never auto-triggered
+- Only available in Work OS context (not personal briefing)
+
+**When to use:** When standard reflect has cycled 2+ times without resolution, or when you want a comprehensive re-examination of a domain after a significant life event.
+
+---
+
+*Artha UX Spec v3.19 — End of Document*

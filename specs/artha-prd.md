@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.20.0
+## Product Requirements Document · v7.22.0
 
 **Author:** [Author]
-**Date:** April 17, 2026
+**Date:** April 22, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.22.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (FR-28)** — 7 reflect pipeline quality patterns: DC-1 Evidence Tiers (5-tier labeling), DC-2 Anti-Rationalization (9 traps), DC-3 Self-Audit Gate (6 blocking checks + rollback), DC-4 EOF Reinforcement, DC-5 Anti-Sycophancy (6 triggers + disagreement protocol), DC-6 Research Mode (opt-in 4-pass, 300s wall-time), DC-9 Instruction Hierarchy (L0–L5). DC-7 deferred; DC-8 rejected. Implemented in `config/reflect-protocol.md`, `config/Artha.core.md §15–16`, `config/guardrails.yaml`, `scripts/work_loop.py`. `specs/datacop.md` archived. See Tech Spec v3.38.0 §36 + UX Spec v3.19 §29. |
 | v7.21.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (FR-27 amendment)** — Replaces the `--archive-brief` CLI hop with a staging pickup pattern (`specs/rebrief.md`). LLM writes `tmp/briefing_incoming_<runtime>.md`; `pipeline.py` ingests at startup via `_ingest_pending_briefs()` with all safety gates (injection, dedup, flock). `source` field stamped by pipeline code (not self-reported); new `runtime` frontmatter field identifies LLM client (`vscode`/`gemini`/`claude`/`copilot`). Preflight updated: accepts `source: vscode` OR `runtime: vscode`. `specs/rebrief.md` archived. See Tech Spec v3.37.0 §35. |
 | v7.20.0 | 2026-04-17 | **Universal Briefing Archival (FR-27)** — Every catch-up from any surface (VS Code, Telegram, Gmail, MCP) now writes to `briefings/YYYY-MM-DD.md` via a single canonical `briefing_archive.save()` function. Guarantees: idempotent (SHA-256 normalized dedup), process-safe (flock), injection-gated, observable (audit.md + health-check.md). `pipeline.py --archive-brief` early-exit subcommand. `gmail_send.py` archive-by-default. Preflight P1 coverage check (existence by 10 AM; `source: vscode` when VS Code session detected). 44 new tests. See Tech Spec v3.36.0 §35. |
 | v7.19.0 | 2026-04-17 | **Simplification & Token Optimization (specs/simplify.md v1.2)** — Compact `Artha.md` activated as default (~21KB/~6,000 tokens). WorkIQ overlay extracted. Domain agents unified into `precompute.py`. Signal types consolidated 10→4 canonical. Connector fallback map cleaned. Config stubs removed. See Tech Spec v3.35.0. `specs/simplify.md` archived. |
@@ -64,6 +65,8 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-24: OpenClaw Home Bridge
    - FR-25: Career Search Intelligence
    - FR-26: Artha Channel Integration
+   - FR-27: Universal Briefing Archival
+   - FR-28: DataCopilot Quality Infrastructure
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1207,6 +1210,46 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 **Security invariants:** Sender ID allowlist enforced (reply_chat_id lookup fails hard if unconfigured); injection filter (80-char cap + HTML strip + blocked patterns from `config/lint_rules.yaml`) applied before all LLM context; vault auto-relock after every LLM call; PII redaction on every outbound byte. M2M/HMAC requirements removed (M2M components deleted).
 
 **Feature flag:** ACI is always-on once `artha_engine.py` is registered as a Task Scheduler task via `scripts/register_engine_task.ps1`.
+
+---
+
+### FR-27 · Universal Briefing Archival *(v7.20.0 → v7.21.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §35, v3.37.0)
+
+Every catch-up from any surface (VS Code, Telegram, Gmail, MCP) archives to `briefings/YYYY-MM-DD.md` via `briefing_archive.save()`. Idempotent (SHA-256 dedup), process-safe (flock), injection-gated, observable (audit.md + health-check.md). Interactive surfaces write `tmp/briefing_incoming_<runtime>.md`; `pipeline.py._ingest_pending_briefs()` picks up at startup. Preflight P1 check audits daily coverage.
+
+**Implementation:** `scripts/lib/briefing_archive.py`, `scripts/pipeline.py`, `scripts/gmail_send.py`, `config/preflight_checks.yaml`
+
+---
+
+### FR-28 · DataCopilot Quality Infrastructure *(v7.22.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §36, UX Spec §29)
+
+Artha’s reflect pipeline enforces seven quality patterns (“DataCopilot” patterns DC-1 through DC-9) to ensure honest, evidence-grounded work assessments. These patterns prevent rationalization, sycophancy, and attention fade in LLM-driven reflection.
+
+| Pattern | Name | Status | Description |
+|---------|------|--------|-------------|
+| **DC-1** | Evidence Tiers | ✅ Active | 5-tier classification: `[state]` → `[signaled]` → `[inferred]` → `[live]` → `[user-confirmed]`. Claims must cite tier. |
+| **DC-2** | Anti-Rationalization | ✅ Active | 9-trap checklist: availability bias, recency bias, social desirability, no-signal-resolution, binary thinking, effort≠impact, timeframe compression, attribution error, pattern overfit. |
+| **DC-3** | Self-Audit Gate | ✅ Active | 6 blocking checks before any reflect commit. Max 2 fix iterations; on exceed → rollback to snapshot. Snapshot stored in `tmp/reflect-snapshots/`. |
+| **DC-4** | EOF Reinforcement | ✅ Active | 6 rules re-stated at end of `reflect-protocol.md` to counter attention fade in long-context sessions. |
+| **DC-5** | Anti-Sycophancy | ✅ Active | Explicit disagreement protocol for 6 trigger patterns (new goal without plan, positive reframe without evidence, effort praise, no-signal-means-resolved, binary framing, inconsistency with prior state). Drops to `[low_confidence]` flag on counter-evidence. |
+| **DC-6** | Research Mode | ✅ Active | Opt-in `deep reflect` command. 4-pass structure: scan → analyze → synthesize → audit. 300s wall-time cap (`research_mode_timeout: 300`). |
+| **DC-7** | Temporal Decay | ⏸ Deferred | Signal freshness weighting — not yet implemented. |
+| **DC-8** | Comparative Baseline | ❌ Rejected | Cross-session delta scoring — rejected as over-engineering for current scale. |
+| **DC-9** | Instruction Hierarchy | ✅ Active | L0–L5 6-layer hierarchy (`Artha.core.md §16`). Conflict resolution: lower layer number wins; L0 (CRITICAL) always wins. |
+
+**Implementation files:**
+- `config/reflect-protocol.md` — LLM-facing contract (DC-1, DC-2, DC-3, DC-4 EOF block, DC-5, DC-6)
+- `config/Artha.core.md §15–16` — Reflect Protocol + Instruction Hierarchy
+- `config/guardrails.yaml` (`audit_gate`) — DC-3 runtime config
+- `scripts/work_loop.py` — DC-3 snapshot/restore functions
+- `config/commands.md` — DC-5 WOI pushback note + DC-6 `deep reflect` command
+- `state/work/reflect-current.md` — DC-3/DC-5 state fields (`audit_passed`, `pushback_log`, `low_confidence`)
+
+**Non-goals:** DC-7 (temporal decay) and DC-8 (comparative baseline) are explicitly out of scope for this release.
 
 ---
 
