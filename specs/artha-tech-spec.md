@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.36.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.38.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.20.0
+> **Implements**: PRD v7.22.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.38.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.22.0 FR-28. |
 | v3.37.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (§35 amendment, `specs/rebrief.md`)**: Replaces the LLM-executed `--archive-brief` CLI hop with a staging pickup pattern. LLM writes `tmp/briefing_incoming_<runtime>.md`; `_ingest_pending_briefs()` ingests at `pipeline.py` startup with full safety gates. `briefing_archive.save()` gains `runtime` param (stored in frontmatter; identifies LLM client: `vscode`/`gemini`/`claude`/`copilot`). `source` field stamped by pipeline from filename — never self-reported by model. `_run_injection_check()` made fail-closed (raises `RuntimeError` on `ImportError` or scan exception). Step 13.5 added to `config/workflow/finalize.md` with surface table; `config/Artha.core.md` Step 14 archive block replaced with one-liner pointer. Preflight coverage check updated: accepts `source: vscode` OR `runtime: vscode`. `--archive-brief` subcommand removed from `pipeline.py`. 36 archive+ingest tests passing. `specs/rebrief.md` archived. Implements PRD v7.21.0. |
 | v3.36.0 | 2026-04-17 | **Universal Briefing Archival (§35)**: Single canonical `scripts/lib/briefing_archive.py` — `save()` with SHA-256 normalized dedup, POSIX `fcntl.flock` on sidecar `.lock` file, per-entry YAML frontmatter (`date`, `source`, `session_id`, `model_version`, `content_hash`), `InjectionDetector` binary gate, PII guard (non-blocking), audit.md + health-check.md observability. `--archive-brief` early-exit subcommand in `pipeline.py` with path-traversal guard; `session_id`/`model_version` added to `_write_pipeline_metrics()` output. `gmail_send.py` default flipped to `archive=True`; `--no-archive` flag added. `catchup.py._save_briefing()` delegates to canonical helper. `post_catchup_memory.py._detect_parser_format()` updated to discriminate on `source:` field. `config/Artha.core.md` Step 14 consolidated into terminal archive block with `💾` verification token. `preflight.check_briefings_archive_coverage()` P1 check: (a) briefing exists by 10 AM; (b) `source: vscode` present when `session_history` marker found. 44 new tests (24 archive unit, 10 pipeline subcommand, 10 preflight coverage). 3,372 passing. Implements PRD v7.20.0. |
 | v3.35.0 | 2026-04-16 | **ACI M2M Cleanup + LLM Primary Switch**: deleted `m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py`; removed `telegram_m2m` channel; disabled `claw_bridge.yaml`; removed `QUERY_ARTHA_MAX_CHARS` from `context_budget.py`; cleaned `channel_listener.py` and `artha_engine.py`. LLM failover chain reordered: Copilot CLI (`gpt-5.4-mini --no-custom-instructions -s`) is now primary (first) for all Telegram Q&A + catch-up; `_which_copilot()` helper adds WinGet fallback path. Claude tool-use trace filter added (`_TRACE_RE` regex + preamble stripper in `catchup.py`). §34 HMAC security policy removed; §34.9–34.12 updated to reflect standalone Telegram-only ACI. Implements PRD v7.18.0. |
@@ -6049,6 +6050,91 @@ The `brief` step is complete after the file is written. Verification token: `�
 | R9 transcript audit: correlate `💾` token with `runtime: vscode` entry | P2 | Commit 3+ |
 | R8 OneDrive/flock validation under active sync | P2 | Commit 3+ |
 | A4 three-way LLM shadow mode (Copilot + Gemini + Claude; segment by `model_version`) | P1 | Ongoing |
+
+---
+
+## 36. DataCopilot Quality Infrastructure *(v3.38.0)*
+
+FR-28 defines quality constraints for the reflect pipeline. This section documents the technical architecture.
+
+### 36.1 Evidence Tier Architecture (DC-1)
+
+Every claim in a reflect output carries a mandatory tier label. The five-tier taxonomy is enforced in `config/reflect-protocol.md §DC-1`:
+
+| Tier | Label | Source | Example |
+|------|-------|--------|---------|
+| 1 | `[state]` | Direct read from state file | "Sleep avg: 6.2h [state]" |
+| 2 | `[signaled]` | Signal extracted within session | "3 late starts this week [signaled]" |
+| 3 | `[inferred]` | Pattern across multiple sessions | "Stress tracks Monday meetings [inferred]" |
+| 4 | `[live]` | Real-time connector data | "BTC: $94,320 [live]" |
+| 5 | `[user-confirmed]` | Explicitly acknowledged by user | "Gym membership cancelled [user-confirmed]" |
+
+Unlabeled claims are protocol violations. The self-audit gate (DC-3) rejects outputs containing unlabeled claims.
+
+### 36.2 Self-Audit Gate Architecture (DC-3)
+
+The audit gate is a pre-emit check loop in the reflect pipeline. Configuration (`config/guardrails.yaml`):
+
+```yaml
+audit_gate:
+  blocking_checks: 6       # all must pass before emit
+  max_iterations: 2        # iteration 3 triggers rollback
+  on_exceed: rollback      # restore last valid snapshot
+  snapshot_dir: tmp/reflect-snapshots
+```
+
+Snapshot lifecycle (`scripts/work_loop.py`):
+- `snapshot_reflect_files()` — calls `shutil.copy2()` on 6 state files to `tmp/reflect-snapshots/` before each reflect invocation
+- `restore_reflect_snapshot()` — restores all 6 files on rollback
+- `cleanup_reflect_snapshot()` — removes snapshot on successful emit
+- Snapshot directory `tmp/reflect-snapshots/` is gitignored via `tmp/` exclusion in `.gitignore`
+
+The 6 blocking checks that must pass:
+1. Every claim carries an evidence tier label (DC-1 compliance)
+2. No DC-2 anti-rationalization trap triggered
+3. No unresolved contradictions in the output
+4. Overall confidence stated explicitly
+5. Risks not softened by hedge language
+6. No empty-gesture commitments ("I'll try to...")
+
+### 36.3 Anti-Sycophancy Protocol (DC-5)
+
+Implemented in `config/reflect-protocol.md §DC-5` and `config/commands.md`. The WOI (Work On It) protocol:
+
+- **Activation scope:** Explicit contradictions between claimed progress and state-file evidence only. Ambiguous data does not trigger pushback.
+- **6 trigger patterns:** (1) new goal without implementation plan, (2) positive reframe without supporting evidence, (3) effort-as-outcome praise, (4) no-signal-means-resolved, (5) binary framing, (6) direct inconsistency with prior reflect state
+- **Disagreement protocol:** Pushback → user provides counter-evidence → Artha drops to `[low_confidence]` flag and proceeds. Artha never capitulates silently.
+- `state/work/reflect-current.md` carries `pushback_log: []` field for audit trail
+
+### 36.4 Research Mode (DC-6)
+
+Activated by `deep reflect` command (opt-in only). Technical constraints:
+
+- **4-pass structure:** P1 (full state re-read) → P2 (contradiction map) → P3 (narrative consistency check) → P4 (synthesis)
+- **Wall-time cap:** `config/artha_config.yaml: research_mode_timeout: 300` (seconds)
+- **Invocation:** `config/commands.md §deep-reflect`; never auto-triggered
+
+### 36.5 Instruction Hierarchy (DC-9)
+
+Defined in `config/Artha.core.md §16`. Six-layer model:
+
+| Layer | Name | Override Authority | Conflict Resolution |
+|-------|------|--------------------|---------------------|
+| L0 | Safety & Legal | Immutable — never overridden | N/A |
+| L1 | Guardrails Config | Only by `guardrails.yaml` update | L0 wins |
+| L2 | Protocol Contracts | `reflect-protocol.md` | L1 wins |
+| L3 | Domain Config | Domain-specific settings | L2 wins |
+| L4 | Session Context | Per-session state | L3 wins |
+| L5 | User Request | Lowest priority | L4 wins |
+
+L2–L4 conflicts log `INSTRUCTION_CONFLICT` to `state/audit.md`.
+
+### 36.6 Deferred & Rejected Patterns
+
+| Pattern | Decision | Rationale |
+|---------|----------|-----------|
+| DC-7 Temporal Decay | ⏸ Deferred | State files lack structured citation metadata; revisit when state schema v3 adopted |
+| DC-8 Comparative Baseline | ❌ Rejected | Over-engineering; evidence tier labels (DC-1) already communicate confidence granularity |
 
 ---
 
