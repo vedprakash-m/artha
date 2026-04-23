@@ -242,3 +242,16 @@ net_negative_write_guard:
     finance: 0.60             # Financial summaries can legitimately condense ~40%
     health: 0.65              # Health records often condensed from raw appointment notes
     transactions: 0.55        # Transaction logs may be heavily summarised
+
+# ── DC-3: Reflect Audit Gate ─────────────────────────────────────────────────
+# Blocking gate applied after state-file writes in every reflect/work-reflect run.
+# 6 blocking checks must pass before reflect can be declared complete.
+# On failure after max_iterations, all reflect state files are rolled back from snapshot.
+# Snapshot dir is created pre-write and deleted on audit success.
+# Ref: specs/datacop.md §DC-3 (approved 2026-04-22)
+
+audit_gate:
+  blocking_checks: 6
+  max_iterations: 2
+  on_exceed: rollback
+  snapshot_dir: tmp/reflect-snapshots

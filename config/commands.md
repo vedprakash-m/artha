@@ -316,6 +316,8 @@ Also accepts: `/items add [description]` to interactively add a new item (Artha 
 
 Markdown: `/items done OI-NNN` marks item done; `/items defer OI-NNN [days]` defers.
 
+> **DC-5 Anti-Sycophancy:** Closing a Work Open Item (WOI) requires a resolution context. If no WorkIQ signal corroborates the close, Artha will prompt: *"No WorkIQ confirmation found. Marking [user-confirmed] only. Close with unverified flag, or search for confirmation?"* This prompt cannot be suppressed — it fires whenever `confidence < [live]`.
+
 ### `/items quick`
 Show only the 5-Minute task list from `state/memory.md → quick_tasks`. Quick display:
 ```
@@ -947,6 +949,7 @@ for the exact reflection window. Do NOT skip this step — state file quality de
 - `/work reflect --tune` — interactive scoring calibration (5 pairwise comparisons)
 - `/work reflect --backfill` — run historical backfill from work-scrape corpus
 - `/work reflect --backfill-review` — interactive validation of backfilled data
+- `deep reflect` — **DC-6 Research Mode** (opt-in, explicit only): runs a 4-pass deep investigation (primary signal → corroboration → cross-signal → external context) before any state write. Activates when user says "deep reflect", "reflect --days 30", or asks a causal question ("why did X happen?"). Max 300s. Sufficiency Gate enforces tier minimums: `[signaled]` for new entries, `[live]` for closes. See `config/reflect-protocol.md §DC-6` for full protocol.
 - Phase: Active (Sprint 0 + Phase 1 + Phase 1.5 + Sprint 2 complete)
 
 ## `/work thrivesync` — Weekly Team Priorities Post
