@@ -52,6 +52,7 @@ _DOMAIN_HANDLERS: dict[str, tuple[str, str]] = {
     "logistics": ("agents.logistics_agent", "main"),
     "readiness": ("agents.readiness_agent", "main"),
     "tribe":     ("agents.tribe_agent",     "main"),
+    "career":    ("agents.career_search_agent", "main"),
 }
 
 

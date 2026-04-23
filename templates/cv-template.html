@@ -2,245 +2,215 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{COMPANY}} — {{ROLE}}</title>
   <style>
     /* ================================================================
-       Artha Career CV Template v1.0
-       ATS-optimized layout: single-column, no tables, no multi-column
-       Fonts: Space Grotesk (headings) + DM Sans (body) — self-hosted
-       Ref: specs/career-ops.md FR-CS-3, §9.1
+       Artha Career CV Template v4.1
+       ATS-optimized, single-column layout (no tables/columns in body)
+       Self-hosted fonts: Space Grotesk (display) + DM Sans (body)
+       Fonts resolved locally via @font-face with local() fallback;
+       woff2 files live in fonts/ (see scripts/install_fonts.sh).
+       No CDN requests at render time.
     ================================================================ */
 
-    /* Self-hosted fonts — no external CDN dependency.
-       SETUP: Run `make install-fonts` or `bash scripts/install_fonts.sh` to
-       download Space Grotesk and DM Sans woff2 files to fonts/.
-       If woff2 files are present, they take priority; local() is fallback. */
+    /* ── Self-hosted fonts (no CDN) ── */
     @font-face {
       font-family: 'Space Grotesk';
-      src: url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2'),
-           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2'),
-           local('Space Grotesk'), local('SpaceGrotesk');
-      font-weight: 400 700;
       font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: local('Space Grotesk Bold'), local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2');
     }
     @font-face {
       font-family: 'DM Sans';
-      src: url('../fonts/DMSans-Regular.woff2') format('woff2'),
-           url('../fonts/DMSans-Medium.woff2') format('woff2'),
-           url('../fonts/DMSans-Bold.woff2') format('woff2'),
-           local('DM Sans'), local('DMSans');
-      font-weight: 400 500 700;
       font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: local('DM Sans'),
+           url('../fonts/DMSans-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: local('DM Sans Medium'), local('DM Sans'),
+           url('../fonts/DMSans-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: local('DM Sans Bold'), local('DM Sans'),
+           url('../fonts/DMSans-Bold.woff2') format('woff2');
     }
 
-    /* Fallback font stack for ATS parsers without font rendering */
-    :root {
-      --font-heading: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
-      --font-body: 'DM Sans', 'Helvetica Neue', Arial, sans-serif;
-      --color-primary: #1a1a2e;
-      --color-accent: #2563eb;
-      --color-border: #e2e8f0;
-      --color-muted: #64748b;
-      --page-width: 8.5in;
-      --margin-h: 0.65in;
-      --margin-v: 0.55in;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     html, body {
-      width: var(--page-width);
-      font-family: var(--font-body);
-      font-size: 10.5pt;
-      line-height: 1.5;
-      color: var(--color-primary);
-      background: #ffffff;
+      font-family: 'DM Sans', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.3;
+      color: #1f2937;
+      background: #fff;
+      width: 8.5in;
     }
 
-    .page {
-      width: var(--page-width);
-      padding: var(--margin-v) var(--margin-h);
-    }
+    .page { padding: 0.22in 0.5in 0.2in; }
 
-    /* ── Header ─────────────────────────────────────────────────── */
-    .header {
-      border-bottom: 2px solid var(--color-accent);
-      padding-bottom: 12px;
-      margin-bottom: 16px;
-    }
-
-    .header h1 {
-      font-family: var(--font-heading);
-      font-size: 22pt;
-      font-weight: 700;
-      color: var(--color-primary);
-      letter-spacing: -0.5px;
+    /* ── Name — Space Grotesk display face ── */
+    h1 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 17pt;
+      font-weight: 600;
+      letter-spacing: -0.1px;
+      color: #0a192f;
       line-height: 1.1;
+      margin-bottom: 2px;
     }
 
-    .header .subtitle {
-      font-family: var(--font-heading);
-      font-size: 11pt;
-      font-weight: 400;
-      color: var(--color-accent);
-      margin-top: 3px;
+    /* ── Contact line ── */
+    h1 + p {
+      font-size: 8.75pt;
+      color: #6b7280;
+      margin-bottom: 0;
+      padding-bottom: 5px;
+      border-bottom: 1.5px solid #0a192f;
+      letter-spacing: 0.1px;
     }
 
-    .header .contact {
-      font-size: 9pt;
-      color: var(--color-muted);
-      margin-top: 6px;
-    }
-
-    /* ── Section headings ───────────────────────────────────────── */
+    /* ── Section headings ── */
     h2 {
-      font-family: var(--font-heading);
-      font-size: 10pt;
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 7.5pt;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: var(--color-accent);
-      border-bottom: 1px solid var(--color-border);
-      padding-bottom: 3px;
-      margin-top: 14px;
-      margin-bottom: 8px;
+      letter-spacing: 1.8px;
+      color: #1e3a5f;
+      border-bottom: 0.75px solid #93c5fd;
+      padding-bottom: 2px;
+      margin-top: 6px;
+      margin-bottom: 3px;
     }
 
-    h3 {
-      font-family: var(--font-heading);
-      font-size: 10.5pt;
-      font-weight: 600;
-      color: var(--color-primary);
-      margin-top: 10px;
-      margin-bottom: 2px;
-    }
+    /* ── Role block ── */
+    .role-block { margin-top: 5px; margin-bottom: 0; }
 
-    /* ── Body text ──────────────────────────────────────────────── */
-    p {
-      margin-bottom: 4px;
-      font-size: 10.5pt;
-    }
-
-    /* ── Lists — ATS-safe (single-column, no flex) ──────────────── */
-    ul {
-      list-style-type: disc;
-      padding-left: 16px;
-      margin-bottom: 6px;
-    }
-
-    li {
-      margin-bottom: 2px;
-      font-size: 10pt;
-      line-height: 1.45;
-    }
-
-    /* ── Experience entries ─────────────────────────────────────── */
-    .exp-header {
+    .role-meta {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      flex-wrap: wrap;
     }
 
-    .exp-header .company-title {
-      font-weight: 600;
-      font-size: 10.5pt;
-    }
-
-    .exp-header .date-range {
-      font-size: 9.5pt;
-      color: var(--color-muted);
-      flex-shrink: 0;
-    }
-
-    .exp-role {
+    .company {
+      font-family: 'Space Grotesk', Georgia, serif;
       font-size: 10pt;
-      color: var(--color-muted);
-      margin-bottom: 4px;
+      font-weight: 700;
+      color: #0a192f;
+      line-height: 1.2;
     }
 
-    /* ── Skills section ─────────────────────────────────────────── */
-    .skills-grid {
-      display: block; /* Single column for ATS */
+    .role-date {
+      font-size: 8.25pt;
+      color: #9ca3af;
+      white-space: nowrap;
+      margin-left: 18px;
+      font-style: normal;
     }
 
-    .skill-category {
-      margin-bottom: 4px;
+    .role-title {
+      font-size: 9.25pt;
+      color: #374151;
+      font-style: italic;
+      margin-top: 1px;
+      line-height: 1.25;
     }
 
-    .skill-category strong {
+    h3 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #0a192f;
+      margin-top: 5px;
+      margin-bottom: 1px;
+    }
+
+    p {
+      font-size: 9pt;
+      margin-bottom: 2px;
+      color: #1f2937;
+    }
+
+    strong { color: #1e3a5f; font-weight: 700; }
+
+    ul {
+      list-style-type: disc;
+      padding-left: 14px;
+      margin-top: 2px;
+      margin-bottom: 1px;
+    }
+
+    li {
+      font-size: 9pt;
+      line-height: 1.28;
+      margin-bottom: 1px;
+      color: #1f2937;
+    }
+
+    /* ── Education — single-column rows only; ATS-safe (no layout tables) ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+      margin-top: 4px;
+    }
+
+    td, th {
+      text-align: left;
+      padding: 2px 8px 2px 0;
+      vertical-align: top;
+    }
+
+    th {
       font-weight: 600;
+      color: #374151;
+      border-bottom: 0.75px solid #e5e7eb;
+      padding-bottom: 3px;
     }
 
-    /* ── Footer metadata (for internal tracking — not ATS visible) */
-    .pdf-meta {
-      display: none; /* Hidden in PDF output */
-    }
+    td:last-child { color: #6b7280; }
 
-    /* ── Page break control ─────────────────────────────────────── */
-    .no-break {
-      page-break-inside: avoid;
-    }
+    hr { display: none; }
 
-    /* ── Score badge (internal use — not shown to recruiter) ────── */
-    .score-badge {
-      display: none;
-    }
+    .role-block, h2 { page-break-after: avoid; }
+    ul, p { page-break-inside: avoid; }
 
-    /* ── Print / PDF overrides ──────────────────────────────────── */
+    .pdf-meta { display: none !important; }
+
     @media print {
-      .pdf-meta { display: none !important; }
-      .score-badge { display: none !important; }
-
-      html, body {
-        font-size: 10pt;
-      }
-
-      h2 {
-        font-size: 9.5pt;
-      }
-
-      /* Force black ink for ATS scanners */
-      h2 {
-        color: #000000 !important;
-      }
+      html, body { font-size: 9.25pt; }
+      h1 { font-size: 16pt; }
     }
-
-    /* ── ATS keyword comment passthrough ────────────────────────── */
-    /* HTML comments injected by career_pdf_generator.py are preserved
-       as-is and ignored by browsers/PDF renderers. ATS parsers that
-       read raw HTML will surface the keyword list. */
   </style>
 </head>
 <body>
   <div class="page">
-
-    <!-- ══ HEADER ═══════════════════════════════════════════════════ -->
-    <div class="header">
-      <h1>{{CANDIDATE_NAME}}</h1>
-      <div class="subtitle">{{CANDIDATE_TITLE}}</div>
-      <div class="contact">
-        {{CANDIDATE_EMAIL}} · {{CANDIDATE_LOCATION}} · {{CANDIDATE_LINKEDIN}}
-      </div>
-    </div>
-
-    <!-- ══ CV CONTENT (injected by CareerPdfGenerator) ══════════════ -->
-    <div id="cv-body">
-      {{CV_CONTENT}}
-    </div>
-
-    <!-- ══ INTERNAL METADATA (hidden from PDF output) ════════════════ -->
+    <div id="cv-body">{{CV_CONTENT}}</div>
     <div class="pdf-meta">
       Generated: {{DATE}} | Company: {{COMPANY}} | Role: {{ROLE}}
-      Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
-      ATS Keywords: {{KEYWORDS}}
+      | Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
+      | ATS Keywords: {{KEYWORDS}}
     </div>
-
   </div>
 </body>
 </html>

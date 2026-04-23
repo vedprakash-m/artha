@@ -64,7 +64,8 @@ _TEMPLATE_FILES: dict[str, Path] = {
     "visual": _REPO_ROOT / "templates" / "cv-template-visual.html",
 }
 _CV_CANDIDATES: list[Path] = [
-    Path.home() / ".artha-local" / "cv-short.md",  # concise 2-page version (preferred)
+    _REPO_ROOT / "state" / "cv-short.md",          # primary: OneDrive-backed, gitignored
+    Path.home() / ".artha-local" / "cv-short.md",  # legacy fallback
     Path.home() / ".artha-local" / "cv.md",
     _REPO_ROOT / "cv.md",
 ]

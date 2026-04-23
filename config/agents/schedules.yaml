@@ -47,6 +47,16 @@ schedules:
     staleness_tolerance_seconds: 604800  # 7 days (1 cron cycle)
     cron_group: "kg-maintenance"
 
-  # ── Slots 5–8 reserved for future domain agents ───────────────────────
+  # ── CareerSearchAgent (slot 5 of 8) — career-ops Phase 2 ─────────────
+  # Invoked via: python scripts/precompute.py --domain career
+  # Scans Greenhouse/Ashby/Lever portals per config/career_portals.yaml.
+  # Heartbeat: tmp/career_last_run.json
+  - agent: "CareerSearchAgent"
+    cron: "0 4 */3 * *"         # 04:00 every 3 days
+    query: "Scan configured ATS portals for new AI roles matching active campaign and update state/career_search.md ## Pipeline section"
+    staleness_tolerance_seconds: 259200  # 72h (3 days = 1 cron cycle)
+    cron_group: "career"
+
+  # ── Slots 6–8 reserved for future domain agents ───────────────────────
   # Do not register a 7th+ slot without first running the
   # adversarial routing test (A1.3) per specs/prd-reloaded.md §3.2.

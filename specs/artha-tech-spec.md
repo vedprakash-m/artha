@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.38.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.39.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.22.0
+> **Implements**: PRD v7.23.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,7 +11,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.38.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.22.0 FR-28. |
+| v3.39.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.23.0 FR-29. |
+| v3.38.0 | 2026-04-21 | **Hermes Home Intelligence Layer (§3.5c, FR-28)**: `scripts/export_hermes_context.py` — writes `sensor.artha_context` HA entity after pipeline Step 21 (non-blocking Step 22 hook) and every 4 hours via Mac LaunchAgent. Reads `state/goals.md` (frontmatter YAML parser), `state/open_items.md` (regex block extractor, same pattern as `todo_sync.py`), `state/calendar.md` (event-block parser with source allowlist). Payload: `schema_version 1.0`, `goals_active[:3]`, `goals_parked[:3]`, `open_items_p1[:3]`, `open_items_p2[:5]`, `today_events`, `week_events[:5]`, size guard at 4096 bytes. LAN gate: 2-second TCP probe. Auth: `artha-ha-token` keyring. `config/hermes_context_allowlist.yaml` — domain allowlist (primary guard); `_validate_no_work_data()` — 10-signal defense-in-depth scan (warning, never blocking). `hermes-home.skill` (ZIP) — 3 Hermes skills: `home-context`, `presence-journal`, `weekly-home-digest`. `artha.hermes-context.plist` — `StartInterval=14400`, `RunAtLoad=true`, `--standalone` flag, concurrency sentinel `tmp/.pipeline_running`. Preflight: `check_hermes_context_staleness()` warns at 48h stale / absent. 41 unit tests in `tests/unit/test_export_hermes_context.py`. `specs/h-int.md` archived. Implements PRD v7.22.0. |
 | v3.37.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (§35 amendment, `specs/rebrief.md`)**: Replaces the LLM-executed `--archive-brief` CLI hop with a staging pickup pattern. LLM writes `tmp/briefing_incoming_<runtime>.md`; `_ingest_pending_briefs()` ingests at `pipeline.py` startup with full safety gates. `briefing_archive.save()` gains `runtime` param (stored in frontmatter; identifies LLM client: `vscode`/`gemini`/`claude`/`copilot`). `source` field stamped by pipeline from filename — never self-reported by model. `_run_injection_check()` made fail-closed (raises `RuntimeError` on `ImportError` or scan exception). Step 13.5 added to `config/workflow/finalize.md` with surface table; `config/Artha.core.md` Step 14 archive block replaced with one-liner pointer. Preflight coverage check updated: accepts `source: vscode` OR `runtime: vscode`. `--archive-brief` subcommand removed from `pipeline.py`. 36 archive+ingest tests passing. `specs/rebrief.md` archived. Implements PRD v7.21.0. |
 | v3.36.0 | 2026-04-17 | **Universal Briefing Archival (§35)**: Single canonical `scripts/lib/briefing_archive.py` — `save()` with SHA-256 normalized dedup, POSIX `fcntl.flock` on sidecar `.lock` file, per-entry YAML frontmatter (`date`, `source`, `session_id`, `model_version`, `content_hash`), `InjectionDetector` binary gate, PII guard (non-blocking), audit.md + health-check.md observability. `--archive-brief` early-exit subcommand in `pipeline.py` with path-traversal guard; `session_id`/`model_version` added to `_write_pipeline_metrics()` output. `gmail_send.py` default flipped to `archive=True`; `--no-archive` flag added. `catchup.py._save_briefing()` delegates to canonical helper. `post_catchup_memory.py._detect_parser_format()` updated to discriminate on `source:` field. `config/Artha.core.md` Step 14 consolidated into terminal archive block with `💾` verification token. `preflight.check_briefings_archive_coverage()` P1 check: (a) briefing exists by 10 AM; (b) `source: vscode` present when `session_history` marker found. 44 new tests (24 archive unit, 10 pipeline subcommand, 10 preflight coverage). 3,372 passing. Implements PRD v7.20.0. |
 | v3.35.0 | 2026-04-16 | **ACI M2M Cleanup + LLM Primary Switch**: deleted `m2m_handler.py`, `export_bridge_context.py`, `hmac_signer.py`; removed `telegram_m2m` channel; disabled `claw_bridge.yaml`; removed `QUERY_ARTHA_MAX_CHARS` from `context_budget.py`; cleaned `channel_listener.py` and `artha_engine.py`. LLM failover chain reordered: Copilot CLI (`gpt-5.4-mini --no-custom-instructions -s`) is now primary (first) for all Telegram Q&A + catch-up; `_which_copilot()` helper adds WinGet fallback path. Claude tool-use trace filter added (`_TRACE_RE` regex + preamble stripper in `catchup.py`). §34 HMAC security policy removed; §34.9–34.12 updated to reflect standalone Telegram-only ACI. Implements PRD v7.18.0. |
@@ -435,6 +436,61 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 **Pipeline health check fix (v8.2.0):** `run_health_checks()` in `pipeline.py` now passes `fetch_cfg` kwargs (including `ha_url`) to `health_check()`, matching the same kwargs-passing pattern used in `run_fetch()`. Without this fix, health check returned `False` because `ha_url` was not passed.
 
 **Phase 2 (device control — future):** Gated behind 30-day read-only production period. Requires explicit user opt-in (`phase2_device_control: true`) and separate security review. Action handler skeleton: `scripts/actions/homeassistant_service.py`. Service allowlist enforced in code (not YAML). Security signal `security_travel_conflict` (cross-domain: travel planned + security camera offline) planned for Wave 3 correlator skill.
+
+### 3.5c Hermes Context Writer *(v3.38.0 — FR-28)*
+
+**Purpose:** After each pipeline run, push a compact Personal OS context snapshot to Home Assistant `sensor.artha_context` so the Hermes HA add-on can answer life-context-aware home queries without any real-time M2M protocol.
+
+**Component map:**
+
+| Component | File | Role |
+|-----------|------|------|
+| Context writer | `scripts/export_hermes_context.py` | Reads state files, builds payload, POSTs to HA. Mac-only (LAN gate). Non-blocking. |
+| Domain allowlist | `config/hermes_context_allowlist.yaml` | Authoritative `source_domain` allowlist. Primary privacy guard. |
+| Hermes skill | `hermes-home.skill` (ZIP) | Three HA add-on skills: `home-context`, `presence-journal`, `weekly-home-digest`. |
+| LaunchAgent | `artha.hermes-context.plist` | Mac LaunchAgent. 4-hour periodic refresh. `--standalone` mode. |
+| Preflight check | `scripts/preflight.py` → `check_hermes_context_staleness()` | Warns if entity absent or `generated` > 48h. Category: `HERMES_CONTEXT_EXPORT_FAIL`. |
+| Pipeline hook | `scripts/pipeline.py` Step 22 | Non-blocking call after Step 21 (Persistent Fact Extraction). Telemetry: `_emit_tel("hermes.context_export", extra={"status": ..., "ms": ...})`. |
+
+**Entity schema (`sensor.artha_context`):**
+```
+state:        ISO-8601 timestamp of last write
+attributes:
+  schema_version: "1.0"
+  friendly_name:  "Artha Context"
+  generated:      <same as state>
+  goals_active:   [...] # max 3; categories: fitness/health/learning/personal/wellness
+  goals_parked:   [...] # max 3; same category filter
+  open_items_p1:  [...] # max 3; allowlisted source_domain only
+  open_items_p2:  [...] # max 5; allowlisted source_domain only
+  today_events:   ["Dentist 9am"]     # personal calendar sources only
+  week_events:    ["Hike Sat 8am"]    # max 5; next 7 days
+```
+
+**Privacy invariants (code-enforced, not configurable):**
+- **Primary guard:** `config/hermes_context_allowlist.yaml` — only allowlisted `source_domain` values may appear.
+- **Excluded Work OS domains:** `employment`, `career` (career secrets), `immigration`, `estate`, `finance_detailed`.
+- **Blocked calendar sources:** `msgraph_calendar`, `workiq_calendar` (code constant `_BLOCKED_CALENDAR_SOURCES`).
+- **Calendar exclude-by-default:** events with no `source` tag are excluded; only explicitly personal sources pass (`google_calendar`, `gcal`, `icloud_calendar`, `caldav_calendar`, `outlook_calendar`, `manual`, `parentsquare_email`).
+- **Goal category filter:** only `fitness`, `health`, `learning`, `personal`, `wellness`, `academic` (constant `_ALLOWED_GOAL_CATEGORIES`).
+- **Secondary guard:** `_validate_no_work_data()` regex scan for 10 work OS signals. Returns matched list; caller logs `HERMES_WORK_SIGNAL_WARNING` to `state/audit.md`. Export always continues — structural guard is primary.
+- **Payload size guard:** truncate `week_events` to 3 if `len(json.dumps(payload)) > 4096`.
+- **Sensitive personal data excluded:** financial account numbers, immigration case numbers, medical details, GPS history, career comp (§6.2 policy).
+
+**Concurrency sentinel (`--standalone` mode):**
+Pipeline creates `tmp/.pipeline_running` at start; removes it at all exit paths (including early `work_items` empty exit). Standalone LaunchAgent checks sentinel age: if file exists and age < 3600s, defers run (pipeline handles the export). Prevents reading partially-written state files mid-catch-up.
+
+**Data flow per pipeline run:**
+1. Pipeline Step 22 calls `export_hermes_context(_REPO_ROOT, dry_run=dry_run)`
+2. Platform gate (`platform.system() == 'Darwin'`)
+3. LAN probe: 2-second TCP to `ha_url` port (from `connectors.yaml`)
+4. Keyring lookup: `keyring.get_password('artha-ha-token', 'artha')`
+5. State readers: `_read_goals()` (frontmatter YAML), `_read_open_items()` (regex blocks), `_read_upcoming_events()` (event-block regex)
+6. Payload assembly + privacy guards
+7. POST `/api/states/sensor.artha_context` with single retry on non-200/201
+8. Telemetry emit + optional audit write on failure
+
+**Test coverage:** 41 unit tests in `tests/unit/test_export_hermes_context.py`. Covers all §16.5 requirements from `specs/h-int.md` (archived): work OS exclusion, calendar source filtering, work directory isolation, signal scan parametrized across 10 keywords, clean personal export (goals_active + goals_parked round-trip), PII absence, calendar source tag sync, dry-run, standalone sentinel, payload size guard, week_events cap.
 
 ### 3.6 Claude Code Capabilities Utilization's native capabilities beyond basic MCP tools.
 
@@ -6053,9 +6109,9 @@ The `brief` step is complete after the file is written. Verification token: `�
 
 ---
 
-## 36. DataCopilot Quality Infrastructure *(v3.38.0)*
+## 36. DataCopilot Quality Infrastructure *(v3.39.0)*
 
-FR-28 defines quality constraints for the reflect pipeline. This section documents the technical architecture.
+FR-29 defines quality constraints for the reflect pipeline. This section documents the technical architecture.
 
 ### 36.1 Evidence Tier Architecture (DC-1)
 

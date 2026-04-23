@@ -1100,20 +1100,40 @@ Invokes `CareerPdfGenerator` skill for report number NNN.
 
 **Prerequisite:** `playwright install chromium` (one-time; preflight check validates Chromium binary).
 
-### `/career scan` — Portal Scan (Phase 2)
+### `/career scan` — Portal Scan
 
-Scans configured portals (LinkedIn, Anthropic, OpenAI, Wellfound, YC) for new matching listings.
-Trigger: manual or scheduled via `CareerSearchAgent` (EAR-3). Results appear in `state/career_search.md` Pipeline section.
+Scans configured ATS portals (Greenhouse, Ashby, Lever) for new matching listings.
+Trigger: manual (`/career scan`) or scheduled via `CareerSearchAgent` (EAR-3). New matches appear in `state/career_search.md` Pipeline section.
 
-*Phase 2 — not yet active.*
+Config: `config/career_portals.yaml` (per-company `enabled:` flag). TTL: 72h per portal.
 
-### `/career prep <company>` — Interview Preparation (Phase 2)
+### `/career apply <NNN>` — Record Submission
 
-Loads `state/interview_prep.md` Story Bank + role evaluation report; generates role-specific STAR story selection and question preparation. *Phase 2.*
+Transitions tracker row `Evaluated` → `Applied` for report NNN. Records timestamp, portal used, referrer (if any). Auto-closes the matching sponsorship-verify open item when present. Emits `career_apply` trace event.
 
-### `/career stories` — Story Bank View (Phase 2)
+Usage: `/career apply 001 --portal greenhouse --referrer "R. Smith"` — portal + referrer are optional.
 
-Displays indexed Story Bank entries from `state/interview_prep.md` and `state/career_search.md`. *Phase 2.*
+Invocation: `python3 scripts/career_apply.py <NNN> [--portal X] [--referrer "Name"] [--notes "..."]`.
+
+### `/career cover <NNN>` — Generate Cover Letter
+
+Authors a 1-page ATS-safe cover letter for report NNN using the Block E personalization plan + Block B CV-match evidence + proof points from `~/.artha-local/article-digest.md`. Output: `briefings/career/{NNN}-cover-letter.md` plus `output/career/cover-{slug}-{date}.pdf`. Hash-sidecar idempotent — same rendered HTML, no regen.
+
+Invocation (skill):
+```python
+from skills.career_cover_letter import CareerCoverLetter
+CareerCoverLetter(report_number="001").execute()
+```
+
+### `/career prep <NNN|company>` — Interview Preparation
+
+Assembles a role-specific prep packet: pulls Block F (STAR stories + red-flag Q counters + case-study framework) from the evaluation report, and attaches the KB sections from `state/interview_prep.md` whose titles overlap with the recommended stories. Output: `briefings/career/{NNN}-interview-prep.md`. Emits `career_prep` trace event.
+
+Invocation: `python3 scripts/career_prep.py <NNN|company-slug>` (e.g. `python3 scripts/career_prep.py 001` or `python3 scripts/career_prep.py netflix`).
+
+### `/career stories` — Story Bank View
+
+Displays indexed Story Bank entries from `state/career_search.md` Story Bank section (sorted by `used_for` frequency — most-leveraged stories first).
 
 ### `/career start` — Activate Campaign
 

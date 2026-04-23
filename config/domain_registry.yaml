@@ -304,7 +304,7 @@ domains:
     always_load: false
     phase: existing
     prompt_file: "prompts/employment.md"
-    state_file: "state/employment.md"
+    state_file: "state/employment.md.age"
     requires_vault: true   # DEBT-006: encrypted at rest like immigration/finance
     enabled_by_default: true
     household_types: [family, couple, single, multi_gen, roommates]
@@ -320,7 +320,7 @@ domains:
     always_load: false
     phase: existing
     prompt_file: "prompts/kids.md"
-    state_file: "state/kids.md"
+    state_file: "state/kids.md.age"
     requires_vault: true   # DEBT-034: encrypted at rest
     enabled_by_default: false
     household_types: [family, multi_gen]
@@ -1373,7 +1373,7 @@ domains:
     always_load: false
     phase: ear3
     prompt_file: "prompts/career_search.md"
-    state_file: "state/career_search.md"
+    state_file: "state/career_search.md.age"
     requires_vault: true
     enabled_by_default: false
     household_types: [family, couple, single, multi_gen, roommates]
