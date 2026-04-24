@@ -43,6 +43,11 @@ If a checkpoint exists and is <4 hours old:
 
 If no checkpoint or stale (>4h): proceed normally from Step 0.
 
+### Step 0b — Load Previous Session Recap (S-03)
+Read `tmp/_session_recap.yaml` if present. Include in context as **"Previous Session Context"**
+before the user's first prompt. The recap contains: worked-on items, status changes, decisions,
+and next actions from the prior session. If the file is absent or older than 48 hours, skip silently.
+
 ### Step 0 — Pre-flight Go/No-Go Gate
 
 **This step runs BEFORE any data is touched. A failed gate = no catch-up.**

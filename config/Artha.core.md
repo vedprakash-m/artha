@@ -393,17 +393,24 @@ index_card, index_data = build_domain_index()
 
 **Command-level context hint table:**
 
-| Command | State files needed | Prompts needed |
-|---------|-------------------|----------------|
-| `/status` | health-check.md | None |
-| `/items` | open_items.md | None |
-| `/items quick` | open_items.md, memory.md | None |
-| `/goals` | goals.md | goals.md prompt only |
-| `/domain <X>` | state/{X}.md | prompts/{X}.md only |
-| `/dashboard` | dashboard.md, health-check.md | None |
-| `/catch-up` (standard) | Tier A state + routed Tier B | Only routed domains |
-| `/catch-up deep` | All state files | All ACTIVE domain prompts |
-| `/scorecard` | All state file frontmatter | None |
+| Command | State files needed | Prompts needed | context_required |
+|---------|-------------------|----------------|-----------------|
+| `/status` | health-check.md | None | minimal |
+| `/items` | open_items.md | None | minimal |
+| `/items quick` | open_items.md, memory.md | None | minimal |
+| `/goals` | goals.md | goals.md prompt only | minimal |
+| `/domain <X>` | state/{X}.md | prompts/{X}.md only | minimal |
+| `/dashboard` | dashboard.md, health-check.md | None | minimal |
+| `/catch-up` (standard) | Tier A state + routed Tier B | Only routed domains | full |
+| `/catch-up deep` | All state files | All ACTIVE domain prompts | full |
+| `/scorecard` | All state file frontmatter | None | minimal |
+| `brief` | Tier A state | None | minimal |
+| `items` | open_items.md | None | minimal |
+| `goals` | goals.md | goals.md prompt only | minimal |
+| `work` | state/work/ | work prompts | full |
+| `connect` | state/work/evidence_lake/ | connect prompt | full |
+| `reflect` | state/work/reflect-history.md | reflect prompt | full |
+| `deep reflect` | All work state | All work prompts | full |
 
 **Estimated context savings per session:**
 - `/status`: ~15K tokens saved | `/items`: ~12K tokens saved

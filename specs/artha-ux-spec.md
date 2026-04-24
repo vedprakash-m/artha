@@ -3480,4 +3480,50 @@ On iteration-limit exceeded, Artha emits:
 
 ---
 
+## 30. Agency Playground UX Patterns *(v7.24.0 — FR-30)*
+
+UX-visible patterns from SPEC-STEAL-001/002 competitive analysis (archived at `.archive/specs/steal.md`). Most Agency Playground improvements are backend/infrastructure; three patterns have observable user-facing UX.
+
+### 30.1 Session Resume Continuity (S-03)
+
+When a session recap exists from a prior session (`tmp/session_recap.yaml`), Artha opens with a compact "Where I left off" block before the briefing:
+
+```
+⏮ Last session: Reviewed immigration status · created 2 open items
+   Open question: H-1B RFE response — no update yet.
+```
+
+- Recap is ≤2KB, PII-stripped, YAML-structured
+- Type `clear recap` to suppress; auto-expires after 48 hours
+- Implementation: `scripts/lib/checkpoint.py::read_session_recap()`
+
+### 30.2 Audience-Specific Work Reports (S-05/S-25)
+
+Work performance summaries adapt framing and length by audience:
+
+| Audience | Max Length | Framing |
+|----------|-----------|----------|
+| Skip-level / executive | 280 chars | Impact + outcomes only |
+| Direct manager | 500 chars | Impact + context |
+| Peer review | 750 chars | Full narrative + collaboration |
+| Self-reflection | No limit | Complete evidence |
+
+- Implementation: `prompts/work-performance.md §Audience Framing`
+- Character limits enforced in `config/workflow/connect-verify.md §S-25`
+- Default audience not persisted to state; set per session
+
+### 30.3 Signal Deduplication Display (S-02)
+
+When the same signal appears across multiple briefing domains, only one canonical mention appears — in the highest-priority domain — with a cross-reference tag:
+
+```
+📅 Visa appointment Mar 15 at 9am  [→ Immigration]
+```
+
+- Dedup is display-layer only (R6 — no backend data merge)
+- Scope: same session only; does not persist across sessions
+- Implementation: `prompts/reason.md §Signal Grouping`
+
+---
+
 *Artha UX Spec v3.19 — End of Document*

@@ -431,7 +431,23 @@ Also clear the checkpoint programmatically (belt-and-suspenders):
 python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import Path; clear_checkpoint(Path('.'))"
 ```
 
-### Step 19 — Accuracy calibration check
+### Step 18b — Write Session Recap (S-03)
+Write a session recap so the next session can orient quickly:
+```python
+from scripts.checkpoint import write_session_recap
+from pathlib import Path
+write_session_recap(
+    Path('.'),
+    worked_on=["<list what was worked on this session>"],
+    status_changes=["<list any status changes observed>"],
+    decisions=["<list key decisions or user preferences noted>"],
+    next_actions=["<list deferred or pending items for next session>"],
+)
+```
+Populate from the session's briefing output and any user corrections or requests.
+Omit PII — use redacted summaries only. The file is written to `tmp/_session_recap.yaml`.
+
+
 
 **SKIP in read-only mode** → log `⏭️ Step 19 skipped — read-only mode`
 

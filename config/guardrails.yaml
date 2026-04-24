@@ -57,6 +57,11 @@ tool:
       max_failures: 3
 
 output:
+  - name: device_suppress
+    class: DeviceSuppressGR
+    enabled: true
+    mode: blocking
+
   - name: pii_output
     class: PiiOutputGuardrail
     enabled: true

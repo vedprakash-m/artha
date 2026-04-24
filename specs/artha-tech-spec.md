@@ -6194,10 +6194,81 @@ L2–L4 conflicts log `INSTRUCTION_CONFLICT` to `state/audit.md`.
 
 ---
 
+## 37. Agency Playground Quality Layer & Agent SRE Observability *(v7.24.0 — FR-30)*
+
+Derived from SPEC-STEAL-001 (competitive analysis of 95 Agency Playground production plugins) and SPEC-STEAL-002 (Agent SRE observability framework). Full source analysis archived at `.archive/specs/steal.md`. All Tier 1 patterns implemented in Phase 0–3.
+
+### 37.1 Agency Playground Quality Patterns (S-01–S-30, Tier 1)
+
+| ID | Pattern | Implementation |
+|----|---------|----------------|
+| S-01 | Quality Gate Harness | `scripts/lib/quality_gate.py` + `config/quality_gates.yaml`; 2 gate calls in `pipeline.py`; `max_retry=2` |
+| S-02 | Signal Deduplication | Display-layer dedup prompt in `prompts/reason.md §Signal Grouping` (R6: no backend merge) |
+| S-03 | Session Recap Checkpoint | `scripts/lib/checkpoint.py::write_session_recap()` / `read_session_recap()`; YAML format, PII-stripped; `config/workflow/finalize.md §18b` |
+| S-04 | Evidence Lake | `scripts/lib/evidence_lake.py`; `state/work/evidence-lake.md`; append-only JSONL; 9 tests pass |
+| S-05 | Audience-Specific Reports | `prompts/work-performance.md §Audience Framing` |
+| S-06 | Claim Verification Pipeline | `config/workflow/connect-verify.md`; 30s timeout; `[UNVERIFIED]` badge on timeout |
+| S-07 | ADO Sprint Snapshot Agent | `scripts/work/ado_snapshot.py`; wired in `reflect.py` + `reflect_reader.py` |
+| S-08 | Partial Write Pattern | `scripts/lib/partial_writer.py`; 3 call sites in `pipeline.py`; prevents corrupt partial state on failure |
+| S-09/S-29 | Reflect Protocol Prompts | `prompts/work-performance.md`; `config/reflect-protocol.md` |
+| S-25 | Audience Character Limits | `config/workflow/connect-verify.md §S-25` |
+| S-30 | Context Budget Gate | `scripts/lib/context_budget.py::check_budget()`; default threshold: 35,000 tokens (`config/artha_config.yaml §context_gate`) |
+
+Tier 2/3 items (S-10–S-28, S-31, S-32) deferred to Phase 2/3. Feature flags in `config/artha_config.yaml §harness.steal_phase0–4` (all `enabled: false` until Phase 2/3 activation).
+
+### 37.2 Agent SRE Observability Modules (ST-01–ST-07)
+
+All seven modules live under `scripts/lib/` and integrate with `telemetry.py` for trace correlation (ST-06).
+
+| Module | File | Key Capability |
+|--------|------|----------------|
+| Telemetry Hash-Chain | `telemetry.py` | `prev_hash` chain; `verify_integrity()` (ST-01) |
+| Trace Correlation | `telemetry.py` | `generate_trace_id()` (L486); `correlate_trace()` (L514) (ST-06) |
+| Correction Tracker | `correction_tracker.py` | Weighted scoring; `_CORRECTION_THRESHOLD = 0.5` (ST-02) |
+| Cost Guard | `cost_guard.py` | Per-session + daily budget enforcement; persists to `~/.artha-local/cost_guard_state.json` (ST-03) |
+| SLO Engine | `slo_engine.py` | `SLODefinition` dataclass; 4 SLO constants for pipeline reliability (ST-04) |
+| Loop Detector | `loop_detector.py` | `RecurrenceScore` dataclass; `find_stuck_items()` — detects circular open items (ST-05) |
+| Guardrail Ring Check | `preflight.py` | `check_guardrails_rings()` — validates guardrail config ring integrity at startup (ST-07) |
+
+### 37.3 Implementation Gates
+
+| Gate | Requirement | Status |
+|------|-------------|--------|
+| G-0 | Token baseline measured | ✅ 37,625 tokens (`state/health-check.md §Token Baseline`) |
+| G-1 | Config blocks present | ✅ `context_gate`, `harness.steal_phase0–4`, `cost_budgets` in `config/artha_config.yaml` |
+| G-2 | Corpus precision ≥ 0.85 | ✅ 50-entry corpus (`tests/fixtures/correction_corpus.jsonl`); `tests/unit/test_correction_tracker_steal.py` PASSED |
+
+### 37.4 Binding Architectural Rules (R1–R12)
+
+| Rule | Constraint |
+|------|------------|
+| R1 | Extend existing modules; do not create standalone top-level scripts for steal-derived patterns |
+| R2 | S-30 phased context loading is a Phase 0 prerequisite for all other steal items |
+| R3 | SQLite state goes to `~/.artha-local/`; never to `state/` (OneDrive-synced) |
+| R4 | Reject DuckDB; use append-only JSONL for analytics/audit data |
+| R5 | Goal scoring is prompt-driven (LLM returns score) — not a Python formula |
+| R6 | Signal dedup for S-02 is display-layer only — no data-layer dedup |
+| R7 | Connect pipeline items are offline batch only — no real-time streaming |
+| R8 | Agent SRE patterns (ST-01–ST-07) are Artha-native reimplementations, not verbatim copies |
+| R9 | Every new write operation must be registered in `config/actions.yaml` |
+| R10 | Guardrail additions go into `config/guardrails.yaml`; no third config file |
+| R11 | Session recaps (S-03) use structured YAML, not free-prose summaries |
+| R12 | Draft replies appear in a dedicated `## Draft Reply` section; never inline |
+
+### 37.5 Rejected Patterns
+
+| Pattern | Rationale |
+|---------|-----------|
+| R-1: Browser automation / career-hub-referral | Automated browser sessions expose credentials (OWASP A2) |
+| R-2: Connect manager mode | Automated access to manager data without explicit consent — ethical boundary violation |
+
+---
+
 ## 18. Revision History
 
 | Version | Changes |
 |---------|---------|
+| v3.40.0 | **Agency Playground Quality Layer & Agent SRE Observability (§37, FR-30)**: S-01–S-30 Tier 1 patterns + ST-01–ST-07 SRE modules from SPEC-STEAL-001/002 competitive analysis. New files: `scripts/lib/quality_gate.py` (S-01), `scripts/lib/checkpoint.py` session recap funcs (S-03), `scripts/lib/evidence_lake.py` (S-04), `scripts/lib/partial_writer.py` (S-08), `scripts/lib/context_budget.py::check_budget` (S-30), `scripts/work/ado_snapshot.py` (S-07), `scripts/lib/correction_tracker.py` (ST-02), `scripts/lib/cost_guard.py` (ST-03), `scripts/lib/slo_engine.py` (ST-04), `scripts/lib/loop_detector.py` (ST-05), `scripts/preflight.py::check_guardrails_rings` (ST-07). Extended: `scripts/lib/telemetry.py` hash-chain + trace (ST-01/ST-06). Gates G-0/G-1/G-2 PASSED. Rules R1–R12. `specs/steal.md` archived to `.archive/specs/`. Implements PRD v7.24.0. |
 | v3.35.0 | **Simplification & Token Optimization (specs/simplify.md v1.2)**: Compact `Artha.md` activated as default (21KB/~6,000 tokens vs. prior 110KB/~31,000 tokens) — `config/workflow/` files loaded per-command via `§R` routing table in all 3 entrypoints (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). WorkIQ overlay extracted to `config/overlays/workiq.md`. Domain agent unification: `scripts/precompute.py` (single dispatcher) replaces `agent_scheduler.py` + 4 domain agent entry-point files; external-agent control plane (`agent_manager.py`) preserved. Signal type consolidation: `DomainSignal` gains `subtype: str = ""` field; 10 email signal types map to 4 canonical types (`deadline`, `confirmation`, `security`, `informational`) via `_CANONICAL_TYPE_MAP` in `email_signal_extractor.py`; all 4 `signal_routing.yaml` consumers updated; 4 canonical catch-all entries added to `config/signal_routing.yaml`. Connector fallback cleanup: `_FALLBACK_HANDLER_MAP` removed from `pipeline.py`; `_ALLOWED_MODULES` made explicit 20-element frozenset; dead `_HANDLER_MAP` init removed; failure mode now emits `[CRITICAL]` + returns empty dict. Config stub cleanup: `config/lint_rules.yaml` embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py`; `config/implementation_status.yaml` deleted; `config/domain_autonomy_state.yaml` moved to `state/`. Pre-commit hook auto-regenerates `Artha.md` when `Artha.core.md` changes. New tests: `tests/test_signal_consolidation.py` (10), `tests/test_precompute.py` (15). Config YAMLs: 20→17. Per-session token savings: ~25,600 tokens. |
 | v3.34.0 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + `WindowsProactorEventLoopPolicy` + 3 async coroutines (`telegram_loop`, `schedule_loop`, `watchdog_loop`). Reddit public JSON connector (`scripts/connectors/reddit.py`). Watch Monitor deterministic keyword filter + urgency-tiered routing (`scripts/skills/watch_monitor.py`). Brief Request stale-while-revalidate bridge. Query Relay domain allowlist {goals, calendar, open_items, home, learning} + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude 30s each). Physiological Engine workout regex parser → `~/.artha-local/workouts.jsonl` (`scripts/skills/fitness_coach.py`). HMAC-SHA256 required on ALL M2M commands — no exceptions. `QUERY_ARTHA_MAX_CHARS = 15_000` added to `scripts/lib/context_budget.py`. `claw_bridge.yaml` extended with `query_artha` + `llm` config blocks. ADR-004 engine-vs-extend decision gate documented. `scripts/register_engine_task.ps1` written. All ACI tests passing. Implements PRD v7.17.0. |
 | v3.33.0 | **RE-DEBTS Wave 2 Full Remediation Sprint (§33)**: 51-item architectural audit (April 14–15, 2026) fully resolved. Formal degradation hierarchy (5 levels, §33.1) + latency budget targets (§33.2). Typed exception hierarchy: `ArthaError` + `LLMUnavailableError` — no more silent `""` on LLM failure (RD-51). Context budget single source of truth: `context_budget.py` with `CHARS_PER_TOKEN=3.5` (RD-50, RD-21). Vault sentinel (`~/.artha-local/.artha-decrypt-failed`) + sync fence quiescence loop (RD-02, RD-06). Signal routing: `slack_after_hours` active, 3 more orphan signals fixed, YAML merge strategy corrected (RD-09, RD-33, RD-48). Idempotency: `signal_type` in composite key (RD-07). PII: entity field scrub + `NAME_IN_SUBJECT` pattern (RD-05). Telegram: `_filter_telegram_payload()` applied to all transports + DLQ (RD-08). Sensitivity drift: `kids`/`employment` reads through `StateReader` (RD-34). Work OS: tool allowlist in `work_refresh_tools.yaml` (RD-36). Session summarization wired into live command path (RD-37). Vault watchdog LaunchAgent plist (RD-40). ActionProposal Pydantic validation at enqueue (RD-41). Signal funnel metrics in eval_runner (RD-43). `llm_trace()` call sites wired (RD-49). Canonical CONTEXT_BUNDLE_FIELDS schema + validate_pii_profiles.py (RD-15). Multiline profile value flattening (RD-17). Wave 0 dual-key override (RD-47). TF-IDF kwarg fix (RD-31). Executor validation gates for composed proposals (RD-32). 8 items remain open (RD-03, RD-04, RD-38/39 local-only, RD-13, RD-14, RD-42, RD-44). New files: `scripts/lib/exceptions.py`, `scripts/lib/context_budget.py`, `scripts/schemas/agent_context.py`, `scripts/validate_pii_profiles.py`, `scripts/service/com.artha.vault-watchdog.plist`, `config/agents/work_refresh_tools.yaml`. 119 new CI invariant tests. `.gitignore` hardened: `*.skill`, `skills/`. `specs/re-debts.md` archived to `.archive/specs/re-debts.md`. 4462 tests passing. |

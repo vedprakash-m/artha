@@ -2400,7 +2400,242 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
             "pipeline.py", ["--health", "--source", "canvas_lms"], severity="P1"
         ))
 
+    # ── P1 — Telemetry hash chain integrity (ST-01) ───────────────────────
+    checks.append(check_telemetry_integrity())
+
+    # ── P2 — Briefing Quality Index (ST-02, informational) ────────────────
+    checks.append(check_briefing_quality_index())
+
+    # ── P2 — Partial file cleanup (S-08, informational) ──────────────────
+    checks.append(check_cleanup_partials())
+
+    # ── P2 — Evidence Lake TTL enforcement (S-04, informational) ─────────
+    checks.append(check_evidence_lake_ttl())
+
+    # ── P2 — SLO burn rate (ST-04, informational) ─────────────────────────
+    checks.append(check_slo_burn_rate())
+
+    # ── P2 — Stuck items loop detection (ST-05, informational) ────────────
+    checks.append(check_stuck_items())
+
+    # ── P2 — Guardrails governance rings (ST-07, informational) ───────────
+    checks.append(check_guardrails_rings())
+
     return checks
+
+
+def check_telemetry_integrity() -> CheckResult:
+    """ST-01 — Verify telemetry.jsonl hash chain integrity (P1, non-blocking)."""
+    try:
+        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
+        import sys as _sys
+        if _lib_dir not in _sys.path:
+            _sys.path.insert(0, _lib_dir)
+        import telemetry as _tel  # type: ignore[import-not-found]
+        valid = _tel.verify_integrity()
+        if valid:
+            return CheckResult("telemetry integrity (ST-01)", "P1", True, "Hash chain intact ✓")
+        return CheckResult(
+            "telemetry integrity (ST-01)", "P1", False,
+            "Hash chain violation detected — telemetry.jsonl may be tampered or corrupt",
+            fix_hint="Investigate state/telemetry.jsonl for tampering or corruption",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "telemetry integrity (ST-01)", "P1", False,
+            f"Could not verify telemetry integrity: {exc}",
+        )
+
+
+def check_briefing_quality_index() -> CheckResult:
+    """ST-02 — Surface rolling 30-day Briefing Quality Index (P2, informational)."""
+    try:
+        import yaml as _yaml  # type: ignore[import-not-found]
+        from datetime import datetime, timezone, timedelta
+        state_file = Path(ARTHA_DIR) / "state" / "catch_up_runs.yaml"
+        if not state_file.exists():
+            return CheckResult(
+                "briefing quality index (ST-02)", "P2", True, "BQI: state file not found — skipped"
+            )
+        raw = _yaml.safe_load(state_file.read_text(encoding="utf-8")) or []
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        rates = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            ts_str = entry.get("timestamp")
+            cr = entry.get("correction_rate")
+            if cr is None or ts_str is None:
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if ts >= cutoff:
+                    rates.append(float(cr))
+            except (ValueError, TypeError):
+                continue
+        if not rates:
+            return CheckResult(
+                "briefing quality index (ST-02)", "P2", True,
+                "BQI: no rated runs logged yet (informational — normal at start)",
+            )
+        avg_rate = sum(rates) / len(rates)
+        threshold = 0.15  # ≤15% correction rate target (specs/steal.md §15.5)
+        ok = avg_rate <= threshold
+        label = "✓" if ok else "⚠ above 15% target"
+        return CheckResult(
+            "briefing quality index (ST-02)", "P2", ok,
+            f"BQI (30d, {len(rates)} runs): correction_rate={avg_rate:.1%} {label}",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "briefing quality index (ST-02)", "P2", True,
+            f"BQI check skipped: {exc}",
+        )
+
+
+def check_cleanup_partials() -> CheckResult:
+    """S-08 — Sweep aged partial_*.json files from tmp/ (P2, informational)."""
+    try:
+        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
+        import sys as _sys
+        if _lib_dir not in _sys.path:
+            _sys.path.insert(0, _lib_dir)
+        from partial_writer import cleanup_partials as _cleanup  # type: ignore
+        artha_dir = Path(ARTHA_DIR)
+        deleted = _cleanup(artha_dir, max_age_hours=24)
+        if deleted:
+            return CheckResult(
+                "partial cleanup (S-08)", "P2", True,
+                f"Cleaned up {deleted} aged partial file(s) from tmp/ ✓",
+            )
+        return CheckResult(
+            "partial cleanup (S-08)", "P2", True,
+            "Partial cleanup: no aged files found ✓",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "partial cleanup (S-08)", "P2", True,
+            f"Partial cleanup skipped: {exc}",
+        )
+
+
+def check_evidence_lake_ttl() -> CheckResult:
+    """S-04 — Enforce TTL on evidence-lake.md entries (P2, informational)."""
+    try:
+        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
+        import sys as _sys
+        if _lib_dir not in _sys.path:
+            _sys.path.insert(0, _lib_dir)
+        from evidence_lake import enforce_ttl as _enforce  # type: ignore
+        lake_path = Path(ARTHA_DIR) / "state" / "work" / "evidence-lake.md"
+        archive_dir = Path(ARTHA_DIR) / "state" / "work" / "evidence-archive"
+        if not lake_path.exists():
+            return CheckResult(
+                "evidence lake TTL (S-04)", "P2", True,
+                "Evidence lake not found — skipped (will be created on first reflect)",
+            )
+        archived = _enforce(lake_path, archive_dir)
+        if archived:
+            return CheckResult(
+                "evidence lake TTL (S-04)", "P2", True,
+                f"Evidence lake TTL: archived {archived} expired entries ✓",
+            )
+        return CheckResult(
+            "evidence lake TTL (S-04)", "P2", True,
+            "Evidence lake TTL: no expired entries ✓",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "evidence lake TTL (S-04)", "P2", True,
+            f"Evidence lake TTL check skipped: {exc}",
+        )
+
+
+def check_slo_burn_rate() -> CheckResult:
+    """ST-04 — Verify no SLO error budget is burning faster than 1.0x (P2, informational)."""
+    try:
+        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
+        import sys as _sys
+        if _lib_dir not in _sys.path:
+            _sys.path.insert(0, _lib_dir)
+        from slo_engine import get_engine  # type: ignore
+        engine = get_engine(artha_dir=ARTHA_DIR)
+        report = engine.status()
+        burning = [s for s in report.slos if s.burn_rate is not None and s.burn_rate > 1.0]
+        if burning:
+            names = ", ".join(s.name for s in burning)
+            return CheckResult(
+                "SLO burn rate (ST-04)", "P2", True,
+                f"SLO error budget burning fast (>1.0x): {names}",
+            )
+        return CheckResult(
+            "SLO burn rate (ST-04)", "P2", True,
+            "SLO error budgets within limits ✓",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "SLO burn rate (ST-04)", "P2", True,
+            f"SLO burn rate check skipped: {exc}",
+        )
+
+
+def check_stuck_items() -> CheckResult:
+    """ST-05 — Detect items stuck in briefings without closure (P2, informational)."""
+    try:
+        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
+        import sys as _sys
+        if _lib_dir not in _sys.path:
+            _sys.path.insert(0, _lib_dir)
+        from loop_detector import find_stuck_items, load_briefing_history, format_stuck_items_badge  # type: ignore
+        runs_path = Path(ARTHA_DIR) / "state" / "catch_up_runs.yaml"
+        history = load_briefing_history(runs_path=runs_path)
+        stuck = find_stuck_items(history)
+        if stuck:
+            badge = format_stuck_items_badge(stuck)
+            return CheckResult(
+                "stuck items (ST-05)", "P2", True,
+                f"Stuck items detected {badge}: {len(stuck)} item(s) looping without closure",
+            )
+        return CheckResult(
+            "stuck items (ST-05)", "P2", True,
+            "No stuck items detected ✓",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "stuck items (ST-05)", "P2", True,
+            f"Stuck items check skipped: {exc}",
+        )
+
+
+def check_guardrails_rings() -> CheckResult:
+    """ST-07 — Verify guardrails.yaml contains all 4 governance rings (P2, informational)."""
+    try:
+        import yaml as _yaml
+        guardrails_path = Path(ARTHA_DIR) / "config" / "guardrails.yaml"
+        if not guardrails_path.exists():
+            return CheckResult(
+                "guardrails rings (ST-07)", "P2", True,
+                "guardrails.yaml not found — skipped",
+            )
+        with guardrails_path.open("r", encoding="utf-8") as fh:
+            data = _yaml.safe_load(fh)
+        rings = (data or {}).get("rings", {})
+        required = {"ring_0", "ring_1", "ring_2", "ring_3"}
+        missing = required - set(rings.keys())
+        if missing:
+            return CheckResult(
+                "guardrails rings (ST-07)", "P2", True,
+                f"Governance rings missing from guardrails.yaml: {sorted(missing)}",
+            )
+        return CheckResult(
+            "guardrails rings (ST-07)", "P2", True,
+            "Governance rings (ring_0–ring_3) present in guardrails.yaml ✓",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "guardrails rings (ST-07)", "P2", True,
+            f"Guardrails rings check skipped: {exc}",
+        )
 
 
 def format_results(
@@ -2519,6 +2754,52 @@ def format_results(
 
 
 # ---------------------------------------------------------------------------
+# Device context — written at preflight time for LLM compose layer
+# ---------------------------------------------------------------------------
+
+def _write_device_context() -> None:
+    """Write tmp/device_context.json with suppressed domains for this host.
+
+    Reads device_suppress rules from config/guardrails.yaml and writes a
+    manifest that the briefing compose step must check before surfacing any
+    domain content.  Non-fatal: failures are logged to stderr and skipped.
+    """
+    import platform
+    from datetime import datetime, timezone
+
+    try:
+        cfg_path = pathlib.Path(ARTHA_DIR) / "config" / "guardrails.yaml"
+        if not cfg_path.exists():
+            return
+
+        import yaml  # noqa: PLC0415
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        hostname = platform.node()
+        suppressed: list[str] = []
+        reason = ""
+        for rule in cfg.get("device_suppress", []):
+            if rule.get("hostname", "").lower() == hostname.lower():
+                suppressed.extend(rule.get("suppress_domains", []))
+                reason = rule.get("reason", "")
+
+        tmp_dir = pathlib.Path(ARTHA_DIR) / "tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        manifest = {
+            "hostname": hostname,
+            "suppressed_domains": sorted(set(suppressed)),
+            "reason": reason,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        out = tmp_dir / "device_context.json"
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[preflight] WARNING: could not write device_context.json: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -2619,6 +2900,7 @@ def main() -> None:
         if args.first_run:
             all_ok = first_run_ok
 
+    _write_device_context()
     sys.exit(0 if all_ok else 1)
 
 

@@ -196,3 +196,83 @@ def clear_checkpoint(artha_dir: Path) -> None:
     """
     path = artha_dir / _CHECKPOINT_FILE
     path.unlink(missing_ok=True)
+
+
+_SESSION_RECAP_FILE = "tmp/_session_recap.yaml"
+_SESSION_RECAP_TTL_HOURS = 48
+
+
+def write_session_recap(
+    artha_dir: Path,
+    *,
+    worked_on: list[str],
+    status_changes: list[str],
+    decisions: list[str],
+    next_actions: list[str],
+) -> Path:
+    """Write a session recap to ``tmp/_session_recap.yaml``.
+
+    Args:
+        artha_dir: Artha project root.
+        worked_on: Items worked on during the session.
+        status_changes: State/status changes made.
+        decisions: Key decisions made.
+        next_actions: Actions to take next session.
+
+    Returns:
+        Path to the written recap file.
+    """
+    import yaml  # noqa: PLC0415
+
+    recap = {
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "worked_on": list(worked_on),
+        "status_changes": list(status_changes),
+        "decisions": list(decisions),
+        "next_actions": list(next_actions),
+    }
+    path = artha_dir / _SESSION_RECAP_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_atomic(path, yaml.dump(recap, allow_unicode=True, sort_keys=False))
+    return path
+
+
+def read_session_recap(artha_dir: Path) -> dict[str, Any] | None:
+    """Read the session recap if it exists and is not stale.
+
+    Args:
+        artha_dir: Artha project root.
+
+    Returns:
+        Parsed recap dict, or None if the file is absent or older than
+        ``_SESSION_RECAP_TTL_HOURS`` (48 h).
+    """
+    import yaml  # noqa: PLC0415
+
+    path = artha_dir / _SESSION_RECAP_FILE
+    if not path.exists():
+        return None
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    written_at_str = data.get("written_at")
+    if not written_at_str:
+        return None
+
+    try:
+        ts = datetime.fromisoformat(str(written_at_str))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+        if age_hours > _SESSION_RECAP_TTL_HOURS:
+            return None
+    except (ValueError, OverflowError):
+        return None
+
+    return data

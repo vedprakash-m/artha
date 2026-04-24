@@ -90,6 +90,79 @@ _CORRECTION_PATTERNS: list[re.Pattern] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Weighted correction scoring (ST-02 — specs/steal.md §15.2.3)
+# ---------------------------------------------------------------------------
+
+_WEIGHTED_CORRECTIONS: list[tuple[float, re.Pattern]] = [
+    # Strong indicators (weight 1.0)
+    (1.0, re.compile(r'\b(?:wrong|incorrect|that\'?s wrong|not right)\b', re.IGNORECASE)),
+    (1.0, re.compile(r'\bcorrection[:\s]', re.IGNORECASE)),
+    (1.0, re.compile(r'\bit should (?:be|say)\b', re.IGNORECASE)),
+    # Medium indicators (weight 0.7)
+    (0.7, re.compile(r'\bactually,?\s+(?:it\'?s|that\'?s|the)\b', re.IGNORECASE)),
+    (0.7, re.compile(r'\bnot\s+\S+\s+but\b', re.IGNORECASE)),
+    # Weak indicators (weight 0.3)
+    (0.3, re.compile(r'\bno[\s,]+wait\b', re.IGNORECASE)),
+    (0.3, re.compile(r'\bI meant\b', re.IGNORECASE)),
+    (0.3, re.compile(r'\bactually\b', re.IGNORECASE)),
+]
+
+_CORRECTION_THRESHOLD: float = 0.5
+
+# Artha command patterns: skip scoring when ≤5 words and matches one of these
+_COMMAND_SKIP_RE = re.compile(
+    r'^(?:brief|work|items|goals|content|guide|health|domain\s+\S+|'
+    r'catch\s+me\s+up|flash\s+briefing|ok\s+continue|yes|no)$',
+    re.IGNORECASE,
+)
+
+
+def correction_score(text: str) -> float:
+    """Return a weighted score [0.0..1.0] indicating likelihood the text is a correction.
+
+    Exclusion rule: if ≤5 words AND matches a known Artha command, returns 0.0.
+    Score is capped at 1.0; the first matching weight at each tier contributes once.
+    """
+    stripped = text.strip()
+    if len(stripped.split()) <= 5 and _COMMAND_SKIP_RE.match(stripped):
+        return 0.0
+
+    total = sum(
+        weight
+        for weight, pattern in _WEIGHTED_CORRECTIONS
+        if pattern.search(stripped)
+    )
+    return min(1.0, total)
+
+
+def compute_quality_metrics(session_texts: list[str]) -> dict:
+    """Compute correction quality metrics for a session's user messages.
+
+    Args:
+        session_texts: List of raw user message strings from a session.
+
+    Returns:
+        Dict with:
+          correction_count: int   — items scoring at or above _CORRECTION_THRESHOLD
+          total_count: int        — total items evaluated
+          correction_rate: float  — fraction scoring above threshold
+          mean_score: float       — mean correction score across all items
+    """
+    if not session_texts:
+        return {"correction_count": 0, "total_count": 0, "correction_rate": 0.0, "mean_score": 0.0}
+
+    scores = [correction_score(t) for t in session_texts]
+    above = [s for s in scores if s >= _CORRECTION_THRESHOLD]
+
+    return {
+        "correction_count": len(above),
+        "total_count": len(session_texts),
+        "correction_rate": round(len(above) / len(scores), 4),
+        "mean_score": round(sum(scores) / len(scores), 4),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Per-agent lock
 # ---------------------------------------------------------------------------
 

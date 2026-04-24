@@ -51,8 +51,9 @@ _ALLOWED_SKILLS: frozenset[str] = frozenset({
     "credit_monitor", "school_calendar",
     # U-9.6 WhatsApp live enrichment
     "whatsapp_last_contact",
-    # ARTHA-IOT Wave 2 — Home Assistant device monitor
+    # ARTHA-IOT Wave 2 — Home Assistant device monitor + home intelligence
     "home_device_monitor",
+    "home_intelligence",
     # CONNECT Phase 2 — Mental health utilization tracker
     "mental_health_utilization",
     # PR-3 — AI Trend Radar
