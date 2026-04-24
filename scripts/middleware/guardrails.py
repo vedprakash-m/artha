@@ -23,6 +23,7 @@ Ref: specs/agent-fw.md §3.1 (AFW-1)
 from __future__ import annotations
 
 import os
+import platform
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -1274,6 +1275,59 @@ class CareerOutreachGR(BaseGuardrail):
         return GuardrailOutput(TripwireResult.PASS)
 
 
+class DeviceSuppressGR(BaseGuardrail):
+    """Suppress specified domains from briefing output on matching devices.
+
+    Reads ``device_suppress`` from guardrails.yaml.  When the current
+    hostname matches an entry, any briefing signal whose domain is in
+    ``suppress_domains`` is redacted with a HALT result.
+
+    Config example (guardrails.yaml):
+        device_suppress:
+          - hostname: CPC-vemis-DJD0M
+            suppress_domains: [career_search]
+            reason: "Career items must not surface on work device"
+    """
+
+    def _load_rules(self) -> list[dict]:
+        """Return the device_suppress list from guardrails.yaml."""
+        import yaml
+
+        cfg_path = Path(__file__).resolve().parents[2] / "config" / "guardrails.yaml"
+        if not cfg_path.exists():
+            return []
+        with open(cfg_path) as f:
+            cfg = yaml.safe_load(f) or {}
+        return cfg.get("device_suppress", [])
+
+    def suppressed_domains(self) -> set[str]:
+        """Return set of domain names suppressed on this host."""
+        hostname = platform.node()
+        result: set[str] = set()
+        for rule in self._load_rules():
+            if rule.get("hostname", "").lower() == hostname.lower():
+                result.update(rule.get("suppress_domains", []))
+        return result
+
+    def check(self, context: dict, data: Any) -> GuardrailOutput:
+        domain = ""
+        if isinstance(data, dict):
+            domain = data.get("domain", "") or data.get("source_domain", "")
+        elif isinstance(data, str):
+            domain = data
+
+        suppressed = self.suppressed_domains()
+        if domain and domain in suppressed:
+            return GuardrailOutput(
+                TripwireResult.HALT,
+                message=(
+                    f"Domain '{domain}' suppressed on this device "
+                    f"(hostname={platform.node()})."
+                ),
+            )
+        return GuardrailOutput(TripwireResult.PASS)
+
+
 # ---------------------------------------------------------------------------
 # Registry of available guardrail classes (used by guardrail_registry.py)
 # ---------------------------------------------------------------------------
@@ -1302,6 +1356,8 @@ GUARDRAIL_CLASSES: dict[str, type[BaseGuardrail]] = {
     "CareerEthicsGR": CareerEthicsGR,
     "CvModificationGR": CvModificationGR,
     "CareerOutreachGR": CareerOutreachGR,
+    # Device-level domain suppression
+    "DeviceSuppressGR": DeviceSuppressGR,
 }
 
 __all__ = [
@@ -1333,5 +1389,7 @@ __all__ = [
     "CareerEthicsGR",
     "CvModificationGR",
     "CareerOutreachGR",
+    # Device-level domain suppression
+    "DeviceSuppressGR",
     "GUARDRAIL_CLASSES",
 ]
