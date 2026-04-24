@@ -4,6 +4,22 @@ steps: 3–4e
 source: config/Artha.core.md §2, Steps 3–4e
 ---
 
+## S-30 Context Gate — Session Start Budget
+
+**Do NOT load the following at session start (load only on explicit commands):**
+- `state/work/reflect-history.md` → load only for `reflect` or `deep reflect`
+- `state/work/evidence_lake/` files → load only for `connect`, `reflect`, or `deep reflect`
+
+**Load only at session start:**
+- `config/Artha.core.md`
+- `config/Artha.md`
+- Active workflow files for the current command
+- `tmp/_session_recap.yaml` (if present and fresh — via S-03)
+
+**Budget:** Core session-start files must total ≤ 35,000 tokens.
+
+---
+
 ## ⛩️ PHASE GATE — Fetch
 
 **If running /catch-up and you haven't loaded this file yet, STOP and read it now.**

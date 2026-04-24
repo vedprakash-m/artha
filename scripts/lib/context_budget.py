@@ -68,3 +68,8 @@ def estimate_context_pct(
 def chars_for_tokens(token_budget: int) -> int:
     """Return the maximum character count for a given token budget."""
     return int(token_budget * CHARS_PER_TOKEN)
+
+
+def check_budget(text: str, budget_tokens: int) -> bool:
+    """Return True if text fits within budget_tokens (S-30 context gate helper)."""
+    return estimate_token_count(text) <= budget_tokens

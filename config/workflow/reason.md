@@ -226,6 +226,18 @@ Cards with `days_until > 7` may remain `seed` (no rush to draft).
 python -c "from scripts.checkpoint import write_checkpoint; from pathlib import Path; write_checkpoint(Path('.'), 8, ooda_completed=True)"
 ```
 
+### Signal Grouping (S-02)
+Before producing the briefing, scan all signals for topic overlap:
+- If an email thread and a Teams message reference the same work item or topic,
+  group them under a single topic header with source attribution: `[email] + [Teams]`
+- If an ADO item update and a meeting action item cover the same deliverable,
+  group them: `[ADO] + [meeting]`
+- Display format: "**Topic: XPF Deployment** [email + Teams + ADO]" followed by merged bullets
+- NEVER merge two items with different action owners or different deadlines
+- When uncertain whether items are the same topic, list them separately (false negatives > false positives)
+
+---
+
 ### Step 9 — Web research (if triggered)
 
 Triggered by time-sensitive external data only:

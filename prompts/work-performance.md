@@ -100,8 +100,33 @@ When generating the Connect prep output:
 5. The commitment ledger MUST appear in every 1:1 prep card — not just in /work connect-prep
 6. Never fabricate evidence. Surface only what is in work-career state.
 
+### Prior Connect Reference (S-29)
+Before drafting any Connect section, read the most recent entry in
+`state/work/reflect-history.md` that mentions "connect" or "self-assessment."
+Use it to:
+- Show PROGRESSION from the prior period (not repetition)
+- Reference specific prior claims and show how they advanced
+- Avoid restating accomplishments already claimed in the prior Connect
+
 ## PII Handling
 - Not encrypted (redacted summaries only, no raw PII)
 - Apply redact_keywords to all goal titles, commitment titles, and stakeholder references
 - OK to store: goal framework, commitment status, evidence counts, stakeholder observability tier
 - NEVER store: 360 feedback quotes, raw manager email, verbatim conversation content
+
+### Audience Variants (S-05) — on-demand only
+When user says "connect --manager" or "reflect --manager":
+- Generate manager-view variant: focus on impact, outcomes, team contributions
+- Suppress: detailed technical work, personal development items
+When user says "connect --exec":
+- Generate exec-view variant: 3 bullet points max, business outcomes only
+Default (no flag): self-view (full detail).
+
+### Character Limits (S-25) — Connect Field Limits
+When generating Connect draft sections, enforce these field-level character limits:
+- **Summary/Impact section:** ≤ 1000 characters
+- **Key Contributions:** ≤ 500 characters per bullet, max 5 bullets
+- **Goals for Next Period:** ≤ 500 characters per goal, max 5 goals
+- **Manager Comments:** (read-only — do not generate)
+If a generated section exceeds its limit: truncate at the last complete sentence before the limit.
+Append "(truncated to Connect limit)" if any truncation occurred.

@@ -1,0 +1,31 @@
+# quality_gates.yaml — S-01 Quality Gate definitions
+# specs/steal.md §15.4.2
+#
+# Each gate specifies which checks must pass and how many retries to allow
+# before the pipeline hard-fails.
+#
+# checks: symbolic names resolved at runtime by the pipeline orchestrator.
+# max_retries: number of RETRY attempts after the initial failure (so
+#   max_retries=2 means up to 3 total attempts).
+
+gates:
+  post_fetch:
+    description: "Runs after all connectors have been fetched."
+    checks:
+      - at_least_one_connector_succeeded
+      - no_critical_staleness
+    max_retries: 1
+
+  post_process:
+    description: "Runs after signal extraction / classification."
+    checks:
+      - signals_classified
+      - no_unhandled_domains
+    max_retries: 2
+
+  post_reason:
+    description: "Runs after the reasoning / briefing generation step."
+    checks:
+      - briefing_non_empty
+      - no_fabricated_claims
+    max_retries: 2

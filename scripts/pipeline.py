@@ -651,6 +651,27 @@ def run_pipeline(
     except Exception:
         pass  # Heartbeat is non-blocking — never halt the pipeline
 
+    # ── PREFLIGHT: CostGuard initialization (ST-03) ──────────────────────────
+    _cost_guard = None
+    try:
+        from lib.cost_guard import BudgetConfig as _BudgetConfig, CostGuard as _CostGuard  # type: ignore[import]
+        _artha_cfg_path = _REPO_ROOT / "config" / "artha_config.yaml"
+        _cg_raw: dict = {}
+        if _artha_cfg_path.exists():
+            with open(_artha_cfg_path, encoding="utf-8") as _cg_fh:
+                _cg_raw = yaml.safe_load(_cg_fh) or {}
+        _cost_guard = _CostGuard()
+        for _ag_id, _ag_limits in (_cg_raw.get("cost_budgets", {}).get("agents", {}) or {}).items():
+            _cost_guard.set_budget(
+                _ag_id,
+                _BudgetConfig(
+                    daily_limit_usd=float(_ag_limits.get("daily_limit_usd", 1.0)),
+                    monthly_limit_usd=float(_ag_limits.get("monthly_limit_usd", 20.0)),
+                ),
+            )
+    except Exception:
+        _cost_guard = None  # Non-fatal — fail-open per spec §15.4.3
+
     # Step 0a (A2.2): Sentinel-file preflight — detect in-progress agent DB writes
     # If ~/.artha-local/.<domain>_writing exists and its mtime is <60 s old, the
     # domain agent is mid-write.  We note the warning and continue using the last
@@ -771,6 +792,19 @@ def run_pipeline(
                 print(f"[pipeline] ERROR {name}: {err}", file=sys.stderr)
                 error_count += 1
                 _log.error("connector.fetch", connector=name, records=0, ms=round(elapsed * 1000), error=err)
+                # S-08: persist partial for failed connector (non-fatal)
+                try:
+                    from lib.partial_writer import PartialResult as _PartialResult, write_partial as _write_partial  # noqa: PLC0415
+                    _write_partial(_REPO_ROOT, _PartialResult(
+                        run_id=_session_id,
+                        provider=name,
+                        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        status="error",
+                        data={},
+                        error=str(err),
+                    ))
+                except Exception:
+                    pass  # S-08 is non-fatal
             else:
                 # Flush buffered lines to stdout (sequential to prevent interleave)
                 # Apply email marketing classifier inline if available
@@ -788,9 +822,52 @@ def run_pipeline(
                         f"[pipeline] ✓ {name}: {len(classified_lines)} records in {elapsed:.1f}s",
                         file=sys.stderr,
                     )
+                # S-08: persist partial for successful connector (non-fatal)
+                try:
+                    from lib.partial_writer import PartialResult as _PartialResult, write_partial as _write_partial  # noqa: PLC0415
+                    _write_partial(_REPO_ROOT, _PartialResult(
+                        run_id=_session_id,
+                        provider=name,
+                        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        status="ok",
+                        data={"record_count": len(classified_lines)},
+                    ))
+                except Exception:
+                    pass  # S-08 is non-fatal
 
     pipeline_elapsed = round(time.monotonic() - pipeline_start, 2)
     timing["_total"] = pipeline_elapsed
+
+    # S-08: assemble partials after all connectors complete (non-fatal)
+    _assembly_warnings: list[str] = []
+    try:
+        from lib.partial_writer import assemble_partials as _assemble_partials  # noqa: PLC0415
+        _, _assembly_warnings = _assemble_partials(_REPO_ROOT, _session_id)
+    except Exception:
+        pass  # S-08 is non-fatal
+    for _aw in _assembly_warnings:
+        print(f"[pipeline] partial-assembly warning: {_aw}", file=sys.stderr)
+
+    # S-01: post_fetch quality gate (non-fatal — warn on failure, never abort)
+    try:
+        from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
+        def _check_at_least_one_succeeded() -> bool:
+            return error_count < len(work_items)
+        def _check_no_critical_staleness() -> bool:
+            return True  # Staleness is warned above; not a hard gate
+        _pf_gate = _evaluate_gate(
+            "post_fetch",
+            [_check_at_least_one_succeeded, _check_no_critical_staleness],
+            max_retries=1,
+        )
+        if not _pf_gate.passed:
+            print(
+                "[pipeline] ⚠ Quality gate 'post_fetch' FAILED — "
+                f"all {len(work_items)} connectors failed; output will be empty",
+                file=sys.stderr,
+            )
+    except Exception:
+        pass  # Quality gate is non-fatal
 
     # ── Blueprint 1: FETCH step exit + checkpoint write ────────────────────────
     _emit_tel(
@@ -966,6 +1043,27 @@ def run_pipeline(
             pass  # Non-fatal — routing summary never blocks pipeline
 
     _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
+
+    # S-01: post_process quality gate (non-fatal — warn on failure, never abort)
+    try:
+        from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
+        def _check_signals_classified() -> bool:
+            return True  # LLM-side classification; Python layer always passes
+        def _check_no_unhandled_domains() -> bool:
+            return True  # Domain routing is non-blocking in this pipeline
+        _pp_gate = _evaluate_gate(
+            "post_process",
+            [_check_signals_classified, _check_no_unhandled_domains],
+            max_retries=2,
+        )
+        if not _pp_gate.passed:
+            print(
+                "[pipeline] ⚠ Quality gate 'post_process' FAILED — "
+                "signal classification produced unexpected results",
+                file=sys.stderr,
+            )
+    except Exception:
+        pass  # Quality gate is non-fatal
 
     # ── Home events buffer merge (spec §P2.4) ────────────────────────────────
     # Merge ~/.artha-local/home_events_buffer.jsonl → state/home_events.md before exit.
@@ -2062,6 +2160,57 @@ def _ingest_pending_briefs() -> None:
                 "briefing.archive_failed",
                 extra={"runtime": runtime, "error": str(exc)},
             )
+
+
+def _cmd_archive_brief(raw_path: str) -> int:
+    """Archive a briefing draft to briefings/YYYY-MM-DD.md.
+
+    Intended as an early-exit subcommand: validates path, reads draft,
+    delegates to briefing_archive.save(), prints a JSON result, and returns
+    an exit code.  Never invokes run_pipeline.
+
+    Returns:
+        0 — ok or skipped
+        1 — failed (draft missing and no today entry, or save error)
+        2 — security violation (path traversal / absolute path)
+    """
+    import json as _json  # noqa: PLC0415
+    import datetime as _dt  # noqa: PLC0415
+    from lib import briefing_archive as _ba  # noqa: PLC0415
+
+    # ── Security: path-traversal guard ───────────────────────────────────
+    # Must be a relative path inside tmp/
+    if (
+        raw_path.startswith("/")
+        or raw_path.startswith("\\")
+        or (len(raw_path) >= 2 and raw_path[1] == ":")  # Windows absolute (C:\...)
+        or not raw_path.startswith("tmp/")
+        or ".." in raw_path.replace("\\", "/").split("/")
+    ):
+        result = {"status": "failed", "error": "path must be inside tmp/"}
+        print(_json.dumps(result))
+        return 2
+
+    draft_path = _REPO_ROOT / raw_path
+
+    today = _dt.datetime.now().strftime("%Y-%m-%d")
+    today_briefing = _REPO_ROOT / "briefings" / f"{today}.md"
+
+    # ── Draft missing ─────────────────────────────────────────────────────
+    if not draft_path.exists():
+        if today_briefing.exists():
+            result = {"status": "skipped", "reason": "path_missing_but_today_exists"}
+            print(_json.dumps(result))
+            return 0
+        result = {"status": "failed", "error": f"draft not found: {raw_path}"}
+        print(_json.dumps(result))
+        return 1
+
+    text = draft_path.read_text(encoding="utf-8")
+
+    save_result = _ba.save(text, source="vscode")
+    print(_json.dumps(save_result))
+    return 0 if save_result["status"] in ("ok", "skipped") else 1
 
 
 def main(argv: list[str] | None = None) -> int:

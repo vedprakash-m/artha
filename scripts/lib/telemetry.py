@@ -72,6 +72,7 @@ Ref: specs/harden.md §3 Phase 0, §2.1.3 FSM State Graph
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -90,6 +91,38 @@ _TELEMETRY_PATH = _REPO_ROOT / "state" / "telemetry.jsonl"
 # Module-level session_id: set once per process, reused for all events.
 # Callers may override via set_session_id() (e.g. pipeline.py at startup).
 _session_id: str = ""
+
+# ---------------------------------------------------------------------------
+# Hash chain state (ST-01 — specs/steal.md §15.2.2)
+# ---------------------------------------------------------------------------
+
+_GENESIS_HASH: str = "0" * 64
+
+
+def _load_prev_hash() -> str:
+    """Read the last entry_hash from telemetry.jsonl to resume hash chain after restart."""
+    if not _TELEMETRY_PATH.exists():
+        return _GENESIS_HASH
+    try:
+        with open(_TELEMETRY_PATH, encoding="utf-8") as fh:
+            last_hash = _GENESIS_HASH
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    h = entry.get("entry_hash")
+                    if isinstance(h, str) and len(h) == 64:
+                        last_hash = h
+                except json.JSONDecodeError:
+                    continue
+            return last_hash
+    except Exception:  # noqa: BLE001
+        return _GENESIS_HASH
+
+
+_prev_hash: str = _load_prev_hash()
 
 
 def _default_session_id() -> str:
@@ -120,6 +153,13 @@ def set_session_id(sid: str) -> None:
     if not sid or len(sid) < 10:
         raise ValueError(f"Invalid session_id format: {sid!r}")
     _session_id = sid
+
+
+def _compute_entry_hash(record: dict) -> str:
+    """Return SHA-256 hex digest of record serialized with sorted keys (ST-01)."""
+    return hashlib.sha256(
+        json.dumps(record, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +193,10 @@ def emit(
     Non-fatal: swallows all exceptions. If the write fails, a warning is
     printed to stderr but the caller is not interrupted.
 
+    Each emitted entry contains ``prev_hash`` (hash of the preceding entry) and
+    ``entry_hash`` (SHA-256 of the current record excluding ``entry_hash``),
+    forming a tamper-evident chain (ST-01).
+
     Args:
         event:        Dot-namespaced event name (see EVENTS above).
         session_id:   Override session_id (default: module-level _session_id).
@@ -174,6 +218,7 @@ def emit(
         extra:        Additional arbitrary metadata (must be JSON-serializable).
         _path:        Override telemetry file path (test use only).
     """
+    global _prev_hash
     try:
         record: dict[str, Any] = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -204,11 +249,17 @@ def emit(
         if extra:
             record["extra"] = extra
 
+        # Hash chain (ST-01)
+        record["prev_hash"] = _prev_hash
+        entry_hash = _compute_entry_hash(record)
+        record["entry_hash"] = entry_hash
+
         target = _path or _TELEMETRY_PATH
         target.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
         with open(target, "a", encoding="utf-8") as fh:
             fh.write(line)
+        _prev_hash = entry_hash
     except Exception as exc:  # noqa: BLE001
         # Telemetry must never crash callers
         print(f"[telemetry] WARNING: emit failed: {exc}", file=sys.stderr)
@@ -362,3 +413,169 @@ def compute_baseline_stats(_path: Path | None = None) -> dict[str, Any]:
             "to": timestamps[-1] if timestamps else None,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Hash chain verification (ST-01)
+# ---------------------------------------------------------------------------
+
+def verify_integrity(path: Path | None = None) -> bool:
+    """Verify the tamper-evident hash chain of the telemetry log.
+
+    Reads every entry in telemetry.jsonl and checks that each entry's
+    ``prev_hash`` matches the previous entry's ``entry_hash``, and that
+    each entry's ``entry_hash`` matches the SHA-256 of the entry (minus the
+    ``entry_hash`` field itself).
+
+    Pre-ST-01 entries (missing ``entry_hash``/``prev_hash``) are skipped
+    so that existing logs are not broken by the upgrade.
+
+    Returns:
+        True if the chain is intact (or log is empty / pre-ST-01 only).
+        False if any tampering, corruption, or gap is detected.
+    """
+    target = path or _TELEMETRY_PATH
+    if not target.exists():
+        return True
+    prev = _GENESIS_HASH
+    chain_started = False
+    try:
+        with open(target, encoding="utf-8") as fh:
+            for lineno, raw_line in enumerate(fh, 1):
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    print(f"[telemetry] WARNING: corrupt JSON at line {lineno}, chain broken", file=sys.stderr)
+                    return False
+
+                stored_hash = entry.get("entry_hash")
+                stored_prev = entry.get("prev_hash")
+
+                # Skip pre-ST-01 entries that have no hash fields
+                if stored_hash is None and stored_prev is None:
+                    continue
+
+                if chain_started and stored_prev != prev:
+                    print(f"[telemetry] WARNING: chain break at line {lineno} — prev_hash mismatch", file=sys.stderr)
+                    return False
+
+                # Recompute hash: strip entry_hash field, hash the rest
+                check = {k: v for k, v in entry.items() if k != "entry_hash"}
+                computed = _compute_entry_hash(check)
+                if computed != stored_hash:
+                    print(f"[telemetry] WARNING: hash mismatch at line {lineno}", file=sys.stderr)
+                    return False
+
+                prev = stored_hash
+                chain_started = True
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[telemetry] WARNING: verify_integrity failed: {exc}", file=sys.stderr)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Trace ID generation and correlation queries (ST-06)
+# ---------------------------------------------------------------------------
+
+
+def generate_trace_id(
+    session_id: str,
+    agent_name: str,
+    timestamp_ms: int,
+    quantization_ms: int = 10,
+) -> str:
+    """Generate a deterministic trace ID for cross-event correlation.
+
+    The trace ID is a 16-character hex string derived from a SHA-256 hash of
+    the inputs. The timestamp is quantized so that events within the same
+    quantization window share the same trace ID, reducing spurious splits.
+
+    Args:
+        session_id: Session identifier (e.g. "20260422_ab1c2d3e").
+        agent_name: Agent/component name (e.g. "pipeline", "work_loop").
+        timestamp_ms: Unix timestamp in milliseconds.
+        quantization_ms: Quantization window in ms (default: 10ms).
+
+    Returns:
+        16-character lowercase hex string (64-bit trace ID).
+    """
+    quantized_ts = (timestamp_ms // quantization_ms) * quantization_ms
+    raw = f"{session_id}:{agent_name}:{quantized_ts}"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+def query_events_by_trace(
+    trace_id: str,
+    path: Path | None = None,
+) -> list[dict]:
+    """Return all telemetry events matching the given trace_id.
+
+    Scans the JSONL telemetry log and returns every entry whose ``trace_id``
+    field equals *trace_id*.  Returns an empty list if the file does not
+    exist or no matching entries are found.
+
+    Args:
+        trace_id: The trace ID to search for (16-char hex string).
+        path: Path to the JSONL file. Defaults to the module-level path.
+
+    Returns:
+        List of event dicts (chronological order, as stored in the log).
+    """
+    target = path or _TELEMETRY_PATH
+    if not target.exists():
+        return []
+    results: list[dict] = []
+    try:
+        with open(target, encoding="utf-8") as fh:
+            for raw_line in fh:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("trace_id") == trace_id:
+                    results.append(entry)
+    except Exception:  # noqa: BLE001
+        pass
+    return results
+
+
+def query_events_by_session(
+    session_id: str,
+    path: Path | None = None,
+) -> list[dict]:
+    """Return all telemetry events belonging to a session.
+
+    Args:
+        session_id: Session identifier to filter by.
+        path: Path to the JSONL file. Defaults to the module-level path.
+
+    Returns:
+        List of matching event dicts in log order.
+    """
+    target = path or _TELEMETRY_PATH
+    if not target.exists():
+        return []
+    results: list[dict] = []
+    try:
+        with open(target, encoding="utf-8") as fh:
+            for raw_line in fh:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    entry = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("session_id") == session_id:
+                    results.append(entry)
+    except Exception:  # noqa: BLE001
+        pass
+    return results

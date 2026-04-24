@@ -235,3 +235,106 @@ class TestCheckpointCycle:
             clear_checkpoint(tmp_path)
             cp = read_checkpoint(tmp_path)
             assert cp is None
+
+
+# ---------------------------------------------------------------------------
+# Session recap (S-03)
+# ---------------------------------------------------------------------------
+
+
+class TestSessionRecap:
+    def test_write_session_recap_creates_yaml(self, tmp_path):
+        """write_session_recap() creates tmp/_session_recap.yaml with correct fields."""
+        import yaml
+        from checkpoint import write_session_recap
+
+        result = write_session_recap(
+            tmp_path,
+            worked_on=["immigration status", "finance review"],
+            status_changes=["GC application filed"],
+            decisions=["use attorney for I-485"],
+            next_actions=["follow up with lawyer"],
+        )
+        assert result.exists()
+        assert result.name == "_session_recap.yaml"
+        data = yaml.safe_load(result.read_text(encoding="utf-8"))
+        assert data["worked_on"] == ["immigration status", "finance review"]
+        assert "written_at" in data
+
+    def test_read_session_recap_returns_fresh(self, tmp_path):
+        """read_session_recap() returns dict for a freshly written recap."""
+        from checkpoint import write_session_recap, read_session_recap
+
+        write_session_recap(
+            tmp_path,
+            worked_on=["goals sprint"],
+            status_changes=[],
+            decisions=[],
+            next_actions=["review goals"],
+        )
+        result = read_session_recap(tmp_path)
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["worked_on"] == ["goals sprint"]
+
+    def test_read_session_recap_stale_returns_none(self, tmp_path):
+        """read_session_recap() returns None when recap is older than 48h."""
+        import yaml
+        from datetime import datetime, timezone, timedelta
+        from checkpoint import read_session_recap, _SESSION_RECAP_TTL_HOURS
+
+        stale_ts = (
+            datetime.now(timezone.utc) - timedelta(hours=_SESSION_RECAP_TTL_HOURS + 1)
+        ).isoformat()
+        recap = {
+            "written_at": stale_ts,
+            "worked_on": ["old work"],
+            "status_changes": [],
+            "decisions": [],
+            "next_actions": [],
+        }
+        recap_path = tmp_path / "tmp" / "_session_recap.yaml"
+        recap_path.parent.mkdir(parents=True, exist_ok=True)
+        recap_path.write_text(yaml.dump(recap), encoding="utf-8")
+
+        result = read_session_recap(tmp_path)
+        assert result is None
+
+    def test_session_recap_under_500_tokens(self, tmp_path):
+        """A realistic session recap must serialize to ≤500 tokens (A-05)."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
+        from context_budget import estimate_token_count
+        from checkpoint import write_session_recap
+
+        path = write_session_recap(
+            tmp_path,
+            worked_on=["immigration status check", "finance review", "goals sprint planning"],
+            status_changes=["Filed I-485", "Paid Q1 taxes"],
+            decisions=["Use USCIS attorney", "Skip Europe trip in Q3"],
+            next_actions=[
+                "Follow up with lawyer by Friday",
+                "Review open items list",
+                "Check visa validity",
+            ],
+        )
+        token_count = estimate_token_count(path.read_text(encoding="utf-8"))
+        assert token_count <= 500, f"Session recap uses {token_count} tokens (max 500)"
+
+    def test_session_recap_no_pii(self, tmp_path):
+        """Session recap must not contain raw email addresses or phone numbers."""
+        import re
+        from checkpoint import write_session_recap
+
+        path = write_session_recap(
+            tmp_path,
+            worked_on=["reviewed work items"],
+            status_changes=["item closed"],
+            decisions=["proceed with plan"],
+            next_actions=["check email tomorrow"],
+        )
+        content = path.read_text(encoding="utf-8")
+        email_re = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+        phone_re = re.compile(r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b")
+        assert not email_re.search(content), "Email address found in session recap"
+        assert not phone_re.search(content), "Phone number found in session recap"

@@ -108,6 +108,10 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals", "work"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "prompt_regression: marks tests as prompt regression tests",
+]
 
 # ---------------------------------------------------------------------------
 # Mypy — strict type checking for narrative/ subpackage

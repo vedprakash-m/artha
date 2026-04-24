@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.24.0 | 2026-04-23 | **Agency Playground Quality Layer & Agent SRE Observability (FR-30)** — 30 Agency Playground patterns (S-01–S-30) + 7 Agent SRE observability modules (ST-01–ST-07) from SPEC-STEAL-001 (95-plugin competitive analysis) and SPEC-STEAL-002 (Agent SRE framework). New modules: quality gate harness (`scripts/lib/quality_gate.py` — S-01), signal dedup display-layer (S-02), session recap (`scripts/lib/checkpoint.py` — S-03), evidence lake (`scripts/lib/evidence_lake.py` — S-04), audience-specific reports (S-05/S-25), claim verification (S-06), ADO snapshot agent (`scripts/work/ado_snapshot.py` — S-07), partial-write pattern (`scripts/lib/partial_writer.py` — S-08), context budget gate (`scripts/lib/context_budget.py` — S-30); SRE: hash-chained telemetry (ST-01), correction tracker (ST-02), cost guard (ST-03), SLO engine (ST-04), loop detector (ST-05), trace correlation (ST-06), guardrail ring check (ST-07). Gates G-0/G-1/G-2 all PASSED (37,625 token baseline; config blocks; corpus precision ≥ 0.85). Binding rules R1–R12. Rejected: R-1 credential exposure (OWASP A2), R-2 consent violation. `specs/steal.md` archived to `.archive/specs/`. See Tech Spec §37 + UX Spec §30. |
 | v7.23.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (FR-29)** — 7 reflect pipeline quality patterns: DC-1 Evidence Tiers (5-tier labeling), DC-2 Anti-Rationalization (9 traps), DC-3 Self-Audit Gate (6 blocking checks + rollback), DC-4 EOF Reinforcement, DC-5 Anti-Sycophancy (6 triggers + disagreement protocol), DC-6 Research Mode (opt-in 4-pass, 300s wall-time), DC-9 Instruction Hierarchy (L0–L5). DC-7 deferred; DC-8 rejected. Implemented in `config/reflect-protocol.md`, `config/Artha.core.md §15–16`, `config/guardrails.yaml`, `scripts/work_loop.py`. `specs/datacop.md` archived. See Tech Spec v3.39.0 §36 + UX Spec v3.19 §29. |
 | v7.22.0 | 2026-04-21 | **Hermes Home Intelligence Layer (FR-28)** — Artha writes a compact Personal OS context snapshot to Home Assistant `sensor.artha_context` after each pipeline run and every 4 hours via a Mac LaunchAgent. Hermes (HA add-on) reads this entity to answer life-context-aware home queries without any real-time M2M protocol. Work OS data is never exported (domain allowlist + defense-in-depth signal scan). Context entity carries `goals_active`, `goals_parked`, `open_items_p1/p2`, `today_events`, `week_events`. Graceful degradation: Hermes operates fully when context is stale or absent. New files: `scripts/export_hermes_context.py`, `config/hermes_context_allowlist.yaml`, `hermes-home.skill`, `artha.hermes-context.plist`. Pipeline Step 22 hook. Preflight staleness check. 41 unit tests. `specs/h-int.md` archived. |
 | v7.21.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (FR-27 amendment)** — Replaces the `--archive-brief` CLI hop with a staging pickup pattern (`specs/rebrief.md`). LLM writes `tmp/briefing_incoming_<runtime>.md`; `pipeline.py` ingests at startup via `_ingest_pending_briefs()` with all safety gates (injection, dedup, flock). `source` field stamped by pipeline code (not self-reported); new `runtime` frontmatter field identifies LLM client (`vscode`/`gemini`/`claude`/`copilot`). Preflight updated: accepts `source: vscode` OR `runtime: vscode`. `specs/rebrief.md` archived. See Tech Spec v3.37.0 §35. |
@@ -69,6 +70,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-27: Universal Briefing Archival
    - FR-28: Hermes Home Intelligence Layer
    - FR-29: DataCopilot Quality Infrastructure
+   - FR-30: Agency Playground Quality Layer & Agent SRE Observability
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1290,6 +1292,46 @@ Artha’s reflect pipeline enforces seven quality patterns (“DataCopilot” pa
 - `state/work/reflect-current.md` — DC-3/DC-5 state fields (`audit_passed`, `pushback_log`, `low_confidence`)
 
 **Non-goals:** DC-7 (temporal decay) and DC-8 (comparative baseline) are explicitly out of scope for this release.
+
+---
+
+### FR-30 · Agency Playground Quality Layer & Agent SRE Observability *(v7.24.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §37, UX Spec §30)
+
+Derived from competitive analysis of 95 production Agency Playground plugins (SPEC-STEAL-001) and Agent SRE observability framework (SPEC-STEAL-002). Full analysis archived at `.archive/specs/steal.md`. Implements 30 quality patterns (S-01–S-30) and 7 SRE observability modules (ST-01–ST-07).
+
+**Agency Playground Tier 1 Patterns (Implemented)**
+
+| ID | Pattern | Implementation |
+|----|---------|----------------|
+| S-01 | Quality Gate Harness | `scripts/lib/quality_gate.py`, `config/quality_gates.yaml` |
+| S-02 | Signal Deduplication | `prompts/reason.md §Signal Grouping` (display-layer only — R6) |
+| S-03 | Session Recap Checkpoint | `scripts/lib/checkpoint.py`, `config/workflow/finalize.md §18b` |
+| S-04 | Evidence Lake | `scripts/lib/evidence_lake.py`, `state/work/evidence-lake.md` |
+| S-05/S-25 | Audience-Specific Reports | `prompts/work-performance.md`, `config/workflow/connect-verify.md` |
+| S-06 | Claim Verification | `config/workflow/connect-verify.md` |
+| S-07 | ADO Snapshot Agent | `scripts/work/ado_snapshot.py` |
+| S-08 | Partial Write Pattern | `scripts/lib/partial_writer.py` |
+| S-30 | Context Budget Gate | `scripts/lib/context_budget.py`, `config/artha_config.yaml §context_gate` |
+
+**Agent SRE Observability Modules**
+
+| ID | Module | Implementation |
+|----|--------|----------------|
+| ST-01 | Telemetry Hash-Chain | `scripts/lib/telemetry.py::verify_integrity()` |
+| ST-02 | Correction Tracker | `scripts/lib/correction_tracker.py` |
+| ST-03 | Cost Guard | `scripts/lib/cost_guard.py` |
+| ST-04 | SLO Engine | `scripts/lib/slo_engine.py` |
+| ST-05 | Loop Detector | `scripts/lib/loop_detector.py` |
+| ST-06 | Trace Correlation | `scripts/lib/telemetry.py::generate_trace_id()`, `correlate_trace()` |
+| ST-07 | Guardrail Ring Check | `scripts/preflight.py::check_guardrails_rings()` |
+
+**Deferred:** S-10–S-28, S-31, S-32 (Tier 2/3 — require Phase 2/3 context budget). Feature flags: `config/artha_config.yaml §harness.steal_phase0–4` (all `enabled: false` until activated).
+
+**Rejected:** R-1 browser automation / career-hub-referral (OWASP A2 credential exposure); R-2 connect manager mode (consent boundary violation).
+
+**Implementation gates:** G-0 ✅ (37,625 token baseline, `state/health-check.md §Token Baseline`); G-1 ✅ (`context_gate`, `harness.steal_phase0–4`, `cost_budgets` in `config/artha_config.yaml`); G-2 ✅ (50-entry corpus, `tests/fixtures/correction_corpus.jsonl`, precision ≥ 0.85).
 
 ---
 
