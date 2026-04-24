@@ -448,6 +448,8 @@ class TestGuardrailClassesRegistry:
             "CareerEthicsGR",
             "CvModificationGR",
             "CareerOutreachGR",
+            # Device-level domain suppression
+            "DeviceSuppressGR",
         }
         assert set(GUARDRAIL_CLASSES.keys()) == expected
 

@@ -221,6 +221,17 @@ domain:
       max_drafts_per_session: 5
       require_preview: true
 
+# ── Device-Level Domain Suppression ──────────────────────────────────────────
+# Suppress specific domains from briefings and catch-up output on matching
+# hostnames. Career search activity must never surface on a work device.
+# Checked by: LLM compose layer (reads this config at briefing time) and
+# DeviceSuppressGR guardrail (pipeline enforcement).
+# To add a device: append hostname + suppress_domains list below.
+device_suppress:
+  - hostname: CPC-vemis-DJD0M          # Microsoft work laptop
+    suppress_domains:
+      - career_search
+    reason: "Career campaign items must not appear on employer-issued device"
 
 # RD-05: Contextual name scrubbing for email subject PII
 pii_guard:
@@ -255,3 +266,45 @@ audit_gate:
   max_iterations: 2
   on_exceed: rollback
   snapshot_dir: tmp/reflect-snapshots
+
+# ── ST-07: Governance Rings (specs/steal.md §14.1) ───────────────────────────
+rings:
+  ring_0:
+    name: encrypted_state_writes
+    description: "Encrypted vault writes — requires explicit user confirmation"
+    allowed_operations: [vault_write, state_encrypt]
+    requires_user_confirmation: true
+  ring_1:
+    name: state_writes_and_connector_fetch
+    description: "State file writes and external connector fetches"
+    allowed_operations: [state_write, connector_fetch, action_execute]
+    requires_user_confirmation: false
+  ring_2:
+    name: read_state_and_generate
+    description: "Read state files and generate LLM output"
+    allowed_operations: [state_read, llm_generate, briefing_write]
+    requires_user_confirmation: false
+  ring_3:
+    name: read_only
+    description: "Read-only access to state and config"
+    allowed_operations: [state_read, config_read]
+    requires_user_confirmation: false
+
+blocked_patterns:
+  - pattern: "subprocess\\.call|os\\.system|eval\\("
+    reason: "Shell injection prevention"
+    severity: hard_block
+  - pattern: "DROP TABLE|DELETE FROM|TRUNCATE"
+    reason: "Destructive database operations blocked"
+    severity: hard_block
+  - pattern: "password|secret|api_key|private_key"
+    reason: "Credential exfiltration prevention (in non-vault outputs)"
+    severity: warn
+
+pii_retention:
+  encrypted_domains:
+    - immigration
+    - finance
+    - health
+  retention_days: 365
+  enforce_ttl: true
