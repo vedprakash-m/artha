@@ -397,10 +397,11 @@ class TestPushPendingActions:
 
         with patch.dict("sys.modules", {"action_executor": mock_ae_mod}), \
              patch("channels.registry.create_adapter_from_config",
-                   return_value=mock_adapter):
+                   return_value=mock_adapter) as mock_create:
             count = cp.push_pending_actions(dry_run=True)
 
         assert count == 1
+        mock_create.assert_not_called()
         mock_adapter.send_message.assert_not_called()
 
     def test_friction_badge_in_message(self, tmp_path, monkeypatch):

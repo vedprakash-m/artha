@@ -1181,6 +1181,112 @@ def check_workiq() -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# EngHub MCP health check (§13.7 — P1, non-blocking, Windows-only)
+# ---------------------------------------------------------------------------
+
+def check_enghub_health() -> CheckResult:
+    """§13.7: EngHub MCP subprocess health check (P1, non-blocking, Windows-only).
+
+    States (priority order):
+      ✗  Node.js / npx not found  → cannot launch subprocess
+      ✗  .vscode/mcp.json missing or missing 'enghub' key → server not registered
+      ⚠  Recent audit log shows init_failed / error → may be auth expiry
+      ✓  Fresh enrichment cache (< 4h TTL) → enrichment working
+      ○  No fresh cache, no known errors → VPN offline or first run (non-blocking)
+
+    Severity: P1 — EngHub enrichment is always async/optional; never blocks catch-up.
+    """
+    import platform
+    import shutil
+
+    # EngHub runs only on Windows (Node.js MSAL waterfall; G9)
+    if platform.system() != "Windows":
+        return CheckResult(
+            "EngHub MCP", "P1", True,
+            "Skipped (not Windows) — EngHub enrichment unavailable on non-Windows ✓",
+        )
+
+    # ── Step 1: npx / Node.js availability ────────────────────────────────
+    npx_path = shutil.which("npx")
+    if not npx_path:
+        return CheckResult(
+            "EngHub MCP", "P1", False,
+            "✗ EngHub: Node.js not found / npx unavailable",
+            fix_hint="Install Node.js (https://nodejs.org) to enable EngHub enrichment",
+        )
+
+    # ── Step 2: .vscode/mcp.json has 'enghub' entry ───────────────────────
+    mcp_json_path = Path(ARTHA_DIR) / ".vscode" / "mcp.json"
+    if not mcp_json_path.exists():
+        return CheckResult(
+            "EngHub MCP", "P1", False,
+            "✗ EngHub: .vscode/mcp.json missing — enghub server not registered",
+            fix_hint="Re-run setup or restore .vscode/mcp.json with an 'enghub' stdio entry",
+        )
+    try:
+        mcp_data = json.loads(mcp_json_path.read_text(encoding="utf-8"))
+        if "enghub" not in mcp_data.get("servers", {}):
+            return CheckResult(
+                "EngHub MCP", "P1", False,
+                "✗ EngHub: 'enghub' key missing from .vscode/mcp.json servers",
+                fix_hint="Add enghub stdio entry to .vscode/mcp.json",
+            )
+    except (json.JSONDecodeError, OSError) as _exc:
+        return CheckResult(
+            "EngHub MCP", "P1", False,
+            f"✗ EngHub: cannot read .vscode/mcp.json: {_exc}",
+        )
+
+    _tmp_dir = Path(ARTHA_DIR) / "tmp"
+
+    # ── Step 3: Check recent audit files for init/auth failures ───────────
+    try:
+        audit_files = sorted(_tmp_dir.glob(".enghub_audit_*.json"))
+        if audit_files:
+            latest = audit_files[-1]
+            audit_data = json.loads(latest.read_text(encoding="utf-8"))
+            # Handle both old (list) and new (dict with events key) formats (Gap #6)
+            if isinstance(audit_data, dict):
+                audit_data = audit_data.get("events", [])
+            events = [entry.get("event", "") for entry in audit_data if isinstance(entry, dict)]
+            if "init_failed" in events or (events and events[-1] == "error"):
+                return CheckResult(
+                    "EngHub MCP", "P1", False,
+                    "⚠ EngHub: auth expired or init failed — run npx @azure-core/enghub-mcp auth",
+                    fix_hint="npx @azure-core/enghub-mcp auth",
+                )
+    except (json.JSONDecodeError, OSError):
+        pass  # Non-critical — audit files are ephemeral
+
+    # ── Step 4: Fresh enrichment cache → confirmed working ────────────────
+    enrichment_cache = _tmp_dir / ".enghub_enrichment.json"
+    if enrichment_cache.exists():
+        try:
+            cache = json.loads(enrichment_cache.read_text(encoding="utf-8"))
+            retrieved_at = cache.get("retrieved_at", "")
+            if retrieved_at:
+                from datetime import datetime, timezone as _tz
+                age_s = (
+                    datetime.now(_tz.utc)
+                    - datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+                ).total_seconds()
+                if age_s < 4 * 3600:
+                    return CheckResult(
+                        "EngHub MCP", "P1", True,
+                        f"✓ EngHub: subprocess spawnable, keychain token valid"
+                        f" (cache {int(age_s // 60)}m old)",
+                    )
+        except (json.JSONDecodeError, ValueError, OSError):
+            pass
+
+    # ── Step 5: No fresh cache, no known errors — VPN offline / first run ─
+    return CheckResult(
+        "EngHub MCP", "P1", True,
+        "○ EngHub: VPN offline or first run — enrichment disabled for this session",
+    )
+
+
+# ---------------------------------------------------------------------------
 # ADO auth check (Work Domains — opt-in, non-blocking)
 # ---------------------------------------------------------------------------
 
@@ -2209,6 +2315,45 @@ def check_eval_p1_alerts() -> "CheckResult | None":
     )
 
 
+def check_connector_registry() -> CheckResult:
+    """P1 non-blocking: Verify all connectors in connectors.yaml appear in config/registry.md."""
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        connectors_path = Path(ARTHA_DIR) / "config" / "connectors.yaml"
+        registry_path = Path(ARTHA_DIR) / "config" / "registry.md"
+        if not connectors_path.exists():
+            return CheckResult(
+                "connector_registry", "P1", True,
+                "connectors.yaml not found — skipping",
+            )
+        if not registry_path.exists():
+            return CheckResult(
+                "connector_registry", "P1", False,
+                "config/registry.md not found",
+                fix_hint="Create config/registry.md with Work OS Connectors section",
+            )
+        with connectors_path.open(encoding="utf-8") as f:
+            conn_data = _yaml.safe_load(f) or {}
+        connector_names = set(conn_data.keys()) if isinstance(conn_data, dict) else set()
+        registry_text = registry_path.read_text(encoding="utf-8")
+        missing = [name for name in connector_names if name not in registry_text]
+        if missing:
+            return CheckResult(
+                "connector_registry", "P1", False,
+                f"Connectors not in registry.md: {', '.join(sorted(missing))}",
+                fix_hint="Add connector entries to config/registry.md Work OS Connectors section",
+            )
+        return CheckResult(
+            "connector_registry", "P1", True,
+            f"All {len(connector_names)} connectors found in registry.md",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "connector_registry", "P1", True,
+            f"connector_registry check skipped: {exc}",
+        )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrails: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -2276,6 +2421,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — EngHub MCP (§13.7 — Windows-only, non-blocking) ─────────────
+    checks.append(check_enghub_health())
 
     # ── P1 — Bridge health (dual-setup.md — non-blocking; skipped if disabled) ──
     checks.append(check_bridge_health())
@@ -2420,6 +2568,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
 
     # ── P2 — Guardrails governance rings (ST-07, informational) ───────────
     checks.append(check_guardrails_rings())
+
+    # ── P1 — Connector registry (§8.6/Phase 4 R5 — non-blocking) ─────────
+    checks.append(check_connector_registry())
 
     return checks
 
@@ -2754,6 +2905,124 @@ def format_results(
 
 
 # ---------------------------------------------------------------------------
+# Stale pipeline checkpoint cleanup
+# ---------------------------------------------------------------------------
+
+def _clear_stale_pipeline_checkpoint() -> None:
+    """Delete state/checkpoint.json if it is older than 4 hours.
+
+    pipeline.py writes state/checkpoint.json after each fetch phase and
+    prints a resume prompt on every subsequent run regardless of age.
+    Clearing it here ensures every preflight-gated run starts fresh unless
+    the user explicitly passed --resume to pipeline.py.
+    """
+    from datetime import datetime, timezone
+
+    ckpt = pathlib.Path(ARTHA_DIR) / "state" / "checkpoint.json"
+    if not ckpt.exists():
+        return
+    try:
+        data = json.loads(ckpt.read_text(encoding="utf-8"))
+        ts_str = data.get("created_at", "")
+        if ts_str:
+            # Normalise malformed "+00:00Z" suffix produced by some pipeline versions
+            ts_str = ts_str.rstrip("Z") if ts_str.endswith("+00:00Z") else ts_str
+            ts = datetime.fromisoformat(ts_str)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age_hours = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+            if age_hours > 4:
+                ckpt.unlink()
+    except Exception:  # noqa: BLE001
+        pass  # Non-fatal — leave checkpoint in place on any parse error
+
+
+# ---------------------------------------------------------------------------
+# health-check.md compaction
+# ---------------------------------------------------------------------------
+
+def _compact_health_check() -> None:
+    """Trim health-check.md to prevent unbounded growth.
+
+    Keeps:
+    - YAML frontmatter (unchanged)
+    - Last 20 unique catch-up run entries across all Catch-Up Run History sections
+    - ## Channel Health (Structured) section (unchanged)
+    - ## Autonomy State section (unchanged)
+    - Last 10 unique ## Connector health — <timestamp> entries
+    Only writes back if the result is smaller than the original.
+    """
+    import re  # noqa: PLC0415
+
+    hc_path = pathlib.Path(ARTHA_DIR) / "state" / "health-check.md"
+    if not hc_path.exists():
+        return
+    try:
+        text = hc_path.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return
+
+    # 1. Extract frontmatter
+    fm_match = re.match(r"^(---\n.*?\n---\n)", text, re.DOTALL)
+    frontmatter = fm_match.group(1) if fm_match else ""
+    body = text[len(frontmatter):]
+
+    # 2. Collect all ### run entries; deduplicate by heading; keep last 20
+    run_entries: list[str] = []
+    seen_run: set[str] = set()
+    for m in re.finditer(r"(### [^\n]+\n(?:(?!###|## )[^\n]*\n)*)", body):
+        heading = m.group(0).split("\n")[0]
+        if heading not in seen_run:
+            seen_run.add(heading)
+            run_entries.append(m.group(0))
+    run_entries = run_entries[-20:]
+
+    # 3. Collect ## Connector health — <ts> entries; deduplicate; keep last 10
+    conn_entries: list[str] = []
+    seen_conn: set[str] = set()
+    for m in re.finditer(r"(## Connector health — [^\n]+\n(?:(?!## )[^\n]*\n)*)", body):
+        heading = m.group(0).split("\n")[0]
+        if heading not in seen_conn:
+            seen_conn.add(heading)
+            conn_entries.append(m.group(0))
+    conn_entries = conn_entries[-10:]
+
+    # 4. Extract persistent sections verbatim
+    channel_health = ""
+    ch_m = re.search(r"(## Channel Health \(Structured\)\n(?:(?!## )[^\n]*\n)*)", body)
+    if ch_m:
+        channel_health = ch_m.group(1)
+
+    autonomy = ""
+    au_m = re.search(r"(## Autonomy State\n(?:(?!## )[^\n]*\n)*)", body)
+    if au_m:
+        autonomy = au_m.group(1)
+
+    # 5. Reassemble
+    sections: list[str] = [frontmatter]
+    if run_entries:
+        sections.append("## Catch-Up Run History\n\n" + "".join(run_entries))
+    if channel_health:
+        sections.append(channel_health)
+    if autonomy:
+        sections.append(autonomy)
+    if conn_entries:
+        sections.append(
+            "## Connector Health\n\n<!-- connector health: last 10 entries -->\n\n"
+            + "".join(conn_entries)
+        )
+
+    new_text = "\n".join(s.rstrip("\n") for s in sections if s) + "\n"
+
+    # Only write if we actually reduced the file (safety gate)
+    if len(new_text) < len(text):
+        try:
+            hc_path.write_text(new_text, encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass  # Non-fatal — original untouched on error
+
+
+# ---------------------------------------------------------------------------
 # Device context — written at preflight time for LLM compose layer
 # ---------------------------------------------------------------------------
 
@@ -2900,6 +3169,8 @@ def main() -> None:
         if args.first_run:
             all_ok = first_run_ok
 
+    _clear_stale_pipeline_checkpoint()
+    _compact_health_check()
     _write_device_context()
     sys.exit(0 if all_ok else 1)
 

@@ -74,9 +74,11 @@ preflight: ## Run Artha preflight checks
 generate: ## Regenerate config/Artha.md from core + identity
 	$(PYTHON) scripts/generate_identity.py
 
-clean: ## Remove __pycache__ and .pyc files
+clean: ## Remove __pycache__, .pyc files, and test output artifacts
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
+	rm -f test_out.txt test_results.txt test_results2.txt test_results3.txt \
+	      tests_output.txt tests_output2.txt last_tests.txt
 	@echo "✓ Clean"
 
 lint-state-writes: ## AFW Wave 0: ban direct .write_text() on state files outside state_writer.py

@@ -29,6 +29,9 @@ Ref: specs/debt.md DEBT-009
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
+
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -45,6 +48,24 @@ _REQUIRED_RAW_FIELDS: dict[str, list[str]] = {
     "email": ["subject", "body"],
     "icloud_email": ["subject", "body"],
 }
+
+# Path to work audit log (G4/F15 — connector record rejections go here)
+_WORK_AUDIT_FILE = os.path.join(
+    os.path.dirname(__file__), "..", "..", "state", "work", "work-audit.md"
+)
+
+
+def _log_rejection(field: str, source: str) -> None:
+    """Append a rejection entry to state/work/work-audit.md (non-blocking, G4/F15)."""
+    try:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry = f"- {ts} [connector_record] rejected: missing {field} from {source}\n"
+        audit_path = os.path.normpath(_WORK_AUDIT_FILE)
+        os.makedirs(os.path.dirname(audit_path), exist_ok=True)
+        with open(audit_path, "a", encoding="utf-8") as fh:
+            fh.write(entry)
+    except Exception:
+        pass  # never let audit failure suppress the ValueError
 
 
 @dataclass(frozen=True)
@@ -83,6 +104,7 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     # --- id ---
     rec_id = raw.get("id")
     if rec_id is None:
+        _log_rejection("id", str(raw.get("source", "unknown")))
         raise ValueError(f"Connector record missing required field 'id' (keys present: {list(raw.keys())})")
     if not isinstance(rec_id, str):
         raise ValueError(f"Connector record 'id' must be str, got {type(rec_id).__name__!r}: {rec_id!r}")
@@ -92,6 +114,7 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     # --- source ---
     source = raw.get("source")
     if source is None:
+        _log_rejection("source", f"id={rec_id!r}")
         raise ValueError(f"Connector record missing required field 'source' (id={rec_id!r})")
     if not isinstance(source, str):
         raise ValueError(f"Connector record 'source' must be str, got {type(source).__name__!r}: {source!r}")
@@ -101,6 +124,7 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     # --- date_iso ---
     date_iso = raw.get("date_iso")
     if date_iso is None:
+        _log_rejection("date_iso", source)
         raise ValueError(
             f"Connector record missing required field 'date_iso' (id={rec_id!r}, source={source!r})"
         )
@@ -124,6 +148,7 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     for field_name in required_raw_fields:
         field_val = raw.get(field_name)
         if field_val is None:
+            _log_rejection(field_name, source)
             raise ValueError(
                 f"Connector record raw['{field_name}'] missing for source={source!r} "
                 f"(id={rec_id!r}). Email extractors rely on this field — "

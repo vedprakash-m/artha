@@ -108,6 +108,7 @@ _SCOPES      = [
 #       be used for SharePoint/Files endpoints — only the MSAL path above works.
 KC_WORK_CLIENT_ID  = "msgraph-work-client-id"
 WORK_TOKEN_FILE    = os.path.join(TOKEN_DIR, "msgraph-work-token.json")
+MCP_WORK_TOKEN_FILE = os.path.join(TOKEN_DIR, "msgraph-work-mcp-token.json")
 _WORK_AUTHORITY    = "https://login.microsoftonline.com/organizations"
 _WORK_SCOPES       = [
     "Files.Read",   # OneDrive / "shared with me" — user-level delegated, no admin consent
@@ -115,6 +116,13 @@ _WORK_SCOPES       = [
     "User.Read",
     # NOTE: offline_access is added automatically by MSAL.
     # NOTE: Sites.Read.All requires admin consent — omit; Files.Read covers sharedWithMe+search.
+]
+_MCP_WORK_SCOPES = [
+    "Mail.ReadWrite",
+    "Calendars.ReadWrite",
+    "User.Read",
+    "Tasks.ReadWrite",
+    "Chat.ReadWrite",
 ]
 
 # ---------------------------------------------------------------------------
@@ -463,6 +471,12 @@ def main() -> None:
                             "personal. Uses a separate app registration and writes to "
                             ".tokens/msgraph-work-token.json. Required for SharePoint."
                         ))
+    parser.add_argument("--work-mcp", action="store_true",
+                        help=(
+                            "Acquire M365 MCP write tokens (Mail.ReadWrite, Calendars.ReadWrite, "
+                            "User.Read, Tasks.ReadWrite, Chat.ReadWrite). Writes to "
+                            ".tokens/msgraph-work-mcp-token.json. Required for M15 action types."
+                        ))
     parser.add_argument("--health", action="store_true",
                         help="Check stored token status and connectivity")
     args = parser.parse_args()
@@ -472,6 +486,40 @@ def main() -> None:
         return
 
     work = args.work
+
+    # --work-mcp: acquire M365 MCP write tokens (M15 action types, C1/F11)
+    if getattr(args, "work_mcp", False):
+        print()
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print("║  M365 MCP Write Token Setup — Artha Work (M15)              ║")
+        print("╚══════════════════════════════════════════════════════════════╝")
+        print()
+        print("  Scopes:", ", ".join(_MCP_WORK_SCOPES))
+        print(f"  Token will be saved to: {MCP_WORK_TOKEN_FILE}")
+        print()
+        client_id = _keychain_read(KC_WORK_CLIENT_ID)
+        if not client_id:
+            print("Work client ID not found in credential store.")
+            print("Run: python -c \"import keyring; "
+                  f"keyring.set_password('{KC_WORK_CLIENT_ID}','artha','<CLIENT_ID>')\"")
+            sys.exit(1)
+        app = _build_app(client_id=client_id, authority=_WORK_AUTHORITY)
+        token = _acquire_token_interactive(app, scopes=_MCP_WORK_SCOPES)
+        if not token:
+            print("✗ Token acquisition failed.")
+            sys.exit(1)
+        # Save to MCP-specific token file (not WORK_TOKEN_FILE — separate credential set)
+        _ensure_token_dir()
+        from datetime import timedelta as _td
+        expires_in = token.get("expires_in", 3600)
+        expiry_dt = datetime.now(timezone.utc).replace(microsecond=0) + _td(seconds=int(expires_in))
+        mcp_data = {**token, "expiry": expiry_dt.isoformat(), "_artha_client_id": client_id}
+        with open(MCP_WORK_TOKEN_FILE, "w") as _fh:
+            json.dump(mcp_data, _fh, indent=2)
+        if os.name != "nt":
+            os.chmod(MCP_WORK_TOKEN_FILE, 0o600)
+        print(f"\n✓ MCP write token saved to: {MCP_WORK_TOKEN_FILE}")
+        return
 
     # Work flow — Microsoft Graph PowerShell (primary, no App Registration) or MSAL (advanced)
     if work:

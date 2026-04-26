@@ -106,6 +106,9 @@ test_out.txt
 test_results.txt
 test_results2.txt
 test_results3.txt
+tests_output.txt
+tests_output2.txt
+last_tests.txt
 tests/_out.txt
 # Work OS test artifacts — generated output, not source
 tests/work/_pytest_results.txt

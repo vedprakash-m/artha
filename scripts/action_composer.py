@@ -236,6 +236,9 @@ class ActionComposer:
           - The signal's metadata is insufficient to build a proposal.
           - DEBT-012: The signal fails structural validation (logged and skipped).
         """
+        # WorkIQ prose is display-only — do not parse for action proposals (prompt injection risk, F22/G6)
+        # Signals MUST originate from deterministic skill outputs in state/work/, never from LLM inference.
+
         # DEBT-012: Validate signal — __post_init__ already fires at construction,
         # but catch defensive ValueError here for any deserialized / test-injected signals.
         try:

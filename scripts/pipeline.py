@@ -1140,15 +1140,45 @@ def run_pipeline(
             capture_output=True, text=True, timeout=60,
             cwd=str(_REPO_ROOT),
         )
-        _pending = sum(
-            1 for ln in _ao_result.stdout.splitlines()
-            if "PENDING" in ln or ("[" in ln and "]" in ln and "|" in ln)
+        _list_result = _subprocess.run(
+            [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--list"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(_REPO_ROOT),
         )
+        import re as _re
+        _queued_match = _re.search(r"Proposals queued:\s*(\d+)", _ao_result.stdout)
+        _new_count = int(_queued_match.group(1)) if _queued_match else 0
+        _pending_match = _re.search(r"PENDING ACTIONS \((\d+)\)", _list_result.stdout)
+        _pending_count = int(_pending_match.group(1)) if _pending_match else 0
+
+        _status = "OK"
+        if _ao_result.returncode != 0 or _list_result.returncode != 0:
+            _status = (
+                f"DEGRADED | run_rc={_ao_result.returncode} "
+                f"list_rc={_list_result.returncode}"
+            )
+
+        _status_parts = [
+            f"{_status} | {_new_count} new proposals | {_pending_count} pending",
+            _ao_result.stdout.strip(),
+        ]
+        if _ao_result.stderr.strip():
+            _status_parts.append("--- ACTION STDERR ---")
+            _status_parts.append(_ao_result.stderr.strip())
+        if _list_result.stdout.strip():
+            _status_parts.append("--- CURRENT ACTION QUEUE ---")
+            _status_parts.append(_list_result.stdout.strip())
+        if _list_result.stderr.strip():
+            _status_parts.append("--- ACTION LIST STDERR ---")
+            _status_parts.append(_list_result.stderr.strip())
+
         _action_status_path.write_text(
-            f"OK | {_pending} proposals\n{_ao_result.stdout.strip()}"
+            "\n".join(part for part in _status_parts if part)
         )
         if _ao_result.stdout.strip():
             print(_ao_result.stdout, flush=True)
+        if _list_result.stdout.strip() and "PENDING ACTIONS" in _list_result.stdout:
+            print(_list_result.stdout, flush=True)
     except Exception as _ao_exc:  # noqa: BLE001
         _action_status_path.write_text(
             f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}"

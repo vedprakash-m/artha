@@ -51,6 +51,19 @@ from actions.base import (
     TERMINAL_STATUSES,
 )
 
+# ---------------------------------------------------------------------------
+# M15: M365 write action types — all permanently L1 (confirm-before-execute)
+# autonomy_cap L1_permanent means user confirmation is ALWAYS required;
+# trust counters never unlock auto-execution (FR-19, G1, F11).
+# ---------------------------------------------------------------------------
+M15_ACTION_TYPES = [
+    {"action_type": "m365_flag",        "autonomy_cap": "L1_permanent"},
+    {"action_type": "m365_reply",       "autonomy_cap": "L1_permanent"},
+    {"action_type": "m365_decline",     "autonomy_cap": "L1_permanent"},
+    {"action_type": "m365_accept",      "autonomy_cap": "L1_permanent"},
+    {"action_type": "m365_teams_reply", "autonomy_cap": "L1_permanent"},
+]
+
 
 # ---------------------------------------------------------------------------
 # DB schema (SQLite DDL)
