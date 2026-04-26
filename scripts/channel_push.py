@@ -607,7 +607,8 @@ def push_pending_actions(dry_run: bool = False) -> int:
     sent_count = 0
 
     for channel_name, channel_cfg in iter_enabled_channels(config):
-        if channel_cfg.get("adapter") != "telegram":
+        adapter_name = str(channel_cfg.get("adapter", "")).replace("\\", "/")
+        if not (adapter_name == "telegram" or adapter_name.endswith("/telegram.py")):
             continue
         if not channel_cfg.get("features", {}).get("push", True):
             continue

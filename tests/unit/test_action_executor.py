@@ -89,6 +89,7 @@ def _make_proposal(
     title: str = "Test action",
     sensitivity: str = "standard",
     min_trust: int = 1,
+    parameters: dict | None = None,
 ) -> ActionProposal:
     return ActionProposal(
         id=str(uuid.uuid4()),
@@ -96,7 +97,7 @@ def _make_proposal(
         domain=domain,
         title=title,
         description="Test",
-        parameters={"to": "test@example.com", "subject": "Hi", "body": "Hello"},
+        parameters=parameters or {"to": "test@example.com", "subject": "Hi", "body": "Hello"},
         friction="standard",
         min_trust=min_trust,
         sensitivity=sensitivity,
@@ -247,6 +248,25 @@ class TestRejectDefer:
         row = executor._queue.get_raw(proposal.id)
         assert row["status"] == "rejected"
 
+    def test_reject_records_feedback_reason(self, executor):
+        with patch.object(executor, "_get_handler") as mock_get:
+            mock_h = MagicMock()
+            mock_h.validate.return_value = (True, "")
+            mock_get.return_value = mock_h
+
+            proposal = executor.propose(
+                action_type="reminder_create",
+                domain="test",
+                title="Create reminder",
+                parameters={"title": "Doctor appointment"},
+            )
+
+        executor.reject(proposal.id, reason="not useful")
+        row = executor._queue._conn.execute(  # noqa: SLF001 - test-only DB inspection
+            "SELECT feedback FROM trust_metrics ORDER BY proposed_at DESC LIMIT 1"
+        ).fetchone()
+        assert row["feedback"] == "not useful"
+
     def test_defer_moves_to_deferred(self, executor):
         with patch.object(executor, "_get_handler") as mock_get:
             mock_h = MagicMock()
@@ -276,6 +296,189 @@ class TestHistory:
     def test_history_returns_list(self, executor):
         history = executor.history()
         assert isinstance(history, list)
+
+
+# ---------------------------------------------------------------------------
+# Proposal quality gate
+# ---------------------------------------------------------------------------
+
+class TestProposalQualityGate:
+    def test_empty_instruction_sheet_rejected_before_enqueue(self, executor):
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="goals",
+            title="Generate guide: empty",
+            min_trust=0,
+            parameters={"task": "Empty", "service": "Test", "context": {}},
+        )
+
+        with pytest.raises(ValueError, match="instruction_sheet_empty_context"):
+            executor.propose_direct(proposal)
+
+        assert executor.pending() == []
+
+    def test_notes_only_instruction_sheet_rejected_before_enqueue(self, executor):
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: notes only",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
+            },
+        )
+
+        with pytest.raises(ValueError, match="instruction_sheet_empty_context"):
+            executor.propose_direct(proposal)
+
+        assert executor.pending() == []
+
+    def test_low_quality_pending_sweep_expires_legacy_proposal(self, executor):
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: legacy notes only",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
+            },
+        )
+        executor._queue.propose(proposal)  # noqa: SLF001 - bypass gate to model legacy data
+
+        assert executor.expire_low_quality_pending() == 1
+        assert executor._queue.get_raw(proposal.id)["status"] == "expired"  # noqa: SLF001
+
+    def test_low_quality_pending_sweep_releases_idempotency_reservation(self, executor, artha_dir):
+        from lib.idempotency import CompositeKey, IdempotencyStore
+
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: legacy notes only",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
+            },
+        )
+        key = CompositeKey.compute(
+            "social",
+            proposal.title.strip().lower()[:80],
+            proposal.action_type,
+            signal_type="",
+        )
+        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+        executor._queue.propose(proposal)  # noqa: SLF001 - bypass gate to model legacy data
+
+        assert executor.expire_low_quality_pending() == 1
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+
+    def test_low_quality_sweep_releases_existing_expired_reservation(self, executor, artha_dir):
+        from lib.idempotency import CompositeKey, IdempotencyStore
+
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: already expired notes only",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
+            },
+        )
+        key = CompositeKey.compute(
+            "social",
+            proposal.title.strip().lower()[:80],
+            proposal.action_type,
+            signal_type="",
+        )
+        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+        executor._queue.propose(proposal)  # noqa: SLF001 - bypass gate to model legacy data
+        executor._queue.transition(proposal.id, "expired", actor="system:expiry")  # noqa: SLF001
+
+        assert executor.expire_low_quality_pending() == 0
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+
+    def test_failed_direct_enqueue_releases_idempotency_reservation(self, executor, artha_dir):
+        from lib.idempotency import CompositeKey, IdempotencyStore
+
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: enqueue failure",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "Useful plan", "steps": ["Review it"]},
+                "signal_type": "content_moment_missed",
+            },
+        )
+        key = CompositeKey.compute(
+            "social",
+            proposal.title.strip().lower()[:80],
+            proposal.action_type,
+            signal_type="content_moment_missed",
+        )
+        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
+
+        with patch.object(executor._queue, "propose", side_effect=ValueError("queue duplicate")):  # noqa: SLF001
+            with pytest.raises(ValueError, match="queue duplicate"):
+                executor.propose_direct(proposal)
+
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+
+    def test_direct_enqueue_recovers_orphan_pending_idempotency_key(self, executor, artha_dir):
+        from lib.idempotency import CompositeKey, IdempotencyStore
+
+        proposal = _make_proposal(
+            action_type="instruction_sheet",
+            domain="social",
+            title="Generate guide: orphan idempotency",
+            min_trust=0,
+            parameters={
+                "task": "Content Moment",
+                "service": "Social",
+                "context": {"description": "Useful plan", "steps": ["Review it"]},
+                "signal_type": "content_moment_missed",
+            },
+        )
+        key = CompositeKey.compute(
+            "social",
+            proposal.title.strip().lower()[:80],
+            proposal.action_type,
+            signal_type="content_moment_missed",
+        )
+        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
+        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+
+        executor.propose_direct(proposal)
+
+        assert executor._queue.get_raw(proposal.id)["status"] == "pending"  # noqa: SLF001
+
+    def test_stale_delivery_reminder_rejected_before_enqueue(self, executor):
+        past = datetime.now(timezone.utc) - timedelta(days=1)
+        title = f"USPS Expected Delivery on {past.strftime('%A, %B %d, %Y')} arriving"
+        proposal = _make_proposal(
+            action_type="reminder_create",
+            domain="shopping",
+            title=f"Create reminder: {title}",
+            min_trust=0,
+            parameters={"title": title, "due_date": "", "body": ""},
+        )
+
+        with pytest.raises(ValueError, match="stale_delivery_reminder"):
+            executor.propose_direct(proposal)
+
+        assert executor.pending() == []
 
 
 # ---------------------------------------------------------------------------

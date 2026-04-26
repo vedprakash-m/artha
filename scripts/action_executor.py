@@ -25,11 +25,12 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import signal
 import sqlite3
 import sys
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -214,6 +215,121 @@ def _pii_scan_params(
 
 
 # ---------------------------------------------------------------------------
+# Proposal quality gate
+# ---------------------------------------------------------------------------
+
+_DELIVERY_TERMS = frozenset({"arriving", "delivery", "delivered", "package", "shipment"})
+_MONTH_DATE_RE = re.compile(
+    r"\b(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:day)?[,]?\s+)?"
+    r"(?P<date>(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|"
+    r"May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},\s+\d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def _proposal_quality_check(proposal: ActionProposal) -> tuple[bool, str]:
+    """Reject structurally valid but low-usefulness action proposals.
+
+    This gate is deliberately conservative: it blocks only cases that are
+    already known to degrade trust, such as empty instruction sheets and
+    reminders for explicitly past delivery events.
+    """
+    return _proposal_quality_check_values(
+        action_type=proposal.action_type,
+        domain=proposal.domain,
+        title=proposal.title,
+        parameters=proposal.parameters,
+        description=proposal.description,
+    )
+
+
+def _proposal_quality_check_values(
+    action_type: str,
+    domain: str,
+    title: str,
+    parameters: dict[str, Any],
+    description: str = "",
+) -> tuple[bool, str]:
+    if action_type == "instruction_sheet":
+        context = parameters.get("context")
+        if not isinstance(context, dict) or not _context_has_substance(context):
+            return False, "quality_rejected:instruction_sheet_empty_context"
+
+    if action_type == "reminder_create":
+        reminder_title = str(parameters.get("title") or title or "").strip()
+        if not reminder_title:
+            return False, "quality_rejected:reminder_missing_title"
+
+        due_date = _coerce_date(parameters.get("due_date"))
+        if due_date and due_date < _today_utc():
+            return False, "quality_rejected:stale_due_date"
+
+        body = str(parameters.get("body") or "")
+        text = " ".join([title, reminder_title, description, body]).lower()
+        if any(term in text for term in _DELIVERY_TERMS):
+            explicit_date = _extract_explicit_text_date(" ".join([title, reminder_title, description, body]))
+            if explicit_date and explicit_date < _today_utc():
+                return False, "quality_rejected:stale_delivery_reminder"
+
+    return True, "ok"
+
+
+def _context_has_substance(context: dict[str, Any]) -> bool:
+    """Return True if an instruction context has content worth rendering."""
+    for key in ("description", "prerequisites", "steps", "contacts", "links"):
+        if _value_has_substance(context.get(key)):
+            return True
+    return False
+
+
+def _value_has_substance(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_value_has_substance(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_value_has_substance(v) for v in value)
+    return value is not None
+
+
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _coerce_date(value: Any) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    text = value.strip()
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        pass
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _extract_explicit_text_date(text: str) -> date | None:
+    match = _MONTH_DATE_RE.search(text)
+    if not match:
+        return None
+    date_text = match.group("date")
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(date_text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Audit log appender
 # ---------------------------------------------------------------------------
 
@@ -387,6 +503,16 @@ class ActionExecutor:
                 f"Cross-domain action proposal blocked: Worker domain '{source_domain}' "
                 f"cannot propose action in domain '{domain}'."
             )
+
+        quality_ok, quality_reason = _proposal_quality_check_values(
+            action_type=action_type,
+            domain=domain,
+            title=title,
+            parameters=parameters,
+            description=description,
+        )
+        if not quality_ok:
+            raise ValueError(f"Proposal quality gate blocked: {quality_reason}")
 
         # §2.3.3 Idempotency pre-action check + reserve (harden.md §2.3.3)
         _idem_key: str | None = None
@@ -760,6 +886,7 @@ class ActionExecutor:
             action_type=self._queue.get_raw(action_id).get("action_type", "unknown"),
             domain=self._queue.get_raw(action_id).get("domain", "unknown"),
             user_decision="rejected",
+            feedback=reason or None,
         )
 
     def defer(self, action_id: str, until: str) -> None:
@@ -953,7 +1080,11 @@ class ActionExecutor:
             )
             raise ValueError(f"Pre-enqueue gate rejected composed proposal: {gate_reason}")
 
-        self._queue.propose(proposal, pubkey=self._get_pubkey())
+        try:
+            self._queue.propose(proposal, pubkey=self._get_pubkey())
+        except Exception:
+            self._mark_idempotency_failed(getattr(proposal, "_idem_key", None))
+            raise
         _audit_log(
             self._artha_dir,
             f"ACTION_PROPOSED | id:{proposal.id} | type:{proposal.action_type} "
@@ -986,7 +1117,12 @@ class ActionExecutor:
         except Exception as _schema_exc:  # noqa: BLE001
             return False, f"schema_invalid:{str(_schema_exc)[:120]}"
 
-        # Gate 1: Idempotency check & reservation (RD-07, RD-32)
+        # Gate 1: Proposal usefulness / freshness check
+        quality_ok, quality_reason = _proposal_quality_check(proposal)
+        if not quality_ok:
+            return False, quality_reason
+
+        # Gate 2: Idempotency check & reservation (RD-07, RD-32)
         try:
             from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
             _idem_recipient = str(
@@ -1005,10 +1141,14 @@ class ActionExecutor:
                 self._artha_dir / "state" / "idempotency_keys.json"
             )
             _idem_result = _idem_store.check_or_reserve(_idem_key, proposal.action_type)
+            if _idem_result == "pending" and not self._has_active_queue_peer(proposal):
+                _idem_store.mark_failed(_idem_key)
+                _idem_result = _idem_store.check_or_reserve(_idem_key, proposal.action_type)
             if _idem_result in ("duplicate", "pending"):
                 _idem_entry = _idem_store.get_entry(_idem_key)
                 _idem_ts = _idem_entry.get("created_at", "unknown time")
                 return False, f"idempotency_{_idem_result}:{_idem_key[:8]}@{_idem_ts}"
+            object.__setattr__(proposal, "_idem_key", _idem_key)  # type: ignore[misc]
         except (ValueError, TypeError):
             raise
         except Exception:  # noqa: BLE001
@@ -1016,7 +1156,7 @@ class ActionExecutor:
             # friction-escalation policy; for pre_enqueue_gate we pass through.
             pass
 
-        # Gate 2: PII scan
+        # Gate 3: PII scan
         config = self._action_configs.get(proposal.action_type, {})
         pii_allowlist = config.get("pii_allowlist", [])
         if config.get("pii_check", True):
@@ -1032,6 +1172,109 @@ class ActionExecutor:
         if count:
             _audit_log(self._artha_dir, f"ACTION_EXPIRY_SWEEP | expired:{count}")
         return count
+
+    def expire_low_quality_pending(self) -> int:
+        """Expire pending proposals that no longer satisfy quality gates.
+
+        This is a cleanup path for proposals created before quality gates were
+        tightened. It never modifies succeeded/rejected history and only acts
+        on proposals the current enqueue gate would reject. It also releases
+        idempotency reservations for recently expired low-quality proposals
+        created by older versions of this sweep.
+        """
+        expired = 0
+        for proposal in self.pending():
+            ok, reason = _proposal_quality_check(proposal)
+            if ok:
+                continue
+            try:
+                self._queue.transition(
+                    proposal.id,
+                    "expired",
+                    actor="system:quality_gate",
+                    context={"reason": reason},
+                )
+                expired += 1
+                _audit_log(
+                    self._artha_dir,
+                    f"ACTION_QUALITY_EXPIRED | id:{proposal.id} "
+                    f"| type:{proposal.action_type} | reason:{reason}",
+                )
+                self._release_idempotency_reservation(proposal)
+            except ValueError:
+                continue
+
+        # Backfill for low-quality proposals expired before this method released
+        # their idempotency keys. Limit to recent rows to avoid historical churn.
+        try:
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(hours=96)
+            ).isoformat(timespec="seconds")
+            rows = self._queue._conn.execute(  # noqa: SLF001 - local queue maintenance
+                """SELECT * FROM actions
+                   WHERE status = 'expired' AND updated_at >= ?""",
+                (cutoff,),
+            ).fetchall()
+            for row in rows:
+                proposal = self._queue._row_to_proposal(  # noqa: SLF001 - local queue maintenance
+                    row, self._get_privkey()
+                )
+                ok, _reason = _proposal_quality_check(proposal)
+                if not ok:
+                    self._release_idempotency_reservation(proposal)
+        except Exception:  # noqa: BLE001
+            pass
+        return expired
+
+    def _release_idempotency_reservation(self, proposal: ActionProposal) -> None:
+        """Mark a proposal's idempotency key failed so it can be regenerated."""
+        try:
+            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
+            _idem_recipient = str(
+                proposal.parameters.get("recipient")
+                or proposal.parameters.get("to")
+                or proposal.parameters.get("payee")
+                or proposal.domain
+            )
+            _idem_intent = proposal.title.strip().lower()[:80]
+            _signal_type = str(proposal.parameters.get("signal_type", ""))
+            _idem_key = _CK.compute(
+                _idem_recipient,
+                _idem_intent,
+                proposal.action_type,
+                signal_type=_signal_type,
+            )
+            _IdemStore(
+                self._artha_dir / "state" / "idempotency_keys.json"
+            ).mark_failed(_idem_key)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _mark_idempotency_failed(self, key: str | None) -> None:
+        if not key:
+            return
+        try:
+            from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
+            _IdemStore(
+                self._artha_dir / "state" / "idempotency_keys.json"
+            ).mark_failed(key)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _has_active_queue_peer(self, proposal: ActionProposal) -> bool:
+        """Return True if a matching active queue proposal exists."""
+        try:
+            row = self._queue._conn.execute(  # noqa: SLF001 - local queue maintenance
+                """SELECT id FROM actions
+                   WHERE action_type = ?
+                     AND source_domain = ?
+                     AND status NOT IN ('succeeded','failed','rejected','expired','cancelled')
+                   LIMIT 1""",
+                (proposal.action_type, proposal.domain),
+            ).fetchone()
+            return row is not None
+        except Exception:  # noqa: BLE001
+            return True
 
     def run_health_checks(self) -> dict[str, bool]:
         """Run health_check() for all enabled handlers.

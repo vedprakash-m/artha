@@ -346,8 +346,8 @@ security_alert:
   status: active
 
 school_action_needed:
-  action_type: whatsapp_send
-  friction: standard
+  action_type: reminder_create
+  friction: low
   min_trust: 0
   reversible: false
   undo_window_sec: null

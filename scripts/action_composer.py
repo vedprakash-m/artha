@@ -168,6 +168,17 @@ _load_signal_routing()
 # ActionComposer class
 # ---------------------------------------------------------------------------
 
+def _context_has_substance(context: dict[str, Any]) -> bool:
+    """Return True when an instruction-sheet context has useful content."""
+    for key in ("description", "prerequisites", "steps", "contacts", "links"):
+        value = context.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
+        if isinstance(value, (list, dict)) and len(value) > 0:
+            return True
+    return False
+
+
 class ActionComposer:
     """Maps domain signals to ActionProposals.
 
@@ -197,6 +208,7 @@ class ActionComposer:
             artha_dir:      Path to Artha workspace root. Used to load
                             config/actions.yaml when actions_config is not provided.
         """
+        self._artha_dir = artha_dir or Path(__file__).resolve().parent.parent
         self._config: dict[str, Any] = {}
         raw: dict[str, Any] | None = actions_config
 
@@ -445,13 +457,19 @@ class ActionComposer:
             }
 
         if action_type == "reminder_create":
+            reminder_title = meta.get("title") or signal.entity
+            reminder_body = meta.get("body") or (
+                f"Signal: {signal.signal_type}. Domain: {signal.domain}. "
+                f"Source: {signal.source}."
+            )
             return {
-                "title": meta.get("title", signal.entity),
-                "due_date": meta.get("due_date", ""),
+                "title": reminder_title,
+                "due_date": meta.get("due_date") or meta.get("deadline") or meta.get("deadline_date", ""),
                 "list_name": meta.get("list_name", "Artha"),
                 "priority": meta.get("priority", "P1"),
-                "body": meta.get("body", ""),
+                "body": reminder_body,
                 "reminder_datetime": meta.get("reminder_datetime", ""),
+                "signal_type": signal.signal_type,
             }
 
         if action_type == "whatsapp_send":
@@ -462,18 +480,18 @@ class ActionComposer:
             }
 
         if action_type == "instruction_sheet":
+            context = meta.get("context")
+            if not isinstance(context, dict) or not _context_has_substance(context):
+                context = self._default_instruction_context(signal)
             return {
                 "task": meta.get("task", signal.signal_type.replace("_", " ").title()),
                 "service": meta.get("service", signal.entity),
-                "context": meta.get("context", {
-                    "description": meta.get("description", ""),
-                    "steps": meta.get("steps", []),
-                    "notes": [f"Signal detected: {signal.signal_type}", f"Domain: {signal.domain}"],
-                }),
+                "context": context,
+                "signal_type": signal.signal_type,
             }
 
         if action_type == "todo_sync":
-            return {"mode": meta.get("mode", "both")}
+            return {"mode": meta.get("mode", "both"), "signal_type": signal.signal_type}
 
         # Fallback: pass all metadata as parameters
         return meta
@@ -513,6 +531,115 @@ class ActionComposer:
         if meta.get("amount") or meta.get("amount_usd"):
             lines.append(f"Amount: ${meta.get('amount') or meta.get('amount_usd')}")
         return " | ".join(lines[:3])  # Keep description concise
+
+    def _default_instruction_context(self, signal: DomainSignal) -> dict[str, Any]:
+        """Return non-empty fallback content for instruction_sheet proposals."""
+        if signal.signal_type == "goal_stale":
+            goal = self._load_goal_by_title(str(signal.entity))
+            next_action = goal.get("next_action") or "Choose the next concrete action"
+            target_date = goal.get("target_date") or "target date not set"
+            last_progress = goal.get("last_progress") or "not recorded"
+            return {
+                "description": (
+                    f"Goal '{signal.entity}' is active but has not recorded progress "
+                    f"since {last_progress}. Target date: {target_date}."
+                ),
+                "prerequisites": [
+                    "Decide whether this goal is still active for the current season.",
+                    "Pick one action small enough to complete in the next 7 days.",
+                ],
+                "steps": [
+                    f"Confirm or replace the current next action: {next_action}.",
+                    "Put one training or preparation block on the calendar this week.",
+                    "Define a tiny completion marker, such as hike registered, route picked, or gear checked.",
+                    "After completing it, update state/goals.md with last_progress and the next_action_date.",
+                    "If the goal no longer matters, park it instead of letting it keep firing stale alerts.",
+                ],
+                "notes": [
+                    f"Signal detected: {signal.signal_type}",
+                    f"Domain: {signal.domain}",
+                ],
+            }
+
+        if signal.domain == "finance" or signal.signal_type in {
+            "bill_due",
+            "subscription_renewal",
+            "payment_failed",
+        }:
+            due = signal.metadata.get("due_date") or signal.metadata.get("deadline") or "not detected"
+            amount = signal.metadata.get("amount") or signal.metadata.get("amount_usd") or "not detected"
+            return {
+                "description": (
+                    f"Finance signal '{signal.signal_type}' was detected for "
+                    f"'{signal.entity}'. Due date: {due}. Amount: {amount}."
+                ),
+                "prerequisites": [
+                    "Verify the request from the provider's official website or app.",
+                    "Confirm the amount, due date, and account before taking any financial action.",
+                ],
+                "steps": [
+                    "Open the provider account directly, not through email links.",
+                    "Compare the displayed amount and due date against this signal.",
+                    "If valid, decide whether to pay, schedule payment, or defer with a concrete date.",
+                    "If invalid, reject this action so future similar signals can be down-ranked.",
+                    "Update the relevant finance state only after the provider-side status is confirmed.",
+                ],
+                "notes": [
+                    f"Source: {signal.source}",
+                    "Artha does not make payments; this sheet is a verification checklist.",
+                ],
+            }
+
+        if signal.domain == "security" or "security" in signal.signal_type:
+            return {
+                "description": (
+                    f"Security signal '{signal.signal_type}' was detected for "
+                    f"'{signal.entity}'."
+                ),
+                "prerequisites": [
+                    "Use the service's official website or app.",
+                    "Avoid clicking links from the original alert until legitimacy is verified.",
+                ],
+                "steps": [
+                    "Check recent activity, device sessions, and account alerts in the official account.",
+                    "If the activity is unfamiliar, change the password and rotate recovery methods.",
+                    "Enable or confirm multi-factor authentication.",
+                    "Record the outcome in the appropriate state file or reject the action if it was benign.",
+                ],
+                "notes": [
+                    f"Source: {signal.source}",
+                    "Escalate manually if the account controls money, identity, immigration, or health records.",
+                ],
+            }
+
+        return {
+            "description": f"Artha detected '{signal.signal_type}' for '{signal.entity}'.",
+            "steps": [
+                "Review whether the signal is still relevant.",
+                "Decide the smallest useful next step.",
+                "Either complete it, defer it with a date, or reject the action.",
+            ],
+            "notes": [
+                f"Signal detected: {signal.signal_type}",
+                f"Domain: {signal.domain}",
+            ],
+        }
+
+    def _load_goal_by_title(self, title: str) -> dict[str, Any]:
+        """Best-effort lookup of a goal record from state/goals.md frontmatter."""
+        try:
+            import yaml  # noqa: PLC0415
+            goals_path = self._artha_dir / "state" / "goals.md"
+            data = next(yaml.safe_load_all(goals_path.read_text(encoding="utf-8")), {}) or {}
+            if not isinstance(data, dict):
+                return {}
+            title_norm = title.strip().lower()
+            for goal in data.get("goals", []):
+                if isinstance(goal, dict) and str(goal.get("title", "")).strip().lower() == title_norm:
+                    return goal
+        except Exception:
+            pass
+        return {}
 
     # ------------------------------------------------------------------
     # Workflow builders

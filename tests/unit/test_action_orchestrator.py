@@ -361,6 +361,15 @@ def test_deduplication_different_entities():
     assert len(result) == 2
 
 
+def test_deduplication_structured_entity_values():
+    """Structured pattern-engine entities must not crash set-based deduplication."""
+    s1 = _make_signal("goal_stale", "goals", {"goal": "Mailbox Peak", "days": 30})
+    s2 = _make_signal("goal_stale", "goals", {"days": 30, "goal": "Mailbox Peak"})
+    s3 = _make_signal("goal_stale", "goals", {"goal": "Different", "days": 30})
+    result = _deduplicate([s1, s2, s3])
+    assert len(result) == 2
+
+
 # ---------------------------------------------------------------------------
 # T-U-08 — signal persistence to JSONL
 # ---------------------------------------------------------------------------
