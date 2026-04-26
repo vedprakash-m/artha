@@ -453,8 +453,7 @@ class ContentStage:
     ) -> dict:
         """Generate platform drafts. In Phase 1, returns structured placeholders.
 
-        Phase 2 replaces this with actual LLM calls. Phase 1 drafts are marked
-        with status=DRAFT and pii_scan_passed=False until LLM integration completes.
+        Phase 2 replaces this with actual LLM calls.
         """
         from pr_stage.personalizer import DraftPersonalizer
         platforms = ["facebook", "linkedin", "instagram", "whatsapp_status"]
@@ -462,8 +461,8 @@ class ContentStage:
 
         for platform in platforms:
             placeholder = (
-                f"[Auto-draft pending for {card.occasion} on {platform}. "
-                f"Use /stage draft {card.id} to generate content.]"
+                f"[Auto-draft pending — occasion: {card.occasion}, platform: {platform}. "
+                f"Run: /stage draft {card.id}]"
             )
             drafts[platform] = self._personalizer.build_platform_draft(
                 placeholder, platform, card
