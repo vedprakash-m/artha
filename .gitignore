@@ -257,6 +257,22 @@ briefings/career/
 state/career_audit.jsonl
 # Local career cache (~/.artha-local/career/ is outside repo — already safe)
 
+# --- MCP Hybrid Connector files (employer-specific connector wiring) ---
+# Config files with internal service names / connector references
+config/work_connector_policy.yaml
+config/enghub_service_scope.yaml
+# Work OS connector modules (contain employer-specific integration logic)
+scripts/lib/workiq_circuit_breaker.py
+scripts/lib/work_connector_router.py
+scripts/lib/mcp_formatter.py
+scripts/lib/enghub_manager.py
+scripts/schemas/briefing_block.py
+# MCP hybrid test files (import above gitignored modules)
+tests/lib/test_workiq_circuit_breaker.py
+tests/lib/test_work_connector_router.py
+tests/lib/test_mcp_formatter.py
+tests/lib/test_enghub_manager.py
+
 # --- Obsidian vault (personal notes — never committed) ---
 .obsidian/
 

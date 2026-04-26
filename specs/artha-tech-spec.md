@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.39.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.40.0 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.23.0
+> **Implements**: PRD v7.25.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.40.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (§38, FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment. Four-pillar Work OS connector model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). New modules: `scripts/lib/workiq_circuit_breaker.py` (3-failure OPEN, 4h half-open probe, atomic `os.replace()` flush — F6/F18/F19/F20/G5/G8), `scripts/lib/mcp_formatter.py` (F31 `connector_record.py` compliance — calendar/mail/teams fallback formatting), `scripts/lib/work_connector_router.py` (policy-driven routing from `config/work_connector_policy.yaml` — F3/F13/G2), `scripts/lib/enghub_manager.py` (Node.js stdio subprocess lifecycle, MCP JSON-RPC, daemon-thread fire-and-forget, 200-char snippet cap — F23/F24/F25/G9/G10/G11/G12/G13), `scripts/schemas/briefing_block.py` (F20 success predicate). Config: `config/work_connector_policy.yaml` (10 routing surfaces), `config/enghub_service_scope.yaml` (service ID scope). Integration: `work_loop.py` gains `ProviderAvailability.m365_mcp`/`enghub_mcp` (F4), circuit breaker in `_run_workiq()`, `_fire_enghub_async()` daemon thread (G10). 12 guardrails (G1–G12), 3 architectural patterns (P1–P3). 50 tests across 4 test files. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.39.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.23.0 FR-29. |
 | v3.38.0 | 2026-04-21 | **Hermes Home Intelligence Layer (§3.5c, FR-28)**: `scripts/export_hermes_context.py` — writes `sensor.artha_context` HA entity after pipeline Step 21 (non-blocking Step 22 hook) and every 4 hours via Mac LaunchAgent. Reads `state/goals.md` (frontmatter YAML parser), `state/open_items.md` (regex block extractor, same pattern as `todo_sync.py`), `state/calendar.md` (event-block parser with source allowlist). Payload: `schema_version 1.0`, `goals_active[:3]`, `goals_parked[:3]`, `open_items_p1[:3]`, `open_items_p2[:5]`, `today_events`, `week_events[:5]`, size guard at 4096 bytes. LAN gate: 2-second TCP probe. Auth: `artha-ha-token` keyring. `config/hermes_context_allowlist.yaml` — domain allowlist (primary guard); `_validate_no_work_data()` — 10-signal defense-in-depth scan (warning, never blocking). `hermes-home.skill` (ZIP) — 3 Hermes skills: `home-context`, `presence-journal`, `weekly-home-digest`. `artha.hermes-context.plist` — `StartInterval=14400`, `RunAtLoad=true`, `--standalone` flag, concurrency sentinel `tmp/.pipeline_running`. Preflight: `check_hermes_context_staleness()` warns at 48h stale / absent. 41 unit tests in `tests/unit/test_export_hermes_context.py`. `specs/h-int.md` archived. Implements PRD v7.22.0. |
 | v3.37.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (§35 amendment, `specs/rebrief.md`)**: Replaces the LLM-executed `--archive-brief` CLI hop with a staging pickup pattern. LLM writes `tmp/briefing_incoming_<runtime>.md`; `_ingest_pending_briefs()` ingests at `pipeline.py` startup with full safety gates. `briefing_archive.save()` gains `runtime` param (stored in frontmatter; identifies LLM client: `vscode`/`gemini`/`claude`/`copilot`). `source` field stamped by pipeline from filename — never self-reported by model. `_run_injection_check()` made fail-closed (raises `RuntimeError` on `ImportError` or scan exception). Step 13.5 added to `config/workflow/finalize.md` with surface table; `config/Artha.core.md` Step 14 archive block replaced with one-liner pointer. Preflight coverage check updated: accepts `source: vscode` OR `runtime: vscode`. `--archive-brief` subcommand removed from `pipeline.py`. 36 archive+ingest tests passing. `specs/rebrief.md` archived. Implements PRD v7.21.0. |
@@ -6264,10 +6265,123 @@ All seven modules live under `scripts/lib/` and integrate with `telemetry.py` fo
 
 ---
 
+## 38. MCP Hybrid Connector Architecture *(v3.40.0 — FR-31)*
+
+Purpose-routed hybrid connector layer for Work OS M365 data surfaces + EngHub engineering knowledge enrichment. Routes each operation to the connector with a structural advantage. Derived from scored comparison study (WorkIQ 41 vs MCP Direct 33 — complementary, not competing). Full analysis: `specs/mcp-hybrid.md` (archived to `.archive/specs/`).
+
+### 38.1 Four-Pillar Connector Model
+
+| Pillar | Connector | Data Surface | Execution |
+|--------|-----------|-------------|-----------|
+| Communication | WorkIQ | Calendar intelligence, Mail triage, Teams priority | Blocking (ThreadPoolExecutor) |
+| Action | MCP Direct (M365) | Write ops: flag, reply, accept/decline, send | L1 confirm-before-execute |
+| Work Items | ADO + ICM + Bluebird | Tasks, incidents, telemetry | Blocking (ThreadPoolExecutor) |
+| Knowledge | EngHub MCP (stdio) | eng.ms TSGs, runbooks, onboarding, architecture | Async daemon thread (≤15s) |
+
+### 38.2 Routing Policy
+
+Machine-readable authority: `config/work_connector_policy.yaml`. Consumed by `scripts/lib/work_connector_router.py::route_connector()`. Never in `config/signal_routing.yaml` (G2).
+
+| Surface | Primary | Fallback | Mode |
+|---------|---------|----------|------|
+| `calendar_briefing` | workiq | m365_query | blocking |
+| `mail_briefing` | workiq | m365_query | blocking |
+| `teams_triage` | workiq | null (SC-6) | blocking |
+| `m365_write` | mcp_direct | null | blocking |
+| `m365_identity` | mcp_direct | null | blocking |
+| `m365_targeted_query` | mcp_direct | workiq | blocking |
+| `engineering_kb_briefing` | enghub | null | async (15s) |
+| `engineering_kb_prep` | enghub | null | foreground (30s) |
+| `incident_tsg_lookup` | enghub | null | async (15s) |
+| `service_doc_lookup` | enghub | null | foreground (60s) |
+
+### 38.3 Circuit Breaker (`scripts/lib/workiq_circuit_breaker.py`)
+
+Lightweight state machine preventing 90s timeout tax on every briefing when WorkIQ is persistently degraded.
+
+**State transitions:** CLOSED →[3 failures]→ OPEN →[4h elapsed]→ HALF_OPEN →[success]→ CLOSED / →[failure]→ OPEN.
+
+- **Persistence:** `tmp/.workiq_breaker.json` (separate from payload cache `.workiq_cache.json` — Pattern P2)
+- **Atomic writes:** `os.replace()` from `.json.tmp` (G5/F18)
+- **Half-open serialization:** `tmp/.workiq_breaker.lock` prevents concurrent probes (G8/F19)
+- **Success predicate:** HTTP 200 AND `BriefingBlock` schema validation (F20)
+- **Integration:** `work_loop.py::_run_workiq()` calls `should_attempt()` / `record_success()` / `record_failure()`
+
+### 38.4 MCP Formatter (`scripts/lib/mcp_formatter.py`)
+
+Normalizes raw M365 MCP responses into F31 connector records (`{id, source, date_iso, raw}`).
+
+| Function | Output Format | Source Tag |
+|----------|--------------|------------|
+| `format_calendar_event()` | `HH:MM – HH:MM \| Title \| Organizer` | `m365_calendar` |
+| `format_mail_message()` | `From \| Subject \| HH:MM` | `m365_mail` |
+| `format_teams_fallback_warning()` | SC-6 structured warning | `m365_teams_fallback` |
+
+All outputs pass `connector_record.validate_record()` (F31/R16 — 13 unit tests).
+
+### 38.5 EngHub Manager (`scripts/lib/enghub_manager.py`)
+
+Node.js stdio subprocess lifecycle manager for `@azure-core/enghub-mcp`. Two-pass render model (G10/F23):
+
+- **Pass 1:** Primary briefing (blocking ThreadPoolExecutor — WorkIQ + ADO + ICM + Bluebird)
+- **Pass 2:** EngHub daemon thread (fire-and-forget, ≤15s budget, `_fire_enghub_async()`)
+
+**Key constraints:**
+- Auth stays in Node.js subprocess (G9/F25) — Python never handles EngHub tokens
+- Snippets truncated to ≤200 chars before persistence (G13)
+- Cache: `tmp/.enghub_enrichment.json` (TTL 4h), audit: `tmp/.enghub_audit_{pid}.json`
+- Stale PID recovery via `tmp/.enghub_pid`
+- stdout/stderr drained on separate daemon threads (prevents pipe backpressure deadlock)
+
+### 38.6 ProviderAvailability Extension
+
+`work_loop.py::ProviderAvailability` dataclass gains:
+- `m365_mcp: bool` — probed via `_check_m365_mcp_available()` (token file existence check)
+- `enghub_mcp: bool` — probed via `_check_enghub_available()`
+
+### 38.7 Observability
+
+Work telemetry stays on `state/work/work-audit.md` (G4 — never `health-check.md`).
+
+```
+[mcp-hybrid] YYYY-MM-DD | route: workiq|mcp | surface: <name> | duration_ms: NNN | outcome: ok|fallback|skip | cache: hit|miss|n/a | breaker: closed|open|half_open
+[enghub] YYYY-MM-DD | mode: async|foreground | query: <N>_chars | results: N | search_ms: NNN | cache: hit|miss | outcome: ok|timeout|vpn_off|spawn_fail|auth_fail
+```
+
+### 38.8 Architectural Guardrails
+
+| ID | Rule |
+|----|------|
+| G1 | No Work writes at L2 — permanently L1 (FR-19) |
+| G2 | Connector policy is NOT signal routing — separate files |
+| G5 | Breaker state transitions are atomic disk writes (`os.replace()`) |
+| G6 | WorkIQ output is display-only — never parsed for action proposals (prompt injection defense) |
+| G7 | Entity ID resolution is two-step (semantic ref → MCP query → concrete ID → cache validation) |
+| G8 | Half-open probe is serialized (lock file) |
+| G9 | EngHub auth lives in Node.js only |
+| G10 | EngHub is enrichment-only — never blocks briefing delivery |
+| G11 | EngHub persists summaries only — no full eng.ms page bodies |
+| G12 | EngHub audit writes are single-writer (per-PID temp file → main thread merge) |
+
+### 38.9 File Map
+
+| File | Purpose |
+|------|---------|
+| `scripts/lib/workiq_circuit_breaker.py` | Circuit-breaker state machine (11 tests) |
+| `scripts/lib/mcp_formatter.py` | MCP → connector record normalization (13 tests) |
+| `scripts/lib/work_connector_router.py` | Policy-driven routing (12 tests) |
+| `scripts/lib/enghub_manager.py` | EngHub subprocess lifecycle (14 tests) |
+| `scripts/schemas/briefing_block.py` | F20 BriefingBlock schema |
+| `config/work_connector_policy.yaml` | Routing authority (10 surfaces) |
+| `config/enghub_service_scope.yaml` | EngHub service ID scope (placeholder — Phase 0 populates) |
+
+---
+
 ## 18. Revision History
 
 | Version | Changes |
 |---------|---------|
+| v3.41.0 | **MCP Hybrid Connector Architecture (§38, FR-31)**: Purpose-routed hybrid M365 connector + EngHub engineering knowledge enrichment. 4 new modules (`workiq_circuit_breaker.py`, `mcp_formatter.py`, `work_connector_router.py`, `enghub_manager.py`), 2 config files (`work_connector_policy.yaml`, `enghub_service_scope.yaml`), 1 schema (`briefing_block.py`). `work_loop.py` extended with `ProviderAvailability.m365_mcp`/`enghub_mcp`, circuit breaker wiring, EngHub daemon thread. 12 guardrails (G1–G12). 50 tests. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.40.0 | **Agency Playground Quality Layer & Agent SRE Observability (§37, FR-30)**: S-01–S-30 Tier 1 patterns + ST-01–ST-07 SRE modules from SPEC-STEAL-001/002 competitive analysis. New files: `scripts/lib/quality_gate.py` (S-01), `scripts/lib/checkpoint.py` session recap funcs (S-03), `scripts/lib/evidence_lake.py` (S-04), `scripts/lib/partial_writer.py` (S-08), `scripts/lib/context_budget.py::check_budget` (S-30), `scripts/work/ado_snapshot.py` (S-07), `scripts/lib/correction_tracker.py` (ST-02), `scripts/lib/cost_guard.py` (ST-03), `scripts/lib/slo_engine.py` (ST-04), `scripts/lib/loop_detector.py` (ST-05), `scripts/preflight.py::check_guardrails_rings` (ST-07). Extended: `scripts/lib/telemetry.py` hash-chain + trace (ST-01/ST-06). Gates G-0/G-1/G-2 PASSED. Rules R1–R12. `specs/steal.md` archived to `.archive/specs/`. Implements PRD v7.24.0. |
 | v3.35.0 | **Simplification & Token Optimization (specs/simplify.md v1.2)**: Compact `Artha.md` activated as default (21KB/~6,000 tokens vs. prior 110KB/~31,000 tokens) — `config/workflow/` files loaded per-command via `§R` routing table in all 3 entrypoints (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). WorkIQ overlay extracted to `config/overlays/workiq.md`. Domain agent unification: `scripts/precompute.py` (single dispatcher) replaces `agent_scheduler.py` + 4 domain agent entry-point files; external-agent control plane (`agent_manager.py`) preserved. Signal type consolidation: `DomainSignal` gains `subtype: str = ""` field; 10 email signal types map to 4 canonical types (`deadline`, `confirmation`, `security`, `informational`) via `_CANONICAL_TYPE_MAP` in `email_signal_extractor.py`; all 4 `signal_routing.yaml` consumers updated; 4 canonical catch-all entries added to `config/signal_routing.yaml`. Connector fallback cleanup: `_FALLBACK_HANDLER_MAP` removed from `pipeline.py`; `_ALLOWED_MODULES` made explicit 20-element frozenset; dead `_HANDLER_MAP` init removed; failure mode now emits `[CRITICAL]` + returns empty dict. Config stub cleanup: `config/lint_rules.yaml` embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py`; `config/implementation_status.yaml` deleted; `config/domain_autonomy_state.yaml` moved to `state/`. Pre-commit hook auto-regenerates `Artha.md` when `Artha.core.md` changes. New tests: `tests/test_signal_consolidation.py` (10), `tests/test_precompute.py` (15). Config YAMLs: 20→17. Per-session token savings: ~25,600 tokens. |
 | v3.34.0 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + `WindowsProactorEventLoopPolicy` + 3 async coroutines (`telegram_loop`, `schedule_loop`, `watchdog_loop`). Reddit public JSON connector (`scripts/connectors/reddit.py`). Watch Monitor deterministic keyword filter + urgency-tiered routing (`scripts/skills/watch_monitor.py`). Brief Request stale-while-revalidate bridge. Query Relay domain allowlist {goals, calendar, open_items, home, learning} + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude 30s each). Physiological Engine workout regex parser → `~/.artha-local/workouts.jsonl` (`scripts/skills/fitness_coach.py`). HMAC-SHA256 required on ALL M2M commands — no exceptions. `QUERY_ARTHA_MAX_CHARS = 15_000` added to `scripts/lib/context_budget.py`. `claw_bridge.yaml` extended with `query_artha` + `llm` config blocks. ADR-004 engine-vs-extend decision gate documented. `scripts/register_engine_task.ps1` written. All ACI tests passing. Implements PRD v7.17.0. |

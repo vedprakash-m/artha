@@ -1,7 +1,7 @@
 ---
 schema_version: "1.0"
 component: registry
-last_updated: 2026-03-07T22:59:52
+last_updated: 2026-04-25T00:00:00
 description: Component manifest for the Artha Personal Intelligence System
 ---
 # Artha Component Registry
@@ -31,6 +31,11 @@ Run `/health` to validate each component is present and passes its self-check.
 | `scripts/todo_sync.py` | Bidirectional sync: open_items.md ↔ Microsoft To Do | ✅ Operational | 2026-03-08 |
 | `scripts/skill_runner.py` | Data fidelity skill orchestrator (USCIS, weather, tax, recalls) | ✅ Operational | 2026-03-13 |
 | `scripts/mcp_server.py` | MCP server adapter for Artha tools | ✅ Operational | 2026-03-13 |
+| `scripts/lib/workiq_circuit_breaker.py` | WorkIQ circuit-breaker state machine (§38) | ✅ Operational | 2026-04-25 |
+| `scripts/lib/mcp_formatter.py` | MCP → connector record normalization (F31) | ✅ Operational | 2026-04-25 |
+| `scripts/lib/work_connector_router.py` | Policy-driven Work OS connector routing (§38) | ✅ Operational | 2026-04-25 |
+| `scripts/lib/enghub_manager.py` | EngHub MCP subprocess lifecycle manager (§38) | ✅ Operational | 2026-04-25 |
+| `scripts/schemas/briefing_block.py` | BriefingBlock schema for F20 success predicate | ✅ Operational | 2026-04-25 |
 | `scripts/generate_identity.py` | Assembles Artha.md from core + identity | ✅ Operational | 2026-03-13 |
 | `scripts/demo_catchup.py` | Demo briefing with fictional data for onboarding | ✅ Operational | 2026-03-13 |
 | `scripts/upgrade.py` | Non-destructive version upgrade detector | ✅ Operational | 2026-03-13 |
@@ -199,6 +204,17 @@ goals:
   review_trigger: "[condition for re-evaluation]"
   status: active
 ```
+
+---
+
+## Work OS Connectors
+
+| Connector | Route | Purpose | Autonomy Cap | Status |
+|-----------|-------|---------|--------------|--------|
+| `workiq_bridge` | WorkIQ (AI read) | WorkIQ bridge — calendar/email/teams narrative fetch; display-only, circuit-breaker gated | L1_permanent | ✅ Registered |
+| `m365_identity` | MCP Direct (primary) | Read-only M365 identity/profile data via Graph API | L1_permanent | ✅ Registered |
+| `m365_write` | MCP Direct (stub) | M365 write operations — permanently stubbed (OQ-1) | L1_permanent | ⛔ Stub (never implement) |
+| `enghub` | EngHub MCP (async) | Engineering Hub MCP search — fire-and-forget enrichment, daemon thread only | L1_permanent | ✅ Registered |
 
 ---
 
