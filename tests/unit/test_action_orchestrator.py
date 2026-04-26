@@ -696,7 +696,7 @@ def test_health_command_reports_status(artha_dir, capsys):
         "calendar_create": True,
         "email_send": False,
     }
-    mock_executor.queue_stats.return_value = {"pending": 0, "deferred": 0}
+    mock_executor.queue_stats.return_value = {"total_pending": 2, "total_deferred": 1}
 
     with patch("action_orchestrator._import_action_modules") as mock_imports:
         mock_imports.return_value = (MagicMock(), MagicMock(return_value=mock_executor), MagicMock())
@@ -705,6 +705,7 @@ def test_health_command_reports_status(artha_dir, capsys):
 
     out = capsys.readouterr().out
     assert "HEALTH" in out
+    assert "2 pending, 1 deferred" in out
     assert result == 0
 
 
@@ -1050,6 +1051,15 @@ def test_output_path_uses_pathlib():
     assert "Path" in func_body, "_validate_output_path must use pathlib.Path"
     # Should not use os.path.join or os.sep
     assert "os.path.join" not in func_body, "Must not use os.path.join in _validate_output_path"
+
+
+def test_pipeline_action_status_includes_current_queue():
+    """T-P-03b: action status must show existing queue depth, not only new proposals."""
+    pipeline_src = (SCRIPTS_DIR / "pipeline.py").read_text(encoding="utf-8")
+    assert '"--list"' in pipeline_src
+    assert "CURRENT ACTION QUEUE" in pipeline_src
+    assert "new proposals" in pipeline_src
+    assert "pending" in pipeline_src
 
 
 def test_python3_compatible_shebang():

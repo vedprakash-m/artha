@@ -844,6 +844,39 @@ def _print_expanded_preview(proposal: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# M15: M365 MCP write dispatch (D3/A4/G1)
+# ---------------------------------------------------------------------------
+
+def _dispatch_m365_write(action_type: str, payload: dict) -> None:
+    """Stub dispatch router for M15 M365 write actions.
+
+    A4 HIGH RISK: This function routes to MCP tools that make real writes
+    (flag email, reply, accept/decline calendar events, Teams messages).
+    All M15 action types carry autonomy_cap='L1_permanent' — user confirmation
+    is ALWAYS required before any call reaches this function (FR-19, G1, F11).
+
+    OQ-1 (P0 BLOCKING): Python batch MCP token proof is unresolved.
+    Until OQ-1 is resolved, this function logs a warning and does NOT
+    execute any MCP call. Wire to the action executor once unblocked.
+    """
+    import logging as _log
+    _DISPATCH_MAP = {
+        "m365_flag":        "mcp_m365-mail_FlagEmail",
+        "m365_reply":       "mcp_m365-mail_ReplyToMessage",
+        "m365_decline":     "mcp_m365-calendar_DeclineEvent",
+        "m365_accept":      "mcp_m365-calendar_AcceptEvent",
+        "m365_teams_reply": "mcp_m365-teams_SendMessageToChat",
+    }
+    if action_type not in _DISPATCH_MAP:
+        raise ValueError(f"Unknown M15 action type: {action_type!r}")
+    _log.getLogger(__name__).warning(
+        "m365_write_dispatch_pending action=%s mcp_tool=%s payload=%r "
+        "(OQ-1: Python batch MCP token unresolved — write blocked)",
+        action_type, _DISPATCH_MAP[action_type], payload,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Core operations
 # ---------------------------------------------------------------------------
 
@@ -1405,8 +1438,8 @@ def cmd_health(artha_dir: Path) -> int:
         db_path = ActionQueue._resolve_db_path(artha_dir)
 
         print("═══ ACTION LAYER HEALTH ════════════════════════════════════════")
-        pending_count = stats.get("pending", 0)
-        deferred_count = stats.get("deferred", 0)
+        pending_count = stats.get("total_pending", stats.get("pending", 0))
+        deferred_count = stats.get("total_deferred", stats.get("deferred", 0))
         print(f"Queue: {pending_count} pending, {deferred_count} deferred")
 
         if handler_results:

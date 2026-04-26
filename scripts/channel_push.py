@@ -612,13 +612,21 @@ def push_pending_actions(dry_run: bool = False) -> int:
         if not channel_cfg.get("features", {}).get("push", True):
             continue
 
-        try:
-            adapter = create_adapter_from_config(channel_name, channel_cfg)
-        except Exception as exc:
-            log.warning("Channel %s: adapter load failed: %s", channel_name, exc)
-            continue
-
         recipients = channel_cfg.get("recipients", {})
+        adapter = None
+        if not dry_run:
+            try:
+                adapter = create_adapter_from_config(channel_name, channel_cfg)
+            except Exception as exc:
+                log.warning("Channel %s: adapter load failed: %s", channel_name, exc)
+                _audit_log(
+                    "ACTION_PUSH_ERROR",
+                    channel=channel_name,
+                    error_type="adapter_load_failed",
+                    message=str(exc)[:200],
+                )
+                continue
+
         for rec_name, rec_cfg in recipients.items():
             if not isinstance(rec_cfg, dict) or not rec_cfg.get("push", False):
                 continue
@@ -652,6 +660,8 @@ def push_pending_actions(dry_run: bool = False) -> int:
                     sent_count += 1
                     continue
 
+                if adapter is None:
+                    continue
                 msg = ChannelMessage(
                     text=text,
                     recipient_id=recipient_id,
@@ -722,21 +732,23 @@ def run_push(dry_run: bool = False) -> int:
             log.debug("Channel %s: push feature disabled, skipping", channel_name)
             continue
 
-        # Instantiate adapter
-        try:
-            adapter = create_adapter_from_config(channel_name, channel_cfg)
-        except Exception as exc:
-            log.warning("Channel %s: could not load adapter: %s", channel_name, exc)
-            _audit_log(
-                "CHANNEL_ERROR",
-                channel=channel_name,
-                error_type="adapter_load_failed",
-                message=str(exc)[:200],
-            )
-            continue
+        adapter = None
+        if not dry_run:
+            # Instantiate adapter
+            try:
+                adapter = create_adapter_from_config(channel_name, channel_cfg)
+            except Exception as exc:
+                log.warning("Channel %s: could not load adapter: %s", channel_name, exc)
+                _audit_log(
+                    "CHANNEL_ERROR",
+                    channel=channel_name,
+                    error_type="adapter_load_failed",
+                    message=str(exc)[:200],
+                )
+                continue
 
-        # Retry any pending pushes first
-        _send_pending_pushes(channel_name, adapter, dry_run=dry_run)
+            # Retry any pending pushes first
+            _send_pending_pushes(channel_name, adapter, dry_run=dry_run)
 
         # Process each push-enabled recipient
         recipients = channel_cfg.get("recipients", {})
@@ -812,6 +824,9 @@ def run_push(dry_run: bool = False) -> int:
                 channels_pushed.append(channel_name)
                 continue
 
+            if adapter is None:
+                continue
+
             success = adapter.send_message(msg)
 
             if success:
@@ -842,6 +857,20 @@ def run_push(dry_run: bool = False) -> int:
         log.info("Push complete. Marker written. Channels: %s", channels_pushed)
     else:
         log.info("Push complete. No messages sent (no enabled recipients with id set).")
+
+    if channels_pushed or dry_run:
+        try:
+            pushed_actions = push_pending_actions(dry_run=dry_run)
+            if pushed_actions:
+                log.info("Pushed %d pending action message(s).", pushed_actions)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Pending action push failed (non-blocking): %s", exc)
+            _audit_log(
+                "ACTION_PUSH_ERROR",
+                channel="all",
+                error_type="unexpected_exception",
+                message=str(exc)[:200],
+            )
 
     return 0
 

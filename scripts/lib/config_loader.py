@@ -47,6 +47,7 @@ _CONFIG_FILES: dict[str, str] = {
     "patterns":       "patterns.yaml",
     "routing":        "routing.yaml",
     "signal_routing": "signal_routing.yaml",
+    "guardrails":     "guardrails.yaml",
 }
 
 
