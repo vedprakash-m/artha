@@ -82,6 +82,56 @@ class TestComposePipeline:
         assert isinstance(proposal.action_type, str)
         assert len(proposal.action_type) > 0
 
+    def test_school_action_routes_to_reminder_not_message(self, composer):
+        signal = _make_signal(
+            signal_type="school_action_needed",
+            domain="kids",
+            entity="Missing assignment",
+        )
+        proposal = composer.compose(signal)
+        assert proposal is not None
+        assert proposal.action_type == "reminder_create"
+
+    def test_goal_stale_instruction_sheet_has_useful_steps(self, composer):
+        signal = _make_signal(
+            signal_type="goal_stale",
+            domain="goals",
+            entity="Summit Mailbox Peak",
+        )
+        proposal = composer.compose(signal)
+        assert proposal is not None
+        context = proposal.parameters["context"]
+        assert context["description"]
+        assert len(context["steps"]) >= 3
+        assert any("update state/goals.md" in step for step in context["steps"])
+
+    def test_instruction_sheet_notes_only_context_is_rebuilt(self, composer):
+        signal = _make_signal(
+            signal_type="content_moment_missed",
+            domain="social",
+            entity="Cultural moment approaching without content plan",
+            metadata={"context": {"description": "", "steps": [], "notes": ["Signal detected"]}},
+        )
+        proposal = composer.compose(signal)
+        assert proposal is not None
+        context = proposal.parameters["context"]
+        assert context["description"]
+        assert len(context["steps"]) >= 3
+
+    def test_finance_instruction_sheet_has_verification_steps(self, composer):
+        signal = _make_signal(
+            signal_type="bill_due",
+            domain="finance",
+            entity="Metro Electric",
+            metadata={"amount": "42.00", "due_date": "2026-05-01"},
+        )
+        proposal = composer.compose(signal)
+        assert proposal is not None
+        context = proposal.parameters["context"]
+        assert "official website or app" in " ".join(context["prerequisites"])
+        assert any("does not make payments" in note for note in context["notes"])
+        assert proposal.parameters["signal_type"] == "bill_due"
+
     def test_proposal_title_populated(self, composer):
         signal = _make_signal(signal_type="bill_due", entity="Metro Electric")
         proposal = composer.compose(signal)

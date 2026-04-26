@@ -130,6 +130,7 @@ class TestSignalPipelinePIIHygiene:
         }
         signals = extractor.extract([otp_email])
         for sig in signals:
+            assert isinstance(getattr(sig, "entity", ""), str)
             metadata = getattr(sig, "metadata", {}) or {}
             for key, val in metadata.items():
                 if isinstance(val, str):
@@ -141,6 +142,18 @@ class TestSignalPipelinePIIHygiene:
                         f"Signal metadata['{key}'] contains potential OTP digits {hits!r} — "
                         "PII scrub failed (DEBT-SIG-004 / DEBT-EVAL-001)"
                     )
+
+    def test_extracted_signal_entity_is_text_not_filter_tuple(self, extractor):
+        """pii_guard.filter_text returns (text, stats); extractor must keep only text."""
+        signals = extractor.extract([{
+            "id": "entity_tuple_regression",
+            "subject": "Payment due Apr 30",
+            "from": "billing@example.com",
+            "snippet": "Your payment of $42.00 is due Apr 30.",
+        }])
+        assert signals
+        assert all(isinstance(sig.entity, str) for sig in signals)
+        assert all(not isinstance(v, tuple) for sig in signals for v in sig.metadata.values())
 
 
 class TestSignalPipelineNoLLM:

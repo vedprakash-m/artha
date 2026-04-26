@@ -1390,9 +1390,10 @@ pipeline.py ─→ JSONL to stdout + tee to tmp/pipeline_output.jsonl
                │  4. Deduplicate signals              │
                │  5. Pre-enqueue handler validation   │
                │  6. ActionComposer.compose() each    │
-               │  7. ActionExecutor.propose_direct()  │
-               │  8. Print summary to stdout          │
-               │  9. Persist signals → tmp/signals.jsonl │
+               │  7. Proposal quality gate            │
+               │  8. ActionExecutor.propose_direct()  │
+               │  9. Print summary to stdout          │
+               │ 10. Persist signals → tmp/signals.jsonl │
                └──────────────┬──────────────────────┘
                               │
                    AI embeds § PENDING ACTIONS in briefing
@@ -1417,20 +1418,40 @@ python3 scripts/action_orchestrator.py --run --mcp
 | Email signal extractor | `scripts/email_signal_extractor.py` | 9 categories: `bill_due`, `event_rsvp_needed`, `school_action_needed`, `delivery_arriving`, `form_deadline`, `financial_alert`, `security_alert`, `subscription_renewal`, `appointment_confirmed`. Scans `body` field (falls back to `body_preview`). Skips `marketing: true` records. |
 | Pattern engine | `scripts/pattern_engine.py` | ~5 active types: `goal_stale`, `maintenance_due`, `document_expiring`, `review_pending`, `health_check_overdue`. Evaluates `config/patterns.yaml` against state files. Per-pattern cooldowns in `state/pattern_engine_state.yaml`. |
 
-**Signal coverage gap (V1.0):** `_FALLBACK_SIGNAL_ROUTING` defines 50+ signal types but only ~13 have active producers in V1.0. The remaining types are pre-wired for future producer expansion — adding a pattern to `config/patterns.yaml` activates a signal type with no code changes.
+**Signal coverage gap (V1.0):** `config/signal_routing.yaml` defines 50+ signal types but only ~13 have active producers in V1.0. The remaining types are pre-wired for future producer expansion — adding a pattern to `config/patterns.yaml` activates a signal type with no code changes.
 
-#### 7.4.4 Signal Routing: YAML-Fallback Merge Invariant
+#### 7.4.4 Signal Routing: YAML Authority Invariant
 
-`action_composer.py`'s `_load_signal_routing()` **merges** `config/signal_routing.yaml` entries **over** the hardcoded `_FALLBACK_SIGNAL_ROUTING` base. YAML entries override individual keys; they do NOT replace the full dict. This ensures all 50+ hardcoded signal types route correctly even when `signal_routing.yaml` has only a subset of entries.
+`config/signal_routing.yaml` is the reviewable authority for signal-to-action mapping. `action_composer.py` loads this YAML at import time as its bootstrap fallback, then `_load_signal_routing()` merges live config values over that file-backed fallback so transient config-loader failures do not silently drop routes. There is no separate hand-maintained Python routing table.
 
 ```python
 def _load_signal_routing() -> dict[str, dict]:
-    base = dict(_FALLBACK_SIGNAL_ROUTING)
+    base = dict(_FALLBACK_SIGNAL_ROUTING)  # populated from config/signal_routing.yaml
     yaml_routing = load_config("signal_routing")  # may be partial
     if yaml_routing:
         base.update(yaml_routing)  # YAML overrides, not replaces
     return base
 ```
+
+#### 7.4.4a Proposal Quality Gate
+
+The enqueue boundary rejects proposals that pass schema/handler validation
+but would degrade trust:
+- `instruction_sheet` requires a substantive context (`description`, `steps`,
+  `prerequisites`, `contacts`, or `links`; notes alone are not sufficient).
+- `ActionComposer` supplies non-empty default contexts for `goal_stale`,
+  finance, and security signals when producers do not provide one.
+- `reminder_create` rejects stale due dates and past delivery-arrival notices.
+- Quality rejections are counted separately from duplicate suppression in
+  orchestrator metrics (`proposals_rejected_quality`).
+- `expire_low_quality_pending()` expires legacy pending proposals that fail
+  the current quality gate, releases their idempotency reservations, and
+  writes `ACTION_QUALITY_EXPIRED` audit entries.
+- If queue insertion fails after idempotency reservation, `propose_direct()`
+  marks the reservation failed so retries are not suppressed by a proposal
+  that never reached the queue.
+- Orphan `RESERVED` idempotency keys with no active matching queue proposal
+  are treated as recoverable and released at the enqueue boundary.
 
 #### 7.4.5 Handler–Action Type Alignment Invariant
 
@@ -1481,6 +1502,8 @@ The DB contains only action queue state — all intelligence (goals, domain stat
 |-----------|--------|
 | Import-level handler check | `_handler_health_check()` at `--run` startup — unavailable action types suppressed for the session |
 | Pre-enqueue validation | `_validate_proposal_handler()` runs `handler.validate(proposal)` before enqueue — catches structural errors before the user ever approves |
+| Proposal quality gate | `ActionExecutor._pre_enqueue_gate()` blocks empty instruction sheets and stale reminders before they reach the queue |
+| Legacy quality sweep | `ActionExecutor.expire_low_quality_pending()` removes old pending proposals that would fail the current gate |
 | Graceful degradation | No pipeline JSONL → pattern engine still runs; email signals=0. Catch-up never fails. |
 | Rate limiting | `ActionRateLimiter` enforces per-type limits from `config/actions.yaml` (e.g., `email_send: max 20/hour`) |
 | Timeout protection | 60s wall-clock limit on `--run`; per-handler timeout on `--approve` |

@@ -331,7 +331,7 @@ class TestPushPendingActions:
             "channels": {
                 "telegram": {
                     "enabled": True,
-                    "adapter": "telegram",
+                    "adapter": "scripts/channels/telegram.py",
                     "auth": {"credential_key": "test-key"},
                     "recipients": {
                         "primary": {"id": "123", "push": True, "access_scope": "full"},
@@ -378,7 +378,7 @@ class TestPushPendingActions:
             "channels": {
                 "telegram": {
                     "enabled": True,
-                    "adapter": "telegram",
+                    "adapter": "scripts/channels/telegram.py",
                     "auth": {"credential_key": "test-key"},
                     "recipients": {
                         "primary": {"id": "123", "push": True, "access_scope": "full"},
@@ -418,7 +418,7 @@ class TestPushPendingActions:
             "channels": {
                 "telegram": {
                     "enabled": True,
-                    "adapter": "telegram",
+                    "adapter": "scripts/channels/telegram.py",
                     "auth": {"credential_key": "test-key"},
                     "recipients": {
                         "primary": {"id": "123", "push": True, "access_scope": "full"},

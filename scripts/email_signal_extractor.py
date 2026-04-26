@@ -249,6 +249,18 @@ _DOMAIN_RE = re.compile(r"@([\w\-\.]+)", re.I)
 _DEDUP_WINDOW_HOURS = 24
 
 
+def _filter_text_only(text: str) -> str:
+    """Return pii_guard-filtered text, tolerating its tuple-return API."""
+    try:
+        from pii_guard import filter_text as _pii_filter  # noqa: PLC0415
+        filtered = _pii_filter(text)
+        if isinstance(filtered, tuple):
+            return str(filtered[0])
+        return str(filtered)
+    except Exception:  # noqa: BLE001
+        return text
+
+
 def _extract_text(email_record: dict) -> str:
     """Build a scannable text blob from subject + from + snippet + body."""
     # body_preview is a trimmed field; fall back to body when absent
@@ -378,12 +390,7 @@ class EmailSignalExtractor:
                 # Email subjects routinely contain contextual PII (patient names,
                 # child names, case references) that pii_guard's regex does not
                 # cover via structured patterns alone. Scrub at the boundary.
-                try:
-                    from pii_guard import filter_text as _pii_filter_entity  # noqa: PLC0415
-                    entity = _pii_filter_entity(entity)
-                except Exception:  # noqa: BLE001
-                    # pii_guard unavailable — aggressive truncation as safety fallback
-                    entity = entity[:40]
+                entity = _filter_text_only(entity)
 
                 canonical_type = _CANONICAL_TYPE_MAP.get(signal_type, signal_type)
                 sig = DomainSignal(
@@ -401,16 +408,12 @@ class EmailSignalExtractor:
                 # Structural keys (email_id, sensitivity) are exempted; user-visible
                 # fields (sender_org_name, deadline_date, amount) are scrubbed.
                 _PII_EXEMPT_KEYS = frozenset({"email_id", "sensitivity", "signal_origin", "source_id"})
-                try:
-                    from pii_guard import filter_text as _pii_filter  # lazy import
-                    clean_meta = {
-                        k: (_pii_filter(v) if isinstance(v, str) and k not in _PII_EXEMPT_KEYS else v)
-                        for k, v in sig.metadata.items()
-                    }
-                    import dataclasses as _dc
-                    sig = _dc.replace(sig, metadata=clean_meta)
-                except Exception:  # pii_guard unavailable — skip scrub, not a crash
-                    pass
+                clean_meta = {
+                    k: (_filter_text_only(v) if isinstance(v, str) and k not in _PII_EXEMPT_KEYS else v)
+                    for k, v in sig.metadata.items()
+                }
+                import dataclasses as _dc
+                sig = _dc.replace(sig, metadata=clean_meta)
                 signals.append(sig)
 
         # RD-43: Write signal funnel metrics for eval_runner and CI regression detection

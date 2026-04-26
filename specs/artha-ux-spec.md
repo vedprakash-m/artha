@@ -797,6 +797,7 @@ block the AI embeds verbatim in the briefing at catch-up Step 12.5:
 ═══ ACTION ORCHESTRATOR ═══════════════════════════════════
 Signals detected: 4 (email: 3, pattern: 1)
 Proposals queued: 3 (1 duplicate suppressed)
+Quality rejected: 1
 Expired: 0
 
 ─── PENDING ACTIONS (3) ───────────────────────────────────
@@ -901,9 +902,10 @@ You'll need to tap Send." Cannot confirm delivery (outside Artha's view).
 
 ### 9.6 Instruction-Sheet Action Type *(v1.9)*
 
-Two actions in `config/actions.yaml` use `type: instruction_sheet` — they
-generate guidance prose rather than executing code. Handler is null; no
-network calls, no file writes.
+`instruction_sheet` actions generate local guidance files rather than
+calling external providers. They are low-friction only when the proposal
+contains substantive context; empty scaffold sheets are rejected before they
+reach the approval queue.
 
 ```
   ┌──────────────────────────────────────────────────────────────┐

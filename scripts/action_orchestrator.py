@@ -407,13 +407,21 @@ def _deduplicate(signals: list[Any]) -> list[Any]:
     Cross-session dedup is handled by ActionQueue.propose() status-based guard.
     Ref: specs/actions-reloaded.md §WB-3
     """
+    def _key_part(value: Any) -> str:
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return str(value)
+        try:
+            return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+        except TypeError:
+            return repr(value)
+
     seen: set[tuple[str, str, str]] = set()
     unique: list[Any] = []
     for s in signals:
         key = (
-            getattr(s, "signal_type", ""),
-            getattr(s, "domain", ""),
-            getattr(s, "entity", ""),
+            _key_part(getattr(s, "signal_type", "")),
+            _key_part(getattr(s, "domain", "")),
+            _key_part(getattr(s, "entity", "")),
         )
         if key not in seen:
             seen.add(key)
@@ -712,6 +720,7 @@ def _print_summary(
     pattern_signal_count: int,
     proposed: int,
     suppressed: int,
+    quality_suppressed: int,
     expired: int,
     pending: list[Any],
     recently_expired: list[Any] | None = None,
@@ -734,13 +743,16 @@ def _print_summary(
         f"(email: {email_signal_count}, pattern: {pattern_signal_count})"
     )
     print(f"Proposals queued: {proposed} ({suppressed} duplicate suppressed)")
+    if quality_suppressed:
+        print(f"Quality rejected: {quality_suppressed}")
     print(f"Expired: {expired}")
 
     # Emit structured counter line to stdout for machine parsing
     print(
         f"\n[{ts}] ACTION_ORCHESTRATOR | "
         f"signals:{len(all_signals)} suppressed:{suppressed} "
-        f"queued:{proposed} expired:{expired} depth:{depth} errors:{errors}"
+        f"quality_rejected:{quality_suppressed} queued:{proposed} "
+        f"expired:{expired} depth:{depth} errors:{errors}"
     )
 
     if pending:
@@ -786,7 +798,7 @@ def _print_summary(
             print(f"  ⏰ [{pid}] {action_type} | {domain} | {title[:60]}")
         if len(recently_expired) > 5:
             print(f"  ... and {len(recently_expired) - 5} more")
-        print("  (These were proposed but not acted on within the 72h expiry window)")
+        print("  (These expired by time window or current proposal-quality cleanup)")
 
     print("════════════════════════════════════════════════════════════════")
 
@@ -1002,6 +1014,7 @@ def run(
     composer = ActionComposer(artha_dir=artha_dir)
     executor = ActionExecutor(artha_dir)
     proposed = 0
+    quality_suppressed = 0
 
     for signal in all_signals:
         signal_type = getattr(signal, "signal_type", "unknown")
@@ -1058,6 +1071,28 @@ def run(
                 f"| domain:{proposal.domain} | friction:{proposal.friction}",
             )
 
+        except ValueError as exc:
+            msg = str(exc)
+            if msg.startswith("Duplicate") or "idempotency_pending:" in msg or "idempotency_duplicate:" in msg:
+                suppressed += 1
+                if verbose:
+                    print(
+                        f"[action_orchestrator] duplicate suppressed for {signal_type}: {exc}",
+                        file=sys.stderr,
+                    )
+                continue
+            if "quality_rejected:" in msg:
+                quality_suppressed += 1
+                if verbose:
+                    print(
+                        f"[action_orchestrator] quality rejected for {signal_type}: {exc}",
+                        file=sys.stderr,
+                    )
+                continue
+            print(
+                f"[action_orchestrator] compose/propose failed for {signal_type}: {exc}",
+                file=sys.stderr,
+            )
         except Exception as exc:
             # compose/propose loop must never crash the session (Principle 7)
             print(
@@ -1071,6 +1106,10 @@ def run(
         expired = executor.expire_stale()
     except Exception as exc:
         print(f"[action_orchestrator] expire_stale failed: {exc}", file=sys.stderr)
+    try:
+        expired += executor.expire_low_quality_pending()
+    except Exception as exc:
+        print(f"[action_orchestrator] expire_low_quality_pending failed: {exc}", file=sys.stderr)
 
     # 7b. Query recently expired actions (last 96h) for surfacing in briefing
     recently_expired: list[dict[str, str]] = []
@@ -1114,6 +1153,7 @@ def run(
         pattern_signal_count=len(pattern_signals),
         proposed=proposed,
         suppressed=suppressed,
+        quality_suppressed=quality_suppressed,
         expired=expired,
         pending=pending,
         recently_expired=recently_expired,
@@ -1132,6 +1172,7 @@ def run(
             "signals_in": len(all_signals),
             "proposals_composed": proposed,
             "proposals_suppressed_duplicates": suppressed,
+            "proposals_rejected_quality": quality_suppressed,
             "proposals_queued": proposed,
         }
         (_metrics_dir / "orchestrator_metrics.json").write_text(
