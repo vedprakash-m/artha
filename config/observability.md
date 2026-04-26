@@ -78,6 +78,20 @@ All channel push / listener events are appended to `state/audit.md` in standard 
 | `CHANNEL_IN` | `channel_listener.py` | `channel`, `sender` (name alias), `command` |
 | `CHANNEL_OUT` | `channel_listener.py` | `channel`, `recipient`, `chars`, `pii_filtered` |
 | `CHANNEL_REJECT` | `channel_listener.py` | `channel`, `sender` (raw ID), `reason` |
+
+---
+
+### MCP Hybrid audit events (v6.0 — Tech Spec §38)
+
+Work OS connector telemetry is written to `state/work/work-audit.md` (G4 — never `health-check.md`):
+
+| Event | Emitted by | Format |
+|-------|-----------|--------|
+| `[mcp-hybrid]` | `work_loop.py::_run_workiq()` | `date \| route \| surface \| duration_ms \| outcome \| cache \| breaker` |
+| `[enghub]` | `enghub_manager.py` (via per-PID temp file) | `date \| mode \| query_chars \| results \| search_ms \| cache \| outcome` |
+
+**Outcome values:** `ok`, `fallback`, `skip` (mcp-hybrid); `ok`, `timeout`, `vpn_off`, `spawn_fail`, `auth_fail` (enghub).
+**Breaker values:** `closed`, `open`, `half_open` — recorded at call time for post-hoc analysis.
 | `CHANNEL_RATE_LIMIT` | `channel_listener.py` | `channel`, `sender`, `cooldown_sec` |
 | `CHANNEL_SESSION` | `channel_listener.py` | `channel`, `recipient`, `action` (unlock / expire) |
 | `CHANNEL_ERROR` | either | `channel`, `error_type`, `message` |

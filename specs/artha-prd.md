@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.23.0
+## Product Requirements Document · v7.25.0
 
 **Author:** [Author]
-**Date:** April 22, 2026
+**Date:** April 25, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.25.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment for Work OS. Four-pillar model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). Circuit breaker for WorkIQ resilience (3-failure OPEN, 4h probe). MCP formatter with F31 connector_record compliance. EngHub async enrichment (daemon thread, ≤15s, never blocks briefing). 12 guardrails (G1–G12), 3 architectural patterns. Policy-driven routing via `config/work_connector_policy.yaml`. 50 tests across 4 modules. `specs/mcp-hybrid.md` archived. See Tech Spec v3.40.0 §38 + UX Spec v3.20 §31. |
 | v7.24.0 | 2026-04-23 | **Agency Playground Quality Layer & Agent SRE Observability (FR-30)** — 30 Agency Playground patterns (S-01–S-30) + 7 Agent SRE observability modules (ST-01–ST-07) from SPEC-STEAL-001 (95-plugin competitive analysis) and SPEC-STEAL-002 (Agent SRE framework). New modules: quality gate harness (`scripts/lib/quality_gate.py` — S-01), signal dedup display-layer (S-02), session recap (`scripts/lib/checkpoint.py` — S-03), evidence lake (`scripts/lib/evidence_lake.py` — S-04), audience-specific reports (S-05/S-25), claim verification (S-06), ADO snapshot agent (`scripts/work/ado_snapshot.py` — S-07), partial-write pattern (`scripts/lib/partial_writer.py` — S-08), context budget gate (`scripts/lib/context_budget.py` — S-30); SRE: hash-chained telemetry (ST-01), correction tracker (ST-02), cost guard (ST-03), SLO engine (ST-04), loop detector (ST-05), trace correlation (ST-06), guardrail ring check (ST-07). Gates G-0/G-1/G-2 all PASSED (37,625 token baseline; config blocks; corpus precision ≥ 0.85). Binding rules R1–R12. Rejected: R-1 credential exposure (OWASP A2), R-2 consent violation. `specs/steal.md` archived to `.archive/specs/`. See Tech Spec §37 + UX Spec §30. |
 | v7.23.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (FR-29)** — 7 reflect pipeline quality patterns: DC-1 Evidence Tiers (5-tier labeling), DC-2 Anti-Rationalization (9 traps), DC-3 Self-Audit Gate (6 blocking checks + rollback), DC-4 EOF Reinforcement, DC-5 Anti-Sycophancy (6 triggers + disagreement protocol), DC-6 Research Mode (opt-in 4-pass, 300s wall-time), DC-9 Instruction Hierarchy (L0–L5). DC-7 deferred; DC-8 rejected. Implemented in `config/reflect-protocol.md`, `config/Artha.core.md §15–16`, `config/guardrails.yaml`, `scripts/work_loop.py`. `specs/datacop.md` archived. See Tech Spec v3.39.0 §36 + UX Spec v3.19 §29. |
 | v7.22.0 | 2026-04-21 | **Hermes Home Intelligence Layer (FR-28)** — Artha writes a compact Personal OS context snapshot to Home Assistant `sensor.artha_context` after each pipeline run and every 4 hours via a Mac LaunchAgent. Hermes (HA add-on) reads this entity to answer life-context-aware home queries without any real-time M2M protocol. Work OS data is never exported (domain allowlist + defense-in-depth signal scan). Context entity carries `goals_active`, `goals_parked`, `open_items_p1/p2`, `today_events`, `week_events`. Graceful degradation: Hermes operates fully when context is stale or absent. New files: `scripts/export_hermes_context.py`, `config/hermes_context_allowlist.yaml`, `hermes-home.skill`, `artha.hermes-context.plist`. Pipeline Step 22 hook. Preflight staleness check. 41 unit tests. `specs/h-int.md` archived. |
@@ -1332,6 +1333,40 @@ Derived from competitive analysis of 95 production Agency Playground plugins (SP
 **Rejected:** R-1 browser automation / career-hub-referral (OWASP A2 credential exposure); R-2 connect manager mode (consent boundary violation).
 
 **Implementation gates:** G-0 ✅ (37,625 token baseline, `state/health-check.md §Token Baseline`); G-1 ✅ (`context_gate`, `harness.steal_phase0–4`, `cost_budgets` in `config/artha_config.yaml`); G-2 ✅ (50-entry corpus, `tests/fixtures/correction_corpus.jsonl`, precision ≥ 0.85).
+
+---
+
+### FR-31 · MCP Hybrid Connector Architecture *(v7.25.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §38, UX Spec §31)
+
+Purpose-routed hybrid connector architecture for Work OS M365 data surfaces. Routes each operation to the connector with a structural advantage based on a scored comparison study (WorkIQ 41 vs MCP Direct 33). Full analysis archived at `.archive/specs/mcp-hybrid.md`.
+
+**Four-Pillar Connector Model**
+
+| Pillar | Connector | Surfaces |
+|--------|-----------|----------|
+| Communication | WorkIQ | Calendar intelligence, Mail triage, Teams priority (AI synthesis) |
+| Action | MCP Direct | Write ops: flag email, decline meeting, reply to Teams (L1 only — G1) |
+| Work Items | ADO + ICM + Bluebird | Tasks, incidents, telemetry |
+| Knowledge | EngHub MCP (stdio) | eng.ms TSGs, runbooks, onboarding, architecture (async enrichment) |
+
+**Key Capabilities**
+
+| ID | Capability | Implementation |
+|----|-----------|----------------|
+| HC-1 | Circuit breaker (WorkIQ resilience) | `scripts/lib/workiq_circuit_breaker.py` — 3-failure OPEN, 4h half-open probe, atomic flush |
+| HC-2 | MCP → connector record normalization | `scripts/lib/mcp_formatter.py` — F31 schema compliance |
+| HC-3 | Policy-driven connector routing | `scripts/lib/work_connector_router.py` + `config/work_connector_policy.yaml` |
+| HC-4 | EngHub async enrichment | `scripts/lib/enghub_manager.py` — daemon thread, ≤15s budget, Node.js subprocess |
+| HC-5 | EngHub service scope | `config/enghub_service_scope.yaml` — service ID → node type mapping |
+| HC-6 | BriefingBlock validation | `scripts/schemas/briefing_block.py` — success predicate for breaker |
+
+**Architectural Guardrails:** G1 (no L2 work writes — permanent), G2 (connector policy ≠ signal routing), G5 (atomic breaker writes), G6 (WorkIQ output display-only — prompt injection defense), G9 (EngHub auth in Node.js only), G10 (EngHub never blocks briefing), G11 (persist summaries only — no full page bodies), G12 (single-writer audit).
+
+**Test coverage:** 50 tests — `test_workiq_circuit_breaker.py` (11), `test_mcp_formatter.py` (13), `test_work_connector_router.py` (12), `test_enghub_manager.py` (14).
+
+**External blocker:** EngHub service IDs in `config/enghub_service_scope.yaml` are placeholder — populated during Phase 0 EngHub onboarding (requires live `resolve_service()` against eng.ms).
 
 ---
 

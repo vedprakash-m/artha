@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.19 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.20 | **Status**: Active Development | **Date**: April 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.23.0, Tech Spec v3.39.0
+> **Implements**: PRD v7.25.0, Tech Spec v3.40.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.20 | 2026-04-25 | **MCP Hybrid Connector UX (§31)** — Fallback indicator in work briefing when MCP Direct serves calendar/mail data instead of WorkIQ AI synthesis. EngHub enrichment supplement display (`📚 Engineering Context` block with retrieval timestamp). Circuit breaker status in `work health` output. Teams fallback skip notice (SC-6). Implements PRD v7.25.0 FR-31 + Tech Spec v3.40.0 §38. |
 | v3.19 | 2026-04-22 | **DataCopilot Reflect Quality UX (§29)** — DC-5 anti-sycophancy pushback interaction patterns (6 trigger templates + response language), evidence tier labels in briefing output (`[state]`, `[signaled]`, `[inferred]`, `[live]`, `[user-confirmed]`), DC-3 audit gate feedback format (blocking check failure messages + rollback notice), `deep reflect` command UX (4 phases, 300s constraint, opt-in only). Implements PRD v7.23.0 FR-29 + Tech Spec v3.39.0 §36. |
 | v3.18 | 2026-04-16 | **ACI M2M Cleanup**** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_ved_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
 | v3.17 | 2026-04-16 | Artha Channel Integration UX — §28: workout logging trigger patterns + acknowledgement format with goal progress, watch alert notification design (immediate Telegram alert vs. daily digest vs. weekly digest), brief request via Claw stale-while-revalidate UX, query relay interaction design (question → 120s timeout expectation → answer). Implements PRD v7.17.0 + Tech Spec v3.34.0. |
@@ -3526,4 +3527,53 @@ When the same signal appears across multiple briefing domains, only one canonica
 
 ---
 
-*Artha UX Spec v3.19 — End of Document*
+## 31. MCP Hybrid Connector UX *(v7.25.0 — FR-31)*
+
+UX patterns for the hybrid M365 connector layer and EngHub engineering knowledge enrichment. Most hybrid connector behavior is invisible to the user — routing decisions happen at the infrastructure level. Three patterns have observable user-facing UX.
+
+### 31.1 Fallback Indicator in Work Briefing
+
+When MCP Direct serves calendar or mail data instead of WorkIQ AI synthesis (circuit breaker OPEN or WorkIQ timeout), the briefing section displays a compact notice:
+
+```
+⚠️ Calendar data via direct query (WorkIQ unavailable)
+09:00 – 09:30 | Weekly XPF Sync | Jane Doe
+10:00 – 11:00 | 1:1 with Manager | Bob Smith
+```
+
+- Fallback data is structured (time | title | organizer) vs WorkIQ’s AI prose (conflict detection, deep links)
+- Notice appears only when fallback is active — normal WorkIQ operation has no indicator
+- Teams section shows: `⚠️ Teams data unavailable (WorkIQ fallback — section skipped)` when teams_triage has null fallback (SC-6)
+
+### 31.2 EngHub Enrichment Supplement
+
+When EngHub async enrichment returns results within the 15s budget, a `📚 Engineering Context` block appears after the primary briefing:
+
+```
+📚 Engineering Context (retrieved 09:30)
+🔗 XPF Auth Latency TSG — eng.ms · relevance: 0.87
+🔗 Azure Storage Service Overview — eng.ms · relevance: 0.72
+```
+
+- Retrieval timestamp always displayed (content may be up to 4h stale from cache)
+- Snippet text (≤200 chars) shown only in `work:prep` foreground mode, not in briefing async mode
+- If EngHub is unavailable (VPN off, auth expired): section is absent with no error — briefing is complete without it
+- Implementation: `scripts/lib/enghub_manager.py::get_enrichment()`
+
+### 31.3 Circuit Breaker Status in `/work health`
+
+The `work health` command displays WorkIQ circuit breaker state:
+
+```
+WorkIQ Breaker: CLOSED (0 failures)
+MCP Fallback (7d): 2 activations
+EngHub: ✅ cache fresh (retrieved 09:30)
+```
+
+- Breaker states: `CLOSED` (normal), `OPEN` (WorkIQ bypassed), `HALF_OPEN` (probe in progress)
+- 7-day fallback count enables trend detection (>3/day = investigation needed)
+- EngHub shows: cache status, last retrieval time, or `⚠️ auth expired` / `○ VPN offline`
+
+---
+
+*Artha UX Spec v3.20 — End of Document*
