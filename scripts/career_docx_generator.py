@@ -1,6 +1,6 @@
 """scripts/career_docx_generator.py — DOCX resume generator.
 
-Reads state/cv-short.md and produces a formatted, editable Word document.
+Reads state/content/resumes/cv-short.md and produces a formatted, editable Word document.
 The DOCX is intended for finishing touches before saving as PDF.
 
 Usage:
@@ -21,7 +21,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_CV_PATH = _REPO_ROOT / "state" / "cv-short.md"
+_CV_PATH = _REPO_ROOT / "state" / "content" / "resumes" / "cv-short.md"
 _OUTPUT_DIR = _REPO_ROOT / "output" / "career"
 
 _NAVY = RGBColor(0x1A, 0x35, 0x5E)
