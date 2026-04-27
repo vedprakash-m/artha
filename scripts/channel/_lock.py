@@ -2,24 +2,28 @@
 from __future__ import annotations
 import logging
 import os
-import socket
-import threading
-import time
 from pathlib import Path
 
 _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _STATE_DIR = _ARTHA_DIR / "state"
 _PID_FILE = _STATE_DIR / ".channel_listener.pid"
-_SINGLETON_MUTEX_NAME = "Global\\ArthaChannelListener"
+# Local\ namespace: per-session scope, no elevated privileges required.
+# Global\ requires SeCreateGlobalPrivilege and is not needed here.
+_SINGLETON_MUTEX_NAME = "Local\\ArthaChannelListener"
 _singleton_mutex_handle = None
 log = logging.getLogger("channel_listener")
 
 def _acquire_singleton_lock() -> bool:
-    """Acquire a Windows Named Mutex to guarantee only one listener runs.
+    """Acquire a Windows Named Mutex to guarantee only one listener runs per session.
 
     Uses ctypes to call CreateMutexW — kernel-level atomic operation with no
     race conditions. Returns True if this process is the singleton, False if
     another instance already holds the mutex.
+
+    Error handling:
+    - ERROR_ALREADY_EXISTS (183): another instance owns the mutex → return False.
+    - Any other error (NULL handle, unexpected Win32 error): log and raise —
+      silently proceeding would allow duplicate listeners.
 
     Also writes a PID file for operator convenience (kill/status scripts).
     """
@@ -28,32 +32,51 @@ def _acquire_singleton_lock() -> bool:
     try:
         import ctypes
         ERROR_ALREADY_EXISTS = 183
-        # Use use_last_error=True so ctypes captures GetLastError() atomically
-        # right after the Win32 call, before any Python/ctypes bookkeeping can
-        # clear it. Accessing ctypes.windll directly does NOT guarantee this.
+        # use_last_error=True: ctypes captures GetLastError() atomically right
+        # after the Win32 call, before any Python bookkeeping clears it.
         _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
         _k32.CreateMutexW.restype = ctypes.c_void_p
         _k32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
         handle = _k32.CreateMutexW(None, True, _SINGLETON_MUTEX_NAME)
-        err = ctypes.get_last_error()  # reads the captured value, always safe
-        if err == ERROR_ALREADY_EXISTS or not handle:
-            # Mutex already exists — another instance owns it
+        err = ctypes.get_last_error()
+
+        if err == ERROR_ALREADY_EXISTS:
+            # Another instance owns the mutex — expected "already running" case.
             if handle:
-                ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
+                _k32.CloseHandle(ctypes.c_void_p(handle))
             return False
-        # We own the mutex — keep the handle alive
+
+        if not handle:
+            # CreateMutexW failed for an unexpected reason (e.g. access denied,
+            # invalid name). Do NOT silently fall through — that would allow
+            # duplicate listeners. Raise so the caller sees a real error.
+            raise RuntimeError(
+                f"CreateMutexW({_SINGLETON_MUTEX_NAME!r}) failed: "
+                f"{ctypes.WinError(err)}"
+            )
+
+        # We own the mutex — keep the handle alive for the process lifetime.
         _singleton_mutex_handle = handle
-        # Write PID file for operator convenience
+        # Write PID file for operator convenience (kill/status scripts).
         try:
             _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
             _PID_FILE.write_text(str(os.getpid()))
         except OSError:
             pass
         return True
-    except Exception:
-        pass
 
-    # ctypes unavailable — fall back to PID file heuristic (best-effort, not atomic)
+    except RuntimeError:
+        raise  # Re-raise our own errors
+    except Exception:
+        # ctypes unavailable (non-Windows or import error) — fall through to
+        # PID file heuristic only on non-Windows platforms.
+        import sys
+        if sys.platform == "win32":
+            # On Windows, ctypes should always be available. If we get here,
+            # something unexpected happened. Raise rather than allow duplicates.
+            raise
+
+    # Non-Windows fallback: PID file heuristic (best-effort, not atomic).
     try:
         _PID_FILE.parent.mkdir(parents=True, exist_ok=True)
         if _PID_FILE.exists():
@@ -61,9 +84,8 @@ def _acquire_singleton_lock() -> bool:
             try:
                 import psutil
                 if psutil.pid_exists(existing_pid):
-                    return False  # Another instance is running
+                    return False
             except ImportError:
-                # psutil not available — trust the PID file
                 return False
         _PID_FILE.write_text(str(os.getpid()))
         return True
@@ -84,8 +106,9 @@ def _release_singleton_lock() -> None:
     if _singleton_mutex_handle is not None:
         try:
             import ctypes
-            ctypes.windll.kernel32.ReleaseMutex(_singleton_mutex_handle)
-            ctypes.windll.kernel32.CloseHandle(_singleton_mutex_handle)
+            _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            _k32.ReleaseMutex(ctypes.c_void_p(_singleton_mutex_handle))
+            _k32.CloseHandle(ctypes.c_void_p(_singleton_mutex_handle))
         except Exception:
             pass
         _singleton_mutex_handle = None
