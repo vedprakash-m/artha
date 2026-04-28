@@ -132,7 +132,27 @@ See `specs/data-quality-gate.md` for the formal quality model (Q = 0.5A + 0.3F +
 
 ---
 
-## §2 Catch-Up Workflow
+### § Correction Memory & Session Invariants (FR-32.1)
+
+> **This block applies to ALL surfaces: VS Code Agent, Copilot CLI, Telegram, Claude.**
+
+**At session start:** Load `state/lessons.md` in full. Apply all active lessons before producing any artifact.
+
+**Correction capture rule:** When the user provides a correction in any form ("that's wrong", "I told you before", "use X not Y", "remember this", "always use"):
+1. Acknowledge the correction explicitly
+2. **Immediately append** a new row to `state/lessons.md` before applying the correction
+3. Apply corrected behavior
+4. Confirm: "📝 Logged to lessons.md as L-NNN."
+
+**Do not wait to log** — the row is written before the artifact is re-generated, not after.
+
+**Connect tag annotation rule (FR-32.2):** When creating a NEW accomplishment entry with Impact=HIGH or MEDIUM:
+- Suggest `ImpactType`, `Reach`, `ConnectArea` values (see L-018 for valid tokens)
+- Write accepted tags to `state/work/work-connect-tags.md` companion file — **never to the ledger**
+- Tags are suggested non-blocking: append `[tag?]` placeholder on the entry if the user is in execution mode and continue; fill tags during `work plan` or `work 11` sessions
+- Do NOT backfill A-001 through A-250 without explicit user request
+
+
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up`
 

@@ -12,6 +12,40 @@
 
 state_files:
 
+  # ── Work OS state (FR-32 — written by work_reader.py + user sessions) ──
+
+  - path: "state/lessons.md"
+    owner_agent: "artha-session"
+    write_frequency: "on user correction during any session"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "normal"
+    description: "FR-32.1 correction memory — loaded at session start. Cap: 50 active rows. Archive: state/lessons-archive.md."
+
+  - path: "state/work/work-connect-tags.md"
+    owner_agent: "artha-work-os"
+    write_frequency: "on new HIGH/MEDIUM accomplishment entry + explicit backfill"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "normal"
+    description: "FR-32.2 companion tagging file for work-accomplishments.md. Join on AccomplishmentID. Ledger never modified."
+
+  - path: "state/work/work-weekly-plan.md"
+    owner_agent: "artha-work-os"
+    write_frequency: "once per work week (work plan command)"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 168
+    sensitivity: "normal"
+    description: "FR-32.3 weekly plan. Written by work:plan on user confirmation. Read by work:standup and work:11."
+
+  - path: "state/work/people/*.md"
+    owner_agent: "artha-work-os"
+    write_frequency: "user-triggered or proposed by reflect Q2"
+    backup_tier: "gfs-standard"
+    max_staleness_hours: 720
+    sensitivity: "elevated"
+    description: "FR-32.7 per-person relationship cards. Sparse overlay on work-people.md. PII: alias/title/work context only."
+
   # ── Pipeline-managed state (written by scripts/pipeline.py steps) ─────
 
   - path: "state/goals.md"
