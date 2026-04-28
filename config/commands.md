@@ -779,8 +779,54 @@ Reads `state/work/work-summary.md` only. Meeting hours today, top comms item, bo
 ## `/work prep` — Meeting Preparation
 Reads work-calendar, work-people, work-notes. Shows next 2-4 hours of meetings sorted by readiness score (lowest first). Includes attendee context, open threads, preparation gaps, carry-forward items from recurring meetings.
 
+**Output format:**
+- Meeting list sorted by readiness (lowest score first)
+- For each meeting: attendees with org context, open threads, recommended talking points
+- Carry-forward items from prior occurrence (if recurring)
+
+**Asks section (FR-32.5 retrofit):**
+After the meeting list, emit an explicit Asks block:
+```
+§ Asks I Need to Make This Session
+| Ask | To | By | Done-looks-like |
+|-----|----|----|----------------|
+| [ask] | [person] | [date] | [observable outcome] |
+```
+Pull Asks from work-open-items where `ask_owner` = other person. If none, emit `✅ No outstanding Asks`.
+
 ## `/work sprint` — Delivery Health
-Reads work-projects. Sprint status, blockers, aging items, dependency risk, Delivery Feasibility Score (commitments vs. calendar capacity).
+Reads work-projects. Sprint health, delivery feasibility, program status, and executive summary.
+
+**Output format (FR-32.5 retrofit — Impediments/Blockers/Asks taxonomy):**
+
+```
+§ Executive Summary (2–3 sentences)
+[Overall sprint health, top risk, one headline number]
+
+§ Wins (this sprint)
+- [win] — [evidence]
+
+§ Impediments (slow-downs, not yet blockers)
+- [impediment] — Owner: [alias] — Impact: [description]
+
+§ Blockers (stop-the-line: work halted until resolved)
+- [blocker] — Owner: [alias] — Escalation: [yes/no] — Due: [date]
+
+§ Asks (actions needed from someone else)
+| Ask | To | By | Done-looks-like |
+|-----|----|----|----------------|
+| [ask] | [alias] | [date] | [outcome] |
+
+§ Program Status
+| Program | Status | Trend | DFS | Next Milestone |
+|---------|--------|-------|-----|----------------|
+| [program] | 🟢/🟡/🔴 | ↑/→/↓ | [score] | [date: desc] |
+```
+
+Terminology:
+- **Impediment**: slows progress but not blocking entirely (process friction, late reviews, resource contention)
+- **Blocker**: work has stopped — escalation or decision needed to unblock
+- **Ask**: specific request to a named person, with a deadline and a done-looks-like
 
 ## `/work return [window]` — Absence Recovery
 Reads work-calendar, work-comms, work-projects, work-notes. Context recovery after PTO/travel/sick. Shows what changed, what is waiting, what is resolved, who needs response first.

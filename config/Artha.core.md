@@ -152,6 +152,13 @@ See `specs/data-quality-gate.md` for the formal quality model (Q = 0.5A + 0.3F +
 - Tags are suggested non-blocking: append `[tag?]` placeholder on the entry if the user is in execution mode and continue; fill tags during `work plan` or `work 11` sessions
 - Do NOT backfill A-001 through A-250 without explicit user request
 
+**Growth lens annotation rule (FR-32.8):** When `growth_lens_enabled: true` in `config/artha_config.yaml`:
+- During `work plan`, `work 11`, or `work reflect` sessions only (NOT standup, quick-close, or IcM response)
+- Load `state/career_growth_practices.md` and identify the single most applicable growth practice
+- Append `🌱 GP-[N] [Practice Name]: [one-sentence application]` to the Notes column of the relevant entry
+- Maximum one GP annotation per entry; skip if no clear match
+- Growth lens never fires automatically — only in deliberate planning/review contexts
+
 
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up`
