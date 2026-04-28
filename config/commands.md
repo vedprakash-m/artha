@@ -1023,7 +1023,138 @@ P2  xConfig            → Architecture learning for Armada
 
 ---
 
-## `/career` — Career Search Intelligence
+## `/work standup` — Daily Stand-Up Generator (FR-32.4)
+
+Generates a formatted stand-up update from accomplishments and open items. No live queries — reads cached state only. Completes in < 2 seconds.
+
+**Natural language triggers:** "standup", "what's my standup", "generate standup", "daily update", "what did I do yesterday", "what's happening today"
+
+**Input sources (in order):**
+1. `state/work/work-accomplishments.md` — entries from last 2 calendar days
+2. `state/work/work-open-items.md` — Critical + Active This Week sections
+3. `state/work/work-weekly-plan.md` — Focus Outcomes for current week (if file exists)
+4. `state/work/reflect-current.md` — active IcMs, Sev-2+ only
+
+**Output format:**
+```
+━━ STANDUP — [DAY, DATE] ━━━━━━━━━━━━━━━━━━━━━━━
+✅ DONE
+  • [Action verb + outcome] ([program]) — [name-drop if cross-team]
+  • [Action verb + outcome] ([program])
+
+⏩ TODAY / TOMORROW
+  • [Action verb + planned outcome] ([program]) — [by when if deadline]
+  • [Action verb + planned outcome] ([program])
+
+⛔ BLOCKERS (if any)
+  • [Blocker description] → waiting on [person/team]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+~[N] words
+```
+
+**Format rules:**
+- Action verbs first — never start with "I" or passive voice
+- Name people explicitly: "unblocked Mehul on STG104" not "unblocked dependency"
+- Skip calendar/admin entries unless they produce an artifact or decision
+- Include cross-team deliverables even if small — they signal coordination
+- Max 120 words total
+- Blockers: surface as explicit items, not buried in body text
+- No corporate speak: "drove alignment" → "agreed on X with Y"
+
+**Sub-commands:**
+- `work standup` — default box-format output
+- `work standup teams` — plain text (no box drawing), Teams chat paste-ready
+
+- Phase: Active (Phase 1 — prompt-routed; Phase 2 — thin `cmd_standup()` dispatch in `work_reader.py`)
+
+---
+
+## `/work plan` — Weekly Planning Command (FR-32.3)
+
+Generates a 3-I-filtered weekly plan from open items and goals. Saves to `state/work/work-weekly-plan.md` on confirmation.
+
+**Natural language triggers:** "plan my week", "what should I focus on this week", "weekly planning", "set up this week", "what's my plan for the week", "work plan"
+
+**Input sources:**
+1. `state/work/work-open-items.md` — Critical + Active This Week sections
+2. `state/work/reflect-current.md` — current week, active programs
+3. `state/work/work-goals.md` — active goals and OKRs
+4. `state/work/work-summary.md` — active programs, Sev-2 IcMs
+
+**3-I Filter:** Each candidate item scored: Important (serves active goal?) + Impactful (moves the needle for stakeholders?) + Irreversible (cost of delay?). Score ≥ 2/3 → Focus Outcome. Score 1/3 → Background. Score 0/3 → Won't Do. Any active Sev-2+ IcM auto-qualifies regardless of score.
+
+**Output format:**
+```
+━━ WEEK PLAN — [Week of DATE] ━━━━━━━━━━━━━━━━━━━━━━━
+Current week: [W-NN] | Active programs: [list]
+
+🎯 FOCUS OUTCOMES (≤4, 3-I ≥ 2/3)
+  1. [Outcome] [WOI ref] [3-I score: ●●○]
+  2. [Outcome] [WOI ref] [3-I score: ●●●]
+
+📋 ASKS THIS WEEK
+  Who            What needed           By when
+  [Person]       [Specific ask]        [Date]
+
+🚫 WON'T DO THIS WEEK
+  • [Item] — [1-line reason: deferred/delegated/not-now]
+
+📌 BACKGROUND (doing if time, 3-I = 1/3)
+  • [Item]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Persistence:** After user confirms ("looks good" / "save it"), plan is written to `state/work/work-weekly-plan.md`. If a current-week plan exists, command shows it first and asks: "Want to revise or add to this?"
+
+- Phase: Active (Phase 1 — LLM-routed; Phase 2 — thin `cmd_plan()` dispatch in `work_reader.py`)
+
+---
+
+## `/work 11 [person]` — 1:1 Update Drafter (FR-32.6)
+
+Drafts a manager 1:1 update organized by workstream with urgency-first ordering. Optional `[person]` argument loads that person's relationship card for tailored "To be discussed" section.
+
+**Aliases:** `work:11`, `work:manager`, `work 11 [person]`, "prep my 1:1", "1:1 update", "manager update", "prep for my sync with [name]"
+
+**Input sources:**
+1. `state/work/work-accomplishments.md` — since last 1:1 (default: last 7 days)
+2. `state/work/work-open-items.md` — active WOIs with urgency flag
+3. `state/work/work-weekly-plan.md` — Focus Outcomes and Asks for current week
+4. `state/work/people/<alias>.md` — relationship card (if [person] specified and card exists)
+5. `state/work/reflect-current.md` — active IcMs and risks
+
+**Output format:**
+```
+━━ 1:1 UPDATE — [Person] · [Date] ━━━━━━━━━━━━━━━
+
+📋 EXECUTIVE SUMMARY
+  [2 sentences: biggest win + biggest risk since last 1:1]
+
+**🚀 [PROGRAM 1]** [status emoji]
+  Status: [New / WIP / Next up / Queued up / Action]
+  [2-3 bullets: what happened, what's next, name-drops]
+
+[...repeat per active workstream, urgency-first order...]
+
+🙋 ASKS OF [Person]
+  • [Specific ask — owner + timeline + done-looks-like]
+
+💬 TO BE DISCUSSED
+  • [Their known priorities / concerns from people card]
+  • [Open questions needing their input]
+
+🏆 WINS SINCE LAST 1:1
+  • [Win with name-drop and metric if available]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Status vocabulary** (exactly these terms): `New` · `WIP` · `Next up` · `Queued up` · `Action`
+
+- Phase: Active (Phase 1 — LLM-routed; Phase 2 — thin `cmd_11()` dispatch in `work_reader.py`)
+
+---
+
+
 
 Manages the active job search campaign: evaluates job descriptions, tracks the application pipeline, generates tailored CV PDFs, and seeds interview prep. Requires `state/career_search.md` and `~/.artha-local/cv.md` (outside repo — never committed).
 
