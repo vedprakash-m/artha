@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.25.0
+## Product Requirements Document · v7.26.0
 
 **Author:** [Author]
-**Date:** April 25, 2026
+**Date:** May 1, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,7 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v7.25.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment for Work OS. Four-pillar model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). Circuit breaker for WorkIQ resilience (3-failure OPEN, 4h probe). MCP formatter with F31 connector_record compliance. EngHub async enrichment (daemon thread, ≤15s, never blocks briefing). 12 guardrails (G1–G12), 3 architectural patterns. Policy-driven routing via `config/work_connector_policy.yaml`. 50 tests across 4 modules. `specs/mcp-hybrid.md` archived. See Tech Spec v3.40.0 §38 + UX Spec v3.20 §31. |
+| v7.26.0 | 2026-05-01 | **PM Starter Kit Adoption (FR-32)** — 11 PAW PM Starter Kit patterns adapted for Artha Work OS across 3 phases. **New commands:** `work standup` (PAW-format daily scaffold: ✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS, ≤120 words, Teams paste-ready variant), `work plan` (3-I filter: Important+Impactful+Irreversible ≥ 2/3 for Focus Outcomes; explicit Won't Do list; growth lens annotations via GP-N tags), `work 11 <alias>` (PAW 1:1 update: Exec Summary, workstream sections with status vocab, Asks Of, To Be Discussed, Wins). **People cards:** `state/work/people/<alias>.md` — sparse overlay on `work-people.md` collaboration graph; 10 seed cards; spec §5.7.3 schema (`domain: work-people-card`, `display_name`, `last_interaction`). **Correction memory:** `state/lessons.md` (50-row cap, session-start loading, auto-archive at 50). **IBA taxonomy:** Impediments / Blockers / Asks escalation structure + Executive Summary for `work sprint` and `work prep`. **Meeting routing:** Step 2b in `reflect-protocol.md` routes meeting transcripts to decisions/people cards/open-items with injection scanning guardrail. **ADO MCP:** kusto-ado confirmed available in VS Code Agent sessions (L-019). Python dispatch: `scripts/work/daily.py` (cmd_standup/cmd_plan/cmd_11, FR-32 §3.5 Pattern 2). `specs/pm-starter-kit.md` archived. See Tech Spec v3.41.0 §39 + UX Spec v3.21 §32. | Four-pillar model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). Circuit breaker for WorkIQ resilience (3-failure OPEN, 4h probe). MCP formatter with F31 connector_record compliance. EngHub async enrichment (daemon thread, ≤15s, never blocks briefing). 12 guardrails (G1–G12), 3 architectural patterns. Policy-driven routing via `config/work_connector_policy.yaml`. 50 tests across 4 modules. `specs/mcp-hybrid.md` archived. See Tech Spec v3.40.0 §38 + UX Spec v3.20 §31. |
 | v7.24.0 | 2026-04-23 | **Agency Playground Quality Layer & Agent SRE Observability (FR-30)** — 30 Agency Playground patterns (S-01–S-30) + 7 Agent SRE observability modules (ST-01–ST-07) from SPEC-STEAL-001 (95-plugin competitive analysis) and SPEC-STEAL-002 (Agent SRE framework). New modules: quality gate harness (`scripts/lib/quality_gate.py` — S-01), signal dedup display-layer (S-02), session recap (`scripts/lib/checkpoint.py` — S-03), evidence lake (`scripts/lib/evidence_lake.py` — S-04), audience-specific reports (S-05/S-25), claim verification (S-06), ADO snapshot agent (`scripts/work/ado_snapshot.py` — S-07), partial-write pattern (`scripts/lib/partial_writer.py` — S-08), context budget gate (`scripts/lib/context_budget.py` — S-30); SRE: hash-chained telemetry (ST-01), correction tracker (ST-02), cost guard (ST-03), SLO engine (ST-04), loop detector (ST-05), trace correlation (ST-06), guardrail ring check (ST-07). Gates G-0/G-1/G-2 all PASSED (37,625 token baseline; config blocks; corpus precision ≥ 0.85). Binding rules R1–R12. Rejected: R-1 credential exposure (OWASP A2), R-2 consent violation. `specs/steal.md` archived to `.archive/specs/`. See Tech Spec §37 + UX Spec §30. |
 | v7.23.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (FR-29)** — 7 reflect pipeline quality patterns: DC-1 Evidence Tiers (5-tier labeling), DC-2 Anti-Rationalization (9 traps), DC-3 Self-Audit Gate (6 blocking checks + rollback), DC-4 EOF Reinforcement, DC-5 Anti-Sycophancy (6 triggers + disagreement protocol), DC-6 Research Mode (opt-in 4-pass, 300s wall-time), DC-9 Instruction Hierarchy (L0–L5). DC-7 deferred; DC-8 rejected. Implemented in `config/reflect-protocol.md`, `config/Artha.core.md §15–16`, `config/guardrails.yaml`, `scripts/work_loop.py`. `specs/datacop.md` archived. See Tech Spec v3.39.0 §36 + UX Spec v3.19 §29. |
 | v7.22.0 | 2026-04-21 | **Hermes Home Intelligence Layer (FR-28)** — Artha writes a compact Personal OS context snapshot to Home Assistant `sensor.artha_context` after each pipeline run and every 4 hours via a Mac LaunchAgent. Hermes (HA add-on) reads this entity to answer life-context-aware home queries without any real-time M2M protocol. Work OS data is never exported (domain allowlist + defense-in-depth signal scan). Context entity carries `goals_active`, `goals_parked`, `open_items_p1/p2`, `today_events`, `week_events`. Graceful degradation: Hermes operates fully when context is stale or absent. New files: `scripts/export_hermes_context.py`, `config/hermes_context_allowlist.yaml`, `hermes-home.skill`, `artha.hermes-context.plist`. Pipeline Step 22 hook. Preflight staleness check. 41 unit tests. `specs/h-int.md` archived. |
@@ -72,6 +72,8 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-28: Hermes Home Intelligence Layer
    - FR-29: DataCopilot Quality Infrastructure
    - FR-30: Agency Playground Quality Layer & Agent SRE Observability
+   - FR-31: Work Intelligence OS MCP Hybrid Connector
+   - FR-32: PM Starter Kit Adoption (Work OS)
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1370,7 +1372,39 @@ Purpose-routed hybrid connector architecture for Work OS M365 data surfaces. Rou
 
 ---
 
-## 7. Goal Intelligence Engine — Deep Dive
+### FR-32 · PM Starter Kit Adoption *(v7.26.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §39, UX Spec §32)
+
+11 PAW (PM Starter Kit) patterns adapted for Artha Work OS. Transforms daily work communication from manual assembly to a structured, prompt-driven workflow. Three implementation phases: Phase 1 (quick wins), Phase 2 (core commands), Phase 3 (routing & enrichment).
+
+**New Work OS Commands**
+
+| Command | Format | Source |
+|---------|--------|--------|
+| `work standup [teams]` | PAW standup: ✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS, ≤120 words, word count footer | PAW `standup-update.prompt.md` |
+| `work plan` | 3-I filter (≥ 2/3 for Focus Outcomes), 🎯/📋/🚫/📌 sections, growth lens (GP-N) | PAW `weekly-planning-primer/SKILL.md` |
+| `work 11 <alias>` | PAW 1:1: Exec Summary, workstream sections (status vocab: New/WIP/Next up/Queued up/Action), 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins | PAW `1-1-update-drafter/SKILL.md` |
+
+**Supporting Infrastructure**
+
+| Feature | Deliverable |
+|---------|-------------|
+| FR-32.1 Correction Memory | `state/lessons.md` — 50-row cap, category-scoped, session-start loading |
+| FR-32.2 Connect Tags | `state/work/work-connect-tags.md` — ImpactType annotations companion file |
+| FR-32.5 IBA Taxonomy | Impediments / Blockers / Asks + Executive Summary for `work sprint` + `work prep` |
+| FR-32.7 People Cards | `state/work/people/<alias>.md` — sparse overlay on work-people.md (10 seed cards) |
+| FR-32.8 Growth Lens | `state/career_growth_practices.md` (GP-1–GP-6) + growth_lens_enabled flag |
+| FR-32.9 Meeting Routing | Step 2b in reflect-protocol.md + meeting_routing_injection_scan guardrail |
+| FR-32.10 ADO MCP | Investigation complete: kusto-ado confirmed in VS Code sessions (L-019) |
+
+**Python dispatch:** `scripts/work/daily.py` — `cmd_standup(fmt)`, `cmd_plan()`, `cmd_11(person)`. Dispatched via `work_reader.py` (thin dispatch pattern §3.5). Telemetry emitted via `lib/telemetry.py`. Injection scanning via guardrails.yaml `meeting_routing_injection_scan`.
+
+**Non-Functional Requirements:** No LLM required for script-routed path. All state reads ≤ 2s. Both paths (LLM-routed via commands.md and script-routed via work_reader.py) serve identical commands. Offline-first (no external calls). Fully reversible (delete state files to reset).
+
+---
+
+
 
 The Goal Intelligence Engine (FR-13) is the feature that most distinguishes Artha from a monitoring tool. Most personal finance and productivity apps track metrics. Artha connects metrics to meaning.
 
@@ -2740,7 +2774,7 @@ These targets are the spec-level SLA commitments enforced by `eval_runner.py --a
 
 ---
 
-*Artha PRD v7.16.0 — End of Document*
+*Artha PRD v7.26.0 — End of Document*
 
 *"Artha is not about having more. It is about knowing where you stand, so you can decide where to go."*
 

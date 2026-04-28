@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.40.0 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.41.0 | **Status**: Active Development | **Date**: May 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.25.0
+> **Implements**: PRD v7.26.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.41.0 | 2026-05-01 | **PM Starter Kit Adoption (§39, FR-32)** — `scripts/work/daily.py` thin dispatch module (Pattern 2, §3.5): `cmd_standup(fmt)` (PAW format, teams variant), `cmd_plan()` (3-I filter scaffold), `cmd_11(person)` (PAW 1:1 with people card lookup). `work_reader.py` dispatch entries: standup/plan/11 in choices list, dispatch dict, imports. People cards system: `state/work/people/<alias>.md` schema (domain: work-people-card, display_name, last_interaction, title, org); 10 seed cards; `_template.md` per §5.7.3. State files: `state/lessons.md` (50-row cap), `state/work/work-connect-tags.md`, `state/work/work-weekly-plan.md`, `state/career_growth_practices.md` (GP-1–GP-6). Config: `artha_config.yaml` `growth_lens_enabled: true`. Guardrail: `meeting_routing_injection_scan` in guardrails.yaml (injection_detector.py). Meeting routing: reflect-protocol.md Step 2b + ProposalID schema. State registry: 4 new entries. Commands.md: work standup/plan/11 specs + IBA retrofit for sprint/prep. Artha.core.md: correction memory rule + connect tag rule + growth lens annotation rule. Implements PRD v7.26.0 FR-32. |
 | v3.40.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (§38, FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment. Four-pillar Work OS connector model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). New modules: `scripts/lib/workiq_circuit_breaker.py` (3-failure OPEN, 4h half-open probe, atomic `os.replace()` flush — F6/F18/F19/F20/G5/G8), `scripts/lib/mcp_formatter.py` (F31 `connector_record.py` compliance — calendar/mail/teams fallback formatting), `scripts/lib/work_connector_router.py` (policy-driven routing from `config/work_connector_policy.yaml` — F3/F13/G2), `scripts/lib/enghub_manager.py` (Node.js stdio subprocess lifecycle, MCP JSON-RPC, daemon-thread fire-and-forget, 200-char snippet cap — F23/F24/F25/G9/G10/G11/G12/G13), `scripts/schemas/briefing_block.py` (F20 success predicate). Config: `config/work_connector_policy.yaml` (10 routing surfaces), `config/enghub_service_scope.yaml` (service ID scope). Integration: `work_loop.py` gains `ProviderAvailability.m365_mcp`/`enghub_mcp` (F4), circuit breaker in `_run_workiq()`, `_fire_enghub_async()` daemon thread (G10). 12 guardrails (G1–G12), 3 architectural patterns (P1–P3). 50 tests across 4 test files. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.39.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.23.0 FR-29. |
 | v3.38.0 | 2026-04-21 | **Hermes Home Intelligence Layer (§3.5c, FR-28)**: `scripts/export_hermes_context.py` — writes `sensor.artha_context` HA entity after pipeline Step 21 (non-blocking Step 22 hook) and every 4 hours via Mac LaunchAgent. Reads `state/goals.md` (frontmatter YAML parser), `state/open_items.md` (regex block extractor, same pattern as `todo_sync.py`), `state/calendar.md` (event-block parser with source allowlist). Payload: `schema_version 1.0`, `goals_active[:3]`, `goals_parked[:3]`, `open_items_p1[:3]`, `open_items_p2[:5]`, `today_events`, `week_events[:5]`, size guard at 4096 bytes. LAN gate: 2-second TCP probe. Auth: `artha-ha-token` keyring. `config/hermes_context_allowlist.yaml` — domain allowlist (primary guard); `_validate_no_work_data()` — 10-signal defense-in-depth scan (warning, never blocking). `hermes-home.skill` (ZIP) — 3 Hermes skills: `home-context`, `presence-journal`, `weekly-home-digest`. `artha.hermes-context.plist` — `StartInterval=14400`, `RunAtLoad=true`, `--standalone` flag, concurrency sentinel `tmp/.pipeline_running`. Preflight: `check_hermes_context_staleness()` warns at 48h stale / absent. 41 unit tests in `tests/unit/test_export_hermes_context.py`. `specs/h-int.md` archived. Implements PRD v7.22.0. |
@@ -899,6 +900,96 @@ connectors/caldav_calendar.fetch(from=today, to=today+7d) → JSONL (source: "ic
 ```
 
 **Preflight:** P1 checks in `preflight.py` — `setup_icloud_auth.py --health` (gating) + `connectors/imap_email.health_check()` + `connectors/caldav_calendar.health_check()` (only if auth check passes)
+
+---
+
+## 39. Work OS PM Starter Kit (FR-32)
+
+### 39.1 Python Dispatch Module: `scripts/work/daily.py`
+
+New thin dispatch submodule for FR-32 daily cadence commands. Pattern 2 (§3.5): reads state files → formats PAW-spec scaffold + raw source data → emits telemetry → returns string. Both LLM-routed (commands.md) and script-routed (work_reader.py) paths serve identical commands.
+
+**Functions:**
+
+| Function | Signature | Output format |
+|----------|-----------|---------------|
+| `cmd_standup` | `(fmt: str = "default") -> str` | PAW §5.4.3: ✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS + word count footer. `fmt="teams"`: plain text, no box drawing |
+| `cmd_plan` | `() -> str` | PAW §5.3.4: 🎯 FOCUS OUTCOMES (3-I ≥ 2/3) / 📋 ASKS THIS WEEK / 🚫 WON'T DO / 📌 BACKGROUND |
+| `cmd_11` | `(person: str = "") -> str` | PAW §5.6.3: 📋 EXECUTIVE SUMMARY / 🚀 workstream sections / 🙋 ASKS OF / 💬 TO BE DISCUSSED / 🏆 WINS |
+
+**State files read (per command):**
+
+| Command | Files |
+|---------|-------|
+| standup | work-accomplishments.md, work-open-items.md, reflect-current.md, work-weekly-plan.md |
+| plan | work-open-items.md, work-weekly-plan.md, work-projects.md, reflect-current.md, career_growth_practices.md |
+| 11 | work-accomplishments.md, work-open-items.md, work-weekly-plan.md, work-decisions.md, reflect-current.md, people/<alias>.md |
+
+**`work_reader.py` integration:** `standup/plan/11` registered in choices list, dispatch dict. Dispatch for standup passes `fmt="teams"` when `args.query == "teams"`. Import: `from work.daily import cmd_standup, cmd_plan, cmd_11`.
+
+**Telemetry:** All 3 functions emit via `lib.telemetry.emit()` with event name `work_reader.<command>`, `step="read_path"`, `latency_ms`.
+
+### 39.2 People Cards Schema (`state/work/people/`)
+
+Sparse overlays on `work-people.md` collaboration graph. Authority rule: `work-people.md` is authoritative for org/title; people card is authoritative for relationship notes and interaction history.
+
+**Frontmatter schema (§5.7.3):**
+```yaml
+schema_version: '1.0'
+domain: work-people-card
+sensitivity: elevated
+vault_encrypt: true
+alias: <alias>
+display_name: <Full Name>
+title: <Job Title>
+org: <Team / Org>
+last_interaction: YYYY-MM-DD
+last_updated: YYYY-MM-DDTHH:MM:SS-07:00
+```
+
+**Sections:** Identity / How We Work Together / Professional Interests & Priorities / Personal Context (non-sensitive) / Interaction History / Open Follow-ups / Notes & Quotes
+
+**Routing:** `work 11 <alias>` loads `people/<alias>.md` if exists; staleness warning if `last_interaction` > 14 days. `work prep <person>` loads card for meeting prep context.
+
+**State registry:** `state/work/people/*.md` — sensitivity: elevated, backup_tier: 720h.
+
+**PII rules:** No home addresses, personal phone numbers, or health conditions. Allowed: alias, title, working style, professional interests, work interaction history.
+
+### 39.3 Correction Memory (`state/lessons.md`)
+
+Single-file correction store for Artha system-wide (distinct scope from `tmp/ext-agent-memory/<agent>/corrections.md` which is agent-specific).
+
+| Dimension | Value |
+|-----------|-------|
+| Schema | `id \| category \| lesson \| severity \| added \| status` |
+| Cap | 50 rows (auto-archive trigger at 40 warnings from preflight) |
+| Loading | Full-file at session start (category-scoped loading not implemented — 50-row cap is sufficient budget control) |
+| Write path | Manual/prompt-seeded by user or Artha during reflect |
+| Scope | All Artha system-wide corrections (work + personal) |
+
+### 39.4 Growth Lens (`state/career_growth_practices.md`)
+
+Six growth practices (GP-1 through GP-6) loaded by `cmd_plan()` for optional annotation of Focus Outcomes with `GP-N` tags.
+
+State registry: sensitivity: normal, backup_tier: 720h.
+
+### 39.5 Meeting Routing (FR-32.9)
+
+Injected as Step 2b in `config/reflect-protocol.md` after Q2 (meeting synthesis). Proposes routing of meeting outputs to structured state files via ProposalID table. Requires explicit user confirmation before writing.
+
+**Guardrail:** `meeting_routing_injection_scan` in `config/guardrails.yaml` — `tool: injection_scan`, `enabled: true`, `mode: blocking`, `detector: injection_detector.py`. Prevents prompt injection from meeting transcripts being routed to system state.
+
+### 39.6 IBA Escalation Taxonomy (FR-32.5)
+
+Three-level escalation structure for `work sprint` and `work prep` outputs:
+
+| Level | Term | Required Action |
+|-------|------|-----------------|
+| 1 | Impediment | Awareness only |
+| 2 | Blocker | Decision or resource needed |
+| 3 | Ask | Explicit commitment + owner + by-when |
+
+Every project sync output begins with a 2–3 sentence Executive Summary (biggest news first, trajectory, one key ask). Defined in `config/commands.md` `work:sprint` and `work:prep` sections.
 
 ---
 

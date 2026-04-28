@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.20 | **Status**: Active Development | **Date**: April 2026
+> **Version**: 3.21 | **Status**: Active Development | **Date**: May 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.25.0, Tech Spec v3.40.0
+> **Implements**: PRD v7.26.0, Tech Spec v3.41.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.21 | 2026-05-01 | **PM Starter Kit Work OS UX (§32)** — Output format specs for all FR-32 new commands. `work standup`: PAW format (✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS), action-verb-first, max 120 words, word count footer; `teams` variant (plain text, no box drawing, Teams chat paste-ready). `work plan`: 3-I score indicators (●●● = 3/3, ●●○ = 2/3 min for Focus, ●○○ = 1/3 Background); emoji section headers (🎯/📋/🚫/📌); GP-N growth lens tags. `work 11 <alias>`: PAW 1:1 format with Exec Summary + workstream sections (status vocab: New/WIP/Next up/Queued up/Action) + 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins; staleness warning if people card > 14 days old. `work sprint` / `work prep`: IBA escalation taxonomy (Impediments/Blockers/Asks) + Executive Summary section. People card discoverability: `work people` lists cards with last_interaction dates. Implements PRD v7.26.0 FR-32 + Tech Spec v3.41.0 §39. |
 | v3.20 | 2026-04-25 | **MCP Hybrid Connector UX (§31)** — Fallback indicator in work briefing when MCP Direct serves calendar/mail data instead of WorkIQ AI synthesis. EngHub enrichment supplement display (`📚 Engineering Context` block with retrieval timestamp). Circuit breaker status in `work health` output. Teams fallback skip notice (SC-6). Implements PRD v7.25.0 FR-31 + Tech Spec v3.40.0 §38. |
 | v3.19 | 2026-04-22 | **DataCopilot Reflect Quality UX (§29)** — DC-5 anti-sycophancy pushback interaction patterns (6 trigger templates + response language), evidence tier labels in briefing output (`[state]`, `[signaled]`, `[inferred]`, `[live]`, `[user-confirmed]`), DC-3 audit gate feedback format (blocking check failure messages + rollback notice), `deep reflect` command UX (4 phases, 300s constraint, opt-in only). Implements PRD v7.23.0 FR-29 + Tech Spec v3.39.0 §36. |
 | v3.18 | 2026-04-16 | **ACI M2M Cleanup**** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_ved_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
@@ -51,6 +52,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 23. [Work OS — Interaction Design](#23-work-os--interaction-design)
 24. [Artha Channel Integration — ACI Interaction Design](#28-artha-channel-integration--aci-interaction-design)
 25. [Work Reflect — Response Quality UX](#29-work-reflect--response-quality-ux)
+26. [PM Starter Kit — Work OS Daily Commands](#32-work-os--pm-starter-kit-daily-commands-fr-32)
 
 ---
 
@@ -3578,4 +3580,156 @@ EngHub: ✅ cache fresh (retrieved 09:30)
 
 ---
 
-*Artha UX Spec v3.20 — End of Document*
+## 32. Work OS — PM Starter Kit Daily Commands (FR-32)
+
+### 32.1 `work standup` — Stand-Up Update
+
+**Source:** PAW `standup-update.prompt.md` | **Command:** `work standup` or `work standup teams`
+
+#### 32.1.1 Default format (terminal)
+
+```
+━━ STANDUP — [DAY, DATE] ━━━━━━━━━━━━━━━━━━━━━━━
+✅ DONE
+  • [Action verb + outcome] ([program]) — [name-drop if cross-team]
+  • [Action verb + outcome] ([program])
+
+⏩ TODAY / TOMORROW
+  • [Action verb + planned outcome] ([program]) — [by when if deadline]
+  • [Action verb + planned outcome] ([program])
+
+⛔ BLOCKERS (if any)
+  • [Blocker description] → waiting on [person/team]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+~[N] words
+```
+
+#### 32.1.2 Teams variant (`work standup teams`)
+
+Same content without box-drawing or emoji headers — plain text for pasting into Teams channel standup thread.
+
+#### 32.1.3 Format rules
+
+- Action verbs first — never start with "I" or passive voice
+- Name people explicitly: "unblocked Mehul on STG104" not "unblocked dependency"
+- Skip calendar/admin entries unless they produce an artifact or decision
+- Max 120 words total; word count footer is mandatory
+- If no blockers: omit ⛔ section entirely (do not write "None")
+
+### 32.2 `work plan` — Weekly Planning
+
+**Source:** PAW `weekly-planning-primer/SKILL.md` | **Command:** `work plan`
+
+#### 32.2.1 Output format
+
+```
+━━ WEEK PLAN — [Week of DATE] ━━━━━━━━━━━━━━━━━━━━━
+Current week: [W-NN] | Active programs: [list]
+
+🎯 FOCUS OUTCOMES (≤4, 3-I ≥ 2/3)
+  1. [Outcome] [WOI ref] [3-I score: ●●○]
+  2. [Outcome] [WOI ref] [3-I score: ●●●]
+  3. [Outcome] [WOI ref] [3-I score: ●●○]
+
+📋 ASKS THIS WEEK
+  Who            What needed           By when
+  [Person]       [Specific ask]        [Date]
+
+🚫 WON'T DO THIS WEEK
+  • [Item] — [1-line reason: deferred/delegated/not-now]
+
+📌 BACKGROUND (doing if time, 3-I = 1/3)
+  • [Item]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+#### 32.2.2 3-I Score indicators
+
+| Score | Symbol | Eligibility |
+|-------|--------|------------|
+| 3/3 | ●●● | Focus Outcome (urgent and high-value) |
+| 2/3 | ●●○ | Focus Outcome (minimum threshold) |
+| 1/3 | ●○○ | Background only |
+| 0/3 | ○○○ | Won't Do |
+
+**Override rule:** Any Sev-2+ IcM or hard deadline (legal, compliance, customer-facing) qualifies regardless of score.
+
+#### 32.2.3 Growth lens annotations
+
+If `growth_lens_enabled: true` in `artha_config.yaml`, Focus Outcomes may carry `GP-N` suffix referencing `state/career_growth_practices.md` practices (e.g., `[3-I score: ●●○] GP-2`).
+
+### 32.3 `work 11 <alias>` — 1:1 Update Prep
+
+**Source:** PAW `1-1-update-drafter/SKILL.md` | **Command:** `work 11 <alias>` or `work 11 ramjee`
+
+#### 32.3.1 Output format
+
+```
+━━ 1:1 UPDATE — [Person] · [Date] ━━━━━━━━━━━━━━━
+📋 EXECUTIVE SUMMARY
+  [2 sentences: biggest win + biggest risk since last 1:1]
+
+**🚀 [PROGRAM/WORKSTREAM 1]** [🟢/🟡/🔴]
+  Status: [New / WIP / Next up / Queued up / Action]
+  • [what happened — name-drops + early metrics]
+  • [what's next — by when]
+
+**📦 [PROGRAM/WORKSTREAM 2]** [status emoji]
+  Status: [status]
+  • [bullets]
+
+🙋 ASKS OF [PERSON NAME]
+  • [Specific ask — owner + timeline + done-looks-like]
+
+💬 TO BE DISCUSSED
+  • [Their known priorities — inferred from people card]
+  • [Open questions needing their input]
+
+🏆 WINS SINCE LAST 1:1
+  • [Win with name-drop and metric if available]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+#### 32.3.2 Format rules
+
+- **Urgency-first** — most urgent workstream leads (not alphabetical)
+- **Status vocabulary** (exactly these terms): New / WIP / Next up / Queued up / Action
+- **"To be discussed"** always leads with what the manager likely has top of mind (inferred from people card or recent comms), not from your own ask list
+- **People card stale warning:** `⚠️ People card for [person] last updated [N] days ago — reviewing for stale context.` — displayed when `last_interaction` > 14 days
+
+### 32.4 `work sprint` / `work prep` — IBA Taxonomy
+
+Impediments / Blockers / Asks escalation structure (FR-32.5) added to `work sprint` and `work prep` outputs:
+
+```
+📋 EXECUTIVE SUMMARY
+  [2-3 sentences: biggest news, trajectory, one key ask]
+
+✅ WINS THIS SPRINT
+  • [Win] ([program])
+
+⚠️ IMPEDIMENTS (heads up, no action needed)
+  • [Description] → impact: [what's slower]
+
+🚫 BLOCKERS (full stop — need decision/resource)
+  • [Description] → owned by [person/team] → unblocks [milestone]
+
+🙋 ASKS (specific actions needed from stakeholders)
+  Ask           From       By      Done-looks-like
+  [Ask]         [Person]   [Date]  [Outcome]
+
+📊 PROGRAM STATUS
+  [program] — [status emoji] — [one-line status]
+```
+
+### 32.5 People Cards UX
+
+- `work 11 <alias>` — loads `state/work/people/<alias>.md` if exists; adds card to scaffold context
+- `work prep <alias>` — same card loading for meeting prep
+- `work people` — lists all cards with `display_name`, `title`, `last_interaction` date, and open follow-up count
+- Stale warning threshold: 14 days since `last_interaction`
+- No-card fallback: `⚠️ No people card found for '<alias>' — add state/work/people/<alias>.md to enrich future 1:1s`
+
+---
+
+*Artha UX Spec v3.21 — End of Document*
