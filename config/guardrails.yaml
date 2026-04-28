@@ -56,6 +56,19 @@ tool:
     config:
       max_failures: 3
 
+  # FR-32.9: Meeting transcript content is untrusted input — scan before routing
+  # to any state file. Reuses injection_detector.py (no new Python module).
+  # Ref: specs/pm-starter-kit.md §5.9 (FR-32.9), guardrails registration D-6.
+  - name: meeting_routing_injection_scan
+    class: MeetingRoutingInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # Discard the proposal and log ⚠️ injection-scan-blocked if triggered
+      on_detection: discard_and_log
+      # Only active during reflect Step 2b (meeting synthesis routing)
+      scope: reflect_step_2b
+
 output:
   - name: device_suppress
     class: DeviceSuppressGR
