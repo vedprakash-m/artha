@@ -567,6 +567,90 @@ def _record_loop_quarantine(
         pass
 
 
+def _check_signal_suppression(conn: Any, signal_subtype: str, domain: str) -> bool:
+    """Return True if (signal_subtype, domain) is in the ML-learned suppression list.
+
+    Entries are written by cmd_apply_suggestions when user approves a domain_suppress
+    suggestion. Returns False if the table doesn't exist yet.
+    Ref: specs/action-convert.md §4.3.1 point 4
+    """
+    try:
+        cur = conn.execute(
+            "SELECT 1 FROM signal_suppression WHERE signal_subtype = ? AND domain = ? LIMIT 1",
+            (signal_subtype, domain),
+        )
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
+def _check_category_dedup(
+    conn: Any, signal_subtype: str, domain: str, normalized_entity: str
+) -> bool:
+    """Return True if the signal should be suppressed due to recent rejection.
+
+    Uses normalized_entity to match across sessions, respecting the
+    category-aware dedup windows from §4.4.3:
+      already_handled → 90 days
+      not_relevant / duplicate → 30 days
+      wrong_action_type / bad_timing → 0 days (no extension)
+      (no reason) → 30 days (conservative default)
+
+    Returns False if insufficient data or no matching rejection found.
+    Ref: specs/action-convert.md §4.4.3
+    """
+    _CATEGORY_WINDOWS: dict[str, int] = {
+        "already_handled": 90,
+        "wrong_action_type": 0,
+        "not_relevant": 30,
+        "bad_timing": 0,
+        "duplicate": 30,
+    }
+    _DEFAULT_WINDOW = 30
+
+    try:
+        cur = conn.execute(
+            """
+            SELECT tm.rejection_category, tm.proposed_at
+            FROM trust_metrics tm
+            JOIN actions a ON tm.action_type = a.action_type
+            WHERE a.normalized_entity = ?
+              AND a.domain = ?
+              AND tm.user_decision = 'rejected'
+            ORDER BY tm.proposed_at DESC
+            LIMIT 1
+            """,
+            (normalized_entity, domain),
+        )
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        cat_raw = row[0] if isinstance(row, (list, tuple)) else row["rejection_category"]
+        proposed_at_str = row[1] if isinstance(row, (list, tuple)) else row["proposed_at"]
+
+        try:
+            import json as _json  # noqa: PLC0415
+            cat_parsed = _json.loads(cat_raw) if cat_raw else {}
+            cat_name = cat_parsed.get("category", "") if isinstance(cat_parsed, dict) else ""
+        except Exception:
+            cat_name = cat_raw or ""
+
+        window_days = _CATEGORY_WINDOWS.get(cat_name, _DEFAULT_WINDOW)
+        if window_days == 0:
+            return False
+
+        try:
+            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            proposed_at = _dt.fromisoformat(proposed_at_str.replace("Z", "+00:00"))
+            age_days = (_dt.now(_tz.utc) - proposed_at).days
+            return age_days < window_days
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
 def _count_consecutive_non_accepted(
     conn: Any,
     signal_subtype: str,
@@ -728,7 +812,17 @@ def _stage_policy_suggestion(
                     ),
                 )
             elif category == 2:
-                # Suggest action_type override for this signal/domain combo
+                # Suggest action_type override for this signal/domain combo.
+                # Prompt for desired type if interactive; store as value so apply can write it.
+                desired_action_type = "PENDING_USER_INPUT"
+                if sys.stdin.isatty():
+                    try:
+                        desired_action_type = input(
+                            f"What action type would you prefer for '{domain}' signals? "
+                            f"(current: {action_type}): "
+                        ).strip() or "PENDING_USER_INPUT"
+                    except (EOFError, KeyboardInterrupt):
+                        desired_action_type = "PENDING_USER_INPUT"
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO policy_suggestions
@@ -738,12 +832,36 @@ def _stage_policy_suggestion(
                     (
                         str(_uuid.uuid4()),
                         "action_override",
-                        action_type,  # current (wrong) action_type as context
-                        domain,
+                        desired_action_type,  # desired action_type (or PENDING_USER_INPUT)
+                        domain,               # domain used as signal_type context
                         action_id,
                         ts,
                     ),
                 )
+            elif category == 3:
+                # Category 3 + very low domain confidence → suggest permanent suppression.
+                # Use action_type as signal_subtype proxy (closest available identifier).
+                _dc = _domain_confidence(conn, action_type, domain)
+                if _dc < 0.3:
+                    conn.execute(
+                        """
+                        INSERT OR IGNORE INTO policy_suggestions
+                        (id, type, value, signal_type, source_action_id, created_at)
+                        VALUES (?, 'domain_suppress', ?, ?, ?, ?)
+                        """,
+                        (
+                            str(_uuid.uuid4()),
+                            domain,
+                            action_type,
+                            action_id,
+                            ts,
+                        ),
+                    )
+                    print(
+                        f"[action] Suggestion staged: permanently suppress "
+                        f"'{action_type}×{domain}' (domain confidence: {_dc:.0%}). "
+                        "Run --apply-suggestions to review."
+                    )
             conn.commit()
         finally:
             conn.close()
@@ -805,7 +923,12 @@ def cmd_apply_suggestions(artha_dir: Path) -> int:
         elif row_dict["type"] == "action_override":
             print(
                 f"  [A{i}] Override action for '{row_dict.get('signal_type', '?')}' "
-                f"(current: {row_dict['value']})  (from {src}, {ts})"
+                f"(desired: {row_dict['value']})  (from {src}, {ts})"
+            )
+        elif row_dict["type"] == "domain_suppress":
+            print(
+                f"  [A{i}] Permanently suppress '{row_dict.get('signal_type','?')} × {row_dict['value']}'  "
+                f"(from {src}, {ts})"
             )
         else:
             print(f"  [A{i}] {row_dict['type']}: {row_dict['value']}  (from {src}, {ts})")
@@ -847,10 +970,41 @@ def cmd_apply_suggestions(artha_dir: Path) -> int:
                 user_ctx["autopay_services"] = services
                 applied_ids.append(sug["id"])
         elif sug["type"] == "action_override":
-            # Stage but note: user must specify the desired action_type manually
-            # for action_override, since we only know the current (wrong) type.
-            # For now, record as applied so it doesn't resurface.
-            applied_ids.append(sug["id"])
+            sig_type = sug.get("signal_type", "")
+            desired_type = sug.get("value", "")
+            if sig_type and desired_type and desired_type != "PENDING_USER_INPUT":
+                overrides = user_ctx.setdefault("action_type_overrides", {})
+                overrides[sig_type] = {
+                    "action_type": desired_type,
+                    "override_reason": "Applied from --apply-suggestions (user rejection feedback)",
+                    "override_date": datetime.now(timezone.utc).date().isoformat(),
+                }
+                user_ctx["action_type_overrides"] = overrides
+                applied_ids.append(sug["id"])
+            else:
+                print(
+                    f"  ⚠ Skipping action_override for '{sig_type}': desired type unknown. "
+                    "Edit user_context.yaml manually."
+                )
+        elif sug["type"] == "domain_suppress":
+            try:
+                ts_now_apply = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT OR IGNORE INTO signal_suppression "
+                    "(signal_subtype, domain, reason, created_at, source_action_id) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (
+                        sug.get("signal_type", sug.get("value", "")),
+                        sug.get("value", ""),
+                        f"ML-learned: user approved suppression (suggestion {sug['id'][:8]})",
+                        ts_now_apply,
+                        sug.get("source_action_id", ""),
+                    ),
+                )
+                conn.commit()
+                applied_ids.append(sug["id"])
+            except Exception as exc:
+                print(f"[action] ✗ failed to write signal_suppression: {exc}", file=sys.stderr)
 
     if not applied_ids:
         print("[action] Nothing to apply.")
@@ -1585,6 +1739,16 @@ def run(
                 quality_suppressed += 1
                 continue
 
+            # Signal suppression check: ML-learned suppressions (§4.3.1 point 4)
+            if _check_signal_suppression(_quality_conn, _signal_subtype, _domain):
+                quality_suppressed += 1
+                if verbose:
+                    print(
+                        f"[action_orchestrator] signal_suppression suppressed: {_signal_subtype}×{_domain}",
+                        file=sys.stderr,
+                    )
+                continue
+
             # Consecutive non-accepted check → quarantine threshold
             consecutive = _count_consecutive_non_accepted(
                 _quality_conn, _signal_subtype, _domain, _normalized_entity
@@ -1598,6 +1762,16 @@ def run(
                         file=sys.stderr,
                     )
                 quality_suppressed += 1
+                continue
+
+            # Category-aware dedup: suppress if recently rejected with a window-extending category (§4.4.3)
+            if _check_category_dedup(_quality_conn, _signal_subtype, _domain, _normalized_entity):
+                quality_suppressed += 1
+                if verbose:
+                    print(
+                        f"[action_orchestrator] category-dedup suppressed: {_signal_subtype}×{_domain}",
+                        file=sys.stderr,
+                    )
                 continue
 
             # Domain confidence gate
@@ -1650,14 +1824,17 @@ def run(
             if _quality_conn is not None and _dc_rate < 0.8:
                 from dataclasses import replace as _dc_replace  # noqa: PLC0415
                 if _dc_rate < 0.5:
-                    # Below 0.5 → suggestion only (write to policy_suggestions, skip queue)
+                    # Below 0.5 → suggestion only (do NOT enqueue; §4.4.2)
                     quality_suppressed += 1
                     if verbose:
                         print(
-                            f"[action_orchestrator] domain confidence → suggestion ({_dc_rate:.2f}): {signal_type}",
-                            file=sys.stderr,
+                            f"  📝 SUGGESTION (low domain confidence {_dc_rate:.0%}) | "
+                            f"{signal_type} | {getattr(signal, 'entity', '')[:50]}",
                         )
-                    _stage_policy_suggestion(artha_dir, proposal.id, 2, executor)
+                    _audit_log(
+                        artha_dir,
+                        f"SIGNAL_SUGGESTION | type:{signal_type} | domain_conf:{_dc_rate:.2f}",
+                    )
                     continue
                 else:
                     # 0.5–0.8 → escalate friction
@@ -1666,13 +1843,20 @@ def run(
                     except Exception:
                         pass
 
-            # Signal confidence → suggestion threshold
+            # Signal confidence → suggestion threshold: surface as informational, do NOT enqueue
+            # Suggestions don't count against acceptance rate (§4.4.2)
             if _sig_confidence > 0.0 and _sig_confidence < _suggestion_threshold:
-                try:
-                    from dataclasses import replace as _dc_replace2  # noqa: PLC0415
-                    proposal = _dc_replace2(proposal, friction="high")
-                except Exception:
-                    pass
+                if verbose:
+                    print(
+                        f"  📝 SUGGESTION | {signal_type} | {getattr(signal, 'entity', '')[:50]}"
+                        f" | confidence:{_sig_confidence:.0%}",
+                    )
+                _audit_log(
+                    artha_dir,
+                    f"SIGNAL_SUGGESTION | type:{signal_type} | confidence:{_sig_confidence:.2f} "
+                    f"| entity:{getattr(signal, 'entity', '')[:40]}",
+                )
+                continue
 
             executor.propose_direct(proposal)
             proposed += 1
@@ -1872,18 +2056,41 @@ def cmd_list(artha_dir: Path) -> int:
         if not pending:
             print("(No pending actions)")
             return 0
+
+        # Read confidence values from actions table (§4.4.2 spec format)
+        confidence_map: dict[str, float | None] = {}
+        try:
+            from action_queue import _open_db as _aq_open_c, ActionQueue as _AQ_c  # noqa: PLC0415
+            _c_db = _AQ_c._resolve_db_path(artha_dir)
+            if _c_db.exists():
+                _c_conn = _aq_open_c(_c_db)
+                try:
+                    ids_csv = ",".join(f"'{getattr(p,'id','')}'" for p in pending)
+                    if ids_csv:
+                        for row in _c_conn.execute(
+                            f"SELECT id, confidence FROM actions WHERE id IN ({ids_csv})"
+                        ):
+                            confidence_map[row[0]] = row[1]
+                finally:
+                    _c_conn.close()
+        except Exception:
+            pass
+
         print(f"═══ PENDING ACTIONS ({len(pending)}) ═══════════════════════════════════")
         for i, p in enumerate(pending, 1):
             icon = _FRICTION_ICON.get(getattr(p, "friction", "standard"), "🟠")
             action_type = getattr(p, "action_type", "")
             domain = getattr(p, "domain", "")
             title = getattr(p, "title", "")
-            pid = getattr(p, "id", "")[:8]
+            full_id = getattr(p, "id", "")
+            pid = full_id[:8]
             friction = getattr(p, "friction", "standard")
             min_trust = getattr(p, "min_trust", 1)
             expires_at = getattr(p, "expires_at", "")
             content_flag = " [content]" if action_type in _CONTENT_BEARING_TYPES else ""
-            print(f"{i}. [{pid}] {icon} {action_type} | {domain} | {title[:60]}{content_flag}")
+            conf = confidence_map.get(full_id)
+            conf_str = f" | {conf*100:.0f}%" if conf is not None else ""
+            print(f"{i}. [{pid}] {icon} {action_type} | {domain}{conf_str} | {title[:60]}{content_flag}")
             print(f"   Friction: {friction} | Trust: {min_trust} | Expires: {expires_at}")
 
         # Acceptance rate line (§4.5.3)
@@ -2011,8 +2218,8 @@ def cmd_reject(artha_dir: Path, action_id: str, reason: str = "") -> int:
         if rejection_category is not None or reason:
             _write_rejection_category(artha_dir, action_id, reason, rejection_category)
 
-        # Stage policy suggestion for cat 1 or 2
-        if rejection_category in (1, 2):
+        # Stage policy suggestion for cat 1, 2, or 3
+        if rejection_category in (1, 2, 3):
             _stage_policy_suggestion(artha_dir, action_id, rejection_category, executor)
 
         return 0
