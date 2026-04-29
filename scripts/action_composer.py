@@ -222,9 +222,15 @@ def _entity_is_viable(signal: "DomainSignal") -> bool:
     # Entity is just an org name with no context (e.g., "Google:")
     if entity.endswith(":") and len(entity.split()) <= 1:
         return False
-    # Entity is too short to be meaningful (applies to full string, not org_part,
-    # since 4-char org names like "USPS" are valid when subject is appended)
-    if len(entity) < 5:
+    # Entity is too short to be meaningful (spec: >= 3 chars; applies to org_part
+    # so "AT&T: Bill" is valid — "AT&T" is 4 chars, but we check org_part length)
+    if len(org_part) < 3:
+        return False
+    # Entity whose org_part looks like a bare domain or email address
+    # e.g. "xfinity.com", "noreply@amazon.com" — these are sender domains, not entities
+    if "." in org_part and " " not in org_part:
+        return False
+    if "@" in entity:
         return False
     return True
 

@@ -21,6 +21,8 @@ config/connectors.yaml.bak
 config/domain_autonomy_state.yaml
 # Watch monitor keyword config — contains personal interest topics (immigration, finance, etc.)
 config/watches.yaml
+# Action quality user preferences — contains personal autopay services, sender domains, overrides (PII)
+config/user_context.yaml
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
