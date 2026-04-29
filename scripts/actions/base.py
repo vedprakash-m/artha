@@ -88,6 +88,9 @@ class DomainSignal:
         source:       Originating skill/step (e.g. "skill:bill_due_tracker").
         metadata:     Signal-specific payload (amounts, dates, thread_ids, etc.).
         detected_at:  ISO-8601 UTC timestamp of detection.
+        subtype:      Original specific signal type before canonical mapping (e.g. "bill_due").
+        confidence:   Extraction quality score 0.0–1.0 (§4.4.2 of specs/action-convert.md).
+                      0.0 = unscored / default. Set by email_signal_extractor at creation time.
     """
     signal_type: str
     domain: str
@@ -98,6 +101,7 @@ class DomainSignal:
     metadata: Dict[str, Any]
     detected_at: str
     subtype: str = ""  # original specific type; signal_type holds the canonical type
+    confidence: float = 0.0  # extraction quality score 0.0–1.0 (§4.4.2); 0.0 = unscored
 
     def __post_init__(self) -> None:
         """DEBT-012: Validate structural invariants at construction time."""
