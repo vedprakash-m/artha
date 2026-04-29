@@ -589,12 +589,15 @@ def _check_category_dedup(
 ) -> bool:
     """Return True if the signal should be suppressed due to recent rejection.
 
-    Uses normalized_entity to match across sessions, respecting the
-    category-aware dedup windows from §4.4.3:
+    Queries trust_metrics.normalized_entity directly (populated since the run-loop
+    writes signal_subtype+normalized_entity to actions, and _write_rejection_category
+    copies them to trust_metrics at reject time).
+
+    Category-aware dedup windows (§4.4.3):
       already_handled → 90 days
       not_relevant / duplicate → 30 days
       wrong_action_type / bad_timing → 0 days (no extension)
-      (no reason) → 30 days (conservative default)
+      (no reason / NULL) → 30 days (conservative default)
 
     Returns False if insufficient data or no matching rejection found.
     Ref: specs/action-convert.md §4.4.3
@@ -611,13 +614,12 @@ def _check_category_dedup(
     try:
         cur = conn.execute(
             """
-            SELECT tm.rejection_category, tm.proposed_at
-            FROM trust_metrics tm
-            JOIN actions a ON tm.action_type = a.action_type
-            WHERE a.normalized_entity = ?
-              AND a.domain = ?
-              AND tm.user_decision = 'rejected'
-            ORDER BY tm.proposed_at DESC
+            SELECT rejection_category, proposed_at
+            FROM trust_metrics
+            WHERE normalized_entity = ?
+              AND domain = ?
+              AND user_decision = 'rejected'
+            ORDER BY proposed_at DESC
             LIMIT 1
             """,
             (normalized_entity, domain),
@@ -732,9 +734,14 @@ def _write_rejection_category(
     reason: str,
     category: "int | None",
 ) -> None:
-    """Update trust_metrics.rejection_category for a rejected action.
+    """Update trust_metrics.rejection_category, signal_subtype, and normalized_entity
+    for a rejected action.
 
-    Ref: specs/action-convert.md §4.5.1
+    Reads signal_subtype and normalized_entity from actions table (written at propose time),
+    then updates the most recently inserted trust_metrics row for this action's
+    (action_type, domain) pair — which was just written by executor.reject().
+
+    Ref: specs/action-convert.md §4.5.1, §4.5.2
     """
     try:
         from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
@@ -743,10 +750,38 @@ def _write_rejection_category(
             return
         conn = _aq_open(db_path)
         try:
+            # Read signal_subtype and normalized_entity from the actions row
+            action_row = conn.execute(
+                "SELECT action_type, domain, signal_subtype, normalized_entity FROM actions WHERE id = ?",
+                (action_id,),
+            ).fetchone()
+            if not action_row:
+                return
+            action_type = action_row["action_type"]
+            domain = action_row["domain"]
+            signal_subtype = action_row["signal_subtype"]
+            normalized_entity = action_row["normalized_entity"]
+
+            # Update ONLY the most recent trust_metrics row for (action_type, domain)
+            # with user_decision='rejected' — this was just inserted by executor.reject().
             conn.execute(
-                "UPDATE trust_metrics SET rejection_category = ? WHERE action_type IN "
-                "(SELECT action_type FROM actions WHERE id = ?)",
-                (reason[:500] if reason else None, action_id),
+                """UPDATE trust_metrics
+                   SET rejection_category = ?,
+                       signal_subtype = ?,
+                       normalized_entity = ?
+                   WHERE id = (
+                       SELECT id FROM trust_metrics
+                       WHERE action_type = ? AND domain = ? AND user_decision = 'rejected'
+                       ORDER BY proposed_at DESC
+                       LIMIT 1
+                   )""",
+                (
+                    reason[:500] if reason else None,
+                    signal_subtype,
+                    normalized_entity,
+                    action_type,
+                    domain,
+                ),
             )
             conn.commit()
         finally:
@@ -840,8 +875,16 @@ def _stage_policy_suggestion(
                 )
             elif category == 3:
                 # Category 3 + very low domain confidence → suggest permanent suppression.
-                # Use action_type as signal_subtype proxy (closest available identifier).
-                _dc = _domain_confidence(conn, action_type, domain)
+                # Read signal_subtype from actions table (written at propose time).
+                signal_subtype_row = conn.execute(
+                    "SELECT signal_subtype FROM actions WHERE id = ?", (action_id,)
+                ).fetchone()
+                signal_subtype = (
+                    signal_subtype_row["signal_subtype"]
+                    if signal_subtype_row and signal_subtype_row["signal_subtype"]
+                    else action_type  # fallback to action_type if not yet populated
+                )
+                _dc = _domain_confidence(conn, signal_subtype, domain)
                 if _dc < 0.3:
                     conn.execute(
                         """
@@ -852,14 +895,14 @@ def _stage_policy_suggestion(
                         (
                             str(_uuid.uuid4()),
                             domain,
-                            action_type,
+                            signal_subtype,  # signal_type column stores actual signal_subtype
                             action_id,
                             ts,
                         ),
                     )
                     print(
                         f"[action] Suggestion staged: permanently suppress "
-                        f"'{action_type}×{domain}' (domain confidence: {_dc:.0%}). "
+                        f"'{signal_subtype}×{domain}' (domain confidence: {_dc:.0%}). "
                         "Run --apply-suggestions to review."
                     )
             conn.commit()
@@ -1861,12 +1904,12 @@ def run(
             executor.propose_direct(proposal)
             proposed += 1
 
-            # Write normalized_entity and confidence to actions row (quality metadata)
+            # Write normalized_entity, confidence, and signal_subtype to actions row (quality metadata)
             if _quality_conn is not None:
                 try:
                     _quality_conn.execute(
-                        "UPDATE actions SET normalized_entity = ?, confidence = ? WHERE id = ?",
-                        (_normalized_entity, _sig_confidence if _sig_confidence > 0.0 else None, proposal.id),
+                        "UPDATE actions SET normalized_entity = ?, confidence = ?, signal_subtype = ? WHERE id = ?",
+                        (_normalized_entity, _sig_confidence if _sig_confidence > 0.0 else None, _signal_subtype, proposal.id),
                     )
                     _quality_conn.commit()
                 except Exception:
