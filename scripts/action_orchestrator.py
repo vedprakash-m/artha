@@ -705,16 +705,16 @@ def _acceptance_rate_windowed(
         cur = conn.execute(
             f"""
             SELECT
-                SUM(CASE WHEN user_decision = 'accepted' THEN 1.0 ELSE 0 END) as accepted,
+                SUM(CASE WHEN user_decision IN ('accepted', 'deferred') THEN 1.0 ELSE 0 END) as accepted,
                 SUM(CASE
-                    WHEN user_decision IN ('accepted', 'rejected') THEN 1.0
+                    WHEN user_decision IN ('accepted', 'rejected', 'deferred') THEN 1.0
                     WHEN user_decision = 'expired' THEN 0.5
                     ELSE 0
                 END) as effective_denominator,
                 COUNT(*) as total
             FROM trust_metrics
             WHERE proposed_at > datetime('now', '-{window_days} days')
-            AND user_decision IN ('accepted', 'rejected', 'expired')
+            AND user_decision IN ('accepted', 'rejected', 'expired', 'deferred')
             """,
         )
         row = cur.fetchone()
@@ -2041,6 +2041,39 @@ def run(
     except Exception:  # noqa: BLE001
         pass  # metrics write failure must never crash pipeline
 
+    # §9.3: Write quality status lines to action_layer_status.txt for anomaly detection
+    try:
+        _status_lines: list[str] = []
+        _suggestions_count = getattr(_print_summary, "_last_suggestions_count", 0)
+        _status_lines.append(
+            f"QUALITY | proposals:{proposed} suppressed:{quality_suppressed + suppressed} "
+            f"suggestions:{_suggestions_count}"
+        )
+        if _quality_conn is not None:
+            # Acceptance rate metrics
+            _rate_30 = _acceptance_rate_windowed(_quality_conn, window_days=30, min_decisions=10)
+            _rate_all = _acceptance_rate_windowed(_quality_conn, window_days=3650, min_decisions=3)
+            _r30_str = f"{_rate_30:.0%}" if _rate_30 is not None else "N/A"
+            _rall_str = f"{_rate_all:.0%}" if _rate_all is not None else "N/A"
+            _status_lines.append(f"QUALITY | acceptance_30d:{_r30_str} acceptance_all:{_rall_str}")
+            # Anomaly flags
+            _total_suppressed = quality_suppressed + suppressed
+            if proposed == 0 and _total_suppressed > 5:
+                _status_lines.append("QUALITY | ⚠ OVER_SUPPRESSED: 0 proposals but >5 suppressed")
+            if _rate_30 is not None and _rate_30 < 0.70:
+                _status_lines.append(
+                    f"QUALITY | ⚠ QUALITY_REGRESSION: 30d acceptance {_rate_30:.0%} < 70% threshold"
+                )
+        _quality_status_path = artha_dir / "tmp" / "action_layer_status.txt"
+        from datetime import datetime as _dt2, timezone as _tz2  # noqa: PLC0415
+        _ts = _dt2.now(_tz2.utc).strftime("%Y-%m-%d %H:%M UTC")
+        _quality_status_path.write_text(
+            f"# Action Layer Quality Status — {_ts}\n" + "\n".join(_status_lines) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass  # status write failure must never crash pipeline
+
     executor.close()
     return proposed
 
@@ -2226,7 +2259,8 @@ def cmd_reject(artha_dir: Path, action_id: str, reason: str = "") -> int:
       1 — Already handled (manual / autopay)
       2 — Wrong action type
       3 — Not relevant / stale
-      4 — Other
+      4 — Bad timing (right signal, wrong moment)
+      5 — Duplicate (already proposed recently)
     """
     _, ActionExecutor, _ = _import_action_modules()
     executor = ActionExecutor(artha_dir)
@@ -2239,16 +2273,18 @@ def cmd_reject(artha_dir: Path, action_id: str, reason: str = "") -> int:
             1: "already_handled",
             2: "wrong_action_type",
             3: "not_relevant",
-            4: "other",
+            4: "bad_timing",
+            5: "duplicate",
         }
         if sys.stdin.isatty() and not reason:
             print("\n  Rejection category:")
             print("    1 — Already handled (manual / autopay)")
             print("    2 — Wrong action type")
             print("    3 — Not relevant / stale")
-            print("    4 — Other")
-            _cat_input = input("  Category [1-4, Enter to skip]: ").strip()
-            if _cat_input.isdigit() and 1 <= int(_cat_input) <= 4:
+            print("    4 — Bad timing (right signal, wrong moment)")
+            print("    5 — Duplicate (already proposed recently)")
+            _cat_input = input("  Category [1-5, Enter to skip]: ").strip()
+            if _cat_input.isdigit() and 1 <= int(_cat_input) <= 5:
                 rejection_category = int(_cat_input)
                 if not reason:
                     reason = _category_labels[rejection_category]

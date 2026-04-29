@@ -395,15 +395,15 @@ class TestComputeConfidence:
 
 class TestRejectionCategory:
     def test_category_labels_format(self):
-        """Rejection category labels should be underscore_separated strings."""
+        """All 5 rejection category labels must be underscore_separated lowercase strings."""
         labels = {
             1: "already_handled",
             2: "wrong_action_type",
             3: "not_relevant",
-            4: "other",
+            4: "bad_timing",
+            5: "duplicate",
         }
         for cat, label in labels.items():
-            assert "_" in label or label == "other"
             assert label.islower()
             assert " " not in label
 
@@ -412,3 +412,127 @@ class TestRejectionCategory:
         from action_orchestrator import _write_rejection_category
         # Should complete without raising
         _write_rejection_category(tmp_path, "fake-action-id", "already_handled", 1)
+
+
+# ---------------------------------------------------------------------------
+# Tests: entity viability — spec §4.3.2 edge cases
+# ---------------------------------------------------------------------------
+
+class TestEntityIsViableExtended:
+    def _call(self, entity: str) -> bool:
+        from action_composer import _entity_is_viable
+        sig = MagicMock()
+        sig.entity = entity
+        return _entity_is_viable(sig)
+
+    def test_three_char_org_valid(self):
+        """3-char org names like 'PSE: Bill' must be accepted (spec: >= 3 chars)."""
+        assert self._call("PSE: Bill due") is True
+
+    def test_two_char_org_invalid(self):
+        """2-char org names are too short."""
+        assert self._call("XY: Bill") is False
+
+    def test_sender_domain_as_entity_rejected(self):
+        """Bare domain like 'xfinity.com' should be rejected — it's a sender, not an entity."""
+        assert self._call("xfinity.com") is False
+
+    def test_email_address_as_entity_rejected(self):
+        """Entities that are raw email addresses should be rejected."""
+        assert self._call("noreply@amazon.com") is False
+
+    def test_legitimate_domain_in_entity_valid(self):
+        """Entity with a domain in context (org + subject) should pass."""
+        assert self._call("Amazon: Your package has shipped") is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: deferred counts as accepted in sliding window (§4.5.3)
+# ---------------------------------------------------------------------------
+
+class TestAcceptanceRateWindowedDeferred:
+    def test_deferred_counts_as_accepted(self, tmp_path):
+        """A deferred action should count as an accepted decision in the 30d window."""
+        from action_orchestrator import _acceptance_rate_windowed
+        import sqlite3
+        from datetime import datetime, timedelta, timezone
+
+        db = tmp_path / "test.db"
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """CREATE TABLE trust_metrics (
+                id TEXT PRIMARY KEY,
+                action_type TEXT,
+                domain TEXT,
+                proposed_at TEXT,
+                user_decision TEXT,
+                execution_result TEXT,
+                feedback TEXT,
+                signal_subtype TEXT,
+                rejection_category TEXT,
+                normalized_entity TEXT
+            )"""
+        )
+        # Insert 8 accepted, 1 deferred (= 9 accepted), 2 rejected → rate = 9/11 ≈ 0.818
+        now = datetime.now(timezone.utc)
+        for i in range(8):
+            conn.execute(
+                "INSERT INTO trust_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"a{i}", "reminder_create", "finance", now.isoformat(), "accepted",
+                 None, None, None, None, None),
+            )
+        conn.execute(
+            "INSERT INTO trust_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("d1", "reminder_create", "finance", now.isoformat(), "deferred",
+             None, None, None, None, None),
+        )
+        for i in range(2):
+            conn.execute(
+                "INSERT INTO trust_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"r{i}", "reminder_create", "finance", now.isoformat(), "rejected",
+                 None, None, None, None, None),
+            )
+        conn.commit()
+
+        rate = _acceptance_rate_windowed(conn, window_days=30, min_decisions=5)
+        assert rate is not None
+        # 9 accepted (8 + 1 deferred) / 11 effective decisions = 0.818...
+        assert abs(rate - (9 / 11)) < 0.01
+
+    def test_deferred_not_double_counted(self, tmp_path):
+        """Deferred appears once in numerator and once in denominator."""
+        from action_orchestrator import _acceptance_rate_windowed
+        import sqlite3
+        from datetime import datetime, timezone
+
+        db = tmp_path / "test2.db"
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """CREATE TABLE trust_metrics (
+                id TEXT PRIMARY KEY,
+                action_type TEXT,
+                domain TEXT,
+                proposed_at TEXT,
+                user_decision TEXT,
+                execution_result TEXT,
+                feedback TEXT,
+                signal_subtype TEXT,
+                rejection_category TEXT,
+                normalized_entity TEXT
+            )"""
+        )
+        now = datetime.now(timezone.utc)
+        # 10 deferred only → rate = 10/10 = 1.0
+        for i in range(10):
+            conn.execute(
+                "INSERT INTO trust_metrics VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"d{i}", "reminder_create", "finance", now.isoformat(), "deferred",
+                 None, None, None, None, None),
+            )
+        conn.commit()
+
+        rate = _acceptance_rate_windowed(conn, window_days=30, min_decisions=5)
+        assert rate is not None
+        assert abs(rate - 1.0) < 0.01

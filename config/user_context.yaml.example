@@ -1,0 +1,49 @@
+# config/user_context.yaml — Explicit user preferences for action proposal filtering
+# Human-authored ONLY. Do NOT auto-populate from ML rejection patterns.
+# ML-learned suppressions are staged in actions.db policy_suggestions table
+# and applied explicitly via: python3 scripts/action_orchestrator.py --apply-suggestions
+#
+# SETUP: Copy this file to config/user_context.yaml and fill in your personal values.
+# config/user_context.yaml is gitignored (contains personal service subscriptions).
+#
+# Ref: specs/artha-tech-spec.md §40 (Action Quality Layer)
+# State plane: explicit preferences (config plane, not runtime/learning plane)
+
+autopay_services:
+  # Bills with auto-pay enabled. Signals from these services are suppressed
+  # for bill_due and financial_alert signal types.
+  # Format: lowercase normalized sender domain or service name.
+  # Examples:
+  # - xfinity
+  # - your-electric-utility
+  # - your-mobile-carrier
+
+trusted_sender_domains:
+  # Expected sender domains per signal type — used by confidence scoring
+  # factor "sender domain matches expected" (weight 0.2).
+  # Format: signal_type: [domain1, domain2, ...]
+  # Examples:
+  bill_due:             []
+  subscription_renewal: []
+  delivery_arriving:    []
+  security_alert:       []
+  school_action_needed: []
+
+action_type_overrides:
+  # Per-signal remap of default action type from signal_routing.yaml.
+  # Explicit user preference only — not auto-populated from rejection feedback.
+  # ML-suggested overrides are staged in DB and applied via --apply-suggestions.
+  # Format: signal_type: {action_type: <type>, override_reason: "...", override_date: "YYYY-MM-DD"}
+  # Examples:
+  # school_action_needed:
+  #   action_type: whatsapp_send
+  #   override_reason: "Prefer automated nudge to child over parent reminder"
+  #   override_date: "2026-01-01"
+
+suppressed_signal_domains:
+  # Signal × domain pairs permanently suppressed — human-seed entries ONLY.
+  # ML-learned suppressions go to actions.db signal_suppression table.
+  # Format: signal_type: [domain1, domain2]
+  # Examples:
+  # form_deadline:
+  #   - comms    # Entity always "unknown" in this domain → suppressed
