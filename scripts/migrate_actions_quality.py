@@ -12,6 +12,7 @@ Changes:
   - trust_metrics.normalized_entity TEXT
   - actions.confidence REAL
   - actions.normalized_entity TEXT
+  - actions.signal_subtype TEXT  (written at propose time; read by _write_rejection_category)
   - NEW TABLE: signal_suppression (signal_subtype, domain, reason, created_at, source_action_id)
   - NEW TABLE: policy_suggestions (id, type, value, signal_type, source_action_id, created_at, applied_at)
   - UNIQUE INDEX: idx_ps_active on policy_suggestions
@@ -149,6 +150,10 @@ def main(artha_dir: Path | None = None, db_path: Path | None = None, dry_run: bo
 
         if _add_column_if_missing(conn, "actions", "normalized_entity", "TEXT", dry_run):
             print("[migrate] Adding normalized_entity column to actions...")
+            any_added = True
+
+        if _add_column_if_missing(conn, "actions", "signal_subtype", "TEXT", dry_run):
+            print("[migrate] Adding signal_subtype column to actions...")
             any_added = True
 
         # --- signal_suppression table ---
