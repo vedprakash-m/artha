@@ -277,13 +277,29 @@ def _signal_is_temporally_relevant(signal: "DomainSignal") -> bool:
                 return True  # unparseable — don't block
 
         today = datetime.now(timezone.utc).date()
-        # Allow same-day signals (due today is still actionable)
-        if parsed_dt.date() < today:
-            return False
+        signal_type = getattr(signal, "signal_type", "") or ""
+
+        # security_alert: skip temporal check entirely (always surface regardless of date)
+        if signal_type == "security_alert":
+            return True
+
+        # Compute days_past (positive = signal date is in the past)
+        days_past = (today - parsed_dt.date()).days
+
+        if days_past <= 0:
+            return True  # Future or same-day → always pass
+
+        # Signal-type-specific grace periods (§4.3.3)
+        if signal_type == "bill_due":
+            return days_past <= 3  # Allow up to 3 days past (just-paid grace period)
+        elif signal_type == "delivery_arriving":
+            return days_past <= 1  # Allow 1 day grace for yesterday's delivery
+        else:
+            return False  # Any past date for other signal types → suppress
     except Exception:  # noqa: BLE001
         return True  # parse failure — do not suppress
 
-    return True
+    return True  # unreachable but satisfies type checker
 
 
 def _resolve_effective_action_type(
