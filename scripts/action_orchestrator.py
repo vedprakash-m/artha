@@ -448,10 +448,16 @@ def _deduplicate(signals: list[Any]) -> list[Any]:
     seen: set[tuple[str, str, str]] = set()
     unique: list[Any] = []
     for s in signals:
+        entity_val = getattr(s, "entity", "")
+        if isinstance(entity_val, dict):
+            # Dict entities use json.dumps(sort_keys=True) for stable key order
+            entity_key = _key_part(entity_val)
+        else:
+            entity_key = _key_part(_normalize_entity_for_dedup(str(entity_val)))
         key = (
             _key_part(getattr(s, "signal_type", "")),
             _key_part(getattr(s, "domain", "")),
-            _key_part(_normalize_entity_for_dedup(str(getattr(s, "entity", "")))),
+            entity_key,
         )
         if key not in seen:
             seen.add(key)
