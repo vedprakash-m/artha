@@ -73,6 +73,8 @@ state/*.db-wal
 state/traces/
 # Connector health/state subdirectory (harden.md §2.3.1; last_fetched_at timestamps)
 state/connectors/
+# Immigration state subdirectory (personal PII — never committed)
+state/immi/
 # KB audit log (LLM observability — machine-local, never committed)
 state/audit/
 !state/.gitkeep

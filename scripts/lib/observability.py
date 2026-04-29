@@ -149,6 +149,11 @@ def semantic_verify_trace(
         metadata={
             "cache_hit": cache_hit,
             "fallback_reason": fallback_reason,
+            # G-7: Calibration correlation — decision + signal_type here are the "predicted" label.
+            # When trust_metrics records the actual user_decision, correlate offline via timestamp
+            # window or proposed_action_id. Direct DB write requires a trust_metrics migration
+            # (add semantic_prediction column). For now, this trace is the calibration record.
+            # Ref: specs/action-convert.md §4.4.1 step 4e — "implemented via trace correlation".
             "decision": decision,
             "sender_domain": sender_domain,
             "signal_type": signal_type,

@@ -395,3 +395,21 @@ state_files:
     max_staleness_hours: 168
     sensitivity: "low"
     description: "Append-only log of home events from OpenClaw (presence, energy, alerts). Written by pipeline.py on buffer merge."
+
+  # ── Action layer quality (specs/action-convert.md) ──────────────────────────
+
+  - path: "config/user_context.yaml"
+    owner_agent: "action_orchestrator"
+    write_frequency: "on --apply-suggestions (human-initiated only)"
+    backup_tier: "config"
+    max_staleness_hours: 8760
+    sensitivity: "medium"
+    description: "Explicit user preferences for action proposal filtering: autopay services, trusted sender domains, action type overrides, human-seed suppression rules. Human-authored only; ML suggestions are staged in actions.db."
+
+  - path: "tmp/semantic_cache.json"
+    owner_agent: "email_signal_extractor"
+    write_frequency: "per pipeline run (when semantic_verification is enabled)"
+    backup_tier: "none"
+    max_staleness_hours: 48
+    sensitivity: "low"
+    description: "Persistent semantic verification LLM cache. TTL-keyed on (sender_domain, signal_type, subject_template_hash). Excluded from git. Automatically recreated if missing."
