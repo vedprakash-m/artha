@@ -922,7 +922,6 @@ def cmd_apply_suggestions(artha_dir: Path) -> int:
     Ref: specs/action-convert.md §4.5.1
     """
     import copy
-    import os
 
     try:
         from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
