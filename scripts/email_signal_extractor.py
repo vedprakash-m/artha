@@ -643,27 +643,23 @@ def _semantic_verify(
     fallback_reason: str | None = None
     result: bool | None = None
 
+    # LLM call isolated in lib.semantic_verifier (satisfies RD-19: no LLM
+    # imports in the signal-path module itself).
     try:
-        import openai  # type: ignore[import]
-        t0 = time.time()
-        resp = openai.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=50,
-            timeout=5,
+        from lib.semantic_verifier import call_llm_verifier  # noqa: PLC0415
+        decision_str, latency_ms, fallback_reason = call_llm_verifier(
+            prompt=prompt, model=model, signal_type=signal_type
         )
-        latency_ms = (time.time() - t0) * 1000
-        raw_text = resp.choices[0].message.content or ""
-        decision_str = "YES" if raw_text.strip().upper().startswith("YES") else "NO"
-        result = decision_str == "YES"
     except Exception as exc:  # noqa: BLE001
         fallback_reason = f"{type(exc).__name__}: {exc}"[:80]
-        if signal_type == "security_alert":
-            decision_str = "timeout"
-            result = False  # fail-closed for security alerts
-        else:
-            decision_str = "timeout"
-            result = None  # fail-to-suggestion for all others
+        decision_str = "timeout"
+
+    if decision_str == "YES":
+        result = True
+    elif decision_str == "NO":
+        result = False
+    else:  # "timeout" or unexpected
+        result = False if signal_type == "security_alert" else None
 
     # Write cache (atomic)
     try:
