@@ -104,3 +104,55 @@ def llm_trace(
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001
         pass  # tracing is best-effort
+
+
+def semantic_verify_trace(
+    *,
+    sender_domain: str,
+    signal_type: str,
+    subject_template: str,
+    model: str,
+    cache_hit: bool,
+    decision: str | None,
+    latency_ms: float | None = None,
+    fallback_reason: str | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    trace_file: "Path | None" = None,
+) -> None:
+    """Convenience wrapper for semantic verification LLM call tracing.
+
+    Emits a trace record via llm_trace() with structured metadata covering
+    all fields required for post-deployment calibration (§4.4.1):
+    cache_hit, fallback_reason, decision, and the hash-based cache key.
+
+    Args:
+        sender_domain:    Sender domain used as part of the cache key.
+        signal_type:      Signal type being verified (e.g. "bill_due").
+        subject_template: Normalised subject hash component.
+        model:            Model identifier used for the call.
+        cache_hit:        True if result came from tmp/semantic_cache.json.
+        decision:         "YES", "NO", "timeout", or None on error.
+        latency_ms:       Wall-clock time of the LLM call in milliseconds.
+        fallback_reason:  Reason for fallback (e.g. "timeout", "model_unavailable").
+        prompt_tokens:    Input token count if known.
+        completion_tokens: Output token count if known.
+        trace_file:       Override default trace file path (for testing).
+    """
+    llm_trace(
+        caller="email_signal_extractor.semantic_verify",
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        latency_ms=latency_ms,
+        error=fallback_reason if decision is None else None,
+        metadata={
+            "cache_hit": cache_hit,
+            "fallback_reason": fallback_reason,
+            "decision": decision,
+            "sender_domain": sender_domain,
+            "signal_type": signal_type,
+            "subject_template_fragment": subject_template[:20],
+        },
+        trace_file=trace_file,
+    )

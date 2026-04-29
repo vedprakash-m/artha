@@ -62,6 +62,7 @@ except ImportError:  # pragma: no cover
         metadata: dict
         detected_at: str
         subtype: str = ""  # original specific type; signal_type holds the canonical type
+        confidence: float = 0.0  # extraction quality score 0.0–1.0 (§4.4.2)
 
 try:
     from context_offloader import load_harness_flag as _load_flag
@@ -319,8 +320,84 @@ class EmailSignalExtractor:
         signals = extractor.extract(email_records, routing_table)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, artha_dir: Path | None = None) -> None:
         self._emitted: set[tuple[str, str]] = set()  # dedup within a session run
+        self._artha_dir = artha_dir or Path(__file__).resolve().parent.parent
+        self._user_ctx: dict | None = None  # lazy-loaded on first use
+
+    def _get_user_ctx(self) -> dict:
+        """Return user context, loading lazily on first call."""
+        if self._user_ctx is None:
+            try:
+                from lib.user_context import load_user_context  # noqa: PLC0415
+                self._user_ctx = load_user_context(self._artha_dir)
+            except Exception:  # noqa: BLE001
+                self._user_ctx = {}
+        return self._user_ctx
+
+    def _compute_confidence(
+        self,
+        signal_type: str,
+        from_field: str,
+        metadata: dict,
+        entity_resolved: bool,
+    ) -> float:
+        """Compute confidence score for a signal using 5-factor model (§4.4.2).
+
+        Factors:
+          0.3 — Entity resolved (org portion not "unknown")
+          0.2 — Date extracted (deadline_date or delivery_date present)
+          0.1 — Amount extracted (finance signals; any numeric metadata otherwise)
+          0.2 — Sender domain matches trusted_sender_domains for this signal_type
+                 (defaults to 0.2 pass-through when no entry exists for signal_type)
+          0.2 — Semantic verification passed (0.0 when flag disabled — default)
+
+        Returns:
+            Score in [0.0, 1.0].
+        """
+        score = 0.0
+
+        # Factor 1: Entity resolved (org portion not "unknown")
+        if entity_resolved:
+            score += 0.3
+
+        # Factor 2: Date extracted
+        if metadata.get("deadline_date") or metadata.get("delivery_date"):
+            score += 0.2
+
+        # Factor 3: Amount extracted (finance signals get full credit; others get partial)
+        if metadata.get("amount") or metadata.get("amount_str"):
+            score += 0.1
+        elif any(isinstance(v, (int, float)) and k not in ("urgency", "impact") for k, v in metadata.items()):
+            score += 0.1
+
+        # Factor 4: Sender domain matches trusted_sender_domains
+        user_ctx = self._get_user_ctx()
+        trusted_domains_map = user_ctx.get("trusted_sender_domains", {}) or {}
+        trusted_for_type = trusted_domains_map.get(signal_type, []) or []
+        if trusted_for_type:
+            # Entry exists — check if sender domain is in it
+            sender_domain_match = False
+            m = _DOMAIN_RE.search(from_field or "")
+            if m:
+                sender_domain = m.group(1).lower()
+                for td in trusted_for_type:
+                    td_lower = str(td).lower()
+                    if sender_domain == td_lower or sender_domain.endswith("." + td_lower):
+                        sender_domain_match = True
+                        break
+            if sender_domain_match:
+                score += 0.2
+            # No match and entry exists → no +0.2
+        else:
+            # No entry for this signal_type → pass-through: don't penalize
+            score += 0.2
+
+        # Factor 5: Semantic verification (0.0 by default — feature-flagged)
+        # Semantic verification is applied separately in _semantic_verify() below.
+        # When disabled (default), this factor contributes 0.0.
+
+        return min(score, 1.0)
 
     def extract(
         self,
@@ -392,6 +469,15 @@ class EmailSignalExtractor:
                 # cover via structured patterns alone. Scrub at the boundary.
                 entity = _filter_text_only(entity)
 
+                # Compute confidence score (§4.4.2)
+                entity_resolved = not org_name.lower().startswith("unknown")
+                confidence = self._compute_confidence(
+                    signal_type=signal_type,
+                    from_field=from_field,
+                    metadata=metadata,
+                    entity_resolved=entity_resolved,
+                )
+
                 canonical_type = _CANONICAL_TYPE_MAP.get(signal_type, signal_type)
                 sig = DomainSignal(
                     signal_type=canonical_type,
@@ -403,6 +489,7 @@ class EmailSignalExtractor:
                     metadata=metadata,
                     detected_at=now_iso,
                     subtype=signal_type,
+                    confidence=confidence,
                 )
                 # DEBT-SIG-004: apply signal-layer PII scrub to all string metadata values.
                 # Structural keys (email_id, sensitivity) are exempted; user-visible
@@ -442,6 +529,175 @@ class EmailSignalExtractor:
     def reset_dedup(self) -> None:
         """Clear in-session dedup state (call between separate email batches)."""
         self._emitted.clear()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Semantic verification (feature-flagged via artha_config.yaml)
+# Ref: specs/action-convert.md §4.4.1
+# ---------------------------------------------------------------------------
+
+def _semantic_verify(
+    signal_type: str,
+    sender: str,
+    subject: str,
+    snippet: str,
+    artha_dir: Path | None = None,
+) -> "bool | None":
+    """LLM-as-judge: verify that an email is genuinely the claimed signal_type.
+
+    Feature-flagged: only runs when harness.actions.quality.semantic_verification=true
+    in artha_config.yaml. Returns None (skip) when flag is disabled.
+
+    Cache: results are persisted in tmp/semantic_cache.json keyed on
+    sha256(sender_domain|signal_type|subject_template)[:16] with a 24h TTL.
+
+    Fail behaviour:
+      - Timeout or error for security_alert → False (fail-closed, suppress entirely)
+      - Timeout or error for all other types → None (fail-to-suggestion)
+
+    Returns:
+        True  — LLM confirmed signal_type is correct
+        False — LLM says not a genuine signal_type (or security_alert timeout)
+        None  — feature disabled, or non-security timeout/error (fail-to-suggestion)
+    """
+    import hashlib
+    import json as _json
+    import os
+    import time
+
+    _artha_dir = artha_dir or Path(__file__).resolve().parent.parent
+
+    # Check feature flag
+    try:
+        from lib.config_loader import load_config as _lc  # noqa: PLC0415
+        _cfg = _lc("artha_config", str(_artha_dir / "config")) or {}
+        _quality = ((_cfg.get("harness") or {}).get("actions") or {}).get("quality") or {}
+        if not _quality.get("semantic_verification", False):
+            return None  # feature disabled
+    except Exception:  # noqa: BLE001
+        return None
+
+    # Build stable cache key
+    m = _DOMAIN_RE.search(sender or "")
+    sender_domain = m.group(1).lower() if m else "unknown"
+    subject_template = re.sub(r"\d+", "N", subject[:60].lower().strip())
+    cache_key = hashlib.sha256(
+        f"{sender_domain}|{signal_type}|{subject_template}".encode()
+    ).hexdigest()[:16]
+
+    # Load / check cache
+    cache_path = _artha_dir / "tmp" / "semantic_cache.json"
+    cache: dict = {}
+    cache_hit = False
+    try:
+        if cache_path.exists():
+            raw = _json.loads(cache_path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                cache = raw
+        entry = cache.get(cache_key)
+        if isinstance(entry, dict):
+            ts = entry.get("ts", 0)
+            if time.time() - ts < 86400:  # 24h TTL
+                cache_hit = True
+                decision = entry.get("decision")
+                try:
+                    from lib.observability import semantic_verify_trace  # noqa: PLC0415
+                    semantic_verify_trace(
+                        sender_domain=sender_domain,
+                        signal_type=signal_type,
+                        subject_template=subject_template,
+                        model=entry.get("model", "cached"),
+                        cache_hit=True,
+                        decision=decision,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return decision == "YES"
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Cache miss — call LLM
+    _signal_definitions = {
+        "bill_due": "a bill or payment that is due and requires action from the recipient",
+        "form_deadline": "a form or document that must be submitted by a deadline",
+        "delivery_arriving": "a package or shipment that is arriving or has arrived",
+        "security_alert": "a genuine security alert about unauthorized account access",
+        "school_action_needed": "a school-related action required from a parent or student",
+        "subscription_renewal": "a subscription or recurring service that is renewing",
+    }
+    signal_def = _signal_definitions.get(signal_type, f"a {signal_type.replace('_', ' ')} event")
+    snippet_truncated = snippet[:200]  # Truncate before building prompt
+    prompt = (
+        f"You are an email classifier. Given this email metadata, answer ONLY "
+        f'"YES" or "NO" — is this genuinely a {signal_type}?\n\n'
+        f"From: {sender}\n"
+        f"Subject: {subject}\n"
+        f"Snippet: {snippet_truncated}\n\n"
+        f"A {signal_type} means: {signal_def}\n"
+        f"Answer YES or NO, then one sentence explaining why."
+    )
+
+    model = "gpt-4o-mini"
+    decision_str: str | None = None
+    latency_ms: float | None = None
+    fallback_reason: str | None = None
+    result: bool | None = None
+
+    try:
+        import openai  # type: ignore[import]
+        t0 = time.time()
+        resp = openai.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            timeout=5,
+        )
+        latency_ms = (time.time() - t0) * 1000
+        raw_text = resp.choices[0].message.content or ""
+        decision_str = "YES" if raw_text.strip().upper().startswith("YES") else "NO"
+        result = decision_str == "YES"
+    except Exception as exc:  # noqa: BLE001
+        fallback_reason = f"{type(exc).__name__}: {exc}"[:80]
+        if signal_type == "security_alert":
+            decision_str = "timeout"
+            result = False  # fail-closed for security alerts
+        else:
+            decision_str = "timeout"
+            result = None  # fail-to-suggestion for all others
+
+    # Write cache (atomic)
+    try:
+        cache[cache_key] = {
+            "ts": time.time(),
+            "decision": decision_str,
+            "model": model,
+            "signal_type": signal_type,
+            "sender_domain": sender_domain,
+        }
+        tmp_path = cache_path.with_suffix(".tmp")
+        tmp_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(_json.dumps(cache, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(str(tmp_path), str(cache_path))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Emit trace
+    try:
+        from lib.observability import semantic_verify_trace  # noqa: PLC0415
+        semantic_verify_trace(
+            sender_domain=sender_domain,
+            signal_type=signal_type,
+            subject_template=subject_template,
+            model=model,
+            cache_hit=False,
+            decision=decision_str,
+            latency_ms=latency_ms,
+            fallback_reason=fallback_reason,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,13 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from actions.base import ActionProposal, DomainSignal
 
+try:
+    from lib.user_context import load_user_context  # noqa: PLC0415
+except ImportError:  # pragma: no cover
+    def load_user_context(artha_dir: "Path") -> dict:  # type: ignore[misc]
+        """Fallback when lib.user_context is not available."""
+        return {}
+
 # ---------------------------------------------------------------------------
 # Signal-to-action routing table (§10.2)
 # ---------------------------------------------------------------------------
@@ -165,11 +172,146 @@ _load_signal_routing()
 
 
 # ---------------------------------------------------------------------------
+# Quality gate helpers (specs/action-convert.md §4.3, §4.4)
+# ---------------------------------------------------------------------------
+
+# Cached quality config — loaded once per process
+_CACHED_QUALITY_CONFIG: dict[str, Any] | None = None
+
+
+def _load_quality_config(artha_dir: "Path") -> dict[str, Any]:
+    """Return the harness.actions.quality block from artha_config.yaml (cached).
+
+    Returns {} on any error — quality gates use their defaults.
+    """
+    global _CACHED_QUALITY_CONFIG  # noqa: PLW0603
+    if _CACHED_QUALITY_CONFIG is not None:
+        return _CACHED_QUALITY_CONFIG
+
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        cfg = load_config("artha_config", str(artha_dir / "config")) or {}
+        harness = cfg.get("harness", {}) or {}
+        actions = harness.get("actions", {}) or {}
+        quality = actions.get("quality", {}) or {}
+        _CACHED_QUALITY_CONFIG = quality if isinstance(quality, dict) else {}
+    except Exception:  # noqa: BLE001
+        _CACHED_QUALITY_CONFIG = {}
+
+    return _CACHED_QUALITY_CONFIG
+
+
+def _entity_is_viable(signal: "DomainSignal") -> bool:
+    """Return False for signals whose entity value is too degraded to be actionable.
+
+    NOTE: The email extractor builds entities as f"{org_name}: {subject}",
+    so a ghost-entity appears as "unknown: Some Subject Line", NOT bare
+    "unknown". Checking the full entity string against "unknown" misses
+    the primary failure mode. Split on the first colon and check the org
+    portion independently.
+
+    Ref: specs/action-convert.md §4.3.2
+    """
+    entity = (signal.entity or "").strip()
+    if not entity:
+        return False
+    # Isolate the org-name portion (before first colon, or full string)
+    org_part = entity.split(":")[0].strip().lower() if ":" in entity else entity.lower()
+    if org_part in ("unknown", ""):
+        return False
+    # Entity is just an org name with no context (e.g., "Google:")
+    if entity.endswith(":") and len(entity.split()) <= 1:
+        return False
+    # Entity is too short to be meaningful (applies to full string, not org_part,
+    # since 4-char org names like "USPS" are valid when subject is appended)
+    if len(entity) < 5:
+        return False
+    return True
+
+
+def _signal_is_temporally_relevant(signal: "DomainSignal") -> bool:
+    """Return False if the signal references a date that is already in the past.
+
+    Checks metadata keys: deadline_date, delivery_date, due_date, deadline.
+    If no date metadata is present, returns True (cannot determine, do not suppress).
+    Unparseable dates also return True (defensive — do not block on parse failure).
+
+    Ref: specs/action-convert.md §4.3.3
+    """
+    meta = signal.metadata or {}
+    date_str = (
+        meta.get("deadline_date")
+        or meta.get("delivery_date")
+        or meta.get("due_date")
+        or meta.get("deadline")
+        or ""
+    )
+    if not date_str:
+        return True  # no date claim — pass through
+
+    try:
+        # Try dateutil first (handles widest range of formats)
+        try:
+            from dateutil import parser as _du_parser  # type: ignore[import]
+            parsed_dt = _du_parser.parse(str(date_str), fuzzy=True)
+        except ImportError:
+            # Fallback: strip leading keywords (by/before/due/on) then try strptime
+            stripped = str(date_str).strip()
+            for prefix in ("by ", "before ", "due ", "on "):
+                if stripped.lower().startswith(prefix):
+                    stripped = stripped[len(prefix):].strip()
+                    break
+            parsed_dt = None
+            for fmt in (
+                "%Y-%m-%d",
+                "%Y-%m-%dT%H:%M:%S",
+                "%B %d, %Y", "%B %d %Y", "%b %d, %Y", "%b %d %Y",
+                "%m/%d/%Y", "%m/%d/%y",
+            ):
+                try:
+                    parsed_dt = datetime.strptime(stripped, fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed_dt is None:
+                return True  # unparseable — don't block
+
+        today = datetime.now(timezone.utc).date()
+        # Allow same-day signals (due today is still actionable)
+        if parsed_dt.date() < today:
+            return False
+    except Exception:  # noqa: BLE001
+        return True  # parse failure — do not suppress
+
+    return True
+
+
+def _resolve_effective_action_type(
+    signal_type: str,
+    route: dict[str, Any],
+    user_ctx: dict[str, Any],
+) -> str:
+    """Return the effective action_type after applying any user_context override.
+
+    Checks user_ctx.action_type_overrides[signal_type] — if present and has
+    an action_type key, returns that. Otherwise returns route["action_type"].
+
+    MUST be called before the action enablement check (CONSTRAINT 2).
+
+    Ref: specs/action-convert.md §4.3.1 CONSTRAINT 2
+    """
+    overrides = user_ctx.get("action_type_overrides", {}) or {}
+    override_entry = overrides.get(signal_type, {}) or {}
+    if isinstance(override_entry, dict) and override_entry.get("action_type"):
+        return str(override_entry["action_type"])
+    return route["action_type"]
+
+
+# ---------------------------------------------------------------------------
 # ActionComposer class
 # ---------------------------------------------------------------------------
 
 def _context_has_substance(context: dict[str, Any]) -> bool:
-    """Return True when an instruction-sheet context has useful content."""
     for key in ("description", "prerequisites", "steps", "contacts", "links"):
         value = context.get(key)
         if isinstance(value, str) and value.strip():
@@ -239,10 +381,13 @@ class ActionComposer:
     # Public API
     # ------------------------------------------------------------------
 
-    def compose(self, signal: DomainSignal) -> ActionProposal | None:
+    def compose(self, signal: DomainSignal) -> "ActionProposal | None":
         """Convert a domain signal to an ActionProposal.
 
         Returns None if:
+          - Signal entity is not viable (ghost entity / unknown org).
+          - Signal is temporally irrelevant (referenced date is in the past).
+          - Signal matches autopay suppression or suppressed_signal_domains.
           - No routing entry for this signal_type.
           - The mapped action_type is disabled in actions.yaml.
           - The signal's metadata is insufficient to build a proposal.
@@ -261,13 +406,51 @@ class ActionComposer:
             print(f"[ACTION_COMPOSER] Invalid signal skipped: {exc}", file=sys.stderr)
             return None
 
+        # Layer 1, Gate 1: Entity minimum viability (§4.3.2)
+        if not _entity_is_viable(signal):
+            print(
+                f"[ACTION_COMPOSER] SIGNAL_ENTITY_REJECTED | {signal.signal_type} | {signal.entity!r}",
+                file=sys.stderr,
+            )
+            return None
+
+        # Layer 1, Gate 2: Temporal coherence (§4.3.3)
+        if not _signal_is_temporally_relevant(signal):
+            print(
+                f"[ACTION_COMPOSER] SIGNAL_TEMPORAL_REJECTED | {signal.signal_type} | {signal.entity!r}",
+                file=sys.stderr,
+            )
+            return None
+
+        # Load user context (cached; never raises)
+        user_ctx = load_user_context(self._artha_dir)
+
+        # Layer 1, Gate 3: Autopay suppression (§4.3.1)
+        if signal.signal_type in ("bill_due", "financial_alert") or getattr(signal, "subtype", "") in ("bill_due", "financial_alert"):
+            entity_lower = (signal.entity or "").lower()
+            for service in user_ctx.get("autopay_services", []) or []:
+                if str(service).lower() in entity_lower:
+                    return None  # auto-pay suppressed
+
         # Find routing entry: prefer subtype (specific) over canonical signal_type
         _routing = _load_signal_routing()
         route = _routing.get(getattr(signal, "subtype", "") or "") or _routing.get(signal.signal_type)
         if route is None:
             return None
 
-        action_type: str = route["action_type"]
+        # CONSTRAINT 2: Resolve effective action_type BEFORE enablement check
+        action_type: str = _resolve_effective_action_type(signal.signal_type, route, user_ctx)
+        # Also check subtype override if signal_type lookup returned nothing useful
+        if action_type == route["action_type"] and getattr(signal, "subtype", ""):
+            action_type = _resolve_effective_action_type(signal.subtype, route, user_ctx)
+
+        # Layer 1, Gate 4: Suppressed signal × domain pairs (§4.3.1)
+        suppressed_domains = user_ctx.get("suppressed_signal_domains", {}) or {}
+        # Check both canonical signal_type and subtype
+        for stype in {signal.signal_type, getattr(signal, "subtype", "")} - {""}:
+            domains_for_type = suppressed_domains.get(stype, []) or []
+            if signal.domain in domains_for_type:
+                return None
 
         # Check action type is enabled in config
         action_cfg = self._config.get(action_type, {})

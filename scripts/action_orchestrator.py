@@ -401,6 +401,36 @@ def _apply_ai_signal_hardening(proposal: Any, signal: Any = None) -> Any:
     return proposal
 
 
+def _normalize_entity_for_dedup(entity: str) -> str:
+    """Strip dates, amounts, and transaction IDs for cross-session dedup.
+
+    Ensures that "Xfinity bill Mar" and "Xfinity bill Apr" produce the same
+    normalized string, preventing the same bill from being proposed each month.
+
+    Ref: specs/action-convert.md §4.4.3
+    """
+    import re
+    s = entity.lower().strip()
+    # Remove dates in various formats
+    s = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", "", s)
+    # Month name followed by a day or year (Mar 25, Mar 2025, March 2026)
+    s = re.sub(
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,4}(?:,?\s+\d{4})?\b",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    # Standalone 4-digit years
+    s = re.sub(r"\b20\d{2}\b", "", s)
+    # Remove dollar amounts
+    s = re.sub(r"\$[\d,]+\.?\d*", "", s)
+    # Remove transaction/confirmation IDs (8+ uppercase alphanumeric)
+    s = re.sub(r"\b[A-Z0-9]{8,}\b", "", s)
+    # Collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or entity.lower().strip()
+
+
 def _deduplicate(signals: list[Any]) -> list[Any]:
     """Remove duplicate signals by (signal_type, domain, entity) within the same run.
 
@@ -421,12 +451,484 @@ def _deduplicate(signals: list[Any]) -> list[Any]:
         key = (
             _key_part(getattr(s, "signal_type", "")),
             _key_part(getattr(s, "domain", "")),
-            _key_part(getattr(s, "entity", "")),
+            _key_part(_normalize_entity_for_dedup(str(getattr(s, "entity", "")))),
         )
         if key not in seen:
             seen.add(key)
             unique.append(s)
     return unique
+
+
+def _domain_confidence(conn: Any, signal_subtype: str, domain: str) -> float:
+    """Return acceptance rate for (signal_subtype, domain) over last 90 days.
+
+    Returns 1.0 (optimistic default) when fewer than 3 decisions exist —
+    avoids suppressing signals that have never been tried.
+
+    Ref: specs/action-convert.md §4.5.2
+    """
+    try:
+        cur = conn.execute(
+            """
+            SELECT
+                SUM(CASE WHEN user_decision = 'accepted' THEN 1.0 ELSE 0 END) as accepted,
+                COUNT(*) as total
+            FROM trust_metrics
+            WHERE signal_subtype = ? AND domain = ?
+            AND proposed_at > datetime('now', '-90 days')
+            """,
+            (signal_subtype, domain),
+        )
+        row = cur.fetchone()
+        if row and row["total"] and row["total"] >= 3:
+            return float(row["accepted"]) / float(row["total"])
+    except Exception:  # noqa: BLE001
+        pass
+    return 1.0  # optimistic default (insufficient data)
+
+
+def _check_loop_quarantine(
+    conn: Any,
+    signal_subtype: str,
+    domain: str,
+    normalized_entity: str,
+) -> bool:
+    """Return True if this entity is currently in loop quarantine (should suppress).
+
+    Ref: specs/action-convert.md §4.4.4
+    """
+    try:
+        cur = conn.execute(
+            """
+            SELECT quarantine_until FROM loop_quarantine
+            WHERE signal_subtype = ? AND domain = ? AND normalized_entity = ?
+            """,
+            (signal_subtype, domain, normalized_entity),
+        )
+        row = cur.fetchone()
+        if row:
+            quarantine_until = row[0] if isinstance(row, (list, tuple)) else row["quarantine_until"]
+            if quarantine_until and quarantine_until > datetime.now(timezone.utc).isoformat():
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _record_loop_quarantine(
+    conn: Any,
+    signal_subtype: str,
+    domain: str,
+    normalized_entity: str,
+    days: int = 14,
+) -> None:
+    """Write a loop quarantine record to prevent repeated rejected proposals.
+
+    Ref: specs/action-convert.md §4.4.4
+    """
+    try:
+        quarantine_until = (
+            datetime.now(timezone.utc) + timedelta(days=days)
+        ).isoformat()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loop_quarantine (
+                signal_subtype    TEXT NOT NULL,
+                domain            TEXT NOT NULL,
+                normalized_entity TEXT NOT NULL,
+                quarantine_until  TEXT NOT NULL,
+                created_at        TEXT NOT NULL,
+                PRIMARY KEY (signal_subtype, domain, normalized_entity)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO loop_quarantine
+            (signal_subtype, domain, normalized_entity, quarantine_until, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                signal_subtype,
+                domain,
+                normalized_entity,
+                quarantine_until,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        conn.commit()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _count_consecutive_non_accepted(
+    conn: Any,
+    signal_subtype: str,
+    domain: str,
+    normalized_entity: str,
+) -> int:
+    """Count consecutive non-accepted decisions for this entity (most recent first).
+
+    Counts until the first 'accepted' decision is found (that resets the streak).
+    Only considers rows where normalized_entity IS NOT NULL (skips historical rows).
+
+    Ref: specs/action-convert.md §4.4.4 + CONSTRAINT 7
+    """
+    try:
+        cur = conn.execute(
+            """
+            SELECT user_decision FROM trust_metrics
+            WHERE signal_subtype = ? AND domain = ? AND normalized_entity = ?
+            AND normalized_entity IS NOT NULL
+            ORDER BY proposed_at DESC
+            LIMIT 20
+            """,
+            (signal_subtype, domain, normalized_entity),
+        )
+        rows = cur.fetchall()
+        count = 0
+        for row in rows:
+            decision = row[0] if isinstance(row, (list, tuple)) else row["user_decision"]
+            if decision == "accepted":
+                break
+            count += 1
+        return count
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _acceptance_rate_windowed(
+    conn: Any,
+    window_days: int = 30,
+    min_decisions: int = 10,
+) -> "float | None":
+    """Compute rolling acceptance rate with 0.5× expiry penalty.
+
+    Returns None if fewer than min_decisions in the window (insufficient data).
+    Expired actions contribute 0.5 to the denominator (§4.5.3).
+
+    Ref: specs/action-convert.md §4.5.3
+    """
+    try:
+        cur = conn.execute(
+            f"""
+            SELECT
+                SUM(CASE WHEN user_decision = 'accepted' THEN 1.0 ELSE 0 END) as accepted,
+                SUM(CASE
+                    WHEN user_decision IN ('accepted', 'rejected') THEN 1.0
+                    WHEN user_decision = 'expired' THEN 0.5
+                    ELSE 0
+                END) as effective_denominator,
+                COUNT(*) as total
+            FROM trust_metrics
+            WHERE proposed_at > datetime('now', '-{window_days} days')
+            AND user_decision IN ('accepted', 'rejected', 'expired')
+            """,
+        )
+        row = cur.fetchone()
+        if row:
+            effective_denom = row[1] if isinstance(row, (list, tuple)) else row["effective_denominator"]
+            accepted = row[0] if isinstance(row, (list, tuple)) else row["accepted"]
+            if effective_denom and effective_denom >= min_decisions:
+                return float(accepted) / float(effective_denom)
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def _write_rejection_category(
+    artha_dir: Path,
+    action_id: str,
+    reason: str,
+    category: "int | None",
+) -> None:
+    """Update trust_metrics.rejection_category for a rejected action.
+
+    Ref: specs/action-convert.md §4.5.1
+    """
+    try:
+        from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
+        db_path = _AQ._resolve_db_path(artha_dir)
+        if not db_path.exists():
+            return
+        conn = _aq_open(db_path)
+        try:
+            conn.execute(
+                "UPDATE trust_metrics SET rejection_category = ? WHERE action_type IN "
+                "(SELECT action_type FROM actions WHERE id = ?)",
+                (reason[:500] if reason else None, action_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _stage_policy_suggestion(
+    artha_dir: Path,
+    action_id: str,
+    category: int,
+    executor: Any,
+) -> None:
+    """Stage a policy suggestion in policy_suggestions table.
+
+    Category 1 (already handled) → autopay_add suggestion for the entity service.
+    Category 2 (wrong action type) → action_override suggestion for the signal_type.
+
+    Staged suggestions are NOT applied until user runs --apply-suggestions.
+
+    Ref: specs/action-convert.md §4.5.1
+    """
+    import uuid as _uuid
+
+    try:
+        action = executor.get_action(action_id)
+        if not action:
+            return
+
+        action_type = getattr(action, "action_type", "")
+        domain = getattr(action, "domain", "")
+        title = getattr(action, "title", "")
+
+        # Derive entity/service name from title (best effort)
+        entity = title.split(":")[0].strip() if ":" in title else title.split()[0] if title.split() else ""
+        entity_lower = entity.lower()[:50]
+
+        from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
+        db_path = _AQ._resolve_db_path(artha_dir)
+        if not db_path.exists():
+            return
+        conn = _aq_open(db_path)
+
+        ts = datetime.now(timezone.utc).isoformat()
+
+        try:
+            if category == 1:
+                # Suggest adding to autopay_services
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO policy_suggestions
+                    (id, type, value, signal_type, source_action_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(_uuid.uuid4()),
+                        "autopay_add",
+                        entity_lower or "unknown",
+                        None,
+                        action_id,
+                        ts,
+                    ),
+                )
+            elif category == 2:
+                # Suggest action_type override for this signal/domain combo
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO policy_suggestions
+                    (id, type, value, signal_type, source_action_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(_uuid.uuid4()),
+                        "action_override",
+                        action_type,  # current (wrong) action_type as context
+                        domain,
+                        action_id,
+                        ts,
+                    ),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def cmd_apply_suggestions(artha_dir: Path) -> int:
+    """Review and apply staged policy suggestions to user_context.yaml.
+
+    Loads pending suggestions from DB, prints a numbered list, prompts for
+    confirmation, and atomically writes approved entries to user_context.yaml.
+    Updates applied_at in DB and emits POLICY_APPLIED audit event.
+
+    Ref: specs/action-convert.md §4.5.1
+    """
+    import copy
+    import os
+
+    try:
+        from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
+        db_path = _AQ._resolve_db_path(artha_dir)
+        if not db_path.exists():
+            print("[action] No actions DB found.")
+            return 0
+        conn = _aq_open(db_path)
+    except Exception as exc:
+        print(f"[action] ✗ cannot open DB: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        cur = conn.execute(
+            "SELECT id, type, value, signal_type, source_action_id, created_at "
+            "FROM policy_suggestions WHERE applied_at IS NULL ORDER BY created_at"
+        )
+        rows = cur.fetchall()
+    except Exception as exc:
+        print(f"[action] ✗ cannot read policy_suggestions: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    if not rows:
+        print("[action] No pending policy suggestions.")
+        conn.close()
+        return 0
+
+    print("\n═══ PENDING POLICY SUGGESTIONS ════════════════════════════════")
+    suggestions = []
+    for i, row in enumerate(rows, 1):
+        row_dict = dict(row) if hasattr(row, "keys") else {
+            "id": row[0], "type": row[1], "value": row[2],
+            "signal_type": row[3], "source_action_id": row[4], "created_at": row[5],
+        }
+        suggestions.append(row_dict)
+        src = (row_dict.get("source_action_id") or "")[:8]
+        ts = (row_dict.get("created_at") or "")[:10]
+        if row_dict["type"] == "autopay_add":
+            print(f"  [A{i}] Add '{row_dict['value']}' to autopay_services  (from {src}, {ts})")
+        elif row_dict["type"] == "action_override":
+            print(
+                f"  [A{i}] Override action for '{row_dict.get('signal_type', '?')}' "
+                f"(current: {row_dict['value']})  (from {src}, {ts})"
+            )
+        else:
+            print(f"  [A{i}] {row_dict['type']}: {row_dict['value']}  (from {src}, {ts})")
+
+    print()
+    if not sys.stdin.isatty():
+        print("[action] Non-interactive mode — skipping apply prompt.")
+        conn.close()
+        return 0
+
+    answer = input("Apply all? [y/n/review]: ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("[action] No changes applied.")
+        conn.close()
+        return 0
+
+    # Load user_context.yaml fresh (NOT from cache — we're about to write it)
+    uc_path = artha_dir / "config" / "user_context.yaml"
+    try:
+        import yaml  # type: ignore[import]
+        raw_uc = yaml.safe_load(uc_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(raw_uc, dict):
+            raw_uc = {}
+    except Exception as exc:
+        print(f"[action] ✗ cannot read user_context.yaml: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    user_ctx = copy.deepcopy(raw_uc)
+    applied_ids: list[str] = []
+    ts_now = datetime.now(timezone.utc).isoformat()
+
+    for sug in suggestions:
+        if sug["type"] == "autopay_add":
+            services = user_ctx.setdefault("autopay_services", []) or []
+            val = sug["value"].lower().strip()
+            if val and val not in [str(s).lower() for s in services]:
+                services.append(val)
+                user_ctx["autopay_services"] = services
+                applied_ids.append(sug["id"])
+        elif sug["type"] == "action_override":
+            # Stage but note: user must specify the desired action_type manually
+            # for action_override, since we only know the current (wrong) type.
+            # For now, record as applied so it doesn't resurface.
+            applied_ids.append(sug["id"])
+
+    if not applied_ids:
+        print("[action] Nothing to apply.")
+        conn.close()
+        return 0
+
+    # Atomic write of user_context.yaml
+    try:
+        import yaml  # type: ignore[import]
+        tmp_path = uc_path.with_suffix(".tmp")
+        tmp_path.write_text(
+            yaml.safe_dump(user_ctx, default_flow_style=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+        os.replace(str(tmp_path), str(uc_path))
+    except Exception as exc:
+        print(f"[action] ✗ failed to write user_context.yaml: {exc}", file=sys.stderr)
+        conn.close()
+        return 1
+
+    # Invalidate user_context cache so next compose() reads fresh data
+    try:
+        from lib.user_context import invalidate_user_context_cache  # noqa: PLC0415
+        invalidate_user_context_cache()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Mark applied in DB
+    try:
+        for sid in applied_ids:
+            conn.execute(
+                "UPDATE policy_suggestions SET applied_at = ? WHERE id = ?",
+                (ts_now, sid),
+            )
+        conn.commit()
+    except Exception as exc:
+        print(f"[action] ✗ failed to update DB applied_at: {exc}", file=sys.stderr)
+
+    _audit_log(
+        artha_dir,
+        f"POLICY_APPLIED | ids:{','.join(a[:8] for a in applied_ids)} | count:{len(applied_ids)}",
+    )
+    print(f"[action] ✓ Applied {len(applied_ids)} suggestion(s) to user_context.yaml")
+    conn.close()
+    return 0
+
+
+def cmd_reset_domain_confidence(artha_dir: Path, signal_subtype: str, domain: str) -> int:
+    """Reset domain confidence for a signal_subtype × domain pair.
+
+    Deletes trust_metrics rows for the pair so the confidence returns to 1.0
+    (optimistic default). Use when the underlying signal quality has improved.
+
+    Ref: specs/action-convert.md §4.5.2
+    """
+    try:
+        from action_queue import _open_db as _aq_open, ActionQueue as _AQ  # noqa: PLC0415
+        db_path = _AQ._resolve_db_path(artha_dir)
+        if not db_path.exists():
+            print("[action] No actions DB found.")
+            return 0
+        conn = _aq_open(db_path)
+        try:
+            cur = conn.execute(
+                "SELECT COUNT(*) FROM trust_metrics WHERE signal_subtype = ? AND domain = ?",
+                (signal_subtype, domain),
+            )
+            count = cur.fetchone()[0]
+            conn.execute(
+                "DELETE FROM trust_metrics WHERE signal_subtype = ? AND domain = ?",
+                (signal_subtype, domain),
+            )
+            conn.commit()
+            print(f"[action] ✓ Reset domain confidence: {signal_subtype}×{domain} ({count} rows deleted)")
+            _audit_log(
+                artha_dir,
+                f"DOMAIN_CONFIDENCE_RESET | signal_subtype:{signal_subtype} | domain:{domain} | rows:{count}",
+            )
+        finally:
+            conn.close()
+        return 0
+    except Exception as exc:
+        print(f"[action] ✗ reset-domain-confidence failed: {exc}", file=sys.stderr)
+        return 1
 
 
 def _persist_signals(path: Path, signals: list[Any]) -> None:
@@ -1016,6 +1518,29 @@ def run(
     proposed = 0
     quality_suppressed = 0
 
+    # Quality layer: ONE DB connection for the entire run (CONSTRAINT 9)
+    _quality_conn: Any = None
+    _quality_cfg: dict = {}
+    try:
+        from action_queue import _open_db as _aq_open_qc, ActionQueue as _AQ_qc  # noqa: PLC0415
+        _qdb_path = _AQ_qc._resolve_db_path(artha_dir)
+        if _qdb_path.exists():
+            _quality_conn = _aq_open_qc(_qdb_path)
+    except Exception as exc:
+        print(f"[action_orchestrator] quality DB unavailable: {exc}", file=sys.stderr)
+
+    try:
+        cfg = _load_config(artha_dir)
+        _quality_cfg = (
+            (cfg.get("harness") or {}).get("actions", {}).get("quality") or {}
+        )
+    except Exception:
+        pass
+
+    _min_confidence: float = float(_quality_cfg.get("min_confidence", 0.5))
+    _suggestion_threshold: float = float(_quality_cfg.get("suggestion_threshold", 0.65))
+    _loop_threshold: int = int(_quality_cfg.get("loop_quarantine_threshold", 4))
+
     for signal in all_signals:
         signal_type = getattr(signal, "signal_type", "unknown")
         is_ai_signal = getattr(signal, "_ai_origin", False)
@@ -1034,6 +1559,63 @@ def run(
                 f"[action_orchestrator] skipping {signal_type} — handler unavailable for {action_type_target}",
                 file=sys.stderr,
             )
+            continue
+
+        # Quality layer: pre-compose checks on the signal itself
+        _signal_subtype = getattr(signal, "subtype", signal_type) or signal_type
+        _domain = getattr(signal, "domain", "unknown")
+        _entity_raw = str(getattr(signal, "entity", "") or "")
+        _normalized_entity = _normalize_entity_for_dedup(_entity_raw)
+        _sig_confidence = float(getattr(signal, "confidence", 0.0) or 0.0)
+
+        if _quality_conn is not None:
+            # Loop quarantine check (CONSTRAINT 7)
+            if _check_loop_quarantine(_quality_conn, _signal_subtype, _domain, _normalized_entity):
+                if verbose:
+                    print(
+                        f"[action_orchestrator] loop-quarantined: {signal_type}/{_domain}/{_normalized_entity[:30]}",
+                        file=sys.stderr,
+                    )
+                quality_suppressed += 1
+                continue
+
+            # Consecutive non-accepted check → quarantine threshold
+            consecutive = _count_consecutive_non_accepted(
+                _quality_conn, _signal_subtype, _domain, _normalized_entity
+            )
+            if consecutive >= _loop_threshold:
+                _record_loop_quarantine(_quality_conn, _signal_subtype, _domain, _normalized_entity)
+                if verbose:
+                    print(
+                        f"[action_orchestrator] entering quarantine ({consecutive}× rejected): "
+                        f"{signal_type}/{_domain}",
+                        file=sys.stderr,
+                    )
+                quality_suppressed += 1
+                continue
+
+            # Domain confidence gate
+            _dc_rate = _domain_confidence(_quality_conn, _signal_subtype, _domain)
+            if _dc_rate < 0.2:
+                # Suppressed entirely
+                quality_suppressed += 1
+                if verbose:
+                    print(
+                        f"[action_orchestrator] domain confidence suppressed ({_dc_rate:.2f}): {signal_type}",
+                        file=sys.stderr,
+                    )
+                continue
+            # (0.2–0.5 range → suggestion-only; handled post-propose)
+            # (0.5–0.8 range → friction escalation; handled post-propose)
+
+        # Signal confidence gate
+        if _sig_confidence > 0.0 and _sig_confidence < _min_confidence:
+            quality_suppressed += 1
+            if verbose:
+                print(
+                    f"[action_orchestrator] confidence below min ({_sig_confidence:.2f}): {signal_type}",
+                    file=sys.stderr,
+                )
             continue
 
         try:
@@ -1058,8 +1640,47 @@ def run(
                 )
                 continue
 
+            # Domain confidence → friction escalation (0.5–0.8) or suggestion-only (<0.5)
+            if _quality_conn is not None and _dc_rate < 0.8:
+                from dataclasses import replace as _dc_replace  # noqa: PLC0415
+                if _dc_rate < 0.5:
+                    # Below 0.5 → suggestion only (write to policy_suggestions, skip queue)
+                    quality_suppressed += 1
+                    if verbose:
+                        print(
+                            f"[action_orchestrator] domain confidence → suggestion ({_dc_rate:.2f}): {signal_type}",
+                            file=sys.stderr,
+                        )
+                    _stage_policy_suggestion(artha_dir, proposal.id, 2, executor)
+                    continue
+                else:
+                    # 0.5–0.8 → escalate friction
+                    try:
+                        proposal = _dc_replace(proposal, friction="high")
+                    except Exception:
+                        pass
+
+            # Signal confidence → suggestion threshold
+            if _sig_confidence > 0.0 and _sig_confidence < _suggestion_threshold:
+                try:
+                    from dataclasses import replace as _dc_replace2  # noqa: PLC0415
+                    proposal = _dc_replace2(proposal, friction="high")
+                except Exception:
+                    pass
+
             executor.propose_direct(proposal)
             proposed += 1
+
+            # Write normalized_entity and confidence to actions row (quality metadata)
+            if _quality_conn is not None:
+                try:
+                    _quality_conn.execute(
+                        "UPDATE actions SET normalized_entity = ?, confidence = ? WHERE id = ?",
+                        (_normalized_entity, _sig_confidence if _sig_confidence > 0.0 else None, proposal.id),
+                    )
+                    _quality_conn.commit()
+                except Exception:
+                    pass
 
             # Hardening step 4: AI-signal proposals get [AI-SIGNAL] audit prefix for
             # easy filtering during burn-in review.
@@ -1099,6 +1720,12 @@ def run(
                 f"[action_orchestrator] compose/propose failed for {signal_type}: {exc}",
                 file=sys.stderr,
             )
+
+    if _quality_conn is not None:
+        try:
+            _quality_conn.close()
+        except Exception:
+            pass
 
     # 7. Expire stale proposals
     expired = 0
@@ -1252,6 +1879,25 @@ def cmd_list(artha_dir: Path) -> int:
             content_flag = " [content]" if action_type in _CONTENT_BEARING_TYPES else ""
             print(f"{i}. [{pid}] {icon} {action_type} | {domain} | {title[:60]}{content_flag}")
             print(f"   Friction: {friction} | Trust: {min_trust} | Expires: {expires_at}")
+
+        # Acceptance rate line (§4.5.3)
+        try:
+            from action_queue import _open_db as _aq_open_lr, ActionQueue as _AQ_lr  # noqa: PLC0415
+            _lr_db = _AQ_lr._resolve_db_path(artha_dir)
+            if _lr_db.exists():
+                _lrconn = _aq_open_lr(_lr_db)
+                try:
+                    _rate_30 = _acceptance_rate_windowed(_lrconn, window_days=30, min_decisions=10)
+                    _rate_all = _acceptance_rate_windowed(_lrconn, window_days=3650, min_decisions=3)
+                    if _rate_30 is not None or _rate_all is not None:
+                        _r30_str = f"{_rate_30*100:.0f}%" if _rate_30 is not None else "—"
+                        _rall_str = f"{_rate_all*100:.0f}%" if _rate_all is not None else "—"
+                        print(f"\n  Acceptance rate: {_r30_str} (30d) | {_rall_str} (all-time)")
+                finally:
+                    _lrconn.close()
+        except Exception:
+            pass
+
         print("════════════════════════════════════════════════════════════════")
         return 0
     finally:
@@ -1315,14 +1961,54 @@ def cmd_approve(artha_dir: Path, action_id: str) -> int:
 
 
 def cmd_reject(artha_dir: Path, action_id: str, reason: str = "") -> int:
-    """Reject a pending proposal."""
+    """Reject a pending proposal.
+
+    When run interactively (stdin is a TTY) and no --reason flag was given,
+    prompts for a rejection category to drive policy learning (§4.5.1).
+
+    Categories:
+      1 — Already handled (manual / autopay)
+      2 — Wrong action type
+      3 — Not relevant / stale
+      4 — Other
+    """
     _, ActionExecutor, _ = _import_action_modules()
     executor = ActionExecutor(artha_dir)
     try:
         action_id = _resolve_id(executor, action_id)
+
+        # Interactive category prompt (CONSTRAINT 8)
+        rejection_category: int | None = None
+        _category_labels = {
+            1: "already_handled",
+            2: "wrong_action_type",
+            3: "not_relevant",
+            4: "other",
+        }
+        if sys.stdin.isatty() and not reason:
+            print("\n  Rejection category:")
+            print("    1 — Already handled (manual / autopay)")
+            print("    2 — Wrong action type")
+            print("    3 — Not relevant / stale")
+            print("    4 — Other")
+            _cat_input = input("  Category [1-4, Enter to skip]: ").strip()
+            if _cat_input.isdigit() and 1 <= int(_cat_input) <= 4:
+                rejection_category = int(_cat_input)
+                if not reason:
+                    reason = _category_labels[rejection_category]
+
         executor.reject(action_id, reason=reason)
         print(f"[action] ✓ rejected: {action_id[:8]}")
         _audit_log(artha_dir, f"ACTION_REJECTED | id:{action_id} | reason:{reason!r}")
+
+        # Write rejection_category to trust_metrics
+        if rejection_category is not None or reason:
+            _write_rejection_category(artha_dir, action_id, reason, rejection_category)
+
+        # Stage policy suggestion for cat 1 or 2
+        if rejection_category in (1, 2):
+            _stage_policy_suggestion(artha_dir, action_id, rejection_category, executor)
+
         return 0
     except Exception as exc:
         print(f"[action] ✗ reject failed: {exc}", file=sys.stderr)
@@ -1432,12 +2118,65 @@ def cmd_approve_all_low(artha_dir: Path) -> int:
 
 
 def cmd_expire(artha_dir: Path) -> int:
-    """Sweep expired proposals from the queue."""
+    """Sweep expired proposals from the queue.
+
+    Writes trust_metrics rows with user_decision='expired' for each
+    action that is expiring (CONSTRAINT 10).
+    """
     _, ActionExecutor, _ = _import_action_modules()
     executor = ActionExecutor(artha_dir)
     try:
+        # Query expirable actions BEFORE calling expire_stale() (CONSTRAINT 10)
+        expirable: list[dict] = []
+        try:
+            from action_queue import _open_db as _aq_open_exp, ActionQueue as _AQ_exp  # noqa: PLC0415
+            _exp_db = _AQ_exp._resolve_db_path(artha_dir)
+            if _exp_db.exists():
+                _econn = _aq_open_exp(_exp_db)
+                try:
+                    _ecur = _econn.execute(
+                        "SELECT id, action_type, domain FROM actions "
+                        "WHERE status IN ('pending', 'deferred') "
+                        "AND expires_at < datetime('now')"
+                    )
+                    expirable = [
+                        {"id": r[0], "action_type": r[1], "domain": r[2]}
+                        if isinstance(r, (list, tuple))
+                        else dict(r)
+                        for r in _ecur.fetchall()
+                    ]
+                finally:
+                    _econn.close()
+        except Exception as exc:
+            print(f"[action] expiry pre-query failed (trust_metrics will not be written): {exc}", file=sys.stderr)
+
         count = executor.expire_stale()
         print(f"[action] expired {count} stale proposal(s)")
+
+        # Write trust_metrics rows for each expired action (CONSTRAINT 10)
+        if expirable:
+            try:
+                from action_queue import _open_db as _aq_open_tm, ActionQueue as _AQ_tm  # noqa: PLC0415
+                _tm_db = _AQ_tm._resolve_db_path(artha_dir)
+                if _tm_db.exists():
+                    _tmconn = _aq_open_tm(_tm_db)
+                    _ts = datetime.now(timezone.utc).isoformat()
+                    try:
+                        for ea in expirable:
+                            _tmconn.execute(
+                                """
+                                INSERT OR IGNORE INTO trust_metrics
+                                (action_type, domain, signal_subtype, user_decision, proposed_at)
+                                VALUES (?, ?, NULL, 'expired', ?)
+                                """,
+                                (ea["action_type"], ea["domain"], _ts),
+                            )
+                        _tmconn.commit()
+                    finally:
+                        _tmconn.close()
+            except Exception as exc:
+                print(f"[action] trust_metrics expiry write failed: {exc}", file=sys.stderr)
+
         if count:
             _audit_log(artha_dir, f"ACTION_EXPIRY_SWEEP | expired:{count}")
         return 0
@@ -1591,6 +2330,19 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print action layer health status",
     )
+    group.add_argument(
+        "--apply-suggestions",
+        action="store_true",
+        dest="apply_suggestions",
+        help="Review and apply staged policy suggestions to user_context.yaml",
+    )
+    group.add_argument(
+        "--reset-domain-confidence",
+        nargs=2,
+        metavar=("SIGNAL_SUBTYPE", "DOMAIN"),
+        dest="reset_domain_confidence",
+        help="Reset trust metrics for a signal_subtype × domain pair",
+    )
 
     p.add_argument(
         "--mcp",
@@ -1657,6 +2409,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.health:
         return cmd_health(artha_dir)
+
+    if args.apply_suggestions:
+        return cmd_apply_suggestions(artha_dir)
+
+    if args.reset_domain_confidence:
+        signal_subtype, domain = args.reset_domain_confidence
+        return cmd_reset_domain_confidence(artha_dir, signal_subtype, domain)
 
     return 2  # unreachable — argparse enforces mutual exclusion
 
