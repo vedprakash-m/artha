@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.41.0 | **Status**: Active Development | **Date**: May 2026
+> **Version**: 3.42.0 | **Status**: Active Development | **Date**: April 29, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.26.0
+> **Implements**: PRD v7.27.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.42.0 | 2026-04-29 | **Action Layer Quality Conversion (§40, FR-40)** — Three-layer gate stack raising proposal acceptance rate target from 25% to 85%+. Layer 1 (signal precision): entity viability gate, temporal coherence check, autopay suppression, action type overrides. Layer 2 (proposal quality): 5-factor confidence scoring, suggestion tier, category-aware dedup (90/30/0 day windows), loop circuit breaker. Layer 3 (feedback): 5 rejection categories, domain confidence decay, 30-day sliding window acceptance rate (deferred=accepted), staged policy suggestions. New DB tables: signal_suppression, policy_suggestions, loop_quarantine. New columns in trust_metrics (signal_subtype, rejection_category, normalized_entity) and actions (confidence, normalized_entity, signal_subtype). Schema migration: scripts/migrate_actions_quality.py (idempotent). Config: config/user_context.yaml (gitignored). 41 unit tests in tests/unit/test_action_quality.py. Implements PRD v7.27.0 + UX Spec v3.22.0. |
+| v3.41.1 | 2026-04-29 | **Passive Capability Inventory (§3, §8.12, FR-15)** — Added `scripts/mcp_discovery.py` and `scripts/skill_index.py`. MCP discovery scans known VS Code/Warp/Claude/Cursor/Codex MCP config files, redacts env values and URL query/fragment data, writes `tmp/mcp_discovery.json`, and never starts servers. Skill index reads `config/skills.yaml` through `lib.config_loader`, scans builtin and plugin skill files, writes `tmp/skill_index.json`, and never imports skill modules. `scripts/preflight.py` gains P1 non-blocking checks `check_mcp_discovery()` and `check_skill_index()`. `scripts/channel/handlers.py::cmd_status()` surfaces compact Connections & capabilities counts. 8 focused tests. Implements PRD v7.26.1 + UX Spec v3.21.1. |
 | v3.41.0 | 2026-05-01 | **PM Starter Kit Adoption (§39, FR-32)** — `scripts/work/daily.py` thin dispatch module (Pattern 2, §3.5): `cmd_standup(fmt)` (PAW format, teams variant), `cmd_plan()` (3-I filter scaffold), `cmd_11(person)` (PAW 1:1 with people card lookup). `work_reader.py` dispatch entries: standup/plan/11 in choices list, dispatch dict, imports. People cards system: `state/work/people/<alias>.md` schema (domain: work-people-card, display_name, last_interaction, title, org); 10 seed cards; `_template.md` per §5.7.3. State files: `state/lessons.md` (50-row cap), `state/work/work-connect-tags.md`, `state/work/work-weekly-plan.md`, `state/career_growth_practices.md` (GP-1–GP-6). Config: `artha_config.yaml` `growth_lens_enabled: true`. Guardrail: `meeting_routing_injection_scan` in guardrails.yaml (injection_detector.py). Meeting routing: reflect-protocol.md Step 2b + ProposalID schema. State registry: 4 new entries. Commands.md: work standup/plan/11 specs + IBA retrofit for sprint/prep. Artha.core.md: correction memory rule + connect tag rule + growth lens annotation rule. Implements PRD v7.26.0 FR-32. |
 | v3.40.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (§38, FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment. Four-pillar Work OS connector model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). New modules: `scripts/lib/workiq_circuit_breaker.py` (3-failure OPEN, 4h half-open probe, atomic `os.replace()` flush — F6/F18/F19/F20/G5/G8), `scripts/lib/mcp_formatter.py` (F31 `connector_record.py` compliance — calendar/mail/teams fallback formatting), `scripts/lib/work_connector_router.py` (policy-driven routing from `config/work_connector_policy.yaml` — F3/F13/G2), `scripts/lib/enghub_manager.py` (Node.js stdio subprocess lifecycle, MCP JSON-RPC, daemon-thread fire-and-forget, 200-char snippet cap — F23/F24/F25/G9/G10/G11/G12/G13), `scripts/schemas/briefing_block.py` (F20 success predicate). Config: `config/work_connector_policy.yaml` (10 routing surfaces), `config/enghub_service_scope.yaml` (service ID scope). Integration: `work_loop.py` gains `ProviderAvailability.m365_mcp`/`enghub_mcp` (F4), circuit breaker in `_run_workiq()`, `_fire_enghub_async()` daemon thread (G10). 12 guardrails (G1–G12), 3 architectural patterns (P1–P3). 50 tests across 4 test files. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.39.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.23.0 FR-29. |
@@ -33,7 +35,7 @@ Full detailed changelog: see [CHANGELOG.md](../CHANGELOG.md)
 
 Artha is a **pull-based personal intelligence system** built on four principles:
 
-1. **Claude Code IS the application.** There is no custom daemon or web server. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application. *Exception (DEBT-SPEC-001):* Three lightweight sidecar utilities run as opt-in OS cron jobs — not as persistent daemons: `scripts/precompute.py --domain <x>` (scheduled domain pre-computation, EAR-3), `scripts/vault.py` (encrypt/decrypt on session open/close, §3.6.2), and `scripts/preflight.py` (system health check). These are invoked on-demand by cron, not running continuously, and have no network listeners.
+1. **Claude Code IS the application.** There is no custom daemon or web server. The user opens a Claude Code session, says "catch me up," and Claude — guided by CLAUDE.md — orchestrates the entire workflow using MCP tools. The instruction file is the application. *Exception (DEBT-SPEC-001):* Three lightweight sidecar utilities run as opt-in OS cron jobs — not as persistent daemons: `scripts/precompute.py --domain <x>` (scheduled domain pre-computation, EAR-3), `scripts/vault.py` (encrypt/decrypt on session open/close, §3.6.2), and `scripts/preflight.py` (system health check). Passive inventory helpers (`scripts/mcp_discovery.py`, `scripts/skill_index.py`) run only when invoked by status/preflight and have no network listeners, subprocess server startup, or skill import side effects.
 
 2. **Prompts are the logic layer.** Domain-specific behavior (what to extract from immigration emails, when to alert about a bill, how to score goal progress) lives in Markdown prompt files — not in code. Adding a new life domain = adding a new `.md` file. No compilation, no deployment, no restart.
 
@@ -200,6 +202,21 @@ The routing table maps email senders and subject patterns to domain prompts. Cla
 ---
 
 ## 3. MCP Tool Configuration
+
+### 3.0 Passive MCP Discovery
+
+`scripts/mcp_discovery.py` is a read-only inventory helper for MCP client configuration drift. It scans known project and home config locations for VS Code, Warp, Claude, Cursor, Codex, and generic MCP config files:
+
+- Project: `.vscode/mcp.json`, `.mcp.json`, `.cursor/mcp.json`, `.warp/mcp.json`, `.warp/.mcp.json`, `.claude/mcp.json`, `.claude.json`
+- Home: `~/.mcp.json`, `~/.config/mcp/config.json`, `~/.cursor/mcp.json`, `~/.warp/mcp.json`, `~/.warp/.mcp.json`, `~/.claude.json`, Claude desktop config, `~/.codex/config.toml`
+
+The scanner accepts JSON, JSONC, and TOML. It recognizes `servers`, `mcpServers`, and `mcp_servers` maps, plus nested `mcp.servers` forms. Output is written atomically to `tmp/mcp_discovery.json` with:
+
+- config file count, server count, project/home split, transport counts, and parse warnings
+- per-server `name`, `transport`, `scope`, `provider`, `config_path`, and optional sanitized `command`/`url`/`description`
+- redacted values: environment blocks are omitted; URL query strings and fragments are stripped; paths are displayed as `$ARTHA_DIR/...` or `~/...`
+
+Non-goals: no MCP server startup, no auth probe, no network call, no subprocess launch. Preflight treats parse/read problems as P1 warnings, never P0 blockers.
 
 ### 3.1 Gmail MCP
 
@@ -380,6 +397,8 @@ npx -y @microsoft/workiq@{PINNED_VERSION} ask \
 ### 3.5 External Integrations & Data Skills
 
 Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fidelity data extraction.
+
+`scripts/skill_index.py` provides the static inventory for this subsystem. It reads `config/skills.yaml` through `lib.config_loader`, scans `scripts/skills/*.py` and `~/.artha-plugins/skills/*.py`, and writes `tmp/skill_index.json`. It never imports skill modules. The index includes configured/enabled counts, builtin/plugin file counts, enabled skills with missing modules, command namespaces, vault requirements, safety-critical flags, connector/package requirements, and plugin-only files that are present but not configured.
 
 | Source | Access Method | Credentials | Stack | Purpose |
 |---|---|---|---|---|
@@ -1214,7 +1233,7 @@ Sensitivity: **standard**, access: full. Per-child sections: Academics table (co
 
 ### 4.5 Health-Check State (`~/OneDrive/Artha/state/health-check.md`)
 
-System observability file. Sections: Last Catch-Up (duration, emails, alerts, errors), MCP Tool Status, Run History (last 10), Estimated Monthly API Cost, Accuracy Pulse Data (per-catchup + 7-day rolling acceptance/corrections), Tiered Context Stats (tier assignments + token savings), Email Pre-Processing Stats, Signal:Noise Tracking (30-day rolling), Context Window Pressure (token usage + headroom), OAuth Token Health (per-provider status).
+System observability file. Sections: Last Catch-Up (duration, emails, alerts, errors), MCP Tool Status, passive MCP inventory summary (`tmp/mcp_discovery.json`), static Skill Inventory summary (`tmp/skill_index.json`), Run History (last 10), Estimated Monthly API Cost, Accuracy Pulse Data (per-catchup + 7-day rolling acceptance/corrections), Tiered Context Stats (tier assignments + token savings), Email Pre-Processing Stats, Signal:Noise Tracking (30-day rolling), Context Window Pressure (token usage + headroom), OAuth Token Health (per-provider status).
 
 ### 4.6 Audit Log (`~/OneDrive/Artha/state/audit.md`)
 
@@ -2403,6 +2422,13 @@ Targeted Python scripts that pull high-fidelity data from institutional portals 
     - **P0 (Immigration):** Halt catch-up on logical/parse errors. If status changes, alert P0 and continue catch-up. Transient errors warn and continue. P0 skills exempt from R7.
     - **P1/P2:** Log warning and continue catch-up.
 
+**1b. Static Skill Index (`scripts/skill_index.py`)**
+- **Purpose:** Provide a cheap capability manifest for status/health surfaces without executing or importing skills.
+- **Inputs:** `config/skills.yaml`, `scripts/skills/*.py`, optional `~/.artha-plugins/skills/*.py`.
+- **Output:** `tmp/skill_index.json` with configured/enabled counts, builtin/plugin file counts, missing enabled modules, plugin-only files, command namespaces, vault requirements, safety-critical flags, connector requirements, and package requirements.
+- **Safety:** Uses `lib.config_loader` for config reads; no Python skill imports; no connector calls; no network; atomic JSON write.
+- **Plumbing:** `preflight.py::check_skill_index()` reports P1 non-blocking status; `/status` shows compact skill counts.
+
 **2. Skill Registry (`config/skills.yaml`)**
 ```yaml
 skills:
@@ -2905,6 +2931,17 @@ Three targeted improvements to `preflight.py`:
 | `_is_bootstrap_stub(path)` | Detects `# Content\nsome: value` fingerprint; `check_state_templates()` now treats stubs as equivalent to missing files for `--fix` replacement |
 | Expired token refresh | `check_msgraph_token()` now attempts `ensure_valid_token()` when `secs_left < 0` (already expired), not just within 300s window |
 | 48h advance advisory | When MS Graph token is valid but expires within 48h, emits a P1 advisory "run --reauth before next session" to prevent mid-session expiry |
+
+#### 8.12.6 Passive Capability Inventory Checks (`scripts/preflight.py`)
+
+Two P1 non-blocking checks keep Artha's capability surface visible without adding runtime complexity:
+
+| Check | Script | Output | Failure behavior |
+|-------|--------|--------|------------------|
+| `check_mcp_discovery()` | `scripts/mcp_discovery.py` | `tmp/mcp_discovery.json` | Read/parse problems are P1 warnings; no MCP server is started |
+| `check_skill_index()` | `scripts/skill_index.py` | `tmp/skill_index.json` | Enabled skills with no builtin/plugin file are P1 warnings; skill code is never imported |
+
+`scripts/channel/handlers.py::cmd_status()` also calls both helpers and appends a compact "Connections & capabilities" block. This is intentionally a read-path affordance only: no connector activation, no auth probing, no automatic remediation.
 
 ---
 
@@ -6488,6 +6525,137 @@ Work telemetry stays on `state/work/work-audit.md` (G4 — never `health-check.m
 | `scripts/schemas/briefing_block.py` | F20 BriefingBlock schema |
 | `config/work_connector_policy.yaml` | Routing authority (10 surfaces) |
 | `config/enghub_service_scope.yaml` | EngHub service ID scope (placeholder — Phase 0 populates) |
+
+---
+
+## 40. Action Layer Quality Conversion *(FR-40, v3.42.0)*
+
+> **Goal:** Raise action proposal acceptance rate from 25% to 85%+ by adding a
+> deterministic three-layer gate stack before any proposal reaches the queue.
+>
+> **Implements:** PRD v7.27.0 | **Files:** `scripts/action_composer.py`,
+> `scripts/action_orchestrator.py`, `scripts/email_signal_extractor.py`,
+> `scripts/migrate_actions_quality.py`, `scripts/lib/user_context.py`,
+> `config/user_context.yaml` (gitignored), `config/user_context.yaml.example`,
+> `config/artha_config.yaml` (`harness.actions.quality` block)
+
+### 40.1 Three-Plane State Model
+
+| Plane | Storage | Written by | Read by | Example content |
+|-------|---------|-----------|---------|-----------------|
+| **Config (explicit preferences)** | `config/user_context.yaml` | Human only, via `--apply-suggestions` approval | `action_composer.py`, `action_orchestrator.py` | autopay_services, action_type_overrides |
+| **Runtime/Learning** | `actions.db` tables: `signal_suppression`, `policy_suggestions`, `trust_metrics` | `action_orchestrator.py` on reject/quarantine | `action_orchestrator.py` pre-compose | domain confidence, rejection categories |
+| **Ephemeral** | `tmp/semantic_cache.json`, `tmp/action_layer_status.txt`, `tmp/orchestrator_metrics.json` | `email_signal_extractor.py` / run loop | Human (health check), eval pipeline | LLM verification cache, quality metrics |
+
+ML-learned suppressions are NEVER written directly to `user_context.yaml`. They are staged in `policy_suggestions` and applied only after explicit human approval.
+
+### 40.2 Layer 1 — Signal Precision (action_composer.py)
+
+Gate order in `ActionComposer.compose()` (all gates run before routing lookup):
+
+1. **Entity Viability Gate** (`_entity_is_viable`): org-part of entity must not be "unknown"/empty; org-part length ≥ 3 chars; entity must not be a bare domain/email. Eliminates RC-1 ghost entities.
+2. **Temporal Coherence** (`_signal_is_temporally_relevant`): `security_alert` bypasses check; `bill_due` has 3-day retroactive grace; `delivery_arriving` has 1-day grace; all other past-date signals are dropped. Eliminates RC-3 stale proposals.
+3. **Autopay Suppression**: If signal type is `bill_due` or `financial_alert` and sender's normalized domain is in `user_context.yaml:autopay_services`, drop. Eliminates RC-1 already-handled.
+4. **Action Type Override**: If `user_context.yaml:action_type_overrides[signal_type]` exists, substitute action type before routing. Eliminates RC-4 wrong action type.
+5. **Suppressed Signal Domains** (config plane): If signal_type × domain is in `user_context.yaml:suppressed_signal_domains`, drop.
+6. **Signal Suppression DB** (learning plane): If ML-approved suppression exists in `signal_suppression` table, drop.
+
+### 40.3 Layer 2 — Proposal Quality (action_orchestrator.py run loop)
+
+Applied per-signal before `compose()` is called, using a single DB connection per run:
+
+| Check | Implementation | Short-circuit |
+|-------|---------------|--------------|
+| Loop quarantine | `_check_loop_quarantine()` — reads `loop_quarantine` table | Drop if quarantined |
+| Signal suppression DB | `_check_signal_suppression()` | Drop if suppressed |
+| Consecutive non-accepted | `_count_consecutive_non_accepted()` → `_record_loop_quarantine()` | Drop + quarantine if ≥ threshold |
+| Category-aware dedup | `_check_category_dedup()` — reads `trust_metrics.normalized_entity` | Drop if within dedup window |
+| Domain confidence | `_domain_confidence()` — ratio of accepted/(accepted+rejected) in 90d | Drop if < 0.2 |
+| Signal confidence | `signal.confidence` vs `min_confidence` (0.5) | Drop if below threshold |
+| Suggestion tier | `signal.confidence` between `min_confidence` and `suggestion_threshold` (0.65) | Display as informational, not proposal |
+
+**Confidence scoring** (5 factors, `email_signal_extractor.py::_compute_confidence()`):
+
+| Factor | Weight | Signal |
+|--------|--------|--------|
+| Entity quality (not "unknown", length) | 0.3 | Is entity useful? |
+| Date/deadline present | 0.2 | Is signal time-bound? |
+| Amount/monetary value present | 0.1 | Is signal financial? |
+| Sender domain in trusted_sender_domains | 0.2 | Is origin trusted? |
+| Semantic verification (LLM-as-judge) | 0.2 | Is signal coherent? |
+
+**Category-aware dedup windows** (§4.4.3):
+
+| Rejection category | Suppression window |
+|-------------------|-------------------|
+| `already_handled` | 90 days |
+| `not_relevant`, `duplicate` | 30 days |
+| `wrong_action_type`, `bad_timing` | 0 days (no suppression) |
+| No category (NULL) | 30 days (default) |
+
+**Loop circuit breaker**: 4 consecutive non-accepted (rejected + expired) → 14-day quarantine in `loop_quarantine` table. Thresholds configurable in `harness.actions.quality`.
+
+### 40.4 Layer 3 — Feedback & Learning (action_orchestrator.py)
+
+**Rejection categories** (interactive TTY prompt + can be passed as --reason):
+1. `already_handled` → stage `autopay_add` suggestion
+2. `wrong_action_type` → stage `action_override` suggestion
+3. `not_relevant` → update domain confidence via trust_metrics
+4. `bad_timing` → 0-day dedup (do not suppress future proposals)
+5. `duplicate` → 30-day dedup window
+
+**Domain confidence** (`_domain_confidence`): `accepted / (accepted + rejected)` over 90-day window by `(signal_subtype, domain)` pair. Falls back to 1.0 (neutral) when no data. Confidence < 0.2 → signal suppressed; 0.2–0.5 → suggestion tier only.
+
+**Sliding window acceptance rate** (`_acceptance_rate_windowed`): `accepted / effective_denominator` over configurable window. Deferred counts as accepted (1.0 weight). Expired counts as 0.5 weight. Returns None if < 10 decisions in window. L2 promotion gate: 85% sustained over 30 days with ≥ 10 decisions.
+
+**Staged policy suggestions** (`policy_suggestions` table): ML-learned changes are staged, never applied directly. User reviews with `--apply-suggestions` (interactive TTY prompt). Approved entries are written atomically to `user_context.yaml` via `os.replace()`. Every application emits a `POLICY_APPLIED` audit event.
+
+**Signal subtype propagation**: `signal_subtype` flows `signal.subtype → actions.signal_subtype (at propose) → trust_metrics.signal_subtype (at reject, via _write_rejection_category)`. This chain is required for domain confidence, category dedup, and domain_suppress to work correctly.
+
+### 40.5 Schema Changes (migrate_actions_quality.py)
+
+New tables in `~/.artha-local/actions.db`:
+
+| Table | Key columns | Purpose |
+|-------|------------|---------|
+| `signal_suppression` | signal_type, domain, reason, created_at | ML-approved permanent suppression |
+| `policy_suggestions` | id, type, value, signal_type, applied_at | Staged suggestions awaiting human review |
+| `loop_quarantine` | signal_subtype, domain, entity_hash, quarantine_until | Loop circuit breaker state |
+
+New columns on existing tables:
+
+| Table | Column | Purpose |
+|-------|--------|---------|
+| `trust_metrics` | `signal_subtype TEXT` | Enables per-signal-type confidence |
+| `trust_metrics` | `rejection_category TEXT` | Drives category-aware dedup windows |
+| `trust_metrics` | `normalized_entity TEXT` | Entity-level dedup (not action-type proxy) |
+| `actions` | `confidence REAL` | Confidence at propose time (audit) |
+| `actions` | `normalized_entity TEXT` | Entity key for dedup |
+| `actions` | `signal_subtype TEXT` | Propagates to trust_metrics at reject |
+
+### 40.6 CLI Commands
+
+| Command | Function | Description |
+|---------|----------|-------------|
+| `--apply-suggestions` | `cmd_apply_suggestions()` | Interactive review of staged policy suggestions → writes approved to user_context.yaml |
+| `--reset-domain-confidence SIGNAL_TYPE DOMAIN` | `cmd_reset_domain_confidence()` | Delete trust_metrics rows for a (signal_subtype, domain) pair to reset confidence to 1.0 |
+| `--list` | Updated | Now shows `[C:0.82]` confidence column when available |
+
+### 40.7 Observability
+
+- `tmp/orchestrator_metrics.json`: per-run funnel metrics (signals_in, proposals_composed, quality_suppressed)
+- `tmp/action_layer_status.txt`: `QUALITY | proposals:X suppressed:Y suggestions:Z` + acceptance rate + anomaly flags (OVER_SUPPRESSED, QUALITY_REGRESSION)
+- `scripts/lib/observability.py::semantic_verify_trace()`: logs semantic verification decisions (cache hit, fallback reason, decision)
+- All suppression decisions logged to `state/audit/` via `_audit_log()`
+
+### 40.8 Semantic Verification (Feature-Flagged)
+
+Disabled by default (`harness.actions.quality.semantic_verification: false`). When enabled:
+- SHA-256 cache key: normalized(subject + sender_domain + signal_type + prompt_version)
+- Cache stored at `tmp/semantic_cache.json` (24h TTL, atomic write)
+- Timeout behavior: fail-to-suggestion (not fail-open)
+- `security_alert` always fails closed on timeout (never suggested, never proposed)
+- Uses `observability.py::semantic_verify_trace()` for every call
 
 ---
 

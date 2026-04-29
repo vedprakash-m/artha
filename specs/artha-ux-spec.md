@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.21 | **Status**: Active Development | **Date**: May 2026
+> **Version**: 3.22.0 | **Status**: Active Development | **Date**: April 29, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.26.0, Tech Spec v3.41.0
+> **Implements**: PRD v7.27.0, Tech Spec v3.42.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,8 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.22.0 | 2026-04-29 | Action Quality Layer UX (§33) — Rejection category prompt (5 categories), suggestion tier display (§ SIGNAL SUGGESTIONS), --list confidence column, --apply-suggestions interactive flow, anomaly alerts. Implements PRD v7.27.0 + Tech Spec §40. |
+| v3.21.1 | 2026-04-29 | **Capability Inventory UX (§10, §24.5)** — `/status` now includes a compact "Connections & capabilities" block showing passive MCP config count/server count and configured/enabled skill count. `/health connections` includes the same passive inventory with P1 warnings for unreadable MCP config files or enabled skills with missing modules. No connector is started and no skill is imported for these displays. Implements PRD v7.26.1 + Tech Spec v3.41.1. |
 | v3.21 | 2026-05-01 | **PM Starter Kit Work OS UX (§32)** — Output format specs for all FR-32 new commands. `work standup`: PAW format (✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS), action-verb-first, max 120 words, word count footer; `teams` variant (plain text, no box drawing, Teams chat paste-ready). `work plan`: 3-I score indicators (●●● = 3/3, ●●○ = 2/3 min for Focus, ●○○ = 1/3 Background); emoji section headers (🎯/📋/🚫/📌); GP-N growth lens tags. `work 11 <alias>`: PAW 1:1 format with Exec Summary + workstream sections (status vocab: New/WIP/Next up/Queued up/Action) + 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins; staleness warning if people card > 14 days old. `work sprint` / `work prep`: IBA escalation taxonomy (Impediments/Blockers/Asks) + Executive Summary section. People card discoverability: `work people` lists cards with last_interaction dates. Implements PRD v7.26.0 FR-32 + Tech Spec v3.41.0 §39. |
 | v3.20 | 2026-04-25 | **MCP Hybrid Connector UX (§31)** — Fallback indicator in work briefing when MCP Direct serves calendar/mail data instead of WorkIQ AI synthesis. EngHub enrichment supplement display (`📚 Engineering Context` block with retrieval timestamp). Circuit breaker status in `work health` output. Teams fallback skip notice (SC-6). Implements PRD v7.25.0 FR-31 + Tech Spec v3.40.0 §38. |
 | v3.19 | 2026-04-22 | **DataCopilot Reflect Quality UX (§29)** — DC-5 anti-sycophancy pushback interaction patterns (6 trigger templates + response language), evidence tier labels in briefing output (`[state]`, `[signaled]`, `[inferred]`, `[live]`, `[user-confirmed]`), DC-3 audit gate feedback format (blocking check failure messages + rollback notice), `deep reflect` command UX (4 phases, 300s constraint, opt-in only). Implements PRD v7.23.0 FR-29 + Tech Spec v3.39.0 §36. |
@@ -1041,7 +1043,15 @@ artha.py --doctor   Unified diagnostic — runs 11 system checks    *(v1.9)*
 
 ### 10.2 /status Output Design
 
-Header (last run time, gap), system health summary (MCP status, OAuth, context pressure), stale domain warnings (>7 days), active alerts count. Quick snapshot — no email fetch.
+Header (last run time, gap), system health summary (MCP status, OAuth, context pressure), stale domain warnings (>7 days), active alerts count, and a compact `Connections & capabilities` block:
+
+```
+Connections & capabilities:
+- MCP: 21 server(s) / 4 config file(s)
+- Skills: 25/34 configured enabled
+```
+
+This block is passive inventory only. It must not imply that every MCP server is authenticated/reachable or that every skill has run successfully. Quick snapshot — no email fetch.
 
 ### 10.3 /domain Output Design
 
@@ -1053,7 +1063,7 @@ Scorecard table (all goals: status, trend, metric, target, pace). Per-goal detai
 
 ### 10.5 /health Output Design
 
-File integrity (registry.md check), MCP health, CLI availability, OAuth token status, state file freshness, context window stats, catch-up history stats (avg duration, reliability, costs). Green/yellow/red per component.
+File integrity (registry.md check), MCP health, passive MCP inventory, static skill inventory, CLI availability, OAuth token status, state file freshness, context window stats, catch-up history stats (avg duration, reliability, costs). Green/yellow/red per component. MCP config parse/read warnings and enabled skills with missing modules appear as P1 warnings under Connections.
 
 **Harness metrics block *(v2.0)*:** When `harness:` is enabled, `/health` appends a `DEEP AGENTS HARNESS` section showing last-session metrics:
 
@@ -2277,6 +2287,8 @@ One namespace replaces `/pr` and `/stage`. The key UX improvement is **fuzzy top
 ### 24.5 `/health` — Consolidated System View
 
 `/health` with no arguments shows all sections in one view: Connections, Domain Health, Quality (7-day), Cost, Privacy, State Changes. Scoped views available: `/health connections`, `/health quality`, `/health cost`, `/health privacy`.
+
+`/health connections` includes passive MCP config inventory and static skill inventory before live connector checks. Counts come from `tmp/mcp_discovery.json` and `tmp/skill_index.json`; warnings are advisory unless they indicate an enabled skill has no corresponding builtin/plugin module.
 
 `/health reconnect <service>` provides guided OAuth re-auth — the same flow triggered by NL ("reconnect Gmail"). It appears in the `/health:` colon menu.
 
@@ -3732,4 +3744,84 @@ Impediments / Blockers / Asks escalation structure (FR-32.5) added to `work spri
 
 ---
 
-*Artha UX Spec v3.21 — End of Document*
+## 33. Action Quality Layer UX *(v3.22.0)*
+
+> **Implements:** PRD v7.27.0 + Tech Spec §40
+
+### 33.1 Rejection Category Prompt
+
+When the user rejects a proposal interactively (stdin is a TTY), Artha prompts
+for a rejection category before writing to the DB:
+
+```
+  Rejection category:
+    1 — Already handled (manual / autopay)
+    2 — Wrong action type
+    3 — Not relevant / stale
+    4 — Bad timing (right signal, wrong moment)
+    5 — Duplicate (already proposed recently)
+  Category [1-5, Enter to skip]:
+```
+
+The selected category drives the dedup window (cat 1 → 90 days, cat 3/5 → 30 days,
+cat 2/4 → 0 days). Skipping records no category and applies the 30-day default.
+
+### 33.2 Suggestion Tier Display
+
+Signals with confidence between 0.5 and 0.65 are surfaced as **informational
+suggestions**, not queued proposals. They appear in the briefing under a
+`§ SIGNAL SUGGESTIONS` header and do NOT count against acceptance rate:
+
+```
+§ SIGNAL SUGGESTIONS (confidence below proposal threshold)
+  • [0.58] bill_due × finance: Xfinity — Bill due. Low confidence (entity clarity).
+    → Run: python3 scripts/action_orchestrator.py --run --verbose to re-evaluate.
+```
+
+### 33.3 --list Output with Confidence
+
+`python3 scripts/action_orchestrator.py --list` shows a `[C:X.XX]` confidence
+indicator when the `confidence` column is populated:
+
+```
+  pending | a1b2c3d4 | instruction_sheet | finance | [C:0.82] Xfinity: Pay bill
+  pending | e5f6g7h8 | reminder_create   | kids    | [C:0.71] Arjun: Assignment due
+```
+
+### 33.4 Apply Suggestions Flow
+
+`python3 scripts/action_orchestrator.py --apply-suggestions` shows a numbered
+list of staged ML recommendations and prompts for approval:
+
+```
+  Staged policy suggestions (3 pending):
+
+  [1] autopay_add: Add 'xfinity' to autopay_services
+      Source: rejection "already_handled" × 3 sessions
+      → Apply? [y/N]:
+
+  [2] action_override: school_action_needed → whatsapp_send
+      (Desired action type requires manual input)
+      → Apply? [y/N]:
+
+  [3] domain_suppress: Suppress 'form_deadline × comms'
+      Domain confidence: 0.00 (0/5 accepted)
+      → Apply? [y/N]:
+```
+
+Approved entries are written to `config/user_context.yaml`. Rejected entries
+remain staged for future review.
+
+### 33.5 Anomaly Alerts
+
+When acceptance rate drops below 70% or all proposals are suppressed, Artha
+surfaces a warning at the bottom of the next briefing:
+
+```
+⚠ Action quality alert: 30-day acceptance rate 62% (target: ≥85%).
+  Run: python3 scripts/action_orchestrator.py --run --verbose for details.
+```
+
+---
+
+*Artha UX Spec v3.22 — End of Document*
