@@ -2354,6 +2354,75 @@ def check_connector_registry() -> CheckResult:
         )
 
 
+def check_mcp_discovery() -> CheckResult:
+    """P1 non-blocking: Generate passive MCP inventory for health/status."""
+    try:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from mcp_discovery import discover_mcp, write_discovery  # noqa: PLC0415
+
+        discovery = discover_mcp(Path(ARTHA_DIR))
+        write_discovery(discovery, Path(ARTHA_DIR) / "tmp" / "mcp_discovery.json")
+        counts = discovery.get("counts", {})
+        msg = (
+            f"{counts.get('servers', 0)} MCP server(s) in "
+            f"{counts.get('config_files', 0)} config file(s)"
+        )
+        if counts.get("errors", 0):
+            return CheckResult(
+                "MCP discovery",
+                "P1",
+                False,
+                f"{msg}; {counts.get('errors')} config read/parse warning(s)",
+                fix_hint="Run: python scripts/mcp_discovery.py --json",
+            )
+        return CheckResult("MCP discovery", "P1", True, f"{msg} ✓")
+    except Exception as exc:
+        return CheckResult(
+            "MCP discovery",
+            "P1",
+            False,
+            f"MCP inventory failed: {exc}",
+            fix_hint="Run: python scripts/mcp_discovery.py --json",
+        )
+
+
+def check_skill_index() -> CheckResult:
+    """P1 non-blocking: Generate static skill index without importing skills."""
+    try:
+        if SCRIPTS_DIR not in sys.path:
+            sys.path.insert(0, SCRIPTS_DIR)
+        from skill_index import build_skill_index, write_skill_index  # noqa: PLC0415
+
+        index = build_skill_index(Path(ARTHA_DIR))
+        write_skill_index(index, Path(ARTHA_DIR) / "tmp" / "skill_index.json")
+        counts = index.get("counts", {})
+        msg = (
+            f"{counts.get('enabled', 0)}/{counts.get('configured', 0)} "
+            "configured skills enabled"
+        )
+        missing = index.get("enabled_missing_modules", [])
+        if missing:
+            names = ", ".join(str(name) for name in missing[:5])
+            suffix = "..." if len(missing) > 5 else ""
+            return CheckResult(
+                "skill index",
+                "P1",
+                False,
+                f"{msg}; enabled skill module(s) missing: {names}{suffix}",
+                fix_hint="Run: python scripts/skill_index.py --json",
+            )
+        return CheckResult("skill index", "P1", True, f"{msg} ✓")
+    except Exception as exc:
+        return CheckResult(
+            "skill index",
+            "P1",
+            False,
+            f"skill index generation failed: {exc}",
+            fix_hint="Run: python scripts/skill_index.py --json",
+        )
+
+
 def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrails: bool = False) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
     checks: list[CheckResult] = []
@@ -2425,6 +2494,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
     # ── P1 — EngHub MCP (§13.7 — Windows-only, non-blocking) ─────────────
     checks.append(check_enghub_health())
 
+    # ── P1 — Passive MCP inventory (non-blocking, no server startup) ──────
+    checks.append(check_mcp_discovery())
+
     # ── P1 — Bridge health (dual-setup.md — non-blocking; skipped if disabled) ──
     checks.append(check_bridge_health())
 
@@ -2465,6 +2537,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
             "beautifulsoup4 not installed — Data Skills will be disabled",
             fix_hint="pip install beautifulsoup4"
         ))
+
+    # ── P1 — Static skill index (non-blocking, no skill imports) ──────────
+    checks.append(check_skill_index())
 
     # Career PDF feature — Playwright + Chromium (P1, non-blocking)
     # Spec FR-CS-3: "Preflight check validates Chromium binary availability"

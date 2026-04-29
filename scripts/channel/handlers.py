@@ -52,6 +52,46 @@ _DOMAIN_STATE_FILES: dict[str, str] = {
 }
 
 
+def _system_inventory_lines() -> list[str]:
+    """Return passive capability inventory for status surfaces."""
+    lines: list[str] = []
+
+    try:
+        import mcp_discovery as _mcp_discovery  # noqa: PLC0415
+
+        discovery = _mcp_discovery.discover_mcp(_ARTHA_DIR)
+        _mcp_discovery.write_discovery(discovery, _ARTHA_DIR / "tmp" / "mcp_discovery.json")
+        counts = discovery.get("counts", {})
+        warning_note = ""
+        if counts.get("errors", 0):
+            warning_note = f", {counts.get('errors')} warning(s)"
+        lines.append(
+            f"MCP: {counts.get('servers', 0)} server(s) / "
+            f"{counts.get('config_files', 0)} config file(s){warning_note}"
+        )
+    except Exception as exc:
+        lines.append(f"MCP: inventory unavailable ({str(exc)[:80]})")
+
+    try:
+        import skill_index as _skill_index  # noqa: PLC0415
+
+        index = _skill_index.build_skill_index(_ARTHA_DIR)
+        _skill_index.write_skill_index(index, _ARTHA_DIR / "tmp" / "skill_index.json")
+        counts = index.get("counts", {})
+        warning_note = ""
+        missing = counts.get("enabled_missing_modules", 0)
+        if missing:
+            warning_note = f", {missing} enabled missing module(s)"
+        lines.append(
+            f"Skills: {counts.get('enabled', 0)}/"
+            f"{counts.get('configured', 0)} configured enabled{warning_note}"
+        )
+    except Exception as exc:
+        lines.append(f"Skills: index unavailable ({str(exc)[:80]})")
+
+    return lines
+
+
 
 # ── cmd_status ──────────────────────────────────────────────────
 
@@ -97,6 +137,11 @@ async def cmd_status(args: list[str], scope: str) -> tuple[str, str]:
     oi_content, _ = _read_state_file("open_items")
     open_count = oi_content.lower().count("status: open")
     summary_parts.append(f"\nOpen items: {open_count}")
+
+    inventory_lines = _system_inventory_lines()
+    if inventory_lines:
+        summary_parts.append("\nConnections & capabilities:")
+        summary_parts.extend(f"- {line}" for line in inventory_lines)
 
     text = "\n".join(summary_parts)
     return _apply_scope_filter(text, scope), staleness
