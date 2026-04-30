@@ -1029,6 +1029,31 @@ def do_import_key() -> None:
 # Preflight delegation
 # ---------------------------------------------------------------------------
 
+def do_file_snapshot(file_path: Path) -> int:
+    """Create a lightweight `.pre-write.bak` copy of a single file.
+
+    Used by Step 8t (Ambient Intent Buffer) as a pre-write guard before
+    materializing planning objects. The .bak file provides a one-step rollback
+    if post-write YAML validation fails.
+
+    Returns 0 on success, 1 on failure.
+    Silently succeeds when the file does not yet exist (first write).
+    """
+    if not file_path.exists():
+        # First write to a new file — nothing to snapshot, not an error
+        return 0
+    bak_path = Path(str(file_path) + ".pre-write.bak")
+    try:
+        shutil.copy2(str(file_path), str(bak_path))
+        log(f"FILE_SNAPSHOT | source: {file_path} | bak: {bak_path.name}")
+        print(f"snapshot: {file_path.name} → {bak_path.name}")
+        return 0
+    except OSError as exc:
+        log(f"FILE_SNAPSHOT_FAILED | source: {file_path} | error: {exc}")
+        print(f"error: snapshot failed for {file_path}: {exc}", file=sys.stderr)
+        return 1
+
+
 def _do_preflight() -> None:
     """Check prerequisites for backup/restore by delegating to vault.py health.
 
@@ -1091,6 +1116,13 @@ def main(argv: "list[str] | None" = None) -> None:
     inst.add_argument("--data-only", action="store_true", help="Restore state files only (skip config)")
     inst.add_argument("--confirm", action="store_true", help="Required to actually write files (safety gate)")
 
+    # ── Single-file snapshot ──
+    fs = sub.add_parser(
+        "file-snapshot",
+        help="Copy a single file to <file>.pre-write.bak (pre-write guard for Step 8t)",
+    )
+    fs.add_argument("file", help="Path to the file to snapshot")
+
     # ── Key management ──
     sub.add_parser("export-key", help="Display the age private key (for secure backup)")
     sub.add_parser("import-key", help="Store an age private key in the credential store")
@@ -1118,6 +1150,8 @@ def main(argv: "list[str] | None" = None) -> None:
     elif args.command == "install":
         do_install(args.zipfile, dry_run=args.dry_run, data_only=args.data_only,
                    confirm=args.confirm)
+    elif args.command == "file-snapshot":
+        sys.exit(do_file_snapshot(Path(args.file)))
     elif args.command == "export-key":
         do_export_key()
     elif args.command == "import-key":

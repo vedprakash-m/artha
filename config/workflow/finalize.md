@@ -490,6 +490,12 @@ If `executed > 0`, list each executed action with its undo window (if applicable
 Present the coaching nudge selected by `coaching_engine.py` at Step 8 (`--goals-file state/goals.md --format json`). Generate a 2-line coaching message matching the user's preferred style from `memory.md → coaching_preferences`. On weekly summary days, fold the nudge into the Goal Review section (§8.X in `config/briefing-formats.md`). If `coaching_engine.py` returns `suppressed: true` or exits non-zero, skip silently (UX-1).
 Max 2 lines in standard mode, omit in flash mode.
 
+If no active sprint exists and `python3 scripts/planning_signals.py sprint-triggers`
+returns a `bootstrap_signal_id`, surface that signal through the Step 8t materialization
+offer flow. Sprint writes must go through `python3 scripts/planning_signals.py materialize
+SIG-NNN`, which delegates to `goals_writer.py --add-sprint`; do not append directly to
+`state/goals.md`.
+
 ---
 
 ## 🔌 Connector & Token Health (MANDATORY — always include)

@@ -159,6 +159,91 @@ def update_goal(goals_file: Path, goal_id: str, fields: dict[str, Any]) -> int:
     return 0
 
 
+def add_sprint(goals_file: Path, fields: dict[str, Any]) -> int:
+    """Append a sprint block to goals.md under the top-level `sprints:` key.
+
+    Validates:
+    - goal_ref exists and is not parked
+    - no active sprint already exists for that goal
+    - goal.target_date >= sprint.end (sprint must finish before goal deadline)
+    - sprint id is unique
+
+    Returns exit code (0 = success, 1 = goal not found, 2 = validation error, 3 = write failure).
+    """
+    required = {"id", "goal_ref", "start", "end", "target"}
+    missing = required - fields.keys()
+    if missing:
+        print(f"error: missing required fields: {missing}", file=sys.stderr)
+        return 2
+
+    content = goals_file.read_text(encoding="utf-8")
+    fm, body = _split_frontmatter(content)
+    goals: list[dict] = fm.get("goals", [])
+
+    # Validate goal_ref exists
+    goal_ref = fields["goal_ref"]
+    goal = next((g for g in goals if g.get("id") == goal_ref), None)
+    if goal is None:
+        print(f"error: goal {goal_ref!r} not found in {goals_file}", file=sys.stderr)
+        return 1
+
+    # Parked goals must not get sprints (§4.4 Archetype 5)
+    if goal.get("status") == "parked":
+        print(f"error: goal {goal_ref!r} is parked — cannot create sprint for a parked goal",
+              file=sys.stderr)
+        return 2
+
+    # Validate sprint end <= goal target_date
+    goal_target = str(goal.get("target_date") or "")
+    sprint_end = str(fields["end"])
+    if goal_target and sprint_end > goal_target:
+        print(
+            f"error: sprint end ({sprint_end}) is after goal target_date ({goal_target}) "
+            f"— shorten sprint or extend goal deadline",
+            file=sys.stderr,
+        )
+        return 2
+
+    sprints: list[dict] = fm.setdefault("sprints", [])
+
+    # Duplicate sprint ID guard
+    if any(s.get("id") == fields["id"] for s in sprints):
+        print(f"error: sprint {fields['id']!r} already exists", file=sys.stderr)
+        return 2
+
+    # Existing active sprint guard for this goal
+    active = [s for s in sprints if s.get("goal_ref") == goal_ref and s.get("status") == "active"]
+    if active:
+        print(
+            f"error: goal {goal_ref!r} already has active sprint {active[0]['id']!r} "
+            f"— close it before adding a new one",
+            file=sys.stderr,
+        )
+        return 2
+
+    new_sprint: dict[str, Any] = {
+        "id": fields["id"],
+        "goal_ref": goal_ref,
+        "start": fields["start"],
+        "end": sprint_end,
+        "target": fields["target"],
+        "status": "active",
+        "check_in_cadence": fields.get("check_in_cadence", "weekly"),
+    }
+    if fields.get("signal_ref"):
+        new_sprint["signal_ref"] = fields["signal_ref"]
+
+    sprints.append(new_sprint)
+    fm["last_updated"] = str(date.today())
+    try:
+        write_state_atomic(goals_file, _assemble(fm, body))
+    except OSError as exc:
+        print(f"error: write failed: {exc}", file=sys.stderr)
+        return 3
+    print(f"added sprint {fields['id']!r} for goal {goal_ref!r}: {fields['target']!r}")
+    return 0
+
+
 def create_goal(goals_file: Path, fields: dict[str, Any]) -> int:
     """Append a new goal to the goals list. Returns exit code."""
     required = {"id", "title", "type", "category"}
@@ -314,6 +399,22 @@ def main() -> int:
         ns, _ = rem.parse_known_args(argv[1:])
         fields = {k: v for k, v in vars(ns).items() if v is not None}
         return create_goal(goals_file, fields)
+
+    elif argv[0] == "--add-sprint":
+        rem = argparse.ArgumentParser(
+            prog="goals_writer.py --add-sprint",
+            description="Append a validated sprint block to goals.md",
+        )
+        rem.add_argument("--id", required=True)
+        rem.add_argument("--goal-ref", dest="goal_ref", required=True)
+        rem.add_argument("--start", required=True)
+        rem.add_argument("--end", required=True)
+        rem.add_argument("--target", required=True)
+        rem.add_argument("--signal-ref", dest="signal_ref")
+        rem.add_argument("--check-in-cadence", dest="check_in_cadence", default="weekly")
+        ns, _ = rem.parse_known_args(argv[1:])
+        fields = {k: v for k, v in vars(ns).items() if v is not None}
+        return add_sprint(goals_file, fields)
 
     else:
         parser.print_help()

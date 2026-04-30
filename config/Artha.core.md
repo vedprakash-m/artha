@@ -265,6 +265,10 @@ If today is the 1st of the month AND last monthly retrospective was >28 days ago
 Read `state/goals.md → sprints`. For any sprint where `sprint_start + 14 days == today`:
   - Flag `sprint_calibration = true` for that sprint
   - Prompt in Step 19b: "Sprint '[name]' is at its 2-week calibration point. Pace on track? [yes / adjust target / pause sprint]"
+Also run `python3 scripts/planning_signals.py sprint-triggers` to deterministically:
+  - create a `goal_drift` sprint candidate for eligible active G-004/G-005 goals with no sprint activity for ≥30 days
+  - skip parked goals and any goal whose target date is before the proposed 14-day sprint end
+  - surface any returned `bootstrap_signal_id` through Step 8t offer handling
 
 **Decision deadlines:**
 Read `state/decisions.md`. For each DEC-NNN with `deadline:` and `status: active`:
@@ -662,9 +666,16 @@ If any cross-domain reasoning produces a recommendation involving trade-offs acr
 - Do not auto-log; user must confirm
 
 **8e — Scenario trigger detection:**
-Check `state/scenarios.md` for scenarios with `status: watching`. For each, evaluate if the current catch-up data matches the `trigger` condition:
+Check `state/scenarios.md` for scenarios with `status: watching` or `status: active`.
+Use deterministic helper `python3 scripts/planning_signals.py evaluate-scenarios --write`
+for scenario OI creation and duplicate guards.
+Before evaluating, apply the idempotency guard: if `last_evaluated` is <7 days ago
+AND the source signal's `last_seen` is not newer than `last_evaluated`, skip this
+scenario for this session. For each remaining scenario, evaluate if the current
+catch-up data matches the `trigger` condition:
 - If trigger matches: promote scenario to `status: active`, surface it in the briefing under 💡 ONE THING or a `⚡ SCENARIO ALERT` block
 - Include scenario ID and question in the alert: "SCN-NNN triggered: [question]"
+- If a scenario recommendation creates an open item, set `source_ref: SCN-NNN`; if an open item with that `source_ref` already exists, do not create another one.
 
 **8f — Compound signal detection:**
 Check for cross-domain correlations that produce non-obvious insights. Correlation rules:
@@ -862,6 +873,50 @@ During ORIENT, for the `Goals × [All Domains]` pair, execute the Goal Evaluatio
 5. Carry all goal findings forward to Step 8-D for U×I×A scoring.
 
 For work goals, the daily catch-up may read work goal status from `state/work/work-goals.md` for the GOAL PULSE display, but does NOT run the Goal Evaluation Protocol against them.
+
+<!-- REQUIRED: Never skip -->
+**8t — Ambient Intent Buffer Evaluation:**
+Use deterministic helper commands for all validation and writes:
+- Validate buffer before reading: `python3 scripts/planning_signals.py validate`
+- List at most one offer: `python3 scripts/planning_signals.py offers --limit 1`
+- Record new canonical evidence: `python3 scripts/planning_signals.py observe ...`
+- On approval: `python3 scripts/planning_signals.py materialize SIG-NNN`
+- On skip: `python3 scripts/planning_signals.py skip SIG-NNN`
+- Archive old materialized signals: `python3 scripts/planning_signals.py archive`
+
+For each signal in `state/planning_signals.md` where `materialized: false`:
+
+1. Check archetype threshold (see `specs/scenarios.md` §4.4).
+2. Check domain context from current session — update `last_seen`,
+   `detection_count`, and `evidence` if new evidence appears in today's emails/
+   state files.
+3. If threshold met AND no existing planning object with same domain/topic:
+   a. Generate draft planning object (scenario, decision, or sprint per
+      `candidate_type`).
+   b. Surface in briefing **immediately after the ONE THING block**:
+      ```
+      💡 PLANNING SIGNAL READY: [candidate_title]
+         Type: [scenario|decision|sprint] | Domain: [domain] | Evidence: [count] sessions
+         Draft ready — respond "SCN" / "DEC" / "SPR" to materialize, or skip.
+      ```
+   c. On approval (any variant of "yes", "y", "ok", "go", "SCN", "DEC", "SPR"):
+      - Run `python3 scripts/planning_signals.py materialize SIG-NNN`.
+      - The helper performs `python3 scripts/backup.py file-snapshot <target_file>`,
+        post-write YAML validation, idempotency checks, and signal cross-reference updates.
+      - Log to `state/audit.md`: `[date] | Step 8t | materialized | [signal_id] | ok`.
+   d. On skip (any variant of "skip", "not now", "no", "later"):
+      - Run `python3 scripts/planning_signals.py skip SIG-NNN`.
+      - The helper increments `skip_count`. If `skip_count >= 3`, it sets `snoozed_until` = today + 30 days.
+
+4. After scan: write updated `state/planning_signals.md`.
+5. Write new signals for anything observed in Step 8 (OODA Observe) that
+   matches an archetype pattern but has no existing signal. Before creating,
+   check for deduplication: scan `planning_signals.md` for existing signals
+   where `domain == current_domain` AND `entity_key` matches exactly (exact
+   key match first; keyword noun overlap fallback only if no key exists).
+   Assign an `entity_key` (snake_case noun phrase) to all new signals.
+6. Run `python3 scripts/planning_signals.py archive` once per session after Step 8t
+   to move materialized signals older than 90 days to the archive block.
 
 ### Step 9 — Web research (if needed)
 For domains requiring external data, delegate to Gemini CLI via `safe_cli.py`:
