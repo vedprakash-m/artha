@@ -109,7 +109,7 @@ After fetch, load domain state files by tier:
 
 | Tier | Condition | Action |
 |------|-----------|--------|
-| `always` | Core files | Load: health-check.md, memory.md, open_items.md, comms.md, calendar.md |
+| `always` | Core files | Load: health-check.md, memory.md, open_items.md, comms.md, calendar.md, planning_signals.md |
 | `active` | last_activity ≤30 days | Load fully |
 | `reference` | last_activity 30–180 days | Load frontmatter + last 30 lines |
 | `archive` | last_activity >180 days | Skip unless new emails route here |

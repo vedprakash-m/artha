@@ -6,7 +6,7 @@ import re
 import sys
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 from preflight._types import (
@@ -147,6 +147,49 @@ def check_open_items(auto_fix: bool = False) -> CheckResult:
         return CheckResult("open_items.md", "P1", True, "open_items.md accessible ✓")
     except OSError as exc:
         return CheckResult("open_items.md", "P1", False, f"open_items.md unreadable: {exc}")
+
+
+def check_planning_signals() -> CheckResult:
+    """P1: Validate FR-41 Ambient Intent Buffer state before Step 8t reads it."""
+    path = Path(STATE_DIR) / "planning_signals.md"
+    if not path.exists():
+        return CheckResult(
+            "planning_signals.md", "P1", False,
+            "planning_signals.md missing — Step 8t ambient planning disabled",
+            fix_hint="Run: python3 scripts/planning_signals.py seed",
+        )
+    try:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from planning_signals import load, validate  # type: ignore
+
+        doc = load(path)
+        errors = validate(doc)
+        if errors:
+            return CheckResult(
+                "planning_signals.md", "P1", False,
+                f"planning_signals.md schema warning: {errors[0]}",
+                fix_hint="Run: python3 scripts/planning_signals.py validate",
+            )
+        active = [s for s in doc.signals if not s.get("materialized")]
+        stale = False
+        try:
+            updated = date.fromisoformat(str(doc.frontmatter.get("last_updated")))
+            stale = bool(active and (date.today() - updated).days >= 2)
+        except ValueError:
+            stale = bool(active)
+        if stale:
+            return CheckResult(
+                "planning_signals.md", "P1", False,
+                "planning_signals.md has active signals but has not been updated in 2+ days",
+                fix_hint="Confirm Step 8t ran; then run: python3 scripts/planning_signals.py offers",
+            )
+        return CheckResult("planning_signals.md", "P1", True, "planning_signals.md valid ✓")
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            "planning_signals.md", "P1", False,
+            f"planning_signals.md validation failed: {str(exc)[:160]}",
+            fix_hint="Run: python3 scripts/planning_signals.py validate",
+        )
 
 
 def check_briefings_directory() -> CheckResult:
@@ -385,5 +428,4 @@ def check_prompt_size() -> CheckResult:
         "prompt size (RD-38)", "P2", True,
         f"config/Artha.md is {size:,} bytes ✓ (limit: {_MAX_PROMPT_BYTES:,}B)",
     )
-
 

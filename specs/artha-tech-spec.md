@@ -6659,11 +6659,112 @@ Disabled by default (`harness.actions.quality.semantic_verification: false`). Wh
 
 ---
 
+## 41. Ambient Intent Buffer *(FR-41, v3.43.0)*
+
+Implements F15.138. Resolves the 40-session dormancy of Life Scenarios, Decision Support, and Sprint Calibration by introducing a per-session signal accumulation loop that surfaces materialization offers at the optimal briefing moment.
+
+### 41.1 Signal Document Schema (`state/planning_signals.md`)
+
+YAML frontmatter + Markdown body. All writes via `scripts/planning_signals.py` atomic writer.
+
+```yaml
+schema_version: 1           # integer; increment on schema changes
+domain: planning_signals
+sensitivity: medium
+last_updated: "YYYY-MM-DD"
+next_signal_id: SIG-NNN     # auto-incremented
+token_estimate: N           # scan-time token estimate (not file size)
+signals:
+  - id: SIG-NNN             # SIG-\d{3}
+    entity_key: snake_case  # stable dedup key; (domain, entity_key) must be unique
+    text: "description"
+    domain: vehicle|immigration|kids|...
+    archetype: deadline|opportunity|pattern|conflict|goal_drift
+    candidate_type: scenario|decision|sprint
+    candidate_title: "human-readable"
+    detection_count: N
+    materialization_threshold: N
+    materialized: false
+    materialization_date: null
+    skip_count: 0
+    snoozed_until: null
+    deadline_date: null      # required for deadline archetype
+    goal_ref: G-NNN          # required for goal_drift archetype
+    signal_ref: SIG-NNN      # cross-reference from planning object back to signal
+    last_seen: "YYYY-MM-DD"
+    first_detected: "YYYY-MM-DD"
+    evidence: []             # max 5 entries; format: "YYYY-MM-DD: source — summary" (summary ≤60 chars)
+archive: []                  # materialized signals moved here after 90 days
+```
+
+### 41.2 Archetype Thresholds
+
+| Archetype | Threshold | Notes |
+|-----------|-----------|-------|
+| `deadline` | 1 | Requires extractable `deadline_date` ≤60 days away |
+| `opportunity` | 2 | Across ≥2 sessions |
+| `pattern` | 3 | Negative signals across ≥2 sessions |
+| `conflict` | 2 | Two contradicting active goals in same domain |
+| `goal_drift` | 1 | Active goal with no sprint activity for ≥30 days |
+
+Parked goals (`status: parked`) excluded from `goal_drift` detection.
+
+### 41.3 Core Script (`scripts/planning_signals.py`)
+
+Deterministic helper for all Step 8t operations. No LLM calls inside the script.
+
+| Subcommand | Action |
+|-----------|--------|
+| `validate` | Schema validation; exits 0 on clean, 1 on errors |
+| `seed` | Idempotent: inserts `SEED_SIGNALS` for missing `(domain, entity_key)` pairs |
+| `offers [--limit N]` | Returns threshold-met, non-snoozed, non-duplicate signals as YAML |
+| `observe --domain D --entity-key K ...` | Appends canonical evidence entry; increments count |
+| `materialize SIG-NNN` | Pre-write snapshot → write planning object → set materialized=true → audit |
+| `skip SIG-NNN` | Increments skip_count; sets snoozed_until if count ≥ 3 |
+| `archive` | Moves materialized signals older than 90 days to archive block |
+| `sprint-triggers` | Bootstrap goal_drift signals for eligible G-004/G-005 goals |
+
+Materialization targets by candidate_type: `scenario` → `state/scenarios.md`, `decision` → `state/decisions.md`, `sprint` → `goals_writer.py --add-sprint`.
+
+### 41.4 Safety Protocol
+
+1. **Pre-write snapshot**: `python3 scripts/backup.py file-snapshot <target>` before every materialization write.
+2. **Post-write YAML validation**: `yaml.safe_load()` on written content; rollback from `.pre-write.bak` on failure.
+3. **Idempotency**: `entity_key` dedup prevents duplicate signals per `(domain, entity_key)` pair. `_signal_exists_in_target()` scans target file for existing `signal_ref` or matching title before writing.
+4. **Duplicate OI guard**: planning objects set `source_ref: SIG-NNN`; Step 8e checks for existing OI with same `source_ref` before creating another.
+5. **Prompt injection defense**: Evidence entries validated against `EVIDENCE_RE = r"^\d{4}-\d{2}-\d{2}: [^—\n]{1,32} — .{1,60}$"`. Entries failing this pattern are rejected at write time.
+6. **Audit trail**: all signal operations appended to `state/audit.md` as `[timestamp] | Step 8t | [action] | [signal_id] | [result]`.
+
+### 41.5 Pipeline Integration
+
+- **Step 8t** in `config/Artha.core.md`: runs after Step 8s; `<!-- REQUIRED: Never skip -->`.
+- **Step 4b fetch tier**: `planning_signals.md` in `always` tier (`config/workflow/fetch.md`).
+- **Step 3 sprint check** (`config/Artha.core.md`): `sprint-triggers` subcommand detects G-004/G-005 goal_drift.
+- **Step 8e idempotency guard**: skip re-evaluation if `last_evaluated` < 7 days ago and signal `last_seen` not newer.
+- **Preflight**: `scripts/preflight/state_checks.py::check_planning_signals()` — P1 warning if file missing or invalid.
+- **Health check**: `--planning-signal-tokens N` flag records Step 8t token cost to `health-check.md`.
+
+### 41.6 Observability (G-1–G-7)
+
+Run `python3 scripts/planning_metrics.py` for 30-day effectiveness report:
+
+| Metric | Target |
+|--------|--------|
+| G-1 Planning objects written | ≥ 2 in 30 days |
+| G-2 Materialized signals | ≥ 1 |
+| G-3 Pending signals | ≤ 15 active |
+| G-4 Skip events | — |
+| G-5 High-skip signals (≥3) | < 20% of total |
+| G-6 Token estimate per session | < 200 tokens |
+| G-7 Snoozed signals | — |
+
+---
+
 ## 18. Revision History
 
 | Version | Changes |
 |---------|---------|
-| v3.41.0 | **MCP Hybrid Connector Architecture (§38, FR-31)**: Purpose-routed hybrid M365 connector + EngHub engineering knowledge enrichment. 4 new modules (`workiq_circuit_breaker.py`, `mcp_formatter.py`, `work_connector_router.py`, `enghub_manager.py`), 2 config files (`work_connector_policy.yaml`, `enghub_service_scope.yaml`), 1 schema (`briefing_block.py`). `work_loop.py` extended with `ProviderAvailability.m365_mcp`/`enghub_mcp`, circuit breaker wiring, EngHub daemon thread. 12 guardrails (G1–G12). 50 tests. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
+| v3.43.0 | **Ambient Intent Buffer (§41, FR-41)**: Step 8t pipeline step; `scripts/planning_signals.py` (validate/seed/offers/observe/materialize/skip/archive/sprint-triggers); `scripts/planning_metrics.py` (G-1–G-7); `scripts/goals_writer.py --add-sprint`; `scripts/backup.py file-snapshot`; preflight `check_planning_signals()`; `health_check_writer.py --planning-signal-tokens`. 9 unit tests. Implements PRD F15.138. | **MCP Hybrid Connector Architecture (§38, FR-31)**: Purpose-routed hybrid M365 connector + EngHub engineering knowledge enrichment. 4 new modules (`workiq_circuit_breaker.py`, `mcp_formatter.py`, `work_connector_router.py`, `enghub_manager.py`), 2 config files (`work_connector_policy.yaml`, `enghub_service_scope.yaml`), 1 schema (`briefing_block.py`). `work_loop.py` extended with `ProviderAvailability.m365_mcp`/`enghub_mcp`, circuit breaker wiring, EngHub daemon thread. 12 guardrails (G1–G12). 50 tests. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.40.0 | **Agency Playground Quality Layer & Agent SRE Observability (§37, FR-30)**: S-01–S-30 Tier 1 patterns + ST-01–ST-07 SRE modules from SPEC-STEAL-001/002 competitive analysis. New files: `scripts/lib/quality_gate.py` (S-01), `scripts/lib/checkpoint.py` session recap funcs (S-03), `scripts/lib/evidence_lake.py` (S-04), `scripts/lib/partial_writer.py` (S-08), `scripts/lib/context_budget.py::check_budget` (S-30), `scripts/work/ado_snapshot.py` (S-07), `scripts/lib/correction_tracker.py` (ST-02), `scripts/lib/cost_guard.py` (ST-03), `scripts/lib/slo_engine.py` (ST-04), `scripts/lib/loop_detector.py` (ST-05), `scripts/preflight.py::check_guardrails_rings` (ST-07). Extended: `scripts/lib/telemetry.py` hash-chain + trace (ST-01/ST-06). Gates G-0/G-1/G-2 PASSED. Rules R1–R12. `specs/steal.md` archived to `.archive/specs/`. Implements PRD v7.24.0. |
 | v3.35.0 | **Simplification & Token Optimization (specs/simplify.md v1.2)**: Compact `Artha.md` activated as default (21KB/~6,000 tokens vs. prior 110KB/~31,000 tokens) — `config/workflow/` files loaded per-command via `§R` routing table in all 3 entrypoints (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). WorkIQ overlay extracted to `config/overlays/workiq.md`. Domain agent unification: `scripts/precompute.py` (single dispatcher) replaces `agent_scheduler.py` + 4 domain agent entry-point files; external-agent control plane (`agent_manager.py`) preserved. Signal type consolidation: `DomainSignal` gains `subtype: str = ""` field; 10 email signal types map to 4 canonical types (`deadline`, `confirmation`, `security`, `informational`) via `_CANONICAL_TYPE_MAP` in `email_signal_extractor.py`; all 4 `signal_routing.yaml` consumers updated; 4 canonical catch-all entries added to `config/signal_routing.yaml`. Connector fallback cleanup: `_FALLBACK_HANDLER_MAP` removed from `pipeline.py`; `_ALLOWED_MODULES` made explicit 20-element frozenset; dead `_HANDLER_MAP` init removed; failure mode now emits `[CRITICAL]` + returns empty dict. Config stub cleanup: `config/lint_rules.yaml` embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py`; `config/implementation_status.yaml` deleted; `config/domain_autonomy_state.yaml` moved to `state/`. Pre-commit hook auto-regenerates `Artha.md` when `Artha.core.md` changes. New tests: `tests/test_signal_consolidation.py` (10), `tests/test_precompute.py` (15). Config YAMLs: 20→17. Per-session token savings: ~25,600 tokens. |
 | v3.34.0 | **Artha Channel Integration (§34, FR-26)**: `artha_engine.py` singleton with PID guard + `WindowsProactorEventLoopPolicy` + 3 async coroutines (`telegram_loop`, `schedule_loop`, `watchdog_loop`). Reddit public JSON connector (`scripts/connectors/reddit.py`). Watch Monitor deterministic keyword filter + urgency-tiered routing (`scripts/skills/watch_monitor.py`). Brief Request stale-while-revalidate bridge. Query Relay domain allowlist {goals, calendar, open_items, home, learning} + 95s async timeout + LLM failover chain (gpt-5.4-mini → Gemini → Claude 30s each). Physiological Engine workout regex parser → `~/.artha-local/workouts.jsonl` (`scripts/skills/fitness_coach.py`). HMAC-SHA256 required on ALL M2M commands — no exceptions. `QUERY_ARTHA_MAX_CHARS = 15_000` added to `scripts/lib/context_budget.py`. `claw_bridge.yaml` extended with `query_artha` + `llm` config blocks. ADR-004 engine-vs-extend decision gate documented. `scripts/register_engine_task.ps1` written. All ACI tests passing. Implements PRD v7.17.0. |

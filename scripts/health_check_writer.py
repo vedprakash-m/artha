@@ -308,6 +308,7 @@ def _append_catch_up_run(
     config_hash: str | None = None,
     weekend_planner_shown: bool | None = None,
     self_model_overlays: list[str] | None = None,
+    planning_signal_tokens: int | None = None,
     items_resolved: int | None = None,
     outcome_corrections: int | None = None,
     outcome_items_resolved: int | None = None,
@@ -560,6 +561,7 @@ def write_health_check(
     config_hash: str | None = None,
     weekend_planner_shown: bool | None = None,
     self_model_overlays: list[str] | None = None,
+    planning_signal_tokens: int | None = None,
     items_resolved: int | None = None,
     outcome_corrections: int | None = None,
     outcome_items_resolved: int | None = None,
@@ -587,6 +589,8 @@ def write_health_check(
             updates["domains_processed"] = "[" + ", ".join(domains_processed) + "]"
         if session_mode:
             updates["session_mode"] = session_mode
+        if planning_signal_tokens is not None:
+            updates["planning_signal_tokens"] = planning_signal_tokens
 
         # Increment catch_up_count by 1
         m = _FRONTMATTER_RE.match(content)
@@ -792,6 +796,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Comma-separated list of self-model overlay keys applied",
     )
     p.add_argument(
+        "--planning-signal-tokens",
+        dest="planning_signal_tokens",
+        type=int,
+        metavar="N",
+        help="Estimated token cost of planning_signals.md loaded for Step 8t",
+    )
+    p.add_argument(
         "--items-resolved",
         dest="items_resolved",
         type=int,
@@ -859,6 +870,7 @@ def main(argv: list[str] | None = None) -> int:
         args.compliance_score, args.quality_score, args.session_id, args.model,
         args.calibration_skipped, args.coaching_nudge, args.config_hash,
         args.weekend_planner_shown, args.self_model_overlays, args.items_resolved,
+        args.planning_signal_tokens,
     ]):
         return 0
 
@@ -889,6 +901,7 @@ def main(argv: list[str] | None = None) -> int:
         config_hash=cfg_hash,
         weekend_planner_shown=args.weekend_planner_shown,
         self_model_overlays=overlays,
+        planning_signal_tokens=args.planning_signal_tokens,
         items_resolved=args.items_resolved,
         outcome_corrections=args.outcome_corrections,
         outcome_items_resolved=args.outcome_items_resolved,

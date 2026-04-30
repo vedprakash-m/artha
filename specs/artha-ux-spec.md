@@ -3824,4 +3824,74 @@ surfaces a warning at the bottom of the next briefing:
 
 ---
 
-*Artha UX Spec v3.22 — End of Document*
+## 34. Ambient Intent Buffer UX *(v7.28.0 — FR-41)*
+
+### 34.1 Planning Signal Offer Block
+
+Surfaces immediately **after the ONE THING block** — the highest-attention moment in the briefing. At most one offer per session (`--limit 1`).
+
+```
+💡 PLANNING SIGNAL READY: [candidate_title]
+   Type: [scenario|decision|sprint] | Domain: [domain] | Evidence: [N] sessions
+   Draft ready — respond "SCN" / "DEC" / "SPR" to materialize, or skip.
+```
+
+**Placement rules:**
+- Always after ONE THING, never at end of briefing, never mid-flow.
+- Suppressed when `planning_signals.md` is missing or fails validation (preflight P1 fires instead).
+- Suppressed when signal is snoozed (`snoozed_until` > today).
+- At most one offer per session even if multiple signals are at threshold (highest `detection_count` wins).
+
+### 34.2 Materialization Confirmation Flow
+
+On any variant of "yes", "y", "ok", "go", "SCN", "DEC", "SPR":
+
+```
+✅ [candidate_title] materialized as [SCN-NNN / DEC-NNN / SPR-NNN].
+   [state/scenarios.md | state/decisions.md | goals.md sprint] updated.
+   Signal SIG-NNN marked complete.
+```
+
+On any variant of "skip", "not now", "no", "later":
+
+```
+⏭ Skipped. Will resurface in the next session.
+   [After 3rd skip: "Snoozed for 30 days — resurfaces on YYYY-MM-DD."]
+```
+
+### 34.3 Sprint Materialization Feedback
+
+Sprint writes go through `goals_writer.py --add-sprint` (not direct YAML append):
+
+```
+✅ Sprint SPR-NNN created for goal [G-NNN]: [sprint target].
+   Check-in cadence: weekly | Ends: YYYY-MM-DD
+   Next catch-up will include sprint pulse.
+```
+
+If validation fails (e.g., sprint end after goal target date):
+
+```
+⚠ Sprint not created: sprint end (YYYY-MM-DD) is after goal target date (YYYY-MM-DD).
+  Options: shorten sprint OR run: goals_writer.py --update G-NNN --target-date YYYY-MM-DD
+```
+
+### 34.4 Preflight / Health Indicators
+
+Shown in briefing footer when relevant:
+
+```
+📊 Planning buffer: [N] active signals | [M] at threshold | tokens: ~[T]
+   [If stale:] ⚠ planning_signals.md not updated in 2+ days — confirm Step 8t ran.
+```
+
+### 34.5 Design Principles
+
+- **Single offer per session**: prevents offer fatigue; most urgent signal wins.
+- **Minimal friction**: one-word response ("SCN") is sufficient to materialize.
+- **No surprise writes**: all state changes gated on explicit user approval.
+- **Graceful degradation**: if `planning_signals.py` fails, Step 8t is skipped with a P1 warning; no briefing crash.
+
+---
+
+*Artha UX Spec v3.23 — End of Document*

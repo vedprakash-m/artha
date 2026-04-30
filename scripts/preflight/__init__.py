@@ -28,7 +28,7 @@ from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
     check_briefings_directory, check_briefings_archive_coverage,
     check_profile_completeness, _is_bootstrap_stub,
-    check_prompt_size,
+    check_prompt_size, check_planning_signals,
 )
 from preflight.integration_checks import (
     check_bridge_health, check_workiq, check_ado_auth, check_ha_connectivity,
@@ -110,6 +110,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_token_freshness("Gmail", "gmail-oauth-token.json"))
     checks.append(check_token_freshness("Calendar", "gcal-oauth-token.json"))
     checks.append(check_open_items(auto_fix=auto_fix))
+    checks.append(check_planning_signals())
     checks.append(check_briefings_directory())
     checks.append(check_briefings_archive_coverage())  # specs/brief.md §5 Step 7 (Commit 3)
     checks.append(check_msgraph_token())  # T-1B.6.1: non-blocking, To Do sync optional
