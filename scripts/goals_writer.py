@@ -34,7 +34,9 @@ Ref: specs/goals-reloaded.md §3.2, §3.6, Implementation Step 1.2
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -45,9 +47,26 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 _ARTHA_DIR = _SCRIPTS_DIR.parent
 _DEFAULT_GOALS_FILE = _ARTHA_DIR / "state" / "goals.md"
 
-# Import write_state_atomic from Reflection Loop Sprint 0
-sys.path.insert(0, str(_SCRIPTS_DIR))
-from work.helpers import write_state_atomic  # noqa: E402
+
+def write_state_atomic(path: Path, content: str) -> None:
+    """Atomic write: tmp → validate → os.replace."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=target.parent, suffix=".tmp", prefix=".gw-")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                yaml.safe_load(parts[1])
+        os.replace(tmp_path, target)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 _VALID_STATUSES = {"active", "parked", "done", "dropped"}
 _VALID_TYPES = {"outcome", "habit", "milestone"}
