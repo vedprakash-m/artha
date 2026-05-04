@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.28.0
+## Product Requirements Document · v7.29.0
 
 **Author:** [Author]
-**Date:** April 29, 2026
+**Date:** May 3, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.29.0 | 2026-05-03 | **xHealth Dashboard Intelligence (FR-42)** — Integrates operational ADX/Kusto dashboards as a live data source within Work OS. New `work xhealth` command produces a 5-section DRI handoff brief: active incidents, repair pipeline, job queue, deployment blockers, and scope area status. Q4-ADX block in `reflect-protocol.md` replaces partial IcM path with live KQL queries; fallback path retained. Q4-IcM-WOI-AUTOCHECK auto-closes mitigated IcM WOIs on every work refresh (circuit breaker: 10 max). Step 2c injects morning xHealth signal (06:00–11:00 window). `work prep` auto-injects xHealth context for meetings tagged with relevant keywords. Sub-commands: `work xhealth scenarios`, `xconfig`, `armada`, `dd`, `deploy`, `weekly`. Integration: `scripts/work/xhealth_signal.py` (10 query methods). Feature flag: `xhealth_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_xhealth_kusto_auth()` (P1 non-blocking). 12 unit tests. See Tech Spec v3.44.0 §42 + UX Spec §35. |
 | v7.28.0 | 2026-04-29 | **Ambient Intent Buffer (FR-41)** — Closes the 40-session dormancy gap where Life Scenarios, Decision Support, and Sprint Calibration existed in spec but never surfaced in practice. Step 8t appended to the catch-up pipeline after Step 8s: evaluates `state/planning_signals.md` each session, increments evidence counts, and surfaces a single materialization offer immediately after the ONE THING block when an archetype threshold is met. Five archetypes: deadline (threshold 1, requires extractable deadline_date ≤60 days), opportunity (2 detections, ≥2 sessions), pattern (3 detections), conflict (2 contradicting goals), goal_drift (active goal with no sprint ≥30 days). Idempotency: entity_key dedup prevents duplicate signals per domain; `_signal_exists_in_target()` prevents duplicate planning objects. Materialization: scenario → `state/scenarios.md`, decision → `state/decisions.md`, sprint → `goals_writer.py --add-sprint`. Safety: pre-write `backup.py file-snapshot`, post-write YAML validation, audit log to `state/audit.md`. Signal lifecycle: `skip_count ≥ 3` triggers 30-day snooze; materialized signals archive after 90 days. Token budget: ≤200 tokens added per session (G-6 guard). Scripts: `scripts/planning_signals.py` (validate/seed/offers/observe/materialize/skip/archive/sprint-triggers), `scripts/planning_metrics.py` (G-1–G-7 metrics). Preflight: `scripts/preflight/state_checks.py` gains `check_planning_signals()`. Extends Tech Spec §41 + UX Spec §34. | **Action Layer Quality Conversion (FR-40)** — Transforms action proposal acceptance from 25% to 85%+. Three-layer gate stack: (1) Signal Precision — entity viability gate (entity_confidence ≥ 0.3, non-domain, ≥3 chars), temporal coherence check (bill_due 3d grace, delivery_arriving 1d grace, security_alert skip), autopay suppression from user_context.yaml, signal_suppression DB table; (2) Proposal Quality — 5-factor confidence scoring (weights: entity 0.3, date 0.2, amount 0.1, sender_domain 0.2, semantic 0.2), suggestion tier for 0.5–0.65 confidence signals, category-aware dedup (already_handled 90d, not_relevant/duplicate 30d, bad_timing 0d), loop circuit breaker (4 consecutive non-accepted → 14-day quarantine), optional semantic LLM-as-judge (feature-flagged); (3) Feedback & Learning — 5 rejection categories (already_handled/wrong_action_type/not_relevant/bad_timing/duplicate), domain confidence decay via trust_metrics, 30-day sliding window acceptance rate (deferred counts as accepted), staged policy suggestions applied via `--apply-suggestions`. L2 promotion gate: ≥85% in 30-day window with ≥10 decisions. New files: config/user_context.yaml (gitignored — PII), config/user_context.yaml.example, scripts/migrate_actions_quality.py. Extends Tech Spec §40 + UX Spec §33. |
 | v7.26.1 | 2026-04-29 | **System Capability Inventory (FR-15 amendment)** — Passive MCP discovery and static skill inventory added to Artha OS Core. `scripts/mcp_discovery.py` inventories MCP client config files without starting servers or exposing secrets, writing `tmp/mcp_discovery.json`. `scripts/skill_index.py` inventories `config/skills.yaml`, builtin skill files, and plugin skill files without importing skills, writing `tmp/skill_index.json`. `/status` surfaces compact "Connections & capabilities" counts; preflight reports both as P1 non-blocking checks. See Tech Spec v3.41.1 + UX Spec v3.21.1. |
 | v7.26.0 | 2026-05-01 | **PM Starter Kit Adoption (FR-32)** — 11 PAW PM Starter Kit patterns adapted for Artha Work OS across 3 phases. **New commands:** `work standup` (PAW-format daily scaffold: ✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS, ≤120 words, Teams paste-ready variant), `work plan` (3-I filter: Important+Impactful+Irreversible ≥ 2/3 for Focus Outcomes; explicit Won't Do list; growth lens annotations via GP-N tags), `work 11 <alias>` (PAW 1:1 update: Exec Summary, workstream sections with status vocab, Asks Of, To Be Discussed, Wins). **People cards:** `state/work/people/<alias>.md` — sparse overlay on `work-people.md` collaboration graph; 10 seed cards; spec §5.7.3 schema (`domain: work-people-card`, `display_name`, `last_interaction`). **Correction memory:** `state/lessons.md` (50-row cap, session-start loading, auto-archive at 50). **IBA taxonomy:** Impediments / Blockers / Asks escalation structure + Executive Summary for `work sprint` and `work prep`. **Meeting routing:** Step 2b in `reflect-protocol.md` routes meeting transcripts to decisions/people cards/open-items with injection scanning guardrail. **ADO MCP:** kusto-ado confirmed available in VS Code Agent sessions (L-019). Python dispatch: `scripts/work/daily.py` (cmd_standup/cmd_plan/cmd_11, FR-32 §3.5 Pattern 2). `specs/pm-starter-kit.md` archived. See Tech Spec v3.41.0 §39 + UX Spec v3.21 §32. | Four-pillar model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). Circuit breaker for WorkIQ resilience (3-failure OPEN, 4h probe). MCP formatter with F31 connector_record compliance. EngHub async enrichment (daemon thread, ≤15s, never blocks briefing). 12 guardrails (G1–G12), 3 architectural patterns. Policy-driven routing via `config/work_connector_policy.yaml`. 50 tests across 4 modules. `specs/mcp-hybrid.md` archived. See Tech Spec v3.40.0 §38 + UX Spec v3.20 §31. |
@@ -76,6 +77,7 @@ See [CHANGELOG.md](../CHANGELOG.md) for full version history.
    - FR-30: Agency Playground Quality Layer & Agent SRE Observability
    - FR-31: Work Intelligence OS MCP Hybrid Connector
    - FR-32: PM Starter Kit Adoption (Work OS)
+   - FR-42: xHealth Dashboard Intelligence
 7. [Goal Intelligence Engine — Deep Dive](#7-goal-intelligence-engine--deep-dive)
 8. [Architecture](#8-architecture)
 9. [Autonomy Framework](#9-autonomy-framework)
@@ -1405,6 +1407,44 @@ Purpose-routed hybrid connector architecture for Work OS M365 data surfaces. Rou
 **Python dispatch:** `scripts/work/daily.py` — `cmd_standup(fmt)`, `cmd_plan()`, `cmd_11(person)`. Dispatched via `work_reader.py` (thin dispatch pattern §3.5). Telemetry emitted via `lib/telemetry.py`. Injection scanning via guardrails.yaml `meeting_routing_injection_scan`.
 
 **Non-Functional Requirements:** No LLM required for script-routed path. All state reads ≤ 2s. Both paths (LLM-routed via commands.md and script-routed via work_reader.py) serve identical commands. Offline-first (no external calls). Fully reversible (delete state files to reset).
+
+---
+
+### FR-42 · xHealth Dashboard Intelligence *(v7.29.0)*
+
+**Priority:** P1 | **Status:** ✅ Implemented (Tech Spec §42, UX Spec §35)
+
+Integrates ADX/Kusto operational dashboards as a live data source within Work OS. Closes the gap where xHealth program metrics (incidents, repair pipeline, deployment blockers) were manually gathered before stand-ups and hand-offs.
+
+**New Work OS Commands**
+
+| Command | Description |
+|---------|-------------|
+| `work xhealth` | 5-section DRI handoff brief: active incidents, repair pipeline, job queue, deployment blockers, scope area status |
+| `work xhealth scenarios` | Scenario coverage and validation state |
+| `work xhealth xconfig` | xConfig rollout health and error summary |
+| `work xhealth armada` | Armada fleet health snapshot |
+| `work xhealth dd` | DD pipeline queue depth and SLA |
+| `work xhealth deploy` | Deployment blocker list with owners |
+| `work xhealth weekly` | Weekly DRI summary across all sub-areas |
+
+**Pipeline Integration**
+
+| Integration Point | Behaviour |
+|-------------------|-----------|
+| `work prep` keyword injection | Meeting subjects containing `xhealth`, `SCHIE`, `repair`, `safety`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario` → auto-append 🏥 xHealth Context block (IcM count, Repair SLA %, top blocker) marked `[live]` |
+| Morning signal (Step 2c) | 06:00–11:00 window: `morning_signal()` appends xHealth snapshot to briefing footer |
+| Q4-ADX reflect block | Live KQL queries replace partial IcM path in `reflect-protocol.md`; fallback retained |
+| Q4-IcM-WOI-AUTOCHECK | Auto-closes mitigated IcM WOIs each work refresh (circuit breaker: 10 max per session) |
+| Accomplishment enrichment | xHealth-tagged accomplishments gain `[live: ADX]` KPI citation when Kusto CLI available |
+
+**Feature Flag:** `xhealth_dashboards.enabled` in `config/work_connector_policy.yaml` (default: `false`). When disabled or Kusto CLI unavailable, all injection points skip silently — no error output.
+
+**Scripts:** `scripts/work/xhealth_signal.py` — 10 query methods: `query_icm_summary`, `query_icm_full`, `query_icm_status`, `query_fleet_health`, `query_repair_sla`, `query_dd_job_queue`, `query_deployment_blockers`, `query_scenario_coverage`, `query_xconfig_status`, `query_kpi_harvest`. Plus: `morning_signal()`, `format_morning_block()`, `check_icm_wois()`, `dri_handoff_brief()`.
+
+**Preflight:** `check_xhealth_kusto_auth()` added to `scripts/preflight.py` after `check_workiq()`. P1 non-blocking — auth failure surfaces as warning, does not block briefing.
+
+**Test coverage:** 12 unit tests in `tests/work/test_xhealth_signal.py`.
 
 ---
 
