@@ -17,6 +17,7 @@ Coverage:
 from __future__ import annotations
 
 import sys
+import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,12 +84,13 @@ class TestComposePipeline:
         assert len(proposal.action_type) > 0
 
     def test_school_action_routes_to_reminder_not_message(self, composer):
-        signal = _make_signal(
-            signal_type="school_action_needed",
-            domain="kids",
-            entity="Missing assignment",
-        )
-        proposal = composer.compose(signal)
+        with unittest.mock.patch("action_composer.load_user_context", return_value={}):
+            signal = _make_signal(
+                signal_type="school_action_needed",
+                domain="kids",
+                entity="Missing assignment",
+            )
+            proposal = composer.compose(signal)
         assert proposal is not None
         assert proposal.action_type == "reminder_create"
 

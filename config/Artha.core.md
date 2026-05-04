@@ -669,13 +669,23 @@ If any cross-domain reasoning produces a recommendation involving trade-offs acr
 Check `state/scenarios.md` for scenarios with `status: watching` or `status: active`.
 Use deterministic helper `python3 scripts/planning_signals.py evaluate-scenarios --write`
 for scenario OI creation and duplicate guards.
+Then run `python3 scripts/planning_signals.py followups --limit 3`. If it returns
+any `planning_followups`, surface them in the catch-up briefing under
+`━━ 💡 PLANNING FOLLOW-UPS ━━` until the item is reviewed, closed, or explicitly
+snoozed. This is mandatory even when the item's deadline is not today; planning
+follow-ups are the user's catch-up-native review queue.
 Before evaluating, apply the idempotency guard: if `last_evaluated` is <7 days ago
 AND the source signal's `last_seen` is not newer than `last_evaluated`, skip this
 scenario for this session. For each remaining scenario, evaluate if the current
 catch-up data matches the `trigger` condition:
 - If trigger matches: promote scenario to `status: active`, surface it in the briefing under 💡 ONE THING or a `⚡ SCENARIO ALERT` block
 - Include scenario ID and question in the alert: "SCN-NNN triggered: [question]"
-- If a scenario recommendation creates an open item, set `source_ref: SCN-NNN`; if an open item with that `source_ref` already exists, do not create another one.
+- If a scenario recommendation creates an open item, it must be catch-up-native:
+  set `source_ref: SCN-NNN`, `origin: system`, `review_cadence: catch-up`,
+  `planning_followup: true`, and `deadline: today + 7 days`. Do not create
+  silent scenario OIs with blank deadlines unless the user explicitly agrees to
+  a manual review behavior outside catch-up.
+- If an open item with that `source_ref` already exists, do not create another one.
 
 **8f — Compound signal detection:**
 Check for cross-domain correlations that produce non-obvious insights. Correlation rules:
@@ -882,6 +892,7 @@ Use deterministic helper commands for all validation and writes:
 - Record new canonical evidence: `python3 scripts/planning_signals.py observe ...`
 - On approval: `python3 scripts/planning_signals.py materialize SIG-NNN`
 - On skip: `python3 scripts/planning_signals.py skip SIG-NNN`
+- Surface catch-up-native planning reviews: `python3 scripts/planning_signals.py followups --limit 3`
 - Archive old materialized signals: `python3 scripts/planning_signals.py archive`
 
 For each signal in `state/planning_signals.md` where `materialized: false`:

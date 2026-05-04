@@ -50,6 +50,17 @@ if _PYDANTIC_AVAILABLE:
         source_step: Optional[str] = Field(default=None)
         source_skill: Optional[str] = Field(default=None)
         linked_oi: Optional[str] = Field(default=None, pattern=r"OI-\d+")
+        signal_subtype: str = Field(default="")
+        confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+        normalized_entity: str = Field(default="")
+        normalized_summary: str = Field(default="")
+        idempotency_key: str = Field(default="")
+        idempotency_expires_at: Optional[str] = Field(default=None)
+        preview_required: bool = Field(default=False)
+        preview_shown_at: Optional[str] = Field(default=None)
+        preview_shown_by: Optional[str] = Field(default=None)
+        last_notified_at: Optional[str] = Field(default=None)
+        last_notified_channel: Optional[str] = Field(default=None)
 
         @field_validator("friction")
         @classmethod

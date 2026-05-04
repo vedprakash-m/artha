@@ -225,6 +225,34 @@ class TestApprove:
         assert result.status == "failure"
         assert "autonomy" in result.message.lower() or "floor" in result.message.lower()
 
+    def test_composed_content_action_requires_preview_before_approve(self, executor):
+        with patch.object(executor, "_get_handler") as mock_get:
+            mock_h = MagicMock()
+            mock_h.validate.return_value = (True, "")
+            mock_h.execute.return_value = ActionResult(
+                status="success",
+                message="Email sent",
+                data={"message_id": "msg123"},
+                reversible=True,
+                reverse_action=None,
+            )
+            mock_get.return_value = mock_h
+
+            proposal = _make_proposal(
+                action_type="email_send",
+                title="Preview gated email",
+                parameters={"to": "a@b.com", "subject": "Hi", "body": "Hello"},
+            )
+            action_id = executor.propose_direct(proposal)
+
+            blocked = executor.approve(action_id, approved_by="user:test")
+            assert blocked.status == "failure"
+            assert "preview required" in blocked.message.lower()
+
+            executor.queue.mark_preview_shown(action_id, shown_by="user:test")
+            allowed = executor.approve(action_id, approved_by="user:test")
+            assert allowed.status == "success"
+
 
 # ---------------------------------------------------------------------------
 # Reject & Defer tests
@@ -352,9 +380,7 @@ class TestProposalQualityGate:
         assert executor.expire_low_quality_pending() == 1
         assert executor._queue.get_raw(proposal.id)["status"] == "expired"  # noqa: SLF001
 
-    def test_low_quality_pending_sweep_releases_idempotency_reservation(self, executor, artha_dir):
-        from lib.idempotency import CompositeKey, IdempotencyStore
-
+    def test_low_quality_pending_sweep_releases_queue_idempotency_hold(self, executor, artha_dir):
         proposal = _make_proposal(
             action_type="instruction_sheet",
             domain="social",
@@ -366,22 +392,12 @@ class TestProposalQualityGate:
                 "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
             },
         )
-        key = CompositeKey.compute(
-            "social",
-            proposal.title.strip().lower()[:80],
-            proposal.action_type,
-            signal_type="",
-        )
-        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
-        assert store.check_or_reserve(key, proposal.action_type) == "ok"
         executor._queue.propose(proposal)  # noqa: SLF001 - bypass gate to model legacy data
 
         assert executor.expire_low_quality_pending() == 1
-        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+        assert executor._queue.find_live_duplicate(proposal) is None  # noqa: SLF001
 
-    def test_low_quality_sweep_releases_existing_expired_reservation(self, executor, artha_dir):
-        from lib.idempotency import CompositeKey, IdempotencyStore
-
+    def test_low_quality_sweep_releases_existing_expired_queue_hold(self, executor, artha_dir):
         proposal = _make_proposal(
             action_type="instruction_sheet",
             domain="social",
@@ -393,19 +409,11 @@ class TestProposalQualityGate:
                 "context": {"description": "", "steps": [], "notes": ["Signal detected"]},
             },
         )
-        key = CompositeKey.compute(
-            "social",
-            proposal.title.strip().lower()[:80],
-            proposal.action_type,
-            signal_type="",
-        )
-        store = IdempotencyStore(artha_dir / "state" / "idempotency_keys.json")
-        assert store.check_or_reserve(key, proposal.action_type) == "ok"
         executor._queue.propose(proposal)  # noqa: SLF001 - bypass gate to model legacy data
         executor._queue.transition(proposal.id, "expired", actor="system:expiry")  # noqa: SLF001
 
         assert executor.expire_low_quality_pending() == 0
-        assert store.check_or_reserve(key, proposal.action_type) == "ok"
+        assert executor._queue.find_live_duplicate(proposal) is None  # noqa: SLF001
 
     def test_failed_direct_enqueue_releases_idempotency_reservation(self, executor, artha_dir):
         from lib.idempotency import CompositeKey, IdempotencyStore

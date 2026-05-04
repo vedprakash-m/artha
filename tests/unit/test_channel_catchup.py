@@ -83,6 +83,31 @@ class TestGatherAllContext:
         result = _gather_all_context(max_chars=0)
         assert isinstance(result, str)
 
+    def test_planning_followups_are_must_surface_context(self, tmp_path, monkeypatch):
+        state = tmp_path / "state"
+        state.mkdir()
+        open_items = state / "open_items.md"
+        open_items.write_text(
+            "- id: OI-084\n"
+            "  source_domain: vehicle\n"
+            "  description: \"SCN-001 - review Kia replacement scenario paths\"\n"
+            "  deadline: 2026-05-07\n"
+            "  priority: P2\n"
+            "  status: open\n"
+            "  source_ref: SCN-001\n"
+            "  review_cadence: catch-up\n"
+            "  planning_followup: true\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(catchup_mod, "OPEN_ITEMS_FILE", open_items)
+        monkeypatch.setattr(catchup_mod, "_STATE_DIR", state)
+
+        result = _gather_all_context(max_chars=5000)
+
+        assert "Pending Planning Follow-ups - MUST SURFACE" in result
+        assert "OI-084" in result
+        assert "SCN-001" in result
+
 
 # ---------------------------------------------------------------------------
 # T4-70: _read_briefing_template

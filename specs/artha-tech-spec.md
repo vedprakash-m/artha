@@ -133,7 +133,7 @@ Artha is a **pull-based personal intelligence system** built on four principles:
 | View scripts | `~/OneDrive/Artha/scripts/*_view.py` | Script-backed deterministic renderers: `dashboard_view.py`, `domain_view.py`, `status_view.py`, `goals_view.py` (`--scope personal/work/all`; direction:down metric bars), `items_view.py`, `scorecard_view.py`, `diff_view.py` |
 | Goal state writer | `~/OneDrive/Artha/scripts/goals_writer.py` | Deterministic YAML writer for `state/goals.md` v2.0 schema; atomic writes via `write_state_atomic()`; CLI flags for all goal fields; exit codes 0–3 |
 | Migration scripts | `~/OneDrive/Artha/scripts/migrate_state.py` | YAML front-matter schema migration DSL for state files |
-| Action orchestrator | `~/OneDrive/Artha/scripts/action_orchestrator.py` | Single CLI integration point for the Action Layer: signal→compose→queue pipeline. Commands: `--run`, `--run --mcp`, `--approve`, `--reject`, `--defer`, `--approve-all-low`, `--show`, `--list`, `--expire`, `--health`. *(ACTIONS-RELOADED v1.3.0)* |
+| Action orchestrator | `~/OneDrive/Artha/scripts/action_orchestrator.py` | Single CLI integration point for the Action Layer: signal→compose→queue pipeline. Commands: `--run`, `--run --mcp`, `--approve`, `--reject`, `--defer`, `--approve-all-low`, `--show`, `--list`, `--expire`, `--health`, `--report`, `--cancel <id>`, `--show-trust`, `--evaluate-trust`, `--set-trust-level <0\|1\|2> --justification "..."`, `--set-preapproved-category <action_type> <on\|off> --justification "..."`. *(ACTIONS-RELOADED v1.3.0)* |
 | Action queue | `~/.artha-local/actions.db` | Platform-local SQLite database for action proposal lifecycle (pending → approved → executed). NOT inside OneDrive workspace — avoids WAL/SHM sync corruption. Cross-machine propagation via the DUAL v1.3.0 bridge. |
 | Scripts (if needed) | `~/OneDrive/Artha/scripts/` | Helper scripts: vault.py, backup.py, pipeline.py, etc. |
 | OneDrive sync | Native OS integration | Cross-device state sync; Mac writes, iPhone/Windows read |
@@ -1599,6 +1599,12 @@ The DB contains only action queue state — all intelligence (goals, domain stat
 | `--list` | Print all pending proposals |
 | `--expire` | Remove proposals past `expires_at` |
 | `--health` | Handler import check + queue stats |
+| `--report` | Operator report: pending/deferred/expired/succeeded/failed counts, suppression breakdown by reason, confidence suppression by signal subtype, trust metric summary, handler health |
+| `--cancel <id>` | Cancel an approved-but-not-yet-executed action (valid only while status is `approved`) |
+| `--show-trust` | Display current trust level, degraded mode status, and pre-approved categories from `trust_state` table |
+| `--evaluate-trust` | Evaluate current acceptance rate and eligibility for trust level elevation |
+| `--set-trust-level <0\|1\|2> --justification "..."` | Mutate trust level; requires explicit justification; emits audit row to `audit_trust_mutations` |
+| `--set-preapproved-category <action_type> <on\|off> --justification "..."` | Enable or disable a per-action-type L2 kill switch; requires justification; emits audit row |
 
 **Exit codes:** 0=ok, 1=partial failure, 3=full failure. Always non-blocking — catch-up never fails due to action layer errors.
 
@@ -1632,6 +1638,10 @@ The DB contains only action queue state — all intelligence (goals, domain stat
 | Encrypted params at rest | Sensitive proposal parameters encrypted in `actions.db` with age | `test_encryption_at_rest` |
 | Output path safety | `pipeline.py --output` validated to be inside `tmp/` only | `test_output_path_traversal_blocked` |
 | No network in orchestrator | `--run` makes zero network calls; network only during handler `--approve` execution | Architecture invariant |
+| AI enricher-only | AI may enrich deterministic proposals (refine title, description, steps, dates/times) but may never create proposals or widen the action surface beyond the deterministic proposal | `test_ai_enrichment_cannot_create_proposals` |
+| Forbidden AI-written fields | AI output may never supply: recipient addresses, phone numbers, contact identifiers, calendar/task/account identifiers, financial amounts, payment instruments, `action_type`, `min_trust`, `autonomy_floor`, or `approved_by` | `test_ai_forbidden_fields_blocked` |
+| Malformed enrichment output | Any malformed AI enrichment output or forbidden field causes suppression or suggestion-only fallback — never executable queueing | `test_ai_malformed_output_suppressed` |
+| Contact validation | Any contact-like string from AI enrichment must resolve to trusted local state or be rejected and audited | `test_ai_contact_resolution_required` |
 
 #### 7.4.10 Operational Telemetry
 
@@ -6632,6 +6642,28 @@ New columns on existing tables:
 | `actions` | `confidence REAL` | Confidence at propose time (audit) |
 | `actions` | `normalized_entity TEXT` | Entity key for dedup |
 | `actions` | `signal_subtype TEXT` | Propagates to trust_metrics at reject |
+
+### 40.5.1 Trust Governance Tables
+
+New trust governance tables in `~/.artha-local/actions.db`:
+
+| Table | Key columns | Purpose |
+|-------|------------|---------|
+| `trust_state` | `singleton_key INTEGER PK CHECK (singleton_key=1)`, `trust_level INT NOT NULL`, `entered_level_at TEXT NOT NULL`, `degraded_mode INTEGER NOT NULL DEFAULT 0`, `degraded_reason TEXT`, `updated_at TEXT NOT NULL` | Single-row authority for current trust level and degraded-mode status |
+| `trust_preapproved_categories` | `action_type TEXT PRIMARY KEY`, `l2_enabled INTEGER NOT NULL DEFAULT 0`, `enabled_at TEXT`, `disabled_at TEXT`, `updated_at TEXT NOT NULL` | Per-action-type L2 kill switches; demotion is a single SQL transaction |
+| `audit_trust_mutations` | `id TEXT PRIMARY KEY`, `timestamp TEXT NOT NULL`, `actor TEXT NOT NULL`, `mutation_type TEXT NOT NULL`, `old_value TEXT`, `new_value TEXT`, `justification TEXT NOT NULL` | Append-only audit trail for all trust mutations |
+
+Extended columns on `trust_metrics`:
+
+| Column | Purpose |
+|--------|---------|
+| `signal_subtype TEXT` | Per-signal-type confidence tracking (extends existing `signal_subtype`) |
+| `proposal_confidence REAL` | Confidence at propose time (audit) |
+| `source_origin TEXT` | Tracks whether signal originated from deterministic or AI-enriched path |
+
+**Migration**: Trust authority migrates from `state/health-check.md` to these tables. `state/health-check.md` retains a mirrored summary for briefing visibility only.
+
+**Single operational store contract**: `~/.artha-local/actions.db` is the sole runtime authority for the action layer. `state/*.md` files containing action-related summaries are mirrors for human visibility only — they are not read by any action-layer script for operational decisions. `tmp/*.jsonl` files are observability artifacts only. No second database or sidecar state file may be introduced. If `actions.db` is unreachable, the action layer enters read-only mode: briefing continues, no proposals queued.
 
 ### 40.6 CLI Commands
 

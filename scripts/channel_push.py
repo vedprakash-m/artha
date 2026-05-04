@@ -588,18 +588,19 @@ def push_pending_actions(dry_run: bool = False) -> int:
     )
     from channels.base import ChannelMessage
 
-    # Load pending actions
+    # Load pending and approved actions
     try:
         sys.path.insert(0, str(_ARTHA_DIR / "scripts"))
         from action_executor import ActionExecutor
         executor = ActionExecutor(_ARTHA_DIR)
         pending = executor.pending()
+        approved = executor.approved()
     except Exception as exc:
         log.warning("Could not load pending actions: %s", exc)
         return 0
 
-    if not pending:
-        log.info("No pending actions to push.")
+    if not pending and not approved:
+        log.info("No pending or approved actions to push.")
         return 0
 
     # Find Telegram channels with push enabled
@@ -647,15 +648,71 @@ def push_pending_actions(dry_run: bool = False) -> int:
                     desc = proposal.description[:200]
                     text += f"{desc}\n"
 
-                buttons = [
-                    {"label": "✅ Approve", "command": f"act:APPROVE:{proposal.id}"},
-                    {"label": "❌ Reject", "command": f"act:REJECT:{proposal.id}"},
-                    {"label": "⏸ Defer", "command": f"act:DEFER:{proposal.id}"},
-                ]
+                if getattr(proposal, "preview_required", False) and not getattr(proposal, "preview_shown_at", None):
+                    buttons = [
+                        {"label": "👁 Preview", "command": f"act:PREVIEW:{proposal.id}"},
+                        {"label": "❌ Reject", "command": f"act:REJECT:{proposal.id}"},
+                        {"label": "⏸ Defer", "command": f"act:DEFER:{proposal.id}"},
+                    ]
+                else:
+                    buttons = [
+                        {"label": "✅ Approve", "command": f"act:APPROVE:{proposal.id}"},
+                        {"label": "❌ Reject", "command": f"act:REJECT:{proposal.id}"},
+                        {"label": "⏸ Defer", "command": f"act:DEFER:{proposal.id}"},
+                    ]
 
                 if dry_run:
                     log.info(
                         "[DRY-RUN] Would push action %s to %s/%s",
+                        proposal.id[:8], channel_name, rec_name,
+                    )
+                    sent_count += 1
+                    continue
+
+                if adapter is None:
+                    continue
+                msg = ChannelMessage(
+                    text=text,
+                    recipient_id=recipient_id,
+                    buttons=buttons,
+                )
+                success = adapter.send_message(msg)
+                if success:
+                    sent_count += 1
+                    try:
+                        executor.queue.update_notification_state(proposal.id, "telegram")
+                    except Exception:
+                        pass
+                    _audit_log(
+                        "ACTION_PUSH",
+                        channel=channel_name,
+                        recipient=rec_name,
+                        action_id=proposal.id[:16],
+                        action_type=proposal.action_type,
+                    )
+                else:
+                    log.warning(
+                        "Failed to push action %s to %s/%s",
+                        proposal.id[:8], channel_name, rec_name,
+                    )
+
+            for proposal in approved:
+                badge = _FRICTION_BADGE.get(proposal.friction, "🟡")
+                text = (
+                    f"✅ ACTION APPROVED\n"
+                    f"Type: {proposal.action_type} | Domain: {proposal.domain}\n"
+                    f"Friction: {badge} {proposal.friction}\n\n"
+                    f"{proposal.title}\n"
+                )
+                if proposal.description:
+                    text += f"{proposal.description[:200]}\n"
+                buttons = [
+                    {"label": "🚫 Cancel", "command": f"act:CANCEL:{proposal.id}"},
+                ]
+
+                if dry_run:
+                    log.info(
+                        "[DRY-RUN] Would push cancel button for approved action %s to %s/%s",
                         proposal.id[:8], channel_name, rec_name,
                     )
                     sent_count += 1
@@ -680,7 +737,7 @@ def push_pending_actions(dry_run: bool = False) -> int:
                     )
                 else:
                     log.warning(
-                        "Failed to push action %s to %s/%s",
+                        "Failed to push cancel button for approved action %s to %s/%s",
                         proposal.id[:8], channel_name, rec_name,
                     )
 

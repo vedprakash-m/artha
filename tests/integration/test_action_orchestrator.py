@@ -723,11 +723,15 @@ def test_routing_merge_produces_proposals_for_all_email_signals():
 
 
 # ---------------------------------------------------------------------------
-# T-I-08 — Full AI signal path: ai_signals.jsonl + ai_signals:true → hardened proposal
+# T-I-08 — AI enricher-only gate: ai_signals.jsonl + ai_signals:true → blocked, NOT queued
 # ---------------------------------------------------------------------------
 
 def test_orchestrator_with_ai_signals_file(artha_dir):
-    """T-I-08: Valid ai_signals.jsonl + ai_signals:true → proposal with friction=high + [AI-SIGNAL] in audit."""
+    """T-I-08: AI signals are blocked at the enricher-only gate — never passed to propose_direct().
+
+    Per §3.5 (AI proposal-creation path fix), AI-origin signals must NOT create proposals.
+    The guard logs AI_SIGNAL_BLOCKED_ENRICHER_ONLY and continues; count must be 0.
+    """
     # Enable ai_signals in config
     (artha_dir / "config" / "artha_config.yaml").write_text(
         "harness:\n"
@@ -750,7 +754,6 @@ def test_orchestrator_with_ai_signals_file(artha_dir):
 
     from actions.base import ActionProposal
 
-    # Composer returns a low-friction proposal (hardening must escalate it)
     proposal = ActionProposal(
         id=str(uuid.uuid4()),
         action_type="instruction_sheet",
@@ -758,7 +761,7 @@ def test_orchestrator_with_ai_signals_file(artha_dir):
         title="Generate guide: goal stale — fitness-goal",
         description="",
         parameters={"task": "Goal Stale", "service": "fitness-goal", "context": {}},
-        friction="low",       # hardening must override this to "high"
+        friction="low",
         min_trust=0,
         sensitivity="standard",
         reversible=False,
@@ -771,7 +774,7 @@ def test_orchestrator_with_ai_signals_file(artha_dir):
     mock_executor = MagicMock()
     mock_executor.propose_direct.return_value = proposal.id
     mock_executor.expire_stale.return_value = 0
-    mock_executor.list_pending.return_value = [proposal]
+    mock_executor.list_pending.return_value = []
     mock_executor._get_handler.return_value.validate.return_value = (True, "ok")
 
     with patch.object(orch, "_is_read_only", return_value=False), \
@@ -787,15 +790,14 @@ def test_orchestrator_with_ai_signals_file(artha_dir):
             MockPE.return_value.evaluate.return_value = []
             count = run(artha_dir)
 
-    # AI signal was processed and produced a proposal
-    assert count == 1
+    # AI signals must be blocked — no proposals queued
+    assert count == 0, f"Expected 0 proposals (AI signals blocked), got {count}"
 
-    # Friction must have been escalated to "high" by _apply_ai_signal_hardening()
-    enqueued_proposal = mock_executor.propose_direct.call_args[0][0]
-    assert enqueued_proposal.friction == "high", (
-        f"Expected friction='high' for AI-origin proposal, got '{enqueued_proposal.friction}'"
-    )
+    # propose_direct must NOT have been called for AI-origin signals
+    mock_executor.propose_direct.assert_not_called()
 
-    # Audit must contain [AI-SIGNAL] prefix
+    # Audit must contain the enricher-only block marker
     audit = (artha_dir / "state" / "audit.md").read_text()
-    assert "[AI-SIGNAL]" in audit, "Expected [AI-SIGNAL] prefix in audit log for AI-origin proposal"
+    assert "AI_SIGNAL_BLOCKED_ENRICHER_ONLY" in audit, (
+        "Expected AI_SIGNAL_BLOCKED_ENRICHER_ONLY in audit log for blocked AI-origin signal"
+    )

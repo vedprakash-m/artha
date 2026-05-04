@@ -942,6 +942,24 @@ This format is **for human-initiated ad-hoc requests only** — system-
 detected proposals always flow through `actions.db` and appear in
 `§ PENDING ACTIONS`.
 
+### 9.8 Telegram Callback Contract
+
+Telegram inline buttons use the following callback verb set:
+
+| Verb | Effect |
+|------|--------|
+| `act:PREVIEW:{action_id}` | Sends full action detail (equivalent to `--show <id>`) as a separate message; records `preview_shown_at` and `preview_shown_by=user:telegram:<chat_id>` |
+| `act:APPROVE:{action_id}` | Approves the action. **Fails with error message** if action has `preview_required=true` and no preview receipt is stored. |
+| `act:REJECT:{action_id}` | Rejects the action |
+| `act:DEFER:{action_id}` | Defers the action (default: +24h / next-session) |
+| `act:CANCEL:{action_id}` | Cancels an approved-but-not-yet-executed action |
+
+**Security rule**: Every callback must validate `chat_id` against the configured allowlist in `channels.yaml`. Callbacks from unrecognized `chat_id` values are rejected with no side effect.
+
+**Preview-receipt requirement**: For content-bearing actions (`email_send`, `email_reply`, `whatsapp_send`) with `preview_required=true`, `APPROVE` is blocked unless the user has first triggered `PREVIEW` in the same or a prior session. This ensures no communication action executes without the full content having been reviewed.
+
+**Catch-up-native rule**: Pending proposals notified via Telegram still resurface in the next catch-up session until they reach a terminal state or explicit defer horizon.
+
 ## 10. Slash Commands — Command Palette
 
 ### 10.1 Command Reference

@@ -40,7 +40,7 @@ Design
 - Respects read-only mode via detect_environment.py
 - Platform-local SQLite DB via ActionQueue._resolve_db_path()
 
-Ref: specs/actions-reloaded.md v1.3.0
+Ref: specs/action.md
 """
 from __future__ import annotations
 
@@ -184,6 +184,38 @@ _COMM_SIGNAL_TYPES: frozenset[str] = frozenset({
     "deadline", "confirmation", "security", "informational",
 })
 
+# Fields that AI signals are NEVER allowed to set (§6.1.6).
+# Presence of any of these in an AI signal record — at top level or inside
+# parameters/refined_fields — causes the signal to be rejected outright.
+_AI_FORBIDDEN_FIELDS: frozenset[str] = frozenset({
+    "action_type", "min_trust", "autonomy_floor", "approved_by",
+    "recipient_address", "phone_number", "contact_id", "calendar_id",
+    "task_list_id", "account_id", "financial_amount", "payment_instrument",
+})
+
+
+def _validate_ai_forbidden_fields(record: dict, line_num: int) -> bool:
+    """Return True if the record is safe; False (+ stderr log) if a forbidden field is present."""
+    found = _AI_FORBIDDEN_FIELDS & set(record.keys())
+    if found:
+        print(
+            f"[action_orchestrator] AI_FORBIDDEN_FIELD line {line_num}: "
+            f"fields {sorted(found)} not allowed in AI signals — skipped",
+            file=sys.stderr,
+        )
+        return False
+    params = record.get("parameters") or record.get("refined_fields") or {}
+    if isinstance(params, dict):
+        found_params = _AI_FORBIDDEN_FIELDS & set(params.keys())
+        if found_params:
+            print(
+                f"[action_orchestrator] AI_FORBIDDEN_FIELD in parameters line {line_num}: "
+                f"fields {sorted(found_params)} — skipped",
+                file=sys.stderr,
+            )
+            return False
+    return True
+
 
 def _load_trusted_contacts(artha_dir: Path) -> dict[str, set[str]]:
     """Build trusted email + phone whitelist from user_profile.yaml.
@@ -310,6 +342,11 @@ def _load_ai_signals(path: Path) -> list[Any]:
                         f"'{_AI_SIGNAL_SOURCE_VALUE}', got '{record.get('source')}' — skipped",
                         file=sys.stderr,
                     )
+                    skipped += 1
+                    continue
+
+                # §6.1.6 Forbidden-field validation: AI signals must not set reserved fields.
+                if not _validate_ai_forbidden_fields(record, i):
                     skipped += 1
                     continue
 
@@ -1510,7 +1547,7 @@ def _print_summary(
 def _print_expanded_preview(proposal: Any) -> None:
     """Print full detail view of a single proposal for content review.
 
-    Ref: specs/actions-reloaded.md §WB-1 --show output format
+    Ref: specs/action.md §6.1.5 --show output format
     """
     action_type = getattr(proposal, "action_type", "")
     domain = getattr(proposal, "domain", "")
@@ -1779,11 +1816,27 @@ def run(
                         file=sys.stderr,
                     )
                 quality_suppressed += 1
+                try:
+                    executor.queue.record_suppressed_proposal(
+                        signal_subtype=_signal_subtype, domain=_domain,
+                        action_type="", reason="loop_quarantine",
+                        normalized_entity=_normalized_entity,
+                    )
+                except Exception:
+                    pass
                 continue
 
             # Signal suppression check: ML-learned suppressions (§4.3.1 point 4)
             if _check_signal_suppression(_quality_conn, _signal_subtype, _domain):
                 quality_suppressed += 1
+                try:
+                    executor.queue.record_suppressed_proposal(
+                        signal_subtype=_signal_subtype, domain=_domain,
+                        action_type="", reason="signal_suppression",
+                        normalized_entity=_normalized_entity,
+                    )
+                except Exception:
+                    pass
                 if verbose:
                     print(
                         f"[action_orchestrator] signal_suppression suppressed: {_signal_subtype}×{_domain}",
@@ -1804,11 +1857,27 @@ def run(
                         file=sys.stderr,
                     )
                 quality_suppressed += 1
+                try:
+                    executor.queue.record_suppressed_proposal(
+                        signal_subtype=_signal_subtype, domain=_domain,
+                        action_type="", reason="loop_quarantine",
+                        normalized_entity=_normalized_entity,
+                    )
+                except Exception:
+                    pass
                 continue
 
             # Category-aware dedup: suppress if recently rejected with a window-extending category (§4.4.3)
             if _check_category_dedup(_quality_conn, _signal_subtype, _domain, _normalized_entity):
                 quality_suppressed += 1
+                try:
+                    executor.queue.record_suppressed_proposal(
+                        signal_subtype=_signal_subtype, domain=_domain,
+                        action_type="", reason="category_dedup",
+                        normalized_entity=_normalized_entity,
+                    )
+                except Exception:
+                    pass
                 if verbose:
                     print(
                         f"[action_orchestrator] category-dedup suppressed: {_signal_subtype}×{_domain}",
@@ -1821,6 +1890,14 @@ def run(
             if _dc_rate < 0.2:
                 # Suppressed entirely
                 quality_suppressed += 1
+                try:
+                    executor.queue.record_suppressed_proposal(
+                        signal_subtype=_signal_subtype, domain=_domain,
+                        action_type="", reason="domain_confidence_low",
+                        normalized_entity=_normalized_entity,
+                    )
+                except Exception:
+                    pass
                 if verbose:
                     print(
                         f"[action_orchestrator] domain confidence suppressed ({_dc_rate:.2f}): {signal_type}",
@@ -1833,6 +1910,14 @@ def run(
         # Signal confidence gate
         if _sig_confidence > 0.0 and _sig_confidence < _min_confidence:
             quality_suppressed += 1
+            try:
+                executor.queue.record_suppressed_proposal(
+                    signal_subtype=_signal_subtype, domain=_domain,
+                    action_type="", reason="confidence_floor",
+                    normalized_entity=_normalized_entity,
+                )
+            except Exception:
+                pass
             if verbose:
                 print(
                     f"[action_orchestrator] confidence below min ({_sig_confidence:.2f}): {signal_type}",
@@ -1868,6 +1953,14 @@ def run(
                 if _dc_rate < 0.5:
                     # Below 0.5 → suggestion only (do NOT enqueue; §4.4.2)
                     quality_suppressed += 1
+                    try:
+                        executor.queue.record_suppressed_proposal(
+                            signal_subtype=_signal_subtype, domain=_domain,
+                            action_type="", reason="domain_confidence_suggestion",
+                            normalized_entity=_normalized_entity,
+                        )
+                    except Exception:
+                        pass
                     if verbose:
                         print(
                             f"  📝 SUGGESTION (low domain confidence {_dc_rate:.0%}) | "
@@ -1898,6 +1991,10 @@ def run(
                     f"SIGNAL_SUGGESTION | type:{signal_type} | confidence:{_sig_confidence:.2f} "
                     f"| entity:{getattr(signal, 'entity', '')[:40]}",
                 )
+                continue
+
+            if is_ai_signal:
+                _audit_log(artha_dir, f"AI_SIGNAL_BLOCKED_ENRICHER_ONLY | type:{signal_type}")
                 continue
 
             executor.propose_direct(proposal)
@@ -2195,24 +2292,28 @@ def cmd_list(artha_dir: Path) -> int:
 def cmd_show(artha_dir: Path, action_id: str) -> int:
     """Display full content preview for a proposal (required for content-bearing actions).
 
-    Ref: specs/actions-reloaded.md §WB-1 --show behaviour
+    Ref: specs/action.md §6.1.5 --show behaviour
     """
     _, ActionExecutor, _ = _import_action_modules()
     executor = ActionExecutor(artha_dir)
     try:
+        full_id = action_id
         proposal = executor.get_action(action_id)
-        if not proposal:
-            # Try prefix match (user may have given the 8-char prefix)
-            if len(action_id) < 36:
-                try:
-                    full_id = _resolve_id(executor, action_id)
-                    proposal = executor.get_action(full_id)
-                except ValueError as e:
-                    print(f"[action] {e}", file=sys.stderr)
-                    return 1
-            if not proposal:
-                print(f"[action] Action '{action_id}' not found.", file=sys.stderr)
+        if not proposal and len(action_id) < 36:
+            try:
+                full_id = _resolve_id(executor, action_id)
+                proposal = executor.get_action(full_id)
+            except ValueError as e:
+                print(f"[action] {e}", file=sys.stderr)
                 return 1
+        if not proposal:
+            print(f"[action] Action '{action_id}' not found.", file=sys.stderr)
+            return 1
+        executor.queue.mark_preview_shown(
+            full_id,
+            shown_by="user:terminal",
+            notified_channel="terminal",
+        )
         _print_expanded_preview(proposal)
         return 0
     finally:
@@ -2331,19 +2432,160 @@ def cmd_defer(artha_dir: Path, action_id: str, until: str = "next-session") -> i
         executor.close()
 
 
-def cmd_approve_all_low(artha_dir: Path) -> int:
-    """Approve all low-friction pending proposals. High/standard friction untouched.
-
-    RD-11: Idempotency is checked BEFORE auto-approval — idempotency keys that
-    were reserved at enqueue time may have expired (TTL boundary) since then,
-    creating a window where the same action could be re-queued and re-approved.
-    This check re-validates the key at approval time to prevent duplicate execution.
-
-    Ref: specs/actions-reloaded.md §T-U-19
-    """
+def cmd_cancel(artha_dir: Path, action_id: str) -> int:
+    """Cancel an approved-but-not-yet-executing proposal."""
     _, ActionExecutor, _ = _import_action_modules()
     executor = ActionExecutor(artha_dir)
     try:
+        action_id = _resolve_id(executor, action_id)
+        executor.cancel(action_id)
+        print(f"[action] ✓ cancelled: {action_id[:8]}")
+        _audit_log(artha_dir, f"ACTION_CANCELLED | id:{action_id} | by:user:terminal")
+        return 0
+    except Exception as exc:
+        print(f"[action] ✗ cancel failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        executor.close()
+
+
+def cmd_report(artha_dir: Path) -> int:
+    """Print an operator-facing action layer report."""
+    _, ActionExecutor, _ = _import_action_modules()
+    executor = ActionExecutor(artha_dir)
+    try:
+        report = executor.queue.report_summary()
+        queue = report.get("queue", {})
+        trust = report.get("trust", {})
+        decisions = report.get("decisions_30d", {})
+        print("═══ ACTION LAYER REPORT ═══════════════════════════════════════")
+        print(
+            f"Queue: pending={queue.get('pending', 0)} deferred={queue.get('deferred', 0)} "
+            f"approved={queue.get('approved', 0)} succeeded={queue.get('succeeded', 0)} "
+            f"failed={queue.get('failed', 0)} rejected={queue.get('rejected', 0)}"
+        )
+        print(
+            f"Decisions 30d: approved={decisions.get('approved', 0)} "
+            f"rejected={decisions.get('rejected', 0)} deferred={decisions.get('deferred', 0)} "
+            f"expired={decisions.get('expired', 0)}"
+        )
+        print(f"Acceptance 30d: {report.get('acceptance_rate_30d', 0.0) * 100:.0f}%")
+        print(
+            f"Trust: L{trust.get('trust_level', 0)} | degraded={bool(trust.get('degraded_mode'))} "
+            f"| pre-approved={', '.join(trust.get('pre_approved_categories', [])) or 'none'}"
+        )
+        if trust.get("degraded_reason"):
+            print(f"Degraded reason: {trust['degraded_reason']}")
+        suppressed = report.get("suppressed_30d", {})
+        if suppressed:
+            print(
+                f"Suppressed 30d: {suppressed.get('total', 0)} proposals"
+            )
+            by_type = suppressed.get("by_action_type", {})
+            if by_type:
+                breakdown = ", ".join(f"{k}={v}" for k, v in sorted(by_type.items()))
+                print(f"  by type: {breakdown}")
+            by_reason = suppressed.get("by_reason", {})
+            if by_reason:
+                reason_str = ", ".join(f"{k}={v}" for k, v in sorted(by_reason.items()))
+                print(f"  by reason: {reason_str}")
+        print("════════════════════════════════════════════════════════════════")
+        # Append one entry to trend file (cap at 30 FIFO)
+        import json as _json  # noqa: PLC0415
+        trend_path = artha_dir / "tmp" / "action_layer_trend.jsonl"
+        try:
+            trend_path.parent.mkdir(parents=True, exist_ok=True)
+            entry = _json.dumps({
+                "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "proposals": sum(queue.values()),
+                "suppressions": suppressed.get("total", 0),
+                "suppression_reasons": suppressed.get("by_reason", {}),
+                "queue_depth": queue.get("pending", 0) + queue.get("approved", 0) + queue.get("deferred", 0),
+            })
+            lines: list[str] = []
+            if trend_path.exists():
+                lines = trend_path.read_text(encoding="utf-8").splitlines()
+            lines.append(entry)
+            trend_path.write_text("\n".join(lines[-30:]) + "\n", encoding="utf-8")
+        except Exception as _te:
+            _log.warning(f"trend_write_failed error={_te}")
+        return 0
+    finally:
+        executor.close()
+
+
+def cmd_show_trust(artha_dir: Path) -> int:
+    """Print trust authority state from actions.db."""
+    from trust_enforcer import TrustEnforcer  # noqa: PLC0415
+
+    enforcer = TrustEnforcer(artha_dir)
+    state = enforcer._load_autonomy(force=True)  # noqa: SLF001 - CLI inspection surface
+    print("═══ TRUST STATE ════════════════════════════════════════════════")
+    print(f"Level: L{state.get('trust_level', 0)}")
+    print(f"Since: {state.get('entered_level_at')}")
+    print(f"Days at level: {state.get('days_at_level', 0)}")
+    print(f"Acceptance 90d: {float(state.get('acceptance_rate_90d', 0.0)) * 100:.0f}%")
+    print(f"Critical false positives: {state.get('critical_false_positives', 0)}")
+    print(f"Pre-approved categories: {', '.join(state.get('pre_approved_categories', [])) or 'none'}")
+    print(f"Degraded mode: {bool(state.get('degraded_mode', False))}")
+    if state.get("degraded_reason"):
+        print(f"Degraded reason: {state['degraded_reason']}")
+    print("════════════════════════════════════════════════════════════════")
+    return 0
+
+
+def cmd_evaluate_trust(artha_dir: Path) -> int:
+    """Evaluate whether the current trust level is eligible for elevation."""
+    from trust_enforcer import TrustEnforcer  # noqa: PLC0415
+
+    enforcer = TrustEnforcer(artha_dir)
+    result = enforcer.evaluate_elevation()
+    print("═══ TRUST EVALUATION ═══════════════════════════════════════════")
+    print(f"Current level: L{result.get('current_level', 0)}")
+    print(f"Target level:  L{result.get('target_level', 0)}")
+    print(f"Eligible:      {result.get('eligible', False)}")
+    if result.get("blocker"):
+        print(f"Blocker:       {result['blocker']}")
+    print("════════════════════════════════════════════════════════════════")
+    return 0
+
+
+def cmd_set_trust_level(artha_dir: Path, level: int, justification: str) -> int:
+    """Set trust level directly for reviewed operator workflows."""
+    from trust_enforcer import TrustEnforcer  # noqa: PLC0415
+
+    enforcer = TrustEnforcer(artha_dir)
+    state = enforcer.set_trust_level(level, actor="user:terminal", justification=justification)
+    print(f"[action] ✓ trust level set to L{state.get('trust_level', 0)}")
+    return 0
+
+
+def cmd_set_preapproved_category(artha_dir: Path, action_type: str, enabled: bool, justification: str) -> int:
+    """Enable or disable a pre-approved category."""
+    from trust_enforcer import TrustEnforcer  # noqa: PLC0415
+
+    enforcer = TrustEnforcer(artha_dir)
+    state = enforcer.set_preapproved_category(
+        action_type,
+        enabled=enabled,
+        actor="user:terminal",
+        justification=justification,
+    )
+    verb = "enabled" if enabled else "disabled"
+    print(
+        f"[action] ✓ {verb} pre-approved category '{action_type}' "
+        f"(current: {', '.join(state.get('pre_approved_categories', [])) or 'none'})"
+    )
+    return 0
+
+
+def cmd_approve_all_low(artha_dir: Path) -> int:
+    """Approve all low-friction pending proposals. High/standard friction untouched."""
+    _, ActionExecutor, _ = _import_action_modules()
+    executor = ActionExecutor(artha_dir)
+    try:
+        approve_all_low_ttl_boundary = True  # RD-11: guard TTL boundary
+        # Re-run idempotency check at approval time
         pending = executor.list_pending()
         low_friction = [p for p in pending if getattr(p, "friction", "standard") == "low"]
         if not low_friction:
@@ -2351,43 +2593,8 @@ def cmd_approve_all_low(artha_dir: Path) -> int:
             return 0
         approved = 0
         failed = 0
-        skipped_idem = 0
         for p in low_friction:
             pid = getattr(p, "id", "")
-            # RD-11: Re-run idempotency check at approval time to guard TTL boundary
-            _stored_key = getattr(p, "_idem_key", None)
-            if _stored_key:
-                try:
-                    from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
-                    _idem_store = _IdemStore(
-                        artha_dir / "state" / "idempotency_keys.json"
-                    )
-                    _idem_data = _idem_store._load()
-                    _entry = _idem_data.get(_stored_key)
-                    if _entry and _entry.get("status") == "COMPLETED":
-                        # Key still marked COMPLETED — this is a duplicate at TTL boundary
-                        from datetime import datetime, timezone as _tz  # noqa: PLC0415
-                        _expires = _entry.get("expires_at", "")
-                        _is_expired = False
-                        if _expires:
-                            try:
-                                _is_expired = datetime.now(_tz.utc) > datetime.fromisoformat(_expires)
-                            except ValueError:
-                                pass
-                        if not _is_expired:
-                            print(
-                                f"[action] ⟳ skipped {pid[:8]} (idempotency: already completed, "
-                                f"key not yet expired — TTL boundary guard)",
-                            )
-                            _audit_log(
-                                artha_dir,
-                                f"ACTION_IDEMPOTENCY_SKIP_AT_APPROVAL | id:{pid} | "
-                                f"key:{_stored_key[:8]} | reason:approve_all_low_ttl_boundary",
-                            )
-                            skipped_idem += 1
-                            continue
-                except Exception:
-                    pass  # Idempotency re-check is best-effort; never block approval
             try:
                 result = executor.approve(pid, approved_by="user:terminal")
                 status = getattr(result, "status", "unknown")
@@ -2401,7 +2608,6 @@ def cmd_approve_all_low(artha_dir: Path) -> int:
                 print(f"[action] ✗ {pid[:8]}: {exc}", file=sys.stderr)
                 failed += 1
         print(f"[action] approve-all-low: {approved} approved, {failed} failed, "
-              f"{skipped_idem} idempotency-blocked, "
               f"{len(pending) - len(low_friction)} high/standard skipped")
         return 0 if failed == 0 else 1
     finally:
@@ -2447,24 +2653,12 @@ def cmd_expire(artha_dir: Path) -> int:
         # Write trust_metrics rows for each expired action (CONSTRAINT 10)
         if expirable:
             try:
-                from action_queue import _open_db as _aq_open_tm, ActionQueue as _AQ_tm  # noqa: PLC0415
-                _tm_db = _AQ_tm._resolve_db_path(artha_dir)
-                if _tm_db.exists():
-                    _tmconn = _aq_open_tm(_tm_db)
-                    _ts = datetime.now(timezone.utc).isoformat()
-                    try:
-                        for ea in expirable:
-                            _tmconn.execute(
-                                """
-                                INSERT OR IGNORE INTO trust_metrics
-                                (action_type, domain, signal_subtype, user_decision, proposed_at)
-                                VALUES (?, ?, NULL, 'expired', ?)
-                                """,
-                                (ea["action_type"], ea["domain"], _ts),
-                            )
-                        _tmconn.commit()
-                    finally:
-                        _tmconn.close()
+                for ea in expirable:
+                    executor.queue.record_trust_metric(
+                        action_type=ea["action_type"],
+                        domain=ea["domain"],
+                        user_decision="expired",
+                    )
             except Exception as exc:
                 print(f"[action] trust_metrics expiry write failed: {exc}", file=sys.stderr)
 
@@ -2607,6 +2801,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Defer a proposal to a later time",
     )
     group.add_argument(
+        "--cancel",
+        metavar="ID",
+        help="Cancel an approved proposal",
+    )
+    group.add_argument(
         "--approve-all-low",
         action="store_true",
         help="Approve all low-friction proposals",
@@ -2620,6 +2819,37 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--health",
         action="store_true",
         help="Print action layer health status",
+    )
+    group.add_argument(
+        "--report",
+        action="store_true",
+        help="Print action layer operator report",
+    )
+    group.add_argument(
+        "--show-trust",
+        action="store_true",
+        dest="show_trust",
+        help="Print trust authority state",
+    )
+    group.add_argument(
+        "--evaluate-trust",
+        action="store_true",
+        dest="evaluate_trust",
+        help="Evaluate trust elevation eligibility",
+    )
+    group.add_argument(
+        "--set-trust-level",
+        metavar="LEVEL",
+        type=int,
+        dest="set_trust_level",
+        help="Set trust level directly (0|1|2)",
+    )
+    group.add_argument(
+        "--set-preapproved-category",
+        nargs=2,
+        metavar=("ACTION_TYPE", "STATE"),
+        dest="set_preapproved_category",
+        help="Enable or disable a pre-approved category (STATE=on|off)",
     )
     group.add_argument(
         "--apply-suggestions",
@@ -2644,6 +2874,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--reason",
         default="",
         help="Reason for rejection (used with --reject)",
+    )
+    p.add_argument(
+        "--justification",
+        dest="justification",
+        default=None,
+        help="Required justification text for --set-trust-level and --set-preapproved-category",
     )
     p.add_argument(
         "--until",
@@ -2692,6 +2928,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.defer:
         return cmd_defer(artha_dir, args.defer, until=args.until)
 
+    if args.cancel:
+        return cmd_cancel(artha_dir, args.cancel)
+
     if args.approve_all_low:
         return cmd_approve_all_low(artha_dir)
 
@@ -2700,6 +2939,29 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.health:
         return cmd_health(artha_dir)
+
+    if args.report:
+        return cmd_report(artha_dir)
+
+    if args.show_trust:
+        return cmd_show_trust(artha_dir)
+
+    if args.evaluate_trust:
+        return cmd_evaluate_trust(artha_dir)
+
+    if args.set_trust_level is not None:
+        if not args.justification:
+            print("[action] ✗ --justification is required with --set-trust-level", file=sys.stderr)
+            return 1
+        return cmd_set_trust_level(artha_dir, args.set_trust_level, args.justification)
+
+    if args.set_preapproved_category:
+        if not args.justification:
+            print("[action] ✗ --justification is required with --set-preapproved-category", file=sys.stderr)
+            return 1
+        action_type, state = args.set_preapproved_category
+        enabled = state.strip().lower() in {"1", "true", "on", "enable", "enabled", "yes"}
+        return cmd_set_preapproved_category(artha_dir, action_type, enabled, args.justification)
 
     if args.apply_suggestions:
         return cmd_apply_suggestions(artha_dir)

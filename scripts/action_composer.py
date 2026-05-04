@@ -62,7 +62,7 @@ try:
 except Exception:
     _FALLBACK_SIGNAL_ROUTING = {}
 
-_REQUIRED_ROUTE_FIELDS = frozenset({"action_type", "friction", "min_trust", "reversible", "undo_window_sec"})
+_REQUIRED_ROUTE_FIELDS = frozenset({"action_type", "friction", "min_trust", "reversible", "undo_window_sec", "allowed_sources"})
 
 # Domains that always escalate friction to "high" (§10.3 rule 4)
 _HIGH_FRICTION_DOMAINS = frozenset({"immigration", "finance", "insurance", "estate"})
@@ -113,6 +113,24 @@ def _validate_routing_table(routing: dict[str, dict] | None = None) -> None:
         atype = route.get("action_type")
         if atype and atype not in _ALLOWED_ACTION_TYPES:
             errors.append(f"  {signal_type}: unknown action_type '{atype}'")
+    # B5: warn on autonomy_floor=true + min_trust>=2 conflict
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        raw_actions = load_config("actions") or {}
+        actions_cfg: dict = raw_actions.get("actions", {}) if isinstance(raw_actions, dict) else {}
+        for signal_type, route in routing.items():
+            if not isinstance(route, dict):
+                continue
+            atype = route.get("action_type", "")
+            action_def = actions_cfg.get(atype, {}) if isinstance(actions_cfg, dict) else {}
+            if action_def.get("autonomy_floor") and int(route.get("min_trust", 0)) >= 2:
+                print(
+                    f"[WARNING] {signal_type}: autonomy_floor=true with min_trust=2 — "
+                    "autonomous approval will always be blocked by autonomy floor.",
+                    file=sys.stderr,
+                )
+    except Exception:  # noqa: BLE001
+        pass
     if errors:
         print(
             "[WARNING] signal_routing.yaml validation errors:\n"
@@ -154,6 +172,9 @@ def _load_signal_routing() -> dict[str, dict]:
         )
 
     _validate_routing_table(routing)
+    for route in routing.values():
+        if isinstance(route, dict):
+            route.setdefault("allowed_sources", ["deterministic"])
 
     if not routing:
         print(
@@ -459,6 +480,9 @@ class ActionComposer:
         route = _routing.get(getattr(signal, "subtype", "") or "") or _routing.get(signal.signal_type)
         if route is None:
             return None
+        allowed_sources = route.get("allowed_sources", ["deterministic"]) or ["deterministic"]
+        if getattr(signal, "_ai_origin", False) and "ai" not in allowed_sources:
+            return None
 
         # CONSTRAINT 2: Resolve effective action_type BEFORE enablement check
         action_type: str = _resolve_effective_action_type(signal.signal_type, route, user_ctx)
@@ -523,8 +547,12 @@ class ActionComposer:
         # Catches field type errors (wrong friction, invalid min_trust, etc.)
         # at compose time rather than at DB-insert time.
         try:
-            from schemas.action import ActionProposalSchema as _APSchema  # noqa: PLC0415
-            _APSchema.model_validate(proposal.__dict__)
+            from schemas.action import (  # noqa: PLC0415
+                ActionProposalSchema as _APSchema,
+                _PYDANTIC_AVAILABLE as _SCHEMA_AVAILABLE,
+            )
+            if _SCHEMA_AVAILABLE and hasattr(_APSchema, "model_validate"):
+                _APSchema.model_validate(proposal.__dict__)
         except Exception as _schema_exc:  # noqa: BLE001
             import sys as _sys  # noqa: PLC0415
             print(

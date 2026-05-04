@@ -10,7 +10,7 @@
 #   undo_window_sec: Seconds to undo (null if irreversible)
 #   status:          Route lifecycle: active (has a producer) | stub (Phase 2 forward-declaration)
 #
-# Ref: specs/pay-debt-reloaded.md §7 WS-7
+# Ref: specs/action.md Phase 4
 
 # Content / Social (DEBT-SIG-001: was silently dropped — no route existed)
 content_stale:
@@ -20,6 +20,7 @@ content_stale:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   description: "Content posting gap exceeds threshold — prompt a post draft"
   producer: config/patterns.yaml PAT-PR-001 PAT-PR-002
 
@@ -31,6 +32,7 @@ bill_due:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 financial_alert:
   action_type: instruction_sheet
@@ -39,6 +41,7 @@ financial_alert:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 property_tax_due:
@@ -48,6 +51,7 @@ property_tax_due:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 subscription_renewal:
@@ -57,6 +61,7 @@ subscription_renewal:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 medical_bill_high:
@@ -66,6 +71,7 @@ medical_bill_high:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # Calendar
@@ -77,6 +83,7 @@ calendar_conflict:
   reversible: true
   undo_window_sec: 300
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 appointment_needed:
@@ -86,6 +93,7 @@ appointment_needed:
   reversible: true
   undo_window_sec: 30
   status: active
+  allowed_sources: [deterministic]
 
 # Email
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -96,6 +104,7 @@ email_needs_reply:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # Social
@@ -107,6 +116,7 @@ birthday_approaching:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD (priority P0 — implement occasion_tracker.py skill)
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -117,6 +127,7 @@ birthday_in_7d:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD (priority P0 — implement occasion_tracker.py skill)
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -127,6 +138,7 @@ life_event_detected:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # Kids
@@ -142,6 +154,7 @@ missing_assignment:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   # RD-25: no dedicated producer; school_action_needed covers this case.
   # Activate only when a dedicated school skill is built.
   producer: TBD (school_action_needed covers this — revisit when dedicated school skill built)
@@ -154,6 +167,7 @@ school_event_rsvp:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # Immigration
@@ -165,6 +179,7 @@ immigration_deadline:
   reversible: true
   undo_window_sec: 30
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD (priority P0 — implement immigration_monitor.py skill)
 
 # Health
@@ -176,6 +191,7 @@ prescription_refill:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD (priority P0)
 
 # Vehicle
@@ -187,6 +203,7 @@ vehicle_recall:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD (priority P1)
 
 # Insurance
@@ -197,6 +214,7 @@ insurance_renewal:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # Open Items
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -207,6 +225,7 @@ open_item_aging:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 open_item_overdue:
@@ -216,6 +235,7 @@ open_item_overdue:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # Generic calendar creation
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -226,6 +246,7 @@ event_invitation:
   reversible: true
   undo_window_sec: 300
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # IoT / Home (ARTHA-IOT Wave 1+2)
@@ -236,6 +257,7 @@ device_offline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 security_device_offline:
   action_type: instruction_sheet
@@ -244,6 +266,7 @@ security_device_offline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 energy_anomaly:
   action_type: instruction_sheet
@@ -252,6 +275,7 @@ energy_anomaly:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 supply_low:
   action_type: instruction_sheet
@@ -260,6 +284,7 @@ supply_low:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 spa_maintenance:
   action_type: instruction_sheet
@@ -268,6 +293,7 @@ spa_maintenance:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # Home Intelligence skill signals (Part 1: motion triage, Part 2: anomaly scan)
 motion_alert:
@@ -277,6 +303,7 @@ motion_alert:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 temperature_anomaly:
   action_type: instruction_sheet
@@ -285,6 +312,7 @@ temperature_anomaly:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 camera_offline:
   action_type: instruction_sheet
@@ -293,6 +321,7 @@ camera_offline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 presence_anomaly:
   action_type: instruction_sheet
@@ -301,6 +330,7 @@ presence_anomaly:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 security_travel_conflict:
@@ -310,6 +340,7 @@ security_travel_conflict:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # E1 — Email Signal Extractor
@@ -320,6 +351,7 @@ event_rsvp_needed:
   reversible: true
   undo_window_sec: 30
   status: active
+  allowed_sources: [deterministic]
 
 appointment_confirmed:
   action_type: calendar_create
@@ -328,6 +360,7 @@ appointment_confirmed:
   reversible: true
   undo_window_sec: 300
   status: active
+  allowed_sources: [deterministic]
 
 delivery_arriving:
   action_type: reminder_create
@@ -336,6 +369,7 @@ delivery_arriving:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 security_alert:
   action_type: instruction_sheet
@@ -344,6 +378,7 @@ security_alert:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 school_action_needed:
   action_type: reminder_create
@@ -352,6 +387,7 @@ school_action_needed:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 form_deadline:
   action_type: instruction_sheet
@@ -360,6 +396,7 @@ form_deadline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # E12 — Decision Tracker (RD-33: restored — decision_tracker.py consumer exists)
 decision_detected:
@@ -369,6 +406,7 @@ decision_detected:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   producer: pipeline.py Step 8d AI reasoning
   notes: >-
     Captured by DecisionTracker.capture_from_signal() — never auto-writes;
@@ -383,6 +421,7 @@ subscription_trial_ending:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 subscription_renewal_upcoming:
@@ -392,6 +431,7 @@ subscription_renewal_upcoming:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 subscription_cancellation_deadline:
   action_type: instruction_sheet
@@ -400,6 +440,7 @@ subscription_cancellation_deadline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 subscription_annual_review:
   action_type: instruction_sheet
@@ -408,6 +449,7 @@ subscription_annual_review:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # E3 — Pattern Engine signals
 goal_stale:
@@ -417,6 +459,7 @@ goal_stale:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 relationship_stale:
   action_type: instruction_sheet
@@ -425,6 +468,7 @@ relationship_stale:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 health_alert:
   action_type: instruction_sheet
@@ -433,6 +477,7 @@ health_alert:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 maintenance_due:
   action_type: instruction_sheet
@@ -441,6 +486,7 @@ maintenance_due:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 insurance_renewal_due:
   action_type: instruction_sheet
@@ -449,6 +495,7 @@ insurance_renewal_due:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # E9 — Attachment Router
 document_financial:
@@ -458,6 +505,7 @@ document_financial:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 document_medical:
   action_type: instruction_sheet
@@ -466,6 +514,7 @@ document_medical:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 document_immigration:
   action_type: instruction_sheet
@@ -474,6 +523,7 @@ document_immigration:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 document_school:
   action_type: instruction_sheet
@@ -482,6 +532,7 @@ document_school:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 document_insurance:
   action_type: instruction_sheet
@@ -490,6 +541,7 @@ document_insurance:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 document_property:
   action_type: instruction_sheet
@@ -498,6 +550,7 @@ document_property:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # Career Search (specs/career-ops.md §3.1 Phase 1, FR-CS-4)
 # interview_scheduled: friction=standard per TS-2 (escalated from low in v1.5.0)
@@ -508,6 +561,7 @@ career_eval_complete:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
 career_interview_scheduled:
@@ -517,6 +571,7 @@ career_interview_scheduled:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -527,6 +582,7 @@ career_offer_received:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 # DEBT-SIG-002: No producer confirmed — downgraded from active to stub
@@ -537,6 +593,7 @@ career_offer_deadline:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
   producer: TBD
 
 career_application_rejected:
@@ -546,6 +603,7 @@ career_application_rejected:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
 
 # Phase 2 — portal scanner signals (CareerSearchAgent)
 new_portal_match:
@@ -555,6 +613,7 @@ new_portal_match:
   reversible: false
   undo_window_sec: null
   status: stub
+  allowed_sources: [deterministic]
 
 # DEBT-008: orphaned signals — no routing existed before; now routed
 automation_failure:
@@ -564,6 +623,7 @@ automation_failure:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 goal_autopark_candidate:
   action_type: todo_sync
@@ -572,6 +632,7 @@ goal_autopark_candidate:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 slack_action_item:
   action_type: todo_sync
@@ -580,6 +641,7 @@ slack_action_item:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
 
 # RD-09: slack_after_hours — activated (was stub). Boundary protection signal.
 # Uses instruction_sheet (not reminder_create) to match the pattern of RD-01/07.
@@ -591,6 +653,7 @@ slack_after_hours:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   producer: pipeline.py (timestamp-based, not pattern-based)
   notes: >-
     Work-life boundary protection. Slack message received outside
@@ -605,6 +668,7 @@ content_moment_missed:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   producer: config/patterns.yaml (content moment detection)
   notes: >-
     Triggered when a content opportunity window passes without a post.
@@ -617,6 +681,7 @@ content_staged_unreviewed:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   producer: config/patterns.yaml (staged content monitor)
   notes: >-
     Triggered when content has been staged but not reviewed within the
@@ -630,6 +695,7 @@ address_update_notification:
   reversible: true
   undo_window_sec: 30
   status: active
+  allowed_sources: [deterministic]
   producer: scripts/action_composer.py _workflow_address_change()
   notes: >-
     Emitted for each contact in an address change workflow. Routes to
@@ -646,6 +712,7 @@ deadline:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   description: "Catch-all: any deadline-class signal without a specific subtype route"
 
 confirmation:
@@ -655,6 +722,7 @@ confirmation:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   description: "Catch-all: any confirmation-class signal without a specific subtype route"
 
 security:
@@ -664,6 +732,7 @@ security:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   description: "Catch-all: any security-class signal without a specific subtype route"
 
 informational:
@@ -673,4 +742,5 @@ informational:
   reversible: false
   undo_window_sec: null
   status: active
+  allowed_sources: [deterministic]
   description: "Catch-all: any informational-class signal without a specific subtype route"
