@@ -141,6 +141,7 @@ def test_all_flag_completes():
         [_PYTHON, str(_SCRIPTS / "precompute.py"), "--all"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         cwd=str(_REPO),
     )
     # capital will exit 2 (vault locked) → --all reports failed domains → exit 1

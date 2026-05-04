@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -115,8 +116,16 @@ def test_evaluate_scenario_creates_deduped_open_item(tmp_path: Path, monkeypatch
     content = open_items.read_text(encoding="utf-8")
     assert result[0]["status"] == "oi_created"
     assert "source_ref: SCN-001" in content
+    assert re.search(r"deadline: \d{4}-\d{2}-\d{2}", content)
+    assert "review_cadence: catch-up" in content
+    assert "planning_followup: true" in content
+    assert "surfacing_status: pending" in content
     assert content.count("source_ref: SCN-001") == 1
     assert repeat[0]["status"] in {"skipped_recent", "duplicate_oi"}
+
+    followups = ps.planning_followups(open_items_file=open_items)
+    assert followups[0]["id"] == "OI-001"
+    assert followups[0]["source_ref"] == "SCN-001"
 
 
 def test_skip_snoozes_after_three_idempotent_skips(tmp_path: Path, monkeypatch) -> None:

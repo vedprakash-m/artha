@@ -29,7 +29,7 @@ STATE MACHINE (canonical — §2.4 of specs/act.md):
   failed → (no auto-retry; user may re-queue)
   Terminal states: rejected, expired, succeeded, failed, cancelled
 
-Ref: specs/act.md §3
+Ref: specs/action.md
 """
 from __future__ import annotations
 
@@ -40,6 +40,8 @@ import shutil
 import sqlite3
 import sys
 import uuid
+import hashlib
+import re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,178 @@ M15_ACTION_TYPES = [
     {"action_type": "m365_accept",      "autonomy_cap": "L1_permanent"},
     {"action_type": "m365_teams_reply", "autonomy_cap": "L1_permanent"},
 ]
+
+_ACTION_TYPE_WINDOW_BUCKET: dict[str, str] = {
+    "calendar_create": "scheduling",
+    "calendar_modify": "scheduling",
+    "email_send": "communication",
+    "email_reply": "communication",
+    "whatsapp_send": "communication",
+    "slack_send": "communication",
+    "instruction_sheet": "instruction_sheet",
+}
+
+_ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_action_text(value: Any) -> str:
+    """Normalize text for deduplication and audit-safe comparisons."""
+    text = str(value or "")
+    text = _ZERO_WIDTH_RE.sub("", text)
+    text = text.strip().lower()
+    return _WHITESPACE_RE.sub(" ", text)
+
+
+def _coerce_iso_minute(value: Any) -> str:
+    """Return UTC ISO minute precision for a datetime-like value."""
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return ""
+        if "T" not in raw and len(raw) >= 10:
+            return raw[:10]
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return ""
+    else:
+        return ""
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    return dt.strftime("%Y-%m-%dT%H:%M")
+
+
+def _derive_target_window_iso(proposal: ActionProposal) -> str:
+    """Return the canonical target window string used in idempotency keys."""
+    params = proposal.parameters or {}
+    if isinstance(params.get("target_window_iso"), str) and params["target_window_iso"].strip():
+        return params["target_window_iso"].strip()
+
+    date_only = (
+        params.get("date")
+        or params.get("due_date")
+        or params.get("day")
+    )
+    if isinstance(date_only, str) and date_only.strip() and "T" not in date_only:
+        return date_only.strip()[:10]
+
+    start = (
+        params.get("start_at")
+        or params.get("starts_at")
+        or params.get("start")
+        or params.get("due_at")
+        or params.get("datetime")
+    )
+    end = params.get("end_at") or params.get("ends_at") or params.get("end")
+    start_iso = _coerce_iso_minute(start)
+    end_iso = _coerce_iso_minute(end)
+
+    if start_iso and end_iso and "T" in start_iso and "T" in end_iso:
+        return f"{start_iso}/{end_iso}"
+    if start_iso:
+        return start_iso
+    return "none"
+
+
+def _derive_target_resource_id(proposal: ActionProposal) -> str:
+    """Return the stable target resource identifier used in idempotency keys."""
+    params = proposal.parameters or {}
+    for key in (
+        "target_resource_id",
+        "event_id",
+        "calendar_id",
+        "thread_id",
+        "message_id",
+        "conversation_id",
+        "task_id",
+        "list_id",
+        "channel",
+        "recipient",
+        "to",
+        "phone_number",
+        "payee",
+        "service",
+    ):
+        value = params.get(key)
+        if value:
+            return f"{_normalize_action_text(proposal.domain)}:{_normalize_action_text(value)}"
+    return _normalize_action_text(proposal.domain)
+
+
+def _derive_normalized_entity(proposal: ActionProposal) -> str:
+    """Return the canonical entity string used for routing and idempotency."""
+    if proposal.normalized_entity:
+        return _normalize_action_text(proposal.normalized_entity)
+    params = proposal.parameters or {}
+    for key in (
+        "normalized_entity",
+        "entity",
+        "recipient",
+        "to",
+        "phone_number",
+        "payee",
+        "service",
+        "subject",
+        "title",
+    ):
+        value = params.get(key)
+        if value:
+            return _normalize_action_text(value)
+    return _normalize_action_text(proposal.domain)
+
+
+def _derive_normalized_summary(proposal: ActionProposal) -> str:
+    """Return the canonical summary string used for deduplication."""
+    if proposal.normalized_summary:
+        return _normalize_action_text(proposal.normalized_summary)
+    params = proposal.parameters or {}
+    for key in ("normalized_summary", "summary", "subject", "title"):
+        value = params.get(key)
+        if value:
+            return _normalize_action_text(value)
+    return _normalize_action_text(proposal.title)
+
+
+def _idempotency_window_for(proposal: ActionProposal) -> timedelta:
+    """Return the configured idempotency window for a proposal."""
+    try:
+        from lib.idempotency import get_window  # noqa: PLC0415
+
+        bucket = _ACTION_TYPE_WINDOW_BUCKET.get(proposal.action_type, proposal.action_type)
+        return get_window(bucket, proposal.domain)
+    except Exception:
+        return timedelta(hours=24)
+
+
+def _compute_idempotency_fields(
+    proposal: ActionProposal,
+    now: datetime | None = None,
+) -> tuple[str, str, str, str, str]:
+    """Return normalized entity, summary, key, window iso, expiry timestamp."""
+    ts = now or datetime.now(timezone.utc)
+    normalized_entity = _derive_normalized_entity(proposal)
+    normalized_summary = _derive_normalized_summary(proposal)
+    target_window_iso = _derive_target_window_iso(proposal)
+    target_resource_id = _derive_target_resource_id(proposal)
+    material = "||".join(
+        [
+            proposal.action_type,
+            normalized_entity,
+            normalized_summary,
+            target_window_iso,
+            target_resource_id,
+        ]
+    )
+    key = hashlib.sha256(material.encode("utf-8")).hexdigest()
+    expires_at = proposal.idempotency_expires_at
+    if not expires_at:
+        expires_at = (ts + _idempotency_window_for(proposal)).isoformat(timespec="seconds")
+    return normalized_entity, normalized_summary, key, target_window_iso, expires_at
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +273,17 @@ CREATE TABLE IF NOT EXISTS actions (
     source_skill      TEXT,
     source_domain     TEXT,
     linked_oi         TEXT,
+    signal_subtype    TEXT,
+    confidence        REAL NOT NULL DEFAULT 0.0,
+    normalized_entity TEXT,
+    normalized_summary TEXT,
+    idempotency_key   TEXT,
+    idempotency_expires_at TEXT,
+    preview_required  INTEGER NOT NULL DEFAULT 0,
+    preview_shown_at  TEXT,
+    preview_shown_by  TEXT,
+    last_notified_at  TEXT,
+    last_notified_channel TEXT,
 
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
@@ -134,7 +319,12 @@ CREATE TABLE IF NOT EXISTS trust_metrics (
     proposed_at      TEXT NOT NULL,
     user_decision    TEXT NOT NULL,
     execution_result TEXT,
-    feedback         TEXT
+    feedback         TEXT,
+    signal_subtype   TEXT,
+    proposal_confidence REAL,
+    source_origin    TEXT,
+    rejection_category TEXT,
+    normalized_entity TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_trust_type ON trust_metrics(action_type);
@@ -164,12 +354,70 @@ CREATE TABLE IF NOT EXISTS actions_archive (
     source_skill      TEXT,
     source_domain     TEXT,
     linked_oi         TEXT,
+    signal_subtype    TEXT,
+    confidence        REAL NOT NULL DEFAULT 0.0,
+    normalized_entity TEXT,
+    normalized_summary TEXT,
+    idempotency_key   TEXT,
+    idempotency_expires_at TEXT,
+    preview_required  INTEGER NOT NULL DEFAULT 0,
+    preview_shown_at  TEXT,
+    preview_shown_by  TEXT,
+    last_notified_at  TEXT,
+    last_notified_channel TEXT,
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
     undo_window_sec   INTEGER,
 
     bridge_synced     INTEGER NOT NULL DEFAULT 0,
     origin            TEXT NOT NULL DEFAULT 'local'
+);
+
+CREATE TABLE IF NOT EXISTS trust_state (
+    singleton_key            INTEGER PRIMARY KEY CHECK (singleton_key = 1),
+    trust_level              INTEGER NOT NULL DEFAULT 0,
+    entered_level_at         TEXT NOT NULL,
+    days_at_level            INTEGER NOT NULL DEFAULT 0,
+    acceptance_rate_90d      REAL NOT NULL DEFAULT 0.0,
+    critical_false_positives INTEGER NOT NULL DEFAULT 0,
+    degraded_mode            INTEGER NOT NULL DEFAULT 0,
+    degraded_reason          TEXT,
+    last_demotion            TEXT,
+    last_elevation           TEXT,
+    updated_at               TEXT NOT NULL,
+    updated_by               TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS trust_preapproved_categories (
+    action_type  TEXT PRIMARY KEY,
+    l2_enabled   INTEGER NOT NULL DEFAULT 0,
+    enabled_at   TEXT,
+    disabled_at  TEXT,
+    updated_at   TEXT NOT NULL,
+    updated_by   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_trust_mutations (
+    id            TEXT PRIMARY KEY,
+    timestamp     TEXT NOT NULL,
+    actor         TEXT NOT NULL,
+    mutation_type TEXT NOT NULL,
+    old_value     TEXT,
+    new_value     TEXT,
+    justification TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS suppressed_proposals (
+    id                 TEXT PRIMARY KEY,
+    created_at         TEXT NOT NULL,
+    signal_subtype     TEXT,
+    domain             TEXT,
+    action_type        TEXT,
+    reason             TEXT NOT NULL,
+    normalized_entity  TEXT,
+    normalized_summary TEXT,
+    shadow_title       TEXT,
+    shadow_description TEXT
 );
 """
 
@@ -268,19 +516,30 @@ class ActionQueue:
 
     def __init__(self, artha_dir: Path) -> None:
         self._artha_dir = artha_dir
-        self._db_path = self._resolve_db_path(artha_dir)
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        primary_path = self._resolve_db_path(artha_dir)
+        db_candidates = [primary_path]
 
-        # Backward-compat: auto-copy legacy DB from OneDrive-synced state/ to local path
-        legacy_path = artha_dir / "state" / "actions.db"
-        if (
-            not self._db_path.exists()
-            and self._db_path != legacy_path
-            and legacy_path.exists()
-        ):
-            shutil.copy2(str(legacy_path), str(self._db_path))
-
-        self._conn = _open_db(self._db_path)
+        last_error: Exception | None = None
+        for candidate in db_candidates:
+            try:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                legacy_path = artha_dir / "state" / "actions.db"
+                if (
+                    candidate != legacy_path
+                    and not candidate.exists()
+                    and legacy_path.exists()
+                ):
+                    shutil.copy2(str(legacy_path), str(candidate))
+                self._db_path = candidate
+                self._conn = _open_db(self._db_path)
+                break
+            except (OSError, sqlite3.OperationalError) as exc:
+                last_error = exc
+                continue
+        else:
+            raise sqlite3.OperationalError(
+                f"unable to open database file ({last_error})"
+            )
         self._init_schema()
 
     @staticmethod
@@ -300,6 +559,9 @@ class ActionQueue:
         the original relative path; production passes the real Artha root and
         gets the platform-local path.
         """
+        if artha_dir.suffix == ".db":
+            return artha_dir
+
         env_override = os.environ.get("ARTHA_LOCAL_DB", "").strip()
         if env_override:
             return Path(env_override)
@@ -327,43 +589,173 @@ class ActionQueue:
         self._migrate_schema_if_needed()
 
     def _migrate_schema_if_needed(self) -> None:
-        """Add bridge_synced and origin columns to existing DBs (idempotent).
-
-        Uses BEGIN IMMEDIATE to prevent concurrent migration race.
-        Adds columns to both actions and actions_archive tables.
-        """
-        cur = self._conn.execute("PRAGMA table_info(actions)")
-        existing_cols = {row[1] for row in cur.fetchall()}
-
-        migrations_actions = []
-        migrations_archive = []
-
-        if "bridge_synced" not in existing_cols:
-            migrations_actions.append(
-                "ALTER TABLE actions ADD COLUMN bridge_synced INTEGER NOT NULL DEFAULT 0"
-            )
-            migrations_archive.append(
-                "ALTER TABLE actions_archive ADD COLUMN bridge_synced INTEGER NOT NULL DEFAULT 0"
-            )
-        if "origin" not in existing_cols:
-            migrations_actions.append(
-                "ALTER TABLE actions ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'"
-            )
-            migrations_archive.append(
-                "ALTER TABLE actions_archive ADD COLUMN origin TEXT NOT NULL DEFAULT 'local'"
-            )
-
-        if not migrations_actions:
-            return  # already up-to-date
+        """Apply additive schema migrations idempotently."""
+        table_columns = {
+            "actions": {
+                "bridge_synced": "INTEGER NOT NULL DEFAULT 0",
+                "origin": "TEXT NOT NULL DEFAULT 'local'",
+                "signal_subtype": "TEXT",
+                "confidence": "REAL NOT NULL DEFAULT 0.0",
+                "normalized_entity": "TEXT",
+                "normalized_summary": "TEXT",
+                "idempotency_key": "TEXT",
+                "idempotency_expires_at": "TEXT",
+                "preview_required": "INTEGER NOT NULL DEFAULT 0",
+                "preview_shown_at": "TEXT",
+                "preview_shown_by": "TEXT",
+                "last_notified_at": "TEXT",
+                "last_notified_channel": "TEXT",
+            },
+            "actions_archive": {
+                "bridge_synced": "INTEGER NOT NULL DEFAULT 0",
+                "origin": "TEXT NOT NULL DEFAULT 'local'",
+                "signal_subtype": "TEXT",
+                "confidence": "REAL NOT NULL DEFAULT 0.0",
+                "normalized_entity": "TEXT",
+                "normalized_summary": "TEXT",
+                "idempotency_key": "TEXT",
+                "idempotency_expires_at": "TEXT",
+                "preview_required": "INTEGER NOT NULL DEFAULT 0",
+                "preview_shown_at": "TEXT",
+                "preview_shown_by": "TEXT",
+                "last_notified_at": "TEXT",
+                "last_notified_channel": "TEXT",
+            },
+            "trust_metrics": {
+                "signal_subtype": "TEXT",
+                "proposal_confidence": "REAL",
+                "source_origin": "TEXT",
+                "rejection_category": "TEXT",
+                "normalized_entity": "TEXT",
+            },
+        }
 
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            for sql in migrations_actions + migrations_archive:
-                try:
-                    self._conn.execute(sql)
-                except sqlite3.OperationalError as exc:
-                    if "duplicate column" not in str(exc).lower():
-                        raise
+            for table, columns in table_columns.items():
+                existing_cols = {
+                    row[1]
+                    for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                for column, col_type in columns.items():
+                    if column in existing_cols:
+                        continue
+                    try:
+                        self._conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                        )
+                    except sqlite3.OperationalError as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            raise
+
+            # C4: rename trust_state columns if old names exist (SQLite 3.25+)
+            ts_cols = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(trust_state)").fetchall()
+            }
+            if "id" in ts_cols and "singleton_key" not in ts_cols:
+                self._conn.execute(
+                    "ALTER TABLE trust_state RENAME COLUMN id TO singleton_key"
+                )
+            if "trust_level_since" in ts_cols and "entered_level_at" not in ts_cols:
+                self._conn.execute(
+                    "ALTER TABLE trust_state RENAME COLUMN trust_level_since TO entered_level_at"
+                )
+
+            # C5: add new columns to trust_preapproved_categories if missing
+            tpc_cols = {
+                row[1]
+                for row in self._conn.execute(
+                    "PRAGMA table_info(trust_preapproved_categories)"
+                ).fetchall()
+            }
+            if "enabled_at" not in tpc_cols:
+                self._conn.execute(
+                    "ALTER TABLE trust_preapproved_categories ADD COLUMN enabled_at TEXT"
+                )
+            if "disabled_at" not in tpc_cols:
+                self._conn.execute(
+                    "ALTER TABLE trust_preapproved_categories ADD COLUMN disabled_at TEXT"
+                )
+
+            # C6: rename audit_trust_mutations.reason → justification if old name exists
+            atm_cols = {
+                row[1]
+                for row in self._conn.execute(
+                    "PRAGMA table_info(audit_trust_mutations)"
+                ).fetchall()
+            }
+            if "reason" in atm_cols and "justification" not in atm_cols:
+                self._conn.execute(
+                    "ALTER TABLE audit_trust_mutations RENAME COLUMN reason TO justification"
+                )
+
+            self._conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_actions_signal_subtype ON actions(signal_subtype, domain);
+                CREATE INDEX IF NOT EXISTS idx_actions_idempotency_key ON actions(idempotency_key);
+                CREATE INDEX IF NOT EXISTS idx_actions_idempotency_live ON actions(idempotency_key, idempotency_expires_at, status);
+                CREATE INDEX IF NOT EXISTS idx_actions_preview_required ON actions(preview_required, status);
+                CREATE TABLE IF NOT EXISTS trust_state (
+                    singleton_key            INTEGER PRIMARY KEY CHECK (singleton_key = 1),
+                    trust_level              INTEGER NOT NULL DEFAULT 0,
+                    entered_level_at         TEXT NOT NULL,
+                    days_at_level            INTEGER NOT NULL DEFAULT 0,
+                    acceptance_rate_90d      REAL NOT NULL DEFAULT 0.0,
+                    critical_false_positives INTEGER NOT NULL DEFAULT 0,
+                    degraded_mode            INTEGER NOT NULL DEFAULT 0,
+                    degraded_reason          TEXT,
+                    last_demotion            TEXT,
+                    last_elevation           TEXT,
+                    updated_at               TEXT NOT NULL,
+                    updated_by               TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS trust_preapproved_categories (
+                    action_type TEXT PRIMARY KEY,
+                    l2_enabled  INTEGER NOT NULL DEFAULT 0,
+                    enabled_at  TEXT,
+                    disabled_at TEXT,
+                    updated_at  TEXT NOT NULL,
+                    updated_by  TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_trust_preapproved_enabled
+                    ON trust_preapproved_categories(l2_enabled, action_type);
+                CREATE TABLE IF NOT EXISTS audit_trust_mutations (
+                    id            TEXT PRIMARY KEY,
+                    timestamp     TEXT NOT NULL,
+                    actor         TEXT NOT NULL,
+                    mutation_type TEXT NOT NULL,
+                    old_value     TEXT,
+                    new_value     TEXT,
+                    justification TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS suppressed_proposals (
+                    id                 TEXT PRIMARY KEY,
+                    created_at         TEXT NOT NULL,
+                    signal_subtype     TEXT,
+                    domain             TEXT,
+                    action_type        TEXT,
+                    reason             TEXT NOT NULL,
+                    normalized_entity  TEXT,
+                    normalized_summary TEXT,
+                    shadow_title       TEXT,
+                    shadow_description TEXT
+                );
+                """
+            )
+
+            now = self._now_utc()
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO trust_state
+                    (singleton_key, trust_level, entered_level_at, days_at_level,
+                     acceptance_rate_90d, critical_false_positives,
+                     degraded_mode, degraded_reason, last_demotion,
+                     last_elevation, updated_at, updated_by)
+                VALUES (1, 0, ?, 0, 0.0, 0, 0, NULL, NULL, NULL, ?, 'system:init')
+                """,
+                (datetime.now(timezone.utc).date().isoformat(), now),
+            )
             self._conn.execute("COMMIT")
         except Exception:
             self._conn.execute("ROLLBACK")
@@ -420,10 +812,15 @@ class ActionQueue:
         pubkey: str | None,
         origin: str = "local",
     ) -> tuple:
-        """Serialise an ActionProposal to a DB row tuple (28 columns)."""
+        """Serialise an ActionProposal to a DB row tuple."""
         now = self._now_utc()
         params_json = json.dumps(proposal.parameters)
         description = proposal.description or ""
+        normalized_entity, normalized_summary, idempotency_key, _, idem_expires_at = (
+            _compute_idempotency_fields(proposal)
+        )
+        signal_subtype = proposal.signal_subtype or ""
+        confidence = float(proposal.confidence or 0.0)
 
         if self._should_encrypt(proposal.sensitivity) and pubkey:
             params_json = _encrypt_field(params_json, pubkey)
@@ -453,6 +850,17 @@ class ActionQueue:
             proposal.source_skill,
             proposal.domain,           # source_domain = domain
             proposal.linked_oi,
+            signal_subtype,
+            confidence,
+            normalized_entity,
+            normalized_summary,
+            proposal.idempotency_key or idempotency_key,
+            idem_expires_at,
+            1 if proposal.preview_required else 0,
+            proposal.preview_shown_at,
+            proposal.preview_shown_by,
+            proposal.last_notified_at,
+            proposal.last_notified_channel,
             1 if proposal.reversible else 0,
             None,                      # reverse_action_id
             proposal.undo_window_sec,
@@ -488,6 +896,17 @@ class ActionQueue:
             source_step=row["source_step"],
             source_skill=row["source_skill"],
             linked_oi=row["linked_oi"],
+            signal_subtype=row["signal_subtype"] or "",
+            confidence=float(row["confidence"] or 0.0),
+            normalized_entity=row["normalized_entity"] or "",
+            normalized_summary=row["normalized_summary"] or "",
+            idempotency_key=row["idempotency_key"] or "",
+            idempotency_expires_at=row["idempotency_expires_at"],
+            preview_required=bool(row["preview_required"]),
+            preview_shown_at=row["preview_shown_at"],
+            preview_shown_by=row["preview_shown_by"],
+            last_notified_at=row["last_notified_at"],
+            last_notified_channel=row["last_notified_channel"],
         )
 
     # ------------------------------------------------------------------
@@ -506,18 +925,21 @@ class ActionQueue:
                         has a PENDING or DEFERRED entry (deduplication rule §10.3).
             OverflowError: If the queue has reached _MAX_QUEUE_SIZE.
         """
-        # Deduplication: check for existing PENDING/DEFERRED for same action_type + domain
+        _, _, idempotency_key, _, _ = _compute_idempotency_fields(proposal)
         existing = self._conn.execute(
-            """SELECT id FROM actions
-               WHERE action_type = ? AND source_domain = ?
-               AND status IN ('pending', 'deferred')
+            """SELECT id, status FROM actions
+               WHERE idempotency_key = ?
+                 AND (
+                     idempotency_expires_at IS NULL
+                     OR idempotency_expires_at > ?
+                 )
                LIMIT 1""",
-            (proposal.action_type, proposal.domain),
+            (proposal.idempotency_key or idempotency_key, self._now_utc()),
         ).fetchone()
         if existing:
             raise ValueError(
-                f"Duplicate: pending/deferred action of type '{proposal.action_type}' "
-                f"for domain '{proposal.domain}' already exists (id={existing['id']})"
+                f"Duplicate: live action with matching idempotency key already exists "
+                f"(id={existing['id']}, status={existing['status']})"
             )
 
         # Queue size guard
@@ -533,8 +955,22 @@ class ActionQueue:
         row = self._proposal_to_row(proposal, pubkey)
         with self._conn:
             self._conn.execute(
-                """INSERT INTO actions VALUES (
-                    ?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,  ?,?,?,  ?,?,?,?,  ?,?,?,  ?,?
+                """INSERT INTO actions (
+                    id, created_at, updated_at,
+                    action_type, domain, friction, min_trust,
+                    title, description, parameters, sensitivity,
+                    status, approved_at, executed_at, approved_by, expires_at,
+                    result_status, result_message, result_data,
+                    source_step, source_skill, source_domain, linked_oi,
+                    signal_subtype, confidence, normalized_entity, normalized_summary,
+                    idempotency_key, idempotency_expires_at,
+                    preview_required, preview_shown_at, preview_shown_by,
+                    last_notified_at, last_notified_channel,
+                    reversible, reverse_action_id, undo_window_sec,
+                    bridge_synced, origin
+                ) VALUES (
+                    ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,
+                    ?,?,?,?, ?,?, ?,?,?, ?,?, ?,?,?, ?,?
                 )""",
                 row,
             )
@@ -588,6 +1024,8 @@ class ActionQueue:
             elif to_status in ("executing", "succeeded", "failed"):
                 if from_status == "approved" and to_status == "executing":
                     updates["executed_at"] = now
+            if to_status in ("rejected", "expired", "cancelled", "failed"):
+                updates["idempotency_expires_at"] = now
 
             set_clause = ", ".join(f"{k} = ?" for k in updates)
             params = list(updates.values()) + [action_id]
@@ -661,6 +1099,264 @@ class ActionQueue:
             return None
         return dict(row)
 
+    def find_live_duplicate(
+        self,
+        proposal: ActionProposal,
+    ) -> dict[str, Any] | None:
+        """Return a live duplicate row for a proposal's idempotency key, if any."""
+        _, _, key, _, _ = _compute_idempotency_fields(proposal)
+        row = self._conn.execute(
+            """SELECT * FROM actions
+               WHERE idempotency_key = ?
+                 AND (idempotency_expires_at IS NULL OR idempotency_expires_at > ?)
+               LIMIT 1""",
+            (proposal.idempotency_key or key, self._now_utc()),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_preview_shown(
+        self,
+        action_id: str,
+        shown_by: str,
+        *,
+        notified_channel: str | None = None,
+    ) -> None:
+        """Record a preview receipt for approval-gated actions."""
+        now = self._now_utc()
+        with self._conn:
+            self._conn.execute(
+                """UPDATE actions
+                   SET preview_shown_at = COALESCE(preview_shown_at, ?),
+                       preview_shown_by = COALESCE(preview_shown_by, ?),
+                       last_notified_at = COALESCE(?, last_notified_at),
+                       last_notified_channel = COALESCE(?, last_notified_channel),
+                       updated_at = ?
+                   WHERE id = ?""",
+                (now, shown_by, now if notified_channel else None, notified_channel, now, action_id),
+            )
+
+    def update_notification_state(self, action_id: str, channel: str) -> None:
+        """Persist the last notification timestamp/channel for a proposal."""
+        now = self._now_utc()
+        with self._conn:
+            self._conn.execute(
+                """UPDATE actions
+                   SET last_notified_at = ?, last_notified_channel = ?, updated_at = ?
+                   WHERE id = ?""",
+                (now, channel, now, action_id),
+            )
+
+    def get_trust_state(self) -> dict[str, Any]:
+        """Return trust authority from actions.db."""
+        row = self._conn.execute(
+            "SELECT * FROM trust_state WHERE singleton_key = 1"
+        ).fetchone()
+        state = dict(row) if row else {}
+        cats = self._conn.execute(
+            """SELECT action_type FROM trust_preapproved_categories
+               WHERE l2_enabled = 1 ORDER BY action_type"""
+        ).fetchall()
+        state["pre_approved_categories"] = [r["action_type"] for r in cats]
+        state["degraded_mode"] = bool(state.get("degraded_mode", 0))
+        return state
+
+    def upsert_trust_state(
+        self,
+        updates: dict[str, Any],
+        *,
+        actor: str,
+        mutation_type: str,
+        justification: str = "",
+    ) -> dict[str, Any]:
+        """Merge updates into trust_state and append an audit row."""
+        current = self.get_trust_state()
+        merged = dict(current)
+        merged.update(updates)
+        merged.setdefault("trust_level", 0)
+        merged.setdefault("entered_level_at", datetime.now(timezone.utc).date().isoformat())
+        merged.setdefault("days_at_level", 0)
+        merged.setdefault("acceptance_rate_90d", 0.0)
+        merged.setdefault("critical_false_positives", 0)
+        merged.setdefault("degraded_mode", False)
+        merged.setdefault("degraded_reason", None)
+        merged.setdefault("last_demotion", None)
+        merged.setdefault("last_elevation", None)
+        now = self._now_utc()
+        old_json = json.dumps(current, sort_keys=True)
+        new_json = json.dumps({k: v for k, v in merged.items() if k != "pre_approved_categories"}, sort_keys=True)
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO trust_state (
+                    singleton_key, trust_level, entered_level_at, days_at_level,
+                    acceptance_rate_90d, critical_false_positives,
+                    degraded_mode, degraded_reason, last_demotion,
+                    last_elevation, updated_at, updated_by
+                ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(singleton_key) DO UPDATE SET
+                    trust_level = excluded.trust_level,
+                    entered_level_at = excluded.entered_level_at,
+                    days_at_level = excluded.days_at_level,
+                    acceptance_rate_90d = excluded.acceptance_rate_90d,
+                    critical_false_positives = excluded.critical_false_positives,
+                    degraded_mode = excluded.degraded_mode,
+                    degraded_reason = excluded.degraded_reason,
+                    last_demotion = excluded.last_demotion,
+                    last_elevation = excluded.last_elevation,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                """,
+                (
+                    int(merged["trust_level"]),
+                    str(merged["entered_level_at"]),
+                    int(merged.get("days_at_level", 0)),
+                    float(merged.get("acceptance_rate_90d", 0.0)),
+                    int(merged.get("critical_false_positives", 0)),
+                    1 if merged.get("degraded_mode") else 0,
+                    merged.get("degraded_reason"),
+                    merged.get("last_demotion"),
+                    merged.get("last_elevation"),
+                    now,
+                    actor,
+                ),
+            )
+            self._conn.execute(
+                """INSERT INTO audit_trust_mutations
+                   (id, timestamp, actor, mutation_type, old_value, new_value, justification)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (self._new_id(), now, actor, mutation_type, old_json, new_json, justification or ""),
+            )
+        return self.get_trust_state()
+
+    def set_preapproved_category(
+        self,
+        action_type: str,
+        *,
+        enabled: bool,
+        actor: str,
+        justification: str = "",
+    ) -> None:
+        """Enable or disable L2 eligibility for a category in trust authority."""
+        now = self._now_utc()
+        old = self._conn.execute(
+            "SELECT l2_enabled FROM trust_preapproved_categories WHERE action_type = ?",
+            (action_type,),
+        ).fetchone()
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO trust_preapproved_categories
+                    (action_type, l2_enabled, enabled_at, disabled_at, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(action_type) DO UPDATE SET
+                    l2_enabled = excluded.l2_enabled,
+                    enabled_at = CASE WHEN excluded.l2_enabled = 1 THEN excluded.enabled_at ELSE enabled_at END,
+                    disabled_at = CASE WHEN excluded.l2_enabled = 0 THEN excluded.disabled_at ELSE disabled_at END,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                """,
+                (action_type, 1 if enabled else 0, now if enabled else None, now if not enabled else None, now, actor),
+            )
+            self._conn.execute(
+                """INSERT INTO audit_trust_mutations
+                   (id, timestamp, actor, mutation_type, old_value, new_value, justification)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self._new_id(),
+                    now,
+                    actor,
+                    "set_preapproved_category",
+                    json.dumps({"action_type": action_type, "enabled": int(old["l2_enabled"])}) if old else None,
+                    json.dumps({"action_type": action_type, "enabled": int(enabled)}),
+                    justification or "",
+                ),
+            )
+
+    def record_suppressed_proposal(
+        self,
+        *,
+        signal_subtype: str,
+        domain: str,
+        action_type: str,
+        reason: str,
+        normalized_entity: str = "",
+        normalized_summary: str = "",
+        shadow_title: str = "",
+        shadow_description: str = "",
+    ) -> None:
+        """Persist a short-lived shadow proposal for suppression analysis."""
+        with self._conn:
+            self._conn.execute(
+                """INSERT INTO suppressed_proposals
+                   (id, created_at, signal_subtype, domain, action_type, reason,
+                    normalized_entity, normalized_summary, shadow_title, shadow_description)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self._new_id(),
+                    self._now_utc(),
+                    signal_subtype or None,
+                    domain or None,
+                    action_type or None,
+                    reason,
+                    normalized_entity or None,
+                    normalized_summary or None,
+                    shadow_title or None,
+                    shadow_description or None,
+                ),
+            )
+
+    def report_summary(self) -> dict[str, Any]:
+        """Return an operator report for queue, trust, and decision health."""
+        cutoff_30d = (
+            datetime.now(timezone.utc) - timedelta(days=30)
+        ).isoformat(timespec="seconds")
+        counts = self._conn.execute(
+            "SELECT status, COUNT(*) AS cnt FROM actions GROUP BY status"
+        ).fetchall()
+        trust = self.get_trust_state()
+        summary = {row["status"]: row["cnt"] for row in counts}
+        metrics = self._conn.execute(
+            """SELECT user_decision, COUNT(*) AS cnt
+               FROM trust_metrics
+               WHERE proposed_at >= ?
+               GROUP BY user_decision""",
+            (cutoff_30d,),
+        ).fetchall()
+        decisions = {row["user_decision"]: row["cnt"] for row in metrics}
+        total_decisions = sum(decisions.values())
+        approved = decisions.get("approved", 0)
+        suppression_rows = self._conn.execute(
+            """SELECT action_type, COUNT(*) AS cnt
+               FROM suppressed_proposals
+               WHERE created_at >= ?
+               GROUP BY action_type
+               ORDER BY cnt DESC""",
+            (cutoff_30d,),
+        ).fetchall()
+        reason_rows = self._conn.execute(
+            """SELECT reason, COUNT(*) AS cnt
+               FROM suppressed_proposals
+               WHERE created_at >= ?
+               GROUP BY reason
+               ORDER BY cnt DESC""",
+            (cutoff_30d,),
+        ).fetchall()
+        suppression_total = self._conn.execute(
+            "SELECT COUNT(*) AS cnt FROM suppressed_proposals WHERE created_at >= ?",
+            (cutoff_30d,),
+        ).fetchone()
+        return {
+            "queue": summary,
+            "decisions_30d": decisions,
+            "acceptance_rate_30d": round((approved / total_decisions), 4) if total_decisions else 0.0,
+            "trust": trust,
+            "suppressed_30d": {
+                "total": suppression_total["cnt"] if suppression_total else 0,
+                "by_action_type": {row["action_type"]: row["cnt"] for row in suppression_rows},
+                "by_reason": {row["reason"]: row["cnt"] for row in reason_rows},
+            },
+        }
+
     def list_pending(self, privkey: str | None = None) -> list[ActionProposal]:
         """Return all PENDING actions, plus DEFERRED actions past their defer time.
 
@@ -676,6 +1372,15 @@ class ActionQueue:
                  CASE friction WHEN 'high' THEN 0 WHEN 'standard' THEN 1 ELSE 2 END,
                  created_at ASC""",
             (now,),
+        ).fetchall()
+        return [self._row_to_proposal(r, privkey) for r in rows]
+
+    def list_approved(self, privkey: str | None = None) -> list[ActionProposal]:
+        """Return all APPROVED actions awaiting execution (cancellable)."""
+        rows = self._conn.execute(
+            """SELECT * FROM actions
+               WHERE status = 'approved'
+               ORDER BY approved_at ASC""",
         ).fetchall()
         return [self._row_to_proposal(r, privkey) for r in rows]
 
@@ -740,18 +1445,31 @@ class ActionQueue:
         user_decision: str,
         execution_result: str | None = None,
         feedback: str | None = None,
+        *,
+        signal_subtype: str | None = None,
+        proposal_confidence: float | None = None,
+        source_origin: str | None = None,
+        rejection_category: str | None = None,
+        normalized_entity: str | None = None,
     ) -> None:
         """Append a trust metric row for elevation scoring."""
         with self._conn:
             self._conn.execute(
                 """INSERT INTO trust_metrics
                    (id, action_type, domain, proposed_at, user_decision,
-                    execution_result, feedback)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    execution_result, feedback, signal_subtype,
+                    proposal_confidence, source_origin, rejection_category,
+                    normalized_entity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     self._new_id(), action_type, domain,
                     self._now_utc(), user_decision,
                     execution_result, feedback,
+                    signal_subtype,
+                    proposal_confidence,
+                    source_origin,
+                    rejection_category,
+                    normalized_entity,
                 ),
             )
 
@@ -879,8 +1597,22 @@ class ActionQueue:
         row = self._proposal_to_row(proposal, pubkey, origin="bridge")
         with self._conn:
             self._conn.execute(
-                """INSERT INTO actions VALUES (
-                    ?,?,?,  ?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,  ?,?,?,  ?,?,?,?,  ?,?,?,  ?,?
+                """INSERT INTO actions (
+                    id, created_at, updated_at,
+                    action_type, domain, friction, min_trust,
+                    title, description, parameters, sensitivity,
+                    status, approved_at, executed_at, approved_by, expires_at,
+                    result_status, result_message, result_data,
+                    source_step, source_skill, source_domain, linked_oi,
+                    signal_subtype, confidence, normalized_entity, normalized_summary,
+                    idempotency_key, idempotency_expires_at,
+                    preview_required, preview_shown_at, preview_shown_by,
+                    last_notified_at, last_notified_channel,
+                    reversible, reverse_action_id, undo_window_sec,
+                    bridge_synced, origin
+                ) VALUES (
+                    ?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?,?,?,
+                    ?,?,?,?, ?,?, ?,?,?, ?,?, ?,?,?, ?,?
                 )""",
                 row,
             )

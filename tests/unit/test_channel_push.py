@@ -444,3 +444,42 @@ class TestPushPendingActions:
         msg = mock_adapter.send_message.call_args[0][0]
         assert "🔴" in msg.text
         assert "high" in msg.text
+
+    def test_preview_required_actions_send_preview_first_buttons(self, tmp_path, monkeypatch):
+        import yaml
+        import lib.common as common
+
+        proposal = self._make_proposal(action_type="email_send")
+        object.__setattr__(proposal, "preview_required", True)
+        mock_executor = MagicMock()
+        mock_executor.pending.return_value = [proposal]
+
+        cfg = {
+            "defaults": {"push_enabled": True},
+            "channels": {
+                "telegram": {
+                    "enabled": True,
+                    "adapter": "scripts/channels/telegram.py",
+                    "auth": {"credential_key": "test-key"},
+                    "recipients": {
+                        "primary": {"id": "123", "push": True, "access_scope": "full"},
+                    },
+                    "features": {"push": True, "buttons": True},
+                }
+            },
+        }
+        (tmp_path / "config" / "channels.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        monkeypatch.setattr(common, "CONFIG_DIR", tmp_path / "config")
+
+        mock_adapter = MagicMock()
+        mock_adapter.send_message.return_value = True
+
+        mock_ae_mod = MagicMock()
+        mock_ae_mod.ActionExecutor.return_value = mock_executor
+
+        with patch.dict("sys.modules", {"action_executor": mock_ae_mod}), \
+             patch("channels.registry.create_adapter_from_config", return_value=mock_adapter):
+            cp.push_pending_actions()
+
+        msg = mock_adapter.send_message.call_args[0][0]
+        assert msg.buttons[0]["command"].startswith(f"act:PREVIEW:{proposal.id}")

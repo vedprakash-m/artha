@@ -41,7 +41,7 @@ from actions.base import (
     DomainSignal,
     validate_proposal_fields,
 )
-from action_queue import ActionQueue
+from action_queue import ActionQueue, _compute_idempotency_fields
 from trust_enforcer import TrustEnforcer
 from action_rate_limiter import ActionRateLimiter, RateLimitError
 
@@ -136,6 +136,9 @@ _HANDLER_MAP = _derive_action_map({})
 
 # Default execution timeout per handler (seconds)
 _DEFAULT_TIMEOUT_SEC = 30
+_CONTENT_PREVIEW_REQUIRED_TYPES = frozenset(
+    {"email_send", "email_reply", "whatsapp_send", "slack_send"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +388,18 @@ class ActionExecutor:
         # Load action configs
         self._action_configs = _load_action_configs(artha_dir)
 
+        # §4.4 Invariant 1: autonomy_floor=True AND min_trust>=2 is contradictory.
+        # autonomy_floor requires explicit human approval; min_trust>=2 allows autonomous.
+        conflicts = [
+            at for at, cfg in self._action_configs.items()
+            if cfg.get("autonomy_floor", False) and int(cfg.get("min_trust", 0)) >= 2
+        ]
+        if conflicts:
+            raise RuntimeError(
+                f"Config invariant violation (§4.4): action types {conflicts} have "
+                f"autonomy_floor=true AND min_trust>=2. Fix config/actions.yaml."
+            )
+
         # Build rate limiter with action configs
         self._rate_limiter = ActionRateLimiter(artha_dir, self._action_configs)
 
@@ -453,6 +468,40 @@ class ActionExecutor:
         self._handlers[action_type] = module
         return module
 
+    def _apply_runtime_proposal_fields(self, proposal: ActionProposal) -> ActionProposal:
+        """Populate queue-owned proposal fields without changing call sites."""
+        config = self._action_configs.get(proposal.action_type, {})
+        params = proposal.parameters or {}
+        try:
+            confidence = float(
+                proposal.confidence
+                or params.get("confidence")
+                or 0.0
+            )
+        except (TypeError, ValueError):
+            confidence = 0.0
+        preview_required = proposal.preview_required or bool(
+            config.get("preview_required", proposal.action_type in _CONTENT_PREVIEW_REQUIRED_TYPES)
+        )
+        signal_subtype = proposal.signal_subtype or str(
+            params.get("signal_subtype") or params.get("signal_type") or ""
+        )
+        normalized_entity, normalized_summary, idem_key, _, idem_expires_at = (
+            _compute_idempotency_fields(proposal)
+        )
+        object.__setattr__(proposal, "preview_required", preview_required)
+        object.__setattr__(proposal, "signal_subtype", signal_subtype)
+        object.__setattr__(proposal, "confidence", confidence)
+        if not proposal.normalized_entity:
+            object.__setattr__(proposal, "normalized_entity", normalized_entity)
+        if not proposal.normalized_summary:
+            object.__setattr__(proposal, "normalized_summary", normalized_summary)
+        if not proposal.idempotency_key:
+            object.__setattr__(proposal, "idempotency_key", idem_key)
+        if not proposal.idempotency_expires_at:
+            object.__setattr__(proposal, "idempotency_expires_at", idem_expires_at)
+        return proposal
+
     # ------------------------------------------------------------------
     # Core lifecycle methods
     # ------------------------------------------------------------------
@@ -514,64 +563,6 @@ class ActionExecutor:
         if not quality_ok:
             raise ValueError(f"Proposal quality gate blocked: {quality_reason}")
 
-        # §2.3.3 Idempotency pre-action check + reserve (harden.md §2.3.3)
-        _idem_key: str | None = None
-        try:
-            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
-            _idem_recipient = str(
-                parameters.get("recipient")
-                or parameters.get("to")
-                or parameters.get("payee")
-                or domain
-            )
-            _idem_intent = title.strip().lower()[:80]
-            # RD-07: Pass signal_type so instruction_sheet keys are qualified
-            # per signal type, preventing cross-signal suppression collisions.
-            _signal_type = str(parameters.get("signal_type", ""))
-            _idem_key = _CK.compute(
-                _idem_recipient, _idem_intent, action_type,
-                signal_type=_signal_type,
-            )
-            _idem_store = _IdemStore(
-                self._artha_dir / "state" / "idempotency_keys.json"
-            )
-            _idem_result = _idem_store.check_or_reserve(_idem_key, action_type)
-            if _idem_result == "duplicate":
-                _idem_entry = _idem_store.get_entry(_idem_key)  # DEBT-EXEC-001: use public API
-                _idem_ts = _idem_entry.get("created_at", "unknown time")
-                _audit_log(
-                    self._artha_dir,
-                    f"ACTION_DUPLICATE_SUPPRESSED | type:{action_type} | domain:{domain} | at:{_idem_ts}",
-                )
-                raise ValueError(
-                    f"You already scheduled this {action_type} at {_idem_ts}. "
-                    "Ignoring duplicate."
-                )
-            if _idem_result == "pending":
-                _idem_entry = _idem_store.get_entry(_idem_key)  # DEBT-EXEC-001: use public API
-                _idem_ts = _idem_entry.get("created_at", "unknown time")
-                raise ValueError(
-                    f"A prior {action_type} action (created {_idem_ts}) is still PENDING "
-                    "from a crashed session. Resolve it via 'artha action list' before "
-                    "re-attempting."
-                )
-        except ValueError:
-            raise
-        except (sqlite3.OperationalError, OSError, PermissionError) as _idem_exc:
-            # DEBT-003: Idempotency store unavailable.
-            # Policy: fail-LOUD, not fail-open.  Escalate friction to "high" so
-            # the existing friction-floor gate (L601+) forces explicit user
-            # confirmation before executing.  The action proceeds but is gated.
-            # This is distinct from DEBT-004 (guardrails absent = no safety net):
-            # here the human friction gate IS the safety net.
-            _idem_key = None
-            friction = "high"
-            _audit_log(
-                self._artha_dir,
-                f"IDEMPOTENCY_DEGRADED | reason: {type(_idem_exc).__name__}: {_idem_exc}"
-                f" | type:{action_type} | domain:{domain}",
-            )
-
         proposal = ActionProposal(
             id=str(uuid.uuid4()),
             action_type=action_type,
@@ -588,9 +579,44 @@ class ActionExecutor:
             source_step=source_step,
             source_skill=source_skill,
             linked_oi=linked_oi,
+            signal_subtype=str(parameters.get("signal_subtype") or parameters.get("signal_type") or ""),
+            confidence=0.0,
+            preview_required=bool(
+                config.get("preview_required", action_type in _CONTENT_PREVIEW_REQUIRED_TYPES)
+            ),
         )
-        # Store idempotency key on proposal for mark_completed in approve()
-        object.__setattr__(proposal, "_idem_key", _idem_key)  # type: ignore[misc]  # frozen dataclass bypass
+        try:
+            object.__setattr__(
+                proposal,
+                "confidence",
+                float(parameters.get("confidence") or 0.0),
+            )
+        except (TypeError, ValueError):
+            object.__setattr__(proposal, "confidence", 0.0)
+        proposal = self._apply_runtime_proposal_fields(proposal)
+        if proposal.preview_required and not proposal.preview_shown_at:
+            object.__setattr__(
+                proposal,
+                "preview_shown_at",
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+            object.__setattr__(proposal, "preview_shown_by", "system:direct_propose")
+
+        try:
+            duplicate = self._queue.find_live_duplicate(proposal)
+        except (sqlite3.OperationalError, OSError, PermissionError):
+            friction = "high"
+            _audit_log(self._artha_dir, f"IDEMPOTENCY_DEGRADED | action_id:{proposal.id}")
+            duplicate = None
+        if duplicate:
+            _audit_log(
+                self._artha_dir,
+                f"ACTION_DUPLICATE_SUPPRESSED | type:{action_type} | domain:{domain} | existing:{duplicate['id'][:8]}",
+            )
+            raise ValueError(
+                f"You already have a live {action_type} action in the queue "
+                f"(id={duplicate['id'][:8]}, status={duplicate['status']})."
+            )
 
         # Field invariant check
         ok, reason = validate_proposal_fields(proposal)
@@ -684,6 +710,17 @@ class ActionExecutor:
             return ActionResult(
                 status="failure",
                 message=f"Action {action_id} is in status '{current_status}'; cannot approve.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
+        if proposal.preview_required and not (raw or {}).get("preview_shown_at"):
+            return ActionResult(
+                status="failure",
+                message=(
+                    "Preview required before approval. Run '--show' in the terminal "
+                    "or tap Preview in Telegram first."
+                ),
                 data=None,
                 reversible=False,
                 reverse_action=None,
@@ -824,21 +861,6 @@ class ActionExecutor:
                 f"ACTION_RESULT_SAVE_FAILED | id:{action_id} | error:{e}",
             )
 
-        # 7a. §2.3.3 Mark idempotency key as completed/failed after execution
-        try:
-            _stored_key = getattr(proposal, "_idem_key", None)
-            if _stored_key:
-                from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
-                _idem_store = _IdemStore(
-                    self._artha_dir / "state" / "idempotency_keys.json"
-                )
-                if result.status in ("success", "partial"):
-                    _idem_store.mark_completed(_stored_key)
-                else:
-                    _idem_store.mark_failed(_stored_key)
-        except Exception:  # noqa: BLE001
-            pass  # idempotency finalisation is best-effort; never block result return
-
         # 7b. Bridge result write (executor machine only; no-op if bridge disabled)
         self._maybe_write_bridge_result(action_id, result)
 
@@ -856,6 +878,10 @@ class ActionExecutor:
             domain=proposal.domain,
             user_decision="approved",
             execution_result=result.status,
+            signal_subtype=proposal.signal_subtype or None,
+            proposal_confidence=proposal.confidence,
+            source_origin=(raw or {}).get("origin"),
+            normalized_entity=proposal.normalized_entity or None,
         )
 
         _aelog.info(
@@ -881,12 +907,16 @@ class ActionExecutor:
             self._artha_dir,
             f"ACTION_REJECTED | id:{action_id} | reason:{reason!r}",
         )
+        raw = self._queue.get_raw(action_id) or {}
         self._queue.record_trust_metric(
-            # We need action_type + domain; fetch from raw
-            action_type=self._queue.get_raw(action_id).get("action_type", "unknown"),
-            domain=self._queue.get_raw(action_id).get("domain", "unknown"),
+            action_type=raw.get("action_type", "unknown"),
+            domain=raw.get("domain", "unknown"),
             user_decision="rejected",
             feedback=reason or None,
+            signal_subtype=raw.get("signal_subtype"),
+            proposal_confidence=raw.get("confidence"),
+            source_origin=raw.get("origin"),
+            normalized_entity=raw.get("normalized_entity"),
         )
 
     def defer(self, action_id: str, until: str) -> None:
@@ -914,10 +944,15 @@ class ActionExecutor:
             self._artha_dir,
             f"ACTION_DEFERRED | id:{action_id} | until:{defer_time}",
         )
+        raw = self._queue.get_raw(action_id) or {}
         self._queue.record_trust_metric(
-            action_type=self._queue.get_raw(action_id).get("action_type", "unknown"),
-            domain=self._queue.get_raw(action_id).get("domain", "unknown"),
+            action_type=raw.get("action_type", "unknown"),
+            domain=raw.get("domain", "unknown"),
             user_decision="deferred",
+            signal_subtype=raw.get("signal_subtype"),
+            proposal_confidence=raw.get("confidence"),
+            source_origin=raw.get("origin"),
+            normalized_entity=raw.get("normalized_entity"),
         )
 
     def cancel(self, action_id: str) -> None:
@@ -1037,6 +1072,10 @@ class ActionExecutor:
         """Alias for pending() — spec-compliant name."""
         return self.pending()
 
+    def approved(self) -> list[ActionProposal]:
+        """Return all APPROVED actions awaiting execution (cancellable)."""
+        return self._queue.list_approved(privkey=self._get_privkey())
+
     def history(self, days: int = 7) -> list[dict[str, Any]]:
         """Return executed/rejected actions for the last N days."""
         return self._queue.list_history(days=days, privkey=self._get_privkey())
@@ -1070,6 +1109,7 @@ class ActionExecutor:
         Raises:
             ValueError: If any pre-enqueue gate rejects the proposal.
         """
+        proposal = self._apply_runtime_proposal_fields(proposal)
         # RD-32: Apply all safety gates before enqueue (was PII-only before).
         gate_ok, gate_reason = self._pre_enqueue_gate(proposal)
         if not gate_ok:
@@ -1083,7 +1123,6 @@ class ActionExecutor:
         try:
             self._queue.propose(proposal, pubkey=self._get_pubkey())
         except Exception:
-            self._mark_idempotency_failed(getattr(proposal, "_idem_key", None))
             raise
         _audit_log(
             self._artha_dir,
@@ -1112,8 +1151,12 @@ class ActionExecutor:
         """
         # Gate 0: Schema validation (RD-41)
         try:
-            from schemas.action import ActionProposalSchema as _APSchema  # noqa: PLC0415
-            _APSchema.model_validate(proposal.__dict__)
+            from schemas.action import (  # noqa: PLC0415
+                ActionProposalSchema as _APSchema,
+                _PYDANTIC_AVAILABLE as _SCHEMA_AVAILABLE,
+            )
+            if _SCHEMA_AVAILABLE and hasattr(_APSchema, "model_validate"):
+                _APSchema.model_validate(proposal.__dict__)
         except Exception as _schema_exc:  # noqa: BLE001
             return False, f"schema_invalid:{str(_schema_exc)[:120]}"
 
@@ -1122,39 +1165,10 @@ class ActionExecutor:
         if not quality_ok:
             return False, quality_reason
 
-        # Gate 2: Idempotency check & reservation (RD-07, RD-32)
-        try:
-            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
-            _idem_recipient = str(
-                proposal.parameters.get("recipient")
-                or proposal.parameters.get("to")
-                or proposal.parameters.get("payee")
-                or proposal.domain
-            )
-            _idem_intent = proposal.title.strip().lower()[:80]
-            _signal_type = str(proposal.parameters.get("signal_type", ""))
-            _idem_key = _CK.compute(
-                _idem_recipient, _idem_intent, proposal.action_type,
-                signal_type=_signal_type,
-            )
-            _idem_store = _IdemStore(
-                self._artha_dir / "state" / "idempotency_keys.json"
-            )
-            _idem_result = _idem_store.check_or_reserve(_idem_key, proposal.action_type)
-            if _idem_result == "pending" and not self._has_active_queue_peer(proposal):
-                _idem_store.mark_failed(_idem_key)
-                _idem_result = _idem_store.check_or_reserve(_idem_key, proposal.action_type)
-            if _idem_result in ("duplicate", "pending"):
-                _idem_entry = _idem_store.get_entry(_idem_key)
-                _idem_ts = _idem_entry.get("created_at", "unknown time")
-                return False, f"idempotency_{_idem_result}:{_idem_key[:8]}@{_idem_ts}"
-            object.__setattr__(proposal, "_idem_key", _idem_key)  # type: ignore[misc]
-        except (ValueError, TypeError):
-            raise
-        except Exception:  # noqa: BLE001
-            # Idempotency store unavailable — let propose() handle its own
-            # friction-escalation policy; for pre_enqueue_gate we pass through.
-            pass
+        # Gate 2: Queue-backed idempotency check
+        duplicate = self._queue.find_live_duplicate(proposal)
+        if duplicate:
+            return False, f"idempotency_duplicate:{duplicate['id'][:8]}:{duplicate['status']}"
 
         # Gate 3: PII scan
         config = self._action_configs.get(proposal.action_type, {})
@@ -1200,81 +1214,10 @@ class ActionExecutor:
                     f"ACTION_QUALITY_EXPIRED | id:{proposal.id} "
                     f"| type:{proposal.action_type} | reason:{reason}",
                 )
-                self._release_idempotency_reservation(proposal)
             except ValueError:
                 continue
 
-        # Backfill for low-quality proposals expired before this method released
-        # their idempotency keys. Limit to recent rows to avoid historical churn.
-        try:
-            cutoff = (
-                datetime.now(timezone.utc) - timedelta(hours=96)
-            ).isoformat(timespec="seconds")
-            rows = self._queue._conn.execute(  # noqa: SLF001 - local queue maintenance
-                """SELECT * FROM actions
-                   WHERE status = 'expired' AND updated_at >= ?""",
-                (cutoff,),
-            ).fetchall()
-            for row in rows:
-                proposal = self._queue._row_to_proposal(  # noqa: SLF001 - local queue maintenance
-                    row, self._get_privkey()
-                )
-                ok, _reason = _proposal_quality_check(proposal)
-                if not ok:
-                    self._release_idempotency_reservation(proposal)
-        except Exception:  # noqa: BLE001
-            pass
         return expired
-
-    def _release_idempotency_reservation(self, proposal: ActionProposal) -> None:
-        """Mark a proposal's idempotency key failed so it can be regenerated."""
-        try:
-            from lib.idempotency import CompositeKey as _CK, IdempotencyStore as _IdemStore  # noqa: PLC0415
-            _idem_recipient = str(
-                proposal.parameters.get("recipient")
-                or proposal.parameters.get("to")
-                or proposal.parameters.get("payee")
-                or proposal.domain
-            )
-            _idem_intent = proposal.title.strip().lower()[:80]
-            _signal_type = str(proposal.parameters.get("signal_type", ""))
-            _idem_key = _CK.compute(
-                _idem_recipient,
-                _idem_intent,
-                proposal.action_type,
-                signal_type=_signal_type,
-            )
-            _IdemStore(
-                self._artha_dir / "state" / "idempotency_keys.json"
-            ).mark_failed(_idem_key)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _mark_idempotency_failed(self, key: str | None) -> None:
-        if not key:
-            return
-        try:
-            from lib.idempotency import IdempotencyStore as _IdemStore  # noqa: PLC0415
-            _IdemStore(
-                self._artha_dir / "state" / "idempotency_keys.json"
-            ).mark_failed(key)
-        except Exception:  # noqa: BLE001
-            pass
-
-    def _has_active_queue_peer(self, proposal: ActionProposal) -> bool:
-        """Return True if a matching active queue proposal exists."""
-        try:
-            row = self._queue._conn.execute(  # noqa: SLF001 - local queue maintenance
-                """SELECT id FROM actions
-                   WHERE action_type = ?
-                     AND source_domain = ?
-                     AND status NOT IN ('succeeded','failed','rejected','expired','cancelled')
-                   LIMIT 1""",
-                (proposal.action_type, proposal.domain),
-            ).fetchone()
-            return row is not None
-        except Exception:  # noqa: BLE001
-            return True
 
     def run_health_checks(self) -> dict[str, bool]:
         """Run health_check() for all enabled handlers.

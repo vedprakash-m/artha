@@ -20,7 +20,7 @@
 # - Key renames: send_email → email_send, send_whatsapp → whatsapp_send,
 #                add_calendar_event → calendar_create
 #
-# Ref: specs/act.md §4.2
+# Ref: specs/action.md
 
 schema_version: "2.0"
 
@@ -47,6 +47,10 @@ actions:
       - "cc"
       - "bcc"
       - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: lineage_check
+    core_surface: true
     audit: true
     autonomy_floor: true         # ALWAYS requires human approval — not bypassable
     description: "Send email via Gmail API on behalf of user"
@@ -70,6 +74,10 @@ actions:
       - "cc"
       - "bcc"
       - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: lineage_check
+    core_surface: true
     audit: true
     autonomy_floor: true
     description: "Reply to email thread via Gmail API"
@@ -91,6 +99,10 @@ actions:
       max_per_hour: 30
       max_per_day: 100
     pii_check: false             # calendar events rarely contain PII
+    preview_required: false
+    l2_eligible: true
+    provider_dedup_mode: search_before_create
+    core_surface: true
     audit: true
     autonomy_floor: false        # CAN be pre-approved at Trust Level 2
     description: "Create Google Calendar event (calendar.events scope — already authorized)"
@@ -110,6 +122,10 @@ actions:
       max_per_hour: 20
       max_per_day: 50
     pii_check: false
+    preview_required: false
+    l2_eligible: false
+    provider_dedup_mode: search_before_create
+    core_surface: true
     audit: true
     autonomy_floor: false
     description: "Modify or reschedule existing Google Calendar event"
@@ -131,6 +147,10 @@ actions:
       max_per_hour: 30
       max_per_day: 200
     pii_check: false
+    preview_required: false
+    l2_eligible: true
+    provider_dedup_mode: search_before_create
+    core_surface: true
     audit: true
     autonomy_floor: false
     description: "Create reminder in Microsoft To Do"
@@ -149,6 +169,10 @@ actions:
       max_per_hour: 10
       max_per_day: 50
     pii_check: false
+    preview_required: false
+    l2_eligible: true
+    provider_dedup_mode: source_of_truth
+    core_surface: true
     audit: true
     autonomy_floor: false
     description: "Bidirectional sync with Microsoft To Do"
@@ -171,6 +195,10 @@ actions:
     pii_allowlist:
       - "phone_number"
       - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: none
+    core_surface: true
     audit: true
     autonomy_floor: true         # ALWAYS requires human approval
     description: "Send WhatsApp message (Phase 1: URL scheme; Phase 2: Cloud API)"
@@ -190,6 +218,10 @@ actions:
     pii_check: true
     pii_allowlist:
       - "channel"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: none
+    core_surface: false
     audit: true
     autonomy_floor: true     # ALWAYS requires human approval
     description: "Send message to a Slack channel or user via chat.postMessage"
@@ -205,6 +237,10 @@ actions:
     timeout_sec: 30
     retry: false
     reversible: false        # Task creation in Todoist cannot be auto-reversed
+    l2_eligible: false
+    preview_required: false
+    provider_dedup_mode: search_before_create
+    core_surface: false
     rate_limit:
       max_per_hour: 30
       max_per_day: 200
@@ -253,6 +289,10 @@ actions:
       max_per_hour: 30
       max_per_day: 200
     pii_check: false
+    preview_required: false
+    l2_eligible: true
+    provider_dedup_mode: none
+    core_surface: true
     audit: true
     autonomy_floor: false
     description: "Generate step-by-step instruction sheet (no external execution)"

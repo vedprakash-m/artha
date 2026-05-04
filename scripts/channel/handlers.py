@@ -1077,6 +1077,59 @@ async def cmd_unlock(args: list[str], scope: str, sender_id: str,
         return "_Incorrect PIN. Session not unlocked._", "N/A"
 
 
+def _allowed_action_chat_ids() -> set[str]:
+    """Return the Telegram recipient IDs allowed to approve action callbacks.
+
+    Raises RuntimeError if the config cannot be read — callers must treat
+    any exception here as an authorisation failure (fail-closed).
+    """
+    from lib.config_loader import load_config as _load_config  # noqa: PLC0415
+
+    cfg = _load_config("channels") or {}
+    telegram = (cfg.get("channels") or {}).get("telegram") or {}
+    recipients = telegram.get("recipients") or {}
+    allowed: set[str] = set()
+    for rec_cfg in recipients.values():
+        if isinstance(rec_cfg, dict):
+            rec_id = str(rec_cfg.get("id", "")).strip()
+            if rec_id:
+                allowed.add(rec_id)
+    return allowed
+
+
+def _build_action_preview_message(proposal: Any) -> str:
+    """Build a concise preview payload for Telegram action review."""
+    params = getattr(proposal, "parameters", {}) or {}
+    lines = [
+        "👁 ACTION PREVIEW",
+        f"Type: {getattr(proposal, 'action_type', '')}",
+        f"Domain: {getattr(proposal, 'domain', '')}",
+        "",
+        getattr(proposal, "title", ""),
+    ]
+    action_type = getattr(proposal, "action_type", "")
+    if action_type in {"email_send", "email_reply"}:
+        if params.get("to"):
+            lines.append(f"To: {params['to']}")
+        if params.get("subject"):
+            lines.append(f"Subject: {params['subject']}")
+        if params.get("body"):
+            lines.append("")
+            lines.append(str(params["body"])[:1200])
+    elif action_type in {"whatsapp_send", "slack_send"}:
+        target = params.get("phone_number") or params.get("channel") or params.get("recipient")
+        if target:
+            lines.append(f"Target: {target}")
+        if params.get("text") or params.get("body"):
+            lines.append("")
+            lines.append(str(params.get("text") or params.get("body"))[:1200])
+    else:
+        if getattr(proposal, "description", ""):
+            lines.append("")
+            lines.append(str(getattr(proposal, "description", ""))[:1200])
+    return "\n".join(line for line in lines if line is not None)
+
+
 # ── _handle_callback_query ──────────────────────────────────────────────
 
 async def _handle_callback_query(
@@ -1087,9 +1140,9 @@ async def _handle_callback_query(
 ) -> None:
     """Handle Telegram inline keyboard button presses for action approval.
 
-    callback_data format: "act:APPROVE:action_id" | "act:REJECT:action_id" | "act:DEFER:action_id"
+    callback_data format: "act:VERB:action_id"
 
-    Ref: specs/act.md §5.3
+    Ref: specs/action.md §6.1.5
     """
     from channels.base import ChannelMessage as _CM  # noqa: PLC0415
 
@@ -1104,8 +1157,44 @@ async def _handle_callback_query(
         return
 
     try:
+        allowed_chat_ids = _allowed_action_chat_ids()
+    except Exception:
+        adapter.send_message(_CM(
+            text="⚠️ Action approvals blocked: cannot read authorised chat list.",
+            recipient_id=sender_id,
+        ))
+        return
+    if not allowed_chat_ids or str(sender_id) not in allowed_chat_ids:
+        adapter.send_message(_CM(
+            text="⚠️ This chat is not authorized for action approvals.",
+            recipient_id=sender_id,
+        ))
+        return
+
+    try:
         from action_executor import ActionExecutor  # noqa: PLC0415
         executor = ActionExecutor(_ARTHA_DIR)
+
+        if verb == "PREVIEW":
+            proposal = executor.get_action(action_id)
+            if not proposal:
+                reply = "⚠️ Action not found."
+                buttons = None
+            else:
+                executor.queue.mark_preview_shown(
+                    action_id,
+                    shown_by=f"user:telegram:{sender_id}",
+                    notified_channel="telegram",
+                )
+                reply = _build_action_preview_message(proposal)
+                buttons = [
+                    {"label": "✅ Approve", "command": f"act:APPROVE:{action_id}"},
+                    {"label": "🚫 Cancel", "command": f"act:CANCEL:{action_id}"},
+                    {"label": "❌ Reject", "command": f"act:REJECT:{action_id}"},
+                    {"label": "⏸ Defer", "command": f"act:DEFER:{action_id}"},
+                ]
+            adapter.send_message(_CM(text=reply, recipient_id=sender_id, buttons=buttons))
+            return
 
         if verb == "APPROVE":
             result = executor.approve(action_id, approved_by="user:telegram")
@@ -1123,6 +1212,10 @@ async def _handle_callback_query(
         elif verb == "DEFER":
             executor.defer(action_id, until="+24h")
             reply = f"⏰ Deferred 24 hours."
+
+        elif verb == "CANCEL":
+            executor.cancel(action_id)
+            reply = "🛑 Action cancelled."
 
         else:
             reply = f"⚠️ Unknown action verb: {verb}"
@@ -1377,9 +1470,9 @@ async def _handle_callback_query(
 ) -> None:
     """Handle Telegram inline keyboard button presses for action approval.
 
-    callback_data format: "act:APPROVE:action_id" | "act:REJECT:action_id" | "act:DEFER:action_id"
+    callback_data format: "act:VERB:action_id"
 
-    Ref: specs/act.md §5.3
+    Ref: specs/action.md §6.1.5
     """
     from channels.base import ChannelMessage as _CM  # noqa: PLC0415
 
@@ -1394,8 +1487,44 @@ async def _handle_callback_query(
         return
 
     try:
+        allowed_chat_ids = _allowed_action_chat_ids()
+    except Exception:
+        adapter.send_message(_CM(
+            text="⚠️ Action approvals blocked: cannot read authorised chat list.",
+            recipient_id=sender_id,
+        ))
+        return
+    if not allowed_chat_ids or str(sender_id) not in allowed_chat_ids:
+        adapter.send_message(_CM(
+            text="⚠️ This chat is not authorized for action approvals.",
+            recipient_id=sender_id,
+        ))
+        return
+
+    try:
         from action_executor import ActionExecutor  # noqa: PLC0415
         executor = ActionExecutor(_ARTHA_DIR)
+
+        if verb == "PREVIEW":
+            proposal = executor.get_action(action_id)
+            if not proposal:
+                reply = "⚠️ Action not found."
+                buttons = None
+            else:
+                executor.queue.mark_preview_shown(
+                    action_id,
+                    shown_by=f"user:telegram:{sender_id}",
+                    notified_channel="telegram",
+                )
+                reply = _build_action_preview_message(proposal)
+                buttons = [
+                    {"label": "✅ Approve", "command": f"act:APPROVE:{action_id}"},
+                    {"label": "🚫 Cancel", "command": f"act:CANCEL:{action_id}"},
+                    {"label": "❌ Reject", "command": f"act:REJECT:{action_id}"},
+                    {"label": "⏸ Defer", "command": f"act:DEFER:{action_id}"},
+                ]
+            adapter.send_message(_CM(text=reply, recipient_id=sender_id, buttons=buttons))
+            return
 
         if verb == "APPROVE":
             result = executor.approve(action_id, approved_by="user:telegram")
@@ -1413,6 +1542,10 @@ async def _handle_callback_query(
         elif verb == "DEFER":
             executor.defer(action_id, until="+24h")
             reply = f"⏰ Deferred 24 hours."
+
+        elif verb == "CANCEL":
+            executor.cancel(action_id)
+            reply = "🛑 Action cancelled."
 
         else:
             reply = f"⚠️ Unknown action verb: {verb}"

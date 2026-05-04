@@ -125,6 +125,10 @@ def _today() -> str:
     return date.today().isoformat()
 
 
+def _planning_review_deadline(days: int = 7) -> str:
+    return (date.today() + timedelta(days=days)).isoformat()
+
+
 def _split_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     if not content.startswith("---"):
         return {}, content
@@ -553,8 +557,16 @@ def _append_open_item(open_items_file: Path, item: dict[str, Any]) -> str:
         "  todo_id: \"\"",
         "  origin: system",
         f"  source_ref: {item['source_ref']}",
-        "",
     ]
+    if item.get("review_cadence"):
+        lines.append(f"  review_cadence: {item['review_cadence']}")
+    if item.get("planning_followup") is not None:
+        lines.append(f"  planning_followup: {str(bool(item['planning_followup'])).lower()}")
+    if item.get("surfacing_status"):
+        lines.append(f"  surfacing_status: {item['surfacing_status']}")
+    if item.get("review_reason"):
+        lines.append(f"  review_reason: \"{item['review_reason']}\"")
+    lines.append("")
     backup = _snapshot(open_items_file)
     try:
         new_content = content.rstrip() + "\n" + "\n".join(lines)
@@ -568,6 +580,76 @@ def _append_open_item(open_items_file: Path, item: dict[str, Any]) -> str:
         raise
 
 
+def _parse_open_item_blocks(content: str) -> list[dict[str, Any]]:
+    """Parse mixed Markdown/YAML open item blocks from ``open_items.md``."""
+    block_pattern = re.compile(
+        r"^- id:\s*(OI-\d+)\s*$(.*?)(?=^- id:\s*OI-|\n## |\Z)",
+        re.MULTILINE | re.DOTALL,
+    )
+    items: list[dict[str, Any]] = []
+    for match in block_pattern.finditer(content):
+        item: dict[str, Any] = {"id": match.group(1).strip()}
+        block = match.group(2)
+        for field_match in re.finditer(r"^\s+([A-Za-z0-9_]+):\s*(.*)$", block, re.MULTILINE):
+            key = field_match.group(1)
+            raw = field_match.group(2).strip()
+            if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+                raw = raw[1:-1]
+            if raw.lower() == "true":
+                value: Any = True
+            elif raw.lower() == "false":
+                value = False
+            else:
+                value = raw
+            item[key] = value
+        items.append(item)
+    return items
+
+
+def planning_followups(
+    *,
+    open_items_file: Path = OPEN_ITEMS_FILE,
+    limit: int = 3,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return planning follow-up OIs that catch-up must surface.
+
+    These are not ordinary future-dated tasks. They are handoffs created by the
+    ambient intent buffer and should remain visible in catch-up until reviewed,
+    closed, or explicitly snoozed.
+    """
+    today = today or date.today()
+    if not open_items_file.exists():
+        return []
+    items = _parse_open_item_blocks(open_items_file.read_text(encoding="utf-8"))
+    followups: list[dict[str, Any]] = []
+    for item in items:
+        if str(item.get("status", "")).lower() != "open":
+            continue
+        if item.get("planning_followup") is not True:
+            continue
+        if str(item.get("review_cadence", "")).lower() != "catch-up":
+            continue
+        deadline = _parse_date(item.get("deadline"))
+        days_until = (deadline - today).days if deadline else None
+        followups.append({
+            "id": item.get("id"),
+            "source_ref": item.get("source_ref"),
+            "source_domain": item.get("source_domain") or item.get("domain"),
+            "description": item.get("description", ""),
+            "deadline": item.get("deadline", ""),
+            "priority": item.get("priority", "P2"),
+            "days_until_deadline": days_until,
+            "review_reason": item.get("review_reason", ""),
+        })
+    followups.sort(key=lambda item: (
+        item["days_until_deadline"] if item["days_until_deadline"] is not None else 9999,
+        str(item.get("priority", "P9")),
+        str(item.get("id", "")),
+    ))
+    return followups[:limit]
+
+
 def _scenario_recommendation(scenario: dict[str, Any], signal: dict[str, Any] | None) -> dict[str, Any] | None:
     title = str(scenario.get("title", "")).casefold()
     if "kia" in title:
@@ -578,9 +660,13 @@ def _scenario_recommendation(scenario: dict[str, Any], signal: dict[str, Any] | 
                 "extend warranty, or keep/monitor. Gather current mileage, warranty status, "
                 "trade-in value, and repair risk before choosing a path."
             ),
-            "deadline": "",
+            "deadline": _planning_review_deadline(),
             "priority": "P2",
             "source_ref": scenario["id"],
+            "review_cadence": "catch-up",
+            "planning_followup": True,
+            "surfacing_status": "pending",
+            "review_reason": "Scenario follow-up created from ambient intent buffer",
         }
     if signal and signal.get("domain") == "kids":
         return {
@@ -589,9 +675,13 @@ def _scenario_recommendation(scenario: dict[str, Any], signal: dict[str, Any] | 
                 f"{scenario['id']} - review academic recovery scenario and choose support path "
                 "with Trisha: teacher conference, tutoring, or structured home plan."
             ),
-            "deadline": "",
+            "deadline": _planning_review_deadline(),
             "priority": "P1",
             "source_ref": scenario["id"],
+            "review_cadence": "catch-up",
+            "planning_followup": True,
+            "surfacing_status": "pending",
+            "review_reason": "Scenario follow-up created from ambient intent buffer",
         }
     return None
 
@@ -987,6 +1077,15 @@ def _cmd_evaluate_scenarios(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_followups(args: argparse.Namespace) -> int:
+    result = planning_followups(
+        open_items_file=Path(args.open_items_file),
+        limit=args.limit,
+    )
+    print(yaml.dump({"planning_followups": result}, allow_unicode=True, sort_keys=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="FR-41 Ambient Intent Buffer")
     parser.add_argument("--signals-file", default=str(SIGNALS_FILE))
@@ -1023,6 +1122,10 @@ def main(argv: list[str] | None = None) -> int:
     eval_p.add_argument("--open-items-file", default=str(OPEN_ITEMS_FILE))
     eval_p.add_argument("--write", action="store_true")
     eval_p.set_defaults(func=_cmd_evaluate_scenarios)
+    followups_p = sub.add_parser("followups")
+    followups_p.add_argument("--open-items-file", default=str(OPEN_ITEMS_FILE))
+    followups_p.add_argument("--limit", type=int, default=3)
+    followups_p.set_defaults(func=_cmd_followups)
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))

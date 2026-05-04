@@ -99,12 +99,39 @@ class TestAutonomyFloor:
         allowed, reason = enforcer.check(proposal, "user:telegram", action_cfg)
         assert allowed is True
 
-    def test_no_autonomy_floor_auto_approver_allowed_at_l2(self, enforcer):
-        """autonomy_floor=false + auto:L2 + trust=1 + min_trust=0 → ALLOWED."""
+    def test_no_autonomy_floor_auto_approver_allowed_at_l2(self, tmp_path):
+        """autonomy_floor=false + auto:L2 + action_type in pre_approved_categories → ALLOWED."""
+        # Rule 6: auto:L2 requires action_type in pre_approved_categories.
+        # Build a fixture that includes "reminder_create" in pre_approved_categories.
+        (tmp_path / "state").mkdir()
+        p = tmp_path / "state" / "health-check.md"
+        p.write_text(
+            "# Health Check\n\n"
+            "## Autonomy State\n\n"
+            "```yaml\n"
+            "autonomy:\n"
+            "  trust_level: 1\n"
+            "  days_at_level: 15\n"
+            "  acceptance_rate_90d: 0.88\n"
+            "  critical_false_positives: 0\n"
+            "  pre_approved_categories: [reminder_create]\n"
+            "```\n"
+        )
+        enforcer_with_cat = TrustEnforcer(tmp_path)
+        proposal = _make_proposal(action_type="reminder_create", min_trust=0, friction="low")
+        action_cfg = {"autonomy_floor": False}
+        allowed, reason = enforcer_with_cat.check(proposal, "auto:L2", action_cfg)
+        assert allowed is True
+
+    def test_no_autonomy_floor_auto_blocked_when_not_in_preapproved(self, enforcer):
+        """autonomy_floor=false + auto:L2 + action_type NOT in pre_approved_categories → BLOCKED."""
+        # Rule 6: auto:L2 requires action_type in pre_approved_categories.
+        # The default enforcer fixture has empty pre_approved_categories.
         proposal = _make_proposal(action_type="reminder_create", min_trust=0, friction="low")
         action_cfg = {"autonomy_floor": False}
         allowed, reason = enforcer.check(proposal, "auto:L2", action_cfg)
-        assert allowed is True
+        assert allowed is False
+        assert "L2_CATEGORY_GATE" in reason
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +203,15 @@ class TestFrictionBlocking:
         allowed, reason = enforcer.check(proposal, "auto:L2", action_cfg)
         assert allowed is False
         assert "friction" in reason.lower()
+
+    def test_degraded_trust_blocks_auto_but_preserves_human_review(self, enforcer):
+        proposal = _make_proposal(friction="low", min_trust=2)
+        with patch.object(enforcer._queue, "get_trust_state", side_effect=RuntimeError("db down")):
+            allowed_human, _ = enforcer.check(proposal, "user:terminal", {"autonomy_floor": False})
+            allowed_auto, reason_auto = enforcer.check(proposal, "auto:L2", {"autonomy_floor": False})
+        assert allowed_human is True
+        assert allowed_auto is False
+        assert "degraded" in reason_auto.lower() or "trust_store" in reason_auto.lower()
 
 
 # ---------------------------------------------------------------------------

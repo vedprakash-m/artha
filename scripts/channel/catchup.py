@@ -19,6 +19,7 @@ from channel.state_readers import (
 )
 from channel.llm_bridge import _ask_llm, _ask_llm_ensemble, _gather_context, _detect_all_llm_clis, _call_single_llm
 from channel.audit import _audit_log
+from planning_signals import OPEN_ITEMS_FILE, planning_followups
 
 _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _STATE_DIR = _ARTHA_DIR / "state"
@@ -90,6 +91,28 @@ def _gather_all_context(max_chars: int = _CATCHUP_MAX_CONTEXT_CHARS) -> str:
     """Gather context for ALL domains — broader than _gather_context()."""
     sections: list[str] = []
     budget = max_chars
+
+    # Planning follow-ups are handoffs from the ambient intent buffer. Put them
+    # before generic open items so catch-up cannot bury them in a long backlog.
+    try:
+        followups = planning_followups(open_items_file=OPEN_ITEMS_FILE, limit=3)
+    except Exception as exc:
+        log.warning("[catch-up] planning followup extraction failed: %s", exc)
+        followups = []
+    if followups:
+        lines = [
+            "[Pending Planning Follow-ups - MUST SURFACE]",
+            "These are catch-up-native planning handoffs. Include them in the briefing until reviewed or closed.",
+        ]
+        for item in followups:
+            deadline = item.get("deadline") or "no deadline"
+            lines.append(
+                f"- {item.get('id')} ({item.get('source_ref')}) "
+                f"[{item.get('source_domain')}] due {deadline}: {item.get('description')}"
+            )
+        followup_text = "\n".join(lines)
+        sections.append(followup_text)
+        budget -= len(followup_text) + 20
 
     # Open items (all open)
     oi_content, _ = _read_state_file("open_items")
@@ -266,6 +289,9 @@ async def cmd_catchup(args: list[str], scope: str) -> tuple[str, str]:
         "Keep it concise: max 3 bullets per domain, skip domains with no new activity "
         "(but state 'No new activity' for major domains).\n"
         "Include ONE THING with Urgency×Impact×Agency scoring.\n"
+        "If the context contains '[Pending Planning Follow-ups - MUST SURFACE]', "
+        "include those items in the briefing under a Planning Follow-ups section, "
+        "even when their deadline is not today.\n"
         "If new emails/events are provided, incorporate them. "
         "If none, synthesize from current state files and open items."
     )

@@ -1967,6 +1967,37 @@ The four new domains (Readiness, Logistics, Tribe, Capital) each have a domain-s
 
 **Work domain hard cap:** All work automation agents (FR-19 FW-21–FW-26) are **permanently L1** — propose-only, no graduation path. Work actions carry organizational risk that personal-domain autonomy graduation does not apply to. See FR-19 work agent autonomy cap note.
 
+### Action Layer Architectural Invariants
+
+The action layer is built on Artha's pull-based architecture. These invariants govern how the layer operates and may not be overridden:
+
+- **Single proposal authority**: `pipeline.py` catch-up (Step 12.5) is the only system authority that evaluates signals and queues proposals. No background process, scheduled job, or external trigger may create proposals.
+- **Telegram is approval-only**: The Telegram bot (`artha_ved_bot`) may approve, reject, defer, preview, or cancel existing proposals. It does not create proposal state and does not become a second planning loop.
+- **Catch-up-native resurfacing**: Pending actions must resurface in every catch-up session until they reach a terminal state (`approved`, `rejected`, `expired`, `cancelled`) or an explicit defer horizon. No feature may require a separate manual review loop outside catch-up.
+- **Non-goals**: This layer does not introduce an always-on autonomous agent, event bus, or background action planner. It does not depend on OpenClaw or `claw_bridge`.
+
+### Autonomy Hardening Invariants
+
+The following must be enforced as startup or pre-execution assertions, not just documentation:
+
+1. **Autonomy-floor conflict abort**: If any action in `config/actions.yaml` has both `autonomy_floor: true` and `min_trust >= 2`, the orchestrator must abort with a clear error. This catches configuration drift where `autonomy_floor` is lowered to widen the L2 surface without realizing it breaks the contract.
+2. **Signal-routing AI-origin gate**: Every entry in `config/signal_routing.yaml` must declare an explicit `allowed_sources` list. Any entry missing this field is treated as `allowed_sources: [deterministic]` (AI-origin blocked by default).
+3. **Untrusted string sanitization**: Any string sourced from email content, external signals, or AI enrichment output must be sanitized before rendering in the briefing or action preview.
+4. **Trust store degraded mode**: If the trust store (`actions.db` trust tables) cannot be read, the system must preserve L1 (propose-and-approve) behavior — it must not silently disable human review or fall through to unguarded auto-execution.
+
+### Hard Stops
+
+Immediate rollback to L1-only (or narrower) if any of the following occur:
+
+- Duplicate external side effect from an auto-executed handler
+- Wrong-recipient communication (message sent to unintended person)
+- Critical health or immigration false positive that triggers an action
+- Trust mutation without a corresponding audit trail row
+- AI-origin action that bypasses contact or parameter validation
+- DB fallback to `state/actions.db` silently accepted as operational (must halt instead)
+- Telegram approval accepted from an unrecognized `chat_id`
+- `auto:L2` execution allowed for a category not in `trust_preapproved_categories`
+
 ---
 
 ## 10. Data Sources & Integrations

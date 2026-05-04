@@ -89,7 +89,7 @@ class DomainSignal:
         metadata:     Signal-specific payload (amounts, dates, thread_ids, etc.).
         detected_at:  ISO-8601 UTC timestamp of detection.
         subtype:      Original specific signal type before canonical mapping (e.g. "bill_due").
-        confidence:   Extraction quality score 0.0–1.0 (§4.4.2 of specs/action-convert.md).
+        confidence:   Extraction quality score 0.0–1.0 (specs/action.md §6.1.3).
                       0.0 = unscored / default. Set by email_signal_extractor at creation time.
     """
     signal_type: str
@@ -179,6 +179,38 @@ class ActionProposal:
     source_step: str | None = None
     source_skill: str | None = None
     linked_oi: str | None = None
+    signal_subtype: str = ""
+    confidence: float = 0.0
+    normalized_entity: str = ""
+    normalized_summary: str = ""
+    idempotency_key: str = ""
+    idempotency_expires_at: str | None = None
+    preview_required: bool = False
+    preview_shown_at: str | None = None
+    preview_shown_by: str | None = None
+    last_notified_at: str | None = None
+    last_notified_channel: str | None = None
+
+    def __post_init__(self) -> None:
+        """Sanitize rendered strings and enforce basic scalar invariants."""
+        object.__setattr__(self, "title", _sanitize_metadata_value(self.title or ""))
+        object.__setattr__(
+            self, "description", _sanitize_metadata_value(self.description or "")
+        )
+        object.__setattr__(
+            self,
+            "normalized_entity",
+            _sanitize_metadata_value(self.normalized_entity or ""),
+        )
+        object.__setattr__(
+            self,
+            "normalized_summary",
+            _sanitize_metadata_value(self.normalized_summary or ""),
+        )
+        if not (0.0 <= float(self.confidence or 0.0) <= 1.0):
+            raise ValueError(
+                f"ActionProposal.confidence must be between 0.0 and 1.0; got {self.confidence!r}"
+            )
 
 
 @dataclass
@@ -457,6 +489,8 @@ def validate_proposal_fields(proposal: ActionProposal) -> tuple[bool, str]:
         return False, "proposal.min_trust must be 0, 1, or 2"
     if proposal.sensitivity not in VALID_SENSITIVITY:
         return False, f"proposal.sensitivity must be one of {VALID_SENSITIVITY}"
+    if not (0.0 <= float(proposal.confidence or 0.0) <= 1.0):
+        return False, "proposal.confidence must be between 0.0 and 1.0"
     if proposal.undo_window_sec is not None and proposal.undo_window_sec < 0:
         return False, "proposal.undo_window_sec must be non-negative"
     # §2.5.2 Per-action-type required payload field check

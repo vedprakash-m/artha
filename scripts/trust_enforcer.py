@@ -10,13 +10,13 @@ Reads the `autonomy:` block from state/health-check.md and enforces:
   3. Auto-approval via 'auto:L2' is blocked for friction="high" actions.
   4. Trust elevation and demotion criteria are evaluated here.
 
-AUTONOMY FLOOR CONTRACT (§6.2, specs/act.md):
+AUTONOMY FLOOR CONTRACT (§6.2, specs/action.md §6.1.6):
   Actions with autonomy_floor=true in actions.yaml ALWAYS require
   a human actor.  If approved_by contains "auto:", the check fails
   regardless of trust level.  This is a hard-coded structural rule —
   not a policy — and cannot be overridden by configuration.
 
-Ref: specs/act.md §6
+Ref: specs/action.md §6.1.6
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ _lib_dir = str(Path(__file__).resolve().parent / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
 from state_writer import write as _state_write  # noqa: PLC0415
+from action_queue import ActionQueue
 
 
 # "auto:" prefix in approved_by = autonomous approval (not human)
@@ -245,62 +246,144 @@ class TrustEnforcer:
     def __init__(self, artha_dir: Path) -> None:
         self._artha_dir = artha_dir
         self._health_check_path = artha_dir / "state" / "health-check.md"
+        self._queue = ActionQueue(artha_dir)
         self._autonomy: dict[str, Any] | None = None
 
     def _load_autonomy(self, force: bool = False) -> dict[str, Any]:
-        """Load the autonomy block from health-check.md.
-
-        Caches the result in-process to avoid repeated file reads.
-        Pass force=True to re-read (e.g. after elevation/demotion).
-        """
+        """Load trust authority from actions.db, with health-check bootstrap."""
         if self._autonomy is not None and not force:
             return self._autonomy
 
         defaults: dict[str, Any] = {
             "trust_level": 0,
-            "trust_level_since": datetime.now(timezone.utc).date().isoformat(),
+            "entered_level_at": datetime.now(timezone.utc).date().isoformat(),
             "days_at_level": 0,
             "acceptance_rate_90d": 0.0,
             "critical_false_positives": 0,
             "pre_approved_categories": [],
             "last_demotion": None,
             "last_elevation": None,
+            "degraded_mode": False,
+            "degraded_reason": None,
         }
-
-        if not self._health_check_path.exists():
+        try:
+            state = self._queue.get_trust_state()
+            # Bootstrap from legacy health-check.md only on first-use default row.
+            if (
+                self._health_check_path.exists()
+                and state.get("updated_by") == "system:init"
+                and int(state.get("trust_level", 0)) == 0
+                and not state.get("pre_approved_categories")
+            ):
+                content = self._health_check_path.read_text(encoding="utf-8")
+                block = _extract_autonomy_block(content)
+                if block:
+                    has_since = "entered_level_at" in block
+                    defaults.update(block)
+                    if has_since:
+                        since_str = defaults.get("entered_level_at", "")
+                        try:
+                            since_date = datetime.strptime(
+                                str(since_str), "%Y-%m-%d"
+                            ).date()
+                            today = datetime.now(timezone.utc).date()
+                            defaults["days_at_level"] = max(0, (today - since_date).days)
+                        except (ValueError, TypeError):
+                            pass
+                    self._queue.upsert_trust_state(
+                        {
+                            "trust_level": int(defaults["trust_level"]),
+                            "entered_level_at": str(defaults["entered_level_at"]),
+                            "days_at_level": int(defaults.get("days_at_level", 0)),
+                            "acceptance_rate_90d": float(defaults.get("acceptance_rate_90d", 0.0)),
+                            "critical_false_positives": int(defaults.get("critical_false_positives", 0)),
+                            "last_demotion": defaults.get("last_demotion"),
+                            "last_elevation": defaults.get("last_elevation"),
+                            "degraded_mode": False,
+                            "degraded_reason": None,
+                        },
+                        actor="system:trust_migrate",
+                        mutation_type="bootstrap_from_health_check",
+                        justification="seed trust_state from legacy health-check.md",
+                    )
+                    for category in defaults.get("pre_approved_categories", []) or []:
+                        self._queue.set_preapproved_category(
+                            str(category),
+                            enabled=True,
+                            actor="system:trust_migrate",
+                            justification="seed trust_preapproved_categories from legacy health-check.md",
+                        )
+                    state = self._queue.get_trust_state()
+            merged = dict(defaults)
+            merged.update(state)
+            self._autonomy = merged
+            return self._autonomy
+        except Exception as exc:
+            defaults["degraded_mode"] = True
+            defaults["degraded_reason"] = f"trust_store_unavailable:{type(exc).__name__}"
             self._autonomy = defaults
             return self._autonomy
-
-        try:
-            content = self._health_check_path.read_text(encoding="utf-8")
-            block = _extract_autonomy_block(content)
-            if block:
-                has_since = "trust_level_since" in block
-                defaults.update(block)
-                # Compute days_at_level dynamically from trust_level_since
-                # when the autonomy block explicitly contains that field.
-                if has_since:
-                    since_str = defaults.get("trust_level_since", "")
-                    try:
-                        since_date = datetime.strptime(
-                            str(since_str), "%Y-%m-%d"
-                        ).date()
-                        today = datetime.now(timezone.utc).date()
-                        defaults["days_at_level"] = max(
-                            0, (today - since_date).days
-                        )
-                    except (ValueError, TypeError):
-                        pass  # keep whatever was parsed or default 0
-        except Exception:
-            pass  # fallback to defaults on any parse error
-
-        self._autonomy = defaults
-        return self._autonomy
 
     @property
     def current_level(self) -> int:
         """Current trust level (0=observe, 1=propose, 2=pre-approve)."""
         return int(self._load_autonomy().get("trust_level", 0))
+
+    def _mirror_autonomy_to_health_check(self, autonomy: dict[str, Any], source: str) -> None:
+        """Mirror DB trust authority back to health-check.md for briefing visibility."""
+        content = ""
+        if self._health_check_path.exists():
+            content = self._health_check_path.read_text(encoding="utf-8")
+        updated = _replace_autonomy_block(content, autonomy)
+        _state_write(
+            self._health_check_path,
+            updated,
+            domain="health_check",
+            source=source,
+            pii_check=False,
+        )
+
+    def set_trust_level(self, level: int, actor: str, justification: str = "") -> dict[str, Any]:
+        """Directly set trust level for controlled operator workflows."""
+        if level not in (0, 1, 2):
+            raise ValueError("trust level must be 0, 1, or 2")
+        now_str = datetime.now(timezone.utc).date().isoformat()
+        state = self._queue.upsert_trust_state(
+            {
+                "trust_level": level,
+                "entered_level_at": now_str,
+                "days_at_level": 0,
+                "degraded_mode": False,
+                "degraded_reason": None,
+                "last_elevation": now_str if level > self.current_level else self._load_autonomy().get("last_elevation"),
+                "last_demotion": now_str if level < self.current_level else self._load_autonomy().get("last_demotion"),
+            },
+            actor=actor,
+            mutation_type="set_trust_level",
+            justification=justification,
+        )
+        self._mirror_autonomy_to_health_check(state, "trust_enforcer.set_trust_level")
+        self._autonomy = None
+        return state
+
+    def set_preapproved_category(
+        self,
+        action_type: str,
+        enabled: bool,
+        actor: str,
+        justification: str = "",
+    ) -> dict[str, Any]:
+        """Enable or disable a pre-approved category in trust authority."""
+        self._queue.set_preapproved_category(
+            action_type,
+            enabled=enabled,
+            actor=actor,
+            justification=justification,
+        )
+        state = self._queue.get_trust_state()
+        self._mirror_autonomy_to_health_check(state, "trust_enforcer.set_preapproved_category")
+        self._autonomy = None
+        return state
 
     def check(
         self,
@@ -327,6 +410,7 @@ class TrustEnforcer:
         autonomy = self._load_autonomy()
         current_trust = int(autonomy.get("trust_level", 0))
         is_auto = approved_by.startswith(_AUTO_APPROVER_PREFIX)
+        degraded_mode = bool(autonomy.get("degraded_mode", False))
 
         # Rule 1 — AUTONOMY FLOOR: structural, non-bypassable.
         if action_config.get("autonomy_floor", False) and is_auto:
@@ -335,6 +419,22 @@ class TrustEnforcer:
                 "AUTONOMY_FLOOR: this action type always requires explicit human "
                 "approval. Autonomous approval ('auto:*') is not permitted.",
             )
+
+        # Rule 1b — explicit L2 ineligibility for categories excluded from autonomy.
+        if action_config.get("l2_eligible") is False and is_auto:
+            return (
+                False,
+                "L2_INELIGIBLE: this action type is excluded from autonomous execution.",
+            )
+
+        # Rule 1c — degraded trust store blocks auto-execution but preserves L1 human review.
+        if degraded_mode:
+            if is_auto:
+                return (
+                    False,
+                    f"TRUST_STORE_DEGRADED: {autonomy.get('degraded_reason') or 'trust authority unavailable'}",
+                )
+            return True, ""
 
         # Rule 2 — Trust level gate.
         if current_trust < proposal_min_trust:
@@ -365,6 +465,21 @@ class TrustEnforcer:
             _check_wave0_gate()  # raises GateBlockedError if blocked
         except GateBlockedError as exc:
             return (False, f"WAVE0_GATE: {exc.reason}")
+
+        # Rule 6 — Per-category L2 gate: auto:L2 requires the action type to be
+        # in trust_preapproved_categories with l2_enabled=1. This is the only path
+        # that allows autonomous execution; it must be explicitly opted-in per type.
+        # Note: actions with autonomy_floor=True are already blocked by Rule 1 above.
+        if is_auto:
+            proposal_action_type: str = getattr(proposal, "action_type", "") or ""
+            pre_approved: list[str] = autonomy.get("pre_approved_categories", []) or []
+            if proposal_action_type not in pre_approved:
+                return (
+                    False,
+                    f"L2_CATEGORY_GATE: action_type '{proposal_action_type}' is not in "
+                    "trust_preapproved_categories (l2_enabled=1). Enable it via "
+                    "--set-preapproved-category before autonomous execution is permitted.",
+                )
 
         return True, ""
 
@@ -403,24 +518,20 @@ class TrustEnforcer:
         current = result["current_level"]
         target = result["target_level"]
         now_str = datetime.now(timezone.utc).date().isoformat()
-
-        autonomy = self._load_autonomy()
-        autonomy["trust_level"] = target
-        autonomy["trust_level_since"] = now_str
-        autonomy["days_at_level"] = 0
-        autonomy["last_elevation"] = now_str
-
-        content = ""
-        if self._health_check_path.exists():
-            content = self._health_check_path.read_text(encoding="utf-8")
-        updated = _replace_autonomy_block(content, autonomy)
-        _state_write(
-            self._health_check_path,
-            updated,
-            domain="health_check",
-            source="trust_enforcer.elevate",
-            pii_check=False,
+        autonomy = self._queue.upsert_trust_state(
+            {
+                "trust_level": target,
+                "entered_level_at": now_str,
+                "days_at_level": 0,
+                "last_elevation": now_str,
+                "degraded_mode": False,
+                "degraded_reason": None,
+            },
+            actor="system:trust_elevate",
+            mutation_type="elevate",
+            justification="criteria satisfied",
         )
+        self._mirror_autonomy_to_health_check(autonomy, "trust_enforcer.elevate")
         self._autonomy = None  # invalidate cache
 
         # Emit telemetry
@@ -532,33 +643,25 @@ class TrustEnforcer:
         level in ``config/domain_autonomy_state.yaml`` (§7.1 demotion).
         Invalidates internal cache.
         """
-        content = ""
-        if self._health_check_path.exists():
-            content = self._health_check_path.read_text(encoding="utf-8")
-
         now_str = datetime.now(timezone.utc).date().isoformat()
-
-        new_autonomy = {
-            "trust_level": 0,
-            "trust_level_since": now_str,
-            "days_at_level": 0,
-            "acceptance_rate_90d": 0.0,
-            "critical_false_positives": int(
-                self._load_autonomy().get("critical_false_positives", 0)
-            ) + 1,
-            "pre_approved_categories": [],
-            "last_demotion": now_str,
-            "last_elevation": self._load_autonomy().get("last_elevation"),
-        }
-
-        updated = _replace_autonomy_block(content, new_autonomy)
-        _state_write(
-                self._health_check_path,
-                updated,
-                domain="health_check",
-                source="trust_enforcer.reset_trust_level",
-                pii_check=False,
-            )
+        new_autonomy = self._queue.upsert_trust_state(
+            {
+                "trust_level": 0,
+                "entered_level_at": now_str,
+                "days_at_level": 0,
+                "acceptance_rate_90d": 0.0,
+                "critical_false_positives": int(
+                    self._load_autonomy().get("critical_false_positives", 0)
+                ) + 1,
+                "last_demotion": now_str,
+                "degraded_mode": False,
+                "degraded_reason": None,
+            },
+            actor="system:trust_demote",
+            mutation_type="demote",
+            justification=reason,
+        )
+        self._mirror_autonomy_to_health_check(new_autonomy, "trust_enforcer.reset_trust_level")
         self._autonomy = None  # invalidate cache
         if domain is not None:
             _apply_domain_demotion(domain, reason)
@@ -568,21 +671,9 @@ class TrustEnforcer:
 
         Used by ActionExecutor after each execution to update metrics.
         """
-        content = ""
-        if self._health_check_path.exists():
-            content = self._health_check_path.read_text(encoding="utf-8")
-
         current = self._load_autonomy()
         current.update(updates)
-
-        updated = _replace_autonomy_block(content, current)
-        _state_write(
-                self._health_check_path,
-                updated,
-                domain="health_check",
-                source="trust_enforcer.update_autonomy_block",
-                pii_check=False,
-            )
+        self._mirror_autonomy_to_health_check(current, "trust_enforcer.update_autonomy_block")
         self._autonomy = None  # invalidate cache
 
 
@@ -598,21 +689,27 @@ _AUTONOMY_YAML_BLOCK_RE = re.compile(
 
 def _extract_autonomy_block(content: str) -> dict[str, Any] | None:
     """Extract the 'autonomy:' YAML block from health-check.md content."""
-    # Look for raw YAML block (not in a code fence)
-    pattern = re.compile(
-        r"^autonomy:\s*\n((?:[ \t]+.*\n?)*)",
-        re.MULTILINE,
-    )
-    m = pattern.search(content)
-    if not m:
-        return None
-
     try:
         import yaml  # PyYAML
-        block_text = "autonomy:\n" + m.group(1)
-        parsed = yaml.safe_load(block_text)
-        if isinstance(parsed, dict) and "autonomy" in parsed:
-            return parsed["autonomy"]
+        fenced = re.search(
+            r"```yaml\s*\n(autonomy:\s*\n(?:[ \t]+.*\n?)*)```",
+            content,
+            re.MULTILINE,
+        )
+        if fenced:
+            parsed = yaml.safe_load(fenced.group(1))
+            if isinstance(parsed, dict) and "autonomy" in parsed:
+                return parsed["autonomy"]
+
+        raw = re.search(
+            r"^autonomy:\s*\n((?:[ \t]+.*\n?)*)",
+            content,
+            re.MULTILINE,
+        )
+        if raw:
+            parsed = yaml.safe_load("autonomy:\n" + raw.group(1))
+            if isinstance(parsed, dict) and "autonomy" in parsed:
+                return parsed["autonomy"]
     except Exception:
         pass
 

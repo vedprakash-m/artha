@@ -57,6 +57,9 @@ state/*.yaml.age
 # JSON runtime state (skills cache, catch-up run history — personal data, not committed)
 state/*.json
 state/*.json.age
+# Career state subdirectory (personal job application data — never committed)
+state/career/
+
 # Content directory — posts, drafts, voice profile, gallery, radar backlog (never committed)
 state/content/
 # Work OS state — personal work data (never committed)
@@ -171,6 +174,8 @@ state/*.age
 .claude/
 tmp/
 visuals/
+# xHealth Shiproom app (personal health data and dashboards — never committed)
+xhealth/
 
 # --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
