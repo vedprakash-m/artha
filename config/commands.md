@@ -794,11 +794,11 @@ After the meeting list, emit an explicit Asks block:
 ```
 Pull Asks from work-open-items where `ask_owner` = other person. If none, emit `✅ No outstanding Asks`.
 
-**xHealth Context Injection (FR-42 §8.5):**
-If the meeting subject/title contains any of `xhealth`, `SCHIE`, `schie`, `repair`, `safety`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario`:
-- Invoke `xhealth_signal.py` → `query_icm_summary()` + `query_repair_sla()`
-- Append a **🏥 xHealth Context** block: active IcM count, Repair SLA %, top blocker — all marked `[live]`
-- If `xhealth_dashboards.enabled: false` in `work_connector_policy.yaml`, or Kusto CLI unavailable, skip silently (no error output)
+**Work-Health Context Injection (FR-42 §8.5):**
+If the meeting subject/title contains any of `work-health`, `repair`, `safety`, `fleet-mgr`, `data-pipeline`, `config-svc`, `scenario`:
+- Invoke `xhealth_signal.py` → `query_incident_summary()` + `query_repair_sla()`
+- Append a **🏥 Work-Health Context** block: active incident count, Repair SLA %, top blocker — all marked `[live]`
+- If `work_health_dashboards.enabled: false` in `work_connector_policy.yaml`, or Kusto CLI unavailable, skip silently (no error output)
 
 ## `/work sprint` — Delivery Health
 Reads work-projects. Sprint health, delivery feasibility, program status, and executive summary.
@@ -913,7 +913,7 @@ Reads Team Lead Journal (work-notes.md) + queries WorkIQ for live tactical conte
 1. **Static context** (instant, from KB + state files):
    - Team Lead Journal entry for the person (open items, meetings to cover, mentoring notes)
    - Their KB entity: works_on edges, expertise signals, OOF backup artifacts
-   - Current hot items in their domains (IcMs, blockers)
+   - Current hot items in their domains (incidents, blockers)
    - Golden queries for their areas
 
 2. **Live tactical context** (WorkIQ query, ~30s):
@@ -924,7 +924,7 @@ Reads Team Lead Journal (work-notes.md) + queries WorkIQ for live tactical conte
 
 3. **Output** — written to `state/work/oof-coverage-<name>.md` (ephemeral):
    - 📅 Meetings to attend (with times, attendees, purpose)
-   - 🔥 Hot items in their areas (IcMs, blockers, deadlines)
+   - 🔥 Hot items in their areas (incidents, blockers, deadlines)
    - 💬 Recent chat/email context (action items, commitments, threads)
    - 📊 KQL queries to run for live data in their areas
    - 📝 Mentoring context (relationship notes, growth areas)
@@ -973,7 +973,7 @@ status, owning team, and active projects. Reads `state/work/work-products.md`.
 
 ## `/work code <question>` — Code Search (Bluebird)
 Routes code-level questions to Engineering Copilot Mini (Bluebird) MCP for ADO repo search.
-Configured repos: Storage-XKulfi, Storage-Armada (msazure/One project).
+Configured repos: [internal-repos] (internal ADO project).
 - `work code <question>` — natural language code search
 - `work code <symbol>` — symbol lookup (class, method, function)
 - Requires Bluebird MCP server running (`.vscode/mcp.json` → `bluebird`)
@@ -989,7 +989,7 @@ sweep → extract → score → reconcile → synthesize → draft pipeline.
 
 **MANDATORY in LLM context:** Before writing any state, you MUST execute the
 WorkIQ data collection protocol in `config/reflect-protocol.md`. This requires
-running 4 identity-scoped WorkIQ queries (emails, meetings, ADO items, IcM incidents)
+running 4 identity-scoped WorkIQ queries (emails, meetings, ADO items, incidents)
 for the exact reflection window. Do NOT skip this step — state file quality depends on it.
 - `/work reflect daily` — force daily close
 - `/work reflect weekly` — force weekly reflection
@@ -1037,49 +1037,53 @@ want to regenerate or edit.
 
 - Phase: Active
 
-## `/work xhealth` — XHealth DRI Dashboard (FR-42)
+## `/work work-health` — Work-Health Dashboard (FR-42)
 
-Provides live XHealth dashboard intelligence via the xhealth module (`scripts/work/xhealth/`).
-Requires `config/work_connector_policy.yaml → xhealth_dashboards.enabled: true` and Kusto.Cli on PATH.
+Provides live Work-Health dashboard intelligence via the xhealth module (`scripts/work/xhealth/`).
+Requires `config/work_connector_policy.yaml → work_health_dashboards.enabled: true` and Kusto.Cli on PATH.
 
-**Default (`work xhealth`):** 5-section DRI handoff brief covering active stuck jobs,
-incident count, repair SLA, and deployment blockers. Maps to `dri_handoff_brief()` in
+**Default (`work work-health`):** 5-section on-call handoff brief covering active stuck jobs,
+incident count, repair SLA, and deployment blockers. Maps to `oncall_handoff_brief()` in
 `scripts/work/xhealth_signal.py`. Duration target: <120 seconds.
 
 **Output format (5 sections):**
 ```
-━━ xHealth DRI Handoff Brief ━━━━━━━━━━━━━━━━━━━━━━━━━━
-[1] IcM Incidents: Sev1=N · Sev2=N · Sev3=N [live: ADX]
-[2] Fleet Health: XPF N% healthy · N stuck repairs [live: ADX]
-[3] Repair SLA: MTTR p90=Nh · p50=Nh · N stuck >SLO [live: ADX]
-[4] DD Job Queue: N active · N stuck >24h [live: ADX]
-[5] Deployment Blockers: N · [top blocker title] [live: ADX]
-[🔗 XDiag] [🔗 Repair SLI] [🔗 DD Health] [🔗 XRepair Deployment]
+━━ Work-Health On-Call Brief ━━━━━━━━━━━━━━━━━━━━━━━━━━
+[1] Incidents: Sev1=N · Sev2=N · Sev3=N [live: telemetry]
+[2] Fleet Health: N% healthy · N stuck repairs [live: telemetry]
+[3] Repair SLA: MTTR p90=Nh · p50=Nh · N stuck >SLO [live: telemetry]
+[4] Data Pipeline Queue: N active · N stuck >24h [live: telemetry]
+[5] Deployment Blockers: N · [top blocker title] [live: telemetry]
+[🔗 Repair SLI] [🔗 Pipeline Health] [🔗 Deployment]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
 **Sub-commands:**
 
-- `work xhealth scenarios` — Scenario coverage per SKU (INT-4, Phase 3)
-  Queries XPF-Readiness-Repairs / SCTE page for pass/fail table per SKU.
+- `work work-health scenarios` — Scenario coverage per SKU (INT-4, Phase 3)
+  Queries scenario readiness data for pass/fail table per SKU.
   Output: pass/fail table with trend vs. target. (Scenario failures = ramp gate blockers.)
 
-- `work xhealth xconfig` — xConfig operation settings status (INT-5, Phase 3)
-  Queries XKulfi-Operation-Settings dashboard.
+- `work work-health config-svc` — config-service operation settings status (INT-5, Phase 3)
+  Queries config-service dashboard.
   Output: TakeFE enabled/disabled fleet %, settings drift count, rollout phase per cluster, stuck clusters.
 
-- `work xhealth armada` — Armada deployment health (Phase 3)
-  Queries Armada repair dashboard pages.
+- `work work-health fleet-mgr` — fleet management deployment health (Phase 3)
+  Queries fleet management dashboard.
   Output: deployment health summary, active repairs, stuck nodes.
 
-- `work xhealth weekly` — Weekly KPI harvest for newsletter/LT deck (INT-7, Phase 5)
+- `work work-health data-pipeline` — Data pipeline queue health (Phase 3)
+  Queries data pipeline queue dashboard.
+  Output: active jobs, stuck >24h, queue depth trend.
+
+- `work work-health weekly` — Weekly KPI harvest for newsletter/LT deck (INT-7, Phase 5)
   Runs `query_kpi_harvest()` in `scripts/work/xhealth_signal.py`.
   Output: structured KPI table — fleet health trend (7d), repair SLA trend, incident count trend,
-  offline capacity trend, scenario coverage trend, xConfig rollout progress — with trend arrows
-  and ADX deep-links. Ready to paste into weekly newsletter and LT deck.
+  offline capacity trend, scenario coverage trend, config-svc rollout progress — with trend arrows
+  and telemetry deep-links. Ready to paste into weekly newsletter and LT deck.
 
-**Feature flag:** If `xhealth_dashboards.enabled: false`, display:
-`⚠ XHealth dashboards not yet enabled. Run Phase 0 auth validation, then set enabled: true in work_connector_policy.yaml.`
+**Feature flag:** If `work_health_dashboards.enabled: false`, display:
+`⚠ Work-health dashboards not yet enabled. Run Phase 0 auth validation, then set enabled: true in work_connector_policy.yaml.`
 
 **Fallback:** If Kusto.Cli unavailable, display auth error with actionable remediation steps.
 
@@ -1093,15 +1097,15 @@ feeds ThriveSync generation and Connect evidence assembly.
 **Display format:**
 ```
 ━━ YOUR SCOPE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-P0  XPF Ramp           → Drive P1 to 100%; resolve deployment blockers
-P0  DD on PF (Yasser)  → Unblock RDMA regression; confirm pilot date
-P1  Armada (Ramjee)    → Define M1 scope doc and timeline
-P1  Ops Excellence     → Asgard migration %; SLO delta
-P1  xDeployment (Isaiah) → OneDeploy blocker resolution
-P1  xSSE (Nikita)      → XPF/DD-PF/Armada execution; BIOS deadline
-P2  Rubik (Isaiah)     → Roadmap with Isaiah; milestone plan
-P2  Shiproom AI        → Security hardening to go live
-P2  xConfig            → Architecture learning for Armada
+P0  [Program-A]               → Drive P1 to 100%; resolve deployment blockers
+P0  [Program-B] ([colleague]) → Unblock regression; confirm pilot date
+P1  [Program-C] ([colleague]) → Define M1 scope doc and timeline
+P1  Ops Excellence            → Migration %; SLO delta
+P1  [Program-D] ([colleague]) → OneDeploy blocker resolution
+P1  [Program-E] ([colleague]) → Execution; deadline
+P2  [Program-F] ([colleague]) → Roadmap and milestone plan
+P2  Shiproom AI               → Security hardening to go live
+P2  [Program-G]               → Architecture learning
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 9 areas · Updated [date]
 ```
@@ -1179,9 +1183,9 @@ Generates a 3-I-filtered weekly plan from open items and goals. Saves to `state/
 1. `state/work/work-open-items.md` — Critical + Active This Week sections
 2. `state/work/reflect-current.md` — current week, active programs
 3. `state/work/work-goals.md` — active goals and OKRs
-4. `state/work/work-summary.md` — active programs, Sev-2 IcMs
+4. `state/work/work-summary.md` — active programs, Sev-2 incidents
 
-**3-I Filter:** Each candidate item scored: Important (serves active goal?) + Impactful (moves the needle for stakeholders?) + Irreversible (cost of delay?). Score ≥ 2/3 → Focus Outcome. Score 1/3 → Background. Score 0/3 → Won't Do. Any active Sev-2+ IcM auto-qualifies regardless of score.
+**3-I Filter:** Each candidate item scored: Important (serves active goal?) + Impactful (moves the needle for stakeholders?) + Irreversible (cost of delay?). Score ≥ 2/3 → Focus Outcome. Score 1/3 → Background. Score 0/3 → Won't Do. Any active Sev-2+ incident auto-qualifies regardless of score.
 
 **Output format:**
 ```

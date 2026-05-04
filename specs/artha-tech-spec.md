@@ -11,11 +11,11 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.44.0 | 2026-05-03 | **xHealth Dashboard Intelligence (§42, FR-42)**: `scripts/work/xhealth_signal.py` — 10 KQL query methods (`query_icm_summary`, `query_icm_full`, `query_icm_status`, `query_fleet_health`, `query_repair_sla`, `query_dd_job_queue`, `query_deployment_blockers`, `query_scenario_coverage`, `query_xconfig_status`, `query_kpi_harvest`). Top-level helpers: `morning_signal()`, `format_morning_block()`, `check_icm_wois()`, `dri_handoff_brief()`. Pipeline integration: Step 2c morning signal (06:00–11:00), `work prep` keyword injection (🏥 xHealth Context block), Q4-ADX reflect block, Q4-IcM-WOI-AUTOCHECK (circuit breaker: 10 max). Feature flag: `xhealth_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_xhealth_kusto_auth()` (P1 non-blocking). 12 unit tests. Implements PRD v7.29.0 FR-42. |
+| v3.44.0 | 2026-05-03 | **Work-Health Dashboard Intelligence (§42, FR-42)**: `scripts/work/xhealth_signal.py` — 10 KQL query methods (`query_incident_summary`, `query_incident_full`, `query_incident_status`, `query_fleet_health`, `query_repair_sla`, `query_data_pipeline_queue`, `query_deployment_blockers`, `query_scenario_coverage`, `query_config_status`, `query_kpi_harvest`). Top-level helpers: `morning_signal()`, `format_morning_block()`, `check_incident_tracked_items()`, `oncall_handoff_brief()`. Pipeline integration: Step 2c morning signal (06:00–11:00), `work prep` keyword injection (🏥 Work-Health Context block), Q4-telemetry reflect block, Q4-incident-autoclose (circuit breaker: 10 max). Feature flag: `work_health_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_work_health_kusto_auth()` (P1 non-blocking). 12 unit tests. Implements PRD v7.29.0 FR-42. |
 | v3.42.0 | 2026-04-29 | **Action Layer Quality Conversion (§40, FR-40)** — Three-layer gate stack raising proposal acceptance rate target from 25% to 85%+. Layer 1 (signal precision): entity viability gate, temporal coherence check, autopay suppression, action type overrides. Layer 2 (proposal quality): 5-factor confidence scoring, suggestion tier, category-aware dedup (90/30/0 day windows), loop circuit breaker. Layer 3 (feedback): 5 rejection categories, domain confidence decay, 30-day sliding window acceptance rate (deferred=accepted), staged policy suggestions. New DB tables: signal_suppression, policy_suggestions, loop_quarantine. New columns in trust_metrics (signal_subtype, rejection_category, normalized_entity) and actions (confidence, normalized_entity, signal_subtype). Schema migration: scripts/migrate_actions_quality.py (idempotent). Config: config/user_context.yaml (gitignored). 41 unit tests in tests/unit/test_action_quality.py. Implements PRD v7.27.0 + UX Spec v3.22.0. |
 | v3.41.1 | 2026-04-29 | **Passive Capability Inventory (§3, §8.12, FR-15)** — Added `scripts/mcp_discovery.py` and `scripts/skill_index.py`. MCP discovery scans known VS Code/Warp/Claude/Cursor/Codex MCP config files, redacts env values and URL query/fragment data, writes `tmp/mcp_discovery.json`, and never starts servers. Skill index reads `config/skills.yaml` through `lib.config_loader`, scans builtin and plugin skill files, writes `tmp/skill_index.json`, and never imports skill modules. `scripts/preflight.py` gains P1 non-blocking checks `check_mcp_discovery()` and `check_skill_index()`. `scripts/channel/handlers.py::cmd_status()` surfaces compact Connections & capabilities counts. 8 focused tests. Implements PRD v7.26.1 + UX Spec v3.21.1. |
 | v3.41.0 | 2026-05-01 | **PM Starter Kit Adoption (§39, FR-32)** — `scripts/work/daily.py` thin dispatch module (Pattern 2, §3.5): `cmd_standup(fmt)` (PAW format, teams variant), `cmd_plan()` (3-I filter scaffold), `cmd_11(person)` (PAW 1:1 with people card lookup). `work_reader.py` dispatch entries: standup/plan/11 in choices list, dispatch dict, imports. People cards system: `state/work/people/<alias>.md` schema (domain: work-people-card, display_name, last_interaction, title, org); 10 seed cards; `_template.md` per §5.7.3. State files: `state/lessons.md` (50-row cap), `state/work/work-connect-tags.md`, `state/work/work-weekly-plan.md`, `state/career_growth_practices.md` (GP-1–GP-6). Config: `artha_config.yaml` `growth_lens_enabled: true`. Guardrail: `meeting_routing_injection_scan` in guardrails.yaml (injection_detector.py). Meeting routing: reflect-protocol.md Step 2b + ProposalID schema. State registry: 4 new entries. Commands.md: work standup/plan/11 specs + IBA retrofit for sprint/prep. Artha.core.md: correction memory rule + connect tag rule + growth lens annotation rule. Implements PRD v7.26.0 FR-32. |
-| v3.40.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (§38, FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment. Four-pillar Work OS connector model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/ICM/Bluebird), Knowledge (EngHub MCP stdio). New modules: `scripts/lib/workiq_circuit_breaker.py` (3-failure OPEN, 4h half-open probe, atomic `os.replace()` flush — F6/F18/F19/F20/G5/G8), `scripts/lib/mcp_formatter.py` (F31 `connector_record.py` compliance — calendar/mail/teams fallback formatting), `scripts/lib/work_connector_router.py` (policy-driven routing from `config/work_connector_policy.yaml` — F3/F13/G2), `scripts/lib/enghub_manager.py` (Node.js stdio subprocess lifecycle, MCP JSON-RPC, daemon-thread fire-and-forget, 200-char snippet cap — F23/F24/F25/G9/G10/G11/G12/G13), `scripts/schemas/briefing_block.py` (F20 success predicate). Config: `config/work_connector_policy.yaml` (10 routing surfaces), `config/enghub_service_scope.yaml` (service ID scope). Integration: `work_loop.py` gains `ProviderAvailability.m365_mcp`/`enghub_mcp` (F4), circuit breaker in `_run_workiq()`, `_fire_enghub_async()` daemon thread (G10). 12 guardrails (G1–G12), 3 architectural patterns (P1–P3). 50 tests across 4 test files. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
+| v3.40.0 | 2026-04-25 | **MCP Hybrid Connector Architecture (§38, FR-31)** — Purpose-routed hybrid M365 connector layer + EngHub engineering knowledge enrichment. Four-pillar Work OS connector model: Communication (WorkIQ AI synthesis), Action (MCP Direct Graph writes), Work Items (ADO/incident-mgr/Bluebird), Knowledge (EngHub MCP stdio). New modules: `scripts/lib/workiq_circuit_breaker.py` (3-failure OPEN, 4h half-open probe, atomic `os.replace()` flush — F6/F18/F19/F20/G5/G8), `scripts/lib/mcp_formatter.py` (F31 `connector_record.py` compliance — calendar/mail/teams fallback formatting), `scripts/lib/work_connector_router.py` (policy-driven routing from `config/work_connector_policy.yaml` — F3/F13/G2), `scripts/lib/enghub_manager.py` (Node.js stdio subprocess lifecycle, MCP JSON-RPC, daemon-thread fire-and-forget, 200-char snippet cap — F23/F24/F25/G9/G10/G11/G12/G13), `scripts/schemas/briefing_block.py` (F20 success predicate). Config: `config/work_connector_policy.yaml` (10 routing surfaces), `config/enghub_service_scope.yaml` (service ID scope). Integration: `work_loop.py` gains `ProviderAvailability.m365_mcp`/`enghub_mcp` (F4), circuit breaker in `_run_workiq()`, `_fire_enghub_async()` daemon thread (G10). 12 guardrails (G1–G12), 3 architectural patterns (P1–P3). 50 tests across 4 test files. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.39.0 | 2026-04-22 | **DataCopilot Quality Infrastructure (§36)** — DC-1 through DC-9 reflect pipeline quality patterns. DC-3 rollback architecture (`tmp/reflect-snapshots/`, `scripts/work_loop.py` snapshot functions), `guardrails.yaml audit_gate` schema (6 blocking checks, max 2 iterations, rollback on exceed), DC-6 4-pass research mode (300s wall-time, `research_mode_timeout` in `artha_config.yaml`), DC-9 L0–L5 instruction hierarchy, DC-1 5-tier evidence taxonomy. `config/reflect-protocol.md` as LLM-facing contract. `specs/datacop.md` archived. Implements PRD v7.23.0 FR-29. |
 | v3.38.0 | 2026-04-21 | **Hermes Home Intelligence Layer (§3.5c, FR-28)**: `scripts/export_hermes_context.py` — writes `sensor.artha_context` HA entity after pipeline Step 21 (non-blocking Step 22 hook) and every 4 hours via Mac LaunchAgent. Reads `state/goals.md` (frontmatter YAML parser), `state/open_items.md` (regex block extractor, same pattern as `todo_sync.py`), `state/calendar.md` (event-block parser with source allowlist). Payload: `schema_version 1.0`, `goals_active[:3]`, `goals_parked[:3]`, `open_items_p1[:3]`, `open_items_p2[:5]`, `today_events`, `week_events[:5]`, size guard at 4096 bytes. LAN gate: 2-second TCP probe. Auth: `artha-ha-token` keyring. `config/hermes_context_allowlist.yaml` — domain allowlist (primary guard); `_validate_no_work_data()` — 10-signal defense-in-depth scan (warning, never blocking). `hermes-home.skill` (ZIP) — 3 Hermes skills: `home-context`, `presence-journal`, `weekly-home-digest`. `artha.hermes-context.plist` — `StartInterval=14400`, `RunAtLoad=true`, `--standalone` flag, concurrency sentinel `tmp/.pipeline_running`. Preflight: `check_hermes_context_staleness()` warns at 48h stale / absent. 41 unit tests in `tests/unit/test_export_hermes_context.py`. `specs/h-int.md` archived. Implements PRD v7.22.0. |
 | v3.37.0 | 2026-04-18 | **Deterministic Briefing Archival — Commit 2b (§35 amendment, `specs/rebrief.md`)**: Replaces the LLM-executed `--archive-brief` CLI hop with a staging pickup pattern. LLM writes `tmp/briefing_incoming_<runtime>.md`; `_ingest_pending_briefs()` ingests at `pipeline.py` startup with full safety gates. `briefing_archive.save()` gains `runtime` param (stored in frontmatter; identifies LLM client: `vscode`/`gemini`/`claude`/`copilot`). `source` field stamped by pipeline from filename — never self-reported by model. `_run_injection_check()` made fail-closed (raises `RuntimeError` on `ImportError` or scan exception). Step 13.5 added to `config/workflow/finalize.md` with surface table; `config/Artha.core.md` Step 14 archive block replaced with one-liner pointer. Preflight coverage check updated: accepts `source: vscode` OR `runtime: vscode`. `--archive-brief` subcommand removed from `pipeline.py`. 36 archive+ingest tests passing. `specs/rebrief.md` archived. Implements PRD v7.21.0. |
@@ -4121,7 +4121,7 @@ The Work OS operates as a fully isolated intelligence surface. The separation is
 |---|---|---|---|
 | 1 | **preflight** | <2s | Provider health check (Agency, Graph, ADO, Outlook, Kusto), token validation, state freshness computation, `ProviderAvailability` map |
 | 2 | **fetch** | <2s (read) / <60s (refresh) | READ: load state files. REFRESH: delegate to Agency CLI or direct Graph/ADO/Kusto providers |
-| 3 | **process** | <5s | REFRESH: call domain writers (`work_domain_writers.py`) with collected data, including Kusto metrics → `xpf-program-structure.md`. Both: load `work-summary.md` into `result.summary` |
+| 3 | **process** | <5s | REFRESH: call domain writers (`work_domain_writers.py`) with collected data, including Kusto metrics → `program-structure.md`. Both: load `work-summary.md` into `result.summary` |
 | 4 | **reason** | <10s | REFRESH: generate `work-comms.md` prioritization and `work-boundary.md` scores (via Agency or fallback logic) |
 | 5 | **finalize** | <1s | Build `result.summary`, write bridge pulse `work_load_pulse.json` |
 | 6 | **audit** | <0.1s | Append run record to `state/work/work-audit.md` (non-blocking) |
@@ -4161,23 +4161,23 @@ Covered connectors: `workiq_bridge`, `ado_workitems`, `msgraph_email`, `msgraph_
 
 ### 19.4a Kusto Integration Architecture
 
-`scripts/kusto_runner.py` provides the Kusto bridge for XPF program metrics:
+`scripts/kusto_runner.py` provides the Kusto bridge for program metrics:
 
 | Component | Location | Purpose |
 |---|---|---|
 | `run_refresh_set()` | `kusto_runner.py:375` | Batch API — runs curated golden queries (GQ-001/002/010/012/050/051), returns `{qid: {rows, card, error}}` |
-| `_check_kusto_available()` | `work_loop.py:389` | Preflight probe — runs `TenantCatalogSnapshot | take 1` against xdeployment |
+| `_check_kusto_available()` | `work_loop.py:389` | Preflight probe — runs `[internal-table] | take 1` against [internal-cluster] |
 | `_run_kusto_metrics()` | `work_loop.py:660` | Fetch provider — calls `run_refresh_set()`, stores in `connector_data["kusto"]` |
-| `write_kusto_metrics_state()` | `work_domain_writers.py:958` | Domain writer — regex-updates metric values in `xpf-program-structure.md` in-place |
+| `write_kusto_metrics_state()` | `work_domain_writers.py:958` | Domain writer — regex-updates metric values in `program-structure.md` in-place |
 | `_load_program_metrics()` | `narrative_engine.py:110` | Read-path parser — extracts signal summary, risk posture, per-WS signals from program structure |
 
 **Auth:** `DefaultAzureCredential` (Azure CLI login on Devbox). No separate token management.
 
 **Golden query registry:** `state/work/golden-queries.md` — 73 queries across 12 Kusto clusters. 31/44 tested pass validation.
 
-**Clusters verified on Devbox:** `xdeployment.westcentralus`, `apdmdata`, `azuredcm`, `icmcluster`, `1es`. DNS-blocked: `azcore`, `xsse` (non-regional URIs).
+**Clusters verified on Devbox:** `[internal-cluster-1]`, `[internal-cluster-2]`, `[internal-cluster-3]`, `[internal-cluster-4]`, `[internal-cluster-5]`. DNS-blocked: `[internal-cluster-6]`, `[internal-cluster-7]` (non-regional URIs).
 
-**PF cross-cluster join pattern:** 12 Env_Machines golden queries (GQ-021, 024, 041, 060, 062–066, 068, 091, 121) use a cross-cluster PF join: `let PF_Clusters = cluster('xdeployment.westcentralus.kusto.windows.net').database('Deployment').TenantCatalogSnapshot | where IsPF == true and ClusterName != '' | distinct ClusterName;` then filter with `| where AutoGen_Cluster in (PF_Clusters)`. Also uses `AutoGen_TimeStamp` (not `TIMESTAMP`) for all Env_Machines queries. Validated live (GQ-060 confirmed working).
+**PF cross-cluster join pattern:** 12 Env_Machines golden queries (GQ-021, 024, 041, 060, 062–066, 068, 091, 121) use a cross-cluster PF join: `let PF_Clusters = cluster('[internal-cluster].kusto.windows.net').database('[internal-db]').[internal-table] | where [partition-column] == true and [cluster-column] != '' | distinct [cluster-column];` then filter with `| where [cluster-column] in (PF_Clusters)`. Also uses `[timestamp-column]` (not `TIMESTAMP`) for all Env_Machines queries. Validated live (GQ-060 confirmed working).
 
 ### 19.5 Bridge Schema Enforcement
 
@@ -4233,7 +4233,7 @@ After a successful import, sets `config/user_profile.yaml → work.bootstrap.imp
 | `state/work/work-project-journeys.md` | Project timeline with milestone evidence and scope arc | 1.0 |
 | `state/work/work-org-calendar.md` | Org dates: Connect deadlines, fiscal year, all-hands cadence | 1.0 |
 | `state/work/work-promo-narrative.md` | Promotion readiness narrative and evidence inventory | 1.0 |
-| `state/work/work-incidents.md` | ICM incident history (Microsoft Enhanced tier) | 1.0 |
+| `state/work/work-incidents.md` | incident history (Microsoft Enhanced tier) | 1.0 |
 | `state/work/work-repos.md` | Repository contribution signals (Microsoft Enhanced tier) | 1.0 |
 | `state/work/work-learned.md` | Learning model: calibration/prediction/anticipation phases | 1.0 |
 | `state/work/work-products.md` | Product knowledge index: taxonomy, per-product summary, deep file pointers | 1.0 |
@@ -5290,7 +5290,7 @@ Eleven architectural constraints enforced by code review and runtime guardrails:
 | Post-briefing sliding window | 6,000 tokens |
 | Chain-level context cap | 6,000 chars across all steps |
 | Memory injection per agent | 1,500 chars max (5 recent daily entries + full memory.md) |
-| Blueprint override example | `icm-triage` = 12,000 (needs 10+ KB sections vs. global 6,000) |
+| Blueprint override example | `incident-triage` = 12,000 (needs 10+ KB sections vs. global 6,000) |
 
 ### 25.14 Governance Rules
 
@@ -5419,7 +5419,7 @@ Multi-agent composition extending AR-9's single-agent invocation model to suppor
 | EAR-4 | Enhanced Lexical Routing (TF-IDF) | `tfidf_router.py` | Two-tier: keyword match (<10ms) → if confidence <0.4, TF-IDF character-trigram fallback. Vectors pre-computed to `tmp/ext-agent-route-vectors.json`. Confidence margin instrumented; median <0.10 over 7d → heartbeat alert. |
 | EAR-5 | Parallel Fan-Out | `fan_out.py` | `ThreadPoolExecutor` max 3. Per-agent timeout; pool timeout = max(individual) + 10s. `threading.Lock()` per `(agent_name, cache_path)`. Degradation: pool timeout → return best single result. |
 | EAR-6 | Evaluator-Optimizer Loop | `evaluator_optimizer.py` | Trigger: Q <0.6 AND any dimension <0.45 AND min_dimension ≥0.2. Max 1 retry, accept max(Q1, Q2). Weekly budget: 50 retries (JSONL counter). Budget exhausted or min_dimension <0.2 → fallback cascade. |
-| EAR-7 | Agent Blueprints | `config/agents/blueprints/` | 8 templates: icm-triage, deployment-monitor, backlog-analyst, meeting-prep, knowledge-curator, escalation-drafter, fleet-health, code-reviewer. CLI: `agent_manager create --blueprint <name> --var <k=v>`. `capability_type`: informational/actionable (actionable deferred V2.1). |
+| EAR-7 | Agent Blueprints | `config/agents/blueprints/` | 8 templates: incident-triage, deployment-monitor, backlog-analyst, meeting-prep, knowledge-curator, escalation-drafter, fleet-health, code-reviewer. CLI: `agent_manager create --blueprint <name> --var <k=v>`. `capability_type`: informational/actionable (actionable deferred V2.1). |
 | EAR-8 | Heartbeat Health Monitor | `agent_heartbeat.py` | Checks: stale cache (age > TTL × 1.5), declining quality trend (5-score window), idle >7d, ≥3 consecutive failures, approaching auto-retirement (suspended >20d). Recovered via `reinstate` (reset quality to 0.5). Briefing section: `§ Agent Fleet Health`. |
 | EAR-9 | SOUL Principles | `soul_allowlist.py` | Per-agent declarative persona + guardrails injected into domain prompt. SOUL compliance checklist in response validator. |
 | EAR-10 | Cross-Agent Knowledge Propagation | `knowledge_propagator.py` | High-confidence facts (≥0.8) propagate to other agents' `daily/` logs (not curated `memory.md`). Contradiction merge: trust-tier-wins, else newer wins. Audit log records propagation. |
@@ -6437,7 +6437,7 @@ Purpose-routed hybrid connector layer for Work OS M365 data surfaces + EngHub en
 |--------|-----------|-------------|-----------|
 | Communication | WorkIQ | Calendar intelligence, Mail triage, Teams priority | Blocking (ThreadPoolExecutor) |
 | Action | MCP Direct (M365) | Write ops: flag, reply, accept/decline, send | L1 confirm-before-execute |
-| Work Items | ADO + ICM + Bluebird | Tasks, incidents, telemetry | Blocking (ThreadPoolExecutor) |
+| Work Items | ADO + incident-mgr + Bluebird | Tasks, incidents, telemetry | Blocking (ThreadPoolExecutor) |
 | Knowledge | EngHub MCP (stdio) | eng.ms TSGs, runbooks, onboarding, architecture | Async daemon thread (≤15s) |
 
 ### 38.2 Routing Policy
@@ -6485,7 +6485,7 @@ All outputs pass `connector_record.validate_record()` (F31/R16 — 13 unit tests
 
 Node.js stdio subprocess lifecycle manager for `@azure-core/enghub-mcp`. Two-pass render model (G10/F23):
 
-- **Pass 1:** Primary briefing (blocking ThreadPoolExecutor — WorkIQ + ADO + ICM + Bluebird)
+- **Pass 1:** Primary briefing (blocking ThreadPoolExecutor — WorkIQ + ADO + incident-mgr + Bluebird)
 - **Pass 2:** EngHub daemon thread (fire-and-forget, ≤15s budget, `_fire_enghub_async()`)
 
 **Key constraints:**
@@ -6793,9 +6793,9 @@ Run `python3 scripts/planning_metrics.py` for 30-day effectiveness report:
 
 ---
 
-## 42. xHealth Dashboard Intelligence *(FR-42, v3.44.0)*
+## 42. Work-Health Dashboard Intelligence *(FR-42, v3.44.0)*
 
-Implements PRD FR-42. Integrates ADX/Kusto operational dashboards as a live data source within Work OS, replacing ad-hoc manual metric gathering before DRI stand-ups and hand-offs.
+Implements PRD FR-42. Integrates Kusto operational dashboards as a live data source within Work OS, replacing ad-hoc manual metric gathering before on-call stand-ups and hand-offs.
 
 ### 42.1 Architecture
 
@@ -6807,11 +6807,11 @@ work_reader.py  ─→  xhealth_signal.py  ─→  Kusto CLI subprocess
      │
      ↓
 work_loop.py  ─→  Step 2c morning_signal()
-config/reflect-protocol.md  ─→  Q4-ADX block
+config/reflect-protocol.md  ─→  Q4-telemetry block
 config/commands.md           ─→  work prep keyword injection
 ```
 
-**Feature flag**: `config/work_connector_policy.yaml → xhealth_dashboards.enabled` (default: `false`). When `false` or Kusto CLI absent, all injection points skip silently with no error output.
+**Feature flag**: `config/work_connector_policy.yaml → work_health_dashboards.enabled` (default: `false`). When `false` or Kusto CLI absent, all injection points skip silently with no error output.
 
 **Module path**: `scripts/work/xhealth_signal.py`. Also loads embedded `scripts/work/xhealth/` module if present.
 
@@ -6819,15 +6819,15 @@ config/commands.md           ─→  work prep keyword injection
 
 | Method | KQL Target | Returns |
 |--------|-----------|---------|
-| `query_icm_summary()` | IcM incidents (≤7 days) | Active incident count, top severity |
-| `query_icm_full()` | IcM full detail | Per-incident title, severity, owner, age |
-| `query_icm_status(icm_id)` | Single IcM record | Current status, mitigated flag |
-| `query_fleet_health()` | Armada fleet table | Unhealthy node count, deployment velocity |
+| `query_incident_summary()` | incidents (≤7 days) | Active incident count, top severity |
+| `query_incident_full()` | incident full detail | Per-incident title, severity, owner, age |
+| `query_incident_status(incident_id)` | Single incident record | Current status, mitigated flag |
+| `query_fleet_health()` | fleet management table | Unhealthy node count, deployment velocity |
 | `query_repair_sla()` | Repair pipeline | SLA %, P0/P1 overdue count |
-| `query_dd_job_queue()` | DD job table | Queue depth, stuck jobs |
+| `query_data_pipeline_queue()` | data pipeline job table | Queue depth, stuck jobs |
 | `query_deployment_blockers()` | Deployment state | Blocker list with owner aliases stripped |
 | `query_scenario_coverage()` | Scenario table | Coverage %, uncovered areas |
-| `query_xconfig_status()` | xConfig rollout | Error rate, rollout % |
+| `query_config_status()` | config-service rollout | Error rate, rollout % |
 | `query_kpi_harvest()` | Multi-table join | Composite KPI snapshot (used by reflect enrichment) |
 
 All methods: call Kusto CLI subprocess → parse stdout → return typed dict. On CLI unavailable or non-zero exit: return `None` (never raise).
@@ -6837,32 +6837,32 @@ All methods: call Kusto CLI subprocess → parse stdout → return typed dict. O
 | Helper | Action |
 |--------|--------|
 | `morning_signal()` | Calls 3 core queries; returns structured dict for morning block |
-| `format_morning_block(signal)` | Formats dict as Markdown 🏥 xHealth block |
-| `check_icm_wois()` | Queries IcM status for WOIs tagged `icm:*`; returns list of auto-closeable IDs |
-| `dri_handoff_brief()` | Calls all 10 queries; assembles 5-section DRI brief |
+| `format_morning_block(signal)` | Formats dict as Markdown 🏥 Work-Health block |
+| `check_incident_tracked_items()` | Queries incident status for tracked items tagged `incident:*`; returns list of auto-closeable IDs |
+| `oncall_handoff_brief()` | Calls all 10 queries; assembles 5-section on-call brief |
 
 ### 42.3 Configuration
 
 ```yaml
 # config/work_connector_policy.yaml
-xhealth_dashboards:
+work_health_dashboards:
   enabled: false                         # master feature flag
-  xhealth_module_path: "scripts/work/xhealth/"
+  work_health_module_path: "scripts/work/xhealth/"
   fallback_to_workiq: true               # use WorkIQ if Kusto unavailable
-  icm_woi_auto_check: true              # enable Q4-IcM-WOI-AUTOCHECK
+  incident_autocheck: true              # enable Q4-incident-autoclose
 ```
 
 **Keyword list for `work prep` injection** (in `config/commands.md`):  
-`xhealth`, `SCHIE`, `schie`, `repair`, `safety`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario`
+`work-health`, `repair`, `safety`, `fleet-mgr`, `data-pipeline`, `config-svc`, `scenario`
 
 ### 42.4 Pipeline Integration
 
 | Integration Point | Trigger | Behaviour |
 |------------------|---------|-----------|
 | Step 2c (morning) | 06:00–11:00 window | `morning_signal()` → `format_morning_block()` → appended to briefing footer |
-| `work prep` injection | Meeting subject keyword match | Append 🏥 xHealth Context block: IcM count, Repair SLA %, top blocker — all `[live]` |
-| Q4-ADX reflect block | `config/reflect-protocol.md` Step 4b.1 | `query_kpi_harvest()` → KPI citation appended to xHealth accomplishments as `[live: ADX]` |
-| Q4-IcM-WOI-AUTOCHECK | Every work refresh | `check_icm_wois()` → auto-close WOIs for mitigated IcMs; circuit breaker: max 10 per session |
+| `work prep` injection | Meeting subject keyword match | Append 🏥 Work-Health Context block: incident count, Repair SLA %, top blocker — all `[live]` |
+| Q4-telemetry reflect block | `config/reflect-protocol.md` Step 4b.1 | `query_kpi_harvest()` → KPI citation appended to work-health accomplishments as `[live: telemetry]` |
+| Q4-incident-autoclose | Every work refresh | `check_incident_tracked_items()` → auto-close tracked items for mitigated incidents; circuit breaker: max 10 per session |
 
 **Degradation contract**: if `enabled: false` OR Kusto CLI unavailable → silent skip (no error, no partial output). `work prep` falls back to WorkIQ path. Reflect enrichment omits KPI citation but proceeds.
 
@@ -6871,25 +6871,25 @@ xhealth_dashboards:
 **Preflight check** (`scripts/preflight.py`):
 
 ```python
-def check_xhealth_kusto_auth() -> CheckResult:
+def check_work_health_kusto_auth() -> CheckResult:
     """P1 non-blocking. Verifies Kusto CLI present and auth token accessible."""
 ```
 
 - Placed after `check_workiq()` in `run_all_checks()`.
 - P1 non-blocking: auth failure → `WARN` (never blocks briefing).
-- Skip condition: `xhealth_dashboards.enabled: false` → return `SKIP`.
+- Skip condition: `work_health_dashboards.enabled: false` → return `SKIP`.
 
 **Work sub-commands** dispatched from `work_reader.py`:
 
 | Sub-command | Handler |
 |------------|---------|
-| `work xhealth` | `dri_handoff_brief()` — 5-section DRI brief |
-| `work xhealth scenarios` | `query_scenario_coverage()` |
-| `work xhealth xconfig` | `query_xconfig_status()` |
-| `work xhealth armada` | `query_fleet_health()` |
-| `work xhealth dd` | `query_dd_job_queue()` |
-| `work xhealth deploy` | `query_deployment_blockers()` |
-| `work xhealth weekly` | Aggregate of all 10 queries as weekly digest |
+| `work work-health` | `oncall_handoff_brief()` — 5-section on-call brief |
+| `work work-health scenarios` | `query_scenario_coverage()` |
+| `work work-health config-svc` | `query_config_status()` |
+| `work work-health fleet-mgr` | `query_fleet_health()` |
+| `work work-health data-pipeline` | `query_data_pipeline_queue()` |
+| `work work-health deploy` | `query_deployment_blockers()` |
+| `work work-health weekly` | Aggregate of all 10 queries as weekly digest |
 
 **Test coverage**: 12 unit tests in `tests/work/test_xhealth_signal.py`. Covers all 10 query methods (mock subprocess), 4 helpers, flag-disabled fast-path, and Kusto CLI unavailable degradation path.
 
@@ -6899,7 +6899,7 @@ def check_xhealth_kusto_auth() -> CheckResult:
 
 | Version | Changes |
 |---------|---------|
-| v3.44.0 | **xHealth Dashboard Intelligence (§42, FR-42)**: `scripts/work/xhealth_signal.py` (10 KQL query methods + 4 helpers). Pipeline: Step 2c morning signal, `work prep` keyword injection, Q4-ADX reflect block, Q4-IcM-WOI-AUTOCHECK (circuit breaker 10). `check_xhealth_kusto_auth()` preflight (P1 non-blocking). Feature flag: `xhealth_dashboards.enabled`. 12 unit tests. Implements PRD v7.29.0 FR-42. |
+| v3.44.0 | **Work-Health Dashboard Intelligence (§42, FR-42)**: `scripts/work/xhealth_signal.py` (10 KQL query methods + 4 helpers). Pipeline: Step 2c morning signal, `work prep` keyword injection, Q4-telemetry reflect block, Q4-incident-autoclose (circuit breaker 10). `check_work_health_kusto_auth()` preflight (P1 non-blocking). Feature flag: `work_health_dashboards.enabled`. 12 unit tests. Implements PRD v7.29.0 FR-42. |
 | v3.43.0 | **Ambient Intent Buffer (§41, FR-41)**: Step 8t pipeline step; `scripts/planning_signals.py` (validate/seed/offers/observe/materialize/skip/archive/sprint-triggers); `scripts/planning_metrics.py` (G-1–G-7); `scripts/goals_writer.py --add-sprint`; `scripts/backup.py file-snapshot`; preflight `check_planning_signals()`; `health_check_writer.py --planning-signal-tokens`. 9 unit tests. Implements PRD F15.138. | **MCP Hybrid Connector Architecture (§38, FR-31)**: Purpose-routed hybrid M365 connector + EngHub engineering knowledge enrichment. 4 new modules (`workiq_circuit_breaker.py`, `mcp_formatter.py`, `work_connector_router.py`, `enghub_manager.py`), 2 config files (`work_connector_policy.yaml`, `enghub_service_scope.yaml`), 1 schema (`briefing_block.py`). `work_loop.py` extended with `ProviderAvailability.m365_mcp`/`enghub_mcp`, circuit breaker wiring, EngHub daemon thread. 12 guardrails (G1–G12). 50 tests. `specs/mcp-hybrid.md` archived. Implements PRD v7.25.0 FR-31. |
 | v3.40.0 | **Agency Playground Quality Layer & Agent SRE Observability (§37, FR-30)**: S-01–S-30 Tier 1 patterns + ST-01–ST-07 SRE modules from SPEC-STEAL-001/002 competitive analysis. New files: `scripts/lib/quality_gate.py` (S-01), `scripts/lib/checkpoint.py` session recap funcs (S-03), `scripts/lib/evidence_lake.py` (S-04), `scripts/lib/partial_writer.py` (S-08), `scripts/lib/context_budget.py::check_budget` (S-30), `scripts/work/ado_snapshot.py` (S-07), `scripts/lib/correction_tracker.py` (ST-02), `scripts/lib/cost_guard.py` (ST-03), `scripts/lib/slo_engine.py` (ST-04), `scripts/lib/loop_detector.py` (ST-05), `scripts/preflight.py::check_guardrails_rings` (ST-07). Extended: `scripts/lib/telemetry.py` hash-chain + trace (ST-01/ST-06). Gates G-0/G-1/G-2 PASSED. Rules R1–R12. `specs/steal.md` archived to `.archive/specs/`. Implements PRD v7.24.0. |
 | v3.35.0 | **Simplification & Token Optimization (specs/simplify.md v1.2)**: Compact `Artha.md` activated as default (21KB/~6,000 tokens vs. prior 110KB/~31,000 tokens) — `config/workflow/` files loaded per-command via `§R` routing table in all 3 entrypoints (`CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`). WorkIQ overlay extracted to `config/overlays/workiq.md`. Domain agent unification: `scripts/precompute.py` (single dispatcher) replaces `agent_scheduler.py` + 4 domain agent entry-point files; external-agent control plane (`agent_manager.py`) preserved. Signal type consolidation: `DomainSignal` gains `subtype: str = ""` field; 10 email signal types map to 4 canonical types (`deadline`, `confirmation`, `security`, `informational`) via `_CANONICAL_TYPE_MAP` in `email_signal_extractor.py`; all 4 `signal_routing.yaml` consumers updated; 4 canonical catch-all entries added to `config/signal_routing.yaml`. Connector fallback cleanup: `_FALLBACK_HANDLER_MAP` removed from `pipeline.py`; `_ALLOWED_MODULES` made explicit 20-element frozenset; dead `_HANDLER_MAP` init removed; failure mode now emits `[CRITICAL]` + returns empty dict. Config stub cleanup: `config/lint_rules.yaml` embedded as `_EMBEDDED_LINT_RULES` constant in `kb_lint.py`; `config/implementation_status.yaml` deleted; `config/domain_autonomy_state.yaml` moved to `state/`. Pre-commit hook auto-regenerates `Artha.md` when `Artha.core.md` changes. New tests: `tests/test_signal_consolidation.py` (10), `tests/test_precompute.py` (15). Config YAMLs: 20→17. Per-session token savings: ~25,600 tokens. |
