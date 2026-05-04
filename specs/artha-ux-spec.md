@@ -1,9 +1,9 @@
 # Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.22.0 | **Status**: Active Development | **Date**: April 29, 2026
+> **Version**: 3.23.0 | **Status**: Active Development | **Date**: May 3, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.27.0, Tech Spec v3.42.0
+> **Implements**: PRD v7.29.0, Tech Spec v3.44.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.23.0 | 2026-05-03 | **xHealth Dashboard Intelligence UX (§35)** — Output format for `work xhealth` 5-section DRI brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 xHealth Context block injection format. Morning signal footer format. `[live: ADX]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
 | v3.22.0 | 2026-04-29 | Action Quality Layer UX (§33) — Rejection category prompt (5 categories), suggestion tier display (§ SIGNAL SUGGESTIONS), --list confidence column, --apply-suggestions interactive flow, anomaly alerts. Implements PRD v7.27.0 + Tech Spec §40. |
 | v3.21.1 | 2026-04-29 | **Capability Inventory UX (§10, §24.5)** — `/status` now includes a compact "Connections & capabilities" block showing passive MCP config count/server count and configured/enabled skill count. `/health connections` includes the same passive inventory with P1 warnings for unreadable MCP config files or enabled skills with missing modules. No connector is started and no skill is imported for these displays. Implements PRD v7.26.1 + Tech Spec v3.41.1. |
 | v3.21 | 2026-05-01 | **PM Starter Kit Work OS UX (§32)** — Output format specs for all FR-32 new commands. `work standup`: PAW format (✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS), action-verb-first, max 120 words, word count footer; `teams` variant (plain text, no box drawing, Teams chat paste-ready). `work plan`: 3-I score indicators (●●● = 3/3, ●●○ = 2/3 min for Focus, ●○○ = 1/3 Background); emoji section headers (🎯/📋/🚫/📌); GP-N growth lens tags. `work 11 <alias>`: PAW 1:1 format with Exec Summary + workstream sections (status vocab: New/WIP/Next up/Queued up/Action) + 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins; staleness warning if people card > 14 days old. `work sprint` / `work prep`: IBA escalation taxonomy (Impediments/Blockers/Asks) + Executive Summary section. People card discoverability: `work people` lists cards with last_interaction dates. Implements PRD v7.26.0 FR-32 + Tech Spec v3.41.0 §39. |
@@ -3912,4 +3913,96 @@ Shown in briefing footer when relevant:
 
 ---
 
-*Artha UX Spec v3.23 — End of Document*
+## 35. xHealth Dashboard Intelligence UX *(v7.29.0 — FR-42)*
+
+### 35.1 `work xhealth` — DRI Handoff Brief
+
+5-section output. Each section is populated by live Kusto data (marked `[live]`) or `[unavailable]` if Kusto CLI is absent.
+
+```
+🏥 XHEALTH DRI BRIEF  [live: ADX | YYYY-MM-DD HH:MM]
+
+── 1. Active Incidents ──────────────────────────────
+  IcM count: N active  |  P0: N  |  P1: N
+  Top blocker: [title, Sev N, age X days]
+
+── 2. Repair Pipeline ───────────────────────────────
+  SLA: XX.X%  |  P0 overdue: N  |  P1 overdue: N
+  [If SLA < 95%:] ⚠ SLA below threshold
+
+── 3. Job Queue (DD) ────────────────────────────────
+  Queue depth: N  |  Stuck (>24h): N
+
+── 4. Deployment Blockers ───────────────────────────
+  [Blocker 1 — owner: <scrubbed>]
+  [Blocker 2 — owner: <scrubbed>]
+  [None] ✅ No blockers
+
+── 5. Scope Area Status ─────────────────────────────
+  Scenarios: XX% covered  |  xConfig: XX% rolled out
+  Armada: N unhealthy nodes
+```
+
+**Degradation**: if `xhealth_dashboards.enabled: false` or Kusto unavailable:
+
+```
+🏥 xHealth brief unavailable — Kusto not configured (xhealth_dashboards.enabled: false)
+   Run: work xhealth --fallback  to use last known state from work-open-items.
+```
+
+### 35.2 Sub-command Output Formats
+
+| Sub-command | Output |
+|-------------|--------|
+| `work xhealth scenarios` | Table: area, coverage %, last validated date |
+| `work xhealth xconfig` | Rollout %, error rate, top error class |
+| `work xhealth armada` | Fleet node count, unhealthy count, deploy velocity (deploys/day) |
+| `work xhealth dd` | Queue depth, jobs >24h, SLA % |
+| `work xhealth deploy` | Blocker list, owner (alias scrubbed), age |
+| `work xhealth weekly` | Condensed version of all 5 sections, covering last 7 days |
+
+### 35.3 `work prep` xHealth Context Injection
+
+When meeting subject/title contains a keyword from the trigger list (`xhealth`, `SCHIE`, `repair`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario`):
+
+```
+🏥 xHealth Context  [live]
+   Active IcMs: N  |  Repair SLA: XX.X%  |  Top blocker: [title, Sev N]
+```
+
+Appended immediately after the Asks block. If Kusto unavailable: entire block suppressed (no error shown).
+
+### 35.4 Morning Signal Footer Format
+
+Appended to briefing footer when `morning_signal()` returns data (06:00–11:00 window only):
+
+```
+─── xHealth Morning Signal ──────────────────────────
+🏥 IcMs: N active  |  Repair SLA: XX.X%  |  DD queue: N
+   [If any P0:] ⚠ P0 incident open — check before stand-up
+```
+
+Suppressed entirely when `enabled: false` or outside the time window.
+
+### 35.5 Reflect Output — Accomplishment KPI Citation
+
+When an xHealth-tagged accomplishment gains a live KPI citation from `query_kpi_harvest()`:
+
+```
+✅ [Accomplishment text]  [live: ADX | YYYY-MM-DD]
+   Metric: Repair SLA XX.X% | IcM count: N | [other KPI]
+   confidence: live
+```
+
+Without Kusto: accomplishment proceeds with `confidence: [user-stated]` — no `[live: ADX]` citation substitution.
+
+### 35.6 Design Principles
+
+- **Live data is labeled**: all Kusto-sourced values carry `[live]` or `[live: ADX]` suffix. No value is silently inferred from live sources.
+- **Graceful-silent degradation**: feature-flag `false` or Kusto unavailable → no error tokens, no partial output. The absence is itself the signal.
+- **Alias scrubbing**: deployment blockers and incident owners display roles/teams only — no personal aliases in committed output.
+- **No blocking in `work prep`**: xHealth context injection is a fire-and-forget append; a slow or failing query never delays meeting preparation output.
+
+---
+
+*Artha UX Spec v3.23.0 — End of Document*

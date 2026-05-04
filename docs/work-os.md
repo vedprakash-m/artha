@@ -84,6 +84,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 | `/work sources` | Registered data sources |
 | `/work docs` | Recent work artifacts |
 | `/work graph` | Stakeholder influence map with trajectory icons |
+| `/work xhealth` | xHealth operational DRI brief — active incidents, repair pipeline, job queue, deployment blockers, scope area status |
 
 ---
 
@@ -95,7 +96,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 /work prep
 ```
 
-Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords. For XPF-related meetings, also injects program context: risk posture and relevant workstream metrics (red/green).
+Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords. For XPF-related meetings, also injects program context: risk posture and relevant workstream metrics (red/green). For meetings with xHealth-related keywords (`xhealth`, `SCHIE`, `repair`, `Armada`, `xconfig`, `scenario`), also injects a live 🏥 xHealth Context block (IcM count, Repair SLA %, top blocker) when `xhealth_dashboards.enabled: true`.
 
 ### During a Meeting (Live Assist)
 
@@ -266,6 +267,7 @@ Each domain has a state file in `state/work/` that is updated on refresh:
 | `work-thrivesync` | work-thrivesync.md | Weekly ThriveSync posts, draft history, style patterns |
 | `xpf-program-structure` | xpf-program-structure.md | XPF program metrics (42 metrics, 12 workstreams, signal summary) — Kusto-validated |
 | `golden-queries` | golden-queries.md | 73 golden Kusto queries for program metrics — schema-validated KQL |
+| `xhealth-state` | xhealth-state.md | Last-known xHealth signal snapshot: IcM count, Repair SLA %, DD queue depth |
 
 ---
 

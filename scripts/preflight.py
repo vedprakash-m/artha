@@ -1224,6 +1224,71 @@ def check_workiq() -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# xHealth Kusto auth warmup (FR-42 — P1, non-blocking)
+# ---------------------------------------------------------------------------
+
+def check_xhealth_kusto_auth() -> CheckResult:
+    """FR-42: Warmup Kusto.Cli against icmclusterbackup. P1 non-blocking.
+
+    Skips silently when:
+      - xhealth_dashboards.enabled: false in work_connector_policy.yaml
+      - Kusto.Cli.exe is not on PATH (no ADX tooling installed)
+    """
+    # Check policy gate
+    policy_path = Path(ARTHA_DIR) / "config" / "work_connector_policy.yaml"
+    if policy_path.exists():
+        try:
+            import yaml  # type: ignore
+            with policy_path.open(encoding="utf-8") as fh:
+                policy = yaml.safe_load(fh) or {}
+            xhealth = policy.get("xhealth_dashboards", {})
+            if not xhealth.get("enabled", False):
+                return CheckResult(
+                    "xHealth Kusto Auth", "P1", True,
+                    "Skipped (xhealth_dashboards.enabled: false) ✓",
+                )
+        except Exception:
+            pass  # if yaml unreadable, proceed to live check
+
+    import shutil
+    kusto_cli = shutil.which("Kusto.Cli") or shutil.which("kusto.cli")
+    if not kusto_cli:
+        return CheckResult(
+            "xHealth Kusto Auth", "P1", False,
+            "Kusto.Cli not on PATH — ADX queries unavailable",
+            fix_hint="Install Kusto.Explorer or Kusto.Cli to enable xHealth signals",
+        )
+
+    try:
+        result = subprocess.run(
+            [kusto_cli, "-server", "icmclusterbackup.kusto.windows.net",
+             "-execute", "print 'ok'"],
+            capture_output=True, text=True, timeout=15,
+            env=_SUBPROCESS_ENV,
+        )
+        if result.returncode == 0 and "ok" in result.stdout:
+            return CheckResult(
+                "xHealth Kusto Auth", "P1", True,
+                "Kusto.Cli authenticated to icmclusterbackup ✓",
+            )
+        return CheckResult(
+            "xHealth Kusto Auth", "P1", False,
+            f"Kusto.Cli auth failed: {result.stderr.strip()[:80]}",
+            fix_hint="Re-authenticate: Kusto.Cli -server icmclusterbackup.kusto.windows.net",
+        )
+    except subprocess.TimeoutExpired:
+        return CheckResult(
+            "xHealth Kusto Auth", "P1", False,
+            "Kusto.Cli timed out (>15s) — check VPN / network",
+        )
+    except Exception as exc:
+        return CheckResult(
+            "xHealth Kusto Auth", "P1", False,
+            f"xHealth Kusto warmup error: {exc}",
+        )
+
+
+# ---------------------------------------------------------------------------
 # EngHub MCP health check (§13.7 — P1, non-blocking, Windows-only)
 # ---------------------------------------------------------------------------
 
@@ -2534,6 +2599,9 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False, force_no_guardrai
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+
+    # ── P1 — xHealth Kusto auth warmup (FR-42 — non-blocking) ────────────
+    checks.append(check_xhealth_kusto_auth())
 
     # ── P1 — EngHub MCP (§13.7 — Windows-only, non-blocking) ─────────────
     checks.append(check_enghub_health())

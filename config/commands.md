@@ -794,6 +794,12 @@ After the meeting list, emit an explicit Asks block:
 ```
 Pull Asks from work-open-items where `ask_owner` = other person. If none, emit `✅ No outstanding Asks`.
 
+**xHealth Context Injection (FR-42 §8.5):**
+If the meeting subject/title contains any of `xhealth`, `SCHIE`, `schie`, `repair`, `safety`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario`:
+- Invoke `xhealth_signal.py` → `query_icm_summary()` + `query_repair_sla()`
+- Append a **🏥 xHealth Context** block: active IcM count, Repair SLA %, top blocker — all marked `[live]`
+- If `xhealth_dashboards.enabled: false` in `work_connector_policy.yaml`, or Kusto CLI unavailable, skip silently (no error output)
+
 ## `/work sprint` — Delivery Health
 Reads work-projects. Sprint health, delivery feasibility, program status, and executive summary.
 
@@ -1030,6 +1036,54 @@ want to regenerate or edit.
 "my top 5 for the week", "team priorities post"
 
 - Phase: Active
+
+## `/work xhealth` — XHealth DRI Dashboard (FR-42)
+
+Provides live XHealth dashboard intelligence via the xhealth module (`scripts/work/xhealth/`).
+Requires `config/work_connector_policy.yaml → xhealth_dashboards.enabled: true` and Kusto.Cli on PATH.
+
+**Default (`work xhealth`):** 5-section DRI handoff brief covering active stuck jobs,
+incident count, repair SLA, and deployment blockers. Maps to `dri_handoff_brief()` in
+`scripts/work/xhealth_signal.py`. Duration target: <120 seconds.
+
+**Output format (5 sections):**
+```
+━━ xHealth DRI Handoff Brief ━━━━━━━━━━━━━━━━━━━━━━━━━━
+[1] IcM Incidents: Sev1=N · Sev2=N · Sev3=N [live: ADX]
+[2] Fleet Health: XPF N% healthy · N stuck repairs [live: ADX]
+[3] Repair SLA: MTTR p90=Nh · p50=Nh · N stuck >SLO [live: ADX]
+[4] DD Job Queue: N active · N stuck >24h [live: ADX]
+[5] Deployment Blockers: N · [top blocker title] [live: ADX]
+[🔗 XDiag] [🔗 Repair SLI] [🔗 DD Health] [🔗 XRepair Deployment]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Sub-commands:**
+
+- `work xhealth scenarios` — Scenario coverage per SKU (INT-4, Phase 3)
+  Queries XPF-Readiness-Repairs / SCTE page for pass/fail table per SKU.
+  Output: pass/fail table with trend vs. target. (Scenario failures = ramp gate blockers.)
+
+- `work xhealth xconfig` — xConfig operation settings status (INT-5, Phase 3)
+  Queries XKulfi-Operation-Settings dashboard.
+  Output: TakeFE enabled/disabled fleet %, settings drift count, rollout phase per cluster, stuck clusters.
+
+- `work xhealth armada` — Armada deployment health (Phase 3)
+  Queries Armada repair dashboard pages.
+  Output: deployment health summary, active repairs, stuck nodes.
+
+- `work xhealth weekly` — Weekly KPI harvest for newsletter/LT deck (INT-7, Phase 5)
+  Runs `query_kpi_harvest()` in `scripts/work/xhealth_signal.py`.
+  Output: structured KPI table — fleet health trend (7d), repair SLA trend, incident count trend,
+  offline capacity trend, scenario coverage trend, xConfig rollout progress — with trend arrows
+  and ADX deep-links. Ready to paste into weekly newsletter and LT deck.
+
+**Feature flag:** If `xhealth_dashboards.enabled: false`, display:
+`⚠ XHealth dashboards not yet enabled. Run Phase 0 auth validation, then set enabled: true in work_connector_policy.yaml.`
+
+**Fallback:** If Kusto.Cli unavailable, display auth error with actionable remediation steps.
+
+- Phase: Active (Phase 2 — default brief and scenarios; Phase 3 — all sub-commands; Phase 5 — weekly harvest)
 
 ## `/work scope` — Ownership Areas & Next Actions
 Reads `state/work/work-scope.md`. Displays all active ownership areas with priority tier,
