@@ -22,7 +22,7 @@ Work OS is **not a chatbot for your work email**. It is a structured daily brief
 | `work.enabled: true` in `user_profile.yaml` | Activates all Work OS domains |
 | ADO configured (`ado_org_url`, `ado_project`) | Work item queries |
 | M365 / Graph access | Calendar, comms, people data |
-| Agency CLI (optional) | Richer data via ADO/WorkIQ/ICM MCP servers |
+| Agency CLI (optional) | Richer data via ADO/WorkIQ/incident-mgr MCP servers |
 
 To check your setup:
 
@@ -58,7 +58,7 @@ Use `--dry-run` to preview what would be written without committing.
 /work refresh
 ```
 
-Fetches fresh data from all configured providers (ADO, WorkIQ, ICM, Graph/M365, **Kusto golden queries**) and writes state files to `state/work/`. Kusto queries auto-update fleet size, deployment velocity, incident counts, and other XPF program metrics in `xpf-program-structure.md`. Takes up to 60 seconds. Everything after this is instant.
+Fetches fresh data from all configured providers (ADO, WorkIQ, incident-mgr, Graph/M365, **Kusto golden queries**) and writes state files to `state/work/`. Kusto queries auto-update fleet size, deployment velocity, incident counts, and other program metrics in `program-structure.md`. Takes up to 60 seconds. Everything after this is instant.
 
 > **Tip:** If you run `/catch-up` in the morning, Work OS refresh happens automatically as a post-catch-up stage — no need to run it separately.
 
@@ -76,7 +76,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 |---------|---------------|
 | `/work pulse` | 30-second snapshot — meetings, comms, boundary, program health (risk posture + R/Y/G) |
 | `/work sprint` | Delivery health, burndown, blockers |
-| `/work prep` | Today's meetings with readiness scoring + XPF program context |
+| `/work prep` | Today's meetings with readiness scoring + program context |
 | `/work comms` | Email/Teams signals, exec visibility |
 | `/work people <name>` | Person lookup — org context, collaboration history; WorkIQ hint when not found locally |
 | `/work notes [meeting-id]` | Post-meeting captures, weekly summaries; meeting-id search; WorkIQ fallback |
@@ -84,7 +84,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 | `/work sources` | Registered data sources |
 | `/work docs` | Recent work artifacts |
 | `/work graph` | Stakeholder influence map with trajectory icons |
-| `/work xhealth` | xHealth operational DRI brief — active incidents, repair pipeline, job queue, deployment blockers, scope area status |
+| `/work work-health` | work-health on-call brief — active incidents, repair pipeline, job queue, deployment blockers, scope area status |
 
 ---
 
@@ -96,7 +96,7 @@ Full work briefing: today's calendar with readiness scores, active sprint health
 /work prep
 ```
 
-Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords. For XPF-related meetings, also injects program context: risk posture and relevant workstream metrics (red/green). For meetings with xHealth-related keywords (`xhealth`, `SCHIE`, `repair`, `Armada`, `xconfig`, `scenario`), also injects a live 🏥 xHealth Context block (IcM count, Repair SLA %, top blocker) when `xhealth_dashboards.enabled: true`.
+Shows today's meetings with a readiness score (0–100) based on: recurring meeting history, carry-forward items, attendee seniority, open action items, and high-stakes keywords. For program-related meetings, also injects program context: risk posture and relevant workstream metrics (red/green). For meetings with work-health keywords (`work-health`, `repair`, `fleet-mgr`, `config-svc`, `scenario`), also injects a live 🏥 Work-Health Context block (incident count, Repair SLA %, top blocker) when `work_health_dashboards.enabled: true`.
 
 ### During a Meeting (Live Assist)
 
@@ -158,7 +158,7 @@ Generates a full promotion narrative Markdown draft ready for submission.
 /work journey [project-name]
 ```
 
-Shows milestone timeline with ADO/IcM/doc provenance — the base layer for promo-case and Connect evidence.
+Shows milestone timeline with ADO/incident/doc provenance — the base layer for promo-case and Connect evidence.
 
 ---
 
@@ -196,7 +196,7 @@ Interactive Narrative Engine — choose template: `weekly_memo`, `talking_points
 /work newsletter [period]
 ```
 
-Drafts a team newsletter from sprint + decision + career data. Includes a **Program Health** section with risk posture, per-workstream signal status, and top red metrics — all sourced from Kusto-validated `xpf-program-structure.md`.
+Drafts a team newsletter from sprint + decision + career data. Includes a **Program Health** section with risk posture, per-workstream signal status, and top red metrics — all sourced from Kusto-validated `program-structure.md`.
 
 ### LT Deck
 
@@ -265,9 +265,9 @@ Each domain has a state file in `state/work/` that is updated on refresh:
 | `work-org-calendar` | work-org-calendar.md | Org dates: Connect deadlines, fiscal events, rewards season |
 | `work-scope` | work-scope.md | Ownership areas, priority tiers, co-owners, next actions per area |
 | `work-thrivesync` | work-thrivesync.md | Weekly ThriveSync posts, draft history, style patterns |
-| `xpf-program-structure` | xpf-program-structure.md | XPF program metrics (42 metrics, 12 workstreams, signal summary) — Kusto-validated |
+| `program-structure` | program-structure.md | program metrics (42 metrics, 12 workstreams, signal summary) — Kusto-validated |
 | `golden-queries` | golden-queries.md | 73 golden Kusto queries for program metrics — schema-validated KQL |
-| `xhealth-state` | xhealth-state.md | Last-known xHealth signal snapshot: IcM count, Repair SLA %, DD queue depth |
+| `work-health-state` | work-health-state.md | Last-known work-health signal snapshot: incident count, Repair SLA %, data-pipeline queue depth |
 
 ---
 
@@ -279,7 +279,7 @@ Work OS ships three agent definitions for use with the Agency CLI:
 |------|------|----------|
 | `artha-work` | `config/agents/artha-work.md` | Any M365 user (Graph baseline) |
 | `artha-work-enterprise` | `config/agents/artha-work-enterprise.md` | M365 + Azure DevOps |
-| `artha-work-msft` | `config/agents/artha-work-msft.md` | Microsoft employees (ADO + WorkIQ + ICM + Bluebird + Kusto) |
+| `artha-work-msft` | `config/agents/artha-work-msft.md` | Microsoft employees (ADO + WorkIQ + incident-mgr + Bluebird + Kusto) |
 
 The correct tier is automatically selected based on your `user_profile.yaml` provider config.
 

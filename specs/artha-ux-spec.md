@@ -1,4 +1,4 @@
-# Artha — UX Specification
+﻿# Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
 > **Version**: 3.23.0 | **Status**: Active Development | **Date**: May 3, 2026
@@ -12,7 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
-| v3.23.0 | 2026-05-03 | **xHealth Dashboard Intelligence UX (§35)** — Output format for `work xhealth` 5-section DRI brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 xHealth Context block injection format. Morning signal footer format. `[live: ADX]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
+| v3.23.0 | 2026-05-03 | **Work-Health Dashboard Intelligence UX (§35)** — Output format for `work work-health` 5-section on-call brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 Work-Health Context block injection format. Morning signal footer format. `[live: telemetry]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
 | v3.22.0 | 2026-04-29 | Action Quality Layer UX (§33) — Rejection category prompt (5 categories), suggestion tier display (§ SIGNAL SUGGESTIONS), --list confidence column, --apply-suggestions interactive flow, anomaly alerts. Implements PRD v7.27.0 + Tech Spec §40. |
 | v3.21.1 | 2026-04-29 | **Capability Inventory UX (§10, §24.5)** — `/status` now includes a compact "Connections & capabilities" block showing passive MCP config count/server count and configured/enabled skill count. `/health connections` includes the same passive inventory with P1 warnings for unreadable MCP config files or enabled skills with missing modules. No connector is started and no skill is imported for these displays. Implements PRD v7.26.1 + Tech Spec v3.41.1. |
 | v3.21 | 2026-05-01 | **PM Starter Kit Work OS UX (§32)** — Output format specs for all FR-32 new commands. `work standup`: PAW format (✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS), action-verb-first, max 120 words, word count footer; `teams` variant (plain text, no box drawing, Teams chat paste-ready). `work plan`: 3-I score indicators (●●● = 3/3, ●●○ = 2/3 min for Focus, ●○○ = 1/3 Background); emoji section headers (🎯/📋/🚫/📌); GP-N growth lens tags. `work 11 <alias>`: PAW 1:1 format with Exec Summary + workstream sections (status vocab: New/WIP/Next up/Queued up/Action) + 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins; staleness warning if people card > 14 days old. `work sprint` / `work prep`: IBA escalation taxonomy (Impediments/Blockers/Asks) + Executive Summary section. People card discoverability: `work people` lists cards with last_interaction dates. Implements PRD v7.26.0 FR-32 + Tech Spec v3.41.0 §39. |
@@ -2384,7 +2384,7 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 | `/work` | Core | Daily work briefing — calendar load, prep status, commitment summary, boundary signal |
 | `/work pulse` | Core | 30-second work status snapshot — meetings, comms, boundary score, DFS, program health (risk posture + R/Y/G signal counts from Kusto-validated metrics) |
 | `/work sprint` | Core | Sprint-focused view — ADO work items, active commitments, blockers |
-| `/work prep <title>` | Meeting | On-demand meeting prep card for a named meeting (readiness score, open threads, key people, XPF program context for relevant meetings) |
+| `/work prep <title>` | Meeting | On-demand meeting prep card for a named meeting (readiness score, open threads, key people, program context for relevant meetings) |
 | `/work live <id>` | Meeting | Live meeting assist — active action capture, decision tracking during a meeting |
 | `/work mark-preread <id>` | Meeting | Mark a meeting as pre-read; updates readiness score |
 | `/work notes [id]` | Capture | Post-meeting captures, weekly summaries; meeting-id search; WorkIQ fallback for transcripts |
@@ -2423,7 +2423,7 @@ Encryption is **automatic and invisible** — user never sees "age", "keypair", 
 | `/work return [window]` | Intel | Absence recovery — summarizes what changed while away (default 3d, e.g. `4d`) |
 | `/work boundary` | Intel | Boundary intelligence report — load trends, after-hours patterns, recommendations |
 | `/work connect` | Intel | Review-cycle evidence by goal area |
-| `/work incidents` | Intel | ICM/incident timeline — on-call history, resolution evidence |
+| `/work incidents` | Intel | incident timeline — on-call history, resolution evidence |
 | `/work repos` | Intel | Repository activity — commit velocity, PR cadence |
 | `/work day` | Intel | Day-ahead schedule synthesis — conflicts, prep gaps, boundary forecast |
 | `/work health` | System | Work connector health — per-connector status, degraded fallbacks, audit log tail |
@@ -3572,7 +3572,7 @@ When MCP Direct serves calendar or mail data instead of WorkIQ AI synthesis (cir
 
 ```
 ⚠️ Calendar data via direct query (WorkIQ unavailable)
-09:00 – 09:30 | Weekly XPF Sync | Jane Doe
+09:00 – 09:30 | Weekly Program Sync | Jane Doe
 10:00 – 11:00 | 1:1 with Manager | Bob Smith
 ```
 
@@ -3586,7 +3586,7 @@ When EngHub async enrichment returns results within the 15s budget, a `📚 Engi
 
 ```
 📚 Engineering Context (retrieved 09:30)
-🔗 XPF Auth Latency TSG — eng.ms · relevance: 0.87
+🔗 [Program] Auth Latency TSG — eng.ms · relevance: 0.87
 🔗 Azure Storage Service Overview — eng.ms · relevance: 0.72
 ```
 
@@ -3683,7 +3683,7 @@ Current week: [W-NN] | Active programs: [list]
 | 1/3 | ●○○ | Background only |
 | 0/3 | ○○○ | Won't Do |
 
-**Override rule:** Any Sev-2+ IcM or hard deadline (legal, compliance, customer-facing) qualifies regardless of score.
+**Override rule:** Any Sev-2+ incident or hard deadline (legal, compliance, customer-facing) qualifies regardless of score.
 
 #### 32.2.3 Growth lens annotations
 
@@ -3691,7 +3691,7 @@ If `growth_lens_enabled: true` in `artha_config.yaml`, Focus Outcomes may carry 
 
 ### 32.3 `work 11 <alias>` — 1:1 Update Prep
 
-**Source:** PAW `1-1-update-drafter/SKILL.md` | **Command:** `work 11 <alias>` or `work 11 ramjee`
+**Source:** PAW `1-1-update-drafter/SKILL.md` | **Command:** `work 11 <alias>`
 
 #### 32.3.1 Output format
 
@@ -3913,24 +3913,24 @@ Shown in briefing footer when relevant:
 
 ---
 
-## 35. xHealth Dashboard Intelligence UX *(v7.29.0 — FR-42)*
+## 35. Work-Health Dashboard Intelligence UX *(v7.29.0 — FR-42)*
 
-### 35.1 `work xhealth` — DRI Handoff Brief
+### 35.1 `work work-health` — On-Call Handoff Brief
 
 5-section output. Each section is populated by live Kusto data (marked `[live]`) or `[unavailable]` if Kusto CLI is absent.
 
 ```
-🏥 XHEALTH DRI BRIEF  [live: ADX | YYYY-MM-DD HH:MM]
+🏥 WORK-HEALTH ON-CALL BRIEF  [live: telemetry | YYYY-MM-DD HH:MM]
 
 ── 1. Active Incidents ──────────────────────────────
-  IcM count: N active  |  P0: N  |  P1: N
+  Incident count: N active  |  P0: N  |  P1: N
   Top blocker: [title, Sev N, age X days]
 
 ── 2. Repair Pipeline ───────────────────────────────
   SLA: XX.X%  |  P0 overdue: N  |  P1 overdue: N
   [If SLA < 95%:] ⚠ SLA below threshold
 
-── 3. Job Queue (DD) ────────────────────────────────
+── 3. Job Queue (Data Pipeline) ─────────────────────────────
   Queue depth: N  |  Stuck (>24h): N
 
 ── 4. Deployment Blockers ───────────────────────────
@@ -3939,35 +3939,35 @@ Shown in briefing footer when relevant:
   [None] ✅ No blockers
 
 ── 5. Scope Area Status ─────────────────────────────
-  Scenarios: XX% covered  |  xConfig: XX% rolled out
-  Armada: N unhealthy nodes
+  Scenarios: XX% covered  |  Config-svc: XX% rolled out
+  Fleet-mgr: N unhealthy nodes
 ```
 
-**Degradation**: if `xhealth_dashboards.enabled: false` or Kusto unavailable:
+**Degradation**: if `work_health_dashboards.enabled: false` or Kusto unavailable:
 
 ```
-🏥 xHealth brief unavailable — Kusto not configured (xhealth_dashboards.enabled: false)
-   Run: work xhealth --fallback  to use last known state from work-open-items.
+🏥 Work-health brief unavailable — Kusto not configured (work_health_dashboards.enabled: false)
+   Run: work work-health --fallback  to use last known state from work-open-items.
 ```
 
 ### 35.2 Sub-command Output Formats
 
 | Sub-command | Output |
 |-------------|--------|
-| `work xhealth scenarios` | Table: area, coverage %, last validated date |
-| `work xhealth xconfig` | Rollout %, error rate, top error class |
-| `work xhealth armada` | Fleet node count, unhealthy count, deploy velocity (deploys/day) |
-| `work xhealth dd` | Queue depth, jobs >24h, SLA % |
-| `work xhealth deploy` | Blocker list, owner (alias scrubbed), age |
-| `work xhealth weekly` | Condensed version of all 5 sections, covering last 7 days |
+| `work work-health scenarios` | Table: area, coverage %, last validated date |
+| `work work-health config-svc` | Rollout %, error rate, top error class |
+| `work work-health fleet-mgr` | Fleet node count, unhealthy count, deploy velocity (deploys/day) |
+| `work work-health data-pipeline` | Queue depth, jobs >24h, SLA % |
+| `work work-health deploy` | Blocker list, owner (alias scrubbed), age |
+| `work work-health weekly` | Condensed version of all 5 sections, covering last 7 days |
 
-### 35.3 `work prep` xHealth Context Injection
+### 35.3 `work prep` Work-Health Context Injection
 
-When meeting subject/title contains a keyword from the trigger list (`xhealth`, `SCHIE`, `repair`, `Armada`, `XPF`, `DD-PF`, `xconfig`, `scenario`):
+When meeting subject/title contains a keyword from the trigger list (`work-health`, `repair`, `fleet-mgr`, `data-pipeline`, `config-svc`, `scenario`):
 
 ```
-🏥 xHealth Context  [live]
-   Active IcMs: N  |  Repair SLA: XX.X%  |  Top blocker: [title, Sev N]
+🏥 Work-Health Context  [live]
+   Active incidents: N  |  Repair SLA: XX.X%  |  Top blocker: [title, Sev N]
 ```
 
 Appended immediately after the Asks block. If Kusto unavailable: entire block suppressed (no error shown).
@@ -3977,8 +3977,8 @@ Appended immediately after the Asks block. If Kusto unavailable: entire block su
 Appended to briefing footer when `morning_signal()` returns data (06:00–11:00 window only):
 
 ```
-─── xHealth Morning Signal ──────────────────────────
-🏥 IcMs: N active  |  Repair SLA: XX.X%  |  DD queue: N
+─── Work-Health Morning Signal ──────────────────────────
+🏥 Incidents: N active  |  Repair SLA: XX.X%  |  Pipeline queue: N
    [If any P0:] ⚠ P0 incident open — check before stand-up
 ```
 
@@ -3986,22 +3986,22 @@ Suppressed entirely when `enabled: false` or outside the time window.
 
 ### 35.5 Reflect Output — Accomplishment KPI Citation
 
-When an xHealth-tagged accomplishment gains a live KPI citation from `query_kpi_harvest()`:
+When a work-health-tagged accomplishment gains a live KPI citation from `query_kpi_harvest()`:
 
 ```
-✅ [Accomplishment text]  [live: ADX | YYYY-MM-DD]
-   Metric: Repair SLA XX.X% | IcM count: N | [other KPI]
+✅ [Accomplishment text]  [live: telemetry | YYYY-MM-DD]
+   Metric: Repair SLA XX.X% | Incident count: N | [other KPI]
    confidence: live
 ```
 
-Without Kusto: accomplishment proceeds with `confidence: [user-stated]` — no `[live: ADX]` citation substitution.
+Without Kusto: accomplishment proceeds with `confidence: [user-stated]` — no `[live: telemetry]` citation substitution.
 
 ### 35.6 Design Principles
 
-- **Live data is labeled**: all Kusto-sourced values carry `[live]` or `[live: ADX]` suffix. No value is silently inferred from live sources.
+- **Live data is labeled**: all Kusto-sourced values carry `[live]` or `[live: telemetry]` suffix. No value is silently inferred from live sources.
 - **Graceful-silent degradation**: feature-flag `false` or Kusto unavailable → no error tokens, no partial output. The absence is itself the signal.
 - **Alias scrubbing**: deployment blockers and incident owners display roles/teams only — no personal aliases in committed output.
-- **No blocking in `work prep`**: xHealth context injection is a fire-and-forget append; a slow or failing query never delays meeting preparation output.
+- **No blocking in `work prep`**: work-health context injection is a fire-and-forget append; a slow or failing query never delays meeting preparation output.
 
 ---
 
