@@ -249,9 +249,6 @@ routing_decision::
 
 # pii-guard: ignore-file
 
-import json
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 _DEFAULT_METRICS_FILE: Path = (
