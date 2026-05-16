@@ -39,6 +39,12 @@ _WORK = _SCRIPTS / "work"
 if str(_WORK) not in sys.path:
     sys.path.insert(0, str(_WORK))
 
+# Skip entire module if scripts/work/ is unavailable (gitignored in CI).
+try:
+    import work.xhealth_signal as _xh_mod  # noqa: F401
+except ModuleNotFoundError:
+    pytest.skip("scripts/work/ is gitignored — xhealth tests require local env", allow_module_level=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
