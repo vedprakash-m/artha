@@ -17,7 +17,7 @@ from googleapiclient.http import MediaIoBaseUpload
 
 # Add parent directory to path so we can import scripts.google_auth
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scripts.google_auth import build_service
+from google_auth import build_service
 
 def markdown_to_html(md_text: str) -> str:
     """
