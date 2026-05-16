@@ -445,7 +445,6 @@ class ActionComposer:
             if not signal.signal_type:
                 raise ValueError("DomainSignal.signal_type must not be empty")
         except ValueError as exc:
-            import sys  # noqa: PLC0415
             print(f"[ACTION_COMPOSER] Invalid signal skipped: {exc}", file=sys.stderr)
             return None
 

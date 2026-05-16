@@ -125,7 +125,7 @@ class TestComposePipeline:
             signal_type="bill_due",
             domain="finance",
             entity="Metro Electric",
-            metadata={"amount": "42.00", "due_date": "2026-05-01"},
+            metadata={"amount": "42.00", "due_date": ((__import__("datetime").date.today() + __import__("datetime").timedelta(days=7)).isoformat())},
         )
         proposal = composer.compose(signal)
         assert proposal is not None
