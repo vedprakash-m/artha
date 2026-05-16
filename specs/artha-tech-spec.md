@@ -7040,3 +7040,93 @@ Single sink: `state/telemetry.jsonl` (plaintext, append-only, no PII — hashed 
 | PENDING idempotency key on startup | PREFLIGHT key file scan | Surface to user; require explicit resolution before new actions |
 
 *"The entire application is a well-written instruction file. The data layer lives where the user lives — always fresh, always accessible, always encrypted where it matters. Nothing sensitive leaves the device. Three LLMs work together — the right model for the right task at the right cost. Now it learns your patterns, guards your data, and shows you what matters before you ask."*
+
+---
+
+## Appendix B — re-artha v1.2.0 Architectural Changes (2026-05-16)
+
+### B.1 Library Consolidation (F-C1/F-C2)
+
+The `scripts/lib/` module count was rationalized from 74 to 75 logical modules
+(net: 4 new clusters, 7 shim wrappers, 2 zero-consumer files archived).
+After shim removal (2026-06-16) the effective count drops to 68.
+
+**Cluster merge registry:**
+
+| New module | Absorbed | Shim exports |
+|-----------|----------|--------------|
+| `lib/agent_health.py` | `lib/agent_heartbeat.py` | `AgentHeartbeat`, `HealthAlert` |
+| `lib/context_guard.py` | `lib/context_classifier.py`, `lib/context_scrubber.py` | `ClassificationResult`, `ContextTier`, `classify_context`, `filter_context_fragments`, `is_tier_allowed`, `ContextScrubber`, `ScrubResult` |
+| `lib/metrics_collection.py` | `lib/metrics.py`, `lib/metrics_writer.py` | `CatchUpMetrics`, `write_invocation_metric`, `write_invocation_trace`, `write_routing_margin`, `write_routing_decision` |
+| `lib/metrics_analysis.py` | `lib/signal_scorer.py`, `lib/metrics_digest.py` | `partition_signals`, `rank_signals`, `score_signal`, `run_digest`, `_compute_digest`, `_render_markdown` |
+| `scripts/vault.py` | `scripts/vault_guard.py` (inline) | `check_file_readable`, `check_all_sensitive` |
+
+Shims preserve backwards compatibility with a `DeprecationWarning` and are
+scheduled for removal 2026-06-16. Any consumer that imports from the old
+module name will continue to work until that date.
+
+**Modules intentionally not merged:**
+- `lib/exceptions.py` — 2 consumers (production + test); not a thin wrapper
+- `lib/config_loader.py` — 49 consumers; foundational, not thin
+- `lib/loop_detector.py` — 1 consumer in `preflight.py` but 180 LOC complex FSM
+- `lib/auto_vault.py` — deferred: overlaps with vault.py keyring functions (OI-098)
+
+### B.2 Pipeline Routing Simplification (F-B1 D1c)
+
+The two-tier routing classifier (planner API probe → TF-IDF UNCLASSIFIED
+block) was removed from `scripts/pipeline.py` at CLASSIFY phase.
+
+**Before:** pipeline.py → planner API (unreachable) → TF-IDF fallback
+(94% UNCLASSIFIED) → LLM briefing
+
+**After:** pipeline.py → LLM briefing (sole classification path)
+
+The `lib/tfidf_router.py` module is retained — it is still consumed by
+`agent_manager.py` and `lib/agent_router.py` for agent dispatch. Only the
+pipeline CLASSIFY step is removed.
+
+See `specs/adr/ADR-005-routing-classifier-d1c-removal.md`.
+
+### B.3 Digest Brief Engine (F-D1)
+
+New pipeline mode: `python scripts/pipeline.py --mode=digest --skip-vault`
+
+**Architecture:**
+- `_run_digest_mode()` dispatches to 5 sub-functions, each reading one state
+  file and emitting a markdown section
+- Stale-lock eviction (`_DIGEST_LOCK = state/.digest.lock`): if lock is older
+  than `_DIGEST_STALE_SECS = 3600`, the lock is forcibly removed before
+  acquiring (macOS `flock` unavailable; uses Python `open(..., 'x')` exclusive
+  create)
+- Output: `briefings/YYYY-MM-DD-digest.md` with YAML frontmatter
+  (`briefing_format: digest`)
+- Automation: `scripts/scheduled_brief.sh` → invoked by
+  `scripts/com.artha.morning-brief.plist` (launchd, Mon–Fri 07:00,
+  `RunAtLoad: false`); activation is manual (`launchctl load`)
+
+### B.4 Citation Audit Sentinel (F-D2)
+
+`scripts/pipeline_audit.py` — new module.
+
+**Functions:**
+- `audit(path)` — tokenizes a briefing file, counts citation tokens
+  (`[src: OI-NNN]`, `[src: state:<domain>]`, `[src: signal:SIG-NNN]`),
+  validates OI IDs against `state/open_items.md`, counts uncited
+  factual-verb lines (≥8 words, main verb, no citation)
+- `_append_audit(r)` — appends one-line summary to `state/audit.md`
+- `main()` — CLI: `--last` (most recent briefing), `--all`, or explicit path
+
+This is **warning-only** in the current phase. Hard-block mode (exit 1 on
+uncited facts above threshold) is deferred to a future gate.
+
+### B.5 Vault Consolidation (F-C2)
+
+`vault_guard.py` functions (`check_file_readable`, `check_all_sensitive`,
+`_load_sensitive_domains`) were inlined into `vault.py`. The `vault_guard.py`
+shim re-exports them with a CLI `main()` for backwards compatibility.
+
+`vault.py` now ~1,475 LOC. Key additions:
+- `_MIN_READABLE_BYTES = 64` — minimum byte threshold for readability check
+- `_STATIC_SENSITIVE` — list of always-sensitive domain names
+- Uses `vault.py`'s existing `ARTHA_DIR`, `STATE_DIR`, `LOCK_FILE` variables
+

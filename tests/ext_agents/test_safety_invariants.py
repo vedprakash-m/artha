@@ -132,7 +132,7 @@ class TestContextScrubberPiiGuardSafety:
         mock_guard = MagicMock()
         mock_guard.filter_text.side_effect = RuntimeError("guard crashed")
 
-        with patch("lib.context_scrubber._get_pii_guard", return_value=mock_guard):
+        with patch("lib.context_guard._get_pii_guard", return_value=mock_guard):
             result = scrubber.scrub("My SSN is 123-45-6789")
 
         assert result.blocked is True
@@ -143,7 +143,7 @@ class TestContextScrubberPiiGuardSafety:
         mock_guard = MagicMock()
         mock_guard.filter_text.side_effect = RuntimeError("guard crashed")
 
-        with patch("lib.context_scrubber._get_pii_guard", return_value=mock_guard):
+        with patch("lib.context_guard._get_pii_guard", return_value=mock_guard):
             result = scrubber.scrub("Some text without PII")
 
         # Non-strict: pass through (degraded), but NOT blocked
@@ -161,7 +161,7 @@ class TestContextScrubberMissingGuard:
     def test_strict_mode_blocks_when_guard_unavailable(self):
         scrubber = ContextScrubber(strict_mode=True)
 
-        with patch("lib.context_scrubber._get_pii_guard", return_value=None):
+        with patch("lib.context_guard._get_pii_guard", return_value=None):
             result = scrubber.scrub("Potentially sensitive content")
 
         assert result.blocked is True
@@ -170,7 +170,7 @@ class TestContextScrubberMissingGuard:
     def test_nonstrict_mode_passes_when_guard_unavailable(self):
         scrubber = ContextScrubber(strict_mode=False)
 
-        with patch("lib.context_scrubber._get_pii_guard", return_value=None):
+        with patch("lib.context_guard._get_pii_guard", return_value=None):
             result = scrubber.scrub("Some content")
 
         assert result.blocked is False

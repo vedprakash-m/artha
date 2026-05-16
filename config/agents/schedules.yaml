@@ -11,12 +11,14 @@
 schedules:
   # ── health-logistics cron group (slot 1 of 8) ─────────────────────────
   - agent: "ReadinessAgent"
+    enabled: false              # F-A2: demoted to on-demand 2026-05-16; archive after 2026-06-16 if zero telemetry
     cron: "0 3 * * *"           # 03:00 daily
     query: "Compute daily readiness score from Apple Health export and update state/readiness.md"
     staleness_tolerance_seconds: 86400   # 24h — 1 cron cycle
     cron_group: "health-logistics"
 
   - agent: "LogisticsAgent"
+    enabled: false              # F-A2: demoted to on-demand 2026-05-16; archive after 2026-06-16 if zero telemetry
     cron: "5 3 * * *"           # 03:05 daily
     query: "Rebuild state/logistics.md from state/logistics.yaml entity store"
     staleness_tolerance_seconds: 86400
@@ -24,6 +26,7 @@ schedules:
 
   # ── CapitalAgent (slot 2 of 8) ────────────────────────────────────────
   - agent: "CapitalAgent"
+    enabled: false              # F-A2: demoted to on-demand 2026-05-16; archive after 2026-06-16 if zero telemetry
     cron: "10 3 * * *"          # 03:10 daily
     query: "Compute 90-day cash-flow projection from ~/.artha-local/cashflow.db and update state/finance_forecast.md"
     staleness_tolerance_seconds: 86400
@@ -35,6 +38,7 @@ schedules:
 
   # ── TribeAgent (slot 3 of 8) ─────────────────────────────────────────
   - agent: "TribeAgent"
+    enabled: false              # F-A2: demoted to on-demand 2026-05-16; archive after 2026-06-16 if zero telemetry
     cron: "30 3 * * *"          # 03:30 daily
     query: "Compute contact decay scores from ~/.artha-local/tribe.db and update ranked reconnect section in state/social.md"
     staleness_tolerance_seconds: 86400

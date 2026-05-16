@@ -695,7 +695,7 @@ def evaluate_scenarios(
 ) -> list[dict[str, Any]]:
     """Evaluate active scenarios and optionally create deduped OIs.
 
-    Implements specs/scenarios.md Step 8e/T-8: skip if evaluated <7 days ago
+    Implements .archive/specs/scenarios.md Step 8e/T-8: skip if evaluated <7 days ago
     and no newer signal evidence exists; otherwise produce at most one OI per
     scenario with ``source_ref: SCN-NNN``.
     """
@@ -885,7 +885,7 @@ def bootstrap_sprint_signal(
 ) -> str | None:
     """Create one goal-drift sprint candidate from eligible goals.
 
-    Eligibility implements specs/scenarios.md Step 3/19b:
+    Eligibility implements .archive/specs/scenarios.md Step 3/19b:
     - active, non-parked goals only
     - G-004/G-005 priority set for no-sprint >30d detection
     - no active sprint for the same goal

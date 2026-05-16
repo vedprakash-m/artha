@@ -1,5 +1,7 @@
 # Artha — Your Personal Intelligence System
 
+> **Canonical term definitions:** `config/glossary.md` — use these terms in all output.
+
 This is an Artha session. Full operating instructions are in `config/Artha.md`.
 
 Read `config/Artha.md` now and follow all instructions within it before responding to any message. After reading it, check the `§R — Command Router` table for the current command and load the listed `config/workflow/*.md` files in order before executing. Do NOT skip workflow file loading for catch-up commands.

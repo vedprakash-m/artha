@@ -2855,3 +2855,92 @@ These targets are the spec-level SLA commitments enforced by `eval_runner.py --a
 
 > Phase 2B features (Insight Engine, Proactive Check-In, Goal Engine Expansion, Spouse Briefing,
 > Autonomy Elevation) are specified in `config/implementation_status.yaml`.
+
+---
+
+## § Consolidation Record — re-artha v1.2.0 (2026-05-16)
+
+The following product changes were implemented as part of the re-artha v1.2.0
+consolidation sprint. They represent architectural simplifications and new
+surface additions, not capability regressions.
+
+### F-D1 — Morning Digest Brief
+
+**New briefing surface**: A lightweight "digest" brief mode
+(`pipeline.py --mode=digest`) generates a focused output covering:
+
+1. P1/P2 open items only (from `state/open_items.md`)
+2. Active goal progress (from `state/goals.md`)
+3. Today's calendar (from `state/calendar.md`)
+4. Health summary (from `state/health.md`)
+
+The digest is written to `briefings/YYYY-MM-DD-digest.md` and is designed
+to complete in < 10 s (vault-skipped path). An automated launchd job
+(`com.artha.morning-brief.plist`) runs Mon–Fri at 07:00. Activation is
+manual (requires `launchctl load`).
+
+**Canonical term**: "digest brief" (see `config/glossary.md`).
+
+### F-D2 — Citation Convention
+
+Briefing facts must carry machine-readable source tokens. Three valid types:
+
+| Token | Source |
+|-------|--------|
+| `[src: OI-NNN]` | Open item ID from `state/open_items.md` |
+| `[src: state:<domain>]` | Domain state file |
+| `[src: signal:SIG-NNN]` | Named signal record |
+
+The citation sentinel (`scripts/pipeline_audit.py`) audits the most recent
+briefing, validates OI IDs, counts uncited factual-verb sentences, and writes
+a one-line summary to `state/audit.md`. This is **warning-only** (days 0–14);
+hard-block mode is reserved for a future gate.
+
+### F-B1 — Routing Classifier Removal (D1c)
+
+The planner API probe + TF-IDF UNCLASSIFIED display block (~80 LOC) was
+removed from `pipeline.py`. Telemetry showed a 94% miss rate over 38 days.
+The LLM briefing step already performs implicit signal classification. See
+`specs/adr/ADR-005-routing-classifier-d1c-removal.md` for full decision
+record.
+
+**Metric targets reset**: `pipeline.degraded_mode` events should drop to
+near-zero (S-5). `routing.unclassified` events should drop to ≤10% (S-4).
+
+### F-C1/F-C2 — Library Consolidation
+
+Thin-wrapper cluster merges reduced logical duplication without changing the
+public API surface:
+
+| Cluster | Merged into | Shims until |
+|---------|-------------|-------------|
+| agent_heartbeat.py | `lib/agent_health.py` | 2026-06-16 |
+| context_classifier.py + context_scrubber.py | `lib/context_guard.py` | 2026-06-16 |
+| metrics.py + metrics_writer.py | `lib/metrics_collection.py` | 2026-06-16 |
+| signal_scorer.py + metrics_digest.py | `lib/metrics_analysis.py` | 2026-06-16 |
+| vault_guard.py → vault.py | inline (no shim needed) | — |
+
+`lib/auto_vault.py` inline was deferred (overlap with `vault.py` keyring
+functions; tracked as OI-098 for a future session).
+
+### F-A7 — Memory Pipeline: Path 2 (Cut)
+
+The post-catch-up memory pipeline (`post_catchup_memory.py`, `fact_extractor.py`,
+`correction_feeder.py`) was archived after a mandatory pre-check produced 0 facts
+and a `NameError` (broken `timedelta` import). `state/self_model.md` and
+`state/lessons.md` remain fully user-curated. See `specs/adr/ADR-006-memory-pipeline-path2.md`
+for full decision record. Tracked for future remediation: OI-097.
+
+### F-A2 — Background Agent Demotion
+
+Four background agents (CapitalAgent, LogisticsAgent, ReadinessAgent, TribeAgent)
+were set to `enabled: false` in `config/agents/schedules.yaml`. They are
+on-demand only from 2026-05-16. Agents with zero telemetry by 2026-06-16
+will be archived from `.archive/scripts/`.
+
+### F-D3 — Canonical Glossary
+
+`config/glossary.md` (hard cap: 3 KB) defines 15 canonical Artha terms.
+All four LLM surfaces (CLAUDE.md, GEMINI.md, AGENTS.md,
+`.github/copilot-instructions.md`) reference this file as the second line.
+

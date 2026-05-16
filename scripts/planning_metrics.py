@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """planning_metrics.py — Phase 4 observability stub for FR-41 Ambient Intent Buffer.
 
-Reports G-1 through G-6 metrics defined in specs/scenarios.md §3.
+Reports G-1 through G-6 metrics defined in .archive/specs/scenarios.md §3.
 
 Usage:
     python3 scripts/planning_metrics.py [--signals-file PATH] [--audit-file PATH]

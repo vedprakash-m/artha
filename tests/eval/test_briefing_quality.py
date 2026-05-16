@@ -104,6 +104,7 @@ class TestGoldenScenarios:
             f"Expected actionability > 8.0, got {result['dimensions']['actionability']}"
         )
 
+    @pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
     def test_valid_corrections_pass_filter(self, sample_facts, rubric):
         """G3: Valid, non-expired correction facts must survive the filter."""
         feeder = _get_correction_feeder()
@@ -157,6 +158,7 @@ class TestAntiGoldenScenarios:
             f"expected <= {threshold}. Dimensions: {result['dimensions']}"
         )
 
+    @pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
     def test_expired_facts_are_filtered_out(self, sample_facts):
         """A2: Facts with past TTL must never appear in feeder output."""
         feeder = _get_correction_feeder()
@@ -165,6 +167,7 @@ class TestAntiGoldenScenarios:
         values = [f["value"] for f in filtered]
         assert "Old expired rule" not in values, "Expired fact leaked through filter"
 
+    @pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
     def test_wrong_type_facts_are_filtered_out(self, sample_facts):
         """A3: Facts with type 'note' (not in allowed types) must be filtered out."""
         feeder = _get_correction_feeder()
@@ -276,6 +279,7 @@ class TestEdgeCases:
         result = scorer.score_briefing(golden_briefing_path)
         assert result.get("schema_version") == "1.0.0"
 
+    @pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
     def test_filter_facts_domain_scoping(self, sample_facts):
         """Domain filter must exclude facts from other domains."""
         feeder = _get_correction_feeder()
@@ -309,6 +313,7 @@ class TestEdgeCases:
         stale = rv._detect_stale_domains(two_runs, streak_threshold=3)
         assert stale == [], "Should return empty list when run count < streak_threshold"
 
+    @pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
     def test_filter_facts_respects_global_cap(self):
         """_filter_facts must enforce the global cap of 50 facts."""
         feeder = _get_correction_feeder()

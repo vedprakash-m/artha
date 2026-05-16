@@ -8,8 +8,8 @@ Security note (R9 — injection sanitization):
   Every post title is sanitized before leaving this module:
   1. Truncated to 80 characters maximum.
   2. Stripped of markdown/HTML special characters: < > * [ ] ` (backtick).
-  3. Rejected if the sanitized title matches any pattern in
-     config/claw_bridge.yaml → injection_filter → blocked_patterns.
+  3. Rejected if the sanitized title matches any pattern in the injection
+     filter (retired — blocked_patterns list is currently empty).
      Rejected items are logged as REDDIT_SANITIZE_REJECT in state/audit.md.
 
 Output record format (pipeline-compatible):
@@ -72,20 +72,12 @@ _STRIP_CHARS = re.compile(r"[<>*\[\]`]")
 # ── Sanitization helpers ─────────────────────────────────────────────────────
 
 def _load_blocked_patterns() -> list[str]:
-    """Load injection_filter.blocked_patterns from config/claw_bridge.yaml.
+    """Load injection-filter blocked patterns.
 
-    Returns an empty list on any error so the connector degrades gracefully.
-    IMPORTANT: patterns come from claw_bridge.yaml → injection_filter →
-    blocked_patterns, NOT lint_rules.yaml (see specs/ac-int.md §7.2 note).
+    # DEAD-CODE-OPENCLAW: external pattern source retired v7.18.0.
+    # Returns empty list until a replacement config location is defined.
     """
-    try:
-        import yaml  # type: ignore[import]
-        cfg_path = _ARTHA_DIR / "config" / "claw_bridge.yaml"
-        with cfg_path.open(encoding="utf-8") as fh:
-            cfg = yaml.safe_load(fh)
-        return list(cfg.get("injection_filter", {}).get("blocked_patterns", []))
-    except Exception:
-        return []
+    return []  # DEAD-CODE-OPENCLAW
 
 
 def _write_audit(event_type: str, **kwargs: str | int | bool | None) -> None:

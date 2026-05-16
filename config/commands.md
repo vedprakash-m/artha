@@ -768,10 +768,32 @@ Topics of interest: Claude Tools, MCP Servers, Agentic Workflows
 # Implementation: scripts/work_loop.py, scripts/work_reader.py
 
 ## `/work` — Full Work Briefing
-Reads all work domains. Produces a structured briefing: meeting count, comms needing response, sprint health, boundary score, recommended next move.
+Reads all work domains. Produces a structured briefing: meeting count, comms needing response, sprint health, boundary score, recommended next move, and a prioritized My Actions list drawn from the last 7 days of meeting transcripts.
 - Reads pre-computed state only (§3.8). Never invokes connectors inline.
 - Includes data freshness footer: "Last refresh: [timestamp] ([age])".
 - If state is older than staleness threshold, emits warning.
+
+**§ My Open Actions (always last section of `/work` output):**
+Sourced from `tmp/work_actions.json` (populated by WorkIQ meeting-actions fetch).
+If file is missing or stale (>24h), emit: `⚠️ Actions list stale — re-run work refresh to update`.
+Output format:
+```
+§ My Open Actions  [N total · pulled from last 7 days of transcripts]
+
+🔴 Ramp-Critical
+- [action] — from: [meeting], [date]
+
+🟡 Leadership-Visible
+- [action] — from: [meeting], [date]
+
+⚪ Hygiene
+- [action] — from: [meeting], [date]
+```
+Rules:
+- Show all 🔴 items always (no cap)
+- Show top 5 🟡 items (oldest first within tier)
+- Show top 3 ⚪ items only (suppress noise)
+- If 0 actions across all tiers: emit `✅ No open actions found in last 7 days`
 
 ## `/work pulse` — 30-Second Status Snapshot
 Reads `state/work/work-summary.md` only. Meeting hours today, top comms item, boundary score.

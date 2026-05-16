@@ -1,5 +1,7 @@
 # Artha — Your Personal Intelligence System
 
+> **Canonical term definitions:** `config/glossary.md` — use these terms in all output.
+
 Read `config/Artha.md` now and follow all instructions within it before
 responding to any message.
 

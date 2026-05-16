@@ -78,6 +78,8 @@ state/traces/
 state/connectors/
 # Immigration state subdirectory (personal PII — never committed)
 state/immi/
+# Travel state subdirectory (trip plans, booking details — personal PII)
+state/travel/
 # KB audit log (LLM observability — machine-local, never committed)
 state/audit/
 !state/.gitkeep
@@ -175,7 +177,7 @@ state/*.age
 tmp/
 visuals/
 # xHealth Shiproom app (personal health data and dashboards — never committed)
-xhealth/
+scripts/work/xhealth/
 
 # --- Assembled instruction file (contains personal identity) ---
 config/Artha.md
@@ -240,6 +242,8 @@ state/*.md.age.*
 # The plist has hardcoded venv + repo paths; users create from the spec template.
 artha.hermes-context.plist
 *.launchagent.plist
+# F-D1 morning-brief job — contains hardcoded /Users/<username>/ path (PII)
+scripts/com.artha.morning-brief.plist
 
 # --- OneDrive conflict copies ---
 # OneDrive git-shadow directory (sync artefact)

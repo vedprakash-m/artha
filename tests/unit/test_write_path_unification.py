@@ -181,6 +181,7 @@ class TestTrustEnforcerUnification:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="fact_extractor.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
 class TestFactExtractorUnification:
     def test_persist_facts_uses_state_write(self, tmp_path):
         """persist_facts() must call _state_write for state/memory.md."""
