@@ -15,8 +15,7 @@ State machine:
 from __future__ import annotations
 
 import logging
-import math
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 _log = logging.getLogger("artha.agent_health")
@@ -546,10 +545,8 @@ def _update_mean(current_mean: float, new_value: float, n: int) -> float:
 # (Merged from agent_heartbeat.py — F-C1. See header for full docstring.)
 
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Configuration

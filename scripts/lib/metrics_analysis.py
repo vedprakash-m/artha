@@ -225,12 +225,9 @@ Ref: specs/ext-agent-reloaded.md §EAR digest
 import json
 import math
 import os
-import sys
 import tempfile
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Any
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _SCRIPTS_DIR.parent.parent

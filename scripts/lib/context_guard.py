@@ -251,7 +251,6 @@ Ref: specs/subagent-ext-agent.md §3.5, §4.4 Step 4, EA-0d
 
 import importlib.util
 import logging
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
