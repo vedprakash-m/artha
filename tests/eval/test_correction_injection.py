@@ -33,6 +33,10 @@ def feeder():
 # T-EV-12-07: Valid correction fact passes through _filter_facts()
 # ===========================================================================
 
+import pytest
+
+
+@pytest.mark.skip(reason="correction_feeder.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
 def test_valid_correction_passes_filter(feeder):
     """T-EV-12-07: A valid correction fact must survive _filter_facts()."""
     future_ttl = (date.today() + timedelta(days=365)).isoformat()

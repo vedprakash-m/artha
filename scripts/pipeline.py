@@ -959,89 +959,11 @@ def run_pipeline(
     # ── Session end: cost-to-intelligence ratio logging ─────────────────────────
     _emit_cost_ratio_telemetry(_session_id)
 
-    # ── §2.1.6 CLASSIFY entry: Planner API availability probe + DEGRADED_MODE ──
-    # The spec §2.1.6 requires: if frontier model API is unavailable at CLASSIFY
-    # entry, emit DEGRADED_MODE to telemetry and notify the user.  The pipeline
-    # falls back to static TF-IDF classification (existing behaviour).
-    _planner_available = False
-    try:
-        _harness_cfg = cfg.get("harness", {})
-        _planner_cfg = _harness_cfg.get("planner", {})
-        _planner_available = bool(
-            _planner_cfg.get("enabled", False)
-            and _planner_cfg.get("model")
-        )
-    except Exception:  # noqa: BLE001
-        _planner_available = False
-
-    if not _planner_available:
-        _emit_tel(
-            "pipeline.degraded_mode",
-            extra={
-                "session_id": _session_id,
-                "reason": "planner_api_unavailable",
-                "fallback": "static_tfidf_classification",
-            },
-        )
-        print(
-            "[pipeline] ⚠ DEGRADED MODE: Planner API not configured. "
-            "Falling back to static TF-IDF classification (v5.1 behaviour). "
-            "Set harness.planner.enabled + harness.planner.model in artha_config.yaml "
-            "to enable FSM planner routing.",
-            file=sys.stderr,
-        )
-
+    # ── §2.1.6 CLASSIFY — F-B1 D1c: planner + tf-idf tier removed 2026-05-16 ──
+    # Classification is handled by the LLM step. The planner API was unavailable
+    # for 38+ days (243 degraded_mode events); tf-idf produced 94% UNCLASSIFIED.
+    # LLM-only classification is the committed path. tfidf_router.py is retired.
     _emit_tel("pipeline.step_enter", extra={"step": "CLASSIFY", "session_id": _session_id})
-
-    # ── Phase 2: UNCLASSIFIED queue display ─────────────────────────────────────
-    if all_classified_lines:
-        try:
-            from lib.tfidf_router import route_with_unclassified as _route_uc  # type: ignore[import]
-            _signals: list[dict] = []
-            for _ln in all_classified_lines:
-                try:
-                    _rec = json.loads(_ln)
-                    # Build minimal routing signal from whatever fields are available
-                    _text = " ".join(
-                        str(_rec.get(f, ""))
-                        for f in ("subject", "title", "summary", "body", "snippet")
-                        if _rec.get(f)
-                    ) or _ln[:200]
-                    _sig_id = (
-                        _rec.get("id")
-                        or _rec.get("messageId")
-                        or _rec.get("uid")
-                        or _ln[:32]
-                    )
-                    _signals.append({"signal_id": str(_sig_id), "text": _text})
-                except (json.JSONDecodeError, Exception):
-                    pass
-            if _signals:
-                _classified_sigs, _unclassified_sigs = _route_uc(_signals)
-                if _unclassified_sigs:
-                    print(
-                        f"\n\u00a7 Unclassified Signals ({len(_unclassified_sigs)} items)",
-                        file=sys.stderr,
-                    )
-                    for _uc in _unclassified_sigs:
-                        _conf = _uc.get("confidence", 0.0)
-                        _uid = _uc.get("signal_id") or _uc.get("id") or "?"
-                        print(
-                            f"  [{_conf:.2f}] {_uid} \u2014 no domain matched",
-                            file=sys.stderr,
-                        )
-                _emit_tel(
-                    "routing.unclassified_summary",
-                    extra={
-                        "session_id": _session_id,
-                        "total_signals": len(_signals),
-                        "classified": len(_classified_sigs),
-                        "unclassified": len(_unclassified_sigs),
-                    },
-                )
-        except Exception:
-            pass  # Non-fatal — routing summary never blocks pipeline
-
     _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
 
     # S-01: post_process quality gate (non-fatal — warn on failure, never abort)
@@ -1196,7 +1118,7 @@ def run_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# Bridge helpers (specs/claw-bridge.md §P2.4 + §P1.3)
+# Bridge helpers
 # ---------------------------------------------------------------------------
 
 def _merge_home_events_buffer(artha_dir: Path) -> None:
@@ -1321,9 +1243,7 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
 def _write_bridge_health_section(artha_dir: Path) -> None:
     """Write/update the ## Bridge Health table in state/health-check.md (spec §13).
 
-    Reads audit.md for last BRIDGE_PUSH / BRIDGE_M2M_RECEIVED events,
-    counts DLQ entries, extracts last pong data (version, clock drift, uptime),
-    and reads hmac_key_version from config/claw_bridge.yaml.
+    # DEAD-CODE-OPENCLAW: claw bridge retired v7.18.0. bridge_enabled always False.
     Non-fatal: silently returns if health-check.md does not exist.
     """
     import re as _re
@@ -1333,17 +1253,9 @@ def _write_bridge_health_section(artha_dir: Path) -> None:
     if not health_md.exists():
         return
 
-    # ── Read claw_bridge.yaml for enabled flag + hmac_key_version ────────────
-    cfg_path = artha_dir / "config" / "claw_bridge.yaml"
-    try:
-        import yaml as _yaml
-        with cfg_path.open("r", encoding="utf-8") as fh:
-            bridge_cfg = _yaml.safe_load(fh) or {}
-    except Exception:
-        bridge_cfg = {}
-
-    bridge_enabled = bridge_cfg.get("enabled", False)
-    hmac_version = bridge_cfg.get("hmac_key_version", "—")
+    # Bridge config retired — always disabled
+    bridge_enabled = False
+    hmac_version = "—"
 
     # ── Parse audit.md for bridge events ─────────────────────────────────────
     audit_path = artha_dir / "state" / "audit.md"
@@ -2132,6 +2044,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
     )
+    p.add_argument(
+        "--mode",
+        choices=["standard", "digest"],
+        default="standard",
+        help="'digest' generates a scheduled lightweight brief from plaintext state (no LLM, no vault)",
+    )
+    p.add_argument(
+        "--skip-vault",
+        action="store_true",
+        dest="skip_vault",
+        help="Exclude vault-encrypted domains (finance, immigration, health, home). Used with --mode=digest.",
+    )
     return p.parse_args(argv)
 
 
@@ -2243,8 +2167,187 @@ def _cmd_archive_brief(raw_path: str) -> int:
     return 0 if save_result["status"] in ("ok", "skipped") else 1
 
 
+# ---------------------------------------------------------------------------
+# Digest brief engine (F-D1) — plaintext state only, no LLM, no vault
+# ---------------------------------------------------------------------------
+
+_VAULT_DOMAINS = frozenset({"immigration", "finance", "health", "home"})
+_DIGEST_LOCK = _REPO_ROOT / "tmp" / "scheduled_brief.lock"
+_DIGEST_STALE_SECS = 7200  # 2 hours
+
+
+def _digest_append_audit(line: str) -> None:
+    """Best-effort append to state/audit.md; never raises."""
+    try:
+        audit = _REPO_ROOT / "state" / "audit.md"
+        with audit.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _digest_open_items(today: str) -> str:
+    """Return markdown section listing P0/P1 open items due today or overdue."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "open_items.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Split into item blocks on leading "- id:"
+    blocks = _re.split(r"\n(?=- id:)", text)
+    urgent = []
+    for block in blocks:
+        pri = _re.search(r"priority:\s*(P\d)", block)
+        dl = _re.search(r"deadline:\s*(\d{4}-\d{2}-\d{2})", block)
+        status = _re.search(r"status:\s*(\w+)", block)
+        desc = _re.search(r'description:\s*"?(.+?)"?\s*$', block, _re.MULTILINE)
+        if not (pri and dl and status):
+            continue
+        if status.group(1) != "open":
+            continue
+        if pri.group(1) in ("P0", "P1") and dl.group(1) <= today:
+            label = "🔴 OVERDUE" if dl.group(1) < today else "🟡 DUE TODAY"
+            summary = desc.group(1)[:120] if desc else "(no description)"
+            urgent.append(f"- **[{pri.group(1)}]** {label} ({dl.group(1)}): {summary}")
+    if not urgent:
+        return "## Open Items\n_No P0/P1 items due today or overdue._"
+    return "## Open Items\n" + "\n".join(urgent)
+
+
+def _digest_goals() -> str:
+    """Return markdown section showing active goal sprints."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "goals.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Find active goals with a sprint block
+    active = _re.findall(
+        r"- id: (G-\d+).*?title: ([^\n]+).*?status: active.*?(?:sprint:.*?status: active.*?(?:end_date: (\S+))?)?",
+        text, _re.DOTALL
+    )
+    if not active:
+        return "## Goals\n_No active sprints._"
+    lines = []
+    for gid, title, end in active[:5]:
+        end_str = f" (ends {end})" if end else ""
+        lines.append(f"- **{gid}** {title.strip()}{end_str}")
+    return "## Goals\n" + "\n".join(lines)
+
+
+def _digest_calendar() -> str:
+    """Return markdown section with next-48h events from state/calendar.md."""
+    path = _REPO_ROOT / "state" / "calendar.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Extract last_updated to check staleness
+    import re as _re
+    updated = _re.search(r"last_updated:\s*\"?(\d{4}-\d{2}-\d{2})", text)
+    if updated:
+        return f"## Calendar\n_Calendar state last updated {updated.group(1)} — run connector to refresh._"
+    return ""
+
+
+def _digest_health_summary() -> str:
+    """Return one-line health summary from state/health-check.md frontmatter."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "health-check.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    catchup = _re.search(r"catch_up_count:\s*(\d+)", text)
+    last = _re.search(r"last_catch_up:\s*\"?(\d{4}-\d{2}-\d{2})", text)
+    if catchup and last:
+        return f"## Health\n_Total catch-ups: {catchup.group(1)}. Last: {last.group(1)}._"
+    return ""
+
+
+def _run_digest_mode() -> int:
+    """Generate a scheduled digest brief from plaintext state. Always returns 0."""
+    import datetime as _dt
+    import shutil
+    import subprocess
+
+    today = _dt.date.today().isoformat()
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    digest_path = _REPO_ROOT / "briefings" / f"{today}-digest.md"
+
+    # Idempotency: one digest per day
+    if digest_path.exists():
+        _digest_append_audit(f"{today} | digest | status=skipped | reason=already_exists")
+        return 0
+
+    # Stale-lock eviction then exclusive-create lock
+    _DIGEST_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    if _DIGEST_LOCK.exists():
+        import time as _time
+        age = _time.time() - _DIGEST_LOCK.stat().st_mtime
+        if age > _DIGEST_STALE_SECS:
+            _DIGEST_LOCK.unlink(missing_ok=True)
+        else:
+            _digest_append_audit(f"{today} | digest | status=skipped | reason=lock_held")
+            return 0
+    try:
+        open(_DIGEST_LOCK, "x").close()  # atomic exclusive create
+    except FileExistsError:
+        _digest_append_audit(f"{today} | digest | status=skipped | reason=lock_contention")
+        return 0
+
+    try:
+        sections = [
+            s for s in [
+                _digest_open_items(today),
+                _digest_goals(),
+                _digest_calendar(),
+                _digest_health_summary(),
+            ] if s
+        ]
+        footer = (
+            "\n---\n_Vault-encrypted domains (finance, immigration, health, home) "
+            "not included — run `brief` for the full briefing._\n"
+        )
+        content = (
+            f"---\nbriefing_format: digest\ngenerated_at: {now_iso}\n---\n\n"
+            f"# Artha Digest — {today}\n\n"
+            + ("\n\n".join(sections) if sections else "_No items found._")
+            + footer
+        )
+        digest_path.write_text(content, encoding="utf-8")
+
+        # Desktop copy for visibility on wake
+        desktop = Path.home() / "Desktop" / f"Artha-Brief-{today}.md"
+        try:
+            shutil.copy2(digest_path, desktop)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # macOS notification
+        try:
+            subprocess.run(
+                ["osascript", "-e", 'display notification "Morning brief ready" with title "Artha"'],
+                timeout=5, check=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        _digest_append_audit(
+            f"{today} | digest | status=ok | sections={len(sections)} | path={digest_path.name}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        _digest_append_audit(f"{today} | digest | status=error | error={exc!r:.200}")
+    finally:
+        _DIGEST_LOCK.unlink(missing_ok=True)
+
+    return 0  # launchd must not retry
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+
+    # F-D1: digest mode bypasses the full connector pipeline
+    if args.mode == "digest":
+        return _run_digest_mode()
 
     _ingest_pending_briefs()
 

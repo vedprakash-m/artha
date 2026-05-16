@@ -132,6 +132,30 @@ See `specs/data-quality-gate.md` for the formal quality model (Q = 0.5A + 0.3F +
 
 ---
 
+### § Citation Convention (F-D2 — warning-only, days 0–14)
+
+Every **factual claim** in briefing prose MUST carry one of these inline tokens immediately after the claim:
+
+- `[src: OI-NNN]` — claim drawn from an open item (use the real OI ID)
+- `[src: state:<domain>]` — claim drawn from a state file (e.g., `[src: state:finance]`)
+- `[src: signal:SIG-NNN]` — claim drawn from an ambient-intent signal
+- `{{MISSING: <reason>}}` — when you cannot ground the claim; emit this **instead of guessing**
+
+**What counts as a factual claim:** sentences with verbs like "is", "has", "will", "was", "are", "have", "were" that assert a specific state of the world (amounts, dates, counts, statuses).
+
+**Few-shot examples:**
+
+> ✓ "The Azure subscription cost increased 34.9% above expected range [src: OI-095]."
+> ✓ "The Kia Telluride lease expires January 2027 [src: state:vehicle]."
+> ✓ "SIG-001 (Kia lease concern) materialized as SCN-001 [src: signal:SIG-001]."
+> ✓ "Summer school deadline {{MISSING: not in any state file — check LWSD portal}}."
+> ✗ "The lease expires soon." ← missing citation
+> ✗ `[src: email from 2026-05-12]` ← invalid token format (email SHA citations not supported)
+
+**Gate:** During the soft phase (first 14 days), `pipeline_audit.py` logs warnings but never blocks archival. On day 15+, briefings with < 80% rolling compliance trigger one LLM retry with citation prompt before archival.
+
+---
+
 ### § Correction Memory & Session Invariants (FR-32.1)
 
 > **This block applies to ALL surfaces: VS Code Agent, Copilot CLI, Telegram, Claude.**
@@ -439,6 +463,7 @@ index_card, index_data = build_domain_index()
 | `items` | open_items.md | None | minimal |
 | `goals` | goals.md | goals.md prompt only | minimal |
 | `work` | state/work/ | work prompts | full |
+| `work xhealth` | scripts/work/xhealth/ (ADX) | xhealth_signal.dri_handoff_brief() | full |
 | `connect` | state/work/evidence_lake/ | connect prompt | full |
 | `reflect` | state/work/reflect-history.md | reflect prompt | full |
 | `deep reflect` | All work state | All work prompts | full |
@@ -897,7 +922,7 @@ Use deterministic helper commands for all validation and writes:
 
 For each signal in `state/planning_signals.md` where `materialized: false`:
 
-1. Check archetype threshold (see `specs/scenarios.md` §4.4).
+1. Check archetype threshold (see `.archive/specs/scenarios.md` §4.4).
 2. Check domain context from current session — update `last_seen`,
    `detection_count`, and `evidence` if new evidence appears in today's emails/
    state files.

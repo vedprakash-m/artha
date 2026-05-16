@@ -65,6 +65,7 @@ def test_ev7_01_finalize_md_step12b_references_log_digest():
 # T-EV-8-01: _run_log_digest writes tmp/log_digest.json when enabled
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="post_catchup_memory.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
 def test_ev8_01_run_log_digest_writes_output(tmp_path):
     """T-EV-8-01: post_catchup_memory._run_log_digest() writes tmp/log_digest.json when enabled.
 
@@ -125,6 +126,7 @@ def test_ev8_01_run_log_digest_writes_output(tmp_path):
     )
 
 
+@pytest.mark.skip(reason="post_catchup_memory.py archived — F-A7 Path 2 (2026-05-16); re-enable if OI-097 restored")
 def test_ev8_01b_run_log_digest_skipped_when_disabled(tmp_path):
     """T-EV-8-01b: _run_log_digest() does nothing when harness.eval.log_digest.enabled=false."""
     pcm = _load_module(

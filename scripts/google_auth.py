@@ -38,6 +38,7 @@ class CredentialStatus(TypedDict):
     client_secret_stored: bool
     gmail_token_stored: bool
     gcal_token_stored: bool
+    gdrive_token_stored: bool
 
 import keyring
 
@@ -57,8 +58,11 @@ CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
+DRIVE_SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+]
 # Combined scope set for a single OAuth flow (simpler for initial setup)
-ALL_SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES
+ALL_SCOPES = GMAIL_SCOPES + CALENDAR_SCOPES + DRIVE_SCOPES
 
 # Keychain service names (client credentials only)
 _KC_CLIENT_ID     = "gmail-client-id"
@@ -67,6 +71,7 @@ _KC_CLIENT_SECRET = "gmail-client-secret"
 # Local token file names (not Keychain)
 _KC_GMAIL_TOKEN   = "gmail-oauth-token"
 _KC_GCAL_TOKEN    = "gcal-oauth-token"
+_KC_GDRIVE_TOKEN  = "gdrive-oauth-token"
 
 # Directory for local token files — inside Artha folder so OneDrive syncs them.
 # ~/.artha-tokens is a symlink → this directory (backward compat for Mac terminal).
@@ -341,13 +346,18 @@ def get_calendar_credentials(force_reauth: bool = False) -> Credentials:
     return _get_or_refresh_credentials(_KC_GCAL_TOKEN, CALENDAR_SCOPES, force_reauth)
 
 
+def get_drive_credentials(force_reauth: bool = False) -> Credentials:
+    """Return valid Drive credentials (refreshes automatically if needed)."""
+    return _get_or_refresh_credentials(_KC_GDRIVE_TOKEN, DRIVE_SCOPES, force_reauth)
+
+
 def build_service(api: str, version: str, force_reauth: bool = False) -> Resource:
     """
     Build and return an authenticated Google API service resource.
 
     Args:
-        api:          "gmail" or "calendar"
-        version:      "v1" (gmail) or "v3" (calendar)
+        api:          "gmail" or "calendar" or "drive"
+        version:      "v1" (gmail) or "v3" (calendar, drive)
         force_reauth: if True, discard cached token and re-run OAuth flow
 
     Returns:
@@ -357,15 +367,17 @@ def build_service(api: str, version: str, force_reauth: bool = False) -> Resourc
         creds = get_gmail_credentials(force_reauth)
     elif api == "calendar":
         creds = get_calendar_credentials(force_reauth)
+    elif api == "drive":
+        creds = get_drive_credentials(force_reauth)
     else:
-        raise ValueError(f"Unknown API '{api}'. Use 'gmail' or 'calendar'.")
+        raise ValueError(f"Unknown API '{api}'. Use 'gmail', 'calendar', or 'drive'.")
 
     return build(api, version, credentials=creds, cache_discovery=False)
 
 
 def revoke_tokens() -> None:
     """Delete stored OAuth token files (does NOT revoke at Google)."""
-    for svc in (_KC_GMAIL_TOKEN, _KC_GCAL_TOKEN):
+    for svc in (_KC_GMAIL_TOKEN, _KC_GCAL_TOKEN, _KC_GDRIVE_TOKEN):
         path = _token_path(svc)
         if os.path.exists(path):
             os.remove(path)
@@ -382,6 +394,7 @@ def check_stored_credentials() -> CredentialStatus:
         # Token presence checked via local files
         "gmail_token_stored":   os.path.exists(_token_path(_KC_GMAIL_TOKEN)),
         "gcal_token_stored":    os.path.exists(_token_path(_KC_GCAL_TOKEN)),
+        "gdrive_token_stored":  os.path.exists(_token_path(_KC_GDRIVE_TOKEN)),
     }
 
 

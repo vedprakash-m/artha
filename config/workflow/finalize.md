@@ -196,7 +196,7 @@ elevated to 🔴 CRITICAL if the person is in `core_family`, or 🟠 URGENT for
 
 ### Step 12.5 — Compose action proposals from domain signals *(Action Layer)*
 
-**SKIP if** `actions.enabled: false` in `config/artha_config.yaml` → log `⏭️ Step 12.5 skipped — actions disabled`
+**SKIP if** `harness.actions.enabled: false` in `config/artha_config.yaml` → log `⏭️ Step 12.5 skipped — actions disabled`
 **SKIP in read-only mode** → log `⏭️ Step 12.5 skipped — read-only mode`
 
 ```bash
@@ -306,7 +306,7 @@ If `briefing.spouse_filtered: true`: generate filtered copy first.
 
 ### Step 14.5 — Push pending action queue to Telegram *(Action Layer)*
 
-**SKIP if** `actions.enabled: false` → log `⏭️ Step 14.5 skipped — actions disabled`  
+**SKIP if** `harness.actions.enabled: false` → log `⏭️ Step 14.5 skipped — actions disabled`  
 **SKIP if** Telegram channel not configured → log `⏭️ Step 14.5 skipped — no Telegram channel`  
 **SKIP in read-only mode** → log `⏭️ Step 14.5 skipped — read-only mode`
 
@@ -461,7 +461,7 @@ Note uncertainty if extraction differs significantly.
 
 ### Step 19.5 — Action layer summary *(Action Layer)*
 
-**SKIP if** `actions.enabled: false` → log `⏭️ Step 19.5 skipped — actions disabled`
+**SKIP if** `harness.actions.enabled: false` → log `⏭️ Step 19.5 skipped — actions disabled`
 
 Append a one-line action layer summary to `state/audit.md`:
 

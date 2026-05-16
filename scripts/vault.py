@@ -1333,3 +1333,139 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# F-C2: Merged from vault_guard.py — vault-aware file readability check
+# Source: specs/re-artha.md §F-C2. Shim vault_guard.py removed after 2026-06-16.
+# ---------------------------------------------------------------------------
+
+_MIN_READABLE_BYTES = 64  # Minimum bytes for a non-placeholder state file
+_STATIC_SENSITIVE = [
+    "immigration", "finance", "insurance", "estate",
+    "health", "audit", "vehicle", "contacts", "occasions",
+]
+
+def _load_sensitive_domains() -> list[str]:
+    """Load sensitive domain list from domain_registry.yaml (preferred) or static fallback."""
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        reg = load_config("domain_registry")
+        sensitive = [
+            name
+            for name, cfg in reg.get("domains", {}).items()
+            if isinstance(cfg, dict) and cfg.get("sensitivity") in ("high", "critical")
+        ]
+        if sensitive:
+            return sensitive
+    except Exception:
+        pass  # Fall through to static list
+    return _STATIC_SENSITIVE
+
+
+def check_file_readable(filepath: str) -> dict:
+    """Check if a state file is genuinely readable or a locked placeholder.
+
+    Args:
+        filepath: Path string (absolute or relative to ARTHA_DIR).
+
+    Returns:
+        dict with keys:
+          - readable (bool)
+          - path (str)
+          - reason (str, only when not readable)
+          - hint (str, only when not readable)
+    """
+    path = Path(filepath)
+    if not path.is_absolute():
+        path = ARTHA_DIR / path
+
+    result_path = str(path.relative_to(ARTHA_DIR)) if path.is_relative_to(ARTHA_DIR) else str(path)
+
+    if not path.exists():
+        return {
+            "readable": False,
+            "path": result_path,
+            "reason": "file_missing",
+            "hint": "File does not exist. Check vault status: python scripts/vault.py status",
+        }
+
+    # If this path is not a sensitive domain, skip the placeholder check.
+    sensitive_domains = _load_sensitive_domains()
+    stem = path.stem.replace(".md", "")  # handles both "finance.md" and "finance"
+    # Normalise: strip .md from stem in case path is "finance.md"
+    if stem.endswith(".md"):
+        stem = stem[:-3]
+
+    domain_name = stem
+    is_sensitive = any(domain_name == d or path.stem == f"{d}.md" for d in sensitive_domains)
+
+    size = path.stat().st_size
+
+    if not is_sensitive:
+        # Non-sensitive file: only check existence
+        return {"readable": True, "path": result_path}
+
+    # Sensitive file checks
+    # 1. Empty file — clear placeholder
+    if size == 0:
+        return {
+            "readable": False,
+            "path": result_path,
+            "reason": "empty_placeholder",
+            "hint": "File is empty. Vault may be locked. Run: python scripts/vault.py decrypt",
+        }
+
+    # 2. Very small file — likely a stub/placeholder written by vault.py when locked
+    if size < _MIN_READABLE_BYTES:
+        # Check if the vault lock file exists — if it does, state is locked
+        if not LOCK_FILE.exists():
+            return {
+                "readable": False,
+                "path": result_path,
+                "reason": "locked_placeholder",
+                "hint": (
+                    f"File is {size} bytes (too small to be meaningful). "
+                    "Vault appears locked. Run: python scripts/vault.py decrypt"
+                ),
+            }
+
+    # 3. If vault is unlocked but file is tiny, flag as suspicious
+    if size < _MIN_READABLE_BYTES and LOCK_FILE.exists():
+        return {
+            "readable": False,
+            "path": result_path,
+            "reason": "suspicious_size",
+            "hint": (
+                f"File is {size} bytes even though vault is unlocked. "
+                "This may indicate a write error. Check state integrity."
+            ),
+        }
+
+    # 4. File is large enough — check it starts with YAML frontmatter (---) or markdown (#)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            first_line = f.readline().strip()
+        if first_line and not first_line.startswith(("---", "#", ">")):
+            # Could be encrypted ciphertext (age files start with "age-encryption...")
+            if first_line.startswith(("age-encryption", "-> X25519")):
+                return {
+                    "readable": False,
+                    "path": result_path,
+                    "reason": "encrypted_ciphertext",
+                    "hint": "File contains encrypted data (not decrypted). Run: python scripts/vault.py decrypt",
+                }
+    except OSError:
+        pass  # File readable check: if we can't read it, report not readable
+
+    return {"readable": True, "path": result_path}
+
+
+def check_all_sensitive() -> list[dict]:
+    """Check all sensitive domain state files. Returns list of results."""
+    sensitive_domains = _load_sensitive_domains()
+    results = []
+    for domain in sensitive_domains:
+        path = STATE_DIR / f"{domain}.md"
+        results.append(check_file_readable(str(path)))
+    return results

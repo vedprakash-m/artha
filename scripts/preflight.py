@@ -2258,10 +2258,12 @@ def check_action_handlers() -> CheckResult:
         config_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
         actions_enabled = False
         if os.path.exists(config_path):
+            import yaml as _yaml  # noqa: PLC0415
             with open(config_path, encoding="utf-8") as _f:
-                _content = _f.read()
-            # Quick YAML check without full parser dependency
-            actions_enabled = "actions:" in _content and "enabled: true" in _content
+                _cfg = _yaml.safe_load(_f)
+            actions_enabled = (
+                _cfg.get("harness", {}).get("actions", {}).get("enabled", False)
+            )
 
         if not actions_enabled:
             return CheckResult(

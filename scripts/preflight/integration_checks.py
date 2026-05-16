@@ -575,13 +575,15 @@ def check_action_handlers() -> CheckResult:
     try:
         import importlib
         # Guard: only run if actions feature is enabled in artha_config.yaml
-        config_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
         actions_enabled = False
-        if os.path.exists(config_path):
-            with open(config_path) as _f:
-                _content = _f.read()
-            # Quick YAML check without full parser dependency
-            actions_enabled = "actions:" in _content and "enabled: true" in _content
+        try:
+            from lib.config_loader import load_config as _lc_action  # noqa: PLC0415
+            _acfg = _lc_action("artha_config")
+            actions_enabled = (
+                _acfg.get("harness", {}).get("actions", {}).get("enabled", False)
+            )
+        except Exception:
+            pass  # config unreadable → default to disabled
 
         if not actions_enabled:
             return CheckResult(
