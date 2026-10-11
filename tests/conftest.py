@@ -1,4 +1,17 @@
 import os
+import sys
+from pathlib import Path
+
+# WP-00: hermetic bootstrap MUST run before any Artha module is imported.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import _isolation  # noqa: E402
+
+_isolation.isolate_environment()
+_isolation.install_network_guard()
+_PRODUCTION_SNAPSHOT = _isolation.ProtectedSnapshot.take(
+    Path(__file__).resolve().parent.parent, _isolation.PROTECTED_ROOTS
+)
+
 os.environ.setdefault("ARTHA_NO_REEXEC", "1")  # Prevent venv re-exec during tests
 import pytest
 import shutil
@@ -46,6 +59,48 @@ def temp_artha_dir():
         (tmp_path / "state" / "audit.md").write_text("# Audit Log\n")
         
         yield tmp_path
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "network: test may use the real network (guard lifted)")
+
+
+def pytest_collection_modifyitems(session, config, items):
+    """Refuse to run the legacy suite against a checkout that holds live data."""
+    root = Path(__file__).resolve().parent.parent
+    selected = sorted({Path(str(i.fspath)).resolve().relative_to(root).as_posix()
+                       for i in items if str(i.fspath).startswith(str(root))})
+    if not _isolation.inplace_run_allowed(root, selected):
+        raise pytest.UsageError(
+            "Refusing to run tests in place: this checkout holds live Artha data and the "
+            "legacy suite writes to state/, briefings/ and tmp/.\n"
+            "Use `make test` (isolated workspace), or set ARTHA_ALLOW_INPLACE_TESTS=1 to override."
+        )
+
+
+@pytest.fixture(autouse=True)
+def _network_policy(request):
+    """Lift the socket guard only for tests explicitly marked ``network``."""
+    _isolation.set_network_allowed(request.node.get_closest_marker("network") is not None)
+    yield
+    _isolation.set_network_allowed(False)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """WP00.AC3: fail the session when a test mutated production data paths."""
+    root = Path(__file__).resolve().parent.parent
+    if (root / _isolation.WORKSPACE_MARKER).exists():
+        return  # throw-away workspace: writing to its data directories is harmless
+    changes = _PRODUCTION_SNAPSHOT.diff()
+    touched = [f"{kind}: {p}" for kind, paths in changes.items() for p in paths]
+    if touched:
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        lines = ["", "PRODUCTION PATHS CHANGED DURING TEST RUN (hermeticity violation):"]
+        lines += [f"  {t}" for t in touched[:50]]
+        if tr is not None:
+            for line in lines:
+                tr.write_line(line)
+        session.exitstatus = 1
 
 
 @pytest.fixture(autouse=True)
