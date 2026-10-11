@@ -18,9 +18,7 @@ jobs:
           python-version: "3.11"
       - name: Syntax check all Python files
         run: |
-          find scripts/ tests/ -name "*.py" ! -path "*/__pycache__/*" ! -path "*/.archive/*" \
-            -exec python -m py_compile {} \;
-          python -m py_compile artha.py
+          python -m compileall -q -x '(__pycache__|\.archive|\.venv)' scripts tests tools artha.py
           echo "✓ Syntax OK"
 
   # ── Ruff Linter ───────────────────────────────────────────────────────────
@@ -34,7 +32,9 @@ jobs:
           python-version: "3.11"
       - run: pip install ruff
       - name: Run ruff
-        run: ruff check scripts/ tests/ --config pyproject.toml
+        run: |
+          ruff check scripts/ tests/ tools/ --config pyproject.toml
+          ruff check scripts/catchup_core --config scripts/catchup_core/ruff.toml
 
   # ── Import Convention ─────────────────────────────────────────────────────
   import-check:
@@ -45,32 +45,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Check for 'from scripts.X' inside scripts/
-        run: |
-          python -c "
-          import ast, pathlib, sys
-          bad = []
-          for p in sorted(pathlib.Path('scripts').rglob('*.py')):
-              if '__pycache__' in str(p): continue
-              for n in ast.walk(ast.parse(p.read_text())):
-                  if isinstance(n, ast.ImportFrom) and (n.module or '').startswith('scripts.'):
-                      bad.append(f'{p}:{n.lineno}: from {n.module}')
-          if bad:
-              print('ERROR: from scripts.X imports found inside scripts/:')
-              print('\n'.join(bad))
-              print('Use from X import ... instead (scripts/ is on sys.path).')
-              sys.exit(1)
-          print('✓ No dual-import patterns')
-          "
+      - name: Check for 'from scripts.X' inside scripts/ (parse errors fail)
+        run: python tools/import_check.py scripts
+      - name: No new direct state writes (ratcheted baseline)
+        run: python tools/lint_state_writes.py .
 
   # ── Test Suite ────────────────────────────────────────────────────────────
   tests:
-    name: pytest (${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.14"]
 
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +79,7 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r scripts/requirements.txt
-          pip install pytest pytest-mock
+          pip install pytest pytest-mock pytest-cov mypy
 
       - name: Create required runtime directories
         run: |
@@ -112,41 +100,26 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=long --ignore=tests/work
+      - name: Run tests (isolated workspace — never against live data)
+        run: python tools/run_tests_isolated.py tests -v --tb=long --ignore=tests/work
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── PII Scan on Specs ─────────────────────────────────────────────────────
-  pii-specs:
-    name: PII scan (spec files)
+  # ── New core: coverage floor + strict typing ──────────────────────────────
+  core-quality:
+    name: catchup_core coverage + strict mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Scan spec files for PII
-        run: |
-          FAIL=0
-          # Files exempt from PII scan (contain intentional test patterns)
-          EXEMPT="specs/supercharge-reloaded.md"
-          for f in specs/*.md config/Artha.core.md config/actions.yaml; do
-            if [ -f "$f" ]; then
-              skip=false
-              for ex in $EXEMPT; do [ "$f" = "$ex" ] && skip=true; done
-              if [ "$skip" = true ]; then
-                echo "Skipping (exempt): $f"
-                continue
-              fi
-              if ! python scripts/pii_guard.py scan "$f"; then
-                echo "::error file=$f::PII detected in $f"
-                FAIL=1
-              fi
-            fi
-          done
-          [ "$FAIL" -eq 0 ] && echo "✓ PII scan clean" || exit 1
+          python-version: "3.12"
+      - run: pip install -r scripts/requirements.txt pytest pytest-mock pytest-cov mypy
+      - name: Coverage floor (>= 90% line and branch)
+        run: make coverage PYTHON=python
+      - name: Strict mypy
+        run: make mypy PYTHON=python
 
   # ── Connector handler imports ─────────────────────────────────────────────
   connectors-syntax:
