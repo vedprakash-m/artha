@@ -468,16 +468,24 @@ def _get_age_pubkey(artha_dir: Path) -> str | None:
         return None
 
 
+class ActionEncryptionError(RuntimeError):
+    """A field that must be encrypted could not be.  The queue never stores it in plaintext
+    (re-artha §10.6, RA-05, WP-06)."""
+
+
 def _encrypt_field(value: str, pubkey: str | None) -> str:
-    """Encrypt a sensitive string field with age. Returns ciphertext or original if unavailable."""
+    """Encrypt a sensitive string field with age and return ``age1:``-prefixed ciphertext.
+
+    Fails closed: no recipient key, a missing ``age`` binary or any encryption error raises
+    :class:`ActionEncryptionError`.  This function used to return the original plaintext.
+    """
     if not pubkey:
-        return value  # fallback: unencrypted (age not configured)
+        raise ActionEncryptionError("no age recipient configured; refusing to store plaintext")
     try:
-        import sys
         from foundation import age_encrypt_string  # noqa: PLC0415
         return "age1:" + age_encrypt_string(pubkey, value)
-    except Exception:
-        return value  # fallback: unencrypted
+    except Exception as exc:  # noqa: BLE001
+        raise ActionEncryptionError(f"encryption failed: {type(exc).__name__}") from exc
 
 
 def _decrypt_field(value: str, privkey: str | None) -> str:
@@ -824,9 +832,9 @@ class ActionQueue:
         signal_subtype = proposal.signal_subtype or ""
         confidence = float(proposal.confidence or 0.0)
 
-        if self._should_encrypt(proposal.sensitivity) and pubkey:
-            params_json = _encrypt_field(params_json, pubkey)
-            description = _encrypt_field(description, pubkey)
+        if self._should_encrypt(proposal.sensitivity):
+            params_json = _encrypt_field(params_json, pubkey)      # raises when it cannot
+            description = _encrypt_field(description, pubkey) if description else description
 
         return (
             proposal.id,
@@ -1059,7 +1067,7 @@ class ActionQueue:
 
         sensitivity = row["sensitivity"]
         result_data_json = json.dumps(result.data) if result.data else None
-        if result_data_json and self._should_encrypt(sensitivity) and pubkey:
+        if result_data_json and self._should_encrypt(sensitivity):
             result_data_json = _encrypt_field(result_data_json, pubkey)
 
         # Cap result message length

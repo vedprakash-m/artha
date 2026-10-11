@@ -283,55 +283,65 @@ def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
 
 
 def age_encrypt_string(pubkey: str, plaintext: str) -> str:
-    """Encrypt an arbitrary string using age.
+    """Encrypt a string with age entirely in memory; return base64 ciphertext.
 
-    Writes plaintext to a temp file, encrypts via age, returns the
-    base64-encoded ciphertext string.  Both temp files are removed
-    in the ``finally`` block regardless of success or failure to
-    prevent key-material leakage on disk.
+    Plaintext goes to ``age`` on stdin and ciphertext comes back on stdout — no
+    temporary file ever holds either (re-artha §10.6, WP-06).
 
     Raises:
         RuntimeError: if age is not installed or encryption fails.
     """
     import base64
-    if not check_age_installed():
+    import shutil
+    import subprocess
+    age = shutil.which("age")
+    if not age:
         raise RuntimeError("age CLI not found on PATH; cannot encrypt string")
-
-    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".txt")
-    out_path = Path(in_path_str).with_suffix(".age")
-    try:
-        with os.fdopen(in_fd, "w", encoding="utf-8") as f:
-            f.write(plaintext)
-        ok = age_encrypt(pubkey, Path(in_path_str), out_path)
-        if not ok:
-            raise RuntimeError("age_encrypt_string: encryption failed")
-        return base64.b64encode(out_path.read_bytes()).decode("ascii")
-    finally:
-        try:
-            os.unlink(in_path_str)
-        except OSError:
-            pass
-        try:
-            out_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+        [age, "-r", pubkey], input=plaintext.encode("utf-8"), capture_output=True, timeout=60, check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError("age_encrypt_string: encryption failed")
+    return base64.b64encode(proc.stdout).decode("ascii")
 
 
 def age_decrypt_string(privkey: str, ciphertext_b64: str) -> str:
-    """Decrypt a base64-encoded age ciphertext back to a plaintext string.
+    """Decrypt a base64 age ciphertext to a string without writing the key or plaintext to disk.
 
-    Writes the decoded bytes to a temp file, decrypts via age, reads the
-    plaintext, and removes both temp files in the ``finally`` block.
+    POSIX: the private key reaches ``age`` through an inherited pipe (``-i /dev/fd/N``),
+    the ciphertext on stdin, the plaintext returns on stdout.  Windows has no ``/dev/fd``;
+    there the legacy temporary-file path is retained (documented limitation, WP-06).
 
     Raises:
         RuntimeError: if age is not installed or decryption fails.
     """
     import base64
-    if not check_age_installed():
+    import shutil
+    import subprocess
+    age = shutil.which("age")
+    if not age:
         raise RuntimeError("age CLI not found on PATH; cannot decrypt string")
-
     raw = base64.b64decode(ciphertext_b64)
-    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".age")
+
+    if sys.platform != "win32":
+        read_fd, write_fd = os.pipe()
+        try:
+            os.write(write_fd, privkey.encode("utf-8"))
+            os.close(write_fd)
+            write_fd = -1
+            proc = subprocess.run(  # noqa: S603
+                [age, "-d", "-i", f"/dev/fd/{read_fd}"], input=raw, capture_output=True,
+                pass_fds=(read_fd,), timeout=60, check=False,
+            )
+        finally:
+            if write_fd != -1:
+                os.close(write_fd)
+            os.close(read_fd)
+        if proc.returncode != 0:
+            raise RuntimeError("age_decrypt_string: decryption failed")
+        return proc.stdout.decode("utf-8")
+
+    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".age")  # pragma: no cover
     out_path = Path(in_path_str).with_suffix(".txt")
     try:
         with os.fdopen(in_fd, "wb") as f:
@@ -341,14 +351,11 @@ def age_decrypt_string(privkey: str, ciphertext_b64: str) -> str:
             raise RuntimeError("age_decrypt_string: decryption failed")
         return out_path.read_text(encoding="utf-8")
     finally:
-        try:
-            os.unlink(in_path_str)
-        except OSError:
-            pass
-        try:
-            out_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        for leftover in (Path(in_path_str), out_path):
+            try:
+                leftover.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
