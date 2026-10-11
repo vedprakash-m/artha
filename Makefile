@@ -88,7 +88,7 @@ diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml fr
 	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --fail-under=$(COV_MIN)
 
 mypy: ## Strict type check of the new core package
-	@$(PYTHON) -m mypy $(CORE_PKG)
+	@$(PYTHON) -m mypy --explicit-package-bases $(CORE_PKG)
 
 check: lint ruff import-check lint-state-writes test coverage mypy pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"

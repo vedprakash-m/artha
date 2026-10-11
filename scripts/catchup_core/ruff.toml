@@ -2,11 +2,13 @@
 # Applied by `make ruff` as a second pass; the repo-wide pass keeps F811 only.
 extend = "../../pyproject.toml"
 target-version = "py311"
-line-length = 100
+line-length = 120
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PL", "PT"]
-ignore = ["PLR2004"]
+# PLR2004: magic values in comparisons are domain constants; PLR0913: ledger/record APIs are
+# keyword-only by design.
+ignore = ["PLR2004", "PLR0913"]
 
 [lint.per-file-ignores]
 "__init__.py" = []
