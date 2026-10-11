@@ -74,6 +74,10 @@ def _to_rfc3339(date_str: str, end_of_day: bool = False) -> str:
 # Public handler interface
 # ---------------------------------------------------------------------------
 
+#: Upper bound on pages followed per calendar; beyond it the scope is reported
+#: ``truncated`` (never silently dropped).  re-artha §7.10.
+MAX_PAGES = 20
+
 def fetch(
     *,
     since: str,
@@ -87,9 +91,12 @@ def fetch(
     """Yield Google Calendar events from *since* over a *window_days* window."""
     from google_auth import build_service  # type: ignore[import]
     from lib.retry import with_retry  # type: ignore[import]
+    from lib.connector_coverage import report_scope  # type: ignore[import]
 
     start_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    end_dt = start_dt + timedelta(days=window_days)
+    # The window must reach into the future even after a long gap between
+    # Catch-ups (since + window_days alone would end in the past).
+    end_dt = max(start_dt, datetime.now(timezone.utc)) + timedelta(days=window_days)
     time_min = _to_rfc3339(start_dt.strftime("%Y-%m-%dT%H:%M:%S%z"), end_of_day=False)
     time_max = _to_rfc3339(end_dt.strftime("%Y-%m-%dT%H:%M:%S%z"), end_of_day=False)
 
@@ -122,29 +129,53 @@ def fetch(
         except Exception:
             cal_name = cal_id
 
-        try:
-            response = with_retry(
-                lambda c=cal_id: service.events().list(
-                    calendarId=c,
-                    timeMin=time_min,
-                    timeMax=time_max,
-                    maxResults=max_results,
-                    singleEvents=True,
-                    orderBy="startTime",
-                ).execute(),
-                context=f"events.list({cal_id})",
-            )
-        except Exception as exc:
-            print(f"[google_calendar] WARN: failed to fetch '{cal_id}': {exc}", file=sys.stderr)
-            continue
+        scope = f"calendar:{cal_id}"
+        fetched = 0
+        page_token: Optional[str] = None
+        pages = 0
+        failed = False
+        truncated = False
+        while True:
+            try:
+                response = with_retry(
+                    lambda c=cal_id, t=page_token: service.events().list(
+                        calendarId=c,
+                        timeMin=time_min,
+                        timeMax=time_max,
+                        maxResults=max_results,
+                        singleEvents=True,
+                        orderBy="startTime",
+                        pageToken=t,
+                    ).execute(),
+                    context=f"events.list({cal_id})",
+                )
+            except Exception as exc:
+                print(f"[google_calendar] WARN: failed to fetch '{cal_id}': {exc}", file=sys.stderr)
+                report_scope(scope, "failed", records=fetched, reason=str(exc))
+                failed = True
+                break
 
-        for evt in response.get("items", []):
-            if evt.get("status") == "cancelled":
-                continue
-            record = _parse_event(evt, cal_name)
-            if source_tag:
-                record["source"] = source_tag
-            all_events.append(record)
+            pages += 1
+            for evt in response.get("items", []):
+                if evt.get("status") == "cancelled":
+                    continue
+                record = _parse_event(evt, cal_name)
+                if source_tag:
+                    record["source"] = source_tag
+                all_events.append(record)
+                fetched += 1
+
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
+            if pages >= MAX_PAGES:
+                truncated = True
+                break
+
+        if truncated:
+            report_scope(scope, "truncated", records=fetched, reason=f"page cap {MAX_PAGES} reached")
+        elif not failed:
+            report_scope(scope, "complete", records=fetched)
 
     all_events.sort(key=lambda e: e.get("start", "9999"))
     yield from all_events

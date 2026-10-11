@@ -136,13 +136,15 @@ def fetch(
     """Yield Outlook Calendar events from *since* over a *window_days* window."""
     from lib.msgraph import _graph_get, _graph_get_full_url  # type: ignore[import]
     from lib.retry import with_retry  # type: ignore[import]
+    from lib.connector_coverage import report_scope  # type: ignore[import]
 
     access_token = auth_context.get("access_token", "")
     if not access_token:
         raise RuntimeError("[msgraph_calendar] auth_context missing access_token")
 
     start_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    end_dt = start_dt + timedelta(days=window_days)
+    # Window must reach into the future even after a long gap (see google_calendar).
+    end_dt = max(start_dt, datetime.now(timezone.utc)) + timedelta(days=window_days)
     start_utc = _parse_date_arg(start_dt.strftime("%Y-%m-%dT%H:%M:%S%z"), end_of_day=False)
     end_utc = _parse_date_arg(end_dt.strftime("%Y-%m-%dT%H:%M:%S%z"), end_of_day=False)
 
@@ -160,6 +162,7 @@ def fetch(
             all_cals = cal_resp.get("value", [])
         except Exception as exc:
             print(f"[msgraph_calendar] WARN: could not enumerate calendars: {exc}", file=sys.stderr)
+            report_scope("calendars:list", "failed", reason=str(exc))
             all_cals = [{"id": "primary", "name": "Calendar"}]
     else:
         all_cals = [{"id": cid, "name": cid} for cid in calendar_ids]
@@ -177,6 +180,8 @@ def fetch(
         }
         count = 0
         next_url: Optional[str] = None
+        scope = f"calendar:{cal_id}"
+        scope_failed = False
         while count < max_results:
             try:
                 if next_url:
@@ -191,6 +196,8 @@ def fetch(
                     )
             except Exception as exc:
                 print(f"[msgraph_calendar] WARN: error fetching '{cal_name}': {exc}", file=sys.stderr)
+                report_scope(scope, "failed", records=count, reason=str(exc))
+                scope_failed = True
                 break
             for evt in resp.get("value", []):
                 if count >= max_results:
@@ -204,7 +211,13 @@ def fetch(
                 count += 1
             next_url = resp.get("@odata.nextLink")
             if not next_url or not resp.get("value"):
+                next_url = None
                 break
+        if not scope_failed:
+            if next_url and count >= max_results:
+                report_scope(scope, "truncated", records=count, reason=f"max_results {max_results} reached")
+            else:
+                report_scope(scope, "complete", records=count)
 
 
 def health_check(auth_context: Dict[str, Any]) -> bool:

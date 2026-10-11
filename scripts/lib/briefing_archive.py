@@ -254,6 +254,24 @@ def _run_pii_warning(text: str, source: str) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+def ensure_coverage_line(text: str, line: str) -> str:
+    """Return ``text`` with a ``Coverage:`` line present (re-artha §6.7, WP-02).
+
+    The line is inserted as the first body line (after any front matter).  An
+    existing coverage line is left alone, so this is idempotent and the
+    archived Briefing can never omit what was and was not checked.
+    """
+    if re.search(r"(?m)^Coverage( \([^)]*\))?:", text):
+        return text
+    body_start = 0
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            body_start = end + len("\n---\n")
+    head, body = text[:body_start], text[body_start:]
+    return f"{head}{line}\n{body}" if head else f"{line}\n\n{body}"
+
+
 def save(
     text: str,
     *,
@@ -295,6 +313,13 @@ def save(
 
     # ── 2. Security: PII warning (non-blocking) ───────────────────────────
     _run_pii_warning(text, source)
+
+    # ── 2b. Coverage line: what the last fetch did and did not check ──────
+    try:
+        from lib.connector_coverage import line_from_store  # noqa: PLC0415
+        text = ensure_coverage_line(text, line_from_store())
+    except Exception:  # noqa: BLE001 — never block an archive on the coverage view
+        pass
 
     # ── 3. Resolve metadata ───────────────────────────────────────────────
     now_utc = datetime.now(timezone.utc)

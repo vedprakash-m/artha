@@ -88,6 +88,14 @@ except ImportError:
 from schemas.connector_record import validate_record as _validate_connector_record  # noqa: E402
 _SCHEMA_VALIDATION_AVAILABLE = True  # kept for backward compat with any external references
 
+# WP-02 (re-artha §6.13): per-run connector coverage — rejections degrade the exact scope.
+from lib.connector_coverage import (  # noqa: E402
+    ConnectorRun as _ConnectorRun,
+    CoverageCollector as _CoverageCollector,
+    CoverageStore as _CoverageStore,
+    coverage_line as _coverage_line,
+)
+
 _log = get_logger("pipeline")
 
 
@@ -350,11 +358,16 @@ def _fetch_one(
     *,
     since: str,
     registry: "_GuardrailRegistry | None" = None,
+    coverage: "_CoverageCollector | None" = None,
 ) -> tuple[str, list[str], float, str | None]:
     """Fetch one connector; return (name, jsonl_lines, elapsed_sec, error).
 
     Extracted from run_pipeline() inner scope so it can be reused by
     fetch_single() for callers that need direct per-connector access.
+
+    When ``coverage`` is given, the run's outcome (records, rejected records,
+    handler-reported scope failures, error) is added to it so a rejected record
+    degrades the exact scope instead of silently shrinking the result.
     """
     t0 = time.monotonic()
     extra_kwargs: dict[str, Any] = {}
@@ -376,12 +389,16 @@ def _fetch_one(
             _gr_out = registry.run_tool_guardrails(_ctx, fetch_cfg)
             if _gr_out.result != _TripwireResult.PASS:
                 elapsed = time.monotonic() - t0
-                return (name, [], elapsed, f"guardrail:{_gr_out.result.value} — {_gr_out.message}")
+                _g_err = f"guardrail:{_gr_out.result.value} — {_gr_out.message}"
+                if coverage is not None:
+                    coverage.add(_ConnectorRun(name, 0, 0, [], _g_err, [], elapsed))
+                return (name, [], elapsed, _g_err)
         except Exception as _gr_exc:  # noqa: BLE001
             # Guardrail failure must never silently drop data — log and continue
             _log.warning("guardrail.tool.error", connector=name, error=str(_gr_exc))
 
     _val_errors: list[int] = [0]  # DEBT-009: mutable cell for nonlocal reference
+    _val_reasons: list[str] = []   # first few rejection reasons (no record content)
 
     def _do_fetch() -> int:
         count = 0
@@ -395,9 +412,11 @@ def _fetch_one(
             # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
             # Malformed records are SKIPPED with a WARNING (never crash pipeline).
             try:
-                _validate_connector_record(record)
+                _validated = _validate_connector_record(record)
             except (TypeError, ValueError) as _vex:
                 _val_errors[0] += 1
+                if len(_val_reasons) < 5:
+                    _val_reasons.append(str(_vex)[:160])
                 _log.warning(
                     "schema.validation_error",
                     connector=name,
@@ -408,9 +427,25 @@ def _fetch_one(
                     file=sys.stderr,
                 )
                 continue
+            # D-21: connectors keep native fields; consumers still get a derived date_iso.
+            if "date_iso" not in record:
+                record["date_iso"] = _validated.date_iso
             lines.append(json.dumps(record, ensure_ascii=False, default=str))
             count += 1
         return count
+
+    _tracker_cm = coverage.track(name) if coverage is not None else None
+    _tracker = _tracker_cm.__enter__() if _tracker_cm is not None else None
+
+    def _finish(error: str | None, elapsed: float) -> None:
+        if _tracker_cm is not None:
+            _tracker_cm.__exit__(None, None, None)
+        if coverage is not None:
+            coverage.add(_ConnectorRun(
+                connector=name, records=len(lines), rejected=_val_errors[0],
+                rejection_reasons=list(_val_reasons), error=error,
+                scopes=list(_tracker.scopes) if _tracker is not None else [], elapsed=elapsed,
+            ))
 
     try:
         with_retry(
@@ -423,10 +458,100 @@ def _fetch_one(
             label=name,
         )
         elapsed = time.monotonic() - t0
+        _finish(None, elapsed)
         return (name, lines, elapsed, None)
     except Exception as exc:
         elapsed = time.monotonic() - t0
+        _finish(str(exc), elapsed)
         return (name, lines, elapsed, str(exc))
+
+
+def _record_coverage(
+    collector: "_CoverageCollector",
+    store: "_CoverageStore | None" = None,
+    *,
+    at: str | None = None,
+) -> str:
+    """Persist this run's connector coverage and return the compact Briefing line.
+
+    Counts and statuses only (no record content).  A failure to persist never
+    aborts the pipeline, but the returned line still reflects this run.
+    """
+    store = store or _CoverageStore()
+    runs: list[Any] = []
+    try:
+        for run in collector.runs:
+            history = store.history(run.connector)
+            runs.append(run.with_history(history))
+            store.record(run, at=at)
+        entries = store.load().get("connectors", {})
+    except OSError as exc:
+        print(f"[pipeline] WARNING: coverage persistence failed: {exc}", file=sys.stderr)
+        runs = list(collector.runs)
+        entries = {}
+    return _coverage_line(runs, entries, now=at)
+
+
+def _post_fetch_checks(
+    runs: list[Any],
+    entries: dict[str, Any],
+    *,
+    error_count: int,
+    now: str | None = None,
+) -> list[Any]:
+    """Post-fetch gate checks that read this run's coverage and persisted history.
+
+    They replace callbacks that returned ``True`` unconditionally.  A failure
+    names the exact scope; it degrades coverage and never aborts the Catch-up.
+    """
+    from lib.connector_coverage import CHRONIC_GAP_DAYS  # noqa: PLC0415
+    from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+
+    def at_least_one_connector_succeeded() -> bool:
+        return not runs or error_count < len(runs)
+
+    def no_degraded_or_unavailable_scope() -> bool:
+        return all(r.status() == "complete" for r in runs)
+
+    def no_chronic_connector_failure() -> bool:
+        current = _dt.fromisoformat(now.replace("Z", "+00:00")) if now else _dt.now(_tz.utc)
+        for entry in entries.values():
+            since = (entry or {}).get("failing_since")
+            if since:
+                age = (current - _dt.fromisoformat(since.replace("Z", "+00:00"))).days
+                if age >= CHRONIC_GAP_DAYS:
+                    return False
+        return True
+
+    return [at_least_one_connector_succeeded, no_degraded_or_unavailable_scope,
+            no_chronic_connector_failure]
+
+
+def _post_process_checks(
+    runs: list[Any],
+    *,
+    total_records: int,
+    output_path: "Path | None",
+) -> list[Any]:
+    """Post-process gate: no record was silently dropped and the snapshot exists."""
+
+    def no_rejected_records() -> bool:
+        return all(r.rejected == 0 for r in runs)
+
+    def output_snapshot_written() -> bool:
+        if output_path is None or total_records == 0:
+            return True
+        try:
+            return Path(output_path).is_file() and Path(output_path).stat().st_size > 0
+        except OSError:
+            return False
+
+    return [no_rejected_records, output_snapshot_written]
+
+
+def _gate_failure_message(gate: str, result: Any) -> str:
+    failed = [c["name"] for c in result.checks if not c["passed"]]
+    return f"Quality gate '{gate}' FAILED — {', '.join(failed) or 'unknown check'}"
 
 
 def fetch_single(
@@ -767,9 +892,11 @@ def run_pipeline(
     max_workers = min(len(work_items), 8)
     # AFW-1: One registry instance shared across all connector threads (thread-safe read-only)
     _registry = _GuardrailRegistry() if _GUARDRAILS_AVAILABLE and _GuardrailRegistry is not None else None
+    _coverage = _CoverageCollector()
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since, registry=_registry): name
+            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since, registry=_registry,
+                            coverage=_coverage): name
             for name, handler, auth, fcfg, rcfg in work_items
         }
         for future in as_completed(futures):
@@ -780,10 +907,12 @@ def run_pipeline(
                 print(f"[pipeline] GUARDRAIL VIOLATION {conn_name}: {exc}", file=sys.stderr)
                 _log.error("guardrail.violation", connector=conn_name, error=str(exc))
                 error_count += 1
+                _coverage.add(_ConnectorRun(conn_name, 0, 0, [], f"guardrail violation: {exc}", [], 0.0))
                 continue
             except Exception as exc:
                 print(f"[pipeline] ERROR {conn_name}: {exc}", file=sys.stderr)
                 error_count += 1
+                _coverage.add(_ConnectorRun(conn_name, 0, 0, [], str(exc), [], 0.0))
                 continue
 
             timing[name] = round(elapsed, 2)
@@ -838,6 +967,11 @@ def run_pipeline(
     pipeline_elapsed = round(time.monotonic() - pipeline_start, 2)
     timing["_total"] = pipeline_elapsed
 
+    # WP-02: per-connector coverage (rejected records degrade the exact scope).
+    validation_errors = sum(r.rejected for r in _coverage.runs)
+    _coverage_summary = _record_coverage(_coverage)
+    print(f"[pipeline] {_coverage_summary}", file=sys.stderr)
+
     # S-08: assemble partials after all connectors complete (non-fatal)
     _assembly_warnings: list[str] = []
     try:
@@ -848,24 +982,18 @@ def run_pipeline(
     for _aw in _assembly_warnings:
         print(f"[pipeline] partial-assembly warning: {_aw}", file=sys.stderr)
 
-    # S-01: post_fetch quality gate (non-fatal — warn on failure, never abort)
+    # S-01: post_fetch quality gate (non-fatal — warn on failure, never abort).
+    # Checks read coverage artifacts; they used to return True unconditionally.
     try:
         from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
-        def _check_at_least_one_succeeded() -> bool:
-            return error_count < len(work_items)
-        def _check_no_critical_staleness() -> bool:
-            return True  # Staleness is warned above; not a hard gate
+        _gate_entries = _CoverageStore().load().get("connectors", {})
         _pf_gate = _evaluate_gate(
             "post_fetch",
-            [_check_at_least_one_succeeded, _check_no_critical_staleness],
-            max_retries=1,
+            _post_fetch_checks(_coverage.runs, _gate_entries, error_count=error_count),
+            max_retries=0,
         )
         if not _pf_gate.passed:
-            print(
-                "[pipeline] ⚠ Quality gate 'post_fetch' FAILED — "
-                f"all {len(work_items)} connectors failed; output will be empty",
-                file=sys.stderr,
-            )
+            print(f"[pipeline] ⚠ {_gate_failure_message('post_fetch', _pf_gate)}", file=sys.stderr)
     except Exception:
         pass  # Quality gate is non-fatal
 
@@ -966,24 +1094,16 @@ def run_pipeline(
     _emit_tel("pipeline.step_enter", extra={"step": "CLASSIFY", "session_id": _session_id})
     _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
 
-    # S-01: post_process quality gate (non-fatal — warn on failure, never abort)
+    # S-01: post_process quality gate (non-fatal — warn on failure, never abort).
     try:
         from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
-        def _check_signals_classified() -> bool:
-            return True  # LLM-side classification; Python layer always passes
-        def _check_no_unhandled_domains() -> bool:
-            return True  # Domain routing is non-blocking in this pipeline
         _pp_gate = _evaluate_gate(
             "post_process",
-            [_check_signals_classified, _check_no_unhandled_domains],
-            max_retries=2,
+            _post_process_checks(_coverage.runs, total_records=total_records, output_path=output_path),
+            max_retries=0,
         )
         if not _pp_gate.passed:
-            print(
-                "[pipeline] ⚠ Quality gate 'post_process' FAILED — "
-                "signal classification produced unexpected results",
-                file=sys.stderr,
-            )
+            print(f"[pipeline] ⚠ {_gate_failure_message('post_process', _pp_gate)}", file=sys.stderr)
     except Exception:
         pass  # Quality gate is non-fatal
 
