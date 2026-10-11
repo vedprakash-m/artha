@@ -68,3 +68,30 @@ def check_connector_coverage(path: Path | None = None, now: str | None = None) -
         fix_hint="Scopes above get no all-clear in the Briefing. Re-run `brief`; "
                  "see `python scripts/pipeline.py --health --source <name>`.",
     )
+
+
+def check_plaintext_in_sync_root(artha_dir: Path | str | None = None) -> CheckResult:
+    """Fetched content and vault markers must not sit in the synced workspace (P1).
+
+    ``tmp/pipeline_output.jsonl`` holds fetched email bodies; the pipeline now
+    writes it to the machine-local directory (WP-03).  A leftover copy, or a
+    sync-conflict copy of the vault lock marker, is reported until removed.
+    """
+    from preflight._types import ARTHA_DIR  # noqa: PLC0415
+    root = Path(artha_dir) if artha_dir else Path(ARTHA_DIR)
+    found: list[str] = []
+    legacy = root / "tmp" / "pipeline_output.jsonl"
+    if legacy.is_file():
+        found.append("tmp/pipeline_output.jsonl")
+    for marker in root.glob("*.artha-decrypted"):
+        if marker.name != ".artha-decrypted":
+            found.append("sync-conflict copy of .artha-decrypted")
+            break
+    name = "Plaintext in synced workspace"
+    if not found:
+        return CheckResult(name, "P1", True, "none found")
+    return CheckResult(
+        name, "P1", False, ", ".join(found),
+        fix_hint="Move or delete it: fetched email content belongs in ~/.artha-local, "
+                 "outside the cloud-synced workspace.",
+    )

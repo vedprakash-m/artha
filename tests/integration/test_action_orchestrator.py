@@ -35,6 +35,17 @@ from action_orchestrator import run, _deduplicate
 # Full Artha directory fixture with real SQLite queue
 # ---------------------------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def _machine_local_dir(tmp_path, monkeypatch):
+    """WP-03: pipeline output lives in the machine-local dir; isolate it per test."""
+    monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_path / "machine-local"))
+
+
+def _pipeline_output():
+    from lib.local_paths import pipeline_output_path
+    return pipeline_output_path()
+
 @pytest.fixture
 def artha_dir(tmp_path):
     """Minimal Artha directory with real filesystem layout."""
@@ -134,7 +145,7 @@ def _rsvp_email_record():
 
 def test_email_signal_to_proposal_e2e(artha_dir):
     """Fake RSVP email JSONL → event_rsvp_needed signal → proposal queued."""
-    jsonl_path = artha_dir / "tmp" / "pipeline_output.jsonl"
+    jsonl_path = _pipeline_output()
     jsonl_path.write_text(json.dumps(_rsvp_email_record()) + "\n")
 
     from actions.base import ActionProposal
@@ -252,7 +263,7 @@ def test_cross_session_dedup(artha_dir):
     mock_extractor = MagicMock()
     mock_extractor.extract.return_value = [signal]
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    (_pipeline_output()).write_text(
         json.dumps({"subject": "Bill due", "from": "electric@co.com", "marketing": False}) + "\n"
     )
 
@@ -287,7 +298,7 @@ def test_kill_switch_full_session(artha_dir):
     (artha_dir / "config" / "artha_config.yaml").write_text(
         "harness:\n  actions:\n    enabled: false\n"
     )
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    (_pipeline_output()).write_text(
         json.dumps({"subject": "RSVP needed", "from": "x@y.com", "marketing": False}) + "\n"
     )
 
@@ -336,24 +347,14 @@ def test_pipeline_output_flag(tmp_path, capsys):
     """pipeline.py --output writes JSONL file atomically."""
     from pipeline import _validate_output_path
 
-    tmp_out = tmp_path / "pipeline_output.jsonl"
-    # Must not raise for valid tmp/ path
-    # Direct call to internal function for unit-level check
-    # (Full pipeline integration test would require connector credentials)
+    # WP-03: the output must be inside the machine-local directory, never the workspace tmp/.
+    valid_output = _pipeline_output()
+    assert _validate_output_path(valid_output, tmp_path) == valid_output.resolve()
 
-    # Verify the path validator correctly accepts paths inside tmp/
-    artha_tmp = tmp_path / "tmp"
-    artha_tmp.mkdir()
-    valid_output = artha_tmp / "pipeline_output.jsonl"
-
-    # _validate_output_path raises ValueError for paths outside tmp/
-    try:
-        _validate_output_path(valid_output, tmp_path)
-        valid_accepted = True
-    except (ValueError, Exception):
-        valid_accepted = False
-
-    assert valid_accepted, "Valid tmp/ path should be accepted by _validate_output_path"
+    workspace_tmp = tmp_path / "tmp"
+    workspace_tmp.mkdir()
+    with pytest.raises(ValueError):
+        _validate_output_path(workspace_tmp / "pipeline_output.jsonl", tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +411,7 @@ def test_fresh_snapshot_no_append(tmp_path):
     from pipeline import _validate_output_path
 
     artha_dir = tmp_path
-    tmp_dir = tmp_path / "tmp"
-    tmp_dir.mkdir()
-    output_path = tmp_dir / "pipeline_output.jsonl"
+    output_path = _pipeline_output()
 
     # Simulate two pipeline runs writing different content
     record_run1 = json.dumps({"run": 1, "data": "first run"})
@@ -447,7 +446,7 @@ def test_full_pipeline_to_orchestrator(artha_dir, capsys):
     """pipeline.py --output + orchestrator --run together produce a proposal."""
     # Write pipeline JSONL as if pipeline.py --output had run
     rsvp = _rsvp_email_record()
-    jsonl_path = artha_dir / "tmp" / "pipeline_output.jsonl"
+    jsonl_path = _pipeline_output()
     jsonl_path.write_text(json.dumps(rsvp) + "\n")
 
     from actions.base import ActionProposal

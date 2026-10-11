@@ -110,11 +110,16 @@ def is_stable_value(
 # Health counter updates
 # ---------------------------------------------------------------------------
 
+#: Consecutive failures after which a skill stops being "trusted" (re-artha §12.3).
+DEMOTION_THRESHOLD = 5
+
+
 def update_health_counters(
     cache_entry: dict[str, Any],
     is_zero: bool,
     is_stable: bool,
     last_wall_clock_ms: int | None = None,
+    demotion_threshold: int = DEMOTION_THRESHOLD,
 ) -> dict[str, Any]:
     """Return a deep-copied cache_entry with updated 'health' sub-dict.
 
@@ -134,7 +139,9 @@ def update_health_counters(
         last_wall_clock_ms:   int | null — wall-clock time of most recent run (ms)
         r7_skips:             int — count of runs skipped due to R7 cadence reduction
         last_r7_prompt:       str | null — ISO timestamp of last R7 disable-prompt
-        maturity:             str — warming_up | measuring | trusted
+        consecutive_failures: int — current streak of failed runs (reset by a success)
+        maturity:             str — warming_up | measuring | trusted | broken
+                              (``broken`` once consecutive_failures >= demotion_threshold)
         classification:       str — warming_up | healthy | degraded | stable | broken
     """
     entry = copy.deepcopy(cache_entry)
@@ -153,6 +160,7 @@ def update_health_counters(
     health.setdefault("last_wall_clock_ms", None)
     health.setdefault("r7_skips", 0)
     health.setdefault("last_r7_prompt", None)
+    health.setdefault("consecutive_failures", 0)
 
     # Increment total run counter
     health["total_runs"] += 1
@@ -169,10 +177,12 @@ def update_health_counters(
 
     if is_failure:
         health["failure_count"] += 1
+        health["consecutive_failures"] += 1
         health["last_failure"] = _now_iso()
         # Failures don't reset or advance zero/stable streaks
     else:
         health["success_count"] += 1
+        health["consecutive_failures"] = 0
         health["last_success"] = _now_iso()
 
         if is_zero:
@@ -192,9 +202,12 @@ def update_health_counters(
     if last_wall_clock_ms is not None:
         health["last_wall_clock_ms"] = last_wall_clock_ms
 
-    # Maturity and classification
+    # Maturity and classification.  A skill on a failure streak is demoted: the
+    # label must never say "trusted" while the classification says "broken".
     health["maturity"] = _maturity(total_runs)
-    health["classification"] = classify_health(health)
+    health["classification"] = classify_health(health, demotion_threshold)
+    if health["classification"] == "broken":
+        health["maturity"] = "broken"
 
     entry["health"] = health
     return entry
@@ -218,7 +231,7 @@ def _maturity(total_runs: int) -> str:
 # Health classification
 # ---------------------------------------------------------------------------
 
-def classify_health(health: dict[str, Any]) -> str:
+def classify_health(health: dict[str, Any], demotion_threshold: int = DEMOTION_THRESHOLD) -> str:
     """Return health classification string.
 
     Classification rules:
@@ -228,6 +241,9 @@ def classify_health(health: dict[str, Any]) -> str:
         stable:     success_rate >= 80% AND consecutive_stable >= 10 (no zeros)
         healthy:    success_rate >= 80% AND had nonzero value recently
     """
+    if health.get("consecutive_failures", 0) >= demotion_threshold:
+        return "broken"
+
     total_runs = health.get("total_runs", 0)
     if total_runs < 5:
         return "warming_up"

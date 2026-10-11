@@ -88,11 +88,13 @@ try:
         update_health_counters as _update_health_counters,
         atomic_write_json as _atomic_write_json,
         CADENCE_REDUCTION as _CADENCE_REDUCTION,
+        DEMOTION_THRESHOLD as _DEMOTION_THRESHOLD,
     )
     _SKILL_HEALTH_AVAILABLE = True
 except ImportError:
     _SKILL_HEALTH_AVAILABLE = False
     _CADENCE_REDUCTION: dict = {"every_run": "daily", "daily": "weekly"}
+    _DEMOTION_THRESHOLD = 5
 
 def load_config() -> Dict[str, Any]:
     if not SKILLS_CONFIG.exists():
@@ -237,6 +239,20 @@ def should_run(skill_name: str, config: Dict[str, Any], cache: Dict[str, Any]) -
     if not _cadence_elapsed(skill_name, configured_cadence, cache):
         logging.info(f"Skipping {skill_name} ({configured_cadence} cadence not yet reached)")
         return False
+
+    # WP-03: a skill on a failure streak is probed weekly instead of on every run.
+    # P0 skills are exempt — a broken P0 skill must keep failing loudly, not go quiet.
+    if skill_cfg.get("priority", "P1") != "P0":
+        _h = cache.get(skill_name, {}).get("health", {})
+        # Keyed on the recent failure streak, not lifetime success rate, so a skill that has
+        # recovered is not starved by its history.
+        _streak = _h.get("consecutive_failures", 0)
+        if _streak >= _DEMOTION_THRESHOLD and not _cadence_elapsed(skill_name, "weekly", cache):
+            logging.info(
+                f"Demoted: skipping {skill_name} ({_h.get('consecutive_failures', '?')} consecutive "
+                "failures; probing weekly)"
+            )
+            return False
 
     # R7: health-aware cadence reduction (P1/P2 only, maturity >= measuring)
     # Applied AFTER configured cadence says skill is due — checks if consecutive

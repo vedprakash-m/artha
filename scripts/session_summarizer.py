@@ -418,6 +418,11 @@ def _auto_extract_facts_if_catchup(summary: "SessionSummary", artha_dir: Path | 
     if not any(kw in cmd for kw in ("catch-up", "catch_up", "catchup", "/catch")):
         return 0
 
+    # RA-06: no automatic fact extraction unless deliberately enabled (memory_policy).
+    from lib import memory_policy  # noqa: PLC0415
+    if not memory_policy.extraction_allowed():
+        return 0
+
     base_dir = artha_dir if artha_dir is not None else ARTHA_DIR
     tmp_dir = base_dir / TMP_DIR.name if artha_dir is not None else TMP_DIR
 

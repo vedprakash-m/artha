@@ -633,18 +633,15 @@ def fetch_single(
 # ---------------------------------------------------------------------------
 
 def _validate_output_path(raw: str, artha_dir: Path) -> Path:
-    """Validate --output path is safe: must resolve inside tmp/.
+    """Validate --output path is safe: must resolve inside the machine-local directory.
 
-    Prevents path traversal attacks (e.g. '../../etc/passwd').
+    Plaintext fetched content must not live in the cloud-synced workspace
+    (re-artha §12.2 item 6); ``tmp/`` inside the workspace is therefore rejected.
+    Also blocks path traversal (e.g. '../../etc/passwd').  ``artha_dir`` is kept
+    for call-site compatibility.
     """
-    target = (artha_dir / raw).resolve()
-    allowed = (artha_dir / "tmp").resolve()
-    if not target.is_relative_to(allowed):
-        raise ValueError(
-            f"--output must be inside tmp/ (got {raw!r}). "
-            "Use a relative path like 'tmp/pipeline_output.jsonl'."
-        )
-    return target
+    from lib.local_paths import resolve_local_output  # noqa: PLC0415
+    return resolve_local_output(str(raw))
 
 
 def run_pipeline(
@@ -1066,6 +1063,10 @@ def run_pipeline(
             with open(tmp_path, "w", encoding="utf-8") as fh:
                 for line in write_lines:
                     fh.write(line + "\n")
+            try:
+                os.chmod(tmp_path, 0o600)  # fetched email content: owner-only
+            except OSError:
+                pass
             tmp_path.replace(output_path)  # atomic rename — no partial reads
             if verbose:
                 print(

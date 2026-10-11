@@ -60,3 +60,27 @@ def test_chronic_failure_age_is_reported(tmp_path):
                                                        failing_since="2026-08-30T00:00:00Z")})
     res = check_connector_coverage(path, now="2026-10-11T00:00:00Z")
     assert "42 days" in res.message
+
+
+# ── plaintext fetched content in the synced workspace (P1) ──────────────────
+
+from preflight.coverage_checks import check_plaintext_in_sync_root  # noqa: E402
+
+
+def test_clean_workspace_passes(tmp_path):
+    (tmp_path / "tmp").mkdir()
+    assert check_plaintext_in_sync_root(tmp_path).passed
+
+
+def test_leftover_pipeline_output_is_flagged(tmp_path):
+    (tmp_path / "tmp").mkdir()
+    (tmp_path / "tmp" / "pipeline_output.jsonl").write_text('{"body": "x"}\n')
+    res = check_plaintext_in_sync_root(tmp_path)
+    assert not res.passed and res.severity == "P1"
+    assert "pipeline_output.jsonl" in res.message
+    assert "~/.artha-local" in res.fix_hint
+
+
+def test_sync_conflict_copy_of_vault_marker_is_flagged(tmp_path):
+    (tmp_path / "-Some Host.artha-decrypted").write_text("{}")
+    assert not check_plaintext_in_sync_root(tmp_path).passed

@@ -5,7 +5,7 @@ to state/calendar.md in a structured event schema.
 
 The pipeline already fetches calendar events from Google Calendar and
 Microsoft Graph.  This script reads the pipeline JSONL output from
-tmp/pipeline_output.jsonl (or stdin) and appends new events to
+~/.artha-local/pipeline_output.jsonl (or stdin) and appends new events to
 state/calendar.md, deduplicating on (date, title) to prevent repeated
 appends across multiple catch-up runs.
 
@@ -15,7 +15,7 @@ Usage
     python scripts/pipeline.py | python scripts/calendar_writer.py
 
     # From saved pipeline output:
-    python scripts/calendar_writer.py --input tmp/pipeline_output.jsonl
+    python scripts/calendar_writer.py --input ~/.artha-local/pipeline_output.jsonl
 
     # Dry-run (show what would be written):
     python scripts/calendar_writer.py --dry-run
@@ -182,8 +182,9 @@ def run(
             except json.JSONDecodeError:
                 pass
     else:
-        # Also try default tmp location
-        default_input = TMP_DIR / "pipeline_output.jsonl"
+        # Default: the machine-local pipeline output (never the synced workspace)
+        from lib.local_paths import pipeline_output_path  # noqa: PLC0415
+        default_input = pipeline_output_path()
         if default_input.exists():
             with default_input.open(encoding="utf-8") as fh:
                 for line in fh:
@@ -289,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--input", "-i",
         metavar="JSONL",
-        help="Path to pipeline JSONL file (default: reads stdin or tmp/pipeline_output.jsonl)",
+        help="Path to pipeline JSONL file (default: reads stdin or ~/.artha-local/pipeline_output.jsonl)",
     )
     p.add_argument("--dry-run", action="store_true", help="Show what would be written")
     p.add_argument("--verbose", "-v", action="store_true")

@@ -444,7 +444,9 @@ def _open_db(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")  # concurrent readers during writes
     conn.execute("PRAGMA busy_timeout=5000") # wait up to 5s on writer contention
     conn.execute("PRAGMA foreign_keys=ON")   # enforce FK constraints
-    conn.execute("PRAGMA synchronous=NORMAL") # safe + fast (WAL handles durability)
+    # FULL, not NORMAL: with WAL a NORMAL commit can be lost on power failure, erasing an
+    # execution claim after a provider has already acted (re-artha RA-05, §7.6).
+    conn.execute("PRAGMA synchronous=FULL")
     return conn
 
 

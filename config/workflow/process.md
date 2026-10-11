@@ -73,7 +73,7 @@ from scripts.context_offloader import offload_artifact
 offload_artifact('pipeline_output', pipeline_jsonl_str)
 "
 ```
-In AI CLI mode: write the processed email batch to `tmp/pipeline_output.jsonl` and
+In AI CLI mode: write the processed email batch to `~/.artha-local/pipeline_output.jsonl` and
 reference it by path throughout Steps 6–9 rather than holding it in context.
 
 ### Step 6 — Route emails to domains
