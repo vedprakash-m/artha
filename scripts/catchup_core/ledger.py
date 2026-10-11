@@ -22,7 +22,7 @@ import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -66,7 +66,19 @@ class LedgerLocked(LedgerError):
 
 
 def _utc_now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _after(previous: str | None, candidate: str) -> str:
+    """A version timestamp strictly later than the fact's previous one (history keys on time)."""
+    if previous is None or candidate > previous:
+        return candidate
+    bumped = datetime.strptime(previous.replace("Z", "+0000"), _fmt_for(previous)) + timedelta(microseconds=1)
+    return bumped.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _fmt_for(stamp: str) -> str:
+    return "%Y-%m-%dT%H:%M:%S.%f%z" if "." in stamp else "%Y-%m-%dT%H:%M:%S%z"
 
 
 # ── sealed deletion checkpoint (outside the restorable set) ───────────────────
@@ -369,14 +381,19 @@ class Ledger:
             return text, 1, version
         return json.dumps(value, sort_keys=True), 0, None
 
+    @staticmethod
+    def _last_version(conn: sqlite3.Connection, fact_id: str) -> str | None:
+        row = conn.execute("SELECT MAX(recorded_at) FROM fact_versions WHERE fact_id=?", (fact_id,)).fetchone()
+        return str(row[0]) if row and row[0] else None
+
     def put_fact(self, fact: FactInput, fact_id: str | None = None) -> str:
         """Create a Fact, or add a new version of an existing one (history is append-only)."""
         self._require_unlocked()
         is_new = fact_id is None
         fid = fact_id or ids.new_id("fct")
         text, encrypted, key_version = self._encode_value(fid, fact.value, fact.confidentiality)
-        now = self._clock()
         with self.transaction() as c:
+            now = _after(self._last_version(c, fid), self._clock())
             if not is_new:
                 if not c.execute("SELECT 1 FROM facts WHERE fact_id=?", (fid,)).fetchone():
                     raise LedgerError(f"unknown fact {fid}")
@@ -490,6 +507,45 @@ class Ledger:
             except PermissionDenied:
                 continue
         return views
+
+    def add_evidence(self, fact_id: str, signal_id: str, span_start: int, span_end: int) -> None:
+        """Attach another evidence span to a Fact (corroboration)."""
+        self._require_unlocked()
+        with self.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO fact_evidence(fact_id,signal_id,span_start,span_end) VALUES(?,?,?,?)",
+                      (fact_id, signal_id, span_start, span_end))
+
+    def set_fact_status(self, fact_id: str, status: FactStatus, provenance: Provenance | None = None) -> None:
+        """Change a Fact's lifecycle status; the previous state stays in ``fact_versions``."""
+        self._require_unlocked()
+        with self.transaction() as c:
+            now = _after(self._last_version(c, fact_id), self._clock())
+            row = c.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+            if row is None:
+                raise LedgerError(f"unknown fact {fact_id}")
+            prov = provenance.value if provenance else row["provenance_class"]
+            c.execute("UPDATE facts SET status=?, provenance_class=?, recorded_at=? WHERE fact_id=?",
+                      (status.value, prov, now, fact_id))
+            digest = hashlib.sha256("|".join(
+                f"{r[0]}:{r[1]}:{r[2]}" for r in c.execute(
+                    "SELECT signal_id,span_start,span_end FROM fact_evidence WHERE fact_id=? ORDER BY signal_id",
+                    (fact_id,)).fetchall()).encode()).hexdigest()
+            c.execute(
+                "INSERT INTO fact_versions(fact_id,recorded_at,value_encrypted,key_version,valid_from,valid_to,"
+                "validity_unknown,provenance_class,evidence_digest,typed_value,status,rule_version)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (fact_id, now, row["value_encrypted"], row["key_version"], row["valid_from"], row["valid_to"],
+                 row["validity_unknown"], prov, digest, row["typed_value"], status.value, row["rule_version"]))
+
+    def facts_matching(self, domain: str, predicate: str, subject_id: str,
+                       statuses: Sequence[FactStatus] = (FactStatus.CURRENT, FactStatus.DISPUTED)) -> list[FactView]:
+        """System-level read (reconciliation): every Fact for one subject and predicate."""
+        marks = ",".join("?" for _ in statuses)
+        rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
+            f"SELECT fact_id FROM facts WHERE domain=? AND predicate=? AND primary_subject_id=? "  # noqa: S608
+            f"AND status IN ({marks}) ORDER BY recorded_at, fact_id",
+            (domain, predicate, subject_id, *[st.value for st in statuses])).fetchall()
+        return [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
 
     # ── alerts ───────────────────────────────────────────────────────────────
     def upsert_alert(

@@ -125,6 +125,57 @@ def _load_prev_hash() -> str:
 _prev_hash: str = _load_prev_hash()
 
 
+def _lock(fh: Any) -> None:
+    try:
+        import fcntl  # noqa: PLC0415
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+    except (ImportError, OSError):
+        pass            # no advisory locking on this platform: best effort
+
+
+def _unlock(fh: Any) -> None:
+    try:
+        import fcntl  # noqa: PLC0415
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except (ImportError, OSError):
+        pass
+
+
+def _read_last_hash(path: Path) -> str:
+    """Last ``entry_hash`` actually present in ``path`` (reads only the tail).
+
+    The in-memory ``_prev_hash`` is only a cache: another process may have appended
+    since it was loaded (re-artha §10.6 — 54 prev-link breaks observed in the live
+    file).  The chain is therefore anchored to the file, under a lock, at every emit.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return _GENESIS_HASH
+    window = 64 * 1024
+    with open(path, "rb") as fh:
+        while True:
+            start = max(0, size - window)
+            fh.seek(start)
+            chunk = fh.read(size - start).decode("utf-8", errors="replace")
+            lines = chunk.splitlines()
+            if start > 0 and lines:
+                lines = lines[1:]            # first line may be cut mid-record
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    h = json.loads(line).get("entry_hash")
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+                if isinstance(h, str) and len(h) == 64:
+                    return h
+            if start == 0:
+                return _GENESIS_HASH
+            window *= 4
+
+
 def _default_session_id() -> str:
     """Generate a session_id in the canonical format: {YYYYMMDD}_{hex8}."""
     date_part = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -249,16 +300,20 @@ def emit(
         if extra:
             record["extra"] = extra
 
-        # Hash chain (ST-01)
-        record["prev_hash"] = _prev_hash
-        entry_hash = _compute_entry_hash(record)
-        record["entry_hash"] = entry_hash
-
+        # Hash chain (ST-01): anchor to the file's real last entry under an exclusive lock,
+        # so concurrent processes cannot fork the chain.
         target = _path or _TELEMETRY_PATH
         target.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
-        with open(target, "a", encoding="utf-8") as fh:
-            fh.write(line)
+        with open(target, "a+", encoding="utf-8") as fh:
+            _lock(fh)
+            try:
+                record["prev_hash"] = _read_last_hash(target)
+                entry_hash = _compute_entry_hash(record)
+                record["entry_hash"] = entry_hash
+                fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                fh.flush()
+            finally:
+                _unlock(fh)
         _prev_hash = entry_hash
     except Exception as exc:  # noqa: BLE001
         # Telemetry must never crash callers
