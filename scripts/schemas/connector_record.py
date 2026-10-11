@@ -25,12 +25,14 @@ RD-22: Extended raw field validation for email connectors.
        at the schema boundary instead of producing silent regex misses in
        email_signal_extractor.py.
 
+Calendar records (WP-02, re-artha D-21) are validated against their own
+per-type schema: ``start`` is required and ``date_iso`` is derived from it, so
+connectors keep their native fields.  The validator has no side effects; the
+pipeline counts rejections into the per-run coverage record.
+
 Ref: specs/debt.md DEBT-009
 """
 from __future__ import annotations
-
-import os
-from datetime import datetime, timezone
 
 import re
 from dataclasses import dataclass
@@ -49,23 +51,22 @@ _REQUIRED_RAW_FIELDS: dict[str, list[str]] = {
     "icloud_email": ["subject", "body"],
 }
 
-# Path to work audit log (G4/F15 — connector record rejections go here)
-_WORK_AUDIT_FILE = os.path.join(
-    os.path.dirname(__file__), "..", "..", "state", "work", "work-audit.md"
-)
+# Calendar sources: records carry native ``start``/``end`` and no ``date_iso``
+# (re-artha D-21).  Detected by source name, with a shape fallback so a new
+# calendar connector is still validated as a calendar rather than as email.
+_CALENDAR_SOURCE_RE = re.compile(r"(^|_)calendar($|_)")
 
 
-def _log_rejection(field: str, source: str) -> None:
-    """Append a rejection entry to state/work/work-audit.md (non-blocking, G4/F15)."""
-    try:
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        entry = f"- {ts} [connector_record] rejected: missing {field} from {source}\n"
-        audit_path = os.path.normpath(_WORK_AUDIT_FILE)
-        os.makedirs(os.path.dirname(audit_path), exist_ok=True)
-        with open(audit_path, "a", encoding="utf-8") as fh:
-            fh.write(entry)
-    except Exception:
-        pass  # never let audit failure suppress the ValueError
+def _is_calendar_record(raw: dict[str, Any], source: Any) -> bool:
+    if isinstance(source, str) and _CALENDAR_SOURCE_RE.search(source):
+        return True
+    return (
+        "start" in raw
+        and "summary" in raw
+        and "subject" not in raw
+        and "body" not in raw
+        and "date_iso" not in raw
+    )
 
 
 @dataclass(frozen=True)
@@ -104,7 +105,6 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     # --- id ---
     rec_id = raw.get("id")
     if rec_id is None:
-        _log_rejection("id", str(raw.get("source", "unknown")))
         raise ValueError(f"Connector record missing required field 'id' (keys present: {list(raw.keys())})")
     if not isinstance(rec_id, str):
         raise ValueError(f"Connector record 'id' must be str, got {type(rec_id).__name__!r}: {rec_id!r}")
@@ -114,17 +114,39 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     # --- source ---
     source = raw.get("source")
     if source is None:
-        _log_rejection("source", f"id={rec_id!r}")
         raise ValueError(f"Connector record missing required field 'source' (id={rec_id!r})")
     if not isinstance(source, str):
         raise ValueError(f"Connector record 'source' must be str, got {type(source).__name__!r}: {source!r}")
     if not source.strip():
         raise ValueError(f"Connector record 'source' must be non-empty string, got: {source!r}")
 
+    # --- calendar records: native start/end; date_iso is derived (D-21) ---
+    if _is_calendar_record(raw, source):
+        start = raw.get("start")
+        if (not isinstance(start, str) or not start.strip()) and isinstance(raw.get("date_iso"), str) \
+                and _DATE_RE.match(raw["date_iso"].strip()):
+            # Legacy shape: a calendar record that already carries a valid date_iso.
+            return ConnectorRecord(id=rec_id, source=source, date_iso=raw["date_iso"].strip(), raw=raw)
+        if not isinstance(start, str) or not start.strip():
+            raise ValueError(
+                f"Calendar record missing required field 'start' (id={rec_id!r}, source={source!r})"
+            )
+        if not _DATE_RE.match(start.strip()):
+            raise ValueError(
+                f"Calendar record 'start' does not match ISO-8601 format: {start!r} "
+                f"(id={rec_id!r}, source={source!r})"
+            )
+        end = raw.get("end")
+        if end not in (None, "") and (not isinstance(end, str) or not _DATE_RE.match(end.strip())):
+            raise ValueError(
+                f"Calendar record 'end' does not match ISO-8601 format: {end!r} "
+                f"(id={rec_id!r}, source={source!r})"
+            )
+        return ConnectorRecord(id=rec_id, source=source, date_iso=start.strip(), raw=raw)
+
     # --- date_iso ---
     date_iso = raw.get("date_iso")
     if date_iso is None:
-        _log_rejection("date_iso", source)
         raise ValueError(
             f"Connector record missing required field 'date_iso' (id={rec_id!r}, source={source!r})"
         )
@@ -148,7 +170,6 @@ def validate_record(raw: dict[str, Any]) -> ConnectorRecord:
     for field_name in required_raw_fields:
         field_val = raw.get(field_name)
         if field_val is None:
-            _log_rejection(field_name, source)
             raise ValueError(
                 f"Connector record raw['{field_name}'] missing for source={source!r} "
                 f"(id={rec_id!r}). Email extractors rely on this field — "

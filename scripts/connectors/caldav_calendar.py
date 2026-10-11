@@ -176,17 +176,18 @@ def fetch(
     **kwargs: Any,
 ) -> Iterator[Dict[str, Any]]:
     """Yield iCloud CalDAV events from *since* over a *window_days* window."""
+    from lib.connector_coverage import report_scope  # type: ignore[import]
+
     apple_id = auth_context.get("apple_id", "")
     app_password = auth_context.get("app_password") or auth_context.get("password", "")
     if not apple_id or not app_password:
         raise RuntimeError("[caldav_calendar] auth_context missing apple_id or app_password")
 
     start_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    end_dt = start_dt + timedelta(days=window_days)
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=timezone.utc)
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    # Window must reach into the future even after a long gap (see google_calendar).
+    end_dt = max(start_dt, datetime.now(timezone.utc)) + timedelta(days=window_days)
 
     print(f"[caldav_calendar] range={start_dt.date()}→{end_dt.date()}", file=sys.stderr)
 
@@ -196,7 +197,9 @@ def fetch(
         all_cals = principal.calendars()
     except Exception as exc:
         print(f"[caldav_calendar] ERROR: CalDAV principal error: {exc}", file=sys.stderr)
-        return
+        report_scope("principal", "failed", reason=str(exc))
+        # An unreachable account is *unavailable*, not an empty calendar.
+        raise RuntimeError(f"[caldav_calendar] CalDAV principal error: {exc}") from exc
 
     if calendar_filter:
         cf_lower = [f.lower() for f in calendar_filter]
@@ -213,13 +216,20 @@ def fetch(
             events_raw = cal.search(start=start_dt, end=end_dt, event=True, expand=True)
         except Exception as exc:
             print(f"[caldav_calendar] WARN: error fetching '{cal_name}': {exc}", file=sys.stderr)
+            report_scope(f"calendar:{cal_name}", "failed", reason=str(exc))
             continue
+        cal_count = 0
         for event_obj in events_raw:
             rec = _parse_event(event_obj, cal_name)
             if rec is not None:
                 all_events.append(rec)
+                cal_count += 1
+        report_scope(f"calendar:{cal_name}", "complete", records=cal_count)
 
     all_events.sort(key=lambda r: r.get("start", ""))
+    if len(all_events) > max_results:
+        report_scope("result-cap", "truncated", records=max_results,
+                     reason=f"{len(all_events)} events exceed max_results {max_results}")
     for rec in all_events[:max_results]:
         if source_tag:
             rec["source"] = source_tag

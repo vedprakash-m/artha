@@ -85,6 +85,8 @@ Show ONLY if any active goal has: `next_action_date` in the past, OR `last_progr
 - Goal pulse uses fixed-width bars for visual consistency
 - ONE THING is always specific: "Call Dr. Smith to confirm [child]'s appointment" not "Handle health matters"
 - Footer shows signal-to-noise ratio (actionable items / total emails processed)
+- **Coverage line (mandatory, every format).** One `Coverage:` line states what the last fetch did and did not check. Produce it with `python3 scripts/stale_banner.py --coverage-line` and place it directly under the title block; the archive inserts it when it is missing. It is generated from persisted connector coverage, never written from memory.
+- **No all-clear over a gap.** If the Coverage line names a degraded, unavailable or anomalous source, do not use "✅ All clear" or "Nothing urgent" for that scope; say what was not checked and when it was last verified. A complete, valid, empty result for a source is *not* a gap and may be reported as quiet.
 
 ### 8.3 Quiet day (no alerts, ≤2 actionable items)
 ```
