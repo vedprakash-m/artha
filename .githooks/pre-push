@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""
+pre-push — scan every commit about to leave the machine
+========================================================
+Git passes one line per ref on stdin:
+    <local ref> <local sha> <remote ref> <remote sha>
+
+For each pushed ref the whole range of *new* commits is scanned (not only the
+tip, so a secret added in commit 1 and removed in commit 3 is still caught).
+Fails closed when a scanner cannot run.  Re-artha §12.9 (WP-00), §12.11.
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import privacy_scan  # noqa: E402
+
+ZERO = privacy_scan.ZERO_SHA
+
+
+def main() -> int:
+    remote = sys.argv[1] if len(sys.argv) > 1 else ""
+    findings: list[privacy_scan.Finding] = []
+    for line in sys.stdin.read().splitlines():
+        parts = line.split()
+        if len(parts) != 4:
+            continue
+        _local_ref, local_sha, _remote_ref, remote_sha = parts
+        if local_sha == ZERO:          # branch deletion
+            continue
+        if remote_sha == ZERO:
+            not_args = ["--not", f"--remotes={remote}"] if remote else []
+            rev_args = [local_sha, *not_args]
+        else:
+            rev_args = [f"{remote_sha}..{local_sha}"]
+        findings += privacy_scan.scan_range(privacy_scan.ARTHA_DIR, rev_args)
+    return privacy_scan.report(findings, "Pre-push")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

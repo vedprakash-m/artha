@@ -249,7 +249,7 @@ _PII_RULES: list[tuple[re.Pattern, str, str]] = [
     # Phone with keyword context (Hindi/English prefix)
     (
         re.compile(
-            r"(?:फ़ोन|फोन|मोबाइल|call|tel|ph(?:one)?)\s*[:#]?\s*[+0]?[\u0966-\u096F\s\-]{10,14}",
+            r"(?:फ़ोन|फोन|मोबाइल|call|tel|ph(?:one)?)\s*[:#]?\s*[+0]?[\u0966-\u096F][\u0966-\u096F\s\-]{8,13}",
             re.IGNORECASE,
         ),
         "[PII-FILTERED-PHONE]",
@@ -385,6 +385,9 @@ def _maybe_add_name_in_subject_pattern() -> None:
 # Core filter function
 # ─────────────────────────────────────────────────────────────────────────────
 
+_EMAIL_ONLY_RULES = ("NAME_IN_SUBJECT", "PII_UNVERIFIED_SCRIPT")
+
+
 def _apply_filter(text: str) -> tuple[str, dict[str, int]]:
     """Apply allowlist sentinels, PII substitutions, and restore sentinels.
 
@@ -431,6 +434,12 @@ def _apply_filter(text: str) -> tuple[str, dict[str, int]]:
     # until full i18n PII coverage is validated (§10.1, Phase 0 safeguard).
     if _DEVANAGARI_RE.search(original_text):
         found["PII_UNVERIFIED_SCRIPT"] = found.get("PII_UNVERIFIED_SCRIPT", 0) + 1
+
+    # Repository/document scans (privacy gate, WP-00): the contextual-name and
+    # language-fence rules exist for *email* content and flag ordinary prose.
+    if os.environ.get("ARTHA_PII_DOC_SCAN"):
+        for noisy in _EMAIL_ONLY_RULES:
+            found.pop(noisy, None)
 
     return text, found
 

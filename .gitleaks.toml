@@ -1,0 +1,23 @@
+# gitleaks configuration — extends the built-in ruleset (re-artha WP-00, D-19).
+# Reviewed exemptions only; each entry names the reason.
+title = "artha gitleaks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Files that contain synthetic or pattern-definition secrets by design"
+paths = [
+  '''tests/unit/test_backup\.py''',
+  '''tests/unit/test_vault\.py''',
+  '''tests/unit/test_pii_guard\.py''',
+  '''tests/dev/test_privacy_gate\.py''',
+  '''scripts/pii_guard\.py''',
+]
+
+[[allowlists]]
+description = "Reviewed false positives: planning-signal entity keys and the public example age recipient from the age README"
+regexes = [
+  '''entity_key"?\s*[=:]\s*"[a-z0-9_]+"''',
+  '''age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p''',
+]
