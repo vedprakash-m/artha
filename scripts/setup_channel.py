@@ -37,7 +37,6 @@ if str(_ARTHA_DIR) not in sys.path:
 _CONFIG_DIR = _ARTHA_DIR / "config"
 _CHANNELS_YAML = _CONFIG_DIR / "channels.yaml"
 _CHANNELS_EXAMPLE = _CONFIG_DIR / "channels.example.yaml"
-_SERVICE_DIR = _ARTHA_DIR / "scripts" / "service"
 
 
 def _print_ok(msg: str) -> None:
@@ -312,97 +311,18 @@ def _test_channel(channel_name: str, config: dict[str, Any]) -> None:
 
 # ── Service installation ───────────────────────────────────────────────────────
 
-def install_service() -> None:
-    """Install the channel listener as an OS background service."""
-    system = platform.system()
-    print(f"\n── Service Installation ({system}) ──────────────────────────────")
+def install_service() -> bool:
+    """Retired (re-artha §1.4, §6.11, D-03): Artha installs no background job.
 
-    if system == "Windows":
-        _install_windows_service()
-    elif system == "Darwin":
-        _install_macos_launchagent()
-    elif system == "Linux":
-        _install_linux_systemd()
-    else:
-        _print_err(f"Unsupported platform: {system}")
-
-
-def _install_windows_service() -> None:
-    tpl = _SERVICE_DIR / "artha-listener.xml"
-    if not tpl.exists():
-        _print_err(f"Service template not found: {tpl}")
-        return
-
-    python_exe = sys.executable
-    artha_root = str(_ARTHA_DIR).replace("\\", "/")
-    content = tpl.read_text(encoding="utf-8")
-    content = content.replace("{{PYTHON_EXE}}", python_exe)
-    content = content.replace("{{ARTHA_ROOT}}", artha_root)
-
-    out_path = _ARTHA_DIR / "tmp" / "artha-listener.xml"
-    out_path.parent.mkdir(exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
-    _print_ok(f"Written: {out_path.name}")
-    print()
-    print("To register the service (requires NSSM — non-sucking service manager):")
-    print(f'  nssm install ArthaChanListener "{python_exe}" "{_ARTHA_DIR / "scripts" / "channel_listener.py"}"')
-    print("  nssm start ArthaChanListener")
-    print()
-    print("Or use Task Scheduler:")
-    print("  • Action: Start a program")
-    print(f'  • Program: {sys.executable}')
-    print(f'  • Arguments: "{_ARTHA_DIR / "scripts" / "channel_listener.py"}"')
-    print("  • Trigger: At log on, repeat every 1 minute")
-
-
-def _install_macos_launchagent() -> None:
-    tpl = _SERVICE_DIR / "com.artha.channel-listener.plist"
-    if not tpl.exists():
-        _print_err(f"Service template not found: {tpl}")
-        return
-
-    python_exe = sys.executable
-    artha_root = str(_ARTHA_DIR)
-    content = tpl.read_text(encoding="utf-8")
-    content = content.replace("{{PYTHON_EXE}}", python_exe)
-    content = content.replace("{{ARTHA_ROOT}}", artha_root)
-
-    launch_agents_dir = Path.home() / "Library" / "LaunchAgents"
-    out_path = launch_agents_dir / "com.artha.channel-listener.plist"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
-    _print_ok(f"Written: {out_path}")
-    print()
-    print(f"To load: launchctl load {out_path}")
-    print(f"To start: launchctl start com.artha.channel-listener")
-    print(f"Logs: ~/Library/Logs/artha-channel-listener.log")
-
-
-def _install_linux_systemd() -> None:
-    tpl = _SERVICE_DIR / "artha-listener.service"
-    if not tpl.exists():
-        _print_err(f"Service template not found: {tpl}")
-        return
-
-    python_exe = sys.executable
-    artha_root = str(_ARTHA_DIR)
-    user = os.environ.get("USER", os.environ.get("LOGNAME", "artha"))
-    content = tpl.read_text(encoding="utf-8")
-    content = content.replace("{{PYTHON_EXE}}", python_exe)
-    content = content.replace("{{ARTHA_ROOT}}", artha_root)
-    content = content.replace("{{USER}}", user)
-
-    service_dir = Path.home() / ".config" / "systemd" / "user"
-    out_path = service_dir / "artha-channel-listener.service"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(content, encoding="utf-8")
-    _print_ok(f"Written: {out_path}")
-    print()
-    print("To enable:")
-    print("  systemctl --user daemon-reload")
-    print("  systemctl --user enable artha-channel-listener")
-    print("  systemctl --user start artha-channel-listener")
-    print("  systemctl --user status artha-channel-listener")
+    The channel listener was an always-on process; Artha now works only inside a
+    session the user starts.  Returns False so callers can tell nothing was installed.
+    """
+    _print_err(
+        "--install-service is retired: Artha does not run a background listener or "
+        "scheduled job (PULL over PUSH).  Approvals and questions happen in a "
+        "user-started CLI or VS Code session."
+    )
+    return False
 
 
 # ── Listener host configuration ────────────────────────────────────────────────

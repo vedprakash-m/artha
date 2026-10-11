@@ -35,6 +35,10 @@ _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
 
 import action_bridge
+
+# The real (fail-closed) helpers, captured before the autouse fixture swaps them for
+# transparent ones so the rest of this file can exercise transport without age.
+_REAL_ENCRYPT = action_bridge._encrypt_field
 from action_bridge import (
     _bridge_filename,
     _write_bridge_file,
@@ -76,6 +80,14 @@ def bridge_dir(tmp_artha):
     return bd
 
 
+@pytest.fixture(autouse=True)
+def _transparent_crypto(monkeypatch):
+    """Transport tests do not need the age binary: swap the fail-closed field helpers
+    for transparent ones.  Fail-closed behaviour is covered in test_action_bridge_failclosed.py."""
+    monkeypatch.setattr(action_bridge, "_encrypt_field", lambda value, pubkey: value)
+    monkeypatch.setattr(action_bridge, "_decrypt_field", lambda value, privkey: value)
+
+
 @pytest.fixture
 def queue(tmp_artha, monkeypatch):
     """ActionQueue backed by an isolated tmp DB (not the real Artha DB)."""
@@ -103,7 +115,8 @@ def _proposal(
         "sensitivity": "standard",
         "reversible": False,
         "undo_window_sec": None,
-        "expires_at": None,
+        # RA-05: the bridge rejects a proposal without a valid expiry (fail closed).
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
         "source_step": None,
         "source_skill": None,
         "linked_oi": None,
@@ -195,12 +208,10 @@ class TestWriteProposal:
             assert data["description"].startswith("age1:")
             assert data["parameters"].startswith("age1:")
 
-    def test_no_encryption_without_pubkey(self, bridge_dir, tmp_artha):
-        p = _proposal(title="Plain title")
-        path = write_proposal(bridge_dir, p, pubkey=None)
-        data = json.loads(path.read_text())
-        assert data["title"] == "Plain title"
-        assert not data["title"].startswith("age1:")
+    def test_no_encryption_without_pubkey_fails_closed(self, bridge_dir, tmp_artha):
+        """Previously a missing recipient silently produced a plaintext bridge file."""
+        with pytest.raises(action_bridge.BridgeEncryptionError):
+            _REAL_ENCRYPT("Plain title", None)
 
     def test_plaintext_routing_envelope(self, bridge_dir, tmp_artha):
         """Even with encryption, routing fields must be plaintext."""

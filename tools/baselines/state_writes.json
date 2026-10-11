@@ -60,7 +60,6 @@
   "scripts/schemas/bridge_schemas.py": 1,
   "scripts/self_model_writer.py": 1,
   "scripts/session_summarizer.py": 2,
-  "scripts/setup_channel.py": 3,
   "scripts/setup_discord.py": 1,
   "scripts/setup_slack.py": 2,
   "scripts/setup_todoist.py": 1,
