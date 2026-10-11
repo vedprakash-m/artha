@@ -555,7 +555,8 @@ def artha_run_skills(skill_name: str | None = None) -> str:
                 if _health_available:
                     _mcp_write_json(_SR_CACHE_FILE, updated_cache)
                 else:
-                    _SR_CACHE_FILE.write_text(__import__('json').dumps(updated_cache, indent=2))
+                    from lib.state_writer import write_atomic as _atomic  # noqa: PLC0415
+                    _atomic(_SR_CACHE_FILE, __import__('json').dumps(updated_cache, indent=2))
             except Exception:
                 pass
 

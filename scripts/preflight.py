@@ -1188,9 +1188,8 @@ def check_workiq() -> CheckResult:
             "checked_at": now_iso,
             "user_name": user_name,
         }
-        cache_path.write_text(
-            json.dumps(cache_data, indent=2), encoding="utf-8"
-        )
+        from lib.state_writer import write_atomic  # noqa: PLC0415
+        write_atomic(cache_path, json.dumps(cache_data, indent=2))
 
         if available and auth_valid:
             return CheckResult(
@@ -3206,7 +3205,9 @@ def _compact_health_check() -> None:
     # Only write if we actually reduced the file (safety gate)
     if len(new_text) < len(text):
         try:
-            hc_path.write_text(new_text, encoding="utf-8")
+            from lib.state_writer import write as _state_write  # noqa: PLC0415
+            _state_write(hc_path, new_text, domain="health-check",
+                         source="preflight.prune_health_check", pii_check=False)
         except Exception:  # noqa: BLE001
             pass  # Non-fatal — original untouched on error
 
