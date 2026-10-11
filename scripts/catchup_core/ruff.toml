@@ -1,0 +1,12 @@
+# Wider rule set for the new core package (re-artha §12.9 WP-00).
+# Applied by `make ruff` as a second pass; the repo-wide pass keeps F811 only.
+extend = "../../pyproject.toml"
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PL", "PT"]
+ignore = ["PLR2004"]
+
+[lint.per-file-ignores]
+"__init__.py" = []

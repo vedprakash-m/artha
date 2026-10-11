@@ -85,6 +85,7 @@ packages = [
     "scripts.channel",
     "scripts.preflight",
     "scripts.narrative",
+    "scripts.catchup_core",
 ]
 
 # ---------------------------------------------------------------------------
@@ -131,3 +132,27 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "catchup_core.*"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+
+[tool.coverage.run]
+branch = true
+source = ["scripts/catchup_core"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
