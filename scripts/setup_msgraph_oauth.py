@@ -101,7 +101,7 @@ _SCOPES      = [
 #      python -c "import keyring; keyring.set_password('msgraph-work-client-id','artha','<CLIENT_ID>')"
 #   5. Run:
 #      python scripts/setup_msgraph_oauth.py --work
-#      (Browser opens; sign in with [REDACTED-listed]@microsoft.com; consent once; done.)
+#      (Browser opens; sign in with your work account; consent once; done.)
 #
 # NOTE: Azure CLI (`az account get-access-token`) only provides directory/admin scopes
 #       in the Microsoft corporate tenant (AADSTS65002 blocks Files.Read). It cannot

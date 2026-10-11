@@ -117,11 +117,32 @@ def _extract_q_section(text: str, q_label: str) -> str:
 # Calendar / meetings parsing
 # ---------------------------------------------------------------------------
 
-_SELF_NAMES = {"ved", "[REDACTED-listed]", "ved [REDACTED-given-name]", "vm"}
+def _load_self_names() -> set[str]:
+    """Names that identify the user as meeting organizer.
+
+    Read from ``ARTHA_SELF_NAMES`` (comma-separated) and the local profile, so no
+    personal identifier is hard-coded in the repository.
+    """
+    import os  # noqa: PLC0415
+    names = {n.strip().lower() for n in os.environ.get("ARTHA_SELF_NAMES", "").split(",") if n.strip()}
+    try:
+        from profile_loader import load_profile  # noqa: PLC0415
+        user = ((load_profile().get("family") or {}).get("primary_user") or {})
+        for key in ("name", "alias", "display_name"):
+            if user.get(key):
+                names.add(str(user[key]).strip().lower())
+                names.add(str(user[key]).split()[0].strip().lower())
+    except Exception:  # noqa: BLE001 — profile is optional for a backfill tool
+        pass
+    return names
+
+
+_SELF_NAMES = _load_self_names()
 
 
 def _is_self_organizer(name: str) -> bool:
-    return name.strip().lower() in _SELF_NAMES or name.strip().lower().startswith("ved")
+    lowered = name.strip().lower()
+    return bool(lowered) and (lowered in _SELF_NAMES or any(lowered.startswith(n) for n in _SELF_NAMES if len(n) >= 3))
 
 
 def _is_ved_marker(line: str) -> bool:

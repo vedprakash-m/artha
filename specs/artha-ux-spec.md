@@ -18,7 +18,7 @@
 | v3.21 | 2026-05-01 | **PM Starter Kit Work OS UX (§32)** — Output format specs for all FR-32 new commands. `work standup`: PAW format (✅ DONE / ⏩ TODAY-TOMORROW / ⛔ BLOCKERS), action-verb-first, max 120 words, word count footer; `teams` variant (plain text, no box drawing, Teams chat paste-ready). `work plan`: 3-I score indicators (●●● = 3/3, ●●○ = 2/3 min for Focus, ●○○ = 1/3 Background); emoji section headers (🎯/📋/🚫/📌); GP-N growth lens tags. `work 11 <alias>`: PAW 1:1 format with Exec Summary + workstream sections (status vocab: New/WIP/Next up/Queued up/Action) + 🙋 Asks Of / 💬 To Be Discussed / 🏆 Wins; staleness warning if people card > 14 days old. `work sprint` / `work prep`: IBA escalation taxonomy (Impediments/Blockers/Asks) + Executive Summary section. People card discoverability: `work people` lists cards with last_interaction dates. Implements PRD v7.26.0 FR-32 + Tech Spec v3.41.0 §39. |
 | v3.20 | 2026-04-25 | **MCP Hybrid Connector UX (§31)** — Fallback indicator in work briefing when MCP Direct serves calendar/mail data instead of WorkIQ AI synthesis. EngHub enrichment supplement display (`📚 Engineering Context` block with retrieval timestamp). Circuit breaker status in `work health` output. Teams fallback skip notice (SC-6). Implements PRD v7.25.0 FR-31 + Tech Spec v3.40.0 §38. |
 | v3.19 | 2026-04-22 | **DataCopilot Reflect Quality UX (§29)** — DC-5 anti-sycophancy pushback interaction patterns (6 trigger templates + response language), evidence tier labels in briefing output (`[state]`, `[signaled]`, `[inferred]`, `[live]`, `[user-confirmed]`), DC-3 audit gate feedback format (blocking check failure messages + rollback notice), `deep reflect` command UX (4 phases, 300s constraint, opt-in only). Implements PRD v7.23.0 FR-29 + Tech Spec v3.39.0 §36. |
-| v3.18 | 2026-04-16 | **ACI M2M Cleanup**** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `[REDACTED-bot_username]`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
+| v3.18 | 2026-04-16 | **ACI M2M Cleanup**** — §28: Removed UX patterns for Brief Request via Claw (§28.3) and Query Relay (§28.4) — OpenClaw M2M bridge disabled. Updated §28.5 error table to reflect standalone Telegram-only operation. Copilot CLI (`gpt-5.4-mini`) is now primary for Telegram Q&A. Single bot: `artha_bot`. Implements PRD v7.18.0 + Tech Spec v3.35.0. |
 | v3.17 | 2026-04-16 | Artha Channel Integration UX — §28: workout logging trigger patterns + acknowledgement format with goal progress, watch alert notification design (immediate Telegram alert vs. daily digest vs. weekly digest), brief request via Claw stale-while-revalidate UX, query relay interaction design (question → 120s timeout expectation → answer). Implements PRD v7.17.0 + Tech Spec v3.34.0. |
 | v3.15 | 2026-04-09 | OpenClaw Home Bridge UX — §27: Home Events briefing section, WhatsApp approval workflow in Telegram, bridge health in `/status` output, kid-arrival presence notification, TTS announcement patterns. Implements PRD v7.14.0 + Tech Spec v3.29.0. |
 | v3.14 | 2026-04-08 | Knowledge Graph v2.0 — §23 Work OS preamble updated to note KB-powered context (7 MCP tools, 950-token budget). Implements PRD v7.13.0 + Tech Spec v3.28.0. |
@@ -3347,7 +3347,7 @@ This section defines the UX patterns for Artha Channel Integration (ACI) surface
 
 ### 28.1 Workout Logging — Trigger Patterns & Acknowledgement
 
-**Trigger:** User sends a workout message to `[REDACTED-bot_username]` Telegram bot.
+**Trigger:** User sends a workout message to `artha_bot` Telegram bot.
 
 **Accepted formats (examples):**
 ```
@@ -3409,7 +3409,7 @@ Briefing delivery continues to work via Telegram push at end of each `scripts/pi
 
 > **Removed in v3.18.** The `query_artha` M2M command and the 120s wait interaction design have been removed.
 
-Free-form Telegram Q&A continues to work: messages sent to `[REDACTED-bot_username]` that do not match a command alias are routed through the multi-LLM chain (Copilot `gpt-5.4-mini` → Gemini → Claude) in `channel_listener.py`. Responses arrive in the same Telegram session, typically within 30–95s.
+Free-form Telegram Q&A continues to work: messages sent to `artha_bot` that do not match a command alias are routed through the multi-LLM chain (Copilot `gpt-5.4-mini` → Gemini → Claude) in `channel_listener.py`. Responses arrive in the same Telegram session, typically within 30–95s.
   "3 active goals: Net Worth (on track, 62%), Exercise 4×/week
   (at risk — 2/4 this week), ByteByteGo course (behind — need
   2h this week). Exercise streak: 6 days."

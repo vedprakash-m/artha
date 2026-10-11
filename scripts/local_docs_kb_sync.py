@@ -293,11 +293,11 @@ def _iter_files(
 
 def _infer_domain(path: Path) -> str:
     # Use only the last 4 path components and require word-boundary match
-    # to avoid false-positives like 'hr' matching inside '[REDACTED-listed]' or path separators.
+    # to avoid false-positives like 'hr' matching inside a user alias or path separators.
     parts = list(path.parts[-4:])
     haystack = " ".join(p.lower() for p in parts)
     for kw, domain in _DOMAIN_KEYWORDS:
-        # Match keyword as a whole word only (avoid 'hr' matching inside '[REDACTED-listed]')
+        # Match keyword as a whole word only (avoid 'hr' matching inside a user alias)
         if re.search(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", haystack):
             return domain
     return "knowledge"
