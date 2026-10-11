@@ -414,7 +414,7 @@ Artha evolves from **read–reason–report** to **read–reason–act**. Every 
 - **`config/workflow/finalize.md`** — Extended Step 12 with explicit skill-to-section mapping: `relationship_pulse` → RELATIONSHIP PULSE, `occasion_tracker` → OCCASIONS & WISHES (with core_family escalation to 🔴), `bill_due_tracker` + `credit_monitor` → Finance section, `school_calendar` → Kids section.
 
 **Channels Config**
-- **`config/channels.yaml`** *(gitignored)* — Created from `channels.example.yaml` template with `telegram.enabled: true`, `bot_username: artha_ved_bot`, `push_enabled: false` (pending bot token). Chat IDs left empty pending `@userinfobot` lookup.
+- **`config/channels.yaml`** *(gitignored)* — Created from `channels.example.yaml` template with `telegram.enabled: true`, `bot_username: artha_bot`, `push_enabled: false` (pending bot token). Chat IDs left empty pending `@userinfobot` lookup.
 
 ---
 

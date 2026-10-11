@@ -126,7 +126,7 @@ class TestCheckChannelConfig:
         config_dir.mkdir()
         self._write_channels_yaml(config_dir,
             "defaults:\n  push_enabled: true\n  listener_host: my-laptop\n"
-            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '8679396255'\n"
+            "channels:\n  telegram:\n    enabled: true\n    recipients:\n      primary:\n        id: '1000000001'\n"
         )
         with patch.object(pf, "ARTHA_DIR", str(tmp_path)):
             result = pf.check_channel_config()
