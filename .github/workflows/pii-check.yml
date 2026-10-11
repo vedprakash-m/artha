@@ -7,81 +7,50 @@ on:
     branches: ["**"]
 
 jobs:
-  pii-check:
-    name: Scan staged files for PII
+  privacy-gate:
+    name: Privacy gate (secrets, PII, forbidden files, owner identifiers)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history so we can diff against base branch
+          fetch-depth: 0   # the whole pushed range is scanned, not only the tip
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install Artha scripts (stdlib-only, no extra deps needed for pii_guard)
-        run: echo "No install needed — pii_guard.py uses stdlib only"
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          VER=8.30.1
+          BASE=https://github.com/gitleaks/gitleaks/releases/download/v${VER}
+          curl -sSfL -o gl.tgz "${BASE}/gitleaks_${VER}_linux_x64.tar.gz"
+          curl -sSfL -o gl.sum "${BASE}/gitleaks_${VER}_checksums.txt"
+          grep "gitleaks_${VER}_linux_x64.tar.gz" gl.sum | sed 's#gitleaks_.*#gl.tgz#' | sha256sum -c -
+          tar -xzf gl.tgz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
 
-      - name: Determine files to scan
-        id: changed_files
+      - name: Scan every tracked file
+        run: python .githooks/privacy_scan.py --tracked
+
+      - name: Scan every commit in the pushed range
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git diff --name-only origin/${{ github.base_ref }}...HEAD > /tmp/changed_files.txt
+            RANGE="origin/${{ github.base_ref }}..HEAD"
           else
-            git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt || \
-              git ls-files --others --cached > /tmp/changed_files.txt
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              RANGE="HEAD --not --remotes=origin"
+            else
+              RANGE="${BEFORE}..${{ github.sha }}"
+            fi
           fi
-          echo "Files to scan:"
-          cat /tmp/changed_files.txt
-
-      - name: Run PII guard on changed files
-        run: |
-          FAIL=0
-          # Files that contain PII patterns by design (regex definitions, test fixtures)
-          EXEMPT="scripts/pii_guard.py tests/unit/test_pii_guard.py tests/unit/test_pii_firewall_actions.py tests/unit/test_action_orchestrator.py tests/unit/test_action_orchestrator_security.py tests/integration/test_catch_up_e2e.py tests/integration/test_action_orchestrator.py tests/ext_agents/test_safety_invariants.py tests/pii_test_data.txt specs/supercharge-reloaded.md .githooks/pre-commit"
-          while IFS= read -r file; do
-            # Skip binary files, encrypted .age files, token files, and .gitignored patterns
-            case "$file" in
-              *.age|*.png|*.jpg|*.jpeg|*.gif|*.ico|*.woff*|*.ttf|*.eot) continue ;;
-              *token*.json|*-token.json|*creds*.json) continue ;;
-              .venv/*|node_modules/*|__pycache__/*) continue ;;
-            esac
-
-            if [ ! -f "$file" ]; then
-              continue
-            fi
-
-            # Skip files that contain PII patterns by design
-            skip=false
-            for exempt in $EXEMPT; do
-              if [ "$file" = "$exempt" ]; then
-                skip=true
-                break
-              fi
-            done
-            if [ "$skip" = true ]; then
-              echo "Skipping (exempt): $file"
-              continue
-            fi
-
-            echo "Scanning: $file"
-            if ! python scripts/pii_guard.py scan "$file"; then
-              echo "::error file=$file::PII detected in $file"
-              FAIL=1
-            fi
-          done < /tmp/changed_files.txt
-
-          if [ "$FAIL" -ne 0 ]; then
-            echo ""
-            echo "PII CHECK FAILED — one or more files contain PII patterns."
-            echo "Run: python scripts/pii_guard.py filter < <file> | diff <file> -"
-            echo "to see what will be redacted, then update the file before committing."
-            exit 1
-          fi
-          echo "PII check passed."
+          echo "scanning range: $RANGE"
+          # shellcheck disable=SC2086
+          python .githooks/privacy_scan.py --range $RANGE
 
       - name: Verify demo fixtures contain no real PII
         run: python scripts/demo_catchup.py --verify
