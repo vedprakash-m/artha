@@ -25,6 +25,7 @@ from preflight.vault_checks import check_keyring_backend, check_vault_health, ch
 from preflight.oauth_checks import check_oauth_token, check_token_freshness, check_msgraph_token
 from preflight.api_checks import check_script_health, check_pii_guard
 from preflight.coverage_checks import check_connector_coverage, check_plaintext_in_sync_root
+from preflight.footprint_checks import check_background_footprint
 from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
     check_briefings_directory, check_briefings_archive_coverage,
@@ -119,6 +120,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     # advisory by design: it degrades a scope, it never stops a Catch-up (re-artha §6.13).
     checks.append(check_connector_coverage())
     checks.append(check_plaintext_in_sync_root())
+    checks.append(check_background_footprint())  # §6.12: PULL only — no jobs, no listeners
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
     checks.append(check_profile_completeness())

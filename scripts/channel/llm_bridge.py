@@ -13,6 +13,7 @@ from typing import Any
 from channel.state_readers import _read_state_file, _apply_scope_filter, _DOMAIN_TO_STATE_FILE
 from channel.formatters import _trim_to_cap, _extract_section_summaries, _strip_frontmatter
 from channel.audit import _audit_log
+from lib.llm_cli_policy import model_args as _model_args
 
 try:
     import sys as _sys
@@ -417,21 +418,15 @@ def _which_copilot() -> str | None:
 def _detect_llm_cli() -> tuple[str, list[str]] | None:
     """Detect available LLM CLI. Returns (executable, base_args) or None.
 
-    Preference order: copilot (gpt-4.5-mini), gemini (3.1-flash), claude (sonnet-4-6).
+    Preference order: copilot, gemini, claude.  No permission-bypass flag is ever
+    passed and no model is hard-coded (``ARTHA_LLM_MODEL_<CLI>`` selects one) —
+    re-artha §12.2 item 1, ``lib/llm_cli_policy.py``.
     """
-    # Copilot CLI — primary
-    copilot = _which_copilot()
-    if copilot:
-        return copilot, ["--yolo", "--model", "gpt-5.4-mini", "--no-custom-instructions", "-s"]
-    # Gemini CLI — first fallback
-    gemini = shutil.which("gemini")
-    if gemini:
-        return gemini, ["--yolo", "--model", "gemini-3.1-flash"]
-    # Claude — last resort
-    claude = shutil.which("claude")
-    if claude:
-        return claude, ["--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]
-    return None
+    clis = _detect_all_llm_clis()
+    if not clis:
+        return None
+    _name, exe, args = clis[0]
+    return exe, args
 
 
 # ── _detect_all_llm_clis ────────────────────────────────────────
@@ -439,20 +434,22 @@ def _detect_llm_cli() -> tuple[str, list[str]] | None:
 def _detect_all_llm_clis() -> list[tuple[str, str, list[str]]]:
     """Return all available CLIs as (name, executable, base_args).
 
-    Preference order: copilot (default model), gemini (2.5-pro), claude (sonnet-4-6).
+    Preference order: copilot, gemini, claude.  Arguments never include a flag that
+    disables approval prompts, and models come only from the environment.
     """
+    from lib.llm_cli_policy import model_args  # noqa: PLC0415
     clis: list[tuple[str, str, list[str]]] = []
     copilot = _which_copilot()
     if copilot:
-        # gpt-5.4-mini via Copilot CLI; --no-custom-instructions prevents AGENTS.md
-        # tool-use traces; -s (silent) outputs only the agent response for scripting.
-        clis.append(("copilot", copilot, ["--yolo", "--model", "gpt-5.4-mini", "--no-custom-instructions", "-s"]))
+        # --no-custom-instructions keeps workspace instructions out; -s (silent)
+        # outputs only the agent response for scripting.
+        clis.append(("copilot", copilot, ["--no-custom-instructions", "-s", *model_args("copilot")]))
     gemini = shutil.which("gemini")
     if gemini:
-        clis.append(("gemini", gemini, ["--yolo", "--model", "gemini-2.5-pro"]))
+        clis.append(("gemini", gemini, [*model_args("gemini")]))
     claude = shutil.which("claude")
     if claude:
-        clis.append(("claude", claude, ["--dangerously-skip-permissions", "--model", "claude-sonnet-4-6"]))
+        clis.append(("claude", claude, [*model_args("claude")]))
     return clis
 
 
@@ -492,14 +489,21 @@ async def _call_single_llm(
     """Call a single LLM CLI and return its response."""
     import tempfile
     import re as _re
+    from lib.llm_cli_policy import PermissionBypassError, assert_no_permission_bypass  # noqa: PLC0415
+
+    try:
+        assert_no_permission_bypass(base_args)
+    except PermissionBypassError as exc:
+        log.error("[%s] launch refused: %s", name, exc)
+        raise LLMUnavailableError(reason="permission_bypass_refused", last_exit_code=-1) from exc
 
     with tempfile.TemporaryDirectory() as tmpdir:
         prompt_file = Path(tmpdir) / "prompt.txt"
         prompt_file.write_text(prompt_text, encoding="utf-8")
 
-        # Run CLIs from the Artha workspace so they pick up project config
-        # (e.g. Claude loads CLAUDE.md, skills, and can invoke vault/tools).
-        workspace = str(_ARTHA_DIR)
+        # Run from the throw-away directory, never the Artha workspace: the CLI must
+        # not load project instructions, skills or state, nor reach the vault tools.
+        workspace = tmpdir
 
         # Each CLI has a different stdin/file-reading pattern
         if name == "gemini":
@@ -736,7 +740,7 @@ async def _ask_llm_ensemble(question: str, context: str) -> str:
         try:
             final = await _call_single_llm(
                 "claude-haiku", claude_exe,
-                ["--dangerously-skip-permissions", "--model", "haiku"],
+                _model_args("claude"),
                 consolidation_prompt, "Synthesize the best answer now.",
             )
         except LLMUnavailableError:

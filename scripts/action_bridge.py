@@ -103,30 +103,55 @@ def _bridge_filename(action_id: str) -> str:
 # Encryption helpers (delegates to action_queue helpers via lazy import)
 # ---------------------------------------------------------------------------
 
+class BridgeEncryptionError(RuntimeError):
+    """An encryption or decryption step failed.  The bridge fails closed: nothing is
+    written in plaintext and nothing undecryptable is ingested (re-artha RA-05)."""
+
+
+_AGE_PREFIX = "age1:"
+
+
 def _encrypt_field(value: str, pubkey: str | None) -> str:
-    """Encrypt a string with age. Returns 'age1:...' prefix or original on failure."""
-    if not pubkey or not value:
+    """Encrypt a string with age and return the ``age1:`` ciphertext.
+
+    Fails closed: with no recipient key, on any helper error, or when the delegate
+    would fall back to returning the original text, this raises
+    :class:`BridgeEncryptionError`.  An empty value has nothing to protect.
+    """
+    if not value:
         return value
+    if not pubkey:
+        raise BridgeEncryptionError("no age recipient configured; refusing to write plaintext")
     try:
         _ensure_scripts_on_path()
         from action_queue import _encrypt_field as _aq_enc  # noqa: PLC0415
-        return _aq_enc(value, pubkey)
-    except Exception as exc:
-        log.warning("encrypt_field_failed error=%s", exc)
-        return value
+        out = _aq_enc(value, pubkey)
+    except Exception as exc:  # noqa: BLE001
+        raise BridgeEncryptionError(f"encryption failed: {type(exc).__name__}") from exc
+    if not isinstance(out, str) or not out.startswith(_AGE_PREFIX):
+        raise BridgeEncryptionError("encryption helper did not return ciphertext")
+    return out
 
 
 def _decrypt_field(value: str, privkey: str | None) -> str:
-    """Decrypt an age-encrypted field. Pass-through if not encrypted."""
-    if not value or not privkey:
+    """Decrypt an age-encrypted field; plain values pass through unchanged.
+
+    Fails closed: an ``age1:`` value that cannot be decrypted raises instead of
+    being handed on as if it were content.
+    """
+    if not value or not value.startswith(_AGE_PREFIX):
         return value
+    if not privkey:
+        raise BridgeEncryptionError("encrypted field but no private key available")
     try:
         _ensure_scripts_on_path()
         from action_queue import _decrypt_field as _aq_dec  # noqa: PLC0415
-        return _aq_dec(value, privkey)
-    except Exception as exc:
-        log.warning("decrypt_field_failed error=%s", exc)
-        return value
+        out = _aq_dec(value, privkey)
+    except Exception as exc:  # noqa: BLE001
+        raise BridgeEncryptionError(f"decryption failed: {type(exc).__name__}") from exc
+    if out == value or (isinstance(out, str) and out.startswith(_AGE_PREFIX)):
+        raise BridgeEncryptionError("decryption helper returned ciphertext")
+    return out
 
 
 def _ensure_scripts_on_path() -> None:
@@ -417,26 +442,37 @@ def ingest_proposals(
             _safe_delete(f)
             continue
 
-        # ── Expiry check ────────────────────────────────────────────────
+        # ── Expiry check (fail closed: a proposal needs a valid, future expiry) ──
         expires_at = data.get("expires_at")
-        if expires_at:
-            try:
-                exp = datetime.fromisoformat(expires_at)
-                if exp.tzinfo is None:
-                    exp = exp.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) > exp:
-                    log.info("[bridge] proposal %s expired (%s) — skipping", action_id[:12], expires_at)
-                    _audit_event(artha_dir, "BRIDGE_PROPOSAL_SKIP",
-                                 action_id=action_id[:16], reason="expired")
-                    _safe_delete(f)
-                    continue
-            except ValueError:
-                pass  # malformed expiry — proceed anyway
+        try:
+            if not expires_at or not isinstance(expires_at, str):
+                raise ValueError("missing expiry")
+            exp = datetime.fromisoformat(expires_at)
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+        except ValueError:
+            log.warning("[bridge] proposal %s has a missing or malformed expiry — rejected", action_id[:12])
+            _audit_event(artha_dir, "BRIDGE_PROPOSAL_SKIP",
+                         action_id=action_id[:16], reason="invalid_expiry")
+            _safe_delete(f)
+            continue
+        if datetime.now(timezone.utc) > exp:
+            log.info("[bridge] proposal %s expired (%s) — skipping", action_id[:12], expires_at)
+            _audit_event(artha_dir, "BRIDGE_PROPOSAL_SKIP",
+                         action_id=action_id[:16], reason="expired")
+            _safe_delete(f)
+            continue
 
-        # ── Decrypt payload ─────────────────────────────────────────────
-        title = _decrypt_field(data.get("title", ""), privkey)
-        description = _decrypt_field(data.get("description", ""), privkey)
-        params_str = _decrypt_field(data.get("parameters", "{}"), privkey)
+        # ── Decrypt payload (fail closed) ───────────────────────────────
+        try:
+            title = _decrypt_field(data.get("title", ""), privkey)
+            description = _decrypt_field(data.get("description", ""), privkey)
+            params_str = _decrypt_field(data.get("parameters", "{}"), privkey)
+        except BridgeEncryptionError as exc:
+            log.error("[bridge] proposal %s not ingested: %s", action_id[:12], exc)
+            _audit_event(artha_dir, "BRIDGE_PROPOSAL_SKIP",
+                         action_id=action_id[:16], reason="decrypt_failed")
+            continue   # keep the file: it can be retried once the key is available
 
         try:
             parameters = json.loads(params_str)

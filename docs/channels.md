@@ -136,39 +136,21 @@ Once the Layer 2 listener is running, send these to your bot:
 
 ---
 
-## Background Listener Service
+## Background Listener Service — retired
 
-### macOS (LaunchAgent)
-
-```bash
-python scripts/setup_channel.py --install-service
-# Then:
-launchctl load ~/Library/LaunchAgents/com.artha.channel-listener.plist
-launchctl start com.artha.channel-listener
-```
-
-Logs: `~/Library/Logs/artha-channel-listener.log`
-
-### Linux (systemd user service)
+The always-on listener (LaunchAgent, systemd user service, Windows Task Scheduler entry)
+has been **retired** (re-artha §1.4 and §6.11, decision D-03). Artha owns no background
+job, listener or schedule: it works only inside a session you start. `setup_channel.py
+--install-service` now refuses and installs nothing. If a previous install exists on a
+machine, remove it:
 
 ```bash
-python scripts/setup_channel.py --install-service
-# Then:
-systemctl --user daemon-reload
-systemctl --user enable artha-channel-listener
-systemctl --user start artha-channel-listener
-systemctl --user status artha-channel-listener
+launchctl bootout gui/$UID ~/Library/LaunchAgents/com.artha.channel-listener.plist   # macOS
+systemctl --user disable --now artha-channel-listener                                # Linux
+schtasks /Delete /TN ArthaChannelListener /F                                         # Windows
 ```
 
-Logs: `journalctl --user -u artha-channel-listener -f`
-
-### Windows (Task Scheduler)
-
-```bash
-python scripts/setup_channel.py --install-service
-# Generates a configured XML in tmp/artha-listener.xml
-# Register with NSSM or Task Scheduler (see instructions printed by the wizard)
-```
+`python scripts/preflight.py` reports any remaining scheduler entry as "Background footprint".
 
 ---
 
