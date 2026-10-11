@@ -302,3 +302,11 @@ OneNote/
 skills/
 # But scripts/skills/ is the Python skill module (no PII) — commit it
 !scripts/skills/
+
+# Personal CV content baked into a script — local only (re-artha WP-00 privacy audit)
+scripts/career_docx_visual_google.py
+
+# Local tooling artifacts
+coverage.xml
+.coverage
+.mypy_cache/

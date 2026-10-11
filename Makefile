@@ -3,8 +3,18 @@
 
 PYTHON ?= ~/.artha-venvs/.venv/bin/python
 PYTEST ?= $(PYTHON) -m pytest
+RUFF ?= ruff
 
-.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start install-fonts install-playwright
+# macOS: /usr/bin/{git,make} are shims for the selected developer directory and
+# refuse to run until the Xcode licence is accepted (re-artha D-01). Without
+# touching system settings, prefer the Command Line Tools when they exist.
+ifeq ($(shell uname -s),Darwin)
+ifneq ($(wildcard /Library/Developer/CommandLineTools/usr/bin/git),)
+export DEVELOPER_DIR ?= /Library/Developer/CommandLineTools
+endif
+endif
+
+.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start install-fonts install-playwright coverage diff-coverage mypy privacy-history hooks
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -13,52 +23,33 @@ help: ## Show this help
 start: ## First-time setup — clone → demo briefing in 60 seconds
 	@bash setup.sh
 
-test: ## Run full test suite
-	$(PYTEST) tests/ --tb=short -q
+test: ## Run full test suite in an isolated copy of the checkout (never against live data)
+	$(PYTHON) tools/run_tests_isolated.py tests -q --tb=short --ignore=tests/work
 
-lint: ## Syntax-check all Python files
-	@find scripts/ -name "*.py" ! -path "*/__pycache__/*" ! -path "*/.archive/*" \
-		-exec $(PYTHON) -m py_compile {} \;
-	@$(PYTHON) -m py_compile artha.py
+lint: ## Syntax-check all Python files (fails on any error)
+	@$(PYTHON) -m compileall -q -x '(__pycache__|\.archive|\.venv)' scripts tests tools artha.py
 	@echo "✓ Syntax OK"
 
-ruff: ## Run ruff linter (F811 redefinition, F401 unused import, etc.)
-	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check scripts/ tests/ --config pyproject.toml; \
-		echo "✓ Ruff OK"; \
-	else \
-		echo "⚠ ruff not installed — skipping (pip install ruff)"; \
+ruff: ## Run ruff linter (fails on violations or when ruff is missing)
+	@command -v $(RUFF) >/dev/null 2>&1 || { echo "ERROR: ruff not installed — install it (pip install ruff)"; exit 1; }
+	@$(RUFF) check scripts/ tests/ tools/ --config pyproject.toml
+	@if [ -f scripts/catchup_core/ruff.toml ]; then \
+		$(RUFF) check scripts/catchup_core --config scripts/catchup_core/ruff.toml; \
 	fi
+	@echo "✓ Ruff OK"
 
-import-check: ## Catch 'from scripts.X' imports inside scripts/ (dual-import bug)
-	@FAIL=0; \
-	HITS=$$($(PYTHON) -c "\
-	import ast, pathlib; \
-	[print(f'{p}:{n.lineno}: from {n.module}') \
-	 for p in sorted(pathlib.Path('scripts').rglob('*.py')) \
-	 if '__pycache__' not in str(p) \
-	 for n in ast.walk(ast.parse(p.read_text())) \
-	 if isinstance(n, ast.ImportFrom) and (n.module or '').startswith('scripts.')]" 2>/dev/null); \
-	if [ -n "$$HITS" ]; then \
-		echo "ERROR: 'from scripts.X' imports found inside scripts/:"; \
-		echo "$$HITS"; \
-		echo "Use 'from X import ...' instead (scripts/ is on sys.path)."; \
-		exit 1; \
-	fi; \
-	echo "✓ No dual-import patterns"
+import-check: ## Catch 'from scripts.X' imports inside scripts/ (dual-import bug); parse errors fail
+	@$(PYTHON) tools/import_check.py scripts
 
-pii-scan: ## Scan distributable files for PII
-	@FAIL=0; \
-	for f in config/Artha.core.md config/connectors.yaml config/actions.yaml \
-	         config/user_profile.example.yaml config/user_profile.schema.json \
-	         prompts/*.md docs/*.md CONTRIBUTING.md README.md; do \
-		if [ -f "$$f" ]; then \
-			if ! $(PYTHON) scripts/pii_guard.py scan < "$$f" > /dev/null 2>&1; then \
-				echo "PII detected: $$f"; FAIL=1; \
-			fi; \
-		fi; \
-	done; \
-	[ "$$FAIL" -eq 0 ] && echo "✓ PII scan clean" || exit 1
+pii-scan: ## Privacy gate: every tracked file plus every commit not yet pushed (secrets, PII, owner identifiers, gitleaks)
+	@$(PYTHON) .githooks/privacy_scan.py --tracked
+	@$(PYTHON) .githooks/privacy_scan.py --unpushed
+
+privacy-history: ## One-time audit: every commit reachable from main, remotes and tags
+	@$(PYTHON) .githooks/privacy_scan.py --history
+
+hooks: ## Activate the repository privacy hooks (pre-commit, pre-push)
+	git config core.hooksPath .githooks
 
 validate: ## Validate example profile against JSON schema
 	@$(PYTHON) -c "\
@@ -81,21 +72,25 @@ clean: ## Remove __pycache__, .pyc files, and test output artifacts
 	      tests_output.txt tests_output2.txt last_tests.txt
 	@echo "✓ Clean"
 
-lint-state-writes: ## AFW Wave 0: ban direct .write_text() on state files outside state_writer.py
-	@HITS=$$(grep -rn '\.write_text(' scripts/ \
-	  | grep -v 'scripts/lib/state_writer\.py' \
-	  | grep -v 'scripts/lib/health_check_writer\.py' \
-	  | grep -v '/test_' \
-	  | grep -v '\.write_text.*tmp/' \
-	  || true); \
-	if [ -n "$$HITS" ]; then \
-		echo "FAIL: direct .write_text() detected — route state writes through state_writer.write(), tmp writes through state_writer.write_atomic()"; \
-		echo "$$HITS"; \
-		exit 1; \
-	fi; \
-	echo "✓ No rogue .write_text() calls"
+lint-state-writes: ## AFW Wave 0: no NEW direct .write_text() outside state writers (ratcheted baseline)
+	@$(PYTHON) tools/lint_state_writes.py .
 
-check: lint ruff import-check lint-state-writes test pii-scan validate ## Full CI check
+# ── New-core quality gates (re-artha §12.8: >=90% line+branch, strict typing) ──
+CORE_PKG ?= scripts/catchup_core
+CORE_TESTS ?= tests/catchup_core
+COV_MIN ?= 90
+
+coverage: ## Line+branch coverage floor on the new core package (fails below COV_MIN)
+	@$(PYTEST) $(CORE_TESTS) -q -p no:cacheprovider --cov=$(CORE_PKG) --cov-branch \
+		--cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN)
+
+diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml from `make coverage`)
+	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --fail-under=$(COV_MIN)
+
+mypy: ## Strict type check of the new core package
+	@$(PYTHON) -m mypy $(CORE_PKG)
+
+check: lint ruff import-check lint-state-writes test coverage mypy pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"
 
 install-fonts: ## Download Space Grotesk + DM Sans woff2 fonts for CV PDF generation
