@@ -1,0 +1,41 @@
+# Kids/School Domain pack v0 (re-artha Appendix B). Thresholds are starting values (D-12):
+# the owner may override each; fixtures are synthetic or redacted.
+domain: kids_school
+version: 0.1.0
+confidentiality: restricted
+impact: consequential
+bindings:
+  school_local: America/Los_Angeles
+  school_calendar:
+    holidays: []
+sources:
+  - {connector: school_email,  required: true,  freshness_hours: 48}
+  - {connector: school_portal, required: false, freshness_hours: 72, class: notified_not_fetched}
+  - {connector: calendar,      required: true,  freshness_hours: 48}
+predicates:
+  - {name: exam_registration_deadline, type: date, high_stakes: true, lead_days: 2,
+     authority: [official_portal_notice, school_email, parent_note]}
+  - {name: test_date, type: date, authority: [official_portal_notice, school_email]}
+  - {name: accommodation_status, type: enum, values: [none, requested, approved, expired],
+     high_stakes: true, confidentiality: restricted, authority: [official_document, school_email]}
+  - {name: grade_alert, type: enum, values: [ok, below_threshold], authority: [school_portal, school_email]}
+  - {name: missing_assignment, type: text, authority: [school_portal, school_email]}
+  - {name: appointment_time, type: datetime, authority: [provider_notice, calendar]}
+  - {name: signup_deadline, type: date, lead_days: 1, authority: [school_email, parent_note]}
+  - {name: plan_document_status, type: enum, values: [draft, final, expired], high_stakes: true,
+     authority: [official_document]}
+alert_rules:
+  - {predicate: exam_registration_deadline, when: "0 <= days_until <= 7", severity: P2}
+  - {predicate: exam_registration_deadline, when: "0 <= days_until <= 2", severity: P1}
+  - {predicate: exam_registration_deadline, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+  - {predicate: grade_alert, when: "value == 'below_threshold'", severity: P3}
+deadline_arithmetic:
+  timezone: school_local
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: school_calendar
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - deadline_vs_calendar_conflict
+  - appointment_vs_school_schedule
+fixtures_dir: tests/fixtures/kids_school/
