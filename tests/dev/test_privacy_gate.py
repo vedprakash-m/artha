@@ -63,7 +63,17 @@ class Sandbox:
 
 
 @pytest.fixture
-def sandbox(tmp_path):
+def stub_gitleaks(tmp_path):
+    """A gitleaks that always passes: the regex layers are what most tests exercise,
+    and CI test runners do not install gitleaks (the privacy-gate job does)."""
+    path = tmp_path / "gitleaks-stub"
+    path.write_text("#!/bin/sh\nexit 0\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+@pytest.fixture
+def sandbox(tmp_path, stub_gitleaks):
     root = tmp_path / "work"
     (root / ".githooks").mkdir(parents=True)
     (root / "scripts").mkdir()
@@ -72,7 +82,7 @@ def sandbox(tmp_path):
         (root / ".githooks" / name).chmod(
             (root / ".githooks" / name).stat().st_mode | stat.S_IXUSR)
     shutil.copy(REPO / "scripts" / "pii_guard.py", root / "scripts" / "pii_guard.py")
-    sb = Sandbox(root)
+    sb = Sandbox(root, {"ARTHA_GITLEAKS": stub_gitleaks})
     sb.git("init", "-q", "-b", "main")
     sb.git("config", "core.hooksPath", ".githooks")
     sb.git("config", "commit.gpgsign", "false")
@@ -143,7 +153,6 @@ def remote(tmp_path, sandbox):
     return bare
 
 
-@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
 def test_push_scans_every_commit_not_just_tip(sandbox, remote):
     sandbox.commit("base")
     sandbox.git("push", "-q", "origin", "main")
@@ -164,7 +173,6 @@ def test_push_scans_every_commit_not_just_tip(sandbox, remote):
     assert "GitHub token" in out(result)
 
 
-@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
 def test_clean_push_succeeds(sandbox, remote):
     sandbox.commit("base")
     sandbox.write("src/a.txt", "fine\n")
@@ -172,7 +180,6 @@ def test_clean_push_succeeds(sandbox, remote):
     assert sandbox.git("push", "origin", "main", check=False).returncode == 0
 
 
-@pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
 def test_first_push_audits_whole_history(sandbox, remote):
     sandbox.write("old.txt", f"k={AWS_KEY}\n")
     sandbox.git("add", "-A")
@@ -205,6 +212,7 @@ def test_repository_gitleaks_config_is_valid(tmp_path):
 
 @pytest.mark.skipif(GITLEAKS is None, reason="gitleaks not installed")
 def test_gitleaks_config_error_is_reported_as_scanner_error_not_a_leak(tmp_path, sandbox):
+    sandbox.extra_env["ARTHA_GITLEAKS"] = GITLEAKS
     (sandbox.root / ".gitleaks.toml").write_text("this is [not valid toml\n")
     sandbox.write("docs/a.txt", "hello\n")
     result = sandbox.commit("x", check=False)
