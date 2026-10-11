@@ -188,9 +188,8 @@ def check_workiq() -> CheckResult:
             "checked_at": now_iso,
             "user_name": user_name,
         }
-        cache_path.write_text(
-            json.dumps(cache_data, indent=2), encoding="utf-8"
-        )
+        from lib.state_writer import write_atomic  # noqa: PLC0415
+        write_atomic(cache_path, json.dumps(cache_data, indent=2))
 
         if available and auth_valid:
             return CheckResult(
