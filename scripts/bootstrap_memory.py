@@ -89,6 +89,17 @@ def main() -> int:
     artha_dir = Path(args.artha_dir).resolve()
     dry_run = args.dry_run
 
+    # RA-06: automatic extraction is off unless deliberately enabled (lib.memory_policy).
+    from lib import memory_policy  # noqa: PLC0415
+    if not memory_policy.extraction_allowed():
+        print(
+            "ℹ️  Automatic memory extraction is disabled (RA-06). Set "
+            "harness.memory_extraction.allow_automatic: true only after the comparison "
+            "against manual curation passes.",
+            file=sys.stderr,
+        )
+        return 0
+
     from fact_extractor import extract_facts_from_summary, persist_facts  # noqa: PLC0415
 
     briefings_dir = artha_dir / "briefings"

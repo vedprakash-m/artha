@@ -24,7 +24,7 @@ Usage
     python scripts/pipeline.py | python scripts/email_classifier.py
 
     # Process a saved JSONL file:
-    python scripts/email_classifier.py --input tmp/pipeline_output.jsonl
+    python scripts/email_classifier.py --input ~/.artha-local/pipeline_output.jsonl
 
     # Print summary statistics only:
     python scripts/email_classifier.py --stats

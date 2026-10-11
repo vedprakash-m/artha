@@ -1677,7 +1677,8 @@ def run(
 
     # 1. Collect signals from email extractor (skip in --mcp mode)
     email_signals: list[Any] = []
-    emails_path = artha_dir / "tmp" / "pipeline_output.jsonl"
+    from lib.local_paths import pipeline_output_path  # noqa: PLC0415
+    emails_path = pipeline_output_path()  # machine-local; never the synced workspace
 
     if mcp_mode:
         if verbose:

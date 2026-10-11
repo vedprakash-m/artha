@@ -311,9 +311,9 @@ Also call `artha_run_skills` to run data fidelity skills in parallel with the fe
 
 **Tier 2 — Unified pipeline (when MCP unavailable, `config/connectors.yaml` exists):**
 ```bash
-python3 scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose --output tmp/pipeline_output.jsonl
+python3 scripts/pipeline.py --since "$LAST_CATCH_UP" --verbose --output ~/.artha-local/pipeline_output.jsonl
 ```
-Output: JSONL stream to stdout + atomic write to `tmp/pipeline_output.jsonl` for the Action Layer (Step 12.5). Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
+Output: JSONL stream to stdout + atomic write to `~/.artha-local/pipeline_output.jsonl` for the Action Layer (Step 12.5). Runs all enabled connectors (gmail, outlook_email, icloud_email, google_calendar, outlook_calendar, icloud_calendar, canvas_lms, onenote) in a single invocation with shared auth, retry, and health logging. Each connector is defined in `config/connectors.yaml` and implemented in `scripts/connectors/`. Connectors execute **in parallel** via `ThreadPoolExecutor` (max 8 threads); JSONL output is buffered per-connector and flushed sequentially after all finish. Per-connector timing is persisted to `tmp/pipeline_metrics.json`.
 
 **Important — Google Calendar:** The pipeline reads calendar IDs from `config/user_profile.yaml` under `integrations.google_calendar.calendar_ids`. Ensure the family shared calendar and US Holidays calendar are configured — do NOT silently drop them.
 
@@ -531,7 +531,7 @@ Before processing **any** email body or subject:
 > **Context Offloading (Phase 1 — harness):**
 > After Steps 4 and 5 complete, offload large intermediate artifacts to `tmp/`.
 > Use `scripts/context_offloader.py` to write and receive compact summary cards:
-> - Pipeline JSONL output → `tmp/pipeline_output.jsonl` (keep only source counts, date range, volume tier, first 10 records as preview in context)
+> - Pipeline JSONL output → `~/.artha-local/pipeline_output.jsonl` (keep only source counts, date range, volume tier, first 10 records as preview in context)
 > - Processed email batch → `tmp/processed_emails.json` (keep only the routing table output: domain → email count)
 > Config flag: `harness.context_offloading.enabled` (default: true)
 > **PII guard runs on all content BEFORE offloading** — never write raw PII to tmp/.
@@ -1113,7 +1113,7 @@ python3 scripts/action_orchestrator.py --run --mcp
 ```
 
 The orchestrator:
-1. Reads `tmp/pipeline_output.jsonl` (written by Step 4)
+1. Reads `~/.artha-local/pipeline_output.jsonl` (written by Step 4)
 2. Reads `tmp/ai_signals.jsonl` (written by you during Steps 7–8, if any)
 3. Runs deterministic signal extraction (email patterns + state patterns)
 4. Composes ActionProposals and queues them in `actions.db` (platform-local)
@@ -1370,7 +1370,7 @@ This file contains redacted but still corporate meeting data. Delete it regardle
 **18a′ — Delete harness offload artifacts (Phase 1–5):**
 ```bash
 # Remove all context-offloading and session tmp files
-rm -f tmp/pipeline_output.jsonl 2>/dev/null || true
+rm -f ~/.artha-local/pipeline_output.jsonl 2>/dev/null || true
 rm -f tmp/processed_emails.json 2>/dev/null || true
 rm -rf tmp/domain_extractions/ 2>/dev/null || true
 rm -f tmp/cross_domain_analysis.json 2>/dev/null || true
@@ -1486,7 +1486,7 @@ python3 scripts/kb_lint.py --brief-mode
 
 After channel push (Step 20), extract durable facts from this session and persist them to `state/memory.md`. This enables cross-session learning — corrections made today suppress false-positive alerts tomorrow.
 
-**Only runs if `harness.agentic.fact_extraction.enabled: true` in `artha_config.yaml`** (defaults to `true`).
+**DISABLED by default (re-artha RA-06, WP-03).** Runs only when `harness.memory_extraction.allow_automatic: true` is set deliberately in `artha_config.yaml`; a missing or unreadable config means off, and the legacy `fact_extraction` / `post_catchup_memory` keys are ignored (enforced in `scripts/lib/memory_policy.py`). Do not run this step.
 
 ```python
 python3 -c "

@@ -143,10 +143,22 @@ def check_open_items(auto_fix: bool = False) -> CheckResult:
         )
     try:
         with open(path, encoding="utf-8") as f:
-            f.read(100)
-        return CheckResult("open_items.md", "P1", True, "open_items.md accessible ✓")
+            text = f.read()
     except OSError as exc:
         return CheckResult("open_items.md", "P1", False, f"open_items.md unreadable: {exc}")
+    try:
+        from lib.open_items_lint import lint  # noqa: PLC0415
+        errors = [i for i in lint(text) if i.is_error]
+    except Exception:  # noqa: BLE001 — a linter fault must not hide the file check
+        errors = []
+    if errors:
+        first = errors[0]
+        return CheckResult(
+            "open_items.md", "P1", False,
+            f"{len(errors)} schema issue(s); first at line {first.line}: {first.code}",
+            fix_hint="Run: python scripts/lib/open_items_lint.py --check  (then --fix for indentation repairs)",
+        )
+    return CheckResult("open_items.md", "P1", True, "open_items.md accessible ✓ (schema clean)")
 
 
 def check_planning_signals() -> CheckResult:

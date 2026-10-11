@@ -43,6 +43,12 @@ from action_orchestrator import (
 from pipeline import _validate_output_path
 
 
+
+def _local_pipeline_output():
+    """Machine-local pipeline output (WP-03: never inside the synced workspace)."""
+    from lib.local_paths import pipeline_output_path
+    return pipeline_output_path()
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -153,7 +159,7 @@ def test_pii_blocked_at_propose(artha_dir):
     mock_composer = MagicMock()
     mock_composer.compose.return_value = proposal_with_pii
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    _local_pipeline_output().write_text(
         json.dumps({"subject": "Finance", "from": "bank@co.com", "marketing": False}) + "\n"
     )
 
@@ -210,7 +216,7 @@ def test_pii_allowed_in_allowlisted_fields(artha_dir):
     mock_composer = MagicMock()
     mock_composer.compose.return_value = proposal
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    _local_pipeline_output().write_text(
         json.dumps({"subject": "Invitation", "from": "friend@example.com", "marketing": False}) + "\n"
     )
 
@@ -250,7 +256,7 @@ def test_unknown_signal_type_dropped(artha_dir):
     mock_executor.expire_stale.return_value = 0
     mock_executor.list_pending.return_value = []
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    _local_pipeline_output().write_text(
         json.dumps({"subject": "Test", "from": "x@y.com", "marketing": False}) + "\n"
     )
 

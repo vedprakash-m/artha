@@ -412,6 +412,10 @@ def print_status() -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+#: Exit status when any item could not be synced (distinct from 1 = setup/auth error).
+EXIT_SYNC_FAILED = 3
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sync Artha open_items.md ↔ Microsoft To Do"
@@ -462,11 +466,19 @@ def main() -> None:
         result = pull_completions(access_token, dry_run=args.dry_run)
         print(f"[todo_sync] Pull complete: {result['completed']} completed, "
               f"{result['still_open']} still open, {result['failed']} failed")
+        if result["failed"] and not args.dry_run:
+            print(f"[todo_sync] TODO_SYNC_FAILED: {result['failed']} item(s) could not be checked "
+                  "— completion state in Open Items may be stale.", file=sys.stderr)
+            sys.exit(EXIT_SYNC_FAILED)
     else:
         result = push_items(access_token, dry_run=args.dry_run)
         if not args.dry_run:
             print(f"[todo_sync] Push complete: {result['pushed']} pushed, "
                   f"{result['failed']} failed, {result['skipped']} already synced")
+            if result["failed"]:
+                print(f"[todo_sync] TODO_SYNC_FAILED: {result['failed']} open item(s) were NOT "
+                      "pushed to Microsoft To Do and will not appear there.", file=sys.stderr)
+                sys.exit(EXIT_SYNC_FAILED)
 
 
 if __name__ == "__main__":

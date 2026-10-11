@@ -63,6 +63,14 @@ Outcome fields populated: `outcome_corrections_next_session`, `outcome_items_res
 
 ### Step 11c — Persistent Fact Extraction
 
+> **DISABLED by default (re-artha RA-06, ADR-006, WP-03).** Automatic extraction of
+> personal facts from Briefings is off. The scripts below return without writing
+> unless `harness.memory_extraction.allow_automatic: true` is set deliberately in
+> `config/artha_config.yaml`; the legacy `post_catchup_memory.enabled` key is ignored
+> and a config error never enables it (enforced in `scripts/lib/memory_policy.py`, not
+> by this instruction). **Do not run the commands in this step.** Record corrections
+> and facts through the curated State Files instead.
+
 **SKIP in read-only mode** → log `⏭️ Step 11c skipped — read-only mode`
 
 After the briefing is finalized (Step 20), run the deterministic memory pipeline.
@@ -110,9 +118,9 @@ else:
 
 After pipeline run, write calendar events to state/calendar.md:
 ```bash
-python3 scripts/calendar_writer.py --input tmp/pipeline_output.jsonl
+python3 scripts/calendar_writer.py --input ~/.artha-local/pipeline_output.jsonl
 ```
-If `tmp/pipeline_output.jsonl` was not written (AI CLI mode), skip silently.
+If `~/.artha-local/pipeline_output.jsonl` was not written (AI CLI mode), skip silently.
 
 If during this session the user corrected a previous finding (e.g., "that's not an anomaly"
 or "ignore X"), an explicit correction fact is created automatically. These corrections
@@ -204,7 +212,7 @@ python3 scripts/action_orchestrator.py --run
 ```
 
 The orchestrator reads:
-- `tmp/pipeline_output.jsonl` (from Step 4)
+- `~/.artha-local/pipeline_output.jsonl` (from Step 4)
 - `tmp/ai_signals.jsonl` (from Steps 7–8, if AI wrote any)
 - `state/*.md` (pattern engine evaluates state files)
 

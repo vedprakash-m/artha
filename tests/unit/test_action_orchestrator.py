@@ -42,6 +42,17 @@ from action_orchestrator import (
 # Minimal Artha directory fixture
 # ---------------------------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def _machine_local_dir(tmp_path, monkeypatch):
+    """WP-03: pipeline output lives in the machine-local dir; isolate it per test."""
+    monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_path / "machine-local"))
+
+
+def _pipeline_output():
+    from lib.local_paths import pipeline_output_path
+    return pipeline_output_path()
+
 @pytest.fixture
 def artha_dir(tmp_path):
     """Create a minimal Artha directory with required structure."""
@@ -162,7 +173,7 @@ def _make_proposal(
 
 def test_run_with_no_emails_file(artha_dir):
     """Returns 0 proposals when pipeline_output.jsonl absent; no crash."""
-    assert not (artha_dir / "tmp" / "pipeline_output.jsonl").exists()
+    assert not (_pipeline_output()).exists()
 
     with patch.object(orch, "_is_read_only", return_value=False), \
          patch("action_orchestrator._import_action_modules") as mock_imports, \
@@ -189,7 +200,7 @@ def test_run_with_no_emails_file(artha_dir):
 
 def test_run_with_empty_emails_file(artha_dir):
     """Empty pipeline_output.jsonl → 0 signals; exits cleanly."""
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text("")
+    (_pipeline_output()).write_text("")
 
     with patch.object(orch, "_is_read_only", return_value=False), \
          patch("action_orchestrator._import_action_modules") as mock_imports, \
@@ -221,7 +232,7 @@ def test_run_with_marketing_only_emails(artha_dir):
         "from": "deals@spam.com",
         "marketing": True,
     })
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(marketing_email + "\n")
+    (_pipeline_output()).write_text(marketing_email + "\n")
 
     mock_extractor_instance = MagicMock()
     mock_extractor_instance.extract.return_value = []
@@ -260,7 +271,7 @@ def test_run_with_one_rsvp_email(artha_dir):
         "from": "friend@example.com",
         "marketing": False,
     })
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(rsvp_email + "\n")
+    (_pipeline_output()).write_text(rsvp_email + "\n")
 
     rsvp_signal = _make_signal("event_rsvp_needed", "calendar", "party-invite")
     proposal = _make_proposal("reminder_create", "calendar")
@@ -303,7 +314,7 @@ def test_run_with_multiple_signals(artha_dir):
     pattern_signal = _make_signal("goal_stale", "goals", "weight-goal")
 
     # Create a non-marketing email so extractor is called
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    (_pipeline_output()).write_text(
         json.dumps({"subject": "Bill due", "from": "electric@co.com", "marketing": False}) + "\n"
     )
 
@@ -475,7 +486,7 @@ def test_compose_failure_does_not_crash_loop(artha_dir):
     s2 = _make_signal("reminder_create", "calendar", "entity2")
     proposal = _make_proposal("reminder_create", "calendar")
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    (_pipeline_output()).write_text(
         json.dumps({"subject": "Bill", "from": "x@y.com", "marketing": False}) + "\n"
     )
 
@@ -518,7 +529,7 @@ def test_propose_failure_does_not_crash_loop(artha_dir):
     proposal1 = _make_proposal("reminder_create", "finance")
     proposal2 = _make_proposal("reminder_create", "calendar")
 
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text(
+    (_pipeline_output()).write_text(
         json.dumps({"subject": "Finance", "from": "x@y.com", "marketing": False}) + "\n"
     )
 
@@ -724,7 +735,7 @@ def test_health_command_reports_status(artha_dir, capsys):
 
 def test_summary_output_format(artha_dir, capsys):
     """--run stdout matches expected structured format."""
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text("")
+    (_pipeline_output()).write_text("")
 
     with patch.object(orch, "_is_read_only", return_value=False), \
          patch("action_orchestrator._import_action_modules") as mock_imports, \
@@ -753,7 +764,7 @@ def test_summary_output_format(artha_dir, capsys):
 
 def test_audit_log_written_on_run(artha_dir):
     """After --run, state/audit.md has ACTION_ORCHESTRATOR entry."""
-    (artha_dir / "tmp" / "pipeline_output.jsonl").write_text("")
+    (_pipeline_output()).write_text("")
 
     with patch.object(orch, "_is_read_only", return_value=False), \
          patch("action_orchestrator._import_action_modules") as mock_imports, \
