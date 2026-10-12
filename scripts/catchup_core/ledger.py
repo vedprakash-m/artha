@@ -547,6 +547,93 @@ class Ledger:
             (domain, predicate, subject_id, *[st.value for st in statuses])).fetchall()
         return [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
 
+    # ── pipeline working set ──────────────────────────────────────────────────
+    def signals_in_state(self, state: ProcessingState) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM signals WHERE processing_state=? ORDER BY signal_id", (state.value,)).fetchall()
+
+    def signal_row(self, signal_id: str) -> sqlite3.Row | None:
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT * FROM signals WHERE signal_id=?", (signal_id,)).fetchone()
+        return row
+
+    def put_candidates(self, signal_id: str, payloads: Sequence[dict[str, Any]]) -> None:
+        """Persist extracted candidates (encrypted) so RECONCILE can resume after a crash."""
+        self._require_unlocked()
+        if self._cipher is None:
+            raise LedgerError("candidates are stored encrypted; no key available")
+        with self.transaction() as c:
+            c.execute("DELETE FROM candidates WHERE signal_id=?", (signal_id,))
+            for idx, payload in enumerate(payloads):
+                text, version = self._cipher.encrypt_json(payload, aad=f"cand:{signal_id}:{idx}".encode())
+                c.execute("INSERT INTO candidates(signal_id,idx,payload_encrypted,key_version) VALUES(?,?,?,?)",
+                          (signal_id, idx, text, version))
+
+    def candidates_for(self, signal_id: str) -> list[dict[str, Any]]:
+        if self._cipher is None:
+            raise LedgerError("candidates are stored encrypted; no key available")
+        out: list[dict[str, Any]] = []
+        for row in self.conn.execute(
+                "SELECT idx, payload_encrypted FROM candidates WHERE signal_id=? ORDER BY idx", (signal_id,)):
+            payload = self._cipher.decrypt_json(row["payload_encrypted"],
+                                                aad=f"cand:{signal_id}:{row['idx']}".encode())
+            out.append(dict(payload))
+        return out
+
+    def record_failure(self, signal_id: str, stage: str, error_class: str) -> None:
+        now = self._clock()
+        with self.transaction() as c:
+            c.execute(
+                "INSERT INTO signal_failures(signal_id,stage,error_class,first_attempt,last_attempt) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(signal_id,stage) DO UPDATE SET attempts=attempts+1, "
+                "last_attempt=excluded.last_attempt, error_class=excluded.error_class",
+                (signal_id, stage, error_class, now, now))
+
+    def failed_signals(self) -> list[str]:
+        return [str(r[0]) for r in self.conn.execute("SELECT DISTINCT signal_id FROM signal_failures")]
+
+    def clear_failure(self, signal_id: str, stage: str) -> None:
+        with self.transaction() as c:
+            c.execute("DELETE FROM signal_failures WHERE signal_id=? AND stage=?", (signal_id, stage))
+
+    def set_coverage(self, connector: str, account_scope: str, status: str, blind_spots: Sequence[str] = (),
+                     completed_at: str | None = None) -> None:
+        with self.transaction() as c:
+            c.execute(
+                "INSERT INTO connector_coverage(connector,account_scope,status,blind_spots,completed_at) "
+                "VALUES(?,?,?,?,?) ON CONFLICT(connector,account_scope) DO UPDATE SET status=excluded.status, "
+                "blind_spots=excluded.blind_spots, completed_at=excluded.completed_at",
+                (connector, account_scope, status, json.dumps(list(blind_spots)), completed_at))
+
+    def coverage_rows(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM connector_coverage ORDER BY connector, account_scope").fetchall()
+
+    def publish_briefing(self, catchup_id: str, text: str, *, correction: bool = False) -> tuple[int, bool]:
+        """One logical Briefing per Catch-up ID.
+
+        A repeat of identical text returns the existing version; different text is
+        refused unless it is an explicit versioned correction.
+        """
+        self._require_unlocked()
+        digest = ids.content_hmac(self._id_key, text)
+        with self.transaction() as c:
+            row = c.execute("SELECT version, text_hmac FROM briefings WHERE catchup_id=? AND status='published'",
+                            (catchup_id,)).fetchone()
+            if row is not None:
+                if row["text_hmac"] == digest:
+                    return int(row["version"]), False
+                if not correction:
+                    raise LedgerError(f"{catchup_id} already has a published Briefing; "
+                                      "a different text needs an explicit correction")
+                c.execute("UPDATE briefings SET status='superseded' WHERE catchup_id=? AND version=?",
+                          (catchup_id, row["version"]))
+                version = int(row["version"]) + 1
+            else:
+                version = 1
+            c.execute("INSERT INTO briefings(catchup_id,version,text_hmac,published_at,status) "
+                      "VALUES(?,?,?,?,'published')", (catchup_id, version, digest, self._clock()))
+        return version, True
+
     # ── alerts ───────────────────────────────────────────────────────────────
     def upsert_alert(
         self, obligation_key: str, *, domain: str, primary_subject_id: str, severity: str,
