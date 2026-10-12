@@ -6,9 +6,9 @@ line-length = 120
 
 [lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF", "PL", "PT"]
-# PLR2004: magic values in comparisons are domain constants; PLR0913: ledger/record APIs are
+# PLR2004: magic values in comparisons are domain constants; PLR0913/PLR0917: ledger/record APIs are
 # keyword-only by design.
-ignore = ["PLR2004", "PLR0913"]
+ignore = ["PLR2004", "PLR0913", "PLR0917"]
 
 [lint.per-file-ignores]
 "__init__.py" = []
