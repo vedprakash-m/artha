@@ -4,9 +4,9 @@
 
 Exit codes: 0 complete · 10 degraded · 20 blocked · 30 usage error.  Result JSON goes
 to stdout, diagnostics to stderr.  Dependencies are injected through ``deps_factory``;
-the default factory refuses to run, because the pilot has not been cut over (that
-needs consented real data and owner sign-off), so the command can never silently
-produce an authoritative Briefing.
+the default factory wires real dependencies for ``--shadow`` only and refuses an
+authoritative run, because the pilot has not been cut over (that needs consented real
+data and owner sign-off) — the command can never silently publish a Briefing.
 """
 from __future__ import annotations
 
@@ -28,8 +28,15 @@ class NotConfigured(RuntimeError):
     pass
 
 
-def _default_factory(_request: CatchupRequest) -> Deps:
-    raise NotConfigured("the new Catch-up core is not cut over; run in shadow with an explicit deps factory")
+def _default_factory(request: CatchupRequest) -> Deps:
+    """Real wiring, **shadow only**: an authoritative run needs the cut-over decision (§12.6)."""
+    if request.mode is not ExecutionMode.SHADOW:
+        raise NotConfigured("authoritative runs are disabled until the pilot is cut over; use --shadow")
+    from catchup_core.runtime import RuntimeConfigError, build_deps  # noqa: PLC0415
+    try:
+        return build_deps(request)
+    except (RuntimeConfigError, OSError) as exc:
+        raise NotConfigured(str(exc)) from exc
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:

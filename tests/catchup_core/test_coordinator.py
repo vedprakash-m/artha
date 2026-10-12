@@ -375,3 +375,21 @@ def test_only_requested_connector_scopes_are_fetched(world):
     d = make({"school_email": tracked("school_email", email()), "calendar": tracked("calendar", cal())})
     co.run_catchup(req(connector_scopes=("calendar",)), d)
     assert called == ["calendar"]
+
+
+def test_incumbent_conclusions_appear_labelled_and_the_adapter_runs_once(world):
+    ledger, _b, make, _p = world
+    calls = {"n": 0}
+
+    class Counting:
+        def run(self, signals, *, budget_seconds):
+            calls["n"] += 1
+            return IncumbentOutput(conclusions=(
+                IncumbentConclusion("finance", "finance: from your records, dated 2026-10-01 — not re-verified",
+                                    "abc123"),))
+    texts = []
+    d = make({"school_email": email(), "calendar": cal()}, incumbent=GuardedIncumbent(Counting()))
+    d.publisher = lambda cid, text, v: texts.append(text)
+    result = co.run_catchup(req(), d)
+    assert calls["n"] == 1 and result.briefing_id
+    assert "FROM YOUR RECORDS (not re-verified)" in texts[0] and "finance: from your records" in texts[0]
