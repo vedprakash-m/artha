@@ -12,6 +12,7 @@ from catchup_core.contracts import (
 )
 
 KEY = ids.HmacKey(1, b"i" * 32)
+LATEST = lg.Ledger.available_migrations()[-1][0]
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x07" * 32}))
 
 
@@ -54,12 +55,12 @@ def test_connection_pragmas(led):
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     assert c.execute("PRAGMA synchronous").fetchone()[0] == 2
     assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    assert led.schema_version() == 1
+    assert led.schema_version() == LATEST
     assert led.integrity_check()
 
 
 def test_migration_idempotent(led):
-    assert led.migrate() == 1
+    assert led.migrate() == LATEST
 
 
 def test_existing_database_refuses_migration_without_verified_backup(tmp_path):
@@ -81,7 +82,7 @@ def test_existing_database_refuses_migration_without_verified_backup(tmp_path):
         assert ledger.schema_version() == 0
         good = tmp_path / "ok.bak"
         good.write_bytes(b"data")
-        assert ledger.migrate(backup=lambda p: good) == 1
+        assert ledger.migrate(backup=lambda p: good) == LATEST
     finally:
         ledger.close()
 
@@ -107,7 +108,7 @@ def test_not_open_raises(tmp_path):
 def test_context_manager_opens_and_closes(tmp_path):
     with lg.Ledger(tmp_path / "c.db", id_key=KEY) as ledger:
         ledger.migrate()
-        assert ledger.schema_version() == 1
+        assert ledger.schema_version() == LATEST
     with pytest.raises(lg.LedgerError):
         ledger.conn
 

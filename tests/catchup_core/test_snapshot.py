@@ -30,7 +30,7 @@ def test_snapshot_is_consistent_and_verifiable(populated):
                          key_metadata={"current_version": 1}, sealed_checkpoint_id=4,
                          now=datetime(2026, 10, 11, tzinfo=UTC))
     manifest = sn.verify_snapshot(m)
-    assert manifest.generation == 1 and manifest.schema_version == 1 and manifest.sealed_checkpoint_id == 4
+    assert manifest.generation == 1 and manifest.schema_version == lg.Ledger.available_migrations()[-1][0] and manifest.sealed_checkpoint_id == 4
     assert manifest.key_metadata == {"current_version": 1}
     assert "lessons.md" in manifest.curated and manifest.taken_at == "2026-10-11T00:00:00Z"
     con = sqlite3.connect(tmp / "snaps" / "ledger-1.db")
