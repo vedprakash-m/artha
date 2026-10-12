@@ -161,3 +161,8 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
 ]
+
+# Incumbent modules imported by catchup_core adapters are not part of the strict surface.
+[[tool.mypy.overrides]]
+module = ["schemas.*", "lib.*"]
+ignore_errors = true
