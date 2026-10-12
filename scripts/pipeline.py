@@ -276,15 +276,22 @@ def _write_platform_skip_sentinel(
 
 
 def _enabled_connectors(
-    cfg: dict[str, Any], source_filter: list[str] | None
+    cfg: dict[str, Any], source_filter: list[str] | None, exclude_sources: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Return list of connector configs that are enabled (and optionally filtered)."""
+    """Return list of connector configs that are enabled (and optionally filtered).
+
+    ``exclude_sources`` removes named connectors after the include filter — the
+    capability the mixed-path coordinator needs to keep pilot scopes out of the
+    incumbent fetch (re-artha §6.14).
+    """
     current_platform = platform.system().lower()  # "darwin", "windows", "linux"
     result = []
     for conn in _normalize_connectors(cfg):
         if not conn.get("enabled", True):
             continue
         if source_filter and conn["name"] not in source_filter:
+            continue
+        if exclude_sources and conn["name"] in exclude_sources:
             continue
         run_on = conn.get("run_on", "all")
         if run_on != "all":
@@ -654,6 +661,7 @@ def run_pipeline(
     output_path: Path | None = None,
     force_wave0_justification: str | None = None,
     resume: bool = False,
+    exclude_sources: list[str] | None = None,
 ) -> int:
     """Run the fetch pipeline.  Streams JSONL to stdout.
 
@@ -818,7 +826,7 @@ def run_pipeline(
         except OSError:
             pass  # Sentinel check is non-blocking
 
-    connectors = _enabled_connectors(cfg, source_filter)
+    connectors = _enabled_connectors(cfg, source_filter, exclude_sources)
     if not connectors:
         print("[pipeline] No connectors enabled — nothing to do.", file=sys.stderr)
         return 0
@@ -2122,6 +2130,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Fetch only this connector (repeatable)",
     )
     p.add_argument(
+        "--exclude-source",
+        metavar="NAME",
+        action="append",
+        dest="exclude_sources",
+        help="Do not fetch this connector (repeatable; applied after --source)",
+    )
+    p.add_argument(
         "--health",
         action="store_true",
         help="Run health checks and exit (exit 0=all OK, 1=failures)",
@@ -2502,6 +2517,7 @@ def main(argv: list[str] | None = None) -> int:
         output_path=output_path,
         force_wave0_justification=args.justification if args.force_wave0 else None,
         resume=args.resume,
+        exclude_sources=args.exclude_sources,
     )
 
 

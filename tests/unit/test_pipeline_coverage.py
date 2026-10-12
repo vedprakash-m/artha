@@ -116,3 +116,33 @@ def test_record_runs_persists_history_and_returns_line(tmp_path):
     line = pipeline._record_coverage(coll, store, at="2026-10-11T00:00:00Z")
     assert "google_calendar" in line and "no all-clear" in line
     assert store.load()["connectors"]["gmail"]["last_success_at"] == "2026-10-11T00:00:00Z"
+
+
+# ── --exclude-source (re-artha §6.14 prerequisite) ─────────────────────────
+
+def _cfg():
+    return {"connectors": {
+        "gmail": {"enabled": True, "type": "email", "fetch": {"handler": "x"}},
+        "google_calendar": {"enabled": True, "type": "calendar", "fetch": {"handler": "x"}},
+        "rss": {"enabled": True, "type": "feed", "fetch": {"handler": "x"}},
+    }}
+
+
+def test_exclude_source_removes_named_connectors_after_include_filter():
+    names = lambda c: sorted(x["name"] for x in c)    # noqa: E731
+    assert names(pipeline._enabled_connectors(_cfg(), None)) == ["gmail", "google_calendar", "rss"]
+    assert names(pipeline._enabled_connectors(_cfg(), None, ["google_calendar"])) == ["gmail", "rss"]
+    assert names(pipeline._enabled_connectors(_cfg(), ["gmail", "rss"], ["rss"])) == ["gmail"]
+    assert names(pipeline._enabled_connectors(_cfg(), None, [])) == ["gmail", "google_calendar", "rss"]
+
+
+def test_exclude_source_cli_flag_is_parsed(monkeypatch):
+    seen = {}
+
+    def fake_run(cfg, **kw):
+        seen.update(kw)
+        return 0
+    monkeypatch.setattr(pipeline, "run_pipeline", fake_run)
+    monkeypatch.setattr(pipeline, "load_connectors_config", lambda: _cfg())
+    rc = pipeline.main(["--exclude-source", "google_calendar", "--exclude-source", "rss", "--since", "2026-10-01T00:00:00Z"])
+    assert rc == 0 and seen["exclude_sources"] == ["google_calendar", "rss"]
