@@ -40,7 +40,7 @@ from catchup_core.contracts import (
     StageCheckpoint,
 )
 from catchup_core.domain_pack import DomainPack
-from catchup_core.incumbent import GuardedIncumbent
+from catchup_core.incumbent import GuardedIncumbent, IncumbentOutput
 from catchup_core.ledger import Ledger, LedgerError, SignalInput, Suppressed
 from catchup_core.reconcile import reconcile
 from catchup_core.triage import CalendarEvent, TriageResult, triage
@@ -104,6 +104,7 @@ class _Run:
         self.request, self.deps, self.led = request, deps, deps.ledger
         self.now = deps.now()
         self.failures: list[FailureClass] = []
+        self._incumbent: IncumbentOutput | None = None
         self.done = set(self.led.committed_stages(request.catchup_id))
         self.versions = {"policy": request.policy_version, "pack": deps.pack.version,
                          "schema": str(request.schema_version)}
@@ -275,9 +276,15 @@ class _Run:
             if source.required and source.connector not in present:
                 entries.append(CoverageEntry(source.connector, "unconnected", CoverageStatus.UNAVAILABLE, True,
                                              detail="no fetch result recorded"))
-        if self.request.mode is ExecutionMode.AUTHORITATIVE:
-            entries.extend(d.incumbent.run([]).coverage)
+        entries.extend(self._incumbent_output().coverage)
         return entries
+
+    def _incumbent_output(self) -> IncumbentOutput:
+        """The guarded incumbent runs once per Catch-up (never writes, never publishes)."""
+        if self._incumbent is None:
+            self._incumbent = self.deps.incumbent.run([])
+            self.failures.extend(self._incumbent.failures)
+        return self._incumbent
 
     # ── driver ───────────────────────────────────────────────────────────────
     def run(self) -> CatchupResult:
@@ -298,13 +305,14 @@ class _Run:
         has_gaps = bool(gaps) or unresolved > 0
         line = self.deps.coverage_line()
 
+        legacy = [c.text for c in self._incumbent_output().conclusions]
         briefing = compose(self.now, triaged, evidence_for=self._evidence_for(triaged), coverage_line=line,
-                           coverage_gaps=gaps, unresolved_signals=unresolved)
+                           coverage_gaps=gaps, unresolved_signals=unresolved, legacy_lines=legacy)
         self.stage(Stage.COMPOSE, lambda: ())
         problems = validate_briefing(briefing.text, briefing.evidence, has_gaps=has_gaps)
         if problems:                                 # one safe retry: citation-dependent claims become MISSING
             briefing = compose(self.now, triaged, evidence_for={}, coverage_line=line, coverage_gaps=gaps,
-                               unresolved_signals=unresolved)
+                               unresolved_signals=unresolved, legacy_lines=legacy)
             problems = validate_briefing(briefing.text, briefing.evidence, has_gaps=has_gaps)
         if problems:
             self.failures.append(FailureClass.POLICY)

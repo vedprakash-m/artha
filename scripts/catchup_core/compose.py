@@ -112,6 +112,7 @@ def compose(
     coverage_gaps: Sequence[str] = (),
     unresolved_signals: int = 0,
     goal_lines: Sequence[str] = (),
+    legacy_lines: Sequence[str] = (),
 ) -> Briefing:
     """Render the standard Briefing.
 
@@ -143,6 +144,10 @@ def compose(
         lines += ["COMING UP"] + [_alert_line(h, cite(h)) for h in upcoming] + [""]
     if result.cross_domain:
         lines += ["WORTH A LOOK"] + [_finding_line(f) for f in result.cross_domain] + [""]
+    if legacy_lines:
+        shown = list(legacy_lines)[:8]
+        extra = f" (+{len(legacy_lines) - 8} more)" if len(legacy_lines) > 8 else ""
+        lines += [f"FROM YOUR RECORDS (not re-verified){extra}"] + [f"• {sanitize(t, 200)}" for t in shown] + [""]
     if goal_lines:
         lines += ["GOALS"] + [f"• {sanitize(g, 200)}" for g in goal_lines] + [""]
 

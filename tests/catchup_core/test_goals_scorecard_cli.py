@@ -94,10 +94,19 @@ def test_empty_scorecard_is_vacuously_clean():
 
 # ── cli ───────────────────────────────────────────────────────────────────
 
-def test_default_factory_refuses_so_nothing_authoritative_happens():
+def test_authoritative_default_factory_is_disabled_until_cutover():
+    err = io.StringIO()
+    assert cli.main(["catchup", "--json", "--host", "mac"], out=io.StringIO(), err=err) == 30
+    assert "cut over" in err.getvalue()
+
+
+def test_shadow_default_factory_reports_missing_configuration(monkeypatch):
+    from catchup_core import runtime
+    monkeypatch.setattr(runtime, "build_deps", lambda request: (_ for _ in ()).throw(
+        runtime.RuntimeConfigError("config/catchup_core.yaml missing")))
     err = io.StringIO()
     assert cli.main(["catchup", "--json", "--shadow"], out=io.StringIO(), err=err) == 30
-    assert "not configured" in err.getvalue()
+    assert "catchup_core.yaml" in err.getvalue()
 
 
 def test_authoritative_without_host_is_a_usage_error():
