@@ -728,6 +728,18 @@ class ActionExecutor:
 
         config = self._action_configs.get(proposal.action_type, {})
 
+        # 2b. Payload binding — the approval applies only to the payload that was proposed/previewed
+        bound, bind_reason = self._queue.verify_payload_binding(action_id, proposal)
+        if not bound:
+            _audit_log(self._artha_dir, f"ACTION_PAYLOAD_CHANGED | id:{action_id} | reason:{bind_reason}")
+            return ActionResult(
+                status="failure",
+                message=f"Approval refused: {bind_reason}.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
+
         # 3. Trust check — BEFORE state transition
         trust_ok, trust_reason = self._trust.check(
             proposal, approved_by, action_config=config
@@ -1352,7 +1364,7 @@ class ActionExecutor:
                 return
 
             bridge_dir = get_bridge_dir(self._artha_dir)
-            final_status = "succeeded" if result.status == "success" else "failed"
+            final_status = _bridge_final_status(result.status)
             write_result(
                 bridge_dir,
                 action_id=action_id,
@@ -1373,6 +1385,11 @@ class ActionExecutor:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _bridge_final_status(result_status: str) -> str:
+    """Map an ActionResult status to the bridge's final_status vocabulary (uncertainty preserved)."""
+    return {"success": "succeeded", "unknown": "unknown"}.get(result_status, "failed")
+
 
 def _execute_with_timeout(
     handler: Any, proposal: ActionProposal, timeout_sec: int
@@ -1400,10 +1417,12 @@ def _execute_with_timeout(
     thread.join(timeout=timeout_sec)
 
     if thread.is_alive():
-        # Timeout — thread is still running but we abandon it
+        # Timeout — the handler thread is still running, so the provider may yet act (or already
+        # has).  That is UNKNOWN, not a failure, and the message must not claim otherwise (RA-05).
         return ActionResult(
-            status="failure",
-            message=f"Action timed out after {timeout_sec}s. No changes were committed.",
+            status="unknown",
+            message=(f"No response within {timeout_sec}s; the action may or may not have taken effect. "
+                     "Verify with the provider before retrying."),
             data={"timed_out": True},
             reversible=False,
             reverse_action=None,
@@ -1411,6 +1430,16 @@ def _execute_with_timeout(
 
     if exception_container[0] is not None:
         exc = exception_container[0]
+        if isinstance(exc, (TimeoutError, ConnectionError)):
+            # The request may have been delivered before the connection dropped.
+            return ActionResult(
+                status="unknown",
+                message=(f"Connection lost ({type(exc).__name__}); the action may or may not have taken "
+                         "effect. Verify with the provider before retrying."),
+                data={"exception": type(exc).__name__},
+                reversible=False,
+                reverse_action=None,
+            )
         return ActionResult(
             status="failure",
             message=f"Handler raised exception: {type(exc).__name__}: {exc}",

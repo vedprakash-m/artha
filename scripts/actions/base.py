@@ -221,7 +221,8 @@ class ActionResult:
     partial result data).
 
     Fields:
-        status:          "success" | "failure" | "partial".
+        status:          "success" | "failure" | "partial" | "unknown"
+                         ("unknown": the effect may have happened; never claim otherwise).
         message:         Human-readable outcome ≤300 chars.
         data:            Handler-specific result data (e.g. message_id, event_id).
         reversible:      Whether this specific execution was reversible.
@@ -433,6 +434,9 @@ VALID_STATUSES = frozenset({
     "pending", "modifying", "approved", "rejected",
     "deferred", "executing", "succeeded", "failed",
     "expired", "cancelled",
+    # RA-05: the provider may have acted but did not return a conclusive result.  Not terminal:
+    # it is reconciled to succeeded/failed, never blindly retried.
+    "unknown",
 })
 
 # Terminal states: transitions out of these are bugs
@@ -447,7 +451,7 @@ VALID_FRICTION = frozenset({"low", "standard", "high"})
 VALID_SENSITIVITY = frozenset({"standard", "high", "critical"})
 
 # Valid result statuses
-VALID_RESULT_STATUSES = frozenset({"success", "failure", "partial"})
+VALID_RESULT_STATUSES = frozenset({"success", "failure", "partial", "unknown"})
 
 # Maximum title length (enforced at proposal creation)
 MAX_TITLE_LENGTH = 120

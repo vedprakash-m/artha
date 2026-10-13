@@ -284,6 +284,9 @@ CREATE TABLE IF NOT EXISTS actions (
     preview_shown_by  TEXT,
     last_notified_at  TEXT,
     last_notified_channel TEXT,
+    payload_hash          TEXT,
+    preview_payload_hash  TEXT,
+    approved_payload_hash TEXT,
 
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
@@ -365,6 +368,9 @@ CREATE TABLE IF NOT EXISTS actions_archive (
     preview_shown_by  TEXT,
     last_notified_at  TEXT,
     last_notified_channel TEXT,
+    payload_hash          TEXT,
+    preview_payload_hash  TEXT,
+    approved_payload_hash TEXT,
     reversible        INTEGER NOT NULL DEFAULT 0,
     reverse_action_id TEXT,
     undo_window_sec   INTEGER,
@@ -466,6 +472,27 @@ def _get_age_pubkey(artha_dir: Path) -> str | None:
     except (Exception, SystemExit):
         # SystemExit raised by foundation.die() when age_recipient is missing.
         return None
+
+
+def compute_payload_hash(proposal: Any) -> str:
+    """Canonical SHA-256 of the exact payload a person reviews and approves (RA-05).
+
+    Covers type, domain, title, description and parameters.  Any change after the
+    preview or approval produces a different hash, which invalidates the approval.
+    """
+    import hashlib  # noqa: PLC0415
+    canonical = json.dumps(
+        {
+            "action_type": proposal.action_type, "domain": proposal.domain, "title": proposal.title,
+            "description": proposal.description or "", "parameters": proposal.parameters,
+        },
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class ConcurrentTransitionError(ValueError):
+    """The action's status changed between read and write; the transition was not applied."""
 
 
 class ActionEncryptionError(RuntimeError):
@@ -615,6 +642,9 @@ class ActionQueue:
                 "preview_shown_by": "TEXT",
                 "last_notified_at": "TEXT",
                 "last_notified_channel": "TEXT",
+                "payload_hash": "TEXT",
+                "preview_payload_hash": "TEXT",
+                "approved_payload_hash": "TEXT",
             },
             "actions_archive": {
                 "bridge_synced": "INTEGER NOT NULL DEFAULT 0",
@@ -630,6 +660,9 @@ class ActionQueue:
                 "preview_shown_by": "TEXT",
                 "last_notified_at": "TEXT",
                 "last_notified_channel": "TEXT",
+                "payload_hash": "TEXT",
+                "preview_payload_hash": "TEXT",
+                "approved_payload_hash": "TEXT",
             },
             "trust_metrics": {
                 "signal_subtype": "TEXT",
@@ -942,6 +975,7 @@ class ActionQueue:
                  AND (
                      idempotency_expires_at IS NULL
                      OR idempotency_expires_at > ?
+                     OR status = 'unknown'   -- an uncertain effect blocks duplicates until reconciled
                  )
                LIMIT 1""",
             (proposal.idempotency_key or idempotency_key, self._now_utc()),
@@ -985,6 +1019,27 @@ class ActionQueue:
                 row,
             )
             self._audit(self._conn, proposal.id, "", "pending", "system:propose")
+            self._conn.execute("UPDATE actions SET payload_hash = ? WHERE id = ?",
+                               (compute_payload_hash(proposal), proposal.id))
+
+    def verify_payload_binding(self, action_id: str, proposal: Any) -> tuple[bool, str]:
+        """True when the payload about to execute is the one that was proposed (and previewed).
+
+        Rows created before payload binding existed have no hash and are accepted; a stored
+        hash that no longer matches the payload — or a preview taken of another payload —
+        refuses the approval (RA-05).
+        """
+        row = self._conn.execute(
+            "SELECT payload_hash, preview_payload_hash FROM actions WHERE id = ?", (action_id,)
+        ).fetchone()
+        if not row or not row["payload_hash"]:
+            return True, ""
+        current = compute_payload_hash(proposal)
+        if row["payload_hash"] != current:
+            return False, "the payload changed after it was proposed; review and approve it again"
+        if row["preview_payload_hash"] and row["preview_payload_hash"] != current:
+            return False, "the preview shown was for a different payload"
+        return True, ""
 
     def transition(
         self,
@@ -1031,6 +1086,8 @@ class ActionQueue:
             if to_status == "approved":
                 updates["approved_at"] = now
                 updates["approved_by"] = approved_by or actor
+                updates["approved_payload_hash"] = self._conn.execute(
+                    "SELECT payload_hash FROM actions WHERE id = ?", (action_id,)).fetchone()["payload_hash"]
             elif to_status in ("executing", "succeeded", "failed"):
                 if from_status == "approved" and to_status == "executing":
                     updates["executed_at"] = now
@@ -1038,10 +1095,17 @@ class ActionQueue:
                 updates["idempotency_expires_at"] = now
 
             set_clause = ", ".join(f"{k} = ?" for k in updates)
-            params = list(updates.values()) + [action_id]
-            self._conn.execute(
-                f"UPDATE actions SET {set_clause} WHERE id = ?", params
+            # Expected-status predicate: a concurrent session that already moved this action
+            # makes this UPDATE match nothing, so it loses instead of overwriting (RA-05).
+            params = [*updates.values(), action_id, from_status]
+            cur = self._conn.execute(
+                f"UPDATE actions SET {set_clause} WHERE id = ? AND status = ?", params
             )
+            if cur.rowcount != 1:
+                raise ConcurrentTransitionError(
+                    f"Action {action_id} changed concurrently (expected '{from_status}'); "
+                    f"transition to '{to_status}' not applied"
+                )
             self._audit(self._conn, action_id, from_status, to_status, actor, context)
 
         return from_status
@@ -1073,7 +1137,8 @@ class ActionQueue:
         # Cap result message length
         message = (result.message or "")[:300]
 
-        new_status = "succeeded" if result.status == "success" else "failed"
+        # RA-05: an inconclusive result is UNKNOWN (reconciled later), never "failed".
+        new_status = {"success": "succeeded", "unknown": "unknown"}.get(result.status, "failed")
         from_status = self.transition(
             action_id, new_status, actor="system:executor",
             context={"result_status": result.status}
@@ -1118,7 +1183,8 @@ class ActionQueue:
         row = self._conn.execute(
             """SELECT * FROM actions
                WHERE idempotency_key = ?
-                 AND (idempotency_expires_at IS NULL OR idempotency_expires_at > ?)
+                 AND (idempotency_expires_at IS NULL OR idempotency_expires_at > ?
+                      OR status = 'unknown')
                LIMIT 1""",
             (proposal.idempotency_key or key, self._now_utc()),
         ).fetchone()
@@ -1138,6 +1204,7 @@ class ActionQueue:
                 """UPDATE actions
                    SET preview_shown_at = COALESCE(preview_shown_at, ?),
                        preview_shown_by = COALESCE(preview_shown_by, ?),
+                       preview_payload_hash = COALESCE(preview_payload_hash, payload_hash),
                        last_notified_at = COALESCE(?, last_notified_at),
                        last_notified_channel = COALESCE(?, last_notified_channel),
                        updated_at = ?
@@ -1630,6 +1697,8 @@ class ActionQueue:
                 self._conn, proposal.id, "", "pending",
                 "system:bridge_ingest",
             )
+            self._conn.execute("UPDATE actions SET payload_hash = ? WHERE id = ?",
+                               (compute_payload_hash(proposal), proposal.id))
         return True
 
     def update_defer_time(self, action_id: str, defer_time: str) -> None:
@@ -1691,6 +1760,8 @@ class ActionQueue:
             return False
 
         from_status = row["status"]
+        if from_status in TERMINAL_STATUSES and final_status == "unknown":
+            return True       # a late, inconclusive report never downgrades a settled result
         ts_executed = executed_at or self._now_utc()
         result_data_json = json.dumps(result_data) if result_data else None
 
@@ -1760,7 +1831,8 @@ def _validate_transition(from_status: str, to_status: str, actor: str) -> None:
         "modifying": {"pending"},
         "deferred":  {"pending", "rejected"},
         "approved":  {"executing", "cancelled"},
-        "executing": {"succeeded", "failed"},
+        "executing": {"succeeded", "failed", "unknown"},
+        "unknown":   {"succeeded", "failed"},       # reconciliation only (RA-05)
     }
 
     allowed = ALLOWED.get(from_status, set())
