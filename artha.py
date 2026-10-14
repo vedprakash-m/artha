@@ -747,7 +747,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Just tell me your name and email to get started.")
         print()
         try:
-            raw = input("  Name and email (e.g. Sibling1, sibling1@gmail.com): ").strip()
+            raw = input("  Name and email (e.g. Alex, alex@example.com): ").strip()
         except (KeyboardInterrupt, EOFError):
             print()
             print(f"  Run {_BOLD}'python artha.py --setup'{_RST} whenever you're ready.")

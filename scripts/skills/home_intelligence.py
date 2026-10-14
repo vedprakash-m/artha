@@ -73,12 +73,24 @@ _RING_MOTION_SUFFIX = "_motion"
 # Person entities
 # ---------------------------------------------------------------------------
 
-_PERSON_ENTITIES = {
-    "person.ved_fam": "Ved",
-    "person.child1": "Child1",
-    "person.child2": "Child2",
-    "person.spouse": "Spouse",
-}
+def _load_person_entities(profile: Optional[Path] = None) -> Dict[str, str]:
+    """Home Assistant person entities -> display names, from the owner's local profile.
+
+    Household identities are personal data and live only in the git-ignored
+    ``config/user_profile.yaml`` under ``home_assistant.person_entities``; source
+    code carries none.  A missing or unreadable profile means no tracked persons.
+    """
+    path = profile or (_REPO_ROOT / "config" / "user_profile.yaml")
+    try:
+        import yaml  # noqa: PLC0415
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        mapping = (data.get("home_assistant") or {}).get("person_entities") or {}
+        return {str(k): str(v) for k, v in mapping.items()}
+    except Exception:  # missing file, bad YAML, wrong shape
+        return {}
+
+
+_PERSON_ENTITIES = _load_person_entities()
 
 # ---------------------------------------------------------------------------
 # Thresholds
