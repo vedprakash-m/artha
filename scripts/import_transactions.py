@@ -44,6 +44,17 @@ TRANSACTIONS_MD = ARTHA / "state" / "transactions.md"
 # ---------------------------------------------------------------------------
 # Unified transaction record
 # ---------------------------------------------------------------------------
+def _spouse_label() -> str:
+    """Spouse's first name from the git-ignored local profile; ``Spouse`` when unavailable."""
+    try:
+        import yaml  # noqa: PLC0415
+        profile = Path(__file__).resolve().parent.parent / "config" / "user_profile.yaml"
+        data = yaml.safe_load(profile.read_text(encoding="utf-8")) or {}
+        return str(data["family"]["spouse"]["name"]).split()[0]
+    except Exception:  # no profile, no spouse, bad shape
+        return "Spouse"
+
+
 class Txn(NamedTuple):
     date: date
     description: str      # truncated to 50 chars, no PII
@@ -51,7 +62,7 @@ class Txn(NamedTuple):
     raw_category: str
     account_last4: str    # e.g. "7836"
     institution: str
-    owner: str            # "Ved" or "Spouse"
+    owner: str            # "Ved" or the spouse's first name from the local profile
     txn_type: str         # "debit" | "credit" | "payment" | "transfer"
     source_file: str      # basename of source file
 
@@ -339,7 +350,7 @@ def _parse_discover_account_html(path: Path) -> list[Txn]:
     if acct_match:
         last4 = (acct_match.group(1) or acct_match.group(2) or last4)[-4:]
 
-    owner = 'Spouse'  # Both Discover accounts belong to Spouse
+    owner = _spouse_label()  # Both Discover accounts belong to the spouse
 
     rows = re.findall(r'<tr[^>]*>(.*?)</tr>', content, re.DOTALL | re.IGNORECASE)
     in_data = False

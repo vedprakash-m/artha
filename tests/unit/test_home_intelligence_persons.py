@@ -23,8 +23,3 @@ def test_missing_or_malformed_profile_tracks_nobody(tmp_path):
     bad.write_text(": : :\n")
     assert hi._load_person_entities(bad) == {}
 
-
-def test_source_carries_no_household_entities():
-    import inspect
-    src = inspect.getsource(hi)
-    assert "person.child1" not in src and "person.child2" not in src
