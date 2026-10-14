@@ -42,7 +42,11 @@ a Catch-up ID resumes at the first uncommitted stage.
    ```
 2. Choose the extraction model deliberately and point `ARTHA_EXTRACTOR_CMD` at a command that
    reads the prompt on stdin and prints the JSON on stdout. Without it, extraction fails closed
-   per Signal and the run reports itself degraded.
+   per Signal and the run reports itself degraded. The recommended command is the bundled
+   no-tools Claude CLI wrapper (D-23): `ARTHA_EXTRACTOR_CMD="python3 scripts/catchup_core/extractor_claude.py"`.
+   It disables tools, skills, MCP servers and settings, runs in an empty directory, scrubs the
+   environment and takes the model only from `ARTHA_LLM_MODEL_CLAUDE`. The CLI must be signed in
+   (`claude` then `/login`) in the shell that runs the Catch-up.
 3. Record consent for any adult household member's restricted data (`Ledger.grant_consent`).
 4. Run `python scripts/catchup_core/cli.py catchup --shadow --json` (from `scripts/` on `PYTHONPATH`,
    i.e. `cd scripts && python -m catchup_core.cli catchup --shadow --json`). Exit codes: 0 complete,
