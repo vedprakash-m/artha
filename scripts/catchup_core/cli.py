@@ -11,6 +11,7 @@ data and owner sign-off) — the command can never silently publish a Briefing.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -18,6 +19,7 @@ from typing import TextIO
 
 from catchup_core.contracts import BriefingFormat, CatchupRequest, CatchupResult, ContractError, ExecutionMode, ExitCode
 from catchup_core.coordinator import Deps, run_catchup
+from catchup_core.exchange import AwaitingExtraction, ExchangeExtractor, parse_responses, render_bundle
 
 __all__ = ["main", "parse_args"]
 
@@ -47,16 +49,28 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run.add_argument("--shadow", action="store_true", help="comparison run: never publishes")
     run.add_argument("--id", default=None, help="Catch-up ID / idempotency key (default: new)")
     run.add_argument("--format", choices=[f.value for f in BriefingFormat], default="standard")
+    run.add_argument("--responses", default=None, metavar="PATH|-",
+                     help="answers to a paused run's extraction requests (JSON; '-' reads stdin)")
     run.add_argument("--host", default="", help="designated authority host (required unless --shadow)")
     run.add_argument("--actor", default="user")
     run.add_argument("--channel", default="cli")
     return parser.parse_args(list(argv))
 
 
+def _read_responses(source: str | None, stdin: TextIO) -> dict[str, str] | None:
+    if source is None:
+        return None
+    if source == "-":
+        return parse_responses(stdin.read())
+    with open(source, encoding="utf-8") as fh:
+        return parse_responses(fh.read())
+
+
 def main(argv: Sequence[str] | None = None, *, deps_factory: DepsFactory = _default_factory,
-         out: TextIO | None = None, err: TextIO | None = None) -> int:
+         out: TextIO | None = None, err: TextIO | None = None, stdin: TextIO | None = None) -> int:
     stdout = out if out is not None else sys.stdout
     stderr = err if err is not None else sys.stderr
+    stdin = stdin if stdin is not None else sys.stdin
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv)
     except SystemExit as exc:
@@ -70,10 +84,23 @@ def main(argv: Sequence[str] | None = None, *, deps_factory: DepsFactory = _defa
         print(f"usage error: {exc}", file=stderr)
         return int(ExitCode.USAGE_ERROR)
     try:
-        result: CatchupResult = run_catchup(request, deps_factory(request))
+        responses = _read_responses(args.responses, stdin)
+    except (OSError, ValueError) as exc:
+        print(f"usage error: {exc}", file=stderr)
+        return int(ExitCode.USAGE_ERROR)
+    try:
+        deps = deps_factory(request)
+        if responses is not None:
+            deps = dataclasses.replace(deps, extractor=ExchangeExtractor(responses))
+        result: CatchupResult = run_catchup(request, deps)
     except NotConfigured as exc:
         print(f"not configured: {exc}", file=stderr)
         return int(ExitCode.USAGE_ERROR)
+    except AwaitingExtraction as paused:
+        print(render_bundle(paused.catchup_id, paused.requests), file=stdout)
+        print(f"awaiting extraction: {len(paused.requests)} request(s); resume with --id "
+              f"{paused.catchup_id} --responses", file=stderr)
+        return int(ExitCode.AWAITING_EXTRACTION)
     if args.json:
         print(result.to_json(), file=stdout)
     else:

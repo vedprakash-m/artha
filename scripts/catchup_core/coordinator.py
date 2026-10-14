@@ -40,6 +40,7 @@ from catchup_core.contracts import (
     StageCheckpoint,
 )
 from catchup_core.domain_pack import DomainPack
+from catchup_core.exchange import AwaitingExtraction, ExtractionPending, PendingRequest
 from catchup_core.incumbent import GuardedIncumbent, IncumbentOutput
 from catchup_core.ledger import Ledger, LedgerError, SignalInput, Suppressed
 from catchup_core.reconcile import reconcile
@@ -104,6 +105,7 @@ class _Run:
         self.request, self.deps, self.led = request, deps, deps.ledger
         self.now = deps.now()
         self.failures: list[FailureClass] = []
+        self._pending: list[PendingRequest] = []
         self._incumbent: IncumbentOutput | None = None
         self.done = set(self.led.committed_stages(request.catchup_id))
         self.versions = {"policy": request.policy_version, "pack": deps.pack.version,
@@ -186,6 +188,9 @@ class _Run:
         signal = ex.NormalizedSignal(sid, row["connector"], text, klass)
         try:
             output = d.extractor(ex.build_request(d.pack, signal, d.subjects).prompt)
+        except ExtractionPending as pending:         # no answer yet: not a failure, the run pauses
+            self._pending.append(pending.request)
+            return False
         except Exception:                            # model failure: isolate, stay non-quiet
             output = ""
         parsed = ex.parse_output(output, d.pack, signal, d.subjects)
@@ -204,8 +209,11 @@ class _Run:
         return True
 
     def _stage_extract(self) -> tuple[str, ...]:
-        return tuple(r["signal_id"] for r in self.led.signals_in_state(ProcessingState.NORMALIZED)
+        done = tuple(r["signal_id"] for r in self.led.signals_in_state(ProcessingState.NORMALIZED)
                      if self._extract_one(r))
+        if self._pending:                            # stage stays uncommitted; resume re-enters it
+            raise AwaitingExtraction(self.request.catchup_id, self._pending)
+        return done
 
     # ── RECONCILE ────────────────────────────────────────────────────────────
     def _source_class(self, signal_id: str) -> str:

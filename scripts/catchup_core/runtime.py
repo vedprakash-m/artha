@@ -15,11 +15,11 @@ Everything environment-specific is configured here and nowhere else:
       consent_required: [adult_child]     # adults whose restricted data needs their recorded consent
       viewer: owner
 
-* the extraction model is an **external command** (``ARTHA_EXTRACTOR_CMD``) that reads
-  the prompt on stdin and prints the JSON on stdout.  It is deliberately not bundled:
-  provider, data classes and retention are the owner's decision (§9.2, §10.1).  With
-  no command configured, extraction fails closed per Signal and the Catch-up reports
-  itself degraded instead of guessing.
+* extraction is **model-neutral** (:mod:`catchup_core.exchange`): with no command configured the run
+  pauses and prints requests for whichever assistant session the owner is running, then resumes
+  with its answers.  ``ARTHA_EXTRACTOR_CMD`` may name any command that reads the prompt on stdin
+  and prints the JSON on stdout for unattended runs.  Provider, data classes and retention remain
+  the owner's decision (§9.2, §10.1); answers are untrusted and validated by the core.
 """
 from __future__ import annotations
 
@@ -41,6 +41,7 @@ from catchup_core.contracts import CatchupRequest, CoverageStatus
 from catchup_core.coordinator import ConnectorFetch, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.domain_pack import DomainPack, PackError, load_pack_file
+from catchup_core.exchange import ExchangeExtractor
 from catchup_core.incumbent import GuardedIncumbent
 from catchup_core.ledger import FileSealedStore, Ledger
 from catchup_core.legacy_state import LegacyStateAdapter
@@ -199,7 +200,8 @@ def build_deps(
     return Deps(
         ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
         fetchers=build_fetchers(config, since, handler_loader, auth_loader, required),
-        extractor=command_extractor(env.get("ARTHA_EXTRACTOR_CMD")),
+        extractor=(command_extractor(env["ARTHA_EXTRACTOR_CMD"]) if env.get("ARTHA_EXTRACTOR_CMD")
+                   else ExchangeExtractor()),
         subjects=config.subjects, viewer=config.viewer, now=now or (lambda: datetime.now(UTC)),
         source_class={name: name for name in config.sources},
         incumbent=GuardedIncumbent(LegacyStateAdapter(root / "state", domains, datetime.now(UTC))),

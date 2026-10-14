@@ -66,6 +66,7 @@ class ExitCode(IntEnum):
     DEGRADED = 10
     BLOCKED = 20
     USAGE_ERROR = 30
+    AWAITING_EXTRACTION = 40    # paused: answer the printed requests, then resume with --responses
 
 
 class RunStatus(StrEnum):

@@ -41,17 +41,22 @@ a Catch-up ID resumes at the first uncommitted stage.
    consent_required: [adult_child]   # adults whose restricted data needs their recorded consent
    viewer: owner
    ```
-2. Choose the extraction model deliberately and point `ARTHA_EXTRACTOR_CMD` at a command that
-   reads the prompt on stdin and prints the JSON on stdout. Without it, extraction fails closed
-   per Signal and the run reports itself degraded. The recommended command is the bundled
-   no-tools Claude CLI wrapper (D-23): `ARTHA_EXTRACTOR_CMD="python3 scripts/catchup_core/extractor_claude.py"`.
-   It disables tools, skills, MCP servers and settings, runs in an empty directory, scrubs the
-   environment and takes the model only from `ARTHA_LLM_MODEL_CLAUDE`. The CLI must be signed in
-   (`claude` then `/login`) in the shell that runs the Catch-up.
+2. **Extraction is done by whichever assistant you are running** (Claude, ChatGPT/Codex, Gemini,
+   Copilot, a local model): the core never calls a model itself. When it needs extraction it pauses:
+   ```
+   cd scripts && python -m catchup_core.cli catchup --shadow --json --id <ID>     # prints the requests, exit 40
+   # the assistant answers each request's prompt (JSON only), then:
+   echo '{"responses": {"<request_id>": "<the model JSON, verbatim>"}}' | \
+     python -m catchup_core.cli catchup --shadow --json --id <ID> --responses -
+   ```
+   Answers are bound to the exact prompt by `request_id`, are treated as untrusted data, and become facts
+   only if the schema, the closed vocabularies and the verbatim-evidence check pass. No model, key or CLI
+   is configured in Artha. Optional: `ARTHA_EXTRACTOR_CMD` may name any command (stdin prompt, stdout
+   JSON) for unattended runs; if set it is used instead of the pause.
 3. Record consent for any adult household member's restricted data (`Ledger.grant_consent`).
 4. Run `python scripts/catchup_core/cli.py catchup --shadow --json` (from `scripts/` on `PYTHONPATH`,
    i.e. `cd scripts && python -m catchup_core.cli catchup --shadow --json`). Exit codes: 0 complete,
-   10 degraded, 20 blocked, 30 usage error.
+   10 degraded, 20 blocked, 30 usage error, 40 paused awaiting extraction answers.
 5. Compare with the incumbent's Briefing using `shadow.incumbent_items` / `shadow.compare`, label
    the items, and feed the cases to `scorecard.score`. The pilot may be considered for cutover only
    when `Scorecard.passes` is true over the agreed number of Catch-ups and you have signed off.
