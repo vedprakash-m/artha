@@ -73,20 +73,18 @@ _RING_MOTION_SUFFIX = "_motion"
 # Person entities
 # ---------------------------------------------------------------------------
 
-def _load_person_entities(profile: Optional[Path] = None) -> Dict[str, str]:
+def _load_person_entities(config_dir: Optional[str] = None) -> Dict[str, str]:
     """Home Assistant person entities -> display names, from the owner's local profile.
 
     Household identities are personal data and live only in the git-ignored
     ``config/user_profile.yaml`` under ``home_assistant.person_entities``; source
     code carries none.  A missing or unreadable profile means no tracked persons.
     """
-    path = profile or (_REPO_ROOT / "config" / "user_profile.yaml")
+    from lib.config_loader import load_config  # type: ignore[import]  # noqa: PLC0415
     try:
-        import yaml  # noqa: PLC0415
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        mapping = (data.get("home_assistant") or {}).get("person_entities") or {}
+        mapping = (load_config("user_profile", config_dir).get("home_assistant") or {}).get("person_entities") or {}
         return {str(k): str(v) for k, v in mapping.items()}
-    except Exception:  # missing file, bad YAML, wrong shape
+    except Exception:  # wrong shape
         return {}
 
 

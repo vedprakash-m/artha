@@ -44,14 +44,13 @@ TRANSACTIONS_MD = ARTHA / "state" / "transactions.md"
 # ---------------------------------------------------------------------------
 # Unified transaction record
 # ---------------------------------------------------------------------------
-def _spouse_label() -> str:
+def _spouse_label(config_dir: str | None = None) -> str:
     """Spouse's first name from the git-ignored local profile; ``Spouse`` when unavailable."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from lib.config_loader import load_config  # noqa: PLC0415
     try:
-        import yaml  # noqa: PLC0415
-        profile = Path(__file__).resolve().parent.parent / "config" / "user_profile.yaml"
-        data = yaml.safe_load(profile.read_text(encoding="utf-8")) or {}
-        return str(data["family"]["spouse"]["name"]).split()[0]
-    except Exception:  # no profile, no spouse, bad shape
+        return str(load_config("user_profile", config_dir)["family"]["spouse"]["name"]).split()[0]
+    except (KeyError, IndexError, TypeError, AttributeError):
         return "Spouse"
 
 
