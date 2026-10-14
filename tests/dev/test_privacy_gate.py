@@ -218,3 +218,29 @@ def test_gitleaks_config_error_is_reported_as_scanner_error_not_a_leak(tmp_path,
     result = sandbox.commit("x", check=False)
     assert result.returncode != 0
     assert "scanner error" in out(result)
+
+
+def test_household_first_names_are_denylisted_but_the_owner_handle_is_not(tmp_path):
+    """A first name alone identifies a spouse/child/sibling; the owner's own name is public by design."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ps_under_test", HOOKS / "privacy_scan.py")
+    ps = importlib.util.module_from_spec(spec)
+    sys.modules["ps_under_test"] = ps
+    spec.loader.exec_module(ps)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "user_profile.yaml").write_text(
+        "family:\n"
+        "  primary_user:\n    name: Zed Ownerson\n"
+        "  spouse:\n    name: Quillan Ownerson\n"
+        "  children:\n    - name: Brindle Ownerson\n      age: 9\n"
+        "      school:\n        name: Riverbend Elementary\n"
+        "  siblings:\n    - name: Corvane Ownerson\n"
+    )
+    deny = ps.load_denylist(tmp_path)
+    hits = lambda text: deny.match(text)  # noqa: E731
+    assert hits("Brindle has a recital")                    # child, first name only
+    assert hits("call Quillan tomorrow")                    # spouse
+    assert hits("Corvane lives abroad")                     # sibling
+    assert not hits("Zed wrote this")                       # owner first name is not household-private
+    assert hits("Zed Ownerson")                             # full name still is
+    assert not hits("Riverbend is a place")                 # a school's name is not a person

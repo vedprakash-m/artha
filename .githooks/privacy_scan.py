@@ -280,8 +280,21 @@ _IDENT_KEYS_BLOCK = {
 }
 _EMAIL_KEYS = {"email", "gmail", "outlook", "icloud"}
 _NAME_KEYS = {"name", "full_name", "legal_name", "spouse_name", "display_name"}
+_SUBSECTION = re.compile(r"^  ([A-Za-z_][\w-]*)\s*:\s*$")
+# Household members other than the owner: a first name alone identifies them, so it is denylisted too.
+_HOUSEHOLD_SUBSECTIONS = {"spouse", "children", "siblings", "extended_family"}
 _YAML_LINE = re.compile(r"^\s*(?:-\s+)?([A-Za-z_][\w-]*)\s*:\s*(.+?)\s*(?:#.*)?$")
 _PLACEHOLDER = re.compile(r"^(?:\$\{.*\}|<.*>|your[-_ ].*|example.*|changeme|todo|tbd|none|null|true|false|yes|no)$", re.I)
+
+
+def _is_household_member_name(line: str, subsection: str) -> bool:
+    """True for the ``name`` of a spouse, child, sibling or relative — not of their school or place."""
+    if subsection not in _HOUSEHOLD_SUBSECTIONS:
+        return False
+    indent = len(line) - len(line.lstrip())
+    if subsection == "spouse":
+        return indent == 4
+    return line.lstrip().startswith("- ")
 
 
 def _unquote(value: str) -> str:
@@ -333,10 +346,15 @@ def load_denylist(repo: Path = ARTHA_DIR) -> Denylist:
     except OSError:
         text = ""
     section = ""
+    subsection = ""
     for line in text.splitlines():
         top = re.match(r"^([A-Za-z_][\w-]*)\s*:\s*$", line)
         if top:
-            section = top.group(1).lower()
+            section, subsection = top.group(1).lower(), ""
+            continue
+        nested = _SUBSECTION.match(line)
+        if nested:
+            subsection = nested.group(1).lower()
             continue
         m = _YAML_LINE.match(line)
         if not m:
@@ -351,6 +369,8 @@ def load_denylist(repo: Path = ARTHA_DIR) -> Denylist:
             deny.add("phone" if key == "phone" else key, raw)
         elif key in _NAME_KEYS and section == "family":
             deny.add("name" if len(raw.split()) >= 2 else "given-name", raw)
+            if _is_household_member_name(line, subsection):
+                deny.add("given-name", raw.split()[0].strip(".,"))
     extra = Path(os.environ.get("ARTHA_LOCAL_DIR", str(Path.home() / ".artha-local"))).expanduser() \
         / "privacy_denylist.txt"
     try:
