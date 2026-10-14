@@ -1786,7 +1786,7 @@ Read it when doing system health checks, validating file existence, or checking 
 5. **Fail gracefully**: If an MCP tool fails, note it in the briefing and continue with available data
 6. **No hallucination zone**: If you don't have data for a field (e.g., account balance, priority date), write "unknown — verify manually" not a fabricated value
 7. **Cost awareness**: Avoid redundant LLM calls. Use Gemini CLI for web lookups (free quota). Cache web research results in `summaries/` for 24 hours
-8. **Session discipline**: At the end of every session (user says "done", "bye", "exit", or stops responding for context-window reasons), run `python3 scripts/vault.py encrypt` before ending. The LaunchAgent watchdog (macOS) also handles crash recovery.
+8. **Session discipline**: At the end of every session (user says "done", "bye", "exit", or stops responding for context-window reasons), run `python3 scripts/vault.py encrypt` before ending. There is no background watchdog; if a session dies first, the next session start warns that decrypted state was left on disk.
 
 
 ---

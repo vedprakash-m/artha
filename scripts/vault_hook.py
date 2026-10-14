@@ -8,6 +8,7 @@ Called by .claude/settings.json PreToolUse and PostToolUse hooks.
 Usage:
   python scripts/vault_hook.py decrypt       — silent decrypt attempt
   python scripts/vault_hook.py stray-check   — warn about unprotected plaintext
+  python scripts/vault_hook.py session-start — warn once when an earlier session left state decrypted
 
 Ref: TS §3.6.2
 RD-02: Decrypt failures now write a sentinel file instead of being swallowed,
@@ -119,6 +120,27 @@ def hook_stray_check() -> None:
             print(f"[VAULT-WARN] Stray plaintext: {plain} (no lock file)")
 
 
+def hook_session_start() -> None:
+    """One line at session start when an earlier session left decrypted state on disk.
+
+    With no background watchdog (re-artha D-27) a crash during a Catch-up leaves plaintext
+    until someone re-encrypts; this makes that visible instead of silent.  Never raises.
+    """
+    import time  # noqa: PLC0415
+    if os.path.exists(LOCK_FILE):
+        try:
+            age = f"{int((time.time() - os.path.getmtime(LOCK_FILE)) / 60)} min"
+        except OSError:
+            age = "unknown age"
+        print(f"[VAULT-WARN] Decrypted state was left on disk by an earlier session (lock {age} old). "
+              "Re-encrypt now: python3 scripts/vault.py encrypt")
+        return
+    stray = [d for d in SENSITIVE_DOMAINS if os.path.exists(os.path.join(STATE_DIR, f"{d}.md"))]
+    if stray:
+        print(f"[VAULT-WARN] Plaintext sensitive state without a lock file: {', '.join(stray)}. "
+              "Re-encrypt: python3 scripts/vault.py encrypt")
+
+
 def hook_contacts_integrity() -> None:
     """DEBT-TRUST-001: Check contacts.yaml for tampering via modification timestamp.
 
@@ -188,6 +210,8 @@ def main() -> None:
         hook_decrypt()
     elif cmd == "stray-check":
         hook_stray_check()
+    elif cmd == "session-start":
+        hook_session_start()
     elif cmd == "contacts-integrity":
         hook_contacts_integrity()
     # Always exit 0 — hooks must not block tool execution

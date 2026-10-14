@@ -108,16 +108,3 @@ class TestVaultSignalHandlers:
         assert "_atexit_encrypt" in registered, \
             "_atexit_encrypt not registered with atexit"
 
-
-class TestVaultWatchdogPlist:
-    """Verify watchdog interval was reduced to 120s (DEBT-001)."""
-
-    def test_watchdog_interval_is_120s(self):
-        plist_path = Path(_SCRIPTS_DIR) / "com.artha.vault-watchdog.plist"
-        assert plist_path.exists(), "Watchdog plist not found"
-        content = plist_path.read_text()
-        # Must NOT have 300 as interval; MUST have 120
-        assert "<integer>120</integer>" in content, \
-            "Watchdog StartInterval must be 120 (2 minutes) per DEBT-001"
-        assert "<integer>300</integer>" not in content, \
-            "Old 300s interval still present in watchdog plist"

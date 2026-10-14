@@ -19,7 +19,7 @@ Run `/health` to validate each component is present and passes its self-check.
 | `scripts/vault.py` | Cross-platform encrypt/decrypt sensitive state files using `age` + keyring | ✅ Operational | 2026-03-13 |
 | `scripts/pii_guard.py` | Layer 1 PII detection and redaction (pure Python, cross-platform) | ✅ Operational | 2026-03-13 |
 | `scripts/safe_cli.py` | Outbound PII wrapper for Gemini/Copilot CLI | ✅ Operational | 2026-03-13 |
-| `scripts/com.artha.vault-watchdog.plist` | LaunchAgent: auto-encrypt on session crash (macOS) | ✅ Loaded (`com.artha.vault-watchdog`) | 2026-03-07 |
+| `scripts/vault_hook.py session-start` | SessionStart warning when an earlier session left decrypted state on disk (replaces the retired vault watchdog, D-27) | ✅ Operational | 2026-10-13 |
 | `scripts/requirements.txt` | Python package dependencies (mirrors pyproject.toml optional-dependencies) | ✅ Created | 2026-03-13 |
 | `scripts/google_auth.py` | Shared Google OAuth helper — keyring-backed, auto-refresh | ✅ Operational | 2026-03-08 |
 | `scripts/pipeline.py` | Unified data pipeline — runs all connectors from `connectors.yaml` | ✅ Operational | 2026-03-13 |
@@ -55,8 +55,8 @@ python scripts/vault.py health
 # pipeline health check
 python scripts/pipeline.py --health
 
-# LaunchAgent (macOS only)
-ls ~/Library/LaunchAgents/com.artha.vault-watchdog.plist 2>/dev/null && echo "LaunchAgent: installed" || echo "LaunchAgent: NOT INSTALLED"
+# No background jobs: Artha owns no LaunchAgent (the vault watchdog was retired, D-27)
+python3 scripts/vault_hook.py session-start   # prints a warning only if decrypted state was left on disk
 ```
 
 ---
@@ -228,7 +228,6 @@ goals:
 | Google Calendar API | Optional | Same OAuth flow as Gmail |
 | `google-api-python-client` | Optional | Run `pip install -r scripts/requirements.txt` |
 | AI CLI | Required | Gemini CLI, GitHub Copilot, or Claude Code (one of) |
-| LaunchAgent (macOS) | Optional | `com.artha.vault-watchdog` — auto-encrypt on session crash |
 
 ---
 

@@ -2,10 +2,9 @@
 
 Artha does work only inside a session the user starts.  This check inventories
 what would contradict that: scheduler entries (launchd, systemd timers, cron,
-Windows Scheduled Tasks) and listening processes that belong to Artha.  The one
-documented exception is the vault watchdog, retained until the in-memory vault
-passes crash tests (§6.11 phase 4).  A tool that cannot be queried is reported,
-never treated as "nothing found".
+Windows Scheduled Tasks) and listening processes that belong to Artha.  There is
+no exception: the vault watchdog was retired (re-artha D-27).  A tool that cannot
+be queried is reported, never treated as "nothing found".
 """
 from __future__ import annotations
 
@@ -19,7 +18,6 @@ from preflight._types import CheckResult
 
 Runner = Callable[[list[str]], tuple[int, str]]
 
-_ALLOWED = ("vault-watchdog", "vaultwatchdog", "vault_watchdog")
 _ARTHA_RE = re.compile(r"artha", re.IGNORECASE)
 _DAEMON_SCRIPTS = re.compile(
     r"(channel_listener|artha_engine|nudge_daemon|agent_scheduler|vault_watchdog)\.py", re.IGNORECASE)
@@ -28,11 +26,6 @@ _DAEMON_SCRIPTS = re.compile(
 def _default_runner(argv: list[str]) -> tuple[int, str]:
     proc = subprocess.run(argv, capture_output=True, text=True, timeout=15)
     return proc.returncode, proc.stdout
-
-
-def _is_allowed(text: str) -> bool:
-    low = text.lower()
-    return any(a in low for a in _ALLOWED)
 
 
 def check_background_footprint(
@@ -45,7 +38,6 @@ def check_background_footprint(
     home = Path(home) if home else Path.home()
     name = "Background footprint"
     found: list[str] = []
-    allowed: list[str] = []
     unknown: list[str] = []
 
     def run(argv: list[str]) -> str | None:
@@ -57,7 +49,7 @@ def check_background_footprint(
         return out if code == 0 else ""
 
     def classify(item: str) -> None:
-        (allowed if _is_allowed(item) else found).append(item)
+        found.append(item)
 
     if platform == "darwin":
         out = run(["launchctl", "list"])
@@ -107,7 +99,4 @@ def check_background_footprint(
             fix_hint="Artha must not own scheduled jobs or listeners (PULL over PUSH). "
                      "Unload and remove them, e.g. `launchctl bootout gui/$UID <plist>` then delete the file.",
         )
-    note = ""
-    if allowed:
-        note = " — documented exception until Stage 1: " + "; ".join(allowed) + " (vault watchdog)"
-    return CheckResult(name, "P1", True, "no scheduler entries or listeners owned by Artha" + note)
+    return CheckResult(name, "P1", True, "no scheduler entries or listeners owned by Artha")

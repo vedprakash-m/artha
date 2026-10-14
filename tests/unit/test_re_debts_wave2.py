@@ -352,13 +352,6 @@ class TestVaultWatchdog:
             "RD-40: vault.py main() must dispatch the 'watchdog' subcommand"
         )
 
-    def test_preflight_check_vault_watchdog_exists(self) -> None:
-        """preflight.py must expose check_vault_watchdog()."""
-        import preflight  # noqa: PLC0415
-
-        assert hasattr(preflight, "check_vault_watchdog"), (
-            "RD-40: preflight.py must expose check_vault_watchdog() P1 advisory check"
-        )
 
 
 # ---------------------------------------------------------------------------

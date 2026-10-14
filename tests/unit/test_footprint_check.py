@@ -41,11 +41,10 @@ def test_loaded_launchd_job_is_a_footprint(tmp_path):
     assert not res.passed and "artha.hermes-context" in res.message
 
 
-def test_vault_watchdog_is_the_documented_exception(tmp_path):
+def test_vault_watchdog_is_no_longer_an_exception(tmp_path):
     runner = _Runner({("launchctl", "list"): "-\t0\tcom.artha.vault-watchdog\n"})
     res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
-    assert res.passed
-    assert "watchdog" in res.message.lower()
+    assert not res.passed and "vault-watchdog" in res.message
 
 
 def test_installed_but_unloaded_definition_is_reported(tmp_path):
@@ -81,12 +80,12 @@ def test_linux_timer_detected(tmp_path):
     assert not res.passed and "artha-channel.timer" in res.message
 
 
-def test_windows_task_detected_watchdog_allowed(tmp_path):
+def test_windows_tasks_detected_including_watchdog(tmp_path):
     out = "TaskName: \\ArthaChannelListener\nStatus: Ready\n\nTaskName: \\ArthaVaultWatchdog\nStatus: Ready\n"
     runner = _Runner({("schtasks",): out})
     res = check_background_footprint(runner=runner, platform="win32", home=tmp_path)
     assert not res.passed
-    assert "ArthaChannelListener" in res.message and "ArthaVaultWatchdog" not in res.message.split("exception")[0]
+    assert "ArthaChannelListener" in res.message and "ArthaVaultWatchdog" in res.message
 
 
 def test_inventory_tool_failure_is_reported_not_passed(tmp_path):

@@ -21,7 +21,7 @@ import sys
 import types
 
 from preflight._types import ARTHA_DIR, SCRIPTS_DIR, STATE_DIR, TOKEN_DIR, LOCK_FILE, WORKIQ_CACHE_FILE, _rel, CheckResult, _REQUIRED_DEPS
-from preflight.vault_checks import check_keyring_backend, check_vault_health, check_vault_lock, check_vault_watchdog
+from preflight.vault_checks import check_keyring_backend, check_vault_health, check_vault_lock
 from preflight.oauth_checks import check_oauth_token, check_token_freshness, check_msgraph_token
 from preflight.api_checks import check_script_health, check_pii_guard
 from preflight.coverage_checks import check_connector_coverage, check_plaintext_in_sync_root
@@ -81,7 +81,6 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     checks.append(check_keyring_backend())
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
-    checks.append(check_vault_watchdog())  # RD-40: advisory check for watchdog daemon
     checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
     checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json"))
     checks.append(check_pii_guard())
