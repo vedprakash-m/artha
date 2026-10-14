@@ -227,3 +227,48 @@ def test_remote_ingest_is_stamped(queue):
     p = proposal("r-1")
     assert queue.ingest_remote(p) is True
     assert queue.get_raw("r-1")["payload_hash"] == aq.compute_payload_hash(p)
+
+
+# ── live trial hold (D-26) ──────────────────────────────────────────────────
+
+REPO_ACTIONS_YAML = Path(__file__).resolve().parents[2] / "config" / "actions.yaml"
+
+
+def test_held_types_are_read_from_config(tmp_path):
+    (tmp_path / "config").mkdir()
+    assert ae._load_held_action_types(tmp_path) == frozenset()          # no file: nothing held
+    (tmp_path / "config" / "actions.yaml").write_text("live_trial:\n  held: [email_send, slack_send]\nactions: {}\n")
+    assert ae._load_held_action_types(tmp_path) == {"email_send", "slack_send"}
+    (tmp_path / "config" / "actions.yaml").write_text("live_trial: not-a-mapping\nactions: {}\n")
+    assert ae._load_held_action_types(tmp_path) == frozenset()
+
+
+def test_repo_config_trials_reminders_and_holds_outbound_communication():
+    import yaml
+    cfg = yaml.safe_load(REPO_ACTIONS_YAML.read_text())
+    held = set(cfg["live_trial"]["held"])
+    assert cfg["live_trial"]["trial"] == ["reminder_create"]
+    assert {"email_send", "email_reply", "whatsapp_send", "slack_send"} <= held
+    assert "reminder_create" not in held
+    # the trial type always needs a person, whatever the trust level
+    assert cfg["actions"]["reminder_create"]["autonomy_floor"] is True
+    assert all(t in cfg["actions"] for t in held)                      # no typos in the hold list
+
+
+def test_held_type_is_queued_but_never_executed(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARTHA_LOCAL_DB", str(tmp_path / "actions.db"))
+    (tmp_path / "state").mkdir()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "actions.yaml").write_text(
+        "schema_version: '2.0'\nlive_trial:\n  held: [email_send]\nactions:\n  email_send:\n"
+        "    handler: scripts/actions/email_send.py\n    enabled: true\n    min_trust: 1\n")
+    ex = ae.ActionExecutor(tmp_path)
+    try:
+        queued = ex._queue
+        held = dataclasses.replace(proposal("h-1"), action_type="email_send")
+        queued.propose(held)
+        result = ex.approve("h-1", approved_by="user:test")
+        assert result.status == "failure" and "held until promoted" in result.message
+        assert queued.get_raw("h-1")["status"] == "pending"                 # untouched: no approval recorded
+    finally:
+        ex.close()

@@ -387,6 +387,8 @@ class ActionExecutor:
 
         # Load action configs
         self._action_configs = _load_action_configs(artha_dir)
+        # Action types held back while the hardened lifecycle is being proven (D-26).
+        self._held_types = _load_held_action_types(artha_dir)
 
         # §4.4 Invariant 1: autonomy_floor=True AND min_trust>=2 is contradictory.
         # autonomy_floor requires explicit human approval; min_trust>=2 allows autonomous.
@@ -735,6 +737,20 @@ class ActionExecutor:
             return ActionResult(
                 status="failure",
                 message=f"Approval refused: {bind_reason}.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
+
+        # 2c. Live-trial hold — types not yet promoted may be proposed and queued but never executed
+        if proposal.action_type in self._held_types:
+            _audit_log(self._artha_dir, f"ACTION_HELD | id:{action_id} | type:{proposal.action_type}")
+            return ActionResult(
+                status="failure",
+                message=(
+                    f"{proposal.action_type} is held until promoted (live trial, re-artha D-26). "
+                    "Remove it from live_trial.held in config/actions.yaml to release it."
+                ),
                 data=None,
                 reversible=False,
                 reverse_action=None,
@@ -1476,6 +1492,20 @@ def _load_action_configs(artha_dir: Path) -> dict[str, Any]:
     except Exception as exc:
         _log.warning(f"load_action_configs_failed error={exc}")
         return {}
+
+
+def _load_held_action_types(artha_dir: Path) -> frozenset[str]:
+    """``live_trial.held`` from config/actions.yaml: action types that must not execute yet."""
+    actions_yaml = artha_dir / "config" / "actions.yaml"
+    try:
+        import yaml  # PyYAML  # noqa: PLC0415
+        with open(actions_yaml, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        held = (data.get("live_trial") or {}).get("held") or []
+        return frozenset(str(t) for t in held)
+    except Exception as exc:
+        _log.warning(f"load_held_action_types_failed error={exc}")
+        return frozenset()
 
 
 def _resolve_defer_time(until: str) -> str:
