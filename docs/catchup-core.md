@@ -37,7 +37,8 @@ a Catch-up ID resumes at the first uncommitted stage.
    sources:
      school_email: {connector: gmail, account_scope: personal, kwargs: {query: "label:school"}}
      calendar:     {connector: google_calendar, account_scope: family}
-   subjects: [kid1, kid2]
+   subjects: [kid1, kid2, adult_child]
+   consent_required: [adult_child]   # adults whose restricted data needs their recorded consent
    viewer: owner
    ```
 2. Choose the extraction model deliberately and point `ARTHA_EXTRACTOR_CMD` at a command that

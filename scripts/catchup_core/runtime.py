@@ -11,7 +11,8 @@ Everything environment-specific is configured here and nowhere else:
       sources:
         school_email: {connector: gmail,           account_scope: personal, kwargs: {query: "label:school"}}
         calendar:     {connector: google_calendar, account_scope: family}
-      subjects: [kid1, kid2]
+      subjects: [kid1, kid2, adult_child]
+      consent_required: [adult_child]     # adults whose restricted data needs their recorded consent
       viewer: owner
 
 * the extraction model is an **external command** (``ARTHA_EXTRACTOR_CMD``) that reads
@@ -55,10 +56,12 @@ class RuntimeConfigError(RuntimeError):
 
 
 class RuntimeConfig:
-    def __init__(self, sources: Mapping[str, Mapping[str, Any]], subjects: list[str], viewer: str):
+    def __init__(self, sources: Mapping[str, Mapping[str, Any]], subjects: list[str], viewer: str,
+                 consent_required: frozenset[str] = frozenset()):
         self.sources = {k: dict(v) for k, v in sources.items()}
         self.subjects = subjects
         self.viewer = viewer
+        self.consent_required = consent_required
 
 
 def local_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -83,7 +86,14 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
     subjects = data.get("subjects")
     if not isinstance(subjects, list) or not all(isinstance(s, str) and s for s in subjects) or not subjects:
         raise RuntimeConfigError("config needs a non-empty 'subjects' list")
-    return RuntimeConfig(sources, [str(s) for s in subjects], str(data.get("viewer", "owner")))
+    required = data.get("consent_required", [])
+    if not isinstance(required, list) or not all(isinstance(s, str) and s for s in required):
+        raise RuntimeConfigError("'consent_required' must be a list of subject ids")
+    unknown = sorted(set(required) - set(subjects))
+    if unknown:
+        raise RuntimeConfigError(f"'consent_required' names subjects not in 'subjects': {', '.join(unknown)}")
+    return RuntimeConfig(sources, [str(s) for s in subjects], str(data.get("viewer", "owner")),
+                         frozenset(required))
 
 
 def command_extractor(command: str | None, *, timeout: float = 120.0,
@@ -175,6 +185,7 @@ def build_deps(
     id_key = _id_key(id_provider)
 
     ledger = Ledger(local / "ledger.db", id_key=id_key, cipher=cipher, owner_id=config.viewer,
+                    consent_subjects=config.consent_required,
                     sealed=FileSealedStore(local / "sealed" / "checkpoint.json")).open()
     ledger.migrate(backup=_backup_for(local))
     if not ledger.check_restore():

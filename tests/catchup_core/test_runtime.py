@@ -27,7 +27,7 @@ def write_cfg(root, **over):
     data = {"sources": {"school_email": {"connector": "gmail", "account_scope": "personal",
                                          "kwargs": {"query": "label:school"}},
                         "calendar": {"connector": "google_calendar", "account_scope": "family"}},
-            "subjects": ["kid1", "kid2"], "viewer": "ved"}
+            "subjects": ["kid1", "kid2", "adult1"], "consent_required": ["adult1"], "viewer": "ved"}
     data.update(over)
     (root / "config" / "catchup_core.yaml").write_text(yaml.safe_dump(data))
 
@@ -44,7 +44,18 @@ def test_config_validation(tmp_path):
         rt.load_runtime_config(tmp_path / "missing.yaml")
     p.write_text("sources: {a: {connector: x, account_scope: y}}\nsubjects: [k]\n")
     cfg = rt.load_runtime_config(p)
-    assert cfg.viewer == "owner" and cfg.subjects == ["k"]
+    assert cfg.viewer == "owner" and cfg.subjects == ["k"] and cfg.consent_required == frozenset()
+
+
+def test_consent_required_is_validated_and_reaches_the_ledger(tmp_path):
+    p = tmp_path / "c.yaml"
+    base = "sources: {a: {connector: x, account_scope: y}}\nsubjects: [k, adult]\n"
+    p.write_text(base + "consent_required: [adult]\n")
+    assert rt.load_runtime_config(p).consent_required == frozenset({"adult"})
+    for bad in ("consent_required: adult\n", "consent_required: [stranger]\n", "consent_required: [1]\n"):
+        p.write_text(base + bad)
+        with pytest.raises(rt.RuntimeConfigError):
+            rt.load_runtime_config(p)
 
 
 def test_command_extractor_fails_closed():
@@ -105,6 +116,7 @@ def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeyp
         assert (local / "catchup_core" / "ledger.db").exists()
         assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {"school_email", "calendar"}
         assert deps.ledger.schema_version() >= 2 and deps.viewer == "ved"
+        assert deps.ledger._consent_subjects == frozenset({"adult1"})   # the gate is actually armed
         keys = {n for (_s, n) in kr.store}
         assert {"key.1", "current_version"} <= keys                       # keys live in the credential store
         out = deps.incumbent.run([])
