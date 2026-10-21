@@ -37,13 +37,22 @@ PROVIDERS = {
 }
 
 
-def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subprocess.run) -> ActionResult:
+def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subprocess.run,
+            operation: str = "execute", since: str = "") -> ActionResult:
+    """Run one handler operation (``execute`` or ``reconcile``) in the bounded child.
+
+    Reconciliation asks the provider, so it gets the same minimal environment and egress policy as execution; it can
+    only ever *confirm* an effect, and a child that does not return a receipt leaves the action ``unknown``.
+    """
+    if operation not in ("execute", "reconcile"):
+        raise ValueError("unsupported action operation")
     if module not in PROVIDERS:
         return ActionResult(
             "failure", "This action has no isolated provider policy; use an instruction sheet.", None, False, None
         )
     environment = {k: v for k, v in os.environ.items() if k in ("SYSTEMROOT", "WINDIR", "LANG", "HOME")}
-    envelope = {"module": module, "proposal": asdict(proposal), "parent": os.getpid(), "timeout": timeout}
+    envelope = {"module": module, "proposal": asdict(proposal), "parent": os.getpid(), "timeout": timeout,
+                "operation": operation, "since": since}
     try:
         result = runner(
             [sys.executable, str(Path(__file__).resolve())],
@@ -115,7 +124,10 @@ def _worker() -> None:
     import io
 
     with redirect_stdout(io.StringIO()):
-        result = handler.execute(proposal)
+        if envelope.get("operation") == "reconcile":
+            result = handler.reconcile(proposal, since=str(envelope.get("since", "")))
+        else:
+            result = handler.execute(proposal)
     print(json.dumps(asdict(result)))
 
 

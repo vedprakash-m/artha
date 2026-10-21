@@ -66,6 +66,7 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "health":
         return {"integrity": led.integrity_check(), "schema": led.schema_version(),
             "capabilities": _capability_states(led, workspace, deps),
+            "performance": _performance(led, workspace),
             "coverage": [{"connector": r["connector"], "status": r["status"],
                           "last_verified": r["completed_at"]} for r in led.coverage_rows()],
             "uninterpreted_signals": len(led.unresolved_signals()), "feedback": views.precision(led, viewer),
@@ -130,12 +131,14 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "activity":
         from catchup_core.runtime import action_database_path  # noqa: PLC0415
         path = action_database_path(workspace)
+        paused = (workspace / "config" / "actions.paused").exists()
         if not path.is_file():
-            return {"activity": []}
+            return {"activity": [], "actions_paused": paused}
+        from catchup_core.action_mapping import describe  # noqa: PLC0415
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
-            return {"activity": [dict(r) for r in db.execute(
-                "SELECT id,action_type,domain,status,created_at FROM actions ORDER BY created_at DESC LIMIT 50")]}
+            rows = db.execute("SELECT * FROM actions ORDER BY created_at DESC LIMIT 50").fetchall()
+        return {"activity": [describe(dict(r)) for r in rows], "actions_paused": paused}
     if args.command in ("reconcile", "resolve"):
         return _action_resolution(args, viewer, workspace)
     if args.command in ("pause", "resume"):
@@ -190,3 +193,15 @@ def _action_resolution(args: Namespace, viewer: str, workspace: Path) -> dict[st
     result = (executor.reconcile(args.action_id) if args.command == "reconcile"
               else executor.resolve_unknown(args.action_id, args.outcome, viewer))
     return {"action": args.action_id, "status": result.status, "message": result.message}
+
+
+def _performance(led: Any, workspace: Path) -> dict[str, Any]:
+    """Latency, complete-run ratio and an approximate cost from this machine's own runs."""
+    from catchup_core.metrics import estimate_cost, read_runs, summarize  # noqa: PLC0415
+    from catchup_core.runtime import RuntimeConfigError, load_runtime_config  # noqa: PLC0415
+    runs = read_runs(led._path.parent / "metrics")
+    try:
+        pricing = load_runtime_config(workspace / "config" / "catchup_core.yaml").policy.get("pricing")
+    except RuntimeConfigError:
+        pricing = None
+    return {**summarize(runs), "cost": estimate_cost(runs, pricing if isinstance(pricing, dict) else None)}

@@ -106,23 +106,27 @@
       "capability": "RA-09",
       "modules": [
         "scripts/catchup_core/policy.py",
+        "scripts/catchup_core/mcp.py",
         "scripts/tool_guard.py"
       ],
       "scope": "pilot",
       "tests": [
         "tests/unit/test_tool_guard.py",
-        "tests/catchup_core/test_release_regressions.py"
+        "tests/catchup_core/test_release_regressions.py",
+        "tests/catchup_core/test_mcp.py"
       ]
     },
     "RA-10.AC1": {
       "capability": "RA-10",
       "modules": [
         "scripts/catchup_core/capabilities.py",
+        "scripts/catchup_core/metrics.py",
         "tools/gen_capability_register.py"
       ],
       "scope": "pilot",
       "tests": [
-        "tests/dev/test_capability_register.py"
+        "tests/dev/test_capability_register.py",
+        "tests/catchup_core/test_metrics.py"
       ]
     },
     "RA-11.AC1": {
@@ -220,9 +224,13 @@
     },
     "RA-19.AC1": {
       "capability": "RA-19",
-      "modules": [],
+      "modules": [
+        "scripts/catchup_core/coordination.py"
+      ],
       "scope": "later",
-      "tests": []
+      "tests": [
+        "tests/catchup_core/test_coordination.py"
+      ]
     },
     "RA-20.AC1": {
       "capability": "RA-20",
@@ -284,13 +292,19 @@
     },
     "RA-25.AC1": {
       "capability": "RA-25",
-      "modules": [],
+      "modules": [
+        "scripts/catchup_core/plans.py",
+        "scripts/catchup_core/responsibilities.py"
+      ],
       "scope": "later",
-      "tests": []
+      "tests": [
+        "tests/catchup_core/test_plans.py",
+        "tests/catchup_core/test_responsibilities.py"
+      ]
     }
   },
   "contract_version": "0.1.0",
-  "implementation_sha256": "7d86b78ab965f48762e432c1c8d033cc1e50addf3a0be037eaaea71865f90351",
+  "implementation_sha256": "ba09eaf724124a8e356fbdba0018b00bcdf22c237d8469e90616776a58a0c458",
   "spec": "specs/re-artha.md",
   "spec_sha256": "7a5cd7a8611d9dfde387d8c28cdca3f2abf3ae82377cfb66a69232484f8d7988",
   "spec_version": "0.8.0"

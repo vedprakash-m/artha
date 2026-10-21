@@ -171,3 +171,45 @@ def test_reconcile_and_resolve_commands_delegate_to_the_executor_with_the_local_
     assert shown == {"action": "a1", "status": "unknown", "message": "Still unknown"}
     commands.execute(Namespace(command="resolve", action_id="a1", outcome="failed"), deps, tmp_path)
     assert ("resolve", "a1", "failed", "owner") in calls
+
+
+def test_bundle_export_publishes_only_after_authorising_the_source_and_closes_storage(tmp_path, monkeypatch):
+    from catchup_core.bundles import ProducerKey, import_bundles
+    from catchup_core.contracts import CoverageStatus
+    from catchup_core.coordinator import ConnectorFetch, ConnectorRecord
+    key = ProducerKey("win-host", b"w" * 32)
+    kr = types.SimpleNamespace(get_password=lambda s, n: __import__("base64").b64encode(b"w" * 32).decode())
+    monkeypatch.setitem(sys.modules, "keyring", kr)
+    closed, authorised = [], []
+    ledger = types.SimpleNamespace(_consent_subjects=frozenset({"adult"}), close=lambda: closed.append(True))
+    config = types.SimpleNamespace(
+        viewer="owner", sources={"school_email": {"connector": "gmail", "account_scope": "school"}},
+        policy={"bundles": {"school_email": {"producer": "win-host", "dir": str(tmp_path), "recipient": "mac",
+                                             "account_scope": "school"}}}, subjects=[], consent_required=frozenset())
+    monkeypatch.setattr("catchup_core.runtime.load_runtime_config", lambda _p: config)
+    monkeypatch.setattr("catchup_core.runtime.build_deps",
+                        lambda *_a, **_k: types.SimpleNamespace(ledger=ledger, subjects=["owner", "adult"]))
+    monkeypatch.setattr("catchup_core.runtime._default_loaders", lambda: (None, None))
+    fetch = ConnectorFetch("school_email", "school", (ConnectorRecord("m1", "hello"),), CoverageStatus.COMPLETE)
+    monkeypatch.setattr("catchup_core.runtime.build_fetchers", lambda *_a, **_k: {"school_email": lambda: fetch})
+    monkeypatch.setattr("catchup_core.policy.authorize_source", lambda *a, **k: authorised.append((a[3], k)))
+    out, err = io.StringIO(), io.StringIO()
+    assert cli.main(["bundle-export", "school_email"], out=out, err=err) == 0, err.getvalue()
+    assert json.loads(out.getvalue())["records"] == 1 and closed == [True]
+    assert authorised[0][0] == "school_email:school" and authorised[0][1]["operations"] == ("ingest", "export")
+    imported = import_bundles(tmp_path, {"win-host": key}, name="school_email", namespace="personal", recipient="mac",
+                              account_scope="school", authority_generation=1, now=datetime.now(timezone.utc))
+    assert [r.text for r in imported.fetch.records] == ["hello"]
+
+
+def test_everything_flag_means_the_deep_format_and_wins_over_an_explicit_format():
+    args = cli.parse_args(["catchup", "--shadow", "--everything", "--format", "flash"])
+    assert args.everything is True
+    seen = []
+
+    def factory(request):
+        seen.append(request.briefing_format.value)
+        raise cli.NotConfigured("stop here")
+    cli.main(["catchup", "--shadow", "--everything", "--format", "flash"], deps_factory=factory,
+             out=io.StringIO(), err=io.StringIO())
+    assert seen == ["deep"]

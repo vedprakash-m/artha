@@ -280,6 +280,8 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
         fetchers=fetchers,
         extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
         model_log=_model_log_writer(local, now_fn),
+        metrics=_metrics_writer(local, now_fn),
+        trace=_trace_writer(local, now_fn),
         provider_label=(f"command:{ext_cmd.split()[0].rsplit('/', 1)[-1]}" if ext_cmd else "session-assistant"),
         subjects=config.subjects, viewer=config.viewer, now=now_fn,
         source_class=source_class,
@@ -291,6 +293,11 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
                                        ledger=ledger, viewer=config.viewer, now=now_fn(),
                                        required_sources=tuple(s.connector for s in pack.sources if s.required)),
         goal_domains=lambda: _goal_domains(root / "state", reader=curated_reader),
+        plan_lines=lambda: _plan_lines(root / "state", reader=curated_reader, today=now_fn().date()),
+        responsibility_lines=lambda: _responsibility_lines(
+            root / "state", reader=curated_reader, today=now_fn().date()),
+        coordination_lines=lambda: _coordination_lines(
+            root / "state", reader=curated_reader, today=now_fn().date(), viewer=config.viewer),
         input_version=hashlib.sha256(inputs.encode()).hexdigest(),
         subjects_for=lambda connector, text: _subjects_for(config, connector, text),
         subject_labels=config.subject_labels,
@@ -450,6 +457,31 @@ def _model_log_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dic
     return write
 
 
+def _metrics_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[str, object]], None]:
+    """Append-only monthly JSONL of run performance (no content), private to the owner."""
+    def write(entry: dict[str, object]) -> None:
+        path = local / "metrics" / f"{now():%Y-%m}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    return write
+
+
+def _trace_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[str, object]], None]:
+    """Append-only monthly JSONL of OTLP-shaped traces (no content), private to the owner."""
+    from catchup_core import CORE_CONTRACT_VERSION  # noqa: PLC0415
+    from catchup_core.metrics import to_trace  # noqa: PLC0415
+
+    def write(entry: dict[str, object]) -> None:
+        path = local / "traces" / f"{now():%Y-%m}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(to_trace(entry, version=CORE_CONTRACT_VERSION), sort_keys=True) + "\n")
+    return write
+
+
 def _purge_replay(local: Path, feedback_ids: Sequence[str]) -> None:
     for fid in feedback_ids:
         if re.fullmatch(r"fbk_[A-Za-z0-9]+", fid):
@@ -488,6 +520,39 @@ def _active_goals(state: Path, reader: Callable[[str], str] | None) -> list[dict
     from catchup_core.curated import read_state, records  # noqa: PLC0415
     goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
     return [g for g in goals if g.get("status") == "active"]
+
+
+def _plan_lines(state: Path, *, reader: Callable[[str], str] | None = None, today: date) -> list[str]:
+    """Milestones of active Goals, evaluated read-only; an unreadable Goals file contributes nothing."""
+    from catchup_core.plans import evaluate_plans, plan_lines  # noqa: PLC0415
+    try:
+        return plan_lines(evaluate_plans(_active_goals(state, reader), today))
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+
+def _responsibility_lines(state: Path, *, reader: Callable[[str], str] | None = None, today: date) -> list[str]:
+    """Standing responsibilities that need attention now; an unreadable or absent file contributes nothing."""
+    from catchup_core.curated import read_state, records  # noqa: PLC0415
+    from catchup_core.responsibilities import evaluate_responsibilities, responsibility_lines  # noqa: PLC0415
+    try:
+        text = reader("responsibilities") if reader else read_state(state, "responsibilities")
+        return responsibility_lines(evaluate_responsibilities(records(text, "responsibilities"), today))
+    except (OSError, RuntimeError, ValueError):
+        return []
+
+
+def _coordination_lines(state: Path, *, reader: Callable[[str], str] | None = None, today: date,
+                        viewer: str) -> list[str]:
+    """Shared household obligations the viewer may see; unreadable or absent contributes nothing."""
+    from catchup_core.coordination import coordination_lines, evaluate_tasks  # noqa: PLC0415
+    from catchup_core.curated import read_state, records  # noqa: PLC0415
+    try:
+        text = reader("household_tasks") if reader else read_state(state, "household_tasks")
+        tasks = evaluate_tasks(records(text, "household_tasks"), today, viewer=viewer, primary=viewer)
+        return coordination_lines(tasks)
+    except (OSError, RuntimeError, ValueError):
+        return []
 
 
 def _goal_domains(state: Path, *, reader: Callable[[str], str] | None = None) -> set[str]:

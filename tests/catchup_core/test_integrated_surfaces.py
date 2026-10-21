@@ -70,7 +70,9 @@ def test_read_and_review_commands_share_the_same_facts(app):
     assert health["integrity"] is True
     states = {c["id"]: c for c in health["capabilities"]}
     assert states["RA-01"]["state"] == "not configured" and states["RA-01"]["measured"] == "no"   # no config here
-    assert states["RA-19"]["state"] == "not implemented"
+    assert states["RA-19"]["state"] == "disabled"                   # later-scope: built, not yet part of the pilot
+    assert health["performance"]["verdict"] == "no finished runs recorded yet"
+    assert health["performance"]["cost"]["estimate"].startswith("unavailable")
     assert commands.execute(args("history"), deps, root) == {"briefings": []}
     response = commands.execute(args("feedback", obligation="exam", response="useful", reason="helped"), deps, root)
     assert response["feedback_id"] and b"helped" not in deps.ledger._path.read_bytes()
@@ -108,11 +110,12 @@ def test_pause_activity_export_and_forget(app, monkeypatch):
     root, deps, _, _ = app
     actions_db = deps.ledger._path.parent.parent / "actions.db"
     monkeypatch.setattr("catchup_core.runtime.action_database_path", lambda _workspace: actions_db)
-    assert commands.execute(args("activity"), deps, root) == {"activity": []}
+    assert commands.execute(args("activity"), deps, root) == {"activity": [], "actions_paused": False}
     with sqlite3.connect(actions_db) as db:
         db.execute("CREATE TABLE actions(id,action_type,domain,status,created_at)")
         db.execute("INSERT INTO actions VALUES('a','reminder_create','home','unknown','2026-10-12')")
-    assert commands.execute(args("activity"), deps, root)["activity"][0]["status"] == "unknown"
+    first = commands.execute(args("activity"), deps, root)["activity"][0]
+    assert first["status"] == "unknown" and first["lifecycle"] == "UNKNOWN" and first["group"] == "unknown"
     assert commands.execute(args("pause"), deps, root)["actions_paused"]
     assert not commands.execute(args("resume"), deps, root)["actions_paused"]
     export = root / "export.ae1"

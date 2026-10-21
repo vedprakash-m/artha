@@ -97,6 +97,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
     run.add_argument("--shadow", action="store_true", help="comparison run: never publishes")
     run.add_argument("--id", default=None, help="Catch-up ID / idempotency key (default: new)")
     run.add_argument("--format", choices=[f.value for f in BriefingFormat], default="standard")
+    run.add_argument("--everything", action="store_true",
+                     help="show everything: the deep format with every Open Item and State File listed")
     run.add_argument("--responses", default=None, metavar="PATH|-",
                      help="answers to a paused run's extraction requests (JSON; '-' reads stdin)")
     run.add_argument("--domain", action="append", default=None, dest="domains",
@@ -105,6 +107,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
     run.add_argument("--actor", default=None)
     run.add_argument("--channel", default="cli")
     _add_bundle_commands(sub)
+    sub.add_parser("mcp", help="read-only MCP server over stdio (launched by your assistant; no listener)")
     for name in ("beliefs", "why", "forget", "feedback", "correct", "health", "history", "items",
                  "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve",
                  "ingest", "review"):
@@ -173,6 +176,8 @@ def main(argv: Sequence[str] | None = None, *, deps_factory: DepsFactory = _defa
         return _restore(args, stdout, stderr)
     if args.command in ("bundle-enroll", "bundle-export"):
         return _bundle(args, stdout, stderr)
+    if args.command == "mcp":
+        return _mcp(stdin, stdout, stderr)
     if args.command != "catchup":
         return _inspect(args, stdout, stderr)
     return _catchup(args, deps_factory, stdout, stderr, stdin)
@@ -195,7 +200,7 @@ def _catchup(args: argparse.Namespace, deps_factory: DepsFactory,
         request = CatchupRequest(
             catchup_id=args.id or f"cu_{uuid.uuid4().hex[:12]}", actor=_actor(args, deps_factory), channel=args.channel,
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
-            briefing_format=BriefingFormat(args.format), host=args.host,
+            briefing_format=BriefingFormat.DEEP if args.everything else BriefingFormat(args.format), host=args.host,
             pilot_domains=tuple(args.domains) if args.domains else ())
     except ContractError as exc:
         print(f"usage error: {exc}", file=stderr)
@@ -232,8 +237,8 @@ def _catchup(args: argparse.Namespace, deps_factory: DepsFactory,
     return int(result.exit_code())
 
 
-def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
-    import json  # noqa: PLC0415
+def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
+    """Open storage, run one command under the session lock, close it.  Shared by the CLI and the MCP server."""
     import socket  # noqa: PLC0415
 
     from catchup_core.commands import execute  # noqa: PLC0415
@@ -250,7 +255,16 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
         mutation = args.command in mutations or (args.command == "review" and args.label is not None)
         deps = build_deps(request, inspection=True, mutation=mutation)
         with session_lock(deps.ledger._path.with_suffix(".session.lock")):
-            result = execute(args, deps, root)
+            return execute(args, deps, root)
+    finally:
+        if deps is not None:
+            deps.ledger.close()
+
+
+def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
+    import json  # noqa: PLC0415
+    try:
+        result = _run_inspection(args)
         if args.json:
             print(json.dumps(result, indent=2, default=str), file=stdout)
         else:
@@ -260,9 +274,25 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=stderr)
         return int(ExitCode.BLOCKED)
-    finally:
-        if deps is not None:
-            deps.ledger.close()
+
+
+def _mcp(stdin: TextIO, stdout: TextIO, stderr: TextIO) -> int:
+    """Read-only MCP server over stdio, launched on demand by the user's own assistant (no listener)."""
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    from catchup_core.mcp import serve, tool_runner  # noqa: PLC0415
+    from catchup_core.runtime import RuntimeConfigError, load_runtime_config  # noqa: PLC0415
+    try:
+        config = load_runtime_config(_Path(__file__).resolve().parents[2] / "config" / "catchup_core.yaml")
+    except RuntimeConfigError as exc:
+        print(f"not configured: {exc}", file=stderr)
+        return int(ExitCode.USAGE_ERROR)
+
+    def execute(namespace: argparse.Namespace) -> dict[str, Any]:
+        namespace.json, namespace.actor, namespace.detail = True, None, False
+        namespace.shadow = not config.cutover                    # read what this host actually holds
+        return _run_inspection(namespace)
+    return serve(stdin, stdout, tool_runner(execute))
 
 
 def _bundle(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:

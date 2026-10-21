@@ -15,7 +15,7 @@ from pathlib import Path
 
 from catchup_core.actions import ActionStatus
 
-__all__ = ["LEGACY_MAP", "MappedRow", "MigrationPlan", "audit_database", "plan_migration"]
+__all__ = ["LEGACY_MAP", "MappedRow", "MigrationPlan", "audit_database", "describe", "plan_migration"]
 
 LEGACY_MAP: dict[str, ActionStatus] = {
     "pending": ActionStatus.PROPOSED,
@@ -94,3 +94,34 @@ def audit_database(path: Path | str) -> MigrationPlan:
     finally:
         conn.close()
     return plan_migration(rows)
+
+
+_GROUPS = {
+    ActionStatus.DRAFT: "pending", ActionStatus.PROPOSED: "pending", ActionStatus.DEFERRED: "pending",
+    ActionStatus.APPROVED: "approved", ActionStatus.EXECUTING: "executing", ActionStatus.UNKNOWN: "unknown",
+    ActionStatus.SUCCEEDED: "completed", ActionStatus.FAILED: "completed", ActionStatus.REJECTED: "completed",
+    ActionStatus.EXPIRED: "completed", ActionStatus.CANCELLED: "completed",
+}
+
+
+def describe(row: Mapping[str, object]) -> dict[str, object]:
+    """One activity line in the spec's vocabulary (RA-24) without migrating the live database.
+
+    ``lifecycle`` is the 7.8 status the legacy value maps to, ``group`` is the view bucket (pending, approved,
+    executing, unknown, completed) and ``reversibility`` says whether an undo exists.  An unmapped legacy value is
+    shown as ``unknown`` rather than guessed.
+    """
+    legacy = str(row.get("status", ""))
+    target = LEGACY_MAP.get(legacy)
+    if legacy == "executing":
+        target = ActionStatus.EXECUTING              # in flight is not the same as "may have been lost" in a live view
+    undo = row.get("undo_window_sec")
+    reversible = bool(row.get("reversible"))
+    return {
+        "id": row.get("id"), "action_type": row.get("action_type"), "domain": row.get("domain"),
+        "status": legacy, "lifecycle": (target or ActionStatus.UNKNOWN).value,
+        "group": _GROUPS.get(target, "unknown") if target else "unknown",
+        "reversibility": (f"reversible (undo window {undo}s)" if reversible and undo else
+                          "reversible" if reversible else "irreversible"),
+        "created_at": row.get("created_at"),
+    }

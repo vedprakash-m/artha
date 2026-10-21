@@ -116,3 +116,37 @@ def test_evidence_table_dedupes_and_resolves():
     t = cp.EvidenceTable()
     assert t.add("e1", "a", "t") == 1 and t.add("e2", "b", "t") == 2 and t.add("e1", "a", "t") == 1
     assert len(t) == 2 and t.resolve(2).token == "e2" and t.resolve(7) is None
+
+
+def test_goal_plans_show_in_standard_and_deep_but_not_in_short_formats():
+    from datetime import datetime, timezone
+
+    from catchup_core.contracts import BriefingFormat
+    from catchup_core.triage import TriageResult
+    empty = TriageResult((), (), (), None, False)
+    now = datetime(2026, 10, 20, 9, tzinfo=timezone.utc)
+    kw = dict(evidence_for={}, coverage_line="Coverage: ok.", plan_lines=["G1: ready — next step: File"])
+    assert "GOAL PLANS" in cp.compose(now, empty, **kw).text
+    assert "GOAL PLANS" in cp.compose(now, empty, fmt=BriefingFormat.DEEP, **kw).text
+    assert "GOAL PLANS" not in cp.compose(now, empty, fmt=BriefingFormat.FLASH, **kw).text
+    assert "GOAL PLANS" not in cp.compose(now, empty, fmt=BriefingFormat.DIGEST, **kw).text
+
+
+def test_responsibilities_show_in_standard_but_not_in_short_formats():
+    from catchup_core.contracts import BriefingFormat
+    from catchup_core.triage import TriageResult
+    empty = TriageResult((), (), (), None, False)
+    now = datetime(2026, 10, 20, 9, tzinfo=timezone.utc)
+    kw = dict(evidence_for={}, coverage_line="Coverage: ok.", responsibility_lines=["R1: check now — Renew"])
+    assert "RESPONSIBILITIES" in cp.compose(now, empty, **kw).text
+    assert "RESPONSIBILITIES" not in cp.compose(now, empty, fmt=BriefingFormat.DIGEST, **kw).text
+
+
+def test_household_section_shows_in_standard_only():
+    from catchup_core.contracts import BriefingFormat
+    from catchup_core.triage import TriageResult
+    empty = TriageResult((), (), (), None, False)
+    now = datetime(2026, 10, 20, 9, tzinfo=timezone.utc)
+    kw = dict(evidence_for={}, coverage_line="Coverage: ok.", coordination_lines=["H1: RSVP — waiting"])
+    assert "HOUSEHOLD" in cp.compose(now, empty, **kw).text
+    assert "HOUSEHOLD" not in cp.compose(now, empty, fmt=BriefingFormat.FLASH, **kw).text

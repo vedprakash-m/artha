@@ -186,3 +186,97 @@ def test_only_a_complete_fetch_may_be_exported_and_sequences_advance(tmp_path):
         export_fetch(tmp_path, KEY, partial, namespace="personal", recipient="mac", authority_generation=1,
                      since="x", now=NOW)
     assert load(tmp_path, now=NOW + timedelta(minutes=1)).fetch.status is CoverageStatus.COMPLETE
+
+
+# ── forged-but-validly-signed bundles: a signature proves origin, not that the content is sane ──────────────────
+
+def _forge(tmp_path, *, header_edits=None, payload=None, name="bundle-win-host-00000009-p001.json"):
+    """Write a bundle signed with the real producer key whose header or payload is deliberately malformed."""
+    import base64
+    from catchup_core.bundles import _canonical
+    source = put(tmp_path / "src")
+    wrapper = json.loads(source.read_text())
+    header = {**wrapper["header"], **(header_edits or {})}
+    body = wrapper["body"]
+    if payload is not None:
+        envelope, _ = KEY.cipher().encrypt(json.dumps(payload).encode(), aad=_canonical(header))
+        body = base64.b64encode(envelope).decode()
+    out = tmp_path / name
+    out.write_text(json.dumps({"header": header, "mac": KEY.sign(header, body), "body": body}))
+    return out
+
+
+def _quarantine_reason(tmp_path):
+    result = load(tmp_path)
+    assert result.fetch.records == ()
+    return result.quarantined[0][1] if result.quarantined else result.skipped[0][1]
+
+
+def test_validly_signed_but_malformed_metadata_is_quarantined(tmp_path):
+    for index, edits in enumerate(({"part": 5, "parts": 2}, {"sequence": 0}, {"parts": 1000},
+                                   {"requested_since": "2026-10-20T00:00:00+00:00",
+                                    "completed_until": "2026-10-01T00:00:00+00:00"},
+                                   {"completed_until": "2026-10-01T00:00:00"}, {"created_at": "not a date"})):
+        d = tmp_path / f"case{index}"
+        d.mkdir()
+        _forge(d, header_edits=edits)
+        assert _quarantine_reason(d) == "invalid bundle metadata", edits
+
+
+def test_validly_signed_but_malformed_payloads_are_quarantined(tmp_path):
+    cases = {
+        "count": ({"records": [], "cancelled": []}, "record count does not match the header"),
+        "cancel": ({"records": [{"upstream_id": "a", "text": "t"}], "cancelled": [1]}, "invalid record or cancellation count"),
+        "shape": ({"records": [{"upstream_id": 5, "text": "t"}], "cancelled": []}, "invalid record"),
+        "event": ({"records": [{"upstream_id": "a", "text": "t", "calendar": {
+            "id": "e", "kind": "school", "all_day": True, "start": "2026-10-02", "end": "2026-10-01"}}],
+            "cancelled": []}, "invalid calendar record"),
+        "missing": ({"records": [{"upstream_id": "a", "text": "t"}]}, "body cannot be decrypted"),
+    }
+    for label, (payload, why) in cases.items():
+        d = tmp_path / label
+        d.mkdir()
+        _forge(d, payload=payload)
+        assert _quarantine_reason(d) == why, label
+
+
+def test_too_large_a_part_is_refused_at_export_and_at_import(tmp_path):
+    many = [ConnectorRecord(f"m{i}", "x") for i in range(5001)]
+    with pytest.raises(BundleError, match="split the export into parts"):
+        export_bundle(tmp_path, KEY, namespace="personal", recipient="mac", account_scope="school",
+                      authority_generation=1, sequence=1, records=many, requested_since="a", completed_until="b",
+                      created_at=NOW)
+    big = tmp_path / "bundle-win-host-00000001-p001.json"
+    big.write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+    assert load(tmp_path).quarantined[0][1] == "bundle exceeds the size limit"
+
+
+def test_a_tampered_or_torn_acknowledgment_neither_renews_freshness_nor_hides_the_bundle(tmp_path):
+    put(tmp_path)
+    load(tmp_path).fetch.commit()                                      # acknowledgment is written only on commit
+    ack = next(tmp_path.glob("ack-*.json"))
+    good = ack.read_text()
+    later = NOW + timedelta(hours=100)
+    assert "h old" not in " ".join(load(tmp_path, now=NOW + timedelta(hours=1)).fetch.blind_spots)
+    wrapper = json.loads(good)
+    wrapper["data"]["completed_until"] = "2099-01-01T00:00:00+00:00"            # claim fresher data than was imported
+    ack.write_text(json.dumps(wrapper))
+    result = load(tmp_path, now=later)
+    assert "102h old" in " ".join(result.fetch.blind_spots)             # the true age, not the forged 2099 claim
+    assert [r.text for r in result.fetch.records] == ["Registration closes 1"]   # and the bundle is imported again
+    ack.write_text("{torn")
+    again = load(tmp_path, now=later)
+    assert "102h old" in " ".join(again.fetch.blind_spots) and again.fetch.records
+
+
+def test_enrollment_fails_loudly_when_the_credential_store_does_not_persist():
+    from catchup_core.bundles import enroll_producer
+
+    class Forgetful:
+        def set_password(self, *_a):
+            pass
+
+        def get_password(self, *_a):
+            return None
+    with pytest.raises(BundleError, match="did not persist"):
+        enroll_producer("win-host", Forgetful())

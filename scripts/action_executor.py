@@ -1139,7 +1139,14 @@ class ActionExecutor:
             return ActionResult(status="unknown", message="This action type cannot be verified with its provider; "
                                 "resolve it by hand with resolve_unknown().", data=None, reversible=False,
                                 reverse_action=None)
-        result = check(proposal, since=str(row.get("approved_at") or row.get("created_at") or ""))
+        since = str(row.get("approved_at") or row.get("created_at") or "")
+        import types  # noqa: PLC0415
+        if isinstance(handler, types.ModuleType):
+            from lib.action_process import execute as run_isolated  # noqa: PLC0415
+            result = run_isolated(handler.__name__, proposal, int(self._action_configs.get(row["action_type"], {}).get("timeout_sec", _DEFAULT_TIMEOUT_SEC)),
+                                  operation="reconcile", since=since)
+        else:                                           # injected in-process handlers (hermetic tests)
+            result = check(proposal, since=since)
         if result.status == "success":
             self._queue.record_result(action_id, result, datetime.now(timezone.utc).isoformat())
             _audit_log(self._artha_dir, f"ACTION_RECONCILED | id:{action_id} | outcome:confirmed")

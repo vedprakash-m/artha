@@ -201,3 +201,54 @@ Later scope still includes household assignment/acceptance, emergency/custodian 
 exchange, broad Goal/Sprint metrics and standing responsibility plans, and OCR/vision expansion. The optional action
 track still needs complete evidence/authorization/provider-version preconditions and broader provider-specific live
 validation. None of those capabilities are implied by the fixes or by green local checks.
+
+## Goal plans, activity and "show everything"
+* **Goal plans (RA-25, pull only).** Put `milestones:` on a Goal in `state/goals.md` (`id`, `title`, `status`, `evidence`,
+  `prerequisites`, `target_date`). Each Catch-up lists `GOAL PLANS`: *ready* (prerequisites done with evidence, next step
+  named), *blocked* (what it waits for) and *unverified* (marked done without evidence, so it is not counted). Nothing
+  advances between sessions and a plan never grants permission to act.
+* **`activity`** shows each proposal in the spec's vocabulary (`lifecycle` DRAFT…CANCELLED, `group` pending / approved /
+  executing / unknown / completed, `reversibility`) without migrating the live action database, plus whether actions are paused.
+* **`catchup --everything`** is the deep format with every Open Item and State File listed ("show everything").
+* **`reconcile` runs in the same bounded child process** as execution (minimal environment, provider-only egress, no
+  sub-processes); a child that returns no receipt leaves the action `unknown`.
+* `docs/traceability-register.md` maps every requirement to acceptance IDs, code and tests and records the PRD
+  feature-group dispositions; it is generated and drift-checked together with the capability register.
+
+## Responsibilities, household tasks and performance
+All three are read-only, evaluated at each Catch-up, and absent files contribute nothing.
+* **Standing responsibilities (RA-25)** in `state/responsibilities.md`: `id`, `outcome`, `allowed_operations`
+  (only `read`, `draft`, `propose`; anything else is reported and ignored), `cadence_days`, `last_checked`,
+  `next_check`, `completion_evidence`, `stop_condition`, `status`. A due check appears under `RESPONSIBILITIES`;
+  "completed" without evidence stays open as unverified.
+* **Household tasks (RA-19)** in `state/household_tasks.md`: `id`, `obligation`, `subject`, `owner`,
+  `status` (`proposed`, `accepted`, `refused`, `done`), `assigned_on`, `escalate_after_days`, `completion_evidence`,
+  `visible_to`. The `HOUSEHOLD` section shows escalations, refusals, owner-less tasks, duplicates (remind once) and
+  tasks marked done without evidence; a task is shown only to the people in `visible_to`. Artha never contacts anyone.
+* **Performance.** Each run appends one line (status, seconds, stage seconds, model requests; no content) to
+  `~/.artha-local/catchup_core/metrics/YYYY-MM.jsonl`. `health` reports p50/p95 against the provisional 3-minute gate and the
+  share of complete runs against the 95% goal, and refuses to judge fewer than five runs.
+
+## Cost estimate (approximate, from sizes only)
+Each run also records prompt and answer *sizes* in characters (never content). Add your own dated prices to
+`config/catchup_core.yaml` and `health` reports `usd_per_run` and `projected_monthly_usd` against the $50 gate:
+```yaml
+pricing:
+  input_usd_per_million_tokens: 3.0
+  output_usd_per_million_tokens: 15.0
+  as_of: 2026-10-01
+  chars_per_token: 4        # optional; default 4
+  runs_per_month: 30        # optional; the cadence the projection assumes
+```
+Assistant-side usage is not visible to Artha, so this is an estimate and says so; without pricing it reports sizes only.
+
+## Read-only MCP server and traces
+* **`cli.py mcp`** is a stdio MCP server your own assistant launches on demand (a short-lived process, never a listener).
+  Tools: `beliefs`, `why`, `items`, `goals`, `health`, `activity`, `history`, plus `propose_correction` and
+  `propose_feedback`, which only return an inert draft. There is no tool that writes, sends, approves, forgets, exports,
+  captures, pauses or resolves. The viewer is fixed by your configuration (no `actor` argument), arguments are validated
+  strictly, results are data-only (no links, images or markup) and size-capped, and errors name a class, never a path.
+  Register it in your assistant's MCP settings as the command `python3 scripts/catchup_core/cli.py mcp`.
+* **Traces.** Each run also appends one OpenTelemetry-shaped trace (OTLP/JSON `resourceSpans`; a `catchup` span and a
+  `stage.*` child per stage; schema `artha.trace.v1`) to `~/.artha-local/catchup_core/traces/YYYY-MM.jsonl`.
+  Attributes are status, mode and counts only, so a trace never contains prompts, answers, names or evidence.

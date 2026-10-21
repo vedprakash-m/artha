@@ -46,10 +46,16 @@ def test_failures_degrade_coverage_capabilities_and_missing_code_is_not_implemen
     degraded = states(journal(True, failures=True))
     assert degraded["RA-01"]["state"] == "degraded" and degraded["RA-16"]["state"] == "degraded"
     assert degraded["RA-03"]["state"] == "last succeeded"
-    assert degraded["RA-19"]["state"] == "not implemented" and degraded["RA-20"]["state"] == "disabled"
+    assert degraded["RA-19"]["state"] == "disabled" and degraded["RA-20"]["state"] == "disabled"
 
 
 def test_a_broken_or_absent_ledger_degrades_to_unknown_not_a_crash():
     assert states(None)["RA-01"]["state"] == "unknown"
     broken = sqlite3.connect(":memory:")                             # no tables
     assert states(broken)["RA-01"]["state"] == "unknown"
+
+
+def test_a_capability_whose_code_is_missing_is_not_implemented(tmp_path):
+    from catchup_core.capabilities import runtime_states
+    everything = runtime_states(tmp_path, {"domains": ["kids_school"]}, journal(True), False, extractor_configured=True)
+    assert {c["state"] for c in everything} == {"not implemented"}

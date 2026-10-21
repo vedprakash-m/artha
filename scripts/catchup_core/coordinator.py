@@ -18,10 +18,12 @@ Guarantees implemented here:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
 import sqlite3
+import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -106,6 +108,9 @@ class Deps:
     preflight: Callable[[], None] = lambda: None
     finalizer: Callable[[str], None] = lambda _cid: None
     goal_lines: Callable[[], Sequence[str]] = lambda: ()
+    plan_lines: Callable[[], Sequence[str]] = lambda: ()
+    responsibility_lines: Callable[[], Sequence[str]] = lambda: ()
+    coordination_lines: Callable[[], Sequence[str]] = lambda: ()
     #: Domains of active Goals; used only as a ranking tie-break (never lifts an ineligible Alert).
     goal_domains: Callable[[], Collection[str]] = lambda: ()
     input_version: str = ""
@@ -115,6 +120,11 @@ class Deps:
     model_log: Callable[[dict[str, str]], None] = lambda _entry: None
     provider_label: str = "unconfigured"
     mode: ExecutionMode = ExecutionMode.AUTHORITATIVE
+    #: Per-run performance record sink (status, seconds, stage seconds, model requests); never content.
+    metrics: Callable[[dict[str, object]], None] = lambda _entry: None
+    perf: Callable[[], float] = time.monotonic
+    #: Trace sink (OTLP/JSON-shaped, content-free); receives the same entry as ``metrics``.
+    trace: Callable[[dict[str, object]], None] = lambda _entry: None
 
 
 def _iso(dt: datetime) -> str:
@@ -131,6 +141,10 @@ class _Run:
         self._pending: list[PendingRequest] = []
         self._incumbent: IncumbentOutput | None = None
         self.done = set(self.led.committed_stages(request.catchup_id))
+        self.timings: dict[str, float] = {}
+        self.model_requests = 0
+        self.prompt_chars = 0
+        self.answer_chars = 0
         self.versions = {"policy": request.policy_version, "pack": deps.pack.version,
                          "schema": str(request.schema_version),
                          "runtime": deps.input_version,
@@ -147,9 +161,11 @@ class _Run:
             return
         if self.deps.fault is not None:
             self.deps.fault(name)
+        started = self.deps.perf()
         artifacts = body()
         self.led.record_stage(StageCheckpoint(self.request.catchup_id, name, "committed", self.versions, artifacts))
         self.done.add(name.value)
+        self.timings[name.value] = round(self.deps.perf() - started, 3)
 
     # ── FETCH ────────────────────────────────────────────────────────────────
     def _fetch_one(self, name: str, fetcher: Callable[[], ConnectorFetch]) -> list[str]:
@@ -294,6 +310,8 @@ class _Run:
         from catchup_core.rule_of_two import Broker  # noqa: PLC0415
         request = ex.build_request(self.deps.pack, signal, subjects)
         Broker().check("extractor", tools=request.tools, private_data=True, untrusted_data=True)
+        self.model_requests += 1
+        self.prompt_chars += len(request.prompt)
         self.deps.model_log({
             "at": _iso(self.now), "catchup_id": self.request.catchup_id, "purpose": "extract",
             "provider": self.deps.provider_label, "data_class": self.deps.pack.confidentiality.value,
@@ -306,6 +324,7 @@ class _Run:
             return None
         except Exception:
             output = ""
+        self.answer_chars += len(output)
         parsed = ex.parse_output(output, self.deps.pack, signal, subjects)
         if parsed.rejections:
             self.failures.append(FailureClass.SCHEMA_REJECTED)
@@ -494,6 +513,9 @@ class _Run:
         def build(evidence: Mapping[str, list[tuple[str, str, str, str]]]) -> Briefing:
             return compose(self.now, triaged, evidence_for=evidence, coverage_line=line, coverage_gaps=gaps,
                            unresolved_signals=unresolved, legacy_lines=legacy, goal_lines=goals,
+                           plan_lines=self.deps.plan_lines(),
+                           responsibility_lines=self.deps.responsibility_lines(),
+                           coordination_lines=self.deps.coordination_lines(),
                            subject_labels=self.deps.subject_labels, fmt=fmt, open_items=open_items,
                            calendar_line=cal_line, incumbent_lines=incumbent_lines)
         briefing = build(self._evidence_for(triaged))
@@ -586,13 +608,37 @@ def run_catchup(request: CatchupRequest, deps: Deps) -> CatchupResult:
         with session_lock(deps.ledger._path.with_suffix(".session.lock")):
             deps.ledger._blob_deleter = deps.blobs.delete
             deps.ledger.resume_pending_forgets()
-            return _Run(request, deps).run()
+            run = _Run(request, deps)
+            started = deps.perf()
+            try:
+                result = run.run()
+            except AwaitingExtraction:
+                _record_metrics(deps, run, request, "paused", started)
+                raise
+            _record_metrics(deps, run, request, result.status.value, started)
+            return result
     except PermissionDenied as exc:
         return CatchupResult(request.catchup_id, request.mode, RunStatus.BLOCKED,
                              reason_unpublished=str(exc), failures=(FailureClass.PERMISSION,))
     except (OSError, LedgerError, SessionBusy, sqlite3.Error, DecryptionError, KeyUnavailableError) as exc:
         return CatchupResult(request.catchup_id, request.mode, RunStatus.BLOCKED,
                              reason_unpublished=str(exc), failures=(FailureClass.STORAGE,))
+
+
+def _record_metrics(deps: Deps, run: _Run, request: CatchupRequest, status: str, started: float) -> None:
+    """One line per run; a failing sink must never change the outcome of a Catch-up."""
+    try:
+        entry: dict[str, object] = {
+            "catchup_id": request.catchup_id, "mode": request.mode.value, "status": status,
+            "at": _iso(run.now), "total_seconds": round(deps.perf() - started, 3), "stages": dict(run.timings),
+            "model_requests": run.model_requests, "prompt_chars": run.prompt_chars, "answer_chars": run.answer_chars,
+            "resumed": bool(run.done - set(run.timings)),
+        }
+    except Exception:
+        return
+    for sink in (deps.metrics, deps.trace):                  # independent: one failing sink never skips the other
+        with contextlib.suppress(Exception):
+            sink(entry)
 
 
 def _parse_day(raw: str) -> date | None:
