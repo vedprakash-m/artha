@@ -87,9 +87,9 @@ def test_regression_vs_incumbent_and_citations():
     assert len(s.failures()) == 4 - 0 or len(s.failures()) >= 3
 
 
-def test_empty_scorecard_is_vacuously_clean():
+def test_empty_scorecard_cannot_authorize_a_release():
     s = score([])
-    assert s.passes and s.cases == 0
+    assert not s.passes and s.cases == 0
 
 
 # ── cli ───────────────────────────────────────────────────────────────────

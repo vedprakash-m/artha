@@ -273,6 +273,7 @@ class CatchupResult:
     artifact_ids: tuple[str, ...] = ()
     failures: tuple[FailureClass, ...] = ()
     pending_refs: tuple[str, ...] = ()
+    briefing_text: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode is ExecutionMode.SHADOW:
@@ -317,6 +318,7 @@ class CatchupResult:
             "artifact_ids": list(self.artifact_ids),
             "failures": [f.value for f in self.failures],
             "pending_refs": list(self.pending_refs),
+            "briefing_text": self.briefing_text,
         }
 
     def to_json(self) -> str:
@@ -346,6 +348,7 @@ class CatchupResult:
                 artifact_ids=tuple(data.get("artifact_ids", ())),
                 failures=tuple(FailureClass(f) for f in data.get("failures", ())),
                 pending_refs=tuple(data.get("pending_refs", ())),
+                briefing_text=data.get("briefing_text"),
             )
         except KeyError as exc:
             raise ContractError(f"missing field {exc}") from exc

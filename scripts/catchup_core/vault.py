@@ -21,7 +21,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -173,8 +172,6 @@ class AgeVault:
     # decrypt ---------------------------------------------------------------
     def read(self, name: str) -> str:
         age = self._require()
-        if sys.platform == "win32":
-            raise VaultUnavailable("in-memory age decryption is not implemented on Windows yet")
         path = self.path_for(name)
         if not path.is_file():
             raise VaultError(f"{name}: no encrypted file")
@@ -184,21 +181,13 @@ class AgeVault:
             raise VaultUnavailable(f"private key unavailable: {type(exc).__name__}") from exc
         if not identity:
             raise VaultUnavailable("private key is empty")
-        read_fd, write_fd = os.pipe()
         try:
-            os.write(write_fd, identity.encode("utf-8"))
-            os.close(write_fd)
-            write_fd = -1
             proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
-                [age, "-d", "-i", f"/dev/fd/{read_fd}", str(path)],
-                capture_output=True, pass_fds=(read_fd,), timeout=60, check=False,
+                [age, "-d", "-i", "-", str(path)], input=(identity.rstrip() + "\n").encode(),
+                capture_output=True, timeout=60, check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise VaultUnavailable(f"age failed to run: {type(exc).__name__}") from exc
-        finally:
-            if write_fd != -1:
-                os.close(write_fd)
-            os.close(read_fd)
         if proc.returncode != 0:
             raise VaultError(f"{name}: decryption failed")
         try:

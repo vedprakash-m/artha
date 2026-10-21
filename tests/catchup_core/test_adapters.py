@@ -90,4 +90,4 @@ def test_required_flag_is_carried():
 
 def test_text_is_bounded():
     got = ad.fetch_via_handler("gmail", "a", gen([email(1, body="x" * 50_000)]), since="x")
-    assert len(got.records[0].text) == ad.MAX_TEXT
+    assert len(got.records[0].text) > ad.MAX_TEXT  # preserve content; extraction owns explicit chunking

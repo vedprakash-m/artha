@@ -46,6 +46,7 @@ class NormalizedSignal:
     connector: str
     text: str
     source_class: str = "school_email"
+    observed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,8 @@ class Candidate:
     span: tuple[int, int]
     quote: str
     confidence: float | None = None
+    obligation_key: str = ""
+    obligation_ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class ExtractionResult:
     rejections: tuple[Rejection, ...] = ()
     failure: FailureClass | None = None
     failure_detail: str = ""
+    complete: bool = True
 
     @property
     def ok(self) -> bool:
@@ -151,7 +155,7 @@ def parse_output(output: str, pack: DomainPack, signal: NormalizedSignal,
             rejected.append(Rejection(index, reason))
         else:
             accepted.append(reason)
-    return ExtractionResult(tuple(accepted), tuple(rejected))
+    return ExtractionResult(tuple(accepted), tuple(rejected), complete=data.get("complete", True) is True)
 
 
 def _check_evidence(item: dict[str, Any], text: str) -> tuple[int, int, str] | str:
@@ -200,9 +204,35 @@ def _check_item(item: Any, pack: DomainPack, signal: NormalizedSignal, allowed: 
     except ValueError as exc:      # includes PackError for undeclared enum values
         return f"value rejected: {exc}"
     problem = _check_confidence(item.get("confidence"))
+    start, end, quote = evidence
+    if not supports_value(pred, value, quote, observed_at=signal.observed_at):
+        problem = "quoted evidence does not support the typed value"
+    obligation_ref = item.get("obligation_ref", "")
+    if not isinstance(obligation_ref, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{0,64}", obligation_ref):
+        problem = "invalid obligation reference"
     if problem:
         return problem
     confidence = item.get("confidence")
-    start, end, quote = evidence
     return Candidate(pred.name, value, subject, signal.signal_id, (start, end), quote,
-                     float(confidence) if confidence is not None else None)
+                     float(confidence) if confidence is not None else None, obligation_ref=obligation_ref)
+
+
+def supports_value(pred: Predicate, value: Any, quote: str, *, observed_at: str | None = None) -> bool:
+    """Conservative field grounding; ambiguous formats require explicit confirmation."""
+    normalized = " ".join(quote.casefold().replace("_", " ").split())
+    if isinstance(value, datetime):
+        return value.isoformat().casefold() in normalized
+    if isinstance(value, date):
+        if value.isoformat() in normalized:
+            return True
+        month = value.strftime("%B").casefold()
+        explicit_years = re.findall(r"\b(?:19|20)\d{2}\b", normalized)
+        if explicit_years:
+            year_matches = str(value.year) in explicit_years
+        else:
+            year_matches = bool(observed_at and observed_at[:4] == str(value.year))
+        return year_matches and bool(re.search(
+            rf"\b(?:{month}|{month[:3]}\.?)\s+0?{value.day}(?:st|nd|rd|th)?\b", normalized))
+    if pred.type == "enum":
+        return str(value).casefold().replace("_", " ") in normalized
+    return str(value).casefold() in normalized

@@ -100,6 +100,49 @@ def test_fetchers_use_handler_and_kwargs():
     assert seen["query"] == "label:school" and seen["auth_context"] == {"token": "t"}
 
 
+def test_verified_scope_fetch_uses_overlap_and_work_is_refused(tmp_path):
+    from test_user_surfaces import CIPHER, KEY
+    from catchup_core.ledger import Ledger
+    seen = {}
+    class Handler:
+        @staticmethod
+        def fetch(**kw):
+            seen.update(kw)
+            return iter(())
+    with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER).open() as led:
+        led.migrate()
+        led.set_coverage("school_email", "personal", "complete", completed_at="2026-10-11T10:00:00Z")
+        spec = {"connector": "gmail", "account_scope": "personal"}
+        cfg = rt.RuntimeConfig({"school_email": spec}, ["kid1"], "owner")
+        fetch = rt.build_fetchers(cfg, "2026-01-01T00:00:00Z", lambda _: Handler, lambda _: {}, {}, led)
+        assert fetch["school_email"]().status is CoverageStatus.COMPLETE
+        assert seen["since"] == "2026-10-10T10:00:00+00:00"
+        cfg.sources["school_email"]["namespace"] = "work"
+        assert fetch["school_email"]().status is CoverageStatus.UNAVAILABLE
+
+
+def test_unknown_requested_pack_and_private_storage_in_repo_are_refused(tmp_path):
+    with pytest.raises(rt.RuntimeConfigError, match="one or more"):
+        rt._load_packs(("kids_school", "missing_pack"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_cfg(repo)
+    request = CatchupRequest("cu", "ved", "cli", mode=ExecutionMode.SHADOW)
+    with pytest.raises(rt.RuntimeConfigError, match="outside"):
+        rt.build_deps(request, repo_root=repo, environ={"ARTHA_LOCAL_DIR": str(repo / "private")})
+
+
+def test_inspection_without_a_prior_catchup_does_not_create_keys(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_cfg(repo)
+    keys = FakeKeyring()
+    with pytest.raises(rt.RuntimeConfigError, match="no Catch-up"):
+        rt.build_deps(CatchupRequest("cu", "ved", "cli", mode=ExecutionMode.SHADOW), repo_root=repo,
+            environ={"ARTHA_LOCAL_DIR": str(tmp_path / "local")}, keyring_backend=keys, inspection=True)
+    assert not keys.store
+
+
 def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "state").mkdir(parents=True)
@@ -113,8 +156,8 @@ def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeyp
         keyring_backend=kr, handler_loader=lambda n: SimpleNamespace(fetch=lambda **kw: iter(())),
         auth_loader=lambda n: {}, now=lambda: datetime(2026, 10, 12, tzinfo=timezone.utc))
     try:
-        assert (local / "catchup_core" / "ledger.db").exists()
-        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {"school_email", "calendar"}
+        assert (local / "catchup_core" / "shadow" / "ledger.db").exists()
+        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {"school_email", "calendar", "capture"}
         assert deps.ledger.schema_version() >= 2 and deps.viewer == "ved"
         assert deps.ledger._consent_subjects == frozenset({"adult1"})   # the gate is actually armed
         keys = {n for (_s, n) in kr.store}
@@ -137,7 +180,7 @@ def test_missing_pack_or_config_is_a_config_error(tmp_path):
         rt.build_deps(request, repo_root=repo, environ={"ARTHA_LOCAL_DIR": str(tmp_path / "l")})
     write_cfg(repo)
     with pytest.raises(rt.RuntimeConfigError):
-        rt.build_deps(CatchupRequest("cu", "u", "c", mode=ExecutionMode.SHADOW, pilot_domains=("nope",)),
+        rt.build_deps(CatchupRequest("cu", "ved", "cli", mode=ExecutionMode.SHADOW, pilot_domains=("nope",)),
                       repo_root=repo, environ={"ARTHA_LOCAL_DIR": str(tmp_path / "l")}, keyring_backend=FakeKeyring())
 
 
@@ -159,10 +202,17 @@ def test_default_loaders_use_the_incumbent_allowlist_and_auth(monkeypatch):
 
 
 def test_backup_callback_copies_the_database(tmp_path):
+    import sqlite3
+    from contextlib import closing
     db = tmp_path / "ledger.db"
-    db.write_bytes(b"sqlite")
+    with closing(sqlite3.connect(db)) as c:
+        c.execute("CREATE TABLE example(x)")
+        c.execute("INSERT INTO example VALUES(42)")
+        c.commit()
     dest = rt._backup_for(tmp_path)(db)
-    assert dest.read_bytes() == b"sqlite" and dest.name.startswith("ledger.pre-migration.")
+    with closing(sqlite3.connect(dest)) as c:
+        assert c.execute("SELECT x FROM example").fetchone()[0] == 42
+    assert dest.name.startswith("ledger.pre-migration.")
 
 
 def test_coverage_line_never_raises(monkeypatch):
@@ -176,26 +226,30 @@ def test_stale_ledger_blocks_build(tmp_path):
     (repo / "state").mkdir(parents=True)
     write_cfg(repo)
     local = tmp_path / "local"
-    request = CatchupRequest("cu", "u", "c", mode=ExecutionMode.SHADOW)
+    request = CatchupRequest("cu", "ved", "cli", mode=ExecutionMode.SHADOW)
     kr = FakeKeyring()
     env = {"ARTHA_LOCAL_DIR": str(local)}
     loaders = dict(handler_loader=lambda n: None, auth_loader=lambda n: {})
     deps = rt.build_deps(request, repo_root=repo, environ=env, keyring_backend=kr, **loaders)
     deps.ledger.forget("c", "a", "u1")                    # seals checkpoint 1
     deps.ledger.close()
-    (local / "catchup_core" / "ledger.db").unlink()        # an old/empty ledger replaces it
+    (local / "catchup_core" / "shadow" / "ledger.db").unlink()
     for suffix in ("-wal", "-shm"):
-        (local / "catchup_core" / f"ledger.db{suffix}").unlink(missing_ok=True)
-    with pytest.raises(rt.RuntimeConfigError, match="sealed deletion checkpoint"):
+        (local / "catchup_core" / "shadow" / f"ledger.db{suffix}").unlink(missing_ok=True)
+    from catchup_core.ledger import LedgerLocked
+    with pytest.raises((rt.RuntimeConfigError, LedgerLocked)):
         rt.build_deps(request, repo_root=repo, environ=env, keyring_backend=kr, **loaders)
 
 
 def test_build_deps_multiple_pilot_domains_creates_composite_pack(tmp_path):
     repo = tmp_path / "repo"
     (repo / "state").mkdir(parents=True)
-    write_cfg(repo)
+    write_cfg(repo, sources={
+        "school_email": {"connector": "gmail", "account_scope": "personal"},
+        "calendar": {"connector": "google_calendar", "account_scope": "family"},
+        "gmail": {"connector": "gmail", "account_scope": "personal", "class": "email_notice"}})
     local = tmp_path / "local"
-    request = CatchupRequest("cu_multi", "u", "c", mode=ExecutionMode.SHADOW,
+    request = CatchupRequest("cu_multi", "ved", "cli", mode=ExecutionMode.SHADOW,
                              pilot_domains=("kids_school", "finance"))
     kr = FakeKeyring()
     env = {"ARTHA_LOCAL_DIR": str(local)}
@@ -207,3 +261,17 @@ def test_build_deps_multiple_pilot_domains_creates_composite_pack(tmp_path):
         assert "exam_registration_deadline" in deps.pack.predicates
     finally:
         deps.ledger.close()
+
+
+def test_unclassified_source_is_rejected_before_any_storage_is_opened(tmp_path):
+    """A source class no predicate ranks would make every Fact UNKNOWN: fail loudly instead."""
+    repo = tmp_path / "repo"
+    (repo / "state").mkdir(parents=True)
+    write_cfg(repo)                      # no 'class' for the gmail source used by finance
+    local = tmp_path / "local"
+    request = CatchupRequest("cu_cls", "ved", "cli", mode=ExecutionMode.SHADOW,
+                             pilot_domains=("kids_school", "finance"))
+    with pytest.raises(rt.RuntimeConfigError, match="set 'class:'"):
+        rt.build_deps(request, repo_root=repo, environ={"ARTHA_LOCAL_DIR": str(local)}, keyring_backend=FakeKeyring(),
+                      handler_loader=lambda n: None, auth_loader=lambda n: {})
+    assert not (local / "shadow" / "ledger.db").exists()

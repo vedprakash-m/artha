@@ -13,6 +13,7 @@ from catchup_core import domain_pack as dp
 from catchup_core import ledger as lg
 from catchup_core.blobs import BlobMissing, EncryptedBlobStore
 from catchup_core.contracts import (
+    BriefingFormat,
     CatchupRequest, CoverageStatus, ExecutionMode, FailureClass, RunStatus, Stage,
 )
 from catchup_core.incumbent import (
@@ -347,7 +348,7 @@ def test_datetime_predicates_flow_through_the_pipeline(world):
     q = "2026-10-14T15:30:00-07:00"
     ex2 = model_for({q: ("appointment_time", q, "kid2")})
     result = co.run_catchup(req(), make(
-        {"school_email": email((co.ConnectorRecord("a1", text),)), "calendar": cal()}, extractor=ex2))
+        {"school_email": email(()), "calendar": cal(records=(co.ConnectorRecord("a1", text),))}, extractor=ex2))
     fact = ledger.facts_matching("kids_school", "appointment_time", "kid2")[0]
     assert fact.value.startswith("2026-10-14T15:30:00")
     assert result.status is RunStatus.COMPLETE
@@ -392,4 +393,60 @@ def test_incumbent_conclusions_appear_labelled_and_the_adapter_runs_once(world):
     d.publisher = lambda cid, text, v: texts.append(text)
     result = co.run_catchup(req(), d)
     assert calls["n"] == 1 and result.briefing_id
-    assert "FROM YOUR RECORDS (not re-verified)" in texts[0] and "finance: from your records" in texts[0]
+    assert "1 other State File(s) are from your records and not re-verified" in texts[0]
+    assert "finance: from your records" not in texts[0]          # collapsed in the standard format
+
+
+def _incumbent_with_items():
+    class WithItems:
+        def run(self, signals, *, budget_seconds):
+            return IncumbentOutput(conclusions=(
+                IncumbentConclusion("finance", "finance: from your records, dated 2026-10-01 — not re-verified", "v1"),
+                IncumbentConclusion("inbox", "OI-2: renew passport; due 2026-12-01; from your records [src: OI-2]",
+                                    "v2", kind="open_item", due="2026-12-01"),
+                IncumbentConclusion("inbox", "OI-1: file form; due 2026-10-01; from your records [src: OI-1]",
+                                    "v2", kind="open_item", due="2026-10-01")))
+    return GuardedIncumbent(WithItems())
+
+
+def _run_format(world, fmt, cid=None):
+    ledger, _b, make, _p = world
+    texts = []
+    d = make({"school_email": email(), "calendar": cal()}, incumbent=_incumbent_with_items())
+    d.publisher = lambda cid, text, v: texts.append(text)
+    co.run_catchup(req(cid or f"cu_{fmt.value}", briefing_format=fmt), d)
+    return texts[0]
+
+
+def test_standard_shows_open_items_overdue_first_and_calendar_line(world):
+    text = _run_format(world, BriefingFormat.STANDARD)
+    assert "OPEN ITEMS (2, 1 overdue)" in text
+    assert text.index("OI-1:") < text.index("OI-2:")
+    assert "Calendar: nothing in the next 7 days." in text
+
+
+def test_deep_lists_every_record_and_flash_is_short(world):
+    deep = _run_format(world, BriefingFormat.DEEP)
+    assert "FROM YOUR RECORDS (not re-verified; 1)" in deep and "finance: from your records" in deep
+    flash = _run_format(world, BriefingFormat.FLASH)
+    assert "ONE THING" in flash and "GOALS" not in flash and "Calendar:" not in flash
+    assert "OPEN ITEMS (2, 1 overdue) — `items` lists them" in flash and "OI-2:" not in flash
+    assert len(flash.splitlines()) < len(deep.splitlines())
+
+
+def test_digest_is_capped_and_never_drops_the_coverage_line(world):
+    digest = _run_format(world, BriefingFormat.DIGEST)
+    assert "Coverage:" in digest and "Next check" in digest
+    assert len(digest.split()) < 300
+
+
+def test_every_model_request_leaves_a_disclosure_record_without_the_prompt(world):
+    ledger, _b, make, _p = world
+    seen = []
+    d = make({"school_email": email(), "calendar": cal()})
+    d.model_log = seen.append
+    d.provider_label = "session-assistant"
+    co.run_catchup(req("cu_log"), d)
+    assert seen and all(e["purpose"] == "extract" and e["provider"] == "session-assistant" for e in seen)
+    assert all(e["request_id"].startswith("evd_") and "Registration" not in json.dumps(e) for e in seen)
+    assert {"data_class", "retention", "catchup_id", "at"} <= set(seen[0])

@@ -175,7 +175,7 @@ def test_check_constraint_blocks_restricted_plaintext_even_via_sql(led):
     with pytest.raises(sqlite3.IntegrityError):
         led.conn.execute(
             "INSERT INTO facts VALUES('f','d','p','{}',0,NULL,'s','restricted',NULL,NULL,0,NULL,'t','t',"
-            "'verified_source','current',NULL)")
+            "'verified_source','current',NULL,'')")
 
 
 def test_fact_versions_are_append_only_history(led):

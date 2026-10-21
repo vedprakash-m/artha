@@ -121,6 +121,7 @@ class DomainPack:
     end_dates: str
     cross_domain_cases: tuple[str, ...]
     fixtures_dir: str
+    predicate_domains: Mapping[str, str] = field(default_factory=dict)
 
     # ── rules ────────────────────────────────────────────────────────────
     def evaluate(self, predicate: str, variables: Mapping[str, Any]) -> RuleResult:
@@ -398,6 +399,7 @@ def load_pack(data: Mapping[str, Any], bindings: Mapping[str, Any] | None = None
         holidays=_holidays(str(arith.get("business_days", "weekdays")), merged), end_dates=end_dates,
         cross_domain_cases=tuple(str(c) for c in data.get("cross_domain_cases", ())),
         fixtures_dir=str(data.get("fixtures_dir", "")),
+        predicate_domains={name: str(data["domain"]) for name in predicates},
     )
 
 
@@ -478,4 +480,6 @@ def composite_pack(packs: Sequence[DomainPack]) -> DomainPack:
         end_dates=packs[0].end_dates,
         cross_domain_cases=tuple(cross_cases),
         fixtures_dir="",
+        predicate_domains={name: p.predicate_domains.get(name, p.domain)
+                           for p in packs for name in p.predicates},
     )

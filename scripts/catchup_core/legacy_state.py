@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -39,10 +39,12 @@ def _fields(text: str) -> dict[str, str]:
 
 
 class LegacyStateAdapter:
-    def __init__(self, state_dir: Path | str, pilot_domains: Sequence[str], now: datetime):
+    def __init__(self, state_dir: Path | str, pilot_domains: Sequence[str], now: datetime,
+                 reader: Callable[[str], str] | None = None):
         self._dir = Path(state_dir)
         self._pilot = set(pilot_domains)
         self._now = now
+        self._reader = reader
 
     def run(self, signals: Sequence[str], *, budget_seconds: float) -> IncumbentOutput:
         conclusions: list[IncumbentConclusion] = []
@@ -51,9 +53,14 @@ class LegacyStateAdapter:
         if not self._dir.is_dir():
             return IncumbentOutput(coverage=(CoverageEntry(
                 "incumbent", "state", CoverageStatus.UNAVAILABLE, False, detail="state directory missing"),))
+        try:
+            conclusions.extend(self._open_items())
+        except (OSError, RuntimeError, ValueError):
+            coverage.append(CoverageEntry("incumbent", "open_items", CoverageStatus.UNAVAILABLE, True,
+                                          detail="Open Items could not be read; commitments are unknown"))
         for path in sorted(self._dir.glob("*.md")):
             name = path.stem
-            if name in _SKIP or name in self._pilot or name.startswith((".", "_")):
+            if name in _SKIP or name in self._pilot or name.startswith((".", "_", "audit")):
                 continue
             try:
                 text = path.read_text(encoding="utf-8")
@@ -84,3 +91,16 @@ class LegacyStateAdapter:
                 "incumbent", "encrypted-state", CoverageStatus.NOTIFIED_NOT_FETCHED, False,
                 blind_spots=tuple(locked), detail=f"{len(locked)} encrypted domain(s) not unlocked in this session"))
         return IncumbentOutput(tuple(conclusions), tuple(coverage))
+
+    def _open_items(self) -> list[IncumbentConclusion]:
+        from catchup_core.curated import records  # noqa: PLC0415
+        path = self._dir / "open_items.md"
+        text = self._reader("open_items") if self._reader else (path.read_text() if path.exists() else "")
+        version = hashlib.sha256(text.encode()).hexdigest()[:16]
+        items = records(text, "open_items")
+        items.sort(key=lambda item: (str(item.get("deadline") or "9999"), str(item.get("id", ""))))
+        return [IncumbentConclusion(str(item.get("source_domain", "inbox")),
+            f"{item.get('id', 'Open Item')}: {item.get('description', '')}; "
+            f"due {item.get('deadline') or 'unknown'}; from your records [src: {item.get('id', 'unknown')}]", version,
+            kind="open_item", due=str(item.get("deadline") or ""))
+            for item in items]

@@ -34,6 +34,10 @@ class EncryptedBlobStore:
 
     def put(self, locator: str, text: str) -> str:
         ref = ids.evidence_id(self._key, locator)
+        if self._path(ref).is_file():
+            if self.get(ref) != text:
+                raise ValueError("immutable evidence locator already contains different content")
+            return ref
         envelope, _ = self._cipher.encrypt(text.encode("utf-8"), aad=ref.encode())
         self._root.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = self._path(ref).with_suffix(".tmp")

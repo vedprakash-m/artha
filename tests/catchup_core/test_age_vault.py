@@ -158,11 +158,18 @@ def test_missing_age_binary_fails_closed(tmp_path):
         v.read("kids")
 
 
-def test_windows_is_explicitly_unsupported(monkeypatch, tmp_path):
+def test_portable_identity_uses_stdin_without_a_key_file(monkeypatch, tmp_path):
+    from types import SimpleNamespace
     v = vt.AgeVault(tmp_path, identity=lambda: "x", recipient="age1x", age_bin="/bin/true")
-    monkeypatch.setattr(sys, "platform", "win32")
-    with pytest.raises(vt.VaultUnavailable, match="Windows"):
-        v.read("kids")
+    (tmp_path / "kids.md.age").write_bytes(b"encrypted")
+    seen = {}
+    def decrypt(argv, **kw):
+        seen.update(kw)
+        assert argv[1:4] == ["-d", "-i", "-"]
+        return SimpleNamespace(returncode=0, stdout=DOC.encode())
+    monkeypatch.setattr(vt.subprocess, "run", decrypt)
+    assert v.read("kids") == DOC and seen["input"] == b"x\n"
+    assert "pass_fds" not in seen
 
 
 @needs_age

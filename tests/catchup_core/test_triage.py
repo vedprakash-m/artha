@@ -111,8 +111,8 @@ def test_overdue_outstanding_is_p1_and_resolved_is_quiet(env):
     assert r.alerts[0].severity is Severity.P1 and r.horizon[0].days_until == -7
     r = run(env, obligation_states={key: "resolved"})
     assert r.alerts == ()
-    r = run(env)                                       # unknown state: uncertain, not guessed
-    assert r.alerts == () and key in r.uncertain
+    r = run(env)  # no resolution evidence means an existing obligation remains outstanding
+    assert r.alerts[0].severity is Severity.P1
 
 
 def test_ranking_severity_then_deadline_then_key(env):
@@ -120,8 +120,8 @@ def test_ranking_severity_then_deadline_then_key(env):
     put(env, EXAM, "2026-10-13", subject="kid1")      # P1
     put(env, "grade_alert", "below_threshold", subject="kid1")   # enum, not a date: no alert via date path
     r = run(env)
-    assert [a.subject_id for a in r.alerts] == ["kid1", "kid2"]
-    assert [a.severity for a in r.alerts] == [Severity.P1, Severity.P2]
+    assert [a.subject_id for a in r.alerts] == ["kid1", "kid2", "kid1"]
+    assert [a.severity for a in r.alerts] == [Severity.P1, Severity.P2, Severity.P3]
 
 
 def test_goal_relevance_breaks_ties_only(env):
@@ -136,7 +136,7 @@ def test_next_check_by_helper():
     mk = lambda lua: type("A", (), {"latest_useful_action": lua})()   # noqa: E731
     assert next_check_by([], date(2026, 10, 12)) is None
     assert next_check_by([mk(date(2026, 10, 20)), mk(date(2026, 10, 15))], date(2026, 10, 12)) == date(2026, 10, 13)
-    assert next_check_by([mk(date(2026, 10, 1))], date(2026, 10, 12)) is None
+    assert next_check_by([mk(date(2026, 10, 1))], date(2026, 10, 12)) == date(2026, 9, 29)
 
 
 def test_deadline_vs_calendar_conflict_proposes_an_open_day(env):
@@ -157,8 +157,9 @@ def test_latest_useful_action_skips_school_holidays(env):
 
 def test_appointment_vs_school_schedule(env):
     put(env, "appointment_time", "2026-10-14T15:00:00-07:00", subject="kid2")
-    school = CalendarEvent("s1", datetime(2026, 10, 14, 8, tzinfo=timezone.utc),
-                           datetime(2026, 10, 14, 15, tzinfo=timezone.utc), kind="school")
+    from zoneinfo import ZoneInfo
+    school = CalendarEvent("s1", datetime(2026, 10, 14, 8, tzinfo=ZoneInfo("America/Los_Angeles")),
+                           datetime(2026, 10, 14, 16, tzinfo=ZoneInfo("America/Los_Angeles")), kind="school")
     r = run(env, calendar=[school])
     assert [f.case for f in r.cross_domain] == ["appointment_vs_school_schedule"]
     assert run(env, calendar=[]).cross_domain == ()

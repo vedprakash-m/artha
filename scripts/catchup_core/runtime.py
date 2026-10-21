@@ -23,12 +23,18 @@ Everything environment-specific is configured here and nowhere else:
 """
 from __future__ import annotations
 
+import hashlib
 import importlib
+import json
 import os
+import re
 import shlex
+import sqlite3
 import subprocess
-from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import closing
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,15 +42,17 @@ import yaml
 
 from catchup_core import ids
 from catchup_core.adapters import fetch_via_handler
+from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
 from catchup_core.blobs import EncryptedBlobStore
-from catchup_core.contracts import CatchupRequest, CoverageStatus
-from catchup_core.coordinator import ConnectorFetch, Deps
+from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode
+from catchup_core.coordinator import ConnectorFetch, ConnectorRecord, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
 from catchup_core.exchange import ExchangeExtractor
 from catchup_core.incumbent import GuardedIncumbent
-from catchup_core.ledger import FileSealedStore, Ledger
+from catchup_core.ledger import KeyringSealedStore, Ledger
 from catchup_core.legacy_state import LegacyStateAdapter
+from catchup_core.policy import authorize_source, validate_release
 
 __all__ = ["RuntimeConfig", "RuntimeConfigError", "build_deps", "command_extractor", "load_runtime_config",
            "local_root", "make_file_publisher"]
@@ -59,7 +67,8 @@ class RuntimeConfigError(RuntimeError):
 class RuntimeConfig:
     def __init__(self, sources: Mapping[str, Mapping[str, Any]], subjects: list[str], viewer: str,
                  consent_required: frozenset[str] = frozenset(), cutover: bool = False,
-                 extractor_cmd: str | None = None, domains: tuple[str, ...] = ("kids_school",)):
+                 extractor_cmd: str | None = None, domains: tuple[str, ...] = ("kids_school",),
+                 policy: Mapping[str, Any] | None = None):
         self.sources = {k: dict(v) for k, v in sources.items()}
         self.subjects = subjects
         self.viewer = viewer
@@ -67,6 +76,8 @@ class RuntimeConfig:
         self.cutover = cutover
         self.extractor_cmd = extractor_cmd
         self.domains = tuple(domains)
+        self.policy = dict(policy or {})
+        self.subject_labels: dict[str, str] = {}
 
 
 def local_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -88,8 +99,9 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
     for name, spec in sources.items():
         if not isinstance(spec, dict) or not spec.get("connector") or not spec.get("account_scope"):
             raise RuntimeConfigError(f"source {name!r} needs 'connector' and 'account_scope'")
-    subjects = data.get("subjects")
-    if not isinstance(subjects, list) or not all(isinstance(s, str) and s for s in subjects) or not subjects:
+    subjects = data.get("subjects", [] if data.get("household_from_profile") is True else None)
+    if (not isinstance(subjects, list) or not all(isinstance(s, str) and s for s in subjects)
+            or (not subjects and data.get("household_from_profile") is not True)):
         raise RuntimeConfigError("config needs a non-empty 'subjects' list")
     required = data.get("consent_required", [])
     if not isinstance(required, list) or not all(isinstance(s, str) and s for s in required):
@@ -104,7 +116,7 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
     return RuntimeConfig(sources, [str(s) for s in subjects], str(data.get("viewer", "owner")),
                          frozenset(required), cutover=cutover,
                          extractor_cmd=str(extractor_cmd) if extractor_cmd else None,
-                         domains=domains)
+                         domains=domains, policy=data)
 
 
 def command_extractor(command: str | None, *, timeout: float = 120.0,
@@ -133,12 +145,18 @@ def build_fetchers(
     handler_loader: Callable[[str], Any],
     auth_loader: Callable[[str], Mapping[str, Any]],
     required: Mapping[str, bool],
+    ledger: Ledger | None = None,
 ) -> dict[str, Callable[[], ConnectorFetch]]:
     """One callable per pilot source; load/auth failures become *unavailable*, not crashes."""
     fetchers: dict[str, Callable[[], ConnectorFetch]] = {}
     for pack_name, spec in config.sources.items():
         def run(pack_name: str = pack_name, spec: Mapping[str, Any] = spec) -> ConnectorFetch:
             try:
+                if ledger is not None:
+                    authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
+                                     f"{pack_name}:{spec['account_scope']}", config.viewer)
+                    if str(spec.get("namespace", "personal")) != "personal":
+                        raise PermissionError("Work sources cannot enter personal context")
                 handler = handler_loader(str(spec["connector"]))
                 auth = auth_loader(str(spec["connector"]))
             except Exception:
@@ -146,8 +164,14 @@ def build_fetchers(
                 return ConnectorFetch(pack_name, str(spec["account_scope"]), (), CoverageStatus.UNAVAILABLE,
                                       FailureClass.AUTH, ("connector could not be loaded or authorised",),
                                       required.get(pack_name, True))
+            start = since
+            if ledger is not None:
+                last = next((r["completed_at"] for r in ledger.coverage_rows()
+                             if r["connector"] == pack_name and r["account_scope"] == spec["account_scope"]), None)
+                if last:
+                    start = (datetime.fromisoformat(last.replace("Z", "+00:00")) - timedelta(hours=24)).isoformat()
             return fetch_via_handler(
-                pack_name, str(spec["account_scope"]), handler.fetch, since=since, auth_context=auth,
+                pack_name, str(spec["account_scope"]), handler.fetch, since=start, auth_context=auth,
                 fetch_kwargs=spec.get("kwargs") or {}, required=required.get(pack_name, True))
         fetchers[pack_name] = run
     return fetchers
@@ -178,13 +202,176 @@ def build_deps(
     handler_loader: Callable[[str], Any] | None = None,
     auth_loader: Callable[[str], Mapping[str, Any]] | None = None,
     now: Callable[[], datetime] | None = None,
+    inspection: bool = False,
 ) -> Deps:
     env = os.environ if environ is None else environ
     root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
     config = load_runtime_config(root / "config" / "catchup_core.yaml")
     local = local_root(env)
+    if local.resolve().is_relative_to(root.resolve()):
+        raise RuntimeConfigError("private runtime storage must be outside the repository")
+    if request.mode.value == "shadow":
+        local = local / "shadow"
 
     domains = request.pilot_domains or config.domains or ("kids_school",)
+    validate_release(replace(request, mode=ExecutionMode.SHADOW) if inspection else request,
+                     config.policy, viewer=config.viewer, domains=domains)
+    pack = _load_packs(domains)
+    source_class = {**{name: str(spec.get("class", name)) for name, spec in config.sources.items()},
+                    "capture": "parent_note"}
+    validate_source_classes(pack, source_class)
+    if inspection and not (local / "ledger.db").is_file():
+        raise RuntimeConfigError("no Catch-up recorded here yet; start with catchup --shadow")
+
+    cipher_provider = KeyringKeyProvider("artha-ledger", backend=keyring_backend)
+    id_provider = KeyringKeyProvider("artha-ledger-ids", backend=keyring_backend)
+    cipher = EnvelopeCipher(cipher_provider)
+    id_key = _id_key(id_provider)
+    if config.policy.get("household_from_profile") is True:
+        _bind_household(config, root, id_key, (now or (lambda: datetime.now(UTC)))().astimezone(pack.timezone).date())
+    if keyring_backend is None:
+        keyring_backend = importlib.import_module("keyring")
+    ledger, blobs = _open_ledger(local, config, request, cipher, id_key, keyring_backend)
+
+    if handler_loader is None or auth_loader is None:
+        handler_loader, auth_loader = _default_loaders()
+    required = {s.connector: s.required for s in pack.sources}
+    clock: Callable[[], datetime] = now or (lambda: datetime.now(UTC))
+    def now_fn() -> datetime:
+        return clock().astimezone(pack.timezone)
+    since = (now_fn() - timedelta(days=int(config.policy.get("bootstrap_days", 30)))).isoformat()
+    ext_cmd = env.get("ARTHA_EXTRACTOR_CMD") or config.extractor_cmd
+    fetchers = build_fetchers(config, since, handler_loader, auth_loader, required, ledger)
+    fetchers["capture"] = _capture_fetcher(local, cipher, config.viewer)
+    def curated_reader(name: str) -> str:
+        from catchup_core.curated import read_state  # noqa: PLC0415
+        subjects = [config.viewer] if name == "goals" else config.subjects
+        authorize_source(ledger, subjects, config.consent_required, f"curated:{name}", config.viewer)
+        return read_state(root / "state", name)
+    def finalize(catchup_id: str) -> None:
+        curated = {p.name: p.read_bytes() for p in (root / "state").glob("*.md")}
+        encrypted_snapshot(local / "snapshots" / f"{catchup_id}.ae1", local / "ledger.db", cipher,
+                           blobs=local / "blobs", curated=curated,
+                           action_db=local.parent / "actions.db" if request.mode.value == "authoritative" else None,
+                           idempotent=True)
+        atomic_bytes(local / "health.json", json.dumps({"last_catch_up": now_fn().isoformat(),
+            "catchup_id": catchup_id, "mode": request.mode.value}).encode())
+    inputs = json.dumps(config.policy, sort_keys=True) + str(ext_cmd)
+    inputs += "".join((_PACKS / f"{d}.yaml").read_text() for d in domains)
+    return Deps(
+        ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
+        fetchers=fetchers,
+        extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
+        model_log=_model_log_writer(local, now_fn),
+        provider_label=(f"command:{ext_cmd.split()[0].rsplit('/', 1)[-1]}" if ext_cmd else "session-assistant"),
+        subjects=config.subjects, viewer=config.viewer, now=now_fn,
+        source_class=source_class,
+        incumbent=GuardedIncumbent(LegacyStateAdapter(root / "state", domains, now_fn(), reader=curated_reader)),
+        publisher=make_file_publisher(local, now_fn, cipher=cipher),
+        coverage_line=_coverage_line,
+        finalizer=finalize,
+        goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader),
+        input_version=hashlib.sha256(inputs.encode()).hexdigest(),
+        subjects_for=lambda connector, text: _subjects_for(config, connector, text),
+        subject_labels=config.subject_labels,
+    )
+
+
+def _bind_household(config: RuntimeConfig, root: Path, key: ids.HmacKey, today: Any) -> None:
+    from catchup_core.household import members  # noqa: PLC0415
+    try:
+        people = members(yaml.safe_load((root / "config/user_profile.yaml").read_text()), key, config.viewer, today)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise RuntimeConfigError("household identity could not be resolved from the profile") from exc
+    config.subjects = [person.subject_id for person in people]
+    config.consent_required = frozenset(person.subject_id for person in people if person.consent_required)
+    config.subject_labels = {person.subject_id: person.name for person in people}
+    config.policy["subject_aliases"] = {person.subject_id: list(person.aliases) for person in people}
+    config.policy["resolved_subjects"] = config.subjects
+    config.policy["consent_required"] = sorted(config.consent_required)
+
+
+def _subjects_for(config: RuntimeConfig, connector: str, text: str) -> list[str]:
+    """Resolve one subject from trusted source scope or explicit aliases, never list order."""
+    candidates = config.sources.get(connector, {}).get("subjects", config.subjects)
+    if len(candidates) == 1:
+        return [str(candidates[0])]
+    aliases = config.policy.get("subject_aliases", {})
+    named = [str(subject) for subject in candidates if any(
+        re.search(r"(?<!\w)" + re.escape(str(alias)) + r"(?!\w)", text, re.IGNORECASE)
+        for alias in (subject, *aliases.get(subject, [])))]
+    # Multi-person evidence needs a scoped excerpt or explicit review before attribution.
+    return named if len(named) == 1 else []
+
+
+def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, cipher: EnvelopeCipher,
+                 id_key: ids.HmacKey, keyring_backend: Any) -> tuple[Ledger, EncryptedBlobStore]:
+    from catchup_core.session_lock import session_lock  # noqa: PLC0415
+    with session_lock(local / "ledger.session.lock"):
+        is_new = not (local / "ledger.db").exists()
+        ledger = Ledger(local / "ledger.db", id_key=id_key, cipher=cipher, owner_id=config.viewer,
+                        consent_subjects=config.consent_required,
+                        sealed=KeyringSealedStore(keyring_backend, request.mode.value)).open()
+        try:
+            ledger.migrate(backup=_backup_for(local, cipher=cipher))
+            if is_new:
+                ledger.seal_privacy()
+            if not ledger.check_restore():
+                raise RuntimeConfigError("ledger is older than the sealed deletion checkpoint; replay tombstones first")
+            ledger.protect_legacy_values()
+            blobs = EncryptedBlobStore(local / "blobs", cipher, id_key)
+            ledger._blob_deleter = blobs.delete
+            ledger._artifact_deleter = lambda cids: _purge_archives(local, ledger, cids)
+            ledger._replay_deleter = lambda fids: _purge_replay(local, fids)
+            ledger.resume_pending_forgets()
+        except Exception:
+            ledger.close()
+            raise
+    return ledger, blobs
+
+
+def _purge_archives(local: Path, ledger: Ledger, catchup_ids: Sequence[str]) -> None:
+    for cid in catchup_ids:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", cid):
+            raise RuntimeConfigError("invalid archive identity in deletion journal")
+        for path in (local / "briefings").glob(f"*-{cid}.v*.ae1"):
+            path.unlink(missing_ok=True)
+        ledger.conn.execute("UPDATE briefings SET status='superseded' WHERE catchup_id=?", (cid,))
+    # Captured notes are source evidence too, not a permanent bypass around forget.
+    for row in ledger.conn.execute("SELECT upstream_id FROM tombstones WHERE connector='capture'"):
+        if re.fullmatch(r"cap_[A-Za-z0-9]+", row[0]):
+            (local / "inbox" / f"{row[0]}.ae1").unlink(missing_ok=True)
+
+
+def validate_source_classes(pack: DomainPack, source_class: Mapping[str, str]) -> None:
+    """A source whose class no predicate ranks would turn every Fact it yields into UNKNOWN."""
+    ranked = {token for pred in pack.predicates.values() for token in pred.authority}
+    for source in pack.sources:
+        klass = source_class.get(source.connector, source.connector)
+        if source.required and klass not in ranked:
+            raise RuntimeConfigError(
+                f"source {source.connector!r} has class {klass!r} which no predicate lists as an authority; "
+                f"set 'class:' on it in config/catchup_core.yaml (one of: {', '.join(sorted(ranked))})")
+
+
+def _model_log_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[str, str]], None]:
+    """Append-only monthly JSONL of *who may have seen what* (provider, data class, purpose), no content."""
+    def write(entry: dict[str, str]) -> None:
+        path = local / "model-requests" / f"{now():%Y-%m}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    return write
+
+
+def _purge_replay(local: Path, feedback_ids: Sequence[str]) -> None:
+    for fid in feedback_ids:
+        if re.fullmatch(r"fbk_[A-Za-z0-9]+", fid):
+            (local / "replay" / f"{fid}.ae1").unlink(missing_ok=True)
+
+
+def _load_packs(domains: tuple[str, ...]) -> DomainPack:
     loaded: list[DomainPack] = []
     for d in domains:
         p_path = _PACKS / f"{d}.yaml"
@@ -195,48 +382,65 @@ def build_deps(
                 raise RuntimeConfigError(str(exc)) from exc
     if not loaded:
         raise RuntimeConfigError(f"no valid domain packs found for: {domains}")
-    pack: DomainPack = composite_pack(loaded)
-
-    cipher_provider = KeyringKeyProvider("artha-ledger", backend=keyring_backend)
-    id_provider = KeyringKeyProvider("artha-ledger-ids", backend=keyring_backend)
-    cipher = EnvelopeCipher(cipher_provider)
-    id_key = _id_key(id_provider)
-
-    ledger = Ledger(local / "ledger.db", id_key=id_key, cipher=cipher, owner_id=config.viewer,
-                    consent_subjects=config.consent_required,
-                    sealed=FileSealedStore(local / "sealed" / "checkpoint.json")).open()
-    ledger.migrate(backup=_backup_for(local))
-    if not ledger.check_restore():
-        raise RuntimeConfigError("ledger is older than the sealed deletion checkpoint; replay tombstones first")
-    blobs = EncryptedBlobStore(local / "blobs", cipher, id_key)
-
-    if handler_loader is None or auth_loader is None:
-        handler_loader, auth_loader = _default_loaders()
-    since = (datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    required = {s.connector: s.required for s in pack.sources}
-    now_fn = now or (lambda: datetime.now(UTC))
-    ext_cmd = env.get("ARTHA_EXTRACTOR_CMD") or config.extractor_cmd
-    return Deps(
-        ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
-        fetchers=build_fetchers(config, since, handler_loader, auth_loader, required),
-        extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
-        subjects=config.subjects, viewer=config.viewer, now=now_fn,
-        source_class={name: name for name in config.sources},
-        incumbent=GuardedIncumbent(LegacyStateAdapter(root / "state", domains, datetime.now(UTC))),
-        publisher=make_file_publisher(root, now_fn),
-        coverage_line=_coverage_line,
-    )
+    if len(loaded) != len(domains):
+        raise RuntimeConfigError("one or more requested Domain packs are unavailable")
+    return composite_pack(loaded)
 
 
-def make_file_publisher(repo_root: Path, now: Callable[[], datetime]) -> Callable[[str, str, int], None]:
+def _capture_fetcher(local: Path, cipher: EnvelopeCipher, viewer: str) -> Callable[[], ConnectorFetch]:
+    def fetch() -> ConnectorFetch:
+        records = []
+        for path in sorted((local / "inbox").glob("cap_*.ae1")):
+            data = json.loads(cipher.decrypt(path.read_bytes(), aad=path.stem.encode()))
+            if data["actor"] != viewer or data["id"] != path.stem:
+                raise RuntimeConfigError("captured note identity does not match this viewer")
+            records.append(ConnectorRecord(path.stem, data["text"], occurred_at=data["observed_at"]))
+        return ConnectorFetch("capture", viewer, tuple(records), required=False)
+    return fetch
+
+
+def _goal_lines(state: Path, *, reader: Callable[[str], str] | None = None) -> list[str]:
+    from catchup_core.curated import read_state, records  # noqa: PLC0415
+    try:
+        goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
+    except (OSError, RuntimeError, ValueError):
+        return ["Goals unavailable; progress is unknown."]
+    output = []
+    for goal in goals:
+        if goal.get("status") != "active":
+            continue
+        observed = goal.get("last_progress") or "unknown"
+        next_action = goal.get("next_action") or "next action unknown"
+        output.append(f"{goal.get('id', 'Goal')}: {goal.get('title', '')}; {next_action}; "
+                      f"authored observation {observed}, not re-verified [src: state:goals]")
+    return output
+
+
+def make_file_publisher(repo_root: Path, now: Callable[[], datetime], *,
+                        cipher: EnvelopeCipher | None = None) -> Callable[[str, str, int], None]:
     """Publisher that writes the canonical briefing file to briefings/YYYY-MM-DD.md."""
     def publish(catchup_id: str, text: str, version: int) -> None:
         briefings_dir = repo_root / "briefings"
         briefings_dir.mkdir(parents=True, exist_ok=True)
         today = now().strftime("%Y-%m-%d")
-        dest = briefings_dir / f"{today}.md" if version == 1 else briefings_dir / f"{today}.v{version}.md"
-        with open(dest, "w", encoding="utf-8") as f:
-            f.write(text)
+        alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        if not catchup_id or any(c not in alphabet for c in catchup_id):
+            raise RuntimeConfigError("invalid Catch-up archive identity")
+        dest = briefings_dir / f"{today}-{catchup_id}.v{version}.{'ae1' if cipher else 'md'}"
+        previous_versions = list(briefings_dir.glob(f"*-{catchup_id}.v{version}.{'ae1' if cipher else 'md'}"))
+        if len(previous_versions) > 1:
+            raise RuntimeConfigError("multiple archives claim this Catch-up version")
+        if previous_versions:
+            dest = previous_versions[0]  # resume across midnight keeps its first archive identity
+        aad = f"archive:{catchup_id}:{version}".encode()
+        if dest.exists():
+            previous = (cipher.decrypt(dest.read_bytes(), aad=aad).decode() if cipher
+                        else dest.read_text(encoding="utf-8"))
+            if previous != text:
+                raise RuntimeConfigError("archive version already contains different text")
+            return
+        data = cipher.encrypt(text.encode(), aad=aad)[0] if cipher else text.encode()
+        atomic_bytes(dest, data)
     return publish
 
 
@@ -248,10 +452,20 @@ def _coverage_line() -> str:
         return "Coverage: not summarized."
 
 
-def _backup_for(local: Path) -> Callable[[Path], Path]:
+def _backup_for(local: Path, *, cipher: EnvelopeCipher | None = None) -> Callable[[Path], Path]:
     def backup(db: Path) -> Path:
-        import shutil  # noqa: PLC0415
         dest = local / f"ledger.pre-migration.{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.db"
-        shutil.copy2(db, dest)
+        if cipher is not None:
+            data = database_bytes(db)
+            envelope, _ = cipher.encrypt(data, aad=b"migration-backup")
+            if cipher.decrypt(envelope, aad=b"migration-backup") != data:
+                raise RuntimeConfigError("migration backup verification failed")
+            dest = dest.with_suffix(".ae1")
+            atomic_bytes(dest, envelope)
+            return dest
+        with closing(sqlite3.connect(db)) as source, closing(sqlite3.connect(dest)) as target:
+            source.backup(target)
+            if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RuntimeConfigError("migration backup integrity check failed")
         return dest
     return backup

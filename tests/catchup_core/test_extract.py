@@ -13,7 +13,7 @@ from catchup_core.rule_of_two import Broker, RuleOfTwoViolation
 
 PACK = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "kids_school.yaml")
 TEXT = "Hello families. SAT registration closes October 19. Accommodation status: approved. Details below."
-SIG = ex.NormalizedSignal("sig_0000000000000001", "school_email", TEXT)
+SIG = ex.NormalizedSignal("sig_0000000000000001", "school_email", TEXT, observed_at="2026-10-12T00:00:00Z")
 SUBJECTS = ["kid1", "kid2"]
 
 
@@ -68,7 +68,7 @@ def test_enum_datetime_and_text_candidates():
     ({"confidence": True}, "confidence"),
 ])
 def test_invalid_candidates_are_rejected_individually(override, reason):
-    good = cand(predicate="test_date", value="2026-10-21", quote="Hello", span=[0, 5])
+    good = cand(predicate="test_date")  # independently valid and actually grounded in the quote
     r = parse([cand(**override), good])
     assert len(r.candidates) == 1 and r.candidates[0].predicate == "test_date"
     assert len(r.rejections) == 1 and reason in r.rejections[0].reason and r.rejections[0].index == 0

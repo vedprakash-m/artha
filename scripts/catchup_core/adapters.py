@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Mapping
+from dataclasses import replace
+from datetime import date, datetime
 from typing import Any
 
 from catchup_core.contracts import CoverageStatus, FailureClass
 from catchup_core.coordinator import ConnectorFetch, ConnectorRecord
+from catchup_core.triage import CalendarEvent
 from lib.connector_coverage import CoverageCollector
 from schemas.connector_record import validate_record
 
@@ -44,7 +47,7 @@ def default_text(record: Mapping[str, Any]) -> str:
         parts = [str(record.get("summary", "")), f"Start: {record.get('start', '')}",
                  f"End: {record.get('end', '')}", str(record.get("location", "")),
                  str(record.get("description", ""))]
-    return "\n".join(p for p in parts if p.strip())[:MAX_TEXT]
+    return "\n".join(p for p in parts if p.strip())
 
 
 def _provider_version(record: Mapping[str, Any]) -> str | None:
@@ -68,19 +71,29 @@ def fetch_via_handler(
 ) -> ConnectorFetch:
     collector = CoverageCollector()
     records: list[ConnectorRecord] = []
+    cancelled: list[str] = []
     rejected = 0
+    content_gaps: list[str] = []
     try:
         with collector.track(name) as tracker:
             for raw in fetch(since=since, auth_context=dict(auth_context or {}), source_tag=name,
                              **dict(fetch_kwargs or {})):
+                if raw.get("status") == "cancelled" and isinstance(raw.get("id"), str):
+                    cancelled.append(raw["id"])
+                    continue
                 try:
                     validated = validate_record(raw)
+                    calendar = _calendar(raw)
                 except (TypeError, ValueError):
                     rejected += 1
                     continue
+                incomplete = bool(raw.get("attachments") or raw.get("body_truncated")
+                                  or raw.get("processing_gaps"))
+                if incomplete:
+                    content_gaps.append("attachment or omitted content has not been interpreted")
                 records.append(ConnectorRecord(
                     upstream_id=validated.id, text=text_of(raw), provider_version=_provider_version(raw),
-                    occurred_at=validated.date_iso))
+                    occurred_at=validated.date_iso, incomplete=incomplete, calendar=calendar))
             scopes = list(tracker.scopes)
     except Exception as exc:
         return ConnectorFetch(name, account_scope, (), CoverageStatus.UNAVAILABLE, classify_failure(exc),
@@ -90,6 +103,7 @@ def fetch_via_handler(
              for s in scopes if s.status in ("failed", "truncated")]
     if rejected:
         blind.append(f"{rejected} record(s) rejected by the validator")
+    blind.extend(sorted(set(content_gaps)))
 
     try:
         from lib.connector_coverage import ConnectorRun, CoverageStore  # noqa: PLC0415
@@ -104,7 +118,10 @@ def fetch_via_handler(
             elapsed=0.0,
         )
         collector.add(c_run)
-        store.record(c_run)
+        stored = store.record(c_run)
+        if stored.get("status") == "anomaly":
+            return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.ANOMALY,
+                                  blind_spots=("unexpected volume drop against complete history",), required=required)
     except Exception:  # noqa: S110
         pass
 
@@ -112,5 +129,21 @@ def fetch_via_handler(
         return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.DEGRADED,
                               FailureClass.SCHEMA_REJECTED if rejected else FailureClass.PROVIDER,
                               blind_spots=tuple(blind), required=required)
-    return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.COMPLETE, None, required=required)
+    return replace(ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.COMPLETE, None,
+                                  required=required), cancelled=tuple(cancelled))
+
+
+def _calendar(raw: Mapping[str, Any]) -> CalendarEvent | None:
+    if "start" not in raw:
+        return None
+    all_day = bool(raw.get("all_day", "T" not in str(raw["start"])))
+    parse = date.fromisoformat if all_day else datetime.fromisoformat
+    start, end = parse(str(raw["start"])), parse(str(raw.get("end", raw["start"])))
+    if end < start or (not all_day and (not isinstance(start, datetime) or not isinstance(end, datetime)
+                                      or start.tzinfo is None or end.tzinfo is None)):
+        raise ValueError("calendar bounds require ordered dates or offset-aware times")
+    kind = str(raw.get("kind", "other"))
+    if kind not in ("school", "travel", "out_of_office", "other"):
+        raise ValueError("unknown calendar kind")
+    return CalendarEvent(str(raw["id"]), start, end, all_day, kind)
 

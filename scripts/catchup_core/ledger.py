@@ -136,6 +136,44 @@ class FileSealedStore:
         os.replace(tmp, self._path)
 
 
+class KeyringSealedStore:
+    """Deletion/permission anchor and replay data outside any restorable directory."""
+
+    def __init__(self, backend: Any, namespace: str):
+        self._backend = backend
+        self._service = f"artha-privacy-{namespace}"
+        self.history: Callable[[], dict[str, Any]] = lambda: {}
+
+    def read(self) -> SealedCheckpoint | None:
+        try:
+            raw = self._backend.get_password(self._service, "checkpoint")
+            if raw is None:
+                return None
+            data = json.loads(raw)
+            return SealedCheckpoint(int(data["checkpoint_id"]), str(data["tombstone_digest"]),
+                                    int(data["permission_generation"]))
+        except Exception as exc:
+            raise LedgerLocked("credential-store privacy checkpoint is unavailable") from exc
+
+    def write(self, checkpoint: SealedCheckpoint) -> None:
+        previous = self.read()
+        if previous and (checkpoint.checkpoint_id < previous.checkpoint_id
+                         or checkpoint.permission_generation < previous.permission_generation):
+            raise LedgerLocked("privacy history cannot move backwards")
+        text = json.dumps({"checkpoint_id": checkpoint.checkpoint_id,
+            "tombstone_digest": checkpoint.tombstone_digest,
+            "permission_generation": checkpoint.permission_generation, "history": self.history()}, sort_keys=True)
+        self._backend.set_password(self._service, "checkpoint", text)
+        if self._backend.get_password(self._service, "checkpoint") != text:
+            raise LedgerLocked("privacy checkpoint was not durably saved")
+
+    def replay(self) -> dict[str, Any]:
+        raw = self._backend.get_password(self._service, "checkpoint")
+        if raw is None:
+            raise LedgerLocked("trusted privacy replay history is missing")
+        return dict(json.loads(raw).get("history", {}))
+
+
 # ── inputs and views ──────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -169,6 +207,7 @@ class FactInput:
     co_subjects: tuple[tuple[str, str], ...] = ()
     viewers: tuple[str, ...] = ()
     evidence: tuple[tuple[str, int, int], ...] = ()
+    obligation_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -187,6 +226,7 @@ class FactView:
     observed_at: str
     recorded_at: str
     evidence: tuple[tuple[str, int, int], ...] = ()
+    obligation_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -215,6 +255,7 @@ class Ledger:
         consent_subjects: frozenset[str] = frozenset(),
         clock: Callable[[], str] = _utc_now,
         blob_deleter: Callable[[str], None] | None = None,
+        artifact_deleter: Callable[[Sequence[str]], None] | None = None,
     ):
         self._path = Path(path)
         self._id_key = id_key
@@ -226,9 +267,13 @@ class Ledger:
         self._consent_subjects = frozenset(consent_subjects)
         self._clock = clock
         self._blob_deleter = blob_deleter
+        self._artifact_deleter = artifact_deleter
+        self._replay_deleter: Callable[[Sequence[str]], None] | None = None
         self._conn: sqlite3.Connection | None = None
         self.locked = False
         self._guard = ids.CollisionGuard()
+        if isinstance(self._sealed, KeyringSealedStore):
+            self._sealed.history = self.privacy_history
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def open(self) -> Ledger:
@@ -240,6 +285,7 @@ class Ledger:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
+        conn.execute("PRAGMA secure_delete=ON")
         conn.execute("PRAGMA busy_timeout=5000")
         self._conn = conn
         return self
@@ -369,17 +415,38 @@ class Ledger:
         """Fetched-but-not-reconciled Signals (quiet-claim closure, §6.7)."""
         rows = self.conn.execute(
             "SELECT signal_id FROM signals WHERE processing_state NOT IN ('reconciled','excluded') "
+            "OR signal_id IN (SELECT signal_id FROM signal_failures) "
             "ORDER BY signal_id").fetchall()
         return [str(r[0]) for r in rows]
 
     # ── facts ────────────────────────────────────────────────────────────────
     def _encode_value(self, fact_id: str, value: Any, confidentiality: Confidentiality) -> tuple[str, int, int | None]:
-        if confidentiality is Confidentiality.RESTRICTED:
+        if confidentiality is not Confidentiality.ORDINARY:
             if self._cipher is None:
-                raise LedgerError("restricted values need an encryption key; refusing plaintext")
+                raise LedgerError("sensitive and restricted values need an encryption key; refusing plaintext")
             text, version = self._cipher.encrypt_json(value, aad=fact_id.encode())
             return text, 1, version
         return json.dumps(value, sort_keys=True), 0, None
+
+    def protect_legacy_values(self) -> int:
+        """Upgrade earlier sensitive plaintext rows without changing their identity or history."""
+        self._require_unlocked()
+        changed = 0
+        with self.transaction() as db:
+            for table in ("facts", "fact_versions"):
+                rows = db.execute(
+                    f"SELECT t.rowid,t.fact_id,t.typed_value FROM {table} t JOIN facts f ON f.fact_id=t.fact_id "  # noqa: S608
+                    "WHERE t.value_encrypted=0 AND f.confidentiality<>'ordinary'").fetchall()
+                for row in rows:
+                    text, encrypted, version = self._encode_value(row[1], json.loads(row[2]), Confidentiality.SENSITIVE)
+                    db.execute(f"UPDATE {table} SET typed_value=?,value_encrypted=?,key_version=? WHERE rowid=?",  # noqa: S608
+                               (text, encrypted, version, row[0]))
+                    changed += 1
+        if changed:
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.conn.execute("VACUUM")
+            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return changed
 
     @staticmethod
     def _last_version(conn: sqlite3.Connection, fact_id: str) -> str | None:
@@ -395,8 +462,13 @@ class Ledger:
         with self.transaction() as c:
             now = _after(self._last_version(c, fid), self._clock())
             if not is_new:
-                if not c.execute("SELECT 1 FROM facts WHERE fact_id=?", (fid,)).fetchone():
+                identity = c.execute("SELECT domain,predicate,primary_subject_id FROM facts WHERE fact_id=?",
+                                     (fid,)).fetchone()
+                if identity is None:
                     raise LedgerError(f"unknown fact {fid}")
+                if tuple(identity) != (fact.domain, fact.predicate, fact.primary_subject_id):
+                    raise LedgerError("a Fact version cannot change its Domain, predicate or subject")
+                c.execute("DELETE FROM fact_evidence WHERE fact_id=?", (fid,))
                 c.execute(
                     "UPDATE facts SET typed_value=?,value_encrypted=?,key_version=?,confidentiality=?,"
                     "valid_from=?,valid_to=?,validity_unknown=?,occurred_at=?,observed_at=?,recorded_at=?,"
@@ -430,10 +502,22 @@ class Ledger:
             for signal_id, start, end in fact.evidence:
                 c.execute("INSERT OR REPLACE INTO fact_evidence(fact_id,signal_id,span_start,span_end)"
                           " VALUES(?,?,?,?)", (fid, signal_id, start, end))
+                c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
+                          (fid, now, signal_id, start, end))
+            c.execute("UPDATE facts SET obligation_key=? WHERE fact_id=?", (fact.obligation_key, fid))
         return fid
 
     def _may_view(self, row: sqlite3.Row, viewer_id: str) -> bool:
         fact_id = row["fact_id"]
+        # A deletion request denies access immediately, even if sealing or physical
+        # deletion failed. Do not expose forgotten history while recovery is pending.
+        if self.conn.execute(
+            "SELECT 1 FROM signals s JOIN tombstones t ON "
+            "(s.connector=t.connector AND s.account_scope=t.account_scope AND s.upstream_id=t.upstream_id) "
+            "OR s.content_hmac=t.content_hmac WHERE s.signal_id IN "
+            "(SELECT signal_id FROM fact_evidence WHERE fact_id=? UNION "
+            "SELECT signal_id FROM fact_version_evidence WHERE fact_id=?) LIMIT 1", (fact_id, fact_id)).fetchone():
+            return False
         allowed = (
             viewer_id == self._owner
             or viewer_id == row["primary_subject_id"]
@@ -444,10 +528,14 @@ class Ledger:
             return False
         # Restricted data about a consent-required adult needs that person's recorded consent
         # for anyone other than that person.
-        if (row["confidentiality"] == Confidentiality.RESTRICTED.value
-                and row["primary_subject_id"] in self._consent_subjects
-                and viewer_id != row["primary_subject_id"]):
-            return self.consent_active(row["primary_subject_id"], "view", viewer_id)
+        if (row["primary_subject_id"] in self._consent_subjects
+                and viewer_id != row["primary_subject_id"]
+                and not self.consent_active(row["primary_subject_id"], "view", viewer_id, scope=row["domain"])):
+            return False
+        for subject in self.conn.execute("SELECT subject_id FROM fact_subjects WHERE fact_id=?", (fact_id,)):
+            if (subject[0] in self._consent_subjects and subject[0] != viewer_id
+                    and not self.consent_active(subject[0], "view", viewer_id, scope=row["domain"])):
+                return False
         return True
 
     def get_fact(self, fact_id: str, viewer_id: str) -> FactView:
@@ -468,7 +556,8 @@ class Ledger:
             primary_subject_id=row["primary_subject_id"], confidentiality=row["confidentiality"],
             provenance_class=row["provenance_class"], status=row["status"], valid_from=row["valid_from"],
             valid_to=row["valid_to"], validity_unknown=bool(row["validity_unknown"]),
-            observed_at=row["observed_at"], recorded_at=row["recorded_at"], evidence=evidence)
+            observed_at=row["observed_at"], recorded_at=row["recorded_at"], evidence=evidence,
+            obligation_key=row["obligation_key"])
 
     def _decode_value(self, fact_id: str, text: str, encrypted: bool) -> Any:
         if not encrypted:
@@ -491,7 +580,10 @@ class Ledger:
                 "recorded_at": row["recorded_at"], "status": row["status"],
                 "value": self._decode_value(fact_id, row["typed_value"], bool(row["value_encrypted"])),
                 "provenance_class": row["provenance_class"], "valid_from": row["valid_from"],
-                "valid_to": row["valid_to"], "key_version": row["key_version"]})
+                "valid_to": row["valid_to"], "key_version": row["key_version"],
+                "evidence": [dict(e) for e in self.conn.execute(
+                    "SELECT signal_id,span_start,span_end FROM fact_version_evidence "
+                    "WHERE fact_id=? AND recorded_at=?", (fact_id, row["recorded_at"]))]})
         return out
 
     def facts_for(self, domain: str, predicate: str, viewer_id: str,
@@ -514,6 +606,9 @@ class Ledger:
         with self.transaction() as c:
             c.execute("INSERT OR REPLACE INTO fact_evidence(fact_id,signal_id,span_start,span_end) VALUES(?,?,?,?)",
                       (fact_id, signal_id, span_start, span_end))
+            recorded_at = self._last_version(c, fact_id)
+            c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
+                      (fact_id, recorded_at, signal_id, span_start, span_end))
 
     def set_fact_status(self, fact_id: str, status: FactStatus, provenance: Provenance | None = None) -> None:
         """Change a Fact's lifecycle status; the previous state stays in ``fact_versions``."""
@@ -536,16 +631,85 @@ class Ledger:
                 " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (fact_id, now, row["value_encrypted"], row["key_version"], row["valid_from"], row["valid_to"],
                  row["validity_unknown"], prov, digest, row["typed_value"], status.value, row["rule_version"]))
+            c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
+                      "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
 
     def facts_matching(self, domain: str, predicate: str, subject_id: str,
-                       statuses: Sequence[FactStatus] = (FactStatus.CURRENT, FactStatus.DISPUTED)) -> list[FactView]:
+                       statuses: Sequence[FactStatus] = (FactStatus.CURRENT, FactStatus.DISPUTED),
+                       obligation_key: str | None = None) -> list[FactView]:
         """System-level read (reconciliation): every Fact for one subject and predicate."""
         marks = ",".join("?" for _ in statuses)
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
             f"SELECT fact_id FROM facts WHERE domain=? AND predicate=? AND primary_subject_id=? "  # noqa: S608
             f"AND status IN ({marks}) ORDER BY recorded_at, fact_id",
             (domain, predicate, subject_id, *[st.value for st in statuses])).fetchall()
-        return [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
+        facts = [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
+        return [f for f in facts if obligation_key is None or f.obligation_key == obligation_key]
+
+    def source_content(self, connector: str, scope: str, upstream_id: str, version: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT content_hmac FROM signals WHERE connector=? AND account_scope=? AND upstream_id=? "
+            "AND upstream_version=?", (connector, scope, upstream_id, version)).fetchone()
+        return str(row[0]) if row else None
+
+    def put_calendar(self, connector: str, scope: str, upstream: str, signal_id: str, event: Any) -> None:
+        self._require_unlocked()
+        if self._cipher is None:
+            raise LedgerError("calendar storage requires encryption")
+        aad = f"calendar:{connector}:{scope}:{upstream}".encode()
+        payload, version = self._cipher.encrypt_json({"id": event.event_id, "start": event.start.isoformat(),
+            "end": event.end.isoformat(), "all_day": event.all_day, "kind": event.kind}, aad=aad)
+        with self.transaction() as db:
+            db.execute("INSERT OR REPLACE INTO calendar_records VALUES(?,?,?,?,?,?)",
+                       (connector, scope, upstream, signal_id, payload, version))
+
+    def cancel_calendar(self, connector: str, scope: str, upstream: str) -> None:
+        self._require_unlocked()
+        with self.transaction() as db:
+            row = db.execute("SELECT signal_id FROM calendar_records WHERE connector=? AND account_scope=? "
+                             "AND upstream_id=?", (connector, scope, upstream)).fetchone()
+            db.execute("DELETE FROM calendar_records WHERE connector=? AND account_scope=? AND upstream_id=?",
+                       (connector, scope, upstream))
+        if row:
+            for fact in self.conn.execute("SELECT fact_id FROM fact_evidence WHERE signal_id=?", (row[0],)).fetchall():
+                self.set_fact_status(fact[0], FactStatus.SUPERSEDED)
+
+    def calendar_for(self, viewer: str) -> list[Any]:
+        self._require_unlocked()
+        from datetime import date  # noqa: PLC0415
+
+        from catchup_core.policy import authorize_source  # noqa: PLC0415
+        from catchup_core.triage import CalendarEvent  # noqa: PLC0415
+        output: list[CalendarEvent] = []
+        if viewer != self._owner or self._cipher is None:
+            return output
+        for row in self.conn.execute("SELECT * FROM calendar_records"):
+            try:
+                authorize_source(self, tuple(self._consent_subjects), self._consent_subjects,
+                                 f"{row['connector']}:{row['account_scope']}", viewer)
+            except PermissionDenied:
+                continue
+            data = self._cipher.decrypt_json(row["payload_encrypted"],
+                aad=f"calendar:{row['connector']}:{row['account_scope']}:{row['upstream_id']}".encode())
+            parse = date.fromisoformat if data["all_day"] else datetime.fromisoformat
+            output.append(CalendarEvent(data["id"], parse(data["start"]), parse(data["end"]),
+                                        data["all_day"], data["kind"], row["signal_id"]))
+        return output
+
+    def draft(self, catchup_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        self._require_unlocked()
+        if self._cipher is None:
+            raise LedgerError("Briefing drafts require encryption")
+        row = self.conn.execute("SELECT payload_encrypted FROM briefing_drafts WHERE catchup_id=?",
+                                (catchup_id,)).fetchone()
+        if row:
+            return dict(self._cipher.decrypt_json(row[0], aad=f"briefing:{catchup_id}".encode()))
+        if payload is not None:
+            text, version = self._cipher.encrypt_json(payload, aad=f"briefing:{catchup_id}".encode())
+            with self.transaction() as c:
+                c.execute("INSERT INTO briefing_drafts VALUES(?,?,?,?)",
+                          (catchup_id, text, version, self._clock()))
+        return payload
 
     # ── pipeline working set ──────────────────────────────────────────────────
     def signals_in_state(self, state: ProcessingState) -> list[sqlite3.Row]:
@@ -597,13 +761,18 @@ class Ledger:
             c.execute("DELETE FROM signal_failures WHERE signal_id=? AND stage=?", (signal_id, stage))
 
     def set_coverage(self, connector: str, account_scope: str, status: str, blind_spots: Sequence[str] = (),
-                     completed_at: str | None = None) -> None:
+                     completed_at: str | None = None, catchup_id: str | None = None,
+                     requested_from: str | None = None, requested_to: str | None = None) -> None:
         with self.transaction() as c:
             c.execute(
-                "INSERT INTO connector_coverage(connector,account_scope,status,blind_spots,completed_at) "
-                "VALUES(?,?,?,?,?) ON CONFLICT(connector,account_scope) DO UPDATE SET status=excluded.status, "
-                "blind_spots=excluded.blind_spots, completed_at=excluded.completed_at",
-                (connector, account_scope, status, json.dumps(list(blind_spots)), completed_at))
+                "INSERT INTO connector_coverage(connector,account_scope,status,blind_spots,completed_at,"
+                "catchup_id,checked_at,requested_from,requested_to) VALUES(?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(connector,account_scope) DO UPDATE SET status=excluded.status, "
+                "blind_spots=excluded.blind_spots, completed_at=COALESCE(excluded.completed_at,"
+                "connector_coverage.completed_at),catchup_id=excluded.catchup_id,checked_at=excluded.checked_at,"
+                "requested_from=excluded.requested_from,requested_to=excluded.requested_to",
+                (connector, account_scope, status, json.dumps(list(blind_spots)), completed_at,
+                 catchup_id, self._clock(), requested_from, requested_to))
 
     def coverage_rows(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM connector_coverage ORDER BY connector, account_scope").fetchall()
@@ -629,6 +798,8 @@ class Ledger:
                           (catchup_id, row["version"]))
                 version = int(row["version"]) + 1
             else:
+                if c.execute("SELECT 1 FROM briefings WHERE catchup_id=?", (catchup_id,)).fetchone():
+                    raise LedgerError("Briefing was invalidated; start a new Catch-up ID")
                 version = 1
             c.execute("INSERT INTO briefings(catchup_id,version,text_hmac,published_at,status) "
                       "VALUES(?,?,?,?,'published')", (catchup_id, version, digest, self._clock()))
@@ -644,7 +815,7 @@ class Ledger:
         self._require_unlocked()
         now = self._clock()
         with self.transaction() as c:
-            row = c.execute("SELECT alert_id FROM alerts WHERE obligation_key=?", (obligation_key,)).fetchone()
+            row = c.execute("SELECT alert_id,deadline FROM alerts WHERE obligation_key=?", (obligation_key,)).fetchone()
             created = row is None
             alert_id = ids.new_id("alt") if row is None else str(row["alert_id"])
             if created:
@@ -654,6 +825,9 @@ class Ledger:
                     (alert_id, obligation_key, domain, primary_subject_id, severity, deadline,
                      latest_useful_action, now, now))
             else:
+                if row["deadline"] != deadline:
+                    c.execute("UPDATE alerts SET status='open',suppressed_until=NULL,resolution_ref=NULL "
+                              "WHERE alert_id=?", (alert_id,))
                 c.execute("UPDATE alerts SET severity=?,deadline=?,latest_useful_action=?,last_seen=? "
                           "WHERE alert_id=?", (severity, deadline, latest_useful_action, now, alert_id))
             for fid in fact_ids:
@@ -708,8 +882,16 @@ class Ledger:
     # ── consent ──────────────────────────────────────────────────────────────
     def grant_consent(self, subject_id: str, grantor_id: str, scope: str, operations: Sequence[str],
                       audience: str, expires_at: str | None = None) -> str:
+        self._require_unlocked()
+        if subject_id in self._consent_subjects and grantor_id != subject_id:
+            raise PermissionDenied("an adult subject must grant their own consent")
         if grantor_id not in (subject_id, self._owner):
             raise PermissionDenied("only the subject or the household owner may grant consent")
+        if expires_at:
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                raise ValueError("consent expiry requires a UTC offset")
+            expires_at = expiry.astimezone(UTC).isoformat()
         consent_id = ids.new_id("con")
         with self.transaction() as c:
             c.execute(
@@ -720,19 +902,38 @@ class Ledger:
         return consent_id
 
     def revoke_consent(self, consent_id: str) -> None:
+        self._require_unlocked()
         with self.transaction() as c:
             cur = c.execute(
                 "UPDATE consent SET revoked_at=?, revocation_version=revocation_version+1 "
                 "WHERE consent_id=? AND revoked_at IS NULL", (self._clock(), consent_id))
             if cur.rowcount != 1:
                 raise LedgerError(f"unknown or already revoked consent {consent_id}")
+        self.seal_privacy()
 
-    def consent_active(self, subject_id: str, operation: str, audience: str) -> bool:
-        now = self._clock()
+    def privacy_history(self) -> dict[str, Any]:
+        return {"tombstones": self.tombstones(),
+                "consent": [dict(r) for r in self.conn.execute("SELECT * FROM consent")]}
+
+    def seal_privacy(self) -> SealedCheckpoint:
+        self._require_unlocked()
+        with self.transaction() as c:
+            seq = int(c.execute("SELECT COALESCE(MAX(checkpoint_id),0)+1 FROM deletion_checkpoint").fetchone()[0])
+            checkpoint = SealedCheckpoint(seq, self._tombstone_digest(c), self._permission_generation())
+            c.execute("INSERT INTO deletion_checkpoint VALUES(?,?,?,?)",
+                      (seq, self._clock(), checkpoint.tombstone_digest, checkpoint.permission_generation))
+        self._sealed.write(checkpoint)
+        return checkpoint
+
+    def consent_active(self, subject_id: str, operation: str, audience: str, scope: str | None = None) -> bool:
+        self._require_unlocked()
+        now = datetime.fromisoformat(self._clock().replace("Z", "+00:00"))
         for row in self.conn.execute(
-                "SELECT operations, audience, expires_at FROM consent WHERE subject_id=? AND revoked_at IS NULL",
+                "SELECT operations, audience, expires_at,scope FROM consent WHERE subject_id=? AND revoked_at IS NULL",
                 (subject_id,)):
-            if row["expires_at"] and row["expires_at"] <= now:
+            if scope is not None and row["scope"] not in (scope, "*"):
+                continue
+            if row["expires_at"] and datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) <= now:
                 continue
             if operation in json.loads(row["operations"]) and row["audience"] in (audience, "*"):
                 return True
@@ -788,7 +989,33 @@ class Ledger:
         deleted_signals = deleted_facts = deleted_alerts = 0
         blob_refs: list[str] = []
         if stage < 3:   # physical deletion, including derived Facts and Alerts
+            detail = self.conn.execute("SELECT detail FROM deletion_journal WHERE seq=?", (seq,)).fetchone()[0]
+            pending = json.loads(detail) if detail else {}
+            if isinstance(pending, list):  # recovery of the first journal format
+                pending = {"blobs": pending}
+            if not pending:
+                signals = list(self.conn.execute(
+                    "SELECT signal_id,evidence_blob_ref FROM signals WHERE "
+                    "(connector=? AND account_scope=? AND upstream_id=?) OR content_hmac=?",
+                    (row["connector"], row["account_scope"], row["upstream_id"], row["content_hmac"])))
+                briefings = {r[0] for signal in signals for r in self.conn.execute(
+                    "SELECT DISTINCT bf.catchup_id FROM briefing_facts bf JOIN fact_evidence fe "
+                    "ON bf.fact_id=fe.fact_id WHERE fe.signal_id=? UNION "
+                    "SELECT catchup_id FROM briefing_signals WHERE signal_id=?", (signal[0], signal[0]))}
+                replay = sorted({r[0] for signal in signals for r in self.conn.execute(
+                    "SELECT feedback_id FROM replay_cases WHERE signal_id=?", (signal[0],))})
+                pending = {"blobs": [s[1] for s in signals], "briefings": sorted(briefings), "replay": replay}
+                self.conn.execute("UPDATE deletion_journal SET detail=? WHERE seq=?", (json.dumps(pending), seq))
             deleted_signals, deleted_facts, deleted_alerts, blob_refs = self._delete_forgotten(row)
+            if self._blob_deleter is not None:
+                for ref in pending["blobs"]:
+                    self._blob_deleter(ref)
+            if self._artifact_deleter is not None:
+                self._artifact_deleter(pending.get("briefings", []))
+            if self._replay_deleter is not None:
+                self._replay_deleter(pending.get("replay", []))
+            for feedback_id in pending.get("replay", []):
+                self.conn.execute("DELETE FROM replay_cases WHERE feedback_id=?", (feedback_id,))
             self._set_journal(seq, "deleted")
         self._set_journal(seq, "receipted")
         return ForgetReceipt(
@@ -811,28 +1038,13 @@ class Ledger:
             sigs = c.execute(query, params).fetchall()
             signal_ids = [str(s["signal_id"]) for s in sigs]
             blob_refs = [str(s["evidence_blob_ref"]) for s in sigs]
-            fact_ids: set[str] = set()
+            removed_facts = deleted_alerts = 0
             for sid in signal_ids:
-                fact_ids.update(str(r[0]) for r in c.execute(
-                    "SELECT DISTINCT fact_id FROM fact_evidence WHERE signal_id=?", (sid,)))
-            alert_ids: set[str] = set()
-            for fid in fact_ids:
-                alert_ids.update(str(r[0]) for r in c.execute(
-                    "SELECT alert_id FROM alert_facts WHERE fact_id=?", (fid,)))
-            for fid in fact_ids:
-                c.execute("DELETE FROM facts WHERE fact_id=?", (fid,))        # cascades versions/evidence
-            deleted_alerts = 0
-            for aid in alert_ids:
-                remaining = c.execute("SELECT COUNT(*) FROM alert_facts WHERE alert_id=?", (aid,)).fetchone()[0]
-                if remaining == 0:
-                    c.execute("DELETE FROM alerts WHERE alert_id=?", (aid,))
-                    deleted_alerts += 1
-            for sid in signal_ids:
-                c.execute("DELETE FROM signals WHERE signal_id=?", (sid,))
-        if self._blob_deleter is not None:
-            for ref in blob_refs:
-                self._blob_deleter(ref)
-        return len(signal_ids), len(fact_ids), deleted_alerts, blob_refs
+                facts, alerts = purge_signal(c, sid)
+                removed_facts += facts
+                deleted_alerts += alerts
+            c.execute("DELETE FROM briefing_drafts")  # cached claims may contain forgotten material
+        return len(signal_ids), removed_facts, deleted_alerts, blob_refs
 
     def resume_pending_forgets(self) -> list[ForgetReceipt]:
         """Complete interrupted forget requests from the durable journal."""
@@ -850,7 +1062,12 @@ class Ledger:
         row = self.conn.execute("SELECT checkpoint_id, tombstone_digest FROM deletion_checkpoint "
                                 "ORDER BY checkpoint_id DESC LIMIT 1").fetchone()
         have = int(row["checkpoint_id"]) if row else 0
-        if sealed is not None and sealed.checkpoint_id > have:
+        if sealed is not None and (sealed.checkpoint_id > have
+                or sealed.permission_generation > self._permission_generation()
+                or sealed.tombstone_digest != self._tombstone_digest(self.conn)):
+            self.locked = True
+            return False
+        if isinstance(self._sealed, KeyringSealedStore) and sealed is None:
             self.locked = True
             return False
         self.locked = False
@@ -911,3 +1128,27 @@ def _split_statements(script: str) -> list[str]:
     """Split a migration script into statements (no triggers/BEGIN blocks are used)."""
     cleaned = "\n".join(line for line in script.splitlines() if not line.strip().startswith("--"))
     return [s.strip() for s in cleaned.split(";") if s.strip()]
+
+
+def purge_signal(db: sqlite3.Connection, signal_id: str) -> tuple[int, int]:
+    """Remove current and historical source claims while retaining independent support."""
+    fact_ids = [r[0] for r in db.execute(
+        "SELECT fact_id FROM fact_evidence WHERE signal_id=? UNION "
+        "SELECT fact_id FROM fact_version_evidence WHERE signal_id=?", (signal_id, signal_id))]
+    db.execute("DELETE FROM fact_evidence WHERE signal_id=?", (signal_id,))
+    db.execute("DELETE FROM fact_version_evidence WHERE signal_id=?", (signal_id,))
+    removed = 0
+    for fid in fact_ids:
+        db.execute("DELETE FROM fact_versions WHERE fact_id=? AND provenance_class<>'user_confirmed' "
+                   "AND NOT EXISTS(SELECT 1 FROM fact_version_evidence e WHERE e.fact_id=fact_versions.fact_id "
+                   "AND e.recorded_at=fact_versions.recorded_at)", (fid,))
+        removed += db.execute("DELETE FROM facts WHERE fact_id=? AND provenance_class<>'user_confirmed' "
+                              "AND NOT EXISTS(SELECT 1 FROM fact_evidence e WHERE e.fact_id=facts.fact_id)",
+                              (fid,)).rowcount
+    db.execute("DELETE FROM feedback WHERE obligation_key IN (SELECT obligation_key FROM alerts "
+               "WHERE NOT EXISTS(SELECT 1 FROM alert_facts af WHERE af.alert_id=alerts.alert_id))")
+    alerts = db.execute("DELETE FROM alerts WHERE NOT EXISTS(SELECT 1 FROM alert_facts af "
+                        "WHERE af.alert_id=alerts.alert_id)").rowcount
+    db.execute("DELETE FROM signal_failures WHERE signal_id=?", (signal_id,))
+    db.execute("DELETE FROM signals WHERE signal_id=?", (signal_id,))
+    return removed, alerts

@@ -34,6 +34,8 @@ class IncumbentConclusion:
     text: str
     state_file_version: str
     provenance: str = "legacy_state"
+    kind: str = "record"            # "open_item" | "record"
+    due: str = ""                   # ISO date for an open item, when known
 
 
 @dataclass(frozen=True)

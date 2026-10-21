@@ -62,19 +62,10 @@ def test_rule_based_no_match_returns_empty():
     assert candidates == []
 
 
-def test_align_candidates_fixes_span():
-    text = "Important note: SAT test date is 2026-11-05 for all juniors."
-    cands = [{
-        "predicate": "test_date",
-        "value": "2026-11-05",
-        "subject_id": "kid1",
-        "quote": "2026-11-05",
-        "span": [0, 10],  # deliberately wrong span
-    }]
-    aligned = extractor_cmd._align_candidates(cands, text, ["kid1"], ["test_date"])
-    assert len(aligned) == 1
-    assert aligned[0]["span"] == [33, 43]
-    assert text[aligned[0]["span"][0]:aligned[0]["span"][1]] == "2026-11-05"
+def test_ambiguous_subjects_never_default_to_the_first_child():
+    assert extractor_cmd._extract_rule_based("deadline 2026-11-05", ["kid1", "kid2"], ["test_date"]) == []
+    candidates = extractor_cmd._extract_rule_based("kid2 SAT test 2026-11-05", ["kid1", "kid2"], ["test_date"])
+    assert candidates[0]["subject_id"] == "kid2"
 
 
 def test_extractor_cmd_main_end_to_end(monkeypatch):
@@ -116,3 +107,19 @@ def test_extractor_cmd_validates_with_catchup_core_extract():
     assert parsed.ok
     assert len(parsed.candidates) == 1
     assert parsed.candidates[0].predicate == "appointment_time"
+
+
+def test_keywords_match_whole_words_only():
+    from catchup_core.extractor_cmd import _extract_rule_based
+    preds = ["exam_registration_deadline", "test_date"]
+    def found(text):
+        return [(c["predicate"], c["value"]) for c in _extract_rule_based(text, ["kid1"], preds)]
+    assert found("kid1 registration deadline: 2026-11-03") == [("exam_registration_deadline", "2026-11-03")]
+    assert found("Contact the office about kid1. Saturday 2026-11-07 is the carnival.") == []
+    assert found("kid1: SAT on 2026-12-05") == [("test_date", "2026-12-05")]
+
+
+def test_undeclared_predicate_does_not_shadow_a_later_rule():
+    from catchup_core.extractor_cmd import _match_date_predicate
+    assert _match_date_predicate("registration deadline ", ["exam_registration_deadline"]) == "exam_registration_deadline"
+    assert _match_date_predicate("ead expires ", ["exam_registration_deadline"]) is None

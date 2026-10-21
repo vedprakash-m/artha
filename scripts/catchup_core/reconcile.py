@@ -83,11 +83,12 @@ def _existing_rank(ledger: Ledger, pack: DomainPack, fact: FactView,
 
 def _fact_input(pack: DomainPack, predicate: str, subject: str, confidentiality: Confidentiality, value: Any,
                 evidence: tuple[tuple[str, int, int], ...], observed_at: str, rule_version: str | None,
-                status: FactStatus, prov: Provenance) -> FactInput:
+                status: FactStatus, prov: Provenance, obligation_key: str = "") -> FactInput:
     return FactInput(
-        domain=pack.domain, predicate=predicate, value=value, primary_subject_id=subject, observed_at=observed_at,
+        domain=pack.predicate_domains.get(predicate, pack.domain), predicate=predicate, value=value,
+        primary_subject_id=subject, observed_at=observed_at,
         confidentiality=confidentiality, provenance=prov, status=status, rule_version=rule_version,
-        evidence=evidence)
+        evidence=evidence, obligation_key=obligation_key)
 
 
 def reconcile(
@@ -112,14 +113,17 @@ def reconcile(
         for cand in group:
             value = _json_value(cand.value)
             rank = authority_rank(pack, predicate, source_class_of(cand.signal_id))
-            existing = ledger.facts_matching(pack.domain, predicate, subject)
+            domain = pack.predicate_domains.get(predicate, pack.domain)
+            existing = ledger.facts_matching(domain, predicate, subject, obligation_key=cand.obligation_key)
             evidence = ((cand.signal_id, cand.span[0], cand.span[1]),)
 
             make = functools.partial(_fact_input, pack, predicate, subject, confidentiality, value, evidence,
-                                     observed_at, rule_version)
+                                     observed_at, rule_version, obligation_key=cand.obligation_key)
 
             if not existing:
-                fid = ledger.put_fact(make(status=FactStatus.CURRENT, prov=Provenance.VERIFIED_SOURCE))
+                trusted = rank < len(pred.authority)
+                fid = ledger.put_fact(make(status=FactStatus.CURRENT if trusted else FactStatus.UNKNOWN,
+                                          prov=Provenance.VERIFIED_SOURCE if trusted else Provenance.MODEL_HYPOTHESIS))
                 changes.append(FactChange("created", fid, predicate, subject))
                 continue
 
@@ -136,7 +140,8 @@ def reconcile(
                 f for f in existing
                 if any(upstream_key_of(sig) == my_key for sig, _s, _e in f.evidence)
             ]
-            overturn = bool(same_upstream) or all(rank < r for r in ranks.values())
+            confirmed = any(f.provenance_class == Provenance.USER_CONFIRMED.value for f in existing)
+            overturn = not confirmed and (bool(same_upstream) or all(rank < r for r in ranks.values()))
             if overturn:
                 fid = ledger.put_fact(make(status=FactStatus.CURRENT, prov=Provenance.VERIFIED_SOURCE))
                 for old in existing:

@@ -34,11 +34,13 @@ class Scorecard:
 
     @property
     def passes(self) -> bool:
-        return (self.false_quiet == 0 and self.unresolved_citations == 0
+        return (self.cases > 0 and self.false_quiet == 0 and self.unresolved_citations == 0
                 and self.regressions_vs_incumbent == 0 and self.recall >= 1.0)
 
     def failures(self) -> list[str]:
         out: list[str] = []
+        if not self.cases:
+            out.append("no evaluated cases")
         if self.false_quiet:
             out.append(f"{self.false_quiet} false quiet claim(s)")
         if self.unresolved_citations:
