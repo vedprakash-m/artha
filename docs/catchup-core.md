@@ -252,3 +252,19 @@ Assistant-side usage is not visible to Artha, so this is an estimate and says so
 * **Traces.** Each run also appends one OpenTelemetry-shaped trace (OTLP/JSON `resourceSpans`; a `catchup` span and a
   `stage.*` child per stage; schema `artha.trace.v1`) to `~/.artha-local/catchup_core/traces/YYYY-MM.jsonl`.
   Attributes are status, mode and counts only, so a trace never contains prompts, answers, names or evidence.
+
+## Benchmark (`make bench`)
+`tools/benchmark_core.py` runs full Catch-ups over synthetic mail (no personal data, no network, no model) and reports cold
+and warm seconds, seconds per stage, and whether cost per signal stays flat as volume grows. On a development Mac:
+
+| Signals | Cold | Warm (same mail again) | Largest stage |
+|---|---|---|---|
+| 500 | 0.3 s | 0.06 s | fetch |
+| 2,000 | 1.2 s | 0.26 s | fetch |
+| 8,000 | 5.6 s | 1.8 s | fetch |
+
+Scaling is linear (cost per signal ratio 1.15 from 500 to 8,000). The benchmark found and fixed a quadratic reconcile
+(every candidate decoded every Fact of its predicate; the obligation filter now runs in SQL: 3.1 s to 0.27 s at 2,000
+signals). A deterministic test counts Fact decodes so that regression cannot return unnoticed. These numbers exclude
+connector latency and assistant time, which dominate in real use: they show the core is not the bottleneck, they are not
+the release measurement.

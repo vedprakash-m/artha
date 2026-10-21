@@ -93,6 +93,9 @@ coverage-harness: ## Line+branch floor on the hook and policy modules (they are 
 	@$(PYTHON) tools/run_tests_isolated.py $(HARNESS_TESTS) -q -p no:cacheprovider \
 		$(foreach m,$(HARNESS_MODULES),--cov=$(m)) --cov-branch --cov-fail-under=$(COV_MIN) --cov-report=term-missing
 
+bench: ## Synthetic workload benchmark of the Catch-up core (latency and scaling; no personal data)
+	@$(PYTHON) tools/benchmark_core.py
+
 diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml from `make coverage`)
 	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main \
 		--include='scripts/catchup_core/*' --fail-under=$(COV_MIN)

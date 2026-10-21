@@ -678,14 +678,18 @@ class Ledger:
     def facts_matching(self, domain: str, predicate: str, subject_id: str,
                        statuses: Sequence[FactStatus] = (FactStatus.CURRENT, FactStatus.DISPUTED),
                        obligation_key: str | None = None) -> list[FactView]:
-        """System-level read (reconciliation): every Fact for one subject and predicate."""
+        """System-level read (reconciliation): Facts for one subject and predicate.
+
+        The obligation filter is applied in SQL (``facts_obligation`` index) so only the matching Facts are decoded and
+        decrypted; loading every Fact of the predicate made reconciliation quadratic in the number of obligations.
+        """
         marks = ",".join("?" for _ in statuses)
+        extra, bound = ("", ()) if obligation_key is None else (" AND obligation_key=?", (obligation_key,))
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
             f"SELECT fact_id FROM facts WHERE domain=? AND predicate=? AND primary_subject_id=? "  # noqa: S608
-            f"AND status IN ({marks}) ORDER BY recorded_at, fact_id",
-            (domain, predicate, subject_id, *[st.value for st in statuses])).fetchall()
-        facts = [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
-        return [f for f in facts if obligation_key is None or f.obligation_key == obligation_key]
+            f"AND status IN ({marks}){extra} ORDER BY recorded_at, fact_id",
+            (domain, predicate, subject_id, *[st.value for st in statuses], *bound)).fetchall()
+        return [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
 
     def replace_source_support(self, signal_id: str) -> None:
         """Withdraw obsolete versions only after complete interpretation; retain history."""

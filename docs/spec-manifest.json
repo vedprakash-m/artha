@@ -121,12 +121,14 @@
       "modules": [
         "scripts/catchup_core/capabilities.py",
         "scripts/catchup_core/metrics.py",
-        "tools/gen_capability_register.py"
+        "tools/gen_capability_register.py",
+        "tools/benchmark_core.py"
       ],
       "scope": "pilot",
       "tests": [
         "tests/dev/test_capability_register.py",
-        "tests/catchup_core/test_metrics.py"
+        "tests/catchup_core/test_metrics.py",
+        "tests/catchup_core/test_benchmark.py"
       ]
     },
     "RA-11.AC1": {
@@ -304,7 +306,7 @@
     }
   },
   "contract_version": "0.1.0",
-  "implementation_sha256": "ae4c5f7d0c226d503f7e29391d5511d296a38c81b963707bf362ba422e10859e",
+  "implementation_sha256": "9c3647a981ea45a992b1e6209f35a8cd331c49c2befc31addb92209883a55a0e",
   "spec": "specs/re-artha.md",
   "spec_sha256": "7a5cd7a8611d9dfde387d8c28cdca3f2abf3ae82377cfb66a69232484f8d7988",
   "spec_version": "0.8.0"
