@@ -271,9 +271,9 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
         atomic_bytes(local / "health.json", json.dumps({"last_catch_up": now_fn().isoformat(),
             "catchup_id": catchup_id, "mode": request.mode.value}).encode())
     inputs = json.dumps(config.policy, sort_keys=True) + str(ext_cmd)
-    inputs += "".join((_PACKS / f"{d}.yaml").read_text() for d in domains)
-    inputs += "".join(p.read_text() for p in sorted(Path(__file__).parent.glob("*.py")))
-    inputs += "".join(p.read_text() for p in sorted((Path(__file__).parent / "prompts").glob("*.md")))
+    inputs += "".join((_PACKS / f"{d}.yaml").read_text(encoding="utf-8") for d in domains)
+    inputs += "".join(p.read_text(encoding="utf-8") for p in sorted(Path(__file__).parent.glob("*.py")))
+    inputs += "".join(p.read_text(encoding="utf-8") for p in sorted((Path(__file__).parent / "prompts").glob("*.md")))
     return Deps(
         mode=request.mode,
         ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
@@ -308,7 +308,7 @@ def _bind_household(config: RuntimeConfig, root: Path, key: ids.HmacKey, today: 
     from catchup_core.household import members  # noqa: PLC0415
     try:
         profile_path = root / "config/user_profile.yaml"
-        profile = yaml.safe_load(profile_path.read_text())
+        profile = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
         people = members(profile, key, config.viewer, today)
         # Preserve the initial keyed IDs in the authored profile. Later name/DOB edits
         # or key rotation must not silently turn old adult data into an unknown minor.

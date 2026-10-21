@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 
 from catchup_core import runtime as rt
@@ -103,4 +104,4 @@ def test_runtime_trace_writer_appends_private_monthly_lines(tmp_path):
     write({"catchup_id": "cu_1", "status": "complete", "at": "2026-10-20T10:00:00Z", "total_seconds": 1, "stages": {"FETCH": 1}})
     path = tmp_path / "traces" / "2026-10.jsonl"
     assert json.loads(path.read_text().splitlines()[0])["schema"] == "artha.trace.v1"
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert os.name == "nt" or oct(path.stat().st_mode & 0o777) == "0o600"

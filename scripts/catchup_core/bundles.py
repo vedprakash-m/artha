@@ -332,7 +332,7 @@ def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], ac
         acked: list[int] = []
         for path in directory.glob("ack-*.json"):
             try:
-                data = json.loads(path.read_text())["data"]
+                data = json.loads(path.read_text(encoding="utf-8"))["data"]
             except (ValueError, OSError, KeyError, TypeError):
                 continue
             if _valid_ack(path, keys.get(producer), namespace, recipient, generation, connector, account_scope):
@@ -355,7 +355,7 @@ def _valid_ack(path: Path, key: ProducerKey | None, namespace: str, recipient: s
     if key is None or not path.is_file():
         return False
     try:
-        wrapper = json.loads(path.read_text())
+        wrapper = json.loads(path.read_text(encoding="utf-8"))
         data = wrapper["data"]
         return bool(data["namespace"] == namespace and data["recipient"] == recipient
             and data["authority_generation"] == generation
@@ -372,7 +372,7 @@ def _latest_ack(directory: Path, account_scope: str, keys: Mapping[str, Producer
     stamps = []
     for path in directory.glob("ack-*.json") if directory.is_dir() else []:
         try:
-            data = json.loads(path.read_text())["data"]
+            data = json.loads(path.read_text(encoding="utf-8"))["data"]
         except (ValueError, OSError, KeyError, TypeError):
             continue
         if data.get("scope") == account_scope and _valid_ack(path, keys.get(data.get("producer")),
@@ -418,7 +418,7 @@ def next_sequence(directory: Path, producer: str, *, connector: str | None = Non
     sequences = []
     for path in directory.glob("bundle-*.json"):
         try:
-            header = json.loads(path.read_text())["header"]
+            header = json.loads(path.read_text(encoding="utf-8"))["header"]
             if header['producer'] != producer:
                 continue
             if connector is not None and any(header.get(k) != v for k, v in {

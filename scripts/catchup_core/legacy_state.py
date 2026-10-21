@@ -97,7 +97,8 @@ class LegacyStateAdapter:
     def _open_items(self) -> list[IncumbentConclusion]:
         from catchup_core.curated import records  # noqa: PLC0415
         path = self._dir / "open_items.md"
-        text = self._reader("open_items") if self._reader else (path.read_text() if path.exists() else "")
+        local = path.read_text(encoding="utf-8") if path.exists() else ""
+        text = self._reader("open_items") if self._reader else local
         version = hashlib.sha256(text.encode()).hexdigest()[:16]
         items = records(text, "open_items")
         items.sort(key=lambda item: (str(item.get("deadline") or "9999"), str(item.get("id", ""))))

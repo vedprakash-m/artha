@@ -20,7 +20,9 @@ MAX_TEXT = 200_000
 def extract_pdf(data: bytes, *, runner: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
     if not data.startswith(b"%PDF-") or len(data) > MAX_BYTES:
         raise ValueError("Provide a PDF smaller than 8 MiB.")
-    environment = {k: v for k, v in os.environ.items() if k in ("SYSTEMROOT", "WINDIR", "LANG")}
+    environment = {k: v for k, v in os.environ.items() if k in (
+        "SYSTEMROOT", "WINDIR", "LANG", "TMPDIR", "TEMP", "TMP", "PYTHONHOME",
+        "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH")}
     try:
         process = runner(
             [sys.executable, str(Path(__file__).resolve())],

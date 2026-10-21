@@ -77,7 +77,18 @@ def test_egress_policy_denies_unknown_hosts_before_dns(monkeypatch):
         callbacks[0]("socket.connect", (None, ("127.0.0.1", 443)))
 
 
-def test_real_child_returns_a_verified_failure_offline():
+@pytest.fixture
+def no_real_credentials():
+    """These tests start a real child that would call the real provider if a real token were reachable."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(action_process.__file__)))
+    root = os.path.dirname(root)
+    if any(name.startswith("msgraph-token") for name in os.listdir(os.path.join(root, ".tokens"))
+           ) if os.path.isdir(os.path.join(root, ".tokens")) else False:
+        pytest.skip("a real Microsoft Graph token is present here; run the suite in the isolated workspace (make test)")
+
+
+def test_real_child_returns_a_verified_failure_offline(no_real_credentials):
     """End to end through a real child process: no token means a clean 'failure', never a hang or 'unknown'."""
     result = action_process.execute("actions.reminder_create", proposal(), 20)
     assert result.status == "failure" and "To Do" in result.message
@@ -128,11 +139,39 @@ def test_reconcile_runs_in_the_same_bounded_child_and_passes_the_approval_time()
     result = action_process.execute("actions.reminder_create", proposal(), 5, runner=runner,
                                     operation="reconcile", since="2026-10-20T10:00:00Z")
     assert result.status == "unknown" and seen["operation"] == "reconcile" and seen["since"] == "2026-10-20T10:00:00Z"
-    assert set(seen["env"]) <= {"SYSTEMROOT", "WINDIR", "LANG", "HOME"}
+    assert set(seen["env"]) <= set(action_process._CHILD_ENV)
+    assert not any(k.endswith(("TOKEN", "SECRET", "KEY", "PASSWORD")) for k in seen["env"])
     with pytest.raises(ValueError):
         action_process.execute("actions.reminder_create", proposal(), 5, operation="delete")
 
 
-def test_real_child_reconcile_without_a_token_stays_unknown():
+def test_real_child_reconcile_without_a_token_stays_unknown(no_real_credentials):
     result = action_process.execute("actions.reminder_create", proposal(), 20, operation="reconcile", since="x")
     assert result.status == "unknown" and "Could not check the provider" in result.message
+
+
+def test_a_child_without_a_receipt_names_its_error_class_but_never_its_message():
+    def runner(*args, **kwargs):
+        return SimpleNamespace(returncode=1, stdout="", stderr=(
+            "Traceback (most recent call last):\n  File \"x\", line 1\nPermissionError: /Users/secret/token.json"))
+    result = action_process.execute("actions.reminder_create", proposal(), 1, runner=runner)
+    assert result.status == "unknown" and "(PermissionError)" in result.message and "/Users" not in result.message
+    silent = action_process.execute("actions.reminder_create", proposal(), 1,
+                                    runner=lambda *a, **k: SimpleNamespace(returncode=1, stdout="", stderr=""))
+    assert "(no error class)" in silent.message
+    assert action_process._child_failure_class("SystemExit: 1") == "SystemExit"
+
+
+def test_the_child_environment_keeps_interpreter_loading_variables_and_nothing_secret(monkeypatch):
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/python/lib")
+    monkeypatch.setenv("GITHUB_TOKEN", "must-not-pass")
+    monkeypatch.setenv("MSGRAPH_CLIENT_SECRET", "must-not-pass")
+    seen = {}
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs["env"])
+        return SimpleNamespace(returncode=0, stdout=json.dumps(
+            {"status": "success", "message": "ok", "data": None, "reversible": False, "reverse_action": None}))
+    action_process.execute("actions.reminder_create", proposal(), 1, runner=runner)
+    assert seen.get("LD_LIBRARY_PATH") == "/opt/python/lib" and "GITHUB_TOKEN" not in seen
+    assert "MSGRAPH_CLIENT_SECRET" not in seen

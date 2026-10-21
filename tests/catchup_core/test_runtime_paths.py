@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +23,7 @@ def test_model_log_appends_private_monthly_jsonl_without_content(tmp_path):
     write({"purpose": "extract", "request_id": "evd_2"})
     path = tmp_path / "model-requests" / "2026-10.jsonl"
     assert [json.loads(line)["request_id"] for line in path.read_text().splitlines()] == ["evd_1", "evd_2"]
-    assert oct(path.stat().st_mode & 0o777) == "0o600"
+    assert os.name == "nt" or oct(path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_replay_purge_only_touches_valid_ids(tmp_path):

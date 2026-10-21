@@ -10,6 +10,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,20 @@ PROVIDERS = {
 }
 
 
+# Interpreter plumbing only, never credentials: a Python that is not on the default library path (for example the CI
+# toolcache build or a framework install) cannot even start without these.  Provider secrets stay out of the child.
+_CHILD_ENV = ("SYSTEMROOT", "WINDIR", "LANG", "HOME", "TMPDIR", "TEMP", "TMP", "PYTHONHOME",
+              "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH")
+_ERROR_LINE = re.compile(r"^([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b")
+
+
+def _child_failure_class(stderr: str) -> str:
+    """Exception class of a crashed child (never its message, which could carry paths or values)."""
+    lines = [ln for ln in (stderr or "").strip().splitlines() if ln.strip()]
+    match = _ERROR_LINE.match(lines[-1]) if lines else None
+    return match.group(1) if match else "no error class"
+
+
 def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subprocess.run,
             operation: str = "execute", since: str = "") -> ActionResult:
     """Run one handler operation (``execute`` or ``reconcile``) in the bounded child.
@@ -50,7 +65,7 @@ def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subpr
         return ActionResult(
             "failure", "This action has no isolated provider policy; use an instruction sheet.", None, False, None
         )
-    environment = {k: v for k, v in os.environ.items() if k in ("SYSTEMROOT", "WINDIR", "LANG", "HOME")}
+    environment = {k: v for k, v in os.environ.items() if k in _CHILD_ENV}
     envelope = {"module": module, "proposal": asdict(proposal), "parent": os.getpid(), "timeout": timeout,
                 "operation": operation, "since": since}
     try:
@@ -65,19 +80,26 @@ def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subpr
             check=False,
         )
         if result.returncode or len(result.stdout) > 1_000_000:
-            raise ValueError("no committed provider receipt")
+            raise _NoReceipt(_child_failure_class(getattr(result, "stderr", "") or ""))
         outcome = json.loads(result.stdout)
         if isinstance(outcome.get("reverse_action"), dict):
             outcome["reverse_action"] = ActionProposal(**outcome["reverse_action"])
         return ActionResult(**outcome)
-    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired) as exc:
+        why = exc.reason if isinstance(exc, _NoReceipt) else type(exc).__name__
         return ActionResult(
             "unknown",
-            "The isolated action did not return a verified receipt; reconcile before retrying.",
+            f"The isolated action did not return a verified receipt ({why}); reconcile before retrying.",
             None,
             False,
             None,
         )
+
+
+class _NoReceipt(ValueError):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 
 
 def restrict_network(hosts: frozenset[str]) -> None:
