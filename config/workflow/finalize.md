@@ -312,41 +312,10 @@ python scripts/gmail_send.py --briefing
 ```
 If `briefing.spouse_filtered: true`: generate filtered copy first.
 
-### Step 14.5 — Push pending action queue to Telegram *(Action Layer)*
+### Step 14.5 — (retired) Telegram action push
 
-**SKIP if** `harness.actions.enabled: false` → log `⏭️ Step 14.5 skipped — actions disabled`  
-**SKIP if** Telegram channel not configured → log `⏭️ Step 14.5 skipped — no Telegram channel`  
-**SKIP in read-only mode** → log `⏭️ Step 14.5 skipped — read-only mode`
-
-After assembling the briefing (Step 14), push any pending action items to the Telegram
-channel with inline approval keyboards.
-
-Each pending action item is sent as a separate Telegram message with:
-
-```
-⚡ ACTION PENDING
-Type: email_send | Domain: finance
-Proposed: Send payment confirmation to landlord
-
-[✅ Approve]  [❌ Reject]  [⏸ Defer]
-```
-
-Inline keyboard button data format:
-- Approve → `act:APPROVE:{action_id}`
-- Reject  → `act:REJECT:{action_id}`
-- Defer   → `act:DEFER:{action_id}`
-
-The `channel_listener.py` intercepts these callbacks and calls
-`executor.approve()` / `executor.reject()` / `executor.defer()`.
-
-**Rules:**
-- Only send `pending` and `pre_approved` actions (not already-approved or expired)
-- Cap at 10 items per session to avoid Telegram spam
-- High-friction items (`friction: high`) prepend `🔴 HIGH FRICTION —` to the message
-- `autonomy_floor: true` items always shown, never auto-processed
-- Previously-notified actions (in state/action_notified.json) are skipped
-
-Update `state/action_notified.json` with the action IDs of sent notifications.
+Retired (re-artha §6.11, ADR-007): no channel pushes or listens. Pending actions are reviewed in the session with `activity`
+and approved there with exact-payload approval (RA-05). Nothing runs between sessions.
 
 ### Step 15 — Push new items to Microsoft To Do
 

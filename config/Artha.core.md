@@ -194,6 +194,7 @@ python3 scripts/catchup_core/cli.py catchup --shadow --json
 ```
 Exit 40 means extraction is paused: answer each request's prompt (JSON only) and resume with `--id <ID> --responses -`
 (see `docs/catchup-core.md`). A shadow run never publishes, archives or writes State Files.
+"show everything" / `brief everything` re-runs the shadow comparison with `--format deep` (every Open Item and State File listed).
 
 > **Composable modules:** For customization and phase-level documentation,
 > see `config/workflow/README.md`. The workflow is organized into 5 phases:
@@ -1457,21 +1458,10 @@ After calibration check, if `state/goals.md` has active goals and `state/memory.
 
 **Dismissal:** User can dismiss any coaching element. If dismissed, do not resurface the same goal nudge for 7 days.
 
-### Step 20 — Channel Push (post-catch-up delivery)
+### Step 20 — (retired) Channel push
 
-Check whether `config/channels.yaml` exists **and** `defaults.push_enabled` is `true`. If yes:
-
-```bash
-python3 scripts/channel_push.py
-```
-
-- Sends a flash briefing summary to each enabled channel recipient.
-- Per-recipient `access_scope` (`full` / `family` / `standard`) filtering applied before send.
-- `pii_guard.filter_text()` runs on **every** outbound message — no exceptions.
-- 12-hour dedup check prevents duplicate pushes on multi-machine setups.
-- Failures are **non-blocking** — log warning, continue to catch-up completion.
-- Audit: `CHANNEL_PUSH` events logged to `state/audit.md`.
-- If `channels.yaml` is missing or `push_enabled: false`, silently skipped in < 10ms.
+Retired (re-artha §6.11, ADR-007): the Telegram, Slack and Discord channel code was removed. The Briefing is presented in
+this session; email delivery to the household remains a user-started step. Skip to Step 21.
 
 ### Step 20b — Data Health Check (non-blocking)
 

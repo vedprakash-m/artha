@@ -34,7 +34,7 @@ from preflight.state_checks import (
 )
 from preflight.integration_checks import (
     check_bridge_health, check_workiq, check_ado_auth, check_ha_connectivity,
-    check_dep_freshness, check_channel_config, check_channel_health, check_action_handlers,
+    check_dep_freshness, check_action_handlers,
     check_ext_agent_discovery, check_ext_agent_health,
 )
 
@@ -141,12 +141,6 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — ADO auth (work-projects domain, opt-in, non-blocking) ────────
     checks.append(check_ado_auth())
-
-    # ── P1 — Channel config (v5.1 — non-blocking) ──────────────────────────
-    checks.append(check_channel_config())
-
-    # ── P1 — Channel health (v5.0 — non-blocking) ─────────────────────────
-    checks.append(check_channel_health())
 
     # ── P1 — Dependency freshness ─────────────────────────────────────────
     checks.append(check_dep_freshness())

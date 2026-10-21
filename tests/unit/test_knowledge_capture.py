@@ -88,24 +88,6 @@ class TestInboxSchema:
 
 
 # ---------------------------------------------------------------------------
-# Rate limit helper
-# ---------------------------------------------------------------------------
-
-class TestRateLimitHelper:
-    """Test the _remember_rate_ok() helper if accessible."""
-
-    def test_rate_limit_module_importable(self):
-        try:
-            import channel_listener
-            has_fn = hasattr(channel_listener, "_remember_rate_ok")
-            # If function exists, test it
-            if has_fn:
-                assert callable(channel_listener._remember_rate_ok)
-        except ImportError:
-            pytest.skip("channel_listener not importable in isolation")
-
-
-# ---------------------------------------------------------------------------
 # Inbox creation
 # ---------------------------------------------------------------------------
 

@@ -55,25 +55,6 @@ class TestRD51LLMUnavailableError:
         assert err.reason == "test"
         assert err.last_exit_code == 1
 
-    def test_llm_bridge_raises_not_returns_empty(self):
-        """_call_single_llm must raise LLMUnavailableError, never return '' on failure."""
-        src = (_SCRIPTS / "channel" / "llm_bridge.py").read_text(encoding="utf-8")
-        # The old pattern was 'return ""' inside _call_single_llm's failure paths
-        # Verify the new pattern raises instead
-        assert "raise LLMUnavailableError" in src, (
-            "llm_bridge.py does not raise LLMUnavailableError — RD-51 not implemented"
-        )
-
-    def test_llm_bridge_imports_llm_unavailable_error(self):
-        src = (_SCRIPTS / "channel" / "llm_bridge.py").read_text(encoding="utf-8")
-        assert "LLMUnavailableError" in src, (
-            "llm_bridge.py does not reference LLMUnavailableError — RD-51 incomplete"
-        )
-
-
-# ===========================================================================
-# RD-50 + RD-21: context_budget.py — single source, corrected constant
-# ===========================================================================
 
 class TestRD50ContextBudget:
     """_CHARS_PER_TOKEN must not be hardcoded in any script outside context_budget."""

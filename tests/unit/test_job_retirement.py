@@ -26,12 +26,6 @@ def test_job_definition_is_gone(rel):
     assert not (REPO / rel).exists(), f"{rel} defines a background job and must be retired"
 
 
-def test_install_service_is_refused():
-    import setup_channel  # noqa: PLC0415
-    assert hasattr(setup_channel, "install_service")
-    assert setup_channel.install_service() is False
-
-
 def test_no_job_installer_text_remains_in_channel_docs():
     text = (REPO / "docs" / "channels.md").read_text(encoding="utf-8")
     for needle in ("launchctl load", "launchctl start", "systemctl --user enable", "systemctl --user start"):

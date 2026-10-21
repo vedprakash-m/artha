@@ -18,27 +18,6 @@ import preflight as pf
 
 
 # ---------------------------------------------------------------------------
-# T5-34..35: check_channel_config
-# ---------------------------------------------------------------------------
-
-class TestCheckChannelConfig:
-    def test_no_channels_yaml_passes_gracefully(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pf, "ARTHA_DIR", str(tmp_path))
-        (tmp_path / "config").mkdir(parents=True, exist_ok=True)
-        result = pf.check_channel_config()
-        assert isinstance(result, pf.CheckResult)
-
-    def test_push_disabled_returns_message(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(pf, "ARTHA_DIR", str(tmp_path))
-        cfg_dir = tmp_path / "config"
-        cfg_dir.mkdir(parents=True, exist_ok=True)
-        channels = {"telegram": {"enabled": True, "push_enabled": False, "token": "x:y", "chat_id": "123"}}
-        (cfg_dir / "channels.yaml").write_text(yaml.dump(channels))
-        result = pf.check_channel_config()
-        assert isinstance(result, pf.CheckResult)
-
-
-# ---------------------------------------------------------------------------
 # T5-36: check_dep_freshness
 # ---------------------------------------------------------------------------
 

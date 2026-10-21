@@ -162,59 +162,6 @@ class TestTelegramPayloadFilter:
 
 
 # ---------------------------------------------------------------------------
-# RD-34: Kids/employment vault gate in state_readers
-# ---------------------------------------------------------------------------
-
-
-class TestVaultGatedStateKeys:
-    """RD-34: Vault-gated domains must raise VaultAccessRequired."""
-
-    def test_vault_gated_keys_loaded_from_registry(self) -> None:
-        """_VAULT_GATED_STATE_KEYS must include kids and employment at minimum."""
-        from channel.state_readers import _VAULT_GATED_STATE_KEYS
-
-        assert "kids" in _VAULT_GATED_STATE_KEYS, "kids must be vault-gated"
-        assert "employment" in _VAULT_GATED_STATE_KEYS, "employment must be vault-gated"
-
-    def test_kids_domain_raises_vault_access_required_when_age_file_present(
-        self, tmp_path: Path
-    ) -> None:
-        """Reading a vault-gated domain with .age file but no plaintext raises VaultAccessRequired."""
-        from channel.state_readers import (
-            VaultAccessRequired,
-            _READABLE_STATE_FILES,
-            _read_state_file,
-        )
-
-        # We patch _READABLE_STATE_FILES to point to tmp_path for 'kids'
-        kids_path = tmp_path / "kids.md"
-        age_path = tmp_path / "kids.md.age"
-        age_path.touch()  # .age exists (vault is locked)
-        # kids.md NOT created (plaintext absent)
-
-        patched_files = dict(_READABLE_STATE_FILES)
-        patched_files["kids"] = kids_path
-
-        with patch("channel.state_readers._READABLE_STATE_FILES", patched_files):
-            with pytest.raises(VaultAccessRequired):
-                _read_state_file("kids")
-
-    def test_vault_access_required_class_exists(self) -> None:
-        """VaultAccessRequired must be a PermissionError subclass."""
-        from channel.state_readers import VaultAccessRequired
-
-        assert issubclass(VaultAccessRequired, PermissionError)
-
-    def test_open_items_not_vault_gated(self) -> None:
-        """Non-vault domains (open_items) must not be in _VAULT_GATED_STATE_KEYS."""
-        from channel.state_readers import _VAULT_GATED_STATE_KEYS
-
-        assert "open_items" not in _VAULT_GATED_STATE_KEYS, (
-            "open_items is not a vault domain and must not be vault-gated"
-        )
-
-
-# ---------------------------------------------------------------------------
 # RD-36: Work OS isolation — no --allow-all-tools
 # ---------------------------------------------------------------------------
 
@@ -438,36 +385,12 @@ class TestSignalPipelineMetrics:
 
 
 # ---------------------------------------------------------------------------
-# RD-49: llm_trace wired into llm_bridge
+# RD-49: llm_trace switch (the channel llm_bridge it was wired into is retired)
 # ---------------------------------------------------------------------------
 
 
 class TestLlmTraceWiring:
-    """RD-49: llm_trace() must be called on every code path in _call_single_llm."""
-
-    def test_llm_trace_import_present_in_llm_bridge(self) -> None:
-        """llm_trace import and call must be present in _call_single_llm source."""
-        bridge_path = SCRIPTS_DIR / "channel" / "llm_bridge.py"
-        text = bridge_path.read_text(encoding="utf-8")
-        assert "llm_trace" in text, (
-            "RD-49: llm_bridge.py must import and call llm_trace"
-        )
-
-    def test_llm_trace_called_on_all_code_paths(self) -> None:
-        """llm_trace calls must be present for success, error, empty, and timeout paths."""
-        bridge_path = SCRIPTS_DIR / "channel" / "llm_bridge.py"
-        text = bridge_path.read_text(encoding="utf-8")
-        # All paths must include an llm_trace call
-        assert 'error="timeout"' in text or "error='timeout'" in text, (
-            "RD-49: llm_trace must be called with error=timeout on TimeoutExpired"
-        )
-        assert 'error="empty_response"' in text or "error='empty_response'" in text, (
-            "RD-49: llm_trace must be called with error=empty_response on empty output"
-        )
-        # Success path: llm_trace called without error (completion_tokens present)
-        assert "completion_tokens" in text, (
-            "RD-49: llm_trace on success must include completion_tokens estimate"
-        )
+    """RD-49: the llm_trace switch lives in lib/observability.py."""
 
     def test_is_trace_enabled_function_in_observability(self) -> None:
         """_is_trace_enabled() must exist in lib/observability.py."""
