@@ -49,7 +49,8 @@ def test_runtime_writer_appends_private_monthly_lines(tmp_path):
     write({"total_seconds": 1.5, "status": "complete"})
     write({"total_seconds": 2.5, "status": "degraded"})
     path = tmp_path / "metrics" / "2026-10.jsonl"
-    assert len(path.read_text().splitlines()) == 2 and oct(path.stat().st_mode & 0o777) == "0o600"
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 2
+    assert os.name == "nt" or oct(path.stat().st_mode & 0o777) == "0o600"
 
 
 def test_cost_needs_pricing_and_never_pretends_to_be_exact():

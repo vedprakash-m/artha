@@ -88,10 +88,22 @@ def no_real_credentials():
         pytest.skip("a real Microsoft Graph token is present here; run the suite in the isolated workspace (make test)")
 
 
+def _child_diagnostics(operation="execute"):
+    """Re-run the same child by hand so a CI-only failure shows *why* (stderr of a no-credential child is safe)."""
+    import os
+    import sys
+    envelope = json.dumps({"module": "actions.reminder_create", "proposal": asdict(proposal()), "parent": os.getpid(),
+                           "timeout": 20, "operation": operation, "since": "x"})
+    env = {k: v for k, v in os.environ.items() if k in action_process._CHILD_ENV}
+    done = subprocess.run([sys.executable, action_process.__file__], input=envelope, capture_output=True, text=True,
+                          env=env, timeout=60, check=False)
+    return f"rc={done.returncode} stdout={done.stdout[-300:]!r} stderr={done.stderr[-900:]!r}"
+
+
 def test_real_child_returns_a_verified_failure_offline(no_real_credentials):
     """End to end through a real child process: no token means a clean 'failure', never a hang or 'unknown'."""
     result = action_process.execute("actions.reminder_create", proposal(), 20)
-    assert result.status == "failure" and "To Do" in result.message
+    assert result.status == "failure" and "To Do" in result.message, (result.message, _child_diagnostics())
 
 
 def test_real_child_cannot_open_sockets_spawn_processes_or_listen():
@@ -147,7 +159,8 @@ def test_reconcile_runs_in_the_same_bounded_child_and_passes_the_approval_time()
 
 def test_real_child_reconcile_without_a_token_stays_unknown(no_real_credentials):
     result = action_process.execute("actions.reminder_create", proposal(), 20, operation="reconcile", since="x")
-    assert result.status == "unknown" and "Could not check the provider" in result.message
+    assert result.status == "unknown" and "Could not check the provider" in result.message, (
+        result.message, _child_diagnostics("reconcile"))
 
 
 def test_a_child_without_a_receipt_names_its_error_class_but_never_its_message():
