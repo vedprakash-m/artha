@@ -124,6 +124,22 @@ jobs:
         run: make mypy PYTHON=python
 
   # ── Connector handler imports ─────────────────────────────────────────────
+  core-windows:
+    name: Catch-up Windows contract smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r scripts/requirements.txt pytest pytest-mock
+      - name: Isolated core contracts
+        run: python tools/run_tests_isolated.py tests/catchup_core -q --tb=short
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  # ── Connector handler imports ─────────────────────────────────────────────
   connectors-syntax:
     name: Connector handler syntax + import
     runs-on: ubuntu-latest

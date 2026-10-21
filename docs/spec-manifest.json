@@ -1,0 +1,285 @@
+{
+  "acceptance": {
+    "RA-01.AC1": {
+      "capability": "RA-01",
+      "modules": [
+        "scripts/catchup_core/coordinator.py",
+        "scripts/catchup_core/adapters.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_coordinator.py",
+        "tests/catchup_core/test_adapters.py",
+        "tests/catchup_core/test_recovery_failures.py"
+      ]
+    },
+    "RA-02.AC1": {
+      "capability": "RA-02",
+      "modules": [
+        "scripts/catchup_core/reconcile.py",
+        "scripts/catchup_core/extract.py",
+        "scripts/catchup_core/ledger.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_fact_reconcile.py",
+        "tests/catchup_core/test_extract.py",
+        "tests/catchup_core/test_ledger.py"
+      ]
+    },
+    "RA-03.AC1": {
+      "capability": "RA-03",
+      "modules": [
+        "scripts/catchup_core/triage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_triage.py"
+      ]
+    },
+    "RA-04.AC1": {
+      "capability": "RA-04",
+      "modules": [
+        "scripts/catchup_core/compose.py",
+        "scripts/catchup_core/views.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_compose.py",
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-05.AC1": {
+      "capability": "RA-05",
+      "modules": [
+        "scripts/catchup_core/actions.py",
+        "scripts/catchup_core/action_mapping.py",
+        "scripts/action_queue.py",
+        "scripts/action_executor.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/catchup_core/test_actions.py",
+        "tests/catchup_core/test_action_mapping.py",
+        "tests/unit/test_action_hardening.py"
+      ]
+    },
+    "RA-06.AC1": {
+      "capability": "RA-06",
+      "modules": [
+        "scripts/lib/memory_policy.py",
+        "scripts/catchup_core/commands.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/unit/test_memory_policy.py",
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-07.AC1": {
+      "capability": "RA-07",
+      "modules": [
+        "scripts/catchup_core/exchange.py",
+        "scripts/catchup_core/extractor_cmd.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_exchange.py",
+        "tests/catchup_core/test_extractor_cmd.py"
+      ]
+    },
+    "RA-08.AC1": {
+      "capability": "RA-08",
+      "modules": [
+        "scripts/catchup_core/adapters.py",
+        "scripts/schemas/connector_record.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_adapters.py"
+      ]
+    },
+    "RA-09.AC1": {
+      "capability": "RA-09",
+      "modules": [
+        "scripts/catchup_core/policy.py",
+        "scripts/tool_guard.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/unit/test_tool_guard.py",
+        "tests/catchup_core/test_release_regressions.py"
+      ]
+    },
+    "RA-10.AC1": {
+      "capability": "RA-10",
+      "modules": [
+        "scripts/catchup_core/capabilities.py",
+        "tools/gen_capability_register.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/dev/test_capability_register.py"
+      ]
+    },
+    "RA-11.AC1": {
+      "capability": "RA-11",
+      "modules": [
+        "scripts/catchup_core/goals.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_goals_scorecard_cli.py"
+      ]
+    },
+    "RA-12.AC1": {
+      "capability": "RA-12",
+      "modules": [
+        "scripts/catchup_core/household.py",
+        "scripts/catchup_core/policy.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_household.py",
+        "tests/catchup_core/test_release_regressions.py"
+      ]
+    },
+    "RA-13.AC1": {
+      "capability": "RA-13",
+      "modules": [
+        "scripts/catchup_core/triage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_kids_school_scenarios.py"
+      ]
+    },
+    "RA-14.AC1": {
+      "capability": "RA-14",
+      "modules": [
+        "scripts/catchup_core/domain_pack.py",
+        "scripts/catchup_core/packs/kids_school.yaml"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_domain_pack.py",
+        "tests/catchup_core/test_composite_pack.py"
+      ]
+    },
+    "RA-15.AC1": {
+      "capability": "RA-15",
+      "modules": [
+        "scripts/catchup_core/commands.py",
+        "scripts/catchup_core/views.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-16.AC1": {
+      "capability": "RA-16",
+      "modules": [
+        "scripts/catchup_core/coordinator.py",
+        "scripts/lib/connector_coverage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_recovery_failures.py",
+        "tests/unit/test_stale_banner.py"
+      ]
+    },
+    "RA-17.AC1": {
+      "capability": "RA-17",
+      "modules": [
+        "scripts/catchup_core/triage.py",
+        "scripts/stale_banner.py",
+        "scripts/session_stop.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_triage.py",
+        "tests/unit/test_stale_banner.py",
+        "tests/unit/test_session_stop.py"
+      ]
+    },
+    "RA-18.AC1": {
+      "capability": "RA-18",
+      "modules": [
+        "scripts/catchup_core/rule_of_two.py",
+        "scripts/tool_guard.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_rule_of_two.py",
+        "tests/unit/test_tool_guard.py"
+      ]
+    },
+    "RA-19.AC1": {
+      "capability": "RA-19",
+      "modules": [],
+      "scope": "later",
+      "tests": []
+    },
+    "RA-20.AC1": {
+      "capability": "RA-20",
+      "modules": [
+        "scripts/catchup_core/backup.py"
+      ],
+      "scope": "later",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-21.AC1": {
+      "capability": "RA-21",
+      "modules": [],
+      "scope": "later",
+      "tests": []
+    },
+    "RA-22.AC1": {
+      "capability": "RA-22",
+      "modules": [
+        "scripts/catchup_core/views.py",
+        "scripts/catchup_core/migrations/0007_replay.sql"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-23.AC1": {
+      "capability": "RA-23",
+      "modules": [
+        "scripts/catchup_core/ledger.py",
+        "scripts/catchup_core/commands.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/catchup_core/test_ledger.py",
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-24.AC1": {
+      "capability": "RA-24",
+      "modules": [
+        "scripts/catchup_core/commands.py",
+        "scripts/action_executor.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/unit/test_action_executor.py"
+      ]
+    },
+    "RA-25.AC1": {
+      "capability": "RA-25",
+      "modules": [],
+      "scope": "later",
+      "tests": []
+    }
+  },
+  "contract_version": "0.1.0",
+  "spec": "specs/re-artha.md",
+  "spec_sha256": "75bc3b146ac94fc130a867bcc37971b5ddf0888d5a5d76919595634d070eb90d",
+  "spec_version": "0.8.0"
+}

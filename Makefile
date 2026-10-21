@@ -3,6 +3,7 @@
 
 PYTHON ?= ~/.artha-venvs/.venv/bin/python
 PYTEST ?= $(PYTHON) -m pytest
+MAKE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 RUFF ?= ruff
 
 # macOS: /usr/bin/{git,make} are shims for the selected developer directory and
@@ -83,9 +84,11 @@ COV_MIN ?= 90
 coverage: ## Line+branch coverage floor on the new core package (fails below COV_MIN)
 	@$(PYTEST) $(CORE_TESTS) -q -p no:cacheprovider --cov=$(CORE_PKG) --cov-branch \
 		--cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN)
+	@$(PYTHON) $(MAKE_DIR)tools/check_core_coverage.py coverage.xml --minimum=$(COV_MIN)
 
 diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml from `make coverage`)
-	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main --fail-under=$(COV_MIN)
+	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main \
+		--include='scripts/catchup_core/*' --fail-under=$(COV_MIN)
 
 mypy: ## Strict type check of the new core package
 	@$(PYTHON) -m mypy --explicit-package-bases $(CORE_PKG)
