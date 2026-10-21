@@ -37,10 +37,12 @@ a Catch-up ID resumes at the first uncommitted stage.
    sources:
      school_email: {connector: gmail, account_scope: personal, kwargs: {query: "label:school"}}
      calendar:     {connector: google_calendar, account_scope: family}
-   subjects: [kid1, kid2, adult_child]
-   consent_required: [adult_child]   # adults whose restricted data needs their recorded consent
+   household_from_profile: true      # subjects and who needs consent come from config/user_profile.yaml
    viewer: owner
+   cutover: false                    # authoritative runs also need a signed `release:` block (policy.py)
    ```
+   A source whose `class:` is not listed as an authority by any predicate is refused at start-up (it would
+   turn every Fact into UNKNOWN): the multi-domain packs name classes such as `email_notice` or `bill_statement`.
 2. **Extraction is done by whichever assistant you are running** (Claude, ChatGPT/Codex, Gemini,
    Copilot, a local model): the core never calls a model itself. When it needs extraction it pauses:
    ```
@@ -67,3 +69,23 @@ a Catch-up ID resumes at the first uncommitted stage.
 * Forgetting writes a tombstone, seals a deletion checkpoint outside the restorable set, deletes derived
   Facts and Alerts, and blocks re-fetch and old-snapshot restore.
 * One Catch-up ID publishes at most one logical Briefing; a different text needs an explicit correction.
+
+## Daily use
+* `brief` runs the incumbent workflow (authoritative) and then `cli.py catchup --shadow --json` as a comparison.
+  `--format flash|standard|deep|digest` changes what is shown; coverage, gaps and `next check by` are always shown.
+* `health` lists every capability as `disabled`, `not configured`, `unknown` (configured, never run), `last succeeded`,
+  `degraded` or `not implemented`, and whether it is `measured` (needs a verified release scorecard).
+  `docs/capability-register.md` and `docs/spec-manifest.json` are generated (`tools/gen_capability_register.py`) and
+  drift-checked in CI.
+* `feedback <obligation> dismiss|snooze|useful|acknowledge --reason ...` also saves an encrypted replay case under
+  `~/.artha-local/catchup_core/replay/` with `expected_outcome: pending_review`; forgetting a Signal deletes its cases.
+* Every model request appends a disclosure record (provider, data class, purpose, retention, keyed request id; never the
+  prompt) to `~/.artha-local/catchup_core/model-requests/YYYY-MM.jsonl`.
+* The Briefing archive of an authoritative run is encrypted under `~/.artha-local/catchup_core/briefings/`; use `history`.
+
+## Harness hooks (`.claude/settings.json`, git-ignored; absolute paths so any working directory works)
+* `PreToolUse` -> `scripts/tool_guard.py`: denies bypass-flag CLI launches, the decrypt-to-disk vault command and
+  plaintext sensitive State Files. It matches the text of a command, so even a heredoc that merely mentions them is refused.
+* `SessionStart` -> `stale_banner.py` (age of the last Catch-up, per-source fetch age, omissions from the last Stop) and `vault_hook.py session-start`.
+* `Stop` -> `session_stop.py`: archives once, checks the health record, records omissions for the next open. Never blocks.
+Hooks are defence in depth; the core's own checks are the controls.

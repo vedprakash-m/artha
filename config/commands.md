@@ -14,7 +14,8 @@ Equivalent natural language: "catch me up", "morning briefing", "SITREP", "what 
 
 Execution:
 ```bash
-python -m scripts.catchup_core.cli catchup --host $(hostname -s) --format standard
+python3 scripts/pipeline.py        # authoritative (incumbent)
+python3 scripts/catchup_core/cli.py catchup --shadow --json   # core comparison; authoritative only after cutover
 ```
 
 Sub-commands:

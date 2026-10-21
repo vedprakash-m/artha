@@ -40,7 +40,7 @@ _Avoid_: data file, config file, memory file, store.
 **Goal** — A named outcome tracked in `state/goals.md` with progress and sprints.
 _Avoid_: objective, target, KPI, intention.
 
-**Sentinel** — A scheduled or threshold-based monitor that fires an alert when a condition is met.
+**Sentinel** — A rule evaluated during a Catch-up that fires an alert when a condition is met. It never runs between sessions (PULL over PUSH).
 _Avoid_: monitor, watcher, trigger, checker.
 
 **Scenario** — A conditional plan in `state/scenarios.md` with an "if X then Y" structure.

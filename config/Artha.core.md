@@ -187,10 +187,13 @@ Every **factual claim** in briefing prose MUST carry one of these inline tokens 
 
 **Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up` / `brief`
 
-**Authoritative Pipeline Execution (re-artha v0.8.0):**
+**Catch-up core (re-artha §6.3, §12.6):** the incumbent workflow below stays authoritative until the pilot is cut over
+(`release` block signed in `config/catchup_core.yaml`). After Step 7 run the core in shadow and report its coverage/Alerts as a comparison:
 ```bash
-python -m scripts.catchup_core.cli catchup --host $(hostname -s) --format standard
+python3 scripts/catchup_core/cli.py catchup --shadow --json
 ```
+Exit 40 means extraction is paused: answer each request's prompt (JSON only) and resume with `--id <ID> --responses -`
+(see `docs/catchup-core.md`). A shadow run never publishes, archives or writes State Files.
 
 > **Composable modules:** For customization and phase-level documentation,
 > see `config/workflow/README.md`. The workflow is organized into 5 phases:
