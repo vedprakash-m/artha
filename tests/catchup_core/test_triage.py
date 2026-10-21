@@ -216,7 +216,7 @@ def test_per_signal_freshness_overrides_the_connector_default(env):
 
 
 def test_resolved_and_snoozed_alerts_stay_quiet_until_the_condition_changes(env):
-    fid, _sid = put(env, EXAM, "2026-10-14")
+    fid, sid = put(env, EXAM, "2026-10-14")
     key = f"kids_school:kid1:{EXAM}"
     env.upsert_alert(key, domain="kids_school", primary_subject_id="kid1", severity="P1",
                      deadline="2026-10-14", fact_ids=[fid])
@@ -233,5 +233,9 @@ def test_resolved_and_snoozed_alerts_stay_quiet_until_the_condition_changes(env)
                    ((NOW - timedelta(days=1)).isoformat(), key))
     assert run(env).alerts                                              # snooze expired: reopens
     with env.transaction() as db:
-        db.execute("UPDATE alerts SET status='resolved', deadline='2026-10-01' WHERE obligation_key=?", (key,))
+        db.execute("UPDATE alerts SET status='resolved', suppressed_until=NULL WHERE obligation_key=?", (key,))
+    assert not run(env).alerts                                          # resolved again for the same evidence
+    env.put_fact(lg.FactInput(domain="kids_school", predicate=EXAM, value="2026-10-15", primary_subject_id="kid1",
+                              observed_at="t2", status=FactStatus.CURRENT, provenance=Provenance.VERIFIED_SOURCE,
+                              evidence=((sid, 0, 4),)), fact_id=fid)
     assert run(env).alerts                                              # the deadline changed: resolution no longer applies
