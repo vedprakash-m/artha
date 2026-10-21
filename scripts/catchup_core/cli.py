@@ -246,7 +246,9 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
         request = CatchupRequest(f"view_{uuid.uuid4().hex[:12]}", args.actor or config.viewer, "cli",
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
             host=socket.gethostname().split(".")[0])
-        deps = build_deps(request, inspection=True)
+        mutations = {"correct", "forget", "feedback", "capture", "ingest", "pause", "resume", "reconcile", "resolve"}
+        mutation = args.command in mutations or (args.command == "review" and args.label is not None)
+        deps = build_deps(request, inspection=True, mutation=mutation)
         with session_lock(deps.ledger._path.with_suffix(".session.lock")):
             result = execute(args, deps, root)
         if args.json:

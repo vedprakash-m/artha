@@ -31,16 +31,19 @@ class Scorecard:
     false_quiet: int
     unresolved_citations: int
     regressions_vs_incumbent: int
+    positive_cases: int = 0
 
     @property
     def passes(self) -> bool:
-        return (self.cases > 0 and self.false_quiet == 0 and self.unresolved_citations == 0
+        return (self.cases > 0 and self.positive_cases > 0 and self.false_quiet == 0 and self.unresolved_citations == 0
                 and self.regressions_vs_incumbent == 0 and self.recall >= 1.0)
 
     def failures(self) -> list[str]:
         out: list[str] = []
         if not self.cases:
             out.append("no evaluated cases")
+        elif not self.positive_cases:
+            out.append("no positive actionable cases")
         if self.false_quiet:
             out.append(f"{self.false_quiet} false quiet claim(s)")
         if self.unresolved_citations:
@@ -66,4 +69,5 @@ def score(cases: Sequence[Case]) -> Scorecard:
         false_quiet=false_quiet,
         unresolved_citations=sum(1 for c in cases if not c.citations_resolve),
         regressions_vs_incumbent=regressions,
+        positive_cases=sum(bool(c.expected) for c in cases),
     )

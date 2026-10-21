@@ -207,6 +207,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
     auth_loader: Callable[[str], Mapping[str, Any]] | None = None,
     now: Callable[[], datetime] | None = None,
     inspection: bool = False,
+    mutation: bool = False,
 ) -> Deps:
     env = os.environ if environ is None else environ
     root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[2]
@@ -218,7 +219,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
         local = local / "shadow"
 
     domains = request.pilot_domains or config.domains or ("kids_school",)
-    validate_release(replace(request, mode=ExecutionMode.SHADOW) if inspection else request,
+    validate_release(replace(request, mode=ExecutionMode.SHADOW) if inspection and not mutation else request,
                      config.policy, viewer=config.viewer, domains=domains)
     pack = _load_packs(domains)
     source_class = {**{name: str(spec.get("class", name)) for name, spec in config.sources.items()},
@@ -264,7 +265,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
             return all((root / "state" / name).read_bytes() == data for name, data in curated.items())
         encrypted_snapshot(local / "snapshots" / f"{catchup_id}.ae1", local / "ledger.db", cipher,
                            blobs=local / "blobs", curated=curated,
-                           action_db=local.parent / "actions.db" if request.mode.value == "authoritative" else None,
+                           action_db=action_database_path(root) if request.mode.value == "authoritative" else None,
                            idempotent=True, guard=unchanged)
         _prune_snapshots(local / "snapshots", now_fn(), int(config.policy.get("snapshot_retention_days", 30)))
         atomic_bytes(local / "health.json", json.dumps({"last_catch_up": now_fn().isoformat(),
@@ -274,6 +275,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
     inputs += "".join(p.read_text() for p in sorted(Path(__file__).parent.glob("*.py")))
     inputs += "".join(p.read_text() for p in sorted((Path(__file__).parent / "prompts").glob("*.md")))
     return Deps(
+        mode=request.mode,
         ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
         fetchers=fetchers,
         extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
@@ -321,6 +323,11 @@ def _bind_household(config: RuntimeConfig, root: Path, key: ids.HmacKey, today: 
     config.policy["subject_aliases"] = {person.subject_id: list(person.aliases) for person in people}
     config.policy["resolved_subjects"] = config.subjects
     config.policy["consent_required"] = sorted(config.consent_required)
+
+
+def action_database_path(workspace: Path) -> Path:
+    queue = importlib.import_module("action_queue")
+    return Path(queue.ActionQueue._resolve_db_path(workspace))
 
 
 def _subjects_for(config: RuntimeConfig, connector: str, text: str) -> list[str]:

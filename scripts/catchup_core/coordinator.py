@@ -114,6 +114,7 @@ class Deps:
     #: §10.1 disclosure record sink: one entry per model request, never the prompt itself.
     model_log: Callable[[dict[str, str]], None] = lambda _entry: None
     provider_label: str = "unconfigured"
+    mode: ExecutionMode = ExecutionMode.AUTHORITATIVE
 
 
 def _iso(dt: datetime) -> str:
@@ -311,6 +312,9 @@ class _Run:
         return parsed if parsed.ok else ex.ExtractionResult((), complete=False)
 
     def _stage_extract(self) -> tuple[str, ...]:
+        for row in self.led.conn.execute("SELECT signal_id FROM signal_failures WHERE stage='extract' "
+                                         "AND retry_eligible=1 AND attempts<3").fetchall():
+            self.led.set_processing_state(row[0], ProcessingState.NORMALIZED)
         done = tuple(r["signal_id"] for r in self.led.signals_in_state(ProcessingState.NORMALIZED)
                      if self._extract_one(r))
         if self._pending:                            # stage stays uncommitted; resume re-enters it
@@ -343,6 +347,9 @@ class _Run:
                            source_class_of=self._source_class, upstream_key_of=self._upstream,
                            rule_version=self.request.policy_version)
         for row in rows:
+            if not self.led.conn.execute("SELECT 1 FROM signal_failures WHERE signal_id=? AND stage='extract'",
+                                         (row['signal_id'],)).fetchone():
+                self.led.replace_source_support(row['signal_id'])
             self.led.set_processing_state(row["signal_id"], ProcessingState.RECONCILED)
         return tuple(r["signal_id"] for r in rows) + tuple(c.fact_id for c in result.changes)
 
@@ -477,6 +484,9 @@ class _Run:
         conclusions = self._incumbent_output().conclusions
         legacy = [c.text for c in conclusions if c.kind == "record"]
         incumbent_lines = [c.text for c in conclusions if c.kind == "obligation"]
+        if incumbent_lines:
+            unresolved += len(incumbent_lines)
+            has_gaps = True
         open_items = [OpenItemLine(c.text, _parse_day(c.due)) for c in conclusions if c.kind == "open_item"]
         goals = self.deps.goal_lines()
         fmt = req.briefing_format

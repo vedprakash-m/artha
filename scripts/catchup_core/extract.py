@@ -256,5 +256,7 @@ def supports_value(pred: Predicate, value: Any, quote: str, *, observed_at: str 
         return year_matches and bool(re.search(
             rf"\b(?:{month}|{month[:3]}\.?)\s+0?{value.day}(?:st|nd|rd|th)?\b", normalized))
     if pred.type == "enum":
-        return str(value).casefold().replace("_", " ") in normalized
+        if re.search(r"\b(not|no|never|previously|formerly|may|might|could|if|unless|unconfirmed)\b", normalized):
+            return False
+        return bool(re.search(r"\b" + re.escape(str(value).casefold().replace("_", " ")) + r"\b", normalized))
     return str(value).casefold() in normalized

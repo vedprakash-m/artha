@@ -121,14 +121,15 @@ def fetch_via_handler(
         stored = store.record(c_run)
         if stored.get("status") == "anomaly":
             return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.ANOMALY,
-                                  blind_spots=("unexpected volume drop against complete history",), required=required)
+                                  blind_spots=("unexpected volume drop against complete history",), required=required,
+                                  cancelled=tuple(cancelled))
     except Exception:  # noqa: S110
         pass
 
     if blind:
         return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.DEGRADED,
                               FailureClass.SCHEMA_REJECTED if rejected else FailureClass.PROVIDER,
-                              blind_spots=tuple(blind), required=required)
+                              blind_spots=tuple(blind), required=required, cancelled=tuple(cancelled))
     return replace(ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.COMPLETE, None,
                                   required=required), cancelled=tuple(cancelled))
 

@@ -47,7 +47,7 @@ def ingest(path: Path, subject: str, ledger: Any, viewer: str, now: datetime) ->
         raise ValueError("Provide a PDF smaller than 8 MiB.")
     data = path.read_bytes()
     extracted = extract_pdf(data)
-    identity = "doc_" + content_hmac(ledger._id_key, base64.b64encode(data).decode())[:24]
+    identity = "doc_" + content_hmac(ledger._id_key, subject + "|" + base64.b64encode(data).decode())[:24]
     if ledger._cipher is None:
         raise ValueError("Document ingestion requires encryption.")
     payload = {

@@ -104,10 +104,12 @@ def test_capture_is_encrypted_and_fetched_during_catchup(app):
         runtime._capture_fetcher(deps.ledger._path.parent, CIPHER, "someone_else")()
 
 
-def test_pause_activity_export_and_forget(app):
+def test_pause_activity_export_and_forget(app, monkeypatch):
     root, deps, _, _ = app
+    actions_db = deps.ledger._path.parent.parent / "actions.db"
+    monkeypatch.setattr("catchup_core.runtime.action_database_path", lambda _workspace: actions_db)
     assert commands.execute(args("activity"), deps, root) == {"activity": []}
-    with sqlite3.connect(deps.ledger._path.parent.parent / "actions.db") as db:
+    with sqlite3.connect(actions_db) as db:
         db.execute("CREATE TABLE actions(id,action_type,domain,status,created_at)")
         db.execute("INSERT INTO actions VALUES('a','reminder_create','home','unknown','2026-10-12')")
     assert commands.execute(args("activity"), deps, root)["activity"][0]["status"] == "unknown"

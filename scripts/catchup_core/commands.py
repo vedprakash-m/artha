@@ -19,6 +19,10 @@ _CODE_ROOT = Path(__file__).resolve().parents[2]      # where the capability cod
 def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # noqa: PLR0911, PLR0912, PLR0915
     # A flat command router: each branch is independent and returns one typed projection.
     led, viewer = deps.ledger, deps.viewer
+    from catchup_core.contracts import ExecutionMode  # noqa: PLC0415
+    shadow = getattr(args, "shadow", False) or getattr(deps, "mode", None) is ExecutionMode.SHADOW
+    if shadow and args.command in ("pause", "resume", "reconcile", "resolve", "activity"):
+        raise LedgerError("shadow mode cannot access or change live action controls")
     if args.command == "beliefs":
         return {"beliefs": views.beliefs(led, viewer, domain=args.domain, subject=args.subject)}
     if args.command == "why":
@@ -124,7 +128,8 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             return {"goals": authored, "observations": lines}
         return {args.command: authored}
     if args.command == "activity":
-        path = led._path.parent.parent / "actions.db"
+        from catchup_core.runtime import action_database_path  # noqa: PLC0415
+        path = action_database_path(workspace)
         if not path.is_file():
             return {"activity": []}
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:

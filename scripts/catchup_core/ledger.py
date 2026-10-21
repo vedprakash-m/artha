@@ -456,6 +456,15 @@ class Ledger:
                     db.execute(f"UPDATE {table} SET typed_value=?,value_encrypted=?,key_version=? WHERE rowid=?",  # noqa: S608
                                (text, encrypted, version, row[0]))
                     changed += 1
+            for row in db.execute("SELECT alert_id,deadline,latest_useful_action FROM alerts "
+                                  "WHERE deadline IS NOT NULL OR latest_useful_action IS NOT NULL").fetchall():
+                if self._cipher is None:
+                    raise LedgerError("Alert dates require encryption")
+                text, version = self._cipher.encrypt_json(
+                    {"deadline": row[1], "latest_useful_action": row[2]}, aad=f"alert:{row[0]}".encode())
+                db.execute("UPDATE alerts SET deadline=NULL,latest_useful_action=NULL,dates_encrypted=?,"
+                           "dates_key_version=? WHERE alert_id=?", (text, version, row[0]))
+                changed += 1
         if changed:
             self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self.conn.execute("VACUUM")
@@ -619,14 +628,27 @@ class Ledger:
         return views
 
     def add_evidence(self, fact_id: str, signal_id: str, span_start: int, span_end: int) -> None:
-        """Attach another evidence span to a Fact (corroboration)."""
+        """Corroboration changes current knowledge, never a past version's evidence."""
         self._require_unlocked()
+        if self.conn.execute("SELECT 1 FROM fact_evidence WHERE fact_id=? AND signal_id=? "
+                             "AND span_start=? AND span_end=?", (fact_id, signal_id, span_start, span_end)).fetchone():
+            return
         with self.transaction() as c:
+            row = c.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+            if row is None:
+                raise LedgerError("unknown Fact")
+            now = _after(self._last_version(c, fact_id), self._clock())
             c.execute("INSERT OR REPLACE INTO fact_evidence(fact_id,signal_id,span_start,span_end) VALUES(?,?,?,?)",
                       (fact_id, signal_id, span_start, span_end))
-            recorded_at = self._last_version(c, fact_id)
-            c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
-                      (fact_id, recorded_at, signal_id, span_start, span_end))
+            digest = hashlib.sha256("|".join(f"{r[0]}:{r[1]}:{r[2]}" for r in c.execute(
+                "SELECT signal_id,span_start,span_end FROM fact_evidence WHERE fact_id=? ORDER BY signal_id,span_start",
+                (fact_id,))).encode()).hexdigest()
+            c.execute("INSERT INTO fact_versions SELECT fact_id,?,value_encrypted,key_version,valid_from,valid_to,"
+                      "validity_unknown,provenance_class,?,typed_value,status,rule_version FROM facts WHERE fact_id=?",
+                      (now, digest, fact_id))
+            c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
+                      "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
+            c.execute("UPDATE facts SET recorded_at=? WHERE fact_id=?", (now, fact_id))
 
     def set_fact_status(self, fact_id: str, status: FactStatus, provenance: Provenance | None = None) -> None:
         """Change a Fact's lifecycle status; the previous state stays in ``fact_versions``."""
@@ -664,6 +686,34 @@ class Ledger:
             (domain, predicate, subject_id, *[st.value for st in statuses])).fetchall()
         facts = [self.get_fact(str(r["fact_id"]), self._owner) for r in rows]
         return [f for f in facts if obligation_key is None or f.obligation_key == obligation_key]
+
+    def replace_source_support(self, signal_id: str) -> None:
+        """Withdraw obsolete versions only after complete interpretation; retain history."""
+        row = self.signal_row(signal_id)
+        if row is None:
+            raise LedgerError("unknown Signal")
+        older = self.conn.execute("SELECT signal_id FROM signals WHERE connector=? AND account_scope=? "
+            "AND upstream_id=? AND signal_id<>?", (row['connector'], row['account_scope'],
+                                                   row['upstream_id'], signal_id)).fetchall()
+        for old in older:
+            facts = self.conn.execute("SELECT f.fact_id,f.provenance_class FROM facts f JOIN fact_evidence e "
+                "ON f.fact_id=e.fact_id WHERE e.signal_id=? AND f.status IN ('current','disputed','unknown') "
+                "AND NOT EXISTS(SELECT 1 FROM fact_evidence n WHERE n.fact_id=f.fact_id AND n.signal_id=?)",
+                (old[0], signal_id)).fetchall()
+            for fact in facts:
+                if fact['provenance_class'] == Provenance.USER_CONFIRMED.value:
+                    continue
+                independent = self.conn.execute("SELECT 1 FROM fact_evidence e JOIN signals s "
+                    "ON e.signal_id=s.signal_id WHERE e.fact_id=? AND NOT "
+                    "(s.connector=? AND s.account_scope=? AND s.upstream_id=?)", (fact[0], row['connector'],
+                     row['account_scope'], row['upstream_id'])).fetchone()
+                if not independent:
+                    self.set_fact_status(fact[0], FactStatus.RETRACTED)
+                else:
+                    with self.transaction() as db:
+                        db.execute("DELETE FROM fact_evidence WHERE fact_id=? AND signal_id=?", (fact[0], old[0]))
+                    self.set_fact_status(fact[0], FactStatus.CURRENT)
+            self.clear_failure(old[0], 'extract')
 
     def source_content(self, connector: str, scope: str, upstream_id: str, version: str) -> str | None:
         row = self.conn.execute(
@@ -834,21 +884,29 @@ class Ledger:
         self._require_unlocked()
         now = self._clock()
         with self.transaction() as c:
-            row = c.execute("SELECT alert_id,deadline FROM alerts WHERE obligation_key=?", (obligation_key,)).fetchone()
+            row = c.execute("SELECT alert_id FROM alerts WHERE obligation_key=?", (obligation_key,)).fetchone()
             created = row is None
             alert_id = ids.new_id("alt") if row is None else str(row["alert_id"])
+            previous = self.get_alert(obligation_key) if row else None
+            if (deadline or latest_useful_action) and self._cipher is None:
+                raise LedgerError("Alert dates require encryption")
+            protected, key_version = (self._cipher.encrypt_json(
+                {"deadline": deadline, "latest_useful_action": latest_useful_action},
+                aad=f"alert:{alert_id}".encode()) if self._cipher else (None, None))
             if created:
                 c.execute(
                     "INSERT INTO alerts(alert_id,obligation_key,domain,primary_subject_id,severity,deadline,"
                     "latest_useful_action,status,first_seen,last_seen) VALUES(?,?,?,?,?,?,?,'open',?,?)",
-                    (alert_id, obligation_key, domain, primary_subject_id, severity, deadline,
-                     latest_useful_action, now, now))
+                    (alert_id, obligation_key, domain, primary_subject_id, severity, None,
+                     None, now, now))
             else:
-                if row["deadline"] != deadline:
+                if previous and previous["deadline"] != deadline:
                     c.execute("UPDATE alerts SET status='open',suppressed_until=NULL,resolution_ref=NULL "
                               "WHERE alert_id=?", (alert_id,))
                 c.execute("UPDATE alerts SET severity=?,deadline=?,latest_useful_action=?,last_seen=? "
-                          "WHERE alert_id=?", (severity, deadline, latest_useful_action, now, alert_id))
+                          "WHERE alert_id=?", (severity, None, None, now, alert_id))
+            c.execute("UPDATE alerts SET dates_encrypted=?,dates_key_version=? WHERE alert_id=?",
+                      (protected, key_version, alert_id))
             for fid in fact_ids:
                 c.execute("INSERT OR IGNORE INTO alert_facts(alert_id,fact_id) VALUES(?,?)", (alert_id, fid))
             if fact_ids:
@@ -869,7 +927,14 @@ class Ledger:
 
     def get_alert(self, obligation_key: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM alerts WHERE obligation_key=?", (obligation_key,)).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        out = dict(row)
+        if out.get("dates_encrypted"):
+            if self._cipher is None:
+                raise LedgerError("Alert dates require encryption")
+            out.update(self._cipher.decrypt_json(out.pop("dates_encrypted"), aad=f"alert:{out['alert_id']}".encode()))
+        return out
 
     # ── open items (first record type with structured authority, D-07) ─────────
     def put_open_item(
@@ -1160,6 +1225,9 @@ def purge_signal(db: sqlite3.Connection, signal_id: str) -> tuple[int, int]:
     fact_ids = [r[0] for r in db.execute(
         "SELECT fact_id FROM fact_evidence WHERE signal_id=? UNION "
         "SELECT fact_id FROM fact_version_evidence WHERE signal_id=?", (signal_id, signal_id))]
+    for fid in fact_ids:
+        db.execute("DELETE FROM goal_observations WHERE goal_id IN "
+                   "(SELECT goal_id FROM goal_observation_facts WHERE fact_id=?)", (fid,))
     db.execute("DELETE FROM fact_evidence WHERE signal_id=?", (signal_id,))
     db.execute("DELETE FROM fact_version_evidence WHERE signal_id=?", (signal_id,))
     removed = 0

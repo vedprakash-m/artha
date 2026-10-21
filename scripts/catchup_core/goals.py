@@ -140,6 +140,8 @@ def observe_goals(ledger: Ledger, authored: Sequence[dict[str, Any]], viewer: st
         with ledger.transaction() as db:
             db.execute("INSERT OR REPLACE INTO goal_observations VALUES(?,?,?,?)",
                        (goal.goal_id, encrypted, version, now.isoformat()))
+            for fact in facts:
+                db.execute("INSERT INTO goal_observation_facts VALUES(?,?)", (goal.goal_id, fact.fact_id))
         ledger.record_capability("RA-11", goal.goal_id + ":" + now.isoformat())
         output.append(f"{goal.title}: {assessment.status.replace('_', ' ')} — {assessment.reason}")
     return output

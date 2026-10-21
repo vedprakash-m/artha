@@ -82,12 +82,18 @@ def test_independent_obligations_are_not_disputed(world):
 
 def test_incomplete_interpretation_remains_visible_on_later_catchups(world):
     _, _, deps, texts = world
+    incomplete = lambda prompt: '{"candidates": [], "complete": false}'  # noqa: E731
     d = deps([co.ConnectorRecord("m1", "x" * 8100 + " 2026-10-14")])
-    d.extractor = lambda prompt: '{"candidates": [], "complete": false}'
+    d.extractor = incomplete
     first = co.run_catchup(request(), d)
-    second = co.run_catchup(request("cu_b"), deps())
+    again = deps()
+    again.extractor = incomplete                          # a retry that is still incomplete stays visible
+    second = co.run_catchup(request("cu_b"), again)
     assert first.status is RunStatus.DEGRADED and second.status is RunStatus.DEGRADED
     assert all("Nothing urgent" not in text for text in texts)
+    # A later retry that interprets the Signal completely resolves it (bounded retry of retry-eligible failures).
+    third = co.run_catchup(request("cu_c"), deps())
+    assert third.status is RunStatus.COMPLETE
 
 
 def test_deadline_after_the_first_excerpt_is_processed(world):

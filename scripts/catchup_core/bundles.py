@@ -43,13 +43,13 @@ from catchup_core.triage import CalendarEvent
 __all__ = ["BUNDLE_SCHEMA", "BundleError", "ImportResult", "ProducerKey", "enroll_producer", "export_bundle",
            "export_fetch", "import_bundles", "load_producer_key", "next_sequence"]
 
-BUNDLE_SCHEMA = "artha.bundle.v2"
+BUNDLE_SCHEMA = "artha.bundle.v3"
 MAX_BUNDLE_BYTES = 8 * 1024 * 1024          # ciphertext size limit
 MAX_RECORDS = 5000
 MAX_RECORD_CHARS = 200_000
 _HEADER_FIELDS = ("schema", "bundle_id", "producer", "namespace", "recipient", "account_scope", "authority_generation",
                   "sequence", "part", "parts", "requested_since", "completed_until", "cursor_generation",
-                  "record_count", "created_at")
+                  "record_count", "created_at", "connector")
 
 
 class BundleError(ValueError):
@@ -91,11 +91,19 @@ def _canonical(header: Mapping[str, Any]) -> bytes:
 
 def _file_name(header: Mapping[str, Any]) -> str:
     safe = "".join(c for c in str(header["producer"]) if c.isalnum() or c in "-_")
-    return f"bundle-{safe}-{int(header['sequence']):08d}-p{int(header['part']):03d}.json"
+    return f"bundle-{safe}-{_stream(header)}-{int(header['sequence']):08d}-p{int(header['part']):03d}.json"
 
 
-def _ack_name(producer: str, scope: str, sequence: int) -> str:
-    digest = hashlib.sha256(f"{producer}|{scope}".encode()).hexdigest()[:12]
+def _stream(header: Mapping[str, Any]) -> str:
+    bound = [header[k] for k in ("namespace", "recipient", "connector", "account_scope", "authority_generation")]
+    return hashlib.sha256(json.dumps(bound).encode()).hexdigest()[:16]
+
+
+def _ack_name(producer: str, scope: str, sequence: int, *, connector: str,
+              namespace: str, recipient: str, generation: int) -> str:
+    stream = _stream({"namespace": namespace, "recipient": recipient, "connector": connector,
+                      "account_scope": scope, "authority_generation": generation})
+    digest = hashlib.sha256(f"{producer}|{stream}".encode()).hexdigest()[:16]
     return f"ack-{digest}-{sequence:08d}.json"
 
 
@@ -104,7 +112,7 @@ def export_bundle(
     authority_generation: int, sequence: int, records: Sequence[ConnectorRecord],
     requested_since: str, completed_until: str, cursor_generation: int = 1, created_at: datetime,
     part: int = 1, parts: int = 1, bundle_id: str = "",
-    cancelled: Sequence[str] = (),
+    cancelled: Sequence[str] = (), connector: str = "school_email",
 ) -> Path:
     """Write one immutable part.  An existing file is never overwritten (a re-export needs a new sequence)."""
     if len(records) > MAX_RECORDS:
@@ -118,7 +126,8 @@ def export_bundle(
     if any(len(r.text) > MAX_RECORD_CHARS for r in records):
         raise BundleError("a record exceeds the size limit")
     header = {
-        "schema": BUNDLE_SCHEMA, "bundle_id": bundle_id or f"{key.producer}-{sequence}", "producer": key.producer,
+        "schema": BUNDLE_SCHEMA, "connector": connector,
+        "bundle_id": bundle_id or f"{key.producer}-{sequence}", "producer": key.producer,
         "namespace": namespace, "recipient": recipient, "account_scope": account_scope,
         "authority_generation": authority_generation, "sequence": sequence, "part": part, "parts": parts,
         "requested_since": requested_since, "completed_until": completed_until,
@@ -212,8 +221,10 @@ def _calendar(raw: Any) -> CalendarEvent | None:
     return CalendarEvent(str(raw["id"]), start, end, bool(raw["all_day"]), str(raw["kind"]))
 
 
-def _check_binding(header: Mapping[str, Any], *, namespace: str, recipient: str, account_scope: str,
+def _check_binding(header: Mapping[str, Any], *, connector: str, namespace: str, recipient: str, account_scope: str,
                    authority_generation: int) -> None:
+    if header["connector"] != connector:
+        raise NotAddressedHere("bundle is for another Connector")
     if header["namespace"] != namespace:
         raise NotAddressedHere("namespace mismatch: this importer does not accept that data class")
     if header["recipient"] != recipient:
@@ -239,7 +250,8 @@ def import_bundles(  # noqa: PLR0915 - validate multipart inputs before construc
     for path in sorted(directory.glob("bundle-*.json")) if directory.is_dir() else []:
         try:
             header, records, cancelled = _load(path, keys)
-            _check_binding(header, namespace=namespace, recipient=recipient, account_scope=account_scope,
+            _check_binding(header, connector=name, namespace=namespace, recipient=recipient,
+            account_scope=account_scope,
                            authority_generation=authority_generation)
         except NotAddressedHere as exc:
             skipped.append((path.name, str(exc)))
@@ -261,8 +273,9 @@ def import_bundles(  # noqa: PLR0915 - validate multipart inputs before construc
     for (producer, sequence), got in sorted(parts.items()):
         by_producer.setdefault(producer, []).append(sequence)
         sample = next(iter(got.values()))[1]
-        ack = directory / _ack_name(producer, account_scope, sequence)
-        if _valid_ack(ack, keys.get(producer), namespace, recipient, authority_generation):
+        ack = directory / _ack_name(producer, account_scope, sequence, connector=name, namespace=namespace,
+                                    recipient=recipient, generation=authority_generation)
+        if _valid_ack(ack, keys.get(producer), namespace, recipient, authority_generation, name, account_scope):
             continue                                         # idempotent: already imported
         total = int(sample["parts"])
         if set(got) != set(range(1, total + 1)):
@@ -284,14 +297,15 @@ def import_bundles(  # noqa: PLR0915 - validate multipart inputs before construc
             cancelled_out.extend(cancellations)
         newest = max(newest, completed) if newest else completed
         imported.append(f"{producer}#{sequence}")
-        ack_data = {"producer": producer, "scope": account_scope, "sequence": sequence,
+        ack_data = {"producer": producer, "connector": name, "scope": account_scope, "sequence": sequence,
                     "namespace": namespace, "recipient": recipient, "authority_generation": authority_generation,
                     "completed_until": completed, "imported_at": now.isoformat()}
         acknowledgments.append((ack, json.dumps({"data": ack_data,
             "mac": keys[producer].sign(ack_data, "ack")}).encode()))
-    blind.extend(_sequence_gaps(directory, by_producer, account_scope))
+    blind.extend(_sequence_gaps(directory, by_producer, account_scope, keys, namespace, recipient,
+    authority_generation, name))
 
-    latest = newest or _latest_ack(directory, account_scope, keys, namespace, recipient, authority_generation)
+    latest = newest or _latest_ack(directory, account_scope, keys, namespace, recipient, authority_generation, name)
     if latest is None:
         blind.append("no bundle has ever been imported for this scope")
         status = CoverageStatus.UNAVAILABLE
@@ -309,7 +323,9 @@ def import_bundles(  # noqa: PLR0915 - validate multipart inputs before construc
     return ImportResult(fetch, imported, rejected, skipped, latest)
 
 
-def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], account_scope: str) -> list[str]:
+def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], account_scope: str,
+                   keys: Mapping[str, ProducerKey], namespace: str, recipient: str,
+                   generation: int, connector: str) -> list[str]:
     """A missing sequence number means an export never arrived; say so instead of importing around it."""
     notes: list[str] = []
     for producer, seqs in by_producer.items():
@@ -319,7 +335,7 @@ def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], ac
                 data = json.loads(path.read_text())["data"]
             except (ValueError, OSError, KeyError, TypeError):
                 continue
-            if data.get("producer") == producer and data.get("scope") == account_scope:
+            if _valid_ack(path, keys.get(producer), namespace, recipient, generation, connector, account_scope):
                 acked.append(int(data["sequence"]))
         everything = sorted(set(seqs) | set(acked))
         missing: list[int] = []
@@ -334,7 +350,8 @@ def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], ac
     return notes
 
 
-def _valid_ack(path: Path, key: ProducerKey | None, namespace: str, recipient: str, generation: int) -> bool:
+def _valid_ack(path: Path, key: ProducerKey | None, namespace: str, recipient: str, generation: int,
+               connector: str, scope: str) -> bool:
     if key is None or not path.is_file():
         return False
     try:
@@ -342,15 +359,16 @@ def _valid_ack(path: Path, key: ProducerKey | None, namespace: str, recipient: s
         data = wrapper["data"]
         return bool(data["namespace"] == namespace and data["recipient"] == recipient
             and data["authority_generation"] == generation
-            and data["producer"] == key.producer
-            and _ack_name(data["producer"], data["scope"], int(data["sequence"])) == path.name
+            and data["producer"] == key.producer and data["connector"] == connector and data["scope"] == scope
+            and _ack_name(data["producer"], data["scope"], int(data["sequence"]), connector=connector,
+                          namespace=namespace, recipient=recipient, generation=generation) == path.name
             and hmac.compare_digest(wrapper["mac"], key.sign(data, "ack")))
     except (ValueError, KeyError, TypeError, OSError):
         return False
 
 
 def _latest_ack(directory: Path, account_scope: str, keys: Mapping[str, ProducerKey],
-                namespace: str, recipient: str, generation: int) -> str | None:
+                namespace: str, recipient: str, generation: int, connector: str) -> str | None:
     stamps = []
     for path in directory.glob("ack-*.json") if directory.is_dir() else []:
         try:
@@ -358,7 +376,8 @@ def _latest_ack(directory: Path, account_scope: str, keys: Mapping[str, Producer
         except (ValueError, OSError, KeyError, TypeError):
             continue
         if data.get("scope") == account_scope and _valid_ack(path, keys.get(data.get("producer")),
-                                                             namespace, recipient, generation):
+                                                             namespace, recipient, generation, connector,
+                                                             account_scope):
             stamps.append(str(data["completed_until"]))
     return max(stamps) if stamps else None
 
@@ -393,11 +412,23 @@ def load_producer_key(producer: str, backend: Any) -> ProducerKey | None:
         return None
 
 
-def next_sequence(directory: Path, producer: str) -> int:
-    safe = "".join(c for c in producer if c.isalnum() or c in "-_")
-    found = [int(p.name.split("-")[-2]) for p in Path(directory).glob(f"bundle-{safe}-*-p*.json")] \
-        if Path(directory).is_dir() else []
-    return max(found, default=0) + 1
+def next_sequence(directory: Path, producer: str, *, connector: str | None = None,
+                  account_scope: str | None = None, namespace: str = "personal", recipient: str | None = None,
+                  authority_generation: int = 1) -> int:
+    sequences = []
+    for path in directory.glob("bundle-*.json"):
+        try:
+            header = json.loads(path.read_text())["header"]
+            if header['producer'] != producer:
+                continue
+            if connector is not None and any(header.get(k) != v for k, v in {
+                'connector': connector, 'account_scope': account_scope, 'namespace': namespace,
+                'recipient': recipient, 'authority_generation': authority_generation}.items()):
+                continue
+            sequences.append(int(header['sequence']))
+        except (ValueError, KeyError, TypeError, OSError):
+            continue
+    return max(sequences, default=0) + 1
 
 
 def export_fetch(directory: Path, key: ProducerKey, fetch: ConnectorFetch, *, namespace: str, recipient: str,
@@ -407,6 +438,9 @@ def export_fetch(directory: Path, key: ProducerKey, fetch: ConnectorFetch, *, na
     if fetch.status is not CoverageStatus.COMPLETE:
         raise BundleError(f"fetch is {fetch.status.value}; an incomplete export is not published")
     return export_bundle(directory, key, namespace=namespace, recipient=recipient, account_scope=fetch.account_scope,
-                         authority_generation=authority_generation, sequence=next_sequence(directory, key.producer),
+                         authority_generation=authority_generation, sequence=next_sequence(directory,
+                         key.producer, connector=fetch.connector,
+                             account_scope=fetch.account_scope, namespace=namespace, recipient=recipient,
+                             authority_generation=authority_generation),
                          records=fetch.records, requested_since=since, completed_until=now.isoformat(), created_at=now,
-                         cancelled=fetch.cancelled)
+                         cancelled=fetch.cancelled, connector=fetch.connector)

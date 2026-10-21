@@ -70,6 +70,11 @@ def encrypted_snapshot(path: Path, ledger: Path, cipher: EnvelopeCipher, *,
     if blobs is not None:
         for blob in sorted(blobs.glob("evd_*.blob")):
             files[f"blobs/{blob.name}"] = base64.b64encode(blob.read_bytes()).decode()
+    artifacts = {}
+    for directory, pattern in (("documents", "doc_*.ae1"), ("inbox", "cap_*.ae1"), ("replay", "fbk_*.ae1")):
+        for artifact in sorted((ledger.parent / directory).glob(pattern)):
+            artifacts[artifact] = artifact.read_bytes()
+            files[f"{directory}/{artifact.name}"] = base64.b64encode(artifacts[artifact]).decode()
     for name, content in (curated or {}).items():
         if "/" in name or "\\" in name or name.startswith("."):
             raise LedgerError("curated snapshot names must be plain file names")
@@ -78,6 +83,7 @@ def encrypted_snapshot(path: Path, ledger: Path, cipher: EnvelopeCipher, *,
                          sort_keys=True).encode()
     envelope, _ = cipher.encrypt(payload, aad=b"artha.snapshot.v1")
     if (database_bytes(ledger) != ledger_image or not guard()
+            or any(not p.exists() or p.read_bytes() != content for p, content in artifacts.items())
             or (action_image is not None and action_db is not None and database_bytes(action_db) != action_image)):
         raise LedgerError("snapshot inputs changed during capture; retry from a quiescent generation")
     # Verify before publishing the immutable snapshot.
@@ -124,8 +130,14 @@ def restore_encrypted_snapshot(path: Path, destination: Path, cipher: EnvelopeCi
                 "(connector=? AND account_scope=? AND upstream_id=?) OR content_hmac=?",
                 (entry["connector"], entry["account_scope"], entry["upstream_id"], entry["content_hmac"])).fetchall()
             for sid, ref in sigs:
+                for feedback in db.execute("SELECT feedback_id FROM replay_cases WHERE signal_id=?", (sid,)):
+                    files.pop(f"replay/{feedback[0]}.ae1", None)
                 purge_signal(db, sid)
                 files.pop(f"blobs/{ref}.blob", None)
+            if entry['connector'] == 'documents':
+                files.pop(f"documents/{entry['upstream_id'].split(':', 1)[0]}.ae1", None)
+            if entry['connector'] == 'capture':
+                files.pop(f"inbox/{entry['upstream_id']}.ae1", None)
         db.execute("DELETE FROM briefing_drafts")
         db.execute("DELETE FROM alerts WHERE NOT EXISTS (SELECT 1 FROM alert_facts af "
                    "WHERE af.alert_id=alerts.alert_id)")
