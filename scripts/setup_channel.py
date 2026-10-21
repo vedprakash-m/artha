@@ -427,6 +427,10 @@ Examples:
                         help="Run health checks on all configured channels")
     args = parser.parse_args()
 
+    if args.channel:
+        print("Channel setup is retired. Use the local CLI or assistant for user-started Catch-up.")
+        return 1
+
     if args.health:
         return run_health_check()
 

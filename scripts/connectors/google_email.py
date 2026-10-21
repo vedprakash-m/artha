@@ -93,7 +93,12 @@ def _parse_message(msg: dict) -> dict:
         date_iso = dt.astimezone(timezone.utc).isoformat()
     except Exception:
         pass
-    body = _trim_body(_extract_body(payload))
+    body = _extract_body(payload)
+    def attachments(part):
+        found = [part.get("filename")] if part.get("filename") else []
+        for child in part.get("parts", []):
+            found.extend(attachments(child))
+        return found
     return {
         "id": msg["id"],
         "thread_id": msg.get("threadId", ""),
@@ -105,6 +110,8 @@ def _parse_message(msg: dict) -> dict:
         "body": body,
         "snippet": msg.get("snippet", ""),
         "labels": msg.get("labelIds", []),
+        "attachments": attachments(payload),
+        "version": str(msg.get("historyId", "")),
     }
 
 
@@ -133,14 +140,19 @@ def fetch(
     source_tag: str = "",
     before: str = "",
     label_filter: str = "",
+    query: str = "",
     **kwargs: Any,
 ) -> Iterator[Dict[str, Any]]:
     """Yield Gmail messages since *since* timestamp."""
     from google_auth import build_service  # type: ignore[import]
     from lib.retry import with_retry  # type: ignore[import]
+    from lib.connector_coverage import report_scope
 
     service = build_service("gmail", "v1")
+    extra_query = query
     query = _since_to_query(since)
+    if extra_query:
+        query += f" ({extra_query})"
     if before:
         try:
             dt = datetime.fromisoformat(before)
@@ -171,6 +183,8 @@ def fetch(
         if not page_token:
             break
 
+    failures = 0
+    fetched = 0
     for ref in all_refs[:max_results]:
         try:
             msg = with_retry(
@@ -183,8 +197,15 @@ def fetch(
             if source_tag:
                 record["source"] = source_tag
             yield record
+            fetched += 1
         except Exception as exc:
+            failures += 1
             print(f"[google_email] skipping {ref.get('id', '?')}: {exc}", file=sys.stderr)
+    if failures or page_token:
+        report_scope("mailbox", "truncated", records=fetched,
+                     reason=f"{failures} messages failed; remaining pages={bool(page_token)}")
+    else:
+        report_scope("mailbox", "complete", records=fetched)
 
 
 def health_check(auth_context: Dict[str, Any]) -> bool:

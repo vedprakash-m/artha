@@ -71,7 +71,7 @@ skills:
   # ── New skills added 2026-03-15 (U-9.1 to U-9.5) ─────────────────────
 
   relationship_pulse:
-    enabled: true
+    enabled: false  # re-artha D-14: inferred relationship profiles retired
     priority: P1
     cadence: every_run
     class: operational
@@ -101,7 +101,7 @@ skills:
     description: "Extract bill due dates from occasions.md. Alert 7/3/1 days before due, flag overdue."
 
   whatsapp_last_contact:
-    enabled: true
+    enabled: false  # re-artha D-14: inferred contact profiles and birthdays retired
     priority: P1
     cadence: every_run
     class: operational

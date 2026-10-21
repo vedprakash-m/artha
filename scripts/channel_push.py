@@ -746,6 +746,12 @@ def push_pending_actions(dry_run: bool = False) -> int:
 
 
 def run_push(dry_run: bool = False) -> int:
+    """Retired entry point: no credentials, personal data, or adapters are loaded."""
+    log.info("Channel push is retired; Catch-up is user-started and presented locally.")
+    return 0
+
+
+def _legacy_run_push(dry_run: bool = False) -> int:
     """Main push orchestrator. Returns 0 on success, 1 on config/fatal error.
 
     Logs warnings for individual channel/recipient failures but always

@@ -317,7 +317,14 @@ async def run_listener(
     config: dict[str, Any],
     dry_run: bool = False,
 ) -> None:
-    """Main asyncio loop. Polls all channels concurrently."""
+    """Reject retired listeners before credentials or adapters are loaded."""
+    raise RuntimeError("Channel listeners are retired. Start Catch-up in the local CLI or assistant.")
+
+
+async def _legacy_run_listener(
+    channel_names: list[str], config: dict[str, Any], dry_run: bool = False,
+) -> None:
+    """Historical implementation retained for reference; no entry point dispatches here."""
     from channels.registry import create_adapter_from_config
 
     # Initialize shared state

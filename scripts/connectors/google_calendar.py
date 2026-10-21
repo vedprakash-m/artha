@@ -46,7 +46,8 @@ def _parse_event(event: dict, calendar_name: str = "primary") -> dict:
         "end": end_dt,
         "all_day": all_day,
         "location": event.get("location", ""),
-        "description": (event.get("description") or "")[:500],
+        "description": event.get("description") or "",
+        "version": event.get("etag") or event.get("updated"),
         "attendees": attendees,
         "status": event.get("status", "confirmed"),
         "visibility": event.get("visibility", "default"),
@@ -144,6 +145,7 @@ def fetch(
                         timeMax=time_max,
                         maxResults=max_results,
                         singleEvents=True,
+                        showDeleted=True,
                         orderBy="startTime",
                         pageToken=t,
                     ).execute(),
@@ -158,6 +160,7 @@ def fetch(
             pages += 1
             for evt in response.get("items", []):
                 if evt.get("status") == "cancelled":
+                    all_events.append({"id": evt["id"], "status": "cancelled", "source": source_tag or "google_calendar"})
                     continue
                 record = _parse_event(evt, cal_name)
                 if source_tag:

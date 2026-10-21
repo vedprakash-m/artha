@@ -299,6 +299,8 @@ def get_delta(skill_name: str, current_data: Any, prev_cache: Dict[str, Any], co
 def run_skill(skill_name: str, artha_dir: Path) -> Dict[str, Any]:
     """Dynamically load and execute a skill."""
     skill_name = _SKILL_ALIASES.get(skill_name, skill_name)
+    if skill_name in {"relationship_pulse", "whatsapp_last_contact"}:
+        return {"status": "retired", "reason": "Inferred relationship profiles are retired; authored occasions remain."}
     if skill_name not in _ALLOWED_SKILLS:
         # Check for user-contributed plugin
         plugin_path = Path.home() / ".artha-plugins" / "skills" / f"{skill_name}.py"

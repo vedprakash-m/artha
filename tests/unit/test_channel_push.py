@@ -278,8 +278,9 @@ class TestPiiRedactionCalled:
             with patch.dict("sys.modules", {"pii_guard": MagicMock(filter_text=_fake_filter)}):
                 cp.run_push()
 
-        # PII guard must have been called at least once per recipient
-        assert len(pii_calls) >= 1
+        # Retirement holds even when an old config still enables push.
+        assert pii_calls == []
+        mock_adapter.send_message.assert_not_called()
 
 
 # ── push_pending_actions() ──────────────────────────────────────────────────
