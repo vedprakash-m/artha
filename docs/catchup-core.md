@@ -241,3 +241,14 @@ pricing:
   runs_per_month: 30        # optional; the cadence the projection assumes
 ```
 Assistant-side usage is not visible to Artha, so this is an estimate and says so; without pricing it reports sizes only.
+
+## Read-only MCP server and traces
+* **`cli.py mcp`** is a stdio MCP server your own assistant launches on demand (a short-lived process, never a listener).
+  Tools: `beliefs`, `why`, `items`, `goals`, `health`, `activity`, `history`, plus `propose_correction` and
+  `propose_feedback`, which only return an inert draft. There is no tool that writes, sends, approves, forgets, exports,
+  captures, pauses or resolves. The viewer is fixed by your configuration (no `actor` argument), arguments are validated
+  strictly, results are data-only (no links, images or markup) and size-capped, and errors name a class, never a path.
+  Register it in your assistant's MCP settings as the command `python3 scripts/catchup_core/cli.py mcp`.
+* **Traces.** Each run also appends one OpenTelemetry-shaped trace (OTLP/JSON `resourceSpans`; a `catchup` span and a
+  `stage.*` child per stage; schema `artha.trace.v1`) to `~/.artha-local/catchup_core/traces/YYYY-MM.jsonl`.
+  Attributes are status, mode and counts only, so a trace never contains prompts, answers, names or evidence.

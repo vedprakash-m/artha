@@ -106,12 +106,14 @@
       "capability": "RA-09",
       "modules": [
         "scripts/catchup_core/policy.py",
+        "scripts/catchup_core/mcp.py",
         "scripts/tool_guard.py"
       ],
       "scope": "pilot",
       "tests": [
         "tests/unit/test_tool_guard.py",
-        "tests/catchup_core/test_release_regressions.py"
+        "tests/catchup_core/test_release_regressions.py",
+        "tests/catchup_core/test_mcp.py"
       ]
     },
     "RA-10.AC1": {
@@ -302,7 +304,7 @@
     }
   },
   "contract_version": "0.1.0",
-  "implementation_sha256": "1dee3b666ad718b69a1bf77e99fceb4cf09d7458185287bb39ff9718adf90df3",
+  "implementation_sha256": "2f540fcf594d57c00144a93841c08766f72829854936194b5ffe0315225359a9",
   "spec": "specs/re-artha.md",
   "spec_sha256": "704e0e27a39ba048f118cf0158d5c9b8c39155e1806e7f676135a966b014a88a",
   "spec_version": "0.8.0"
