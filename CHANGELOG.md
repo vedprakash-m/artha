@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added / Changed — re-artha pilot core (`scripts/catchup_core/`), 2026-10-11 to 2026-10-21
+
+Work packages WP-00 to WP-13 of `specs/re-artha.md` v0.8.0 (the spec is local-only and **not archived**: work continues).
+The incumbent Catch-up stays authoritative; the new core runs in shadow until a signed release block exists.
+
+| Area | What changed |
+|---|---|
+| Delivery foundation (WP-00) | Hermetic test bootstrap and isolated runner, trustworthy `make lint`/`ruff`/`import-check`, ratcheted state-write lint, one privacy-scan policy for pre-commit, pre-push, `make` and CI (gitleaks + owner/household denylist), coverage floors, strict mypy |
+| Containment (WP-01..03) | Calendar record contract and truthful connector coverage, stale-on-open banner, plaintext pipeline output removed from the sync root, memory extraction off by default in code, Open Items lint, fail-closed action bridge, retired job definitions |
+| Core (WP-04..08) | Typed Catch-up state machine, Domain packs (Kids/School pilot), encrypted ledger and migrations 0001-0009, in-memory `age` vault, reconciliation by per-predicate authority, deterministic triage and ranking, cited Briefing composer, session lock, backups and restore, forgetting with sealed deletion checkpoint |
+| Actions (WP-09) | Compare-and-set claims, payload-bound approval, `unknown` outcomes with provider reconciliation, deterministic policy guard, isolated action child process with provider-only egress |
+| Retirements (D-03) | Telegram/Slack/Discord channel code, always-on engine, nudge daemon and background job definitions removed |
+| Surfaces | `catchup`, `beliefs`, `why`, `forget`, `feedback`, `correct`, `health`, `history`, `items`, `goals`, `capture`, `export`, `restore`, `activity`, `pause`, `reconcile`, `resolve`, `bundle-enroll`, `bundle-export`, read-only `mcp` (stdio) |
+| Evidence and records | Ingest bundles (signed, encrypted, immutable), text-PDF ingestion, Goal plans, standing responsibilities, household coordination, replay cases, model-request disclosure log, run metrics, cost estimate, OTLP-shaped traces |
+| Harness | PreToolUse guard, Stop-hook omission record, in-memory `vault.py write`, generated capability and traceability registers with drift check |
+| Performance | Synthetic benchmark (`make bench`); quadratic reconcile fixed (8,000 signals: 5.6 s cold, linear scaling) |
+
+**Modified/added:** `scripts/catchup_core/**`, `scripts/lib/{action_policy,action_process}.py`, `scripts/{action_executor,action_queue,tool_guard,session_stop,stale_banner,vault}.py`, `scripts/actions/reminder_create.py`, `scripts/preflight*`, `config/{Artha.core,commands,glossary}.md`, `config/workflow/*`, `docs/*`, `tools/*`, `Makefile`, `.github/workflows/ci.yml`, `.gitignore` (secret-file patterns added in the finalization audit).
+**Tests:** 5,091 isolated tests pass (594 in the core suite, 96.7% line / 91.1% branch coverage, 96.5% on hook and policy modules); strict mypy and ruff clean; privacy scan clean.
+**Not done (recorded in the spec log):** consented real-data shadow run, labeled corpus and release scorecard (cutover stays off), owner UAT, measured latency/cost on the real workload, Windows validation, OCR/vision extraction, live action-database status migration, incumbent in-memory vault.
+
 ### Hardened — AR-9 External Agent Composition (Safety Audit)
 - `scripts/lib/prompt_composer.py`: C-1 template injection defense — user query braces escaped before `str.format()`; 8,000 char hard cap with truncation indicator
 - `scripts/lib/knowledge_extractor.py`: C-2 atomic cache writes — `tempfile.mkstemp()` + `os.replace()` prevents partial-write corruption on crash or power loss
