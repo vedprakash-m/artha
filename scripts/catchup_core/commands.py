@@ -124,13 +124,15 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             return {"goals": authored, "observations": lines}
         return {args.command: authored}
     if args.command == "activity":
+        paused = (workspace / "config" / "actions.paused").exists()
         path = led._path.parent.parent / "actions.db"
         if not path.is_file():
-            return {"activity": []}
+            return {"activity": [], "actions_paused": paused}
+        from catchup_core.action_mapping import describe  # noqa: PLC0415
         with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
-            return {"activity": [dict(r) for r in db.execute(
-                "SELECT id,action_type,domain,status,created_at FROM actions ORDER BY created_at DESC LIMIT 50")]}
+            rows = db.execute("SELECT * FROM actions ORDER BY created_at DESC LIMIT 50").fetchall()
+        return {"activity": [describe(dict(r)) for r in rows], "actions_paused": paused}
     if args.command in ("reconcile", "resolve"):
         return _action_resolution(args, viewer, workspace)
     if args.command in ("pause", "resume"):

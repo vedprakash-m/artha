@@ -97,6 +97,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
     run.add_argument("--shadow", action="store_true", help="comparison run: never publishes")
     run.add_argument("--id", default=None, help="Catch-up ID / idempotency key (default: new)")
     run.add_argument("--format", choices=[f.value for f in BriefingFormat], default="standard")
+    run.add_argument("--everything", action="store_true",
+                     help="show everything: the deep format with every Open Item and State File listed")
     run.add_argument("--responses", default=None, metavar="PATH|-",
                      help="answers to a paused run's extraction requests (JSON; '-' reads stdin)")
     run.add_argument("--domain", action="append", default=None, dest="domains",
@@ -195,7 +197,7 @@ def _catchup(args: argparse.Namespace, deps_factory: DepsFactory,
         request = CatchupRequest(
             catchup_id=args.id or f"cu_{uuid.uuid4().hex[:12]}", actor=_actor(args, deps_factory), channel=args.channel,
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
-            briefing_format=BriefingFormat(args.format), host=args.host,
+            briefing_format=BriefingFormat.DEEP if args.everything else BriefingFormat(args.format), host=args.host,
             pilot_domains=tuple(args.domains) if args.domains else ())
     except ContractError as exc:
         print(f"usage error: {exc}", file=stderr)

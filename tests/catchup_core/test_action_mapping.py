@@ -53,3 +53,17 @@ def test_audit_database_is_read_only_and_counts(tmp_path):
     assert db.read_bytes() == before
     with pytest.raises(sqlite3.OperationalError):
         audit_database(tmp_path / "missing.db")
+
+
+def test_activity_lines_use_the_spec_vocabulary_and_never_guess():
+    from catchup_core.action_mapping import describe
+    pending = describe({"id": "a", "action_type": "reminder_create", "domain": "home", "status": "pending",
+                        "reversible": 1, "undo_window_sec": 30, "created_at": "t"})
+    assert (pending["lifecycle"], pending["group"]) == ("PROPOSED", "pending")
+    assert pending["reversibility"] == "reversible (undo window 30s)"
+    assert describe({"status": "executing"})["group"] == "executing"           # in flight is not "lost"
+    assert describe({"status": "unknown"})["group"] == "unknown"
+    assert describe({"status": "succeeded", "reversible": 1})["reversibility"] == "reversible"
+    odd = describe({"status": "from-the-future"})
+    assert (odd["lifecycle"], odd["group"], odd["reversibility"]) == ("UNKNOWN", "unknown", "irreversible")
+    assert {describe({"status": s})["group"] for s in ("failed", "rejected", "expired", "cancelled")} == {"completed"}

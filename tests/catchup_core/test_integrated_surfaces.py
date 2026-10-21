@@ -106,11 +106,12 @@ def test_capture_is_encrypted_and_fetched_during_catchup(app):
 
 def test_pause_activity_export_and_forget(app):
     root, deps, _, _ = app
-    assert commands.execute(args("activity"), deps, root) == {"activity": []}
+    assert commands.execute(args("activity"), deps, root) == {"activity": [], "actions_paused": False}
     with sqlite3.connect(deps.ledger._path.parent.parent / "actions.db") as db:
         db.execute("CREATE TABLE actions(id,action_type,domain,status,created_at)")
         db.execute("INSERT INTO actions VALUES('a','reminder_create','home','unknown','2026-10-12')")
-    assert commands.execute(args("activity"), deps, root)["activity"][0]["status"] == "unknown"
+    first = commands.execute(args("activity"), deps, root)["activity"][0]
+    assert first["status"] == "unknown" and first["lifecycle"] == "UNKNOWN" and first["group"] == "unknown"
     assert commands.execute(args("pause"), deps, root)["actions_paused"]
     assert not commands.execute(args("resume"), deps, root)["actions_paused"]
     export = root / "export.ae1"
