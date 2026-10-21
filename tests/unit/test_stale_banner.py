@@ -94,3 +94,35 @@ def test_shadow_or_unreadable_core_health_never_renews_freshness(tmp_path):
     assert sb.read_core_catch_up(tmp_path / "missing.json") is None
     assert sb.latest(None, None) is None
     assert sb.latest("garbage", None) == "garbage"
+
+
+def test_main_combines_health_check_core_run_and_stop_omissions(tmp_path, capsys):
+    import json
+    hc = tmp_path / "health-check.md"
+    hc.write_text('---\nlast_catch_up: "2026-10-11T15:50:00Z"\n---\n')
+    cov = tmp_path / "connector_coverage.json"
+    cov.write_text(json.dumps({"connectors": {"gmail": {"last_success_at": "2026-10-01T00:00:00Z"},
+                                              "calendar": {"failing_since": "2026-10-02T00:00:00Z"}}}))
+    core = tmp_path / "core.json"
+    core.write_text(json.dumps({"last_catch_up": "2026-10-20T10:00:00+00:00", "mode": "authoritative"}))
+    (tmp_path / "stop-hook-failures.log").write_text("2026-10-19T00:00:00Z health record missing\n")
+    assert sb.main(["--health-check", str(hc), "--coverage", str(cov), "--core-health", str(core),
+                    "--now", "2026-10-20T12:00:00Z"]) == 0
+    out = capsys.readouterr().out
+    assert "Last Catch-up: 2h ago" in out or "2h ago" in out
+    assert "gmail 19 days ago" in out and "calendar never fetched successfully" in out
+    assert "Previous session ended with an omission: 2026-10-19T00:00:00Z health record missing" in out
+
+
+def test_main_survives_missing_files_and_reports_the_coverage_line(tmp_path, capsys):
+    assert sb.main(["--health-check", str(tmp_path / "none.md"), "--coverage", str(tmp_path / "none.json"),
+                    "--core-health", str(tmp_path / "none2.json"), "--now", "2026-10-20T12:00:00Z"]) == 0
+    assert "no completed Catch-up on record" in capsys.readouterr().out
+    assert sb.main(["--coverage", str(tmp_path / "none.json"), "--coverage-line", "--now", "2026-10-20T12:00:00Z"]) == 0
+    assert capsys.readouterr().out.strip().startswith("Coverage")
+
+
+def test_age_wording_and_unreadable_timestamps():
+    assert sb._age(0.2) == "under 1h ago" and sb._age(5) == "5h ago" and sb._age(100) == "4 days ago"
+    text = sb.build_banner(now="2026-10-20T12:00:00Z", last_catch_up="garbage", entries={"x": {"last_success_at": "bad"}})
+    assert "unreadable timestamp" in text

@@ -120,6 +120,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq age
       - name: Coverage floor (>= 90% line and branch)
         run: make coverage PYTHON=python
+      - name: Hook and policy modules coverage (>= 90% line and branch)
+        run: make coverage-harness PYTHON=python
       - name: Strict mypy
         run: make mypy PYTHON=python
 

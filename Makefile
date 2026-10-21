@@ -86,6 +86,13 @@ coverage: ## Line+branch coverage floor on the new core package (fails below COV
 		--cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN)
 	@$(PYTHON) $(MAKE_DIR)tools/check_core_coverage.py coverage.xml --minimum=$(COV_MIN)
 
+HARNESS_MODULES = tool_guard session_stop stale_banner lib.action_policy
+HARNESS_TESTS = tests/unit/test_tool_guard.py tests/unit/test_session_stop.py tests/unit/test_stale_banner.py tests/unit/test_action_policy.py
+
+coverage-harness: ## Line+branch floor on the hook and policy modules (they are controls, not conveniences)
+	@$(PYTHON) tools/run_tests_isolated.py $(HARNESS_TESTS) -q -p no:cacheprovider \
+		$(foreach m,$(HARNESS_MODULES),--cov=$(m)) --cov-branch --cov-fail-under=$(COV_MIN) --cov-report=term-missing
+
 diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml from `make coverage`)
 	@$(PYTHON) -m diff_cover.diff_cover_tool coverage.xml --compare-branch=origin/main \
 		--include='scripts/catchup_core/*' --fail-under=$(COV_MIN)
@@ -93,7 +100,7 @@ diff-coverage: ## Changed-line coverage vs origin/main (requires coverage.xml fr
 mypy: ## Strict type check of the new core package
 	@$(PYTHON) -m mypy --explicit-package-bases $(CORE_PKG)
 
-check: lint ruff import-check lint-state-writes test coverage mypy pii-scan validate ## Full CI check
+check: lint ruff import-check lint-state-writes test coverage coverage-harness mypy pii-scan validate ## Full CI check
 	@echo "✓ All checks passed"
 
 install-fonts: ## Download Space Grotesk + DM Sans woff2 fonts for CV PDF generation

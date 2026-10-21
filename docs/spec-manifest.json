@@ -61,7 +61,8 @@
       "tests": [
         "tests/catchup_core/test_actions.py",
         "tests/catchup_core/test_action_mapping.py",
-        "tests/unit/test_action_hardening.py"
+        "tests/unit/test_action_hardening.py",
+        "tests/unit/test_reminder_reconcile.py"
       ]
     },
     "RA-06.AC1": {
@@ -92,11 +93,13 @@
       "capability": "RA-08",
       "modules": [
         "scripts/catchup_core/adapters.py",
+        "scripts/catchup_core/bundles.py",
         "scripts/schemas/connector_record.py"
       ],
       "scope": "pilot",
       "tests": [
-        "tests/catchup_core/test_adapters.py"
+        "tests/catchup_core/test_adapters.py",
+        "tests/catchup_core/test_bundles.py"
       ]
     },
     "RA-09.AC1": {
@@ -264,11 +267,13 @@
       "capability": "RA-24",
       "modules": [
         "scripts/catchup_core/commands.py",
-        "scripts/action_executor.py"
+        "scripts/action_executor.py",
+        "scripts/lib/action_policy.py"
       ],
       "scope": "reduced",
       "tests": [
-        "tests/unit/test_action_executor.py"
+        "tests/unit/test_action_executor.py",
+        "tests/unit/test_action_policy.py"
       ]
     },
     "RA-25.AC1": {
@@ -280,6 +285,6 @@
   },
   "contract_version": "0.1.0",
   "spec": "specs/re-artha.md",
-  "spec_sha256": "75bc3b146ac94fc130a867bcc37971b5ddf0888d5a5d76919595634d070eb90d",
+  "spec_sha256": "0620f8810e34e69b6a63fba948bc6fafa94cf755da2f41860e4976b7507c9412",
   "spec_version": "0.8.0"
 }

@@ -89,3 +89,45 @@ a Catch-up ID resumes at the first uncommitted stage.
 * `SessionStart` -> `stale_banner.py` (age of the last Catch-up, per-source fetch age, omissions from the last Stop) and `vault_hook.py session-start`.
 * `Stop` -> `session_stop.py`: archives once, checks the health record, records omissions for the next open. Never blocks.
 Hooks are defence in depth; the core's own checks are the controls.
+
+## Second machine: ingest bundles (re-artha 6.10)
+A Connector that lives on another machine (for example Work or school mail on Windows) reaches the authority host only
+through a hand-run, signed, encrypted, immutable bundle in the sync folder. There is no listener and no replication.
+1. On the authority host: `cli.py bundle-enroll <producer>` prints a secret once. On the other machine:
+   `cli.py bundle-enroll <producer> --secret <that value>`. The secret lives only in each OS credential store.
+2. Config, on both machines (`config/catchup_core.yaml`):
+   ```yaml
+   bundles:
+     school_email:              # a source name from `sources:`; the authority host imports instead of fetching live
+       producer: win-host
+       dir: ~/OneDrive/Artha-ingest
+       recipient: mac           # authority host name
+       account_scope: personal
+       namespace: personal      # a Work bundle is rejected by the personal importer
+       authority_generation: 1  # bump on operator-led promotion; older bundles are then refused
+       max_age_hours: 48
+   ```
+3. On the other machine, whenever you choose: `cli.py bundle-export school_email`. Only a COMPLETE fetch is published.
+4. The next Catch-up on the authority host imports it. A forged file, an unenrolled producer, a wrong recipient, scope or
+   generation, a missing part, a sequence gap or data older than `max_age_hours` is quarantined or shown as an
+   incomplete scope with its age; it never reads as "nothing to report".
+
+## Action policy guard (RA-24)
+`scripts/lib/action_policy.py` runs inside `ActionExecutor.approve()` after the friction floor and before any state
+change. It refuses: hand-off-only types (money, credentials, legal, permanent deletion; extend with
+`live_trial.handoff_only` in `config/actions.yaml`), expired or unreadable-expiry proposals, standing/automatic
+approvals (they prepare, a person executes), and sensitive outbound content without exactly one named recipient.
+Executor sub-process isolation with a network allowlist is still open (Stage 6).
+
+## Say it your way
+`brief everything` / "show everything" runs the comparison with `--format deep`: every Open Item and State File listed.
+
+## Uncertain actions
+An action whose outcome is not known (a timeout or lost response after dispatch) is `unknown`, blocks duplicates, and is
+never retried blindly. `cli.py reconcile <action_id>` asks the provider: for `reminder_create`, exactly one matching task
+created after the approval closes it as succeeded; no match, several matches or a failed lookup keep it `unknown`
+(absence is not proof). `cli.py resolve <action_id> succeeded|failed` records a person's decision (human only; `failed`
+releases the duplicate guard). Both are audited.
+
+## Channels are gone
+The Telegram, Slack and Discord code, the always-on engine and the nudge daemon were removed (see `docs/channels.md`).

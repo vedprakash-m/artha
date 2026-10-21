@@ -51,3 +51,17 @@ def test_archive_failure_and_leftover_draft_are_both_recorded(tmp_path):
 def test_main_never_raises(monkeypatch):
     monkeypatch.setattr(ss, "check", lambda: (_ for _ in ()).throw(RuntimeError("x")))
     assert ss.main() == 0
+
+
+def test_main_runs_the_real_check_and_never_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(ss, "ROOT", tmp_path)
+    monkeypatch.setattr(ss, "check", lambda: [])
+    assert ss.main() == 0
+
+
+def test_unreadable_health_timestamp_counts_as_not_updated(tmp_path):
+    root = tree(tmp_path, draft=True, last="not-a-date")
+    problems = ss.check(root, local=tmp_path / "L", now=NOW,
+                        archive=lambda: (root / "tmp" / "briefing_draft_claude.md").unlink())
+    assert problems == ["state/health-check.md was not updated by this Catch-up"]
+    assert ss.fallback_path(tmp_path).name == "stop-hook-failures.log"
