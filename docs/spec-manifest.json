@@ -284,13 +284,17 @@
     },
     "RA-25.AC1": {
       "capability": "RA-25",
-      "modules": [],
+      "modules": [
+        "scripts/catchup_core/plans.py"
+      ],
       "scope": "later",
-      "tests": []
+      "tests": [
+        "tests/catchup_core/test_plans.py"
+      ]
     }
   },
   "contract_version": "0.1.0",
-  "implementation_sha256": "07c1b2f8aa7ceec033aeb876b7d29fc0bd7ed59afbda85b24af1243b0b34a4d6",
+  "implementation_sha256": "912e8c9e95e0c7c3dc22a9329723ef1f6fb60b5cf6b0cf6ea479f3b176fa6e8f",
   "spec": "specs/re-artha.md",
   "spec_sha256": "704e0e27a39ba048f118cf0158d5c9b8c39155e1806e7f676135a966b014a88a",
   "spec_version": "0.8.0"

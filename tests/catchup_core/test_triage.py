@@ -197,3 +197,41 @@ def test_goal_relevance_is_a_tie_break_only():
     same_a, same_b = alert("a", Severity.P1, "finance"), alert("b", Severity.P1, "kids_school")
     assert _rank_key(same_b, {}, {"kids_school"}) < _rank_key(same_a, {}, {"kids_school"})          # tie: goal first
     assert _rank_key(same_a, {}, set()) < _rank_key(same_b, {}, set())                              # no goals: key order
+
+
+def test_stale_enum_fact_is_unknown_not_reassurance(env):
+    put(env, "accommodation_status", "approved", connector="school_email")
+    old = {"school_email": NOW - timedelta(hours=500), "calendar": NOW - timedelta(hours=1)}
+    result = run(env, freshness=old)
+    stale = [a for a in result.alerts if a.predicate == "accommodation_status"]
+    assert stale and stale[0].state == "unknown_stale" and "school_email last verified" in stale[0].uncertainty
+
+
+def test_per_signal_freshness_overrides_the_connector_default(env):
+    fid, sid = put(env, EXAM, "2026-10-20")
+    stale_connector = {"school_email": NOW - timedelta(hours=500), "calendar": NOW}
+    assert run(env, freshness=stale_connector).horizon[0].state == "unknown_stale"
+    refreshed = {**stale_connector, sid: NOW - timedelta(hours=1)}     # this exact evidence was re-verified
+    assert run(env, freshness=refreshed).horizon[0].state == "actionable"
+
+
+def test_resolved_and_snoozed_alerts_stay_quiet_until_the_condition_changes(env):
+    fid, _sid = put(env, EXAM, "2026-10-14")
+    key = f"kids_school:kid1:{EXAM}"
+    env.upsert_alert(key, domain="kids_school", primary_subject_id="kid1", severity="P1",
+                     deadline="2026-10-14", fact_ids=[fid])
+    assert run(env).alerts                                              # open: surfaces
+    with env.transaction() as db:
+        db.execute("UPDATE alerts SET status='resolved' WHERE obligation_key=?", (key,))
+    assert not run(env).alerts
+    with env.transaction() as db:
+        db.execute("UPDATE alerts SET status='snoozed', suppressed_until=? WHERE obligation_key=?",
+                   ((NOW + timedelta(days=2)).isoformat(), key))
+    assert not run(env).alerts
+    with env.transaction() as db:
+        db.execute("UPDATE alerts SET suppressed_until=? WHERE obligation_key=?",
+                   ((NOW - timedelta(days=1)).isoformat(), key))
+    assert run(env).alerts                                              # snooze expired: reopens
+    with env.transaction() as db:
+        db.execute("UPDATE alerts SET status='resolved', deadline='2026-10-01' WHERE obligation_key=?", (key,))
+    assert run(env).alerts                                              # the deadline changed: resolution no longer applies

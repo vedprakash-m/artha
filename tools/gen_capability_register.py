@@ -9,10 +9,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import json  # noqa: E402
 
-from catchup_core.capabilities import manifest, render_register  # noqa: E402
+from catchup_core.capabilities import manifest, render_register, render_traceability  # noqa: E402
 
 TARGET = ROOT / "docs" / "capability-register.md"
 MANIFEST = ROOT / "docs" / "spec-manifest.json"
+TRACE = ROOT / "docs" / "traceability-register.md"
 
 
 def main(argv: list[str]) -> int:
@@ -21,6 +22,7 @@ def main(argv: list[str]) -> int:
     current = manifest(ROOT, previous)
     if "--check" in argv:
         stale = not TARGET.exists() or TARGET.read_text(encoding="utf-8") != text
+        stale = stale or not TRACE.exists() or TRACE.read_text(encoding="utf-8") != render_traceability(ROOT)
         # The local-only spec digest is recorded but never compared: a CI checkout does not have the spec.
         stale = stale or {k: v for k, v in previous.items() if k != "spec_sha256"} != {
             k: v for k, v in current.items() if k != "spec_sha256"}
@@ -30,6 +32,7 @@ def main(argv: list[str]) -> int:
             return 1
         return 0
     TARGET.write_text(text, encoding="utf-8")
+    TRACE.write_text(render_traceability(ROOT), encoding="utf-8")
     MANIFEST.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
