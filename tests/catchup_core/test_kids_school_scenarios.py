@@ -32,7 +32,7 @@ def model_for(mapping):
                 i = message.index(quote)
                 items.append({"predicate": pred, "value": value, "subject_id": subject, "quote": quote,
                               "span": [i, i + len(quote)]})
-        return json.dumps({"candidates": items})
+        return json.dumps({"complete": True, "candidates": items})
     return run
 
 

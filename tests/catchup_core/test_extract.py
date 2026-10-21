@@ -30,7 +30,7 @@ def cand(**kw):
 
 
 def parse(items, text=None, signal=SIG):
-    return ex.parse_output(json.dumps({"candidates": items}), PACK, signal, SUBJECTS)
+    return ex.parse_output(json.dumps({"complete": True, "candidates": items}), PACK, signal, SUBJECTS)
 
 
 def test_valid_candidate_is_typed_and_evidence_located():
@@ -49,7 +49,7 @@ def test_enum_datetime_and_text_candidates():
         {"predicate": "missing_assignment", "value": "Essay 2", "subject_id": "kid2",
          "quote": "Essay 2", "span": [t.text.index("Essay 2"), t.text.index("Essay 2") + 7]},
     ]
-    r = ex.parse_output(json.dumps({"candidates": items}), PACK, t, SUBJECTS)
+    r = ex.parse_output(json.dumps({"complete": True, "candidates": items}), PACK, t, SUBJECTS)
     assert r.ok and len(r.candidates) == 2
     assert isinstance(r.candidates[0].value, datetime) and r.candidates[0].value.tzinfo
     assert r.candidates[1].value == "Essay 2"
@@ -89,7 +89,7 @@ def test_naive_datetime_and_url_text_rejected():
              "quote": "2026-10-14T15:30:00", "span": [t.text.index("2026"), len(t.text)]}
     url = {"predicate": "missing_assignment", "value": "http://evil.example", "subject_id": "kid1",
            "quote": "http://evil.example", "span": [6, 25]}
-    r = ex.parse_output(json.dumps({"candidates": [naive, url]}), PACK, t, SUBJECTS)
+    r = ex.parse_output(json.dumps({"complete": True, "candidates": [naive, url]}), PACK, t, SUBJECTS)
     assert not r.candidates and len(r.rejections) == 2
 
 

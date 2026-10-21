@@ -1,6 +1,6 @@
 # Artha Workflow Modules
 
-The catch-up workflow (§2 in Artha.core.md) is a 21-step pipeline. This
+The incumbent Catch-up workflow lives in `catchup.md` and is loaded through §R in Artha.core.md. This
 directory documents each composable phase for customization and extension.
 
 ## Phase Architecture
@@ -10,7 +10,7 @@ that execute together:
 
 | Phase | Steps | Module | Purpose |
 |-------|-------|--------|---------|
-| **Preflight** | 0–2b | [preflight.md](preflight.md) | Gate checks, decrypt, health-check |
+| **Preflight** | 0–2b | [preflight.md](preflight.md) | Gate checks, in-memory state access, health-check |
 | **Fetch** | 3–4d | [fetch.md](fetch.md) | Periodic triggers, data pull, context loading |
 | **Process** | 5–7b | [process.md](config/workflow/process.md) | PII filter, domain routing, state updates |
 | **Reason** | 8–11 | [reason.md](reason.md) | Cross-domain reasoning, research, briefing synthesis |
@@ -47,7 +47,7 @@ Preflight → Fetch → Process → Reason → Finalize
 
 ## Canonical Reference
 
-The authoritative workflow definition is in `config/Artha.core.md` §2.
+The command router is `config/Artha.core.md` §R; the authoritative incumbent sequence is `catchup.md`.
 These module files are documentation and customization guides — they do
 NOT replace or override the core workflow.
 
@@ -62,5 +62,5 @@ The workflow instruments key phases for performance tracking:
 | `tmp/catchup_metrics.json` | `lib/metrics.py` | Phase-level timing, counters, eval scores |
 
 Run `python scripts/eval_runner.py` for a full report covering performance
-trends, accuracy (acceptance rates), signal:noise ratio, and data freshness.
+trends, reviewed correctness and usefulness (reported separately), signal:noise ratio, and data freshness.
 See `config/observability.md` for the eval command reference.

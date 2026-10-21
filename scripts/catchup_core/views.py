@@ -49,9 +49,12 @@ def explain(ledger: Ledger, blobs: EncryptedBlobStore, viewer: str, fact_id: str
                              "observed_at": row["observed_at"], "quote": text[start:end]})
     value = (selected["value"] if selected else None) if as_of else fact.value
     return {"fact_id": fact_id, "value": value,
-            "known_at_requested_time": bool(selected) if as_of else True, "status": fact.status,
-            "provenance": fact.provenance_class, "observed_at": fact.observed_at,
-            "valid_from": fact.valid_from, "valid_to": fact.valid_to,
+            "known_at_requested_time": bool(selected) if as_of else True,
+            "status": selected["status"] if selected else fact.status,
+            "provenance": selected["provenance_class"] if selected else fact.provenance_class,
+            "observed_at": fact.observed_at,
+            "valid_from": selected["valid_from"] if selected else fact.valid_from,
+            "valid_to": selected["valid_to"] if selected else fact.valid_to,
             "evidence": evidence, "history": history}
 
 
@@ -118,9 +121,79 @@ def replay_case(ledger: Ledger, blobs: EncryptedBlobStore, viewer: str, obligati
     return path
 
 
-def precision(ledger: Ledger) -> list[dict[str, Any]]:
-    return [dict(r) for r in ledger.conn.execute("SELECT response,review_status,count(*) AS count "
-                                                 "FROM feedback GROUP BY response,review_status")]
+def precision(ledger: Ledger, viewer: str | None = None) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, str], int] = {}
+    for row in ledger.conn.execute("SELECT * FROM feedback"):
+        if _feedback_visible(ledger, viewer or ledger._owner, row["obligation_key"]):
+            key = (row["response"], row["review_status"])
+            counts[key] = counts.get(key, 0) + 1
+    return [{"response": response, "review_status": review, "count": count}
+            for (response, review), count in sorted(counts.items())]
+
+
+def _feedback_visible(ledger: Ledger, viewer: str, obligation: str) -> bool:
+    refs = ledger.conn.execute("SELECT af.fact_id FROM alert_facts af JOIN alerts a "
+                               "ON a.alert_id=af.alert_id WHERE a.obligation_key=?", (obligation,)).fetchall()
+    if not refs:
+        return False
+    try:
+        for ref in refs:
+            ledger.get_fact(ref[0], viewer)
+    except PermissionDenied:
+        return False
+    return True
+
+
+def review_feedback(ledger: Ledger, viewer: str, directory: Path, feedback_id: str | None,
+                     label: str | None, now: datetime) -> list[dict[str, Any]]:
+    """Reviewed correctness is separate from usefulness, timing and already-handled feedback."""
+    if label and (not feedback_id or label not in ("correct", "incorrect", "handled", "timing")):
+        raise ValueError("Review needs a feedback ID and a supported correctness label")
+    output = []
+    rows = (ledger.conn.execute("SELECT * FROM feedback WHERE feedback_id=?", (feedback_id,)).fetchall()
+            if feedback_id else ledger.conn.execute("SELECT * FROM feedback ORDER BY recorded_at LIMIT 50").fetchall())
+    for row in rows:
+        alert = ledger.get_alert(row["obligation_key"])
+        if alert is None:
+            continue
+        try:
+            refs = ledger.conn.execute("SELECT fact_id FROM alert_facts WHERE alert_id=?",
+                                       (alert["alert_id"],)).fetchall()
+            if not refs:
+                continue
+            for ref in refs:
+                ledger.get_fact(ref[0], viewer)
+        except PermissionDenied:
+            continue
+        if label:
+            path = directory / f"{row['feedback_id']}.ae1"
+            if ledger._cipher is None or not path.exists():
+                raise ValueError("Saved input bundle is missing; this feedback cannot become an evaluation case")
+            aad = f"replay:{row['feedback_id']}".encode()
+            case = json.loads(ledger._cipher.decrypt(path.read_bytes(), aad=aad))
+            case.update(expected_outcome=label, reviewed_at=now.isoformat(), reviewed_by=viewer)
+            atomic_bytes(path, ledger._cipher.encrypt(json.dumps(case).encode(), aad=aad)[0])
+            with ledger.transaction() as db:
+                db.execute("UPDATE feedback SET review_status=? WHERE feedback_id=?", (label, row["feedback_id"]))
+            ledger.record_capability("RA-22", row["feedback_id"])
+        if label or row["review_status"] == "unreviewed":
+            output.append({"id": row["feedback_id"], "response": row["response"],
+                           "status": label or row["review_status"], "domain": alert["domain"]})
+    if feedback_id and not output:
+        raise ValueError("No accessible feedback matches that ID")
+    return output
+
+
+def class_precision(ledger: Ledger, viewer: str | None = None) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, str, str], int] = {}
+    for row in ledger.conn.execute("SELECT a.domain,a.severity,fb.review_status,fb.obligation_key "
+            "FROM feedback fb JOIN alerts a ON a.obligation_key=fb.obligation_key "
+            "WHERE fb.review_status IN ('correct','incorrect')"):
+        if _feedback_visible(ledger, viewer or ledger._owner, row["obligation_key"]):
+            key = (row["domain"], row["severity"], row["review_status"])
+            counts[key] = counts.get(key, 0) + 1
+    return [{"domain": domain, "severity": severity, "review_status": review, "count": count}
+            for (domain, severity, review), count in sorted(counts.items())]
 
 
 def correct(ledger: Ledger, viewer: str, fact_id: str, value: Any, expected_recorded_at: str) -> None:
@@ -134,6 +207,8 @@ def correct(ledger: Ledger, viewer: str, fact_id: str, value: Any, expected_reco
         primary_subject_id=fact.primary_subject_id, observed_at=fact.observed_at,
         confidentiality=Confidentiality(fact.confidentiality), provenance=Provenance.USER_CONFIRMED,
         status=FactStatus.CURRENT, evidence=(), obligation_key=fact.obligation_key), fact_id=fact_id)
+    ledger.correction_notice(fact_id, "Explicit user correction; the archived Briefing preserves its original text.")
+    ledger.record_capability("RA-06", fact_id + ":" + expected_recorded_at)
 
 
 def safe_projection(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -150,7 +225,7 @@ def safe_projection(value: Mapping[str, Any]) -> dict[str, Any]:
     return dict(inert(dict(value)))
 
 
-def render(command: str, result: Mapping[str, Any]) -> str:
+def render(command: str, result: Mapping[str, Any], *, detail: bool = False) -> str:
     """Plain-text projection for terminal users; structured clients request JSON."""
     from catchup_core.compose import sanitize  # noqa: PLC0415
     rows = result.get(command)
@@ -161,8 +236,11 @@ def render(command: str, result: Mapping[str, Any]) -> str:
         for row in rows:
             identity = row.get("fact_id") or row.get("id") or row.get("catchup_id", "")
             label = row.get("description") or row.get("title") or row.get("predicate") or row.get("action_type", "")
-            detail = row.get("value", row.get("status", ""))
-            output.append(sanitize(f"{identity}: {label} — {detail}", 500))
+            value = row.get("value", row.get("status", ""))
+            prefix = f"{identity}: " if command != "beliefs" or detail else ""
+            output.append(sanitize(f"{prefix}{label.replace('_', ' ')} — {value}", 500))
+        if command == "goals":
+            output.extend(sanitize(str(line), 500) for line in result.get("observations", []))
         return "\n".join(output)
     import json  # noqa: PLC0415
     # Key/value detail retains unknowns and receipts without implying extra facts.

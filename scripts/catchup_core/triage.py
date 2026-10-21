@@ -165,18 +165,12 @@ def _in_horizon(a: AlertDraft, states: Mapping[str, str], horizon_days: int) -> 
 def _evaluate_date_fact(
     pack: DomainPack, pred: Predicate, fact: FactView, key: str, deadline: date, connectors: tuple[str, ...],
     now: datetime, freshness: Mapping[str, datetime], limits: Mapping[str, int], states: Mapping[str, str],
-    source_class_of: Any,
+    source_class_of: Any, connector_of: Any = None,
 ) -> AlertDraft:
     days = pack.days_until(datetime.combine(deadline, datetime.min.time(), tzinfo=pack.timezone), now)
     lua = pack.latest_useful_action(pred.name, deadline)
-    stale_reason = ""
-    for conn in connectors:
-        seen = freshness.get(conn)
-        limit = limits.get(conn)
-        if limit is not None and (seen is None or now - seen > timedelta(hours=limit)):
-            age = "never" if seen is None else f"{int((now - seen).total_seconds() // 3600)}h ago"
-            stale_reason = f"{conn} last verified {age} (limit {limit}h)"
-            break
+    stale_reason = _stale_reason(fact, connectors, now, freshness, limits,
+                                 connector_of, source_class_of, pred.authority)
     source_class = source_class_of(fact.evidence[0][0]) if (source_class_of and fact.evidence) else None
     result = pack.evaluate(pred.name, {
         "days_until": days, "value": fact.value, "obligation_state": states.get(key, "outstanding"),
@@ -191,12 +185,46 @@ def _evaluate_date_fact(
                       deadline, lua, days, state, note, pred.high_stakes, connectors)
 
 
+def _stale_reason(fact: FactView, connectors: tuple[str, ...], now: datetime,
+                  freshness: Mapping[str, datetime], limits: Mapping[str, int], connector_of: Any = None,
+                  source_class_of: Any = None, authority: Sequence[str] = ()) -> str:
+    if connector_of and fact.evidence:
+        signals = [sid for sid, _a, _b in fact.evidence]
+        if source_class_of and authority:
+            ranks = {sid: (authority.index(source_class_of(sid)) if source_class_of(sid) in authority
+                           else len(authority)) for sid in signals}
+            best = min(ranks.values())
+            signals = [sid for sid in signals if ranks[sid] == best]
+        reasons = []
+        for sid in signals:
+            conn = connector_of(sid)
+            seen = freshness.get(sid, freshness.get(conn))
+            limit = limits.get(conn)
+            if limit is None:
+                continue
+            if seen is not None and now - seen <= timedelta(hours=limit):
+                return ""  # current corroboration from the strongest source refreshes the belief
+            age = "never" if seen is None else f"{int((now - seen).total_seconds() // 3600)}h ago"
+            reasons.append(f"{conn} last verified {age} (limit {limit}h)")
+        return reasons[0] if reasons else ""
+    for conn in connectors:
+        scoped = [freshness[sid] for sid, _a, _b in fact.evidence if sid in freshness]
+        seen = max(scoped) if scoped else freshness.get(conn)
+        limit = limits.get(conn)
+        if limit is not None and (seen is None or now - seen > timedelta(hours=limit)):
+            age = "never" if seen is None else f"{int((now - seen).total_seconds() // 3600)}h ago"
+            return f"{conn} last verified {age} (limit {limit}h)"
+    return ""
+
+
 def _suppressed(ledger: Ledger, fact: FactView, key: str,
                 states: Mapping[str, str], now: datetime) -> bool:
     if states.get(key) == "resolved":
         return True
     saved = ledger.get_alert(key)
     if not saved or saved["deadline"] != str(fact.value):
+        return False
+    if saved.get("evidence_version") and saved["evidence_version"] != fact.recorded_at:
         return False
     if saved["status"] == "resolved":
         return True
@@ -211,7 +239,7 @@ def _rank_key(a: AlertDraft, relevance: Mapping[str, float], goal_domains: Colle
             0 if a.state == "actionable" else 1, -weight, a.obligation_key)
 
 
-def triage(
+def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares one ranked result
     ledger: Ledger,
     pack: DomainPack,
     now: datetime,
@@ -247,6 +275,14 @@ def triage(
             if _suppressed(ledger, fact, key, states, now):
                 continue
             connectors = tuple(sorted({connector_of(sig) for sig, _s, _e in fact.evidence})) if connector_of else ()
+
+            stale = _stale_reason(fact, connectors, now, freshness, limits,
+                                 connector_of, source_class_of, pred.authority)
+            if stale and pred.type != "date":
+                drafts.append(AlertDraft(key, domain, fact.primary_subject_id, predicate, fact.fact_id,
+                    None, None, None, None, "unknown_stale", stale, pred.high_stakes, connectors))
+                uncertain.append(key)
+                continue
 
             if fact.status == FactStatus.UNKNOWN.value:
                 drafts.append(AlertDraft(key, domain, fact.primary_subject_id, predicate, fact.fact_id,
@@ -289,7 +325,8 @@ def triage(
                 continue
 
             drafts.append(_evaluate_date_fact(
-                pack, pred, fact, key, deadline, connectors, now, freshness, limits, states, source_class_of))
+                pack, pred, fact, key, deadline, connectors, now, freshness, limits, states,
+                source_class_of, connector_of))
             if drafts[-1].uncertainty.endswith("a rule input is unknown"):
                 uncertain.append(key)
 

@@ -91,6 +91,18 @@ def test_never_verified_source_is_stale(env):
     assert r.alerts[0].state == "unknown_stale" and "never" in r.alerts[0].uncertainty
 
 
+def test_only_current_strong_corroboration_refreshes_a_fact(env):
+    fid, original = put(env, EXAM, "2026-10-14")
+    other, _ = env.upsert_signal(lg.SignalInput("school_email", "other-account", "confirmation", "v1",
+                                               "t", "confirmation-hash", "b"))
+    ages = {original: NOW - timedelta(hours=100), other: NOW}
+    assert run(env, freshness=ages).alerts[0].state == "unknown_stale"
+    env.add_evidence(fid, other, 0, 4)
+    weak = lambda sid: "school_email" if sid == original else "parent_note"
+    assert run(env, freshness=ages, source_class_of=weak).alerts[0].state == "unknown_stale"
+    assert run(env, freshness=ages, source_class_of=lambda _: "school_email").alerts[0].state == "actionable"
+
+
 def test_disputed_fact_is_surfaced_as_dispute(env):
     put(env, EXAM, "2026-10-14", status=FactStatus.DISPUTED, prov=Provenance.DISPUTED)
     a = run(env).alerts[0]

@@ -52,7 +52,8 @@ def _recipients(parameters: Mapping[str, Any]) -> list[str]:
 
 
 def check_policy(proposal: Any, approved_by: str, now: datetime, *,
-                 handoff_types: frozenset[str] = frozenset()) -> tuple[bool, str]:
+                 handoff_types: frozenset[str] = frozenset(),
+                 named_recipients: frozenset[str] = frozenset()) -> tuple[bool, str]:
     """``(allowed, reason)``.  ``proposal`` needs action_type, sensitivity, parameters and expires_at."""
     action_type = str(proposal.action_type)
     if action_type in handoff_types or HANDOFF_PATTERNS.search(action_type):
@@ -67,8 +68,12 @@ def check_policy(proposal: Any, approved_by: str, now: datetime, *,
             return False, "the proposal has expired; propose it again to approve a fresh payload"
     if approved_by.startswith(("standing:", "system:", "auto")):
         return False, "standing and automatic approvals authorize preparation only; a person must approve execution"
-    if _OUTBOUND.match(action_type) and str(getattr(proposal, "sensitivity", "standard")).lower() in _SENSITIVE:
+    sensitive = (str(getattr(proposal, "sensitivity", "standard")).lower() in _SENSITIVE
+                 or getattr(proposal, "domain", "") == "health")
+    if _OUTBOUND.match(action_type) and sensitive:
         recipients = _recipients(proposal.parameters if isinstance(proposal.parameters, Mapping) else {})
         if len(recipients) != 1 or _GROUPISH.search(recipients[0]):
             return False, "sensitive content needs exactly one named recipient (no groups, lists or broadcasts)"
+        if recipients[0].strip().casefold() not in {r.casefold() for r in named_recipients}:
+            return False, "sensitive recipient must be registered in the trusted action policy"
     return True, ""

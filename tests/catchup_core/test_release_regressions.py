@@ -26,9 +26,9 @@ def extract(prompt):
     for value in ("2026-10-14", "2026-10-16"):
         if value in text:
             i = text.index(value)
-            return json.dumps({"candidates": [{"predicate": "exam_registration_deadline",
+            return json.dumps({"complete": True, "candidates": [{"predicate": "exam_registration_deadline",
                 "subject_id": "kid1", "value": value, "quote": value, "span": [i, i + 10]}]})
-    return '{"candidates": []}'
+    return '{"complete": true, "candidates": []}'
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ def request(cid="cu_a", **kw):
 def test_unrelated_quote_cannot_support_a_date():
     raw = {"predicate": "exam_registration_deadline", "subject_id": "kid1",
            "value": "2026-10-14", "quote": "Lunch menu", "span": [0, 10]}
-    result = parse_output(json.dumps({"candidates": [raw]}), PACK,
+    result = parse_output(json.dumps({"complete": True, "candidates": [raw]}), PACK,
                           NormalizedSignal("s", "school_email", "Lunch menu"), ["kid1"])
     assert not result.candidates and result.rejections
 
@@ -261,6 +261,6 @@ def test_yearless_date_requires_a_matching_observation_year(value, observed, acc
     text = "Deadline October 14"
     raw = {"predicate": "exam_registration_deadline", "subject_id": "kid1", "value": value,
            "quote": text, "span": [0, len(text)]}
-    got = parse_output(json.dumps({"candidates": [raw]}), PACK,
+    got = parse_output(json.dumps({"complete": True, "candidates": [raw]}), PACK,
         NormalizedSignal("s", "school_email", text, observed_at=observed), ["kid1"])
     assert bool(got.candidates) is accepted

@@ -253,6 +253,7 @@ class Ledger:
         sealed: SealedStore | None = None,
         owner_id: str = "owner",
         consent_subjects: frozenset[str] = frozenset(),
+        known_subjects: frozenset[str] | None = None,
         clock: Callable[[], str] = _utc_now,
         blob_deleter: Callable[[str], None] | None = None,
         artifact_deleter: Callable[[Sequence[str]], None] | None = None,
@@ -265,6 +266,7 @@ class Ledger:
         # Adults other than the owner: restricted data about them needs their recorded consent
         # (RA-12 v0).  Minor children are governed by the household owner's authority.
         self._consent_subjects = frozenset(consent_subjects)
+        self._known_subjects = known_subjects
         self._clock = clock
         self._blob_deleter = blob_deleter
         self._artifact_deleter = artifact_deleter
@@ -321,6 +323,18 @@ class Ledger:
     def _require_unlocked(self) -> None:
         if self.locked:
             raise LedgerLocked("ledger is older than the sealed deletion checkpoint; replay tombstones first")
+
+    def record_capability(self, capability: str, operation: str, *, succeeded: bool = True) -> None:
+        with self.transaction() as db:
+            db.execute("INSERT INTO capability_evidence(capability,operation_id,state,recorded_at) VALUES(?,?,?,?) "
+                       "ON CONFLICT(capability,operation_id) DO UPDATE SET "
+                       "state=excluded.state,recorded_at=excluded.recorded_at",
+                       (capability, operation, "last succeeded" if succeeded else "degraded", self._clock()))
+
+    def correction_notice(self, fact_id: str, reason: str) -> None:
+        with self.transaction() as db:
+            db.execute("INSERT OR IGNORE INTO correction_notices SELECT catchup_id,?,?,? FROM briefing_facts "
+                       "WHERE fact_id=?", (fact_id, self._clock(), reason, fact_id))
 
     # ── migrations ───────────────────────────────────────────────────────────
     def schema_version(self) -> int:
@@ -507,8 +521,10 @@ class Ledger:
             c.execute("UPDATE facts SET obligation_key=? WHERE fact_id=?", (fact.obligation_key, fid))
         return fid
 
-    def _may_view(self, row: sqlite3.Row, viewer_id: str) -> bool:
+    def _may_view(self, row: sqlite3.Row, viewer_id: str) -> bool:  # noqa: PLR0911 - deny at each permission boundary
         fact_id = row["fact_id"]
+        if self._known_subjects is not None and row["primary_subject_id"] not in self._known_subjects:
+            return False
         # A deletion request denies access immediately, even if sealing or physical
         # deletion failed. Do not expose forgotten history while recovery is pending.
         if self.conn.execute(
@@ -533,6 +549,8 @@ class Ledger:
                 and not self.consent_active(row["primary_subject_id"], "view", viewer_id, scope=row["domain"])):
             return False
         for subject in self.conn.execute("SELECT subject_id FROM fact_subjects WHERE fact_id=?", (fact_id,)):
+            if self._known_subjects is not None and subject[0] not in self._known_subjects:
+                return False
             if (subject[0] in self._consent_subjects and subject[0] != viewer_id
                     and not self.consent_active(subject[0], "view", viewer_id, scope=row["domain"])):
                 return False
@@ -633,6 +651,7 @@ class Ledger:
                  row["validity_unknown"], prov, digest, row["typed_value"], status.value, row["rule_version"]))
             c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
                       "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
+        self.correction_notice(fact_id, "Source belief changed; inspect the current evidence before acting.")
 
     def facts_matching(self, domain: str, predicate: str, subject_id: str,
                        statuses: Sequence[FactStatus] = (FactStatus.CURRENT, FactStatus.DISPUTED),
@@ -832,6 +851,9 @@ class Ledger:
                           "WHERE alert_id=?", (severity, deadline, latest_useful_action, now, alert_id))
             for fid in fact_ids:
                 c.execute("INSERT OR IGNORE INTO alert_facts(alert_id,fact_id) VALUES(?,?)", (alert_id, fid))
+            if fact_ids:
+                c.execute("UPDATE alerts SET evidence_version=(SELECT recorded_at FROM facts WHERE fact_id=?) "
+                          "WHERE alert_id=?", (fact_ids[0], alert_id))
             for viewer in viewers:
                 c.execute("INSERT OR IGNORE INTO alert_viewers(alert_id,viewer_id) VALUES(?,?)",
                           (alert_id, viewer))
@@ -929,8 +951,11 @@ class Ledger:
         self._require_unlocked()
         now = datetime.fromisoformat(self._clock().replace("Z", "+00:00"))
         for row in self.conn.execute(
-                "SELECT operations, audience, expires_at,scope FROM consent WHERE subject_id=? AND revoked_at IS NULL",
+                "SELECT operations, audience, expires_at,scope,grantor_id FROM consent "
+                "WHERE subject_id=? AND revoked_at IS NULL",
                 (subject_id,)):
+            if subject_id in self._consent_subjects and row["grantor_id"] != subject_id:
+                continue  # parental grants do not silently become an adult's consent
             if scope is not None and row["scope"] not in (scope, "*"):
                 continue
             if row["expires_at"] and datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00")) <= now:

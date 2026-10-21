@@ -236,9 +236,13 @@
     },
     "RA-21.AC1": {
       "capability": "RA-21",
-      "modules": [],
-      "scope": "later",
-      "tests": []
+      "modules": [
+        "scripts/catchup_core/documents.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_documents.py"
+      ]
     },
     "RA-22.AC1": {
       "capability": "RA-22",
@@ -268,12 +272,14 @@
       "modules": [
         "scripts/catchup_core/commands.py",
         "scripts/action_executor.py",
-        "scripts/lib/action_policy.py"
+        "scripts/lib/action_policy.py",
+        "scripts/lib/action_process.py"
       ],
       "scope": "reduced",
       "tests": [
         "tests/unit/test_action_executor.py",
-        "tests/unit/test_action_policy.py"
+        "tests/unit/test_action_policy.py",
+        "tests/unit/test_action_process.py"
       ]
     },
     "RA-25.AC1": {
@@ -284,7 +290,8 @@
     }
   },
   "contract_version": "0.1.0",
+  "implementation_sha256": "07c1b2f8aa7ceec033aeb876b7d29fc0bd7ed59afbda85b24af1243b0b34a4d6",
   "spec": "specs/re-artha.md",
-  "spec_sha256": "0620f8810e34e69b6a63fba948bc6fafa94cf755da2f41860e4976b7507c9412",
+  "spec_sha256": "704e0e27a39ba048f118cf0158d5c9b8c39155e1806e7f676135a966b014a88a",
   "spec_version": "0.8.0"
 }

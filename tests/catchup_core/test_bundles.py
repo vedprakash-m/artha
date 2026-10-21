@@ -40,10 +40,29 @@ def test_round_trip_is_complete_and_the_body_is_not_readable_at_rest(tmp_path):
 
 def test_import_is_idempotent_and_acknowledged(tmp_path):
     put(tmp_path)
-    load(tmp_path)
+    load(tmp_path).fetch.commit()
     again = load(tmp_path)
     assert again.fetch.records == () and again.imported == [] and again.fetch.status is CoverageStatus.COMPLETE
     assert list(tmp_path.glob("ack-*.json"))
+
+
+def test_forged_ack_cannot_hide_an_uncommitted_bundle(tmp_path):
+    put(tmp_path)
+    result=load(tmp_path); result.fetch.commit()
+    ack=next(tmp_path.glob("ack-*.json"))
+    wrapper=json.loads(ack.read_text()); wrapper["data"]["sequence"]=99
+    ack.write_text(json.dumps(wrapper))
+    assert len(load(tmp_path).fetch.records)==1
+
+
+def test_future_metadata_and_inconsistent_parts_are_incomplete(tmp_path):
+    put(tmp_path,completed_until=(NOW+timedelta(days=1)).isoformat())
+    assert load(tmp_path).fetch.status is not CoverageStatus.COMPLETE
+    assert load(tmp_path).fetch.records==()
+    other=tmp_path/"parts"
+    put(other,part=1,parts=2)
+    put(other,part=2,parts=2,completed_until=(NOW-timedelta(hours=1)).isoformat())
+    assert "inconsistent" in " ".join(load(other).fetch.blind_spots)
 
 
 def test_published_parts_are_immutable(tmp_path):

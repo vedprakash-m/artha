@@ -72,7 +72,7 @@ def test_hostile_answer_is_rejected_by_the_core_not_trusted(world):
         co.run_catchup(req("cu_h"), make({"school_email": email(), "calendar": cal()},
                                          extractor=xc.ExchangeExtractor()))
     pending = paused.value.requests[0]
-    forged = json.dumps({"candidates": [{"predicate": "exam_registration_deadline", "value": "2026-10-01",
+    forged = json.dumps({"complete": True, "candidates": [{"predicate": "exam_registration_deadline", "value": "2026-10-01",
                                          "subject_id": "kid1", "quote": "this text is not in the message",
                                          "span": [0, 10]}]})
     result = co.run_catchup(req("cu_h"), make({"school_email": email(), "calendar": cal()},

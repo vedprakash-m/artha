@@ -162,6 +162,8 @@ def test_bundle_sources_import_through_the_runtime_and_unenrolled_producers_are_
             return base64.b64encode(self.secret).decode() if self.secret else None
 
     class Ledger:
+        _consent_subjects = frozenset()
+        _known_subjects = frozenset({"owner"})
         class conn:                                           # noqa: N801 - minimal stand-in
             @staticmethod
             def execute(_sql):
@@ -171,7 +173,7 @@ def test_bundle_sources_import_through_the_runtime_and_unenrolled_producers_are_
         import types
         return types.SimpleNamespace(**kw)
 
-    cfg = types_namespace(policy={"bundles": {"school_email": {
+    cfg = types_namespace(sources={}, subjects=["owner"], viewer="owner", policy={"bundles": {"school_email": {
         "producer": "win-host", "dir": str(tmp_path), "recipient": "mac", "account_scope": "school"}}})
     fetchers = rt._bundle_fetchers(cfg, Ledger(), Keyring(b"w" * 32), {"school_email": True}, NOW)
     got = fetchers["school_email"]()

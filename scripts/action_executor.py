@@ -837,7 +837,8 @@ class ActionExecutor:
 
         # 5c. Deterministic policy guard (RA-24): hand-off tier, expiry, standing approvals, recipient class
         policy_ok, policy_reason = check_policy(
-            proposal, approved_by, datetime.now(timezone.utc), handoff_types=_load_handoff_action_types(self._artha_dir))
+            proposal, approved_by, datetime.now(timezone.utc), handoff_types=_load_handoff_action_types(self._artha_dir),
+            named_recipients=frozenset(config.get("named_recipients", [])))
         if not policy_ok:
             _audit_log(self._artha_dir, f"ACTION_POLICY_BLOCKED | id:{action_id} | reason:{policy_reason}")
             return ActionResult(
@@ -1474,13 +1475,17 @@ def _bridge_final_status(result_status: str) -> str:
 def _execute_with_timeout(
     handler: Any, proposal: ActionProposal, timeout_sec: int
 ) -> ActionResult:
-    """Execute handler.execute() with a timeout.
+    """Registered handlers use a bounded child; injected test handlers use a local timeout.
 
-    On timeout: returns ActionResult(status="failure", ...).
-    Catches all exceptions and converts to failure result.
-
-    Uses signal.SIGALRM on Unix; threading-based timeout on Windows.
+    A timeout or lost response is unknown: the provider may already have acted.
     """
+    import types
+    if isinstance(handler, types.ModuleType):
+        from lib.action_process import execute
+        return execute(handler.__name__, proposal, timeout_sec)
+
+    # Injected in-process handlers are used by hermetic tests; registered production
+    # handlers above always execute in the bounded child process.
     import threading
 
     result_container: list[ActionResult | None] = [None]

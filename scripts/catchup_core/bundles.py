@@ -30,7 +30,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +38,12 @@ from catchup_core.backup import atomic_bytes
 from catchup_core.contracts import CoverageStatus, FailureClass
 from catchup_core.coordinator import ConnectorFetch, ConnectorRecord
 from catchup_core.crypto import DecryptionError, EnvelopeCipher, StaticKeyProvider
+from catchup_core.triage import CalendarEvent
 
 __all__ = ["BUNDLE_SCHEMA", "BundleError", "ImportResult", "ProducerKey", "enroll_producer", "export_bundle",
            "export_fetch", "import_bundles", "load_producer_key", "next_sequence"]
 
-BUNDLE_SCHEMA = "artha.bundle.v1"
+BUNDLE_SCHEMA = "artha.bundle.v2"
 MAX_BUNDLE_BYTES = 8 * 1024 * 1024          # ciphertext size limit
 MAX_RECORDS = 5000
 MAX_RECORD_CHARS = 200_000
@@ -103,12 +104,17 @@ def export_bundle(
     authority_generation: int, sequence: int, records: Sequence[ConnectorRecord],
     requested_since: str, completed_until: str, cursor_generation: int = 1, created_at: datetime,
     part: int = 1, parts: int = 1, bundle_id: str = "",
+    cancelled: Sequence[str] = (),
 ) -> Path:
     """Write one immutable part.  An existing file is never overwritten (a re-export needs a new sequence)."""
     if len(records) > MAX_RECORDS:
         raise BundleError("too many records for one part; split the export into parts")
     body_obj = [{"upstream_id": r.upstream_id, "text": r.text, "provider_version": r.provider_version,
-                 "occurred_at": r.occurred_at, "incomplete": r.incomplete} for r in records]
+                 "occurred_at": r.occurred_at, "incomplete": r.incomplete,
+                 "calendar": ({"id": r.calendar.event_id, "start": r.calendar.start.isoformat(),
+                    "end": r.calendar.end.isoformat(), "all_day": r.calendar.all_day,
+                    "kind": r.calendar.kind} if r.calendar else None)} for r in records]
+    body_data = {"records": body_obj, "cancelled": list(cancelled)}
     if any(len(r.text) > MAX_RECORD_CHARS for r in records):
         raise BundleError("a record exceeds the size limit")
     header = {
@@ -120,7 +126,7 @@ def export_bundle(
         "created_at": created_at.isoformat(),
     }
     aad = _canonical(header)
-    envelope, _ = key.cipher().encrypt(json.dumps(body_obj).encode(), aad=aad)
+    envelope, _ = key.cipher().encrypt(json.dumps(body_data).encode(), aad=aad)
     body = base64.b64encode(envelope).decode()
     path = Path(directory) / _file_name(header)
     if path.exists():
@@ -143,7 +149,7 @@ def _quarantine(src: Path, dst: Path) -> None:
     os.replace(src, dst)
 
 
-def _load(path: Path, keys: Mapping[str, ProducerKey]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _load(path: Path, keys: Mapping[str, ProducerKey]) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
     if path.stat().st_size > MAX_BUNDLE_BYTES:
         raise BundleError("bundle exceeds the size limit")
     try:
@@ -160,12 +166,50 @@ def _load(path: Path, keys: Mapping[str, ProducerKey]) -> tuple[dict[str, Any], 
     if set(header) != set(_HEADER_FIELDS) or header["schema"] != BUNDLE_SCHEMA:
         raise BundleError("unsupported bundle schema")
     try:
-        records = json.loads(key.cipher().decrypt(base64.b64decode(str(body)), aad=_canonical(header)))
-    except (DecryptionError, ValueError) as exc:
+        if not (1 <= int(header["part"]) <= int(header["parts"]) <= 100 and int(header["sequence"]) > 0):
+            raise ValueError("invalid part or sequence")
+        stamps = [datetime.fromisoformat(str(header[k]).replace("Z", "+00:00"))
+                  for k in ("requested_since", "completed_until", "created_at")]
+        if any(stamp.tzinfo is None for stamp in stamps) or stamps[0] > stamps[1]:
+            raise ValueError("invalid coverage interval")
+    except (ValueError, TypeError) as exc:
+        raise BundleError("invalid bundle metadata") from exc
+    try:
+        decoded = key.cipher().decrypt(base64.b64decode(str(body)), aad=_canonical(header))
+        if len(decoded) > MAX_BUNDLE_BYTES:
+            raise BundleError("decoded bundle exceeds the size limit")
+        payload = json.loads(decoded)
+        records, cancelled = payload["records"], payload["cancelled"]
+    except (DecryptionError, ValueError, KeyError, TypeError) as exc:
         raise BundleError("body cannot be decrypted") from exc
-    if not isinstance(records, list) or len(records) != header["record_count"]:
+    _validate_records(records, cancelled, header["record_count"])
+    return header, records, cancelled
+
+
+def _validate_records(records: Any, cancelled: Any, count: int) -> None:
+    if not isinstance(records, list) or len(records) != count:
         raise BundleError("record count does not match the header")
-    return header, records
+    if len(records) > MAX_RECORDS or not isinstance(cancelled, list) or not all(isinstance(c, str) for c in cancelled):
+        raise BundleError("invalid record or cancellation count")
+    for record in records:
+        if (not isinstance(record, dict) or not isinstance(record.get("upstream_id"), str)
+                or not isinstance(record.get("text"), str) or len(record["text"]) > MAX_RECORD_CHARS):
+            raise BundleError("invalid record")
+        try:
+            _calendar(record.get("calendar"))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BundleError("invalid calendar record") from exc
+
+
+def _calendar(raw: Any) -> CalendarEvent | None:
+    if raw is None:
+        return None
+    parse = date.fromisoformat if raw["all_day"] is True else datetime.fromisoformat
+    start, end = parse(raw["start"]), parse(raw["end"])
+    if end <= start or (isinstance(start, datetime) and
+                        (start.tzinfo is None or not isinstance(end, datetime) or end.tzinfo is None)):
+        raise ValueError("invalid event interval")
+    return CalendarEvent(str(raw["id"]), start, end, bool(raw["all_day"]), str(raw["kind"]))
 
 
 def _check_binding(header: Mapping[str, Any], *, namespace: str, recipient: str, account_scope: str,
@@ -176,11 +220,11 @@ def _check_binding(header: Mapping[str, Any], *, namespace: str, recipient: str,
         raise NotAddressedHere("bundle is addressed to another recipient")
     if header["account_scope"] != account_scope:
         raise NotAddressedHere("bundle is for another account scope")
-    if int(header["authority_generation"]) < authority_generation:
+    if int(header["authority_generation"]) != authority_generation:
         raise BundleError("bundle belongs to a former authority generation")
 
 
-def import_bundles(
+def import_bundles(  # noqa: PLR0915 - validate multipart inputs before constructing the commit acknowledgment
     directory: Path, keys: Mapping[str, ProducerKey], *, name: str, namespace: str, recipient: str,
     account_scope: str, authority_generation: int, now: datetime, required: bool = True,
     max_age_hours: float = 48.0, move: Callable[[Path, Path], None] | None = None,
@@ -189,12 +233,12 @@ def import_bundles(
     directory = Path(directory)
     quarantine = directory / "quarantine"
     mover = move or _quarantine
-    parts: dict[tuple[str, int], dict[int, tuple[Path, dict[str, Any], list[dict[str, Any]]]]] = {}
+    parts: dict[tuple[str, int], dict[int, tuple[Path, dict[str, Any], list[dict[str, Any]], list[str]]]] = {}
     rejected: list[tuple[str, str]] = []
     skipped: list[tuple[str, str]] = []
     for path in sorted(directory.glob("bundle-*.json")) if directory.is_dir() else []:
         try:
-            header, records = _load(path, keys)
+            header, records, cancelled = _load(path, keys)
             _check_binding(header, namespace=namespace, recipient=recipient, account_scope=account_scope,
                            authority_generation=authority_generation)
         except NotAddressedHere as exc:
@@ -205,34 +249,49 @@ def import_bundles(
             mover(path, quarantine / path.name)
             continue
         parts.setdefault((str(header["producer"]), int(header["sequence"])), {})[int(header["part"])] = (
-            path, header, records)
+            path, header, records, cancelled)
 
     blind: list[str] = [f"{n}: {why}" for n, why in rejected]
     imported: list[str] = []
     records_out: list[ConnectorRecord] = []
+    cancelled_out: list[str] = []
+    acknowledgments: list[tuple[Path, bytes]] = []
     newest: str | None = None
     by_producer: dict[str, list[int]] = {}
     for (producer, sequence), got in sorted(parts.items()):
         by_producer.setdefault(producer, []).append(sequence)
         sample = next(iter(got.values()))[1]
         ack = directory / _ack_name(producer, account_scope, sequence)
-        if ack.exists():
+        if _valid_ack(ack, keys.get(producer), namespace, recipient, authority_generation):
             continue                                         # idempotent: already imported
         total = int(sample["parts"])
         if set(got) != set(range(1, total + 1)):
             blind.append(f"{producer} #{sequence}: {len(got)} of {total} parts present")
             continue
-        for _path, _header, recs in got.values():
-            records_out.extend(ConnectorRecord(str(r["upstream_id"]), str(r["text"]), r.get("provider_version"),
-                                               r.get("occurred_at"), bool(r.get("incomplete"))) for r in recs)
+        if any({k: v for k, v in h.items() if k not in ("part", "record_count")} !=
+               {k: v for k, v in sample.items() if k not in ("part", "record_count")}
+               for _p, h, _r, _c in got.values()):
+            blind.append(f"{producer} #{sequence}: inconsistent part headers")
+            continue
         completed = str(sample["completed_until"])
+        if datetime.fromisoformat(completed.replace("Z", "+00:00")) > now + timedelta(minutes=5):
+            blind.append(f"{producer} #{sequence}: future completion time")
+            continue
+        for _path, _header, recs, cancellations in got.values():
+            records_out.extend(ConnectorRecord(str(r["upstream_id"]), str(r["text"]), r.get("provider_version"),
+                                               r.get("occurred_at"), bool(r.get("incomplete")),
+                                               _calendar(r.get("calendar"))) for r in recs)
+            cancelled_out.extend(cancellations)
         newest = max(newest, completed) if newest else completed
         imported.append(f"{producer}#{sequence}")
-        atomic_bytes(ack, json.dumps({"producer": producer, "scope": account_scope, "sequence": sequence,
-                                      "completed_until": completed, "imported_at": now.isoformat()}).encode())
+        ack_data = {"producer": producer, "scope": account_scope, "sequence": sequence,
+                    "namespace": namespace, "recipient": recipient, "authority_generation": authority_generation,
+                    "completed_until": completed, "imported_at": now.isoformat()}
+        acknowledgments.append((ack, json.dumps({"data": ack_data,
+            "mac": keys[producer].sign(ack_data, "ack")}).encode()))
     blind.extend(_sequence_gaps(directory, by_producer, account_scope))
 
-    latest = newest or _latest_ack(directory, account_scope)
+    latest = newest or _latest_ack(directory, account_scope, keys, namespace, recipient, authority_generation)
     if latest is None:
         blind.append("no bundle has ever been imported for this scope")
         status = CoverageStatus.UNAVAILABLE
@@ -241,9 +300,12 @@ def import_bundles(
         if age_hours > max_age_hours:
             blind.append(f"secondary machine data is {int(age_hours)}h old (limit {int(max_age_hours)}h)")
         status = CoverageStatus.DEGRADED if blind else CoverageStatus.COMPLETE
+    def commit() -> None:
+        for path, content in acknowledgments:
+            atomic_bytes(path, content)
     fetch = ConnectorFetch(name, account_scope, tuple(records_out), status,
                            FailureClass.PROVIDER if status is CoverageStatus.UNAVAILABLE else None,
-                           tuple(blind), required)
+                           tuple(blind), required, tuple(dict.fromkeys(cancelled_out)), commit, latest)
     return ImportResult(fetch, imported, rejected, skipped, latest)
 
 
@@ -254,26 +316,49 @@ def _sequence_gaps(directory: Path, by_producer: Mapping[str, Sequence[int]], ac
         acked: list[int] = []
         for path in directory.glob("ack-*.json"):
             try:
-                data = json.loads(path.read_text())
-            except (ValueError, OSError):
+                data = json.loads(path.read_text())["data"]
+            except (ValueError, OSError, KeyError, TypeError):
                 continue
             if data.get("producer") == producer and data.get("scope") == account_scope:
                 acked.append(int(data["sequence"]))
         everything = sorted(set(seqs) | set(acked))
-        missing = sorted(set(range(everything[0], everything[-1] + 1)) - set(everything)) if everything else []
+        missing: list[int] = []
+        previous = 0
+        for sequence in everything:
+            missing.extend(range(previous + 1, min(sequence, previous + 6)))
+            if len(missing) >= 5:
+                break
+            previous = sequence
         if missing:
             notes.append(f"{producer}: sequence gap, missing {missing[:5]}")
     return notes
 
 
-def _latest_ack(directory: Path, account_scope: str) -> str | None:
+def _valid_ack(path: Path, key: ProducerKey | None, namespace: str, recipient: str, generation: int) -> bool:
+    if key is None or not path.is_file():
+        return False
+    try:
+        wrapper = json.loads(path.read_text())
+        data = wrapper["data"]
+        return bool(data["namespace"] == namespace and data["recipient"] == recipient
+            and data["authority_generation"] == generation
+            and data["producer"] == key.producer
+            and _ack_name(data["producer"], data["scope"], int(data["sequence"])) == path.name
+            and hmac.compare_digest(wrapper["mac"], key.sign(data, "ack")))
+    except (ValueError, KeyError, TypeError, OSError):
+        return False
+
+
+def _latest_ack(directory: Path, account_scope: str, keys: Mapping[str, ProducerKey],
+                namespace: str, recipient: str, generation: int) -> str | None:
     stamps = []
     for path in directory.glob("ack-*.json") if directory.is_dir() else []:
         try:
-            data = json.loads(path.read_text())
-        except (ValueError, OSError):
+            data = json.loads(path.read_text())["data"]
+        except (ValueError, OSError, KeyError, TypeError):
             continue
-        if data.get("scope") == account_scope:
+        if data.get("scope") == account_scope and _valid_ack(path, keys.get(data.get("producer")),
+                                                             namespace, recipient, generation):
             stamps.append(str(data["completed_until"]))
     return max(stamps) if stamps else None
 
@@ -323,4 +408,5 @@ def export_fetch(directory: Path, key: ProducerKey, fetch: ConnectorFetch, *, na
         raise BundleError(f"fetch is {fetch.status.value}; an incomplete export is not published")
     return export_bundle(directory, key, namespace=namespace, recipient=recipient, account_scope=fetch.account_scope,
                          authority_generation=authority_generation, sequence=next_sequence(directory, key.producer),
-                         records=fetch.records, requested_since=since, completed_until=now.isoformat(), created_at=now)
+                         records=fetch.records, requested_since=since, completed_until=now.isoformat(), created_at=now,
+                         cancelled=fetch.cancelled)

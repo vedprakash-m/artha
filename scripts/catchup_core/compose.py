@@ -187,6 +187,7 @@ def compose(
     fmt: BriefingFormat = BriefingFormat.STANDARD,
     open_items: Sequence[OpenItemLine] = (),
     calendar_line: str = "",
+    incumbent_lines: Sequence[str] = (),
 ) -> Briefing:
     """Render the standard Briefing.
 
@@ -230,6 +231,8 @@ def compose(
                 for r in evidence_for.get(f.obligation_key, ()))
             for f in result.cross_domain] + [""]
     lines += _records_section(legacy_lines, fmt)
+    if incumbent_lines:
+        lines += ["OTHER COMMITMENTS TO REVIEW"] + [f"• {sanitize(t, 700)}" for t in incumbent_lines] + [""]
     if goal_lines and not brief:
         lines += ["GOALS"] + [f"• {sanitize(g, 200)}" for g in goal_lines] + [""]
     lines += _verdict_lines(result, quiet, coverage_gaps, unresolved_signals)

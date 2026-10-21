@@ -64,8 +64,8 @@ def test_command_extractor_fails_closed():
 
     def ok(argv, **kw):
         assert kw["input"] == "PROMPT" and argv == ["model", "--json"]
-        return SimpleNamespace(returncode=0, stdout='{"candidates": []}')
-    assert rt.command_extractor("model --json", runner=ok)("PROMPT") == '{"candidates": []}'
+        return SimpleNamespace(returncode=0, stdout='{"complete": true, "candidates": []}')
+    assert rt.command_extractor("model --json", runner=ok)("PROMPT") == '{"complete": true, "candidates": []}'
 
     def bad(argv, **kw):
         return SimpleNamespace(returncode=2, stdout="")
@@ -157,7 +157,8 @@ def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeyp
         auth_loader=lambda n: {}, now=lambda: datetime(2026, 10, 12, tzinfo=timezone.utc))
     try:
         assert (local / "catchup_core" / "shadow" / "ledger.db").exists()
-        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {"school_email", "calendar", "capture"}
+        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {
+            "school_email", "calendar", "capture", "documents"}
         assert deps.ledger.schema_version() >= 2 and deps.viewer == "ved"
         assert deps.ledger._consent_subjects == frozenset({"adult1"})   # the gate is actually armed
         keys = {n for (_s, n) in kr.store}

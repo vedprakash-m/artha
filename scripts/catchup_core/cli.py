@@ -89,7 +89,7 @@ def _add_bundle_commands(sub: Any) -> None:
     export.add_argument("--days", type=int, default=30, help="history window for this export")
 
 
-def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR0915 - flat command grammar
     parser = argparse.ArgumentParser(prog="catchup_core", add_help=True)
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("catchup", help="run one Catch-up")
@@ -106,11 +106,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run.add_argument("--channel", default="cli")
     _add_bundle_commands(sub)
     for name in ("beliefs", "why", "forget", "feedback", "correct", "health", "history", "items",
-                 "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve"):
+                 "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve",
+                 "ingest", "review"):
         command = sub.add_parser(name)
         command.add_argument("--json", action="store_true")
         command.add_argument("--shadow", action="store_true")
         command.add_argument("--actor", default=None)
+        command.add_argument("--detail", action="store_true", help="include internal record IDs")
         if name == "beliefs":
             command.add_argument("--domain")
             command.add_argument("--subject")
@@ -132,6 +134,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             command.add_argument("--days", type=int, default=7)
         elif name == "capture":
             command.add_argument("text")
+        elif name == "ingest":
+            command.add_argument("path")
+            command.add_argument("--subject", required=True, help="person's name or subject ID")
+        elif name == "review":
+            command.add_argument("feedback_id", nargs="?")
+            command.add_argument("--label", choices=("correct", "incorrect", "handled", "timing"))
         elif name in ("reconcile", "resolve"):
             command.add_argument("action_id")
             if name == "resolve":
@@ -245,7 +253,7 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
             print(json.dumps(result, indent=2, default=str), file=stdout)
         else:
             from catchup_core.views import render  # noqa: PLC0415
-            print(render(args.command, result), file=stdout)
+            print(render(args.command, result, detail=args.detail), file=stdout)
         return 0
     except (OSError, ValueError, RuntimeError) as exc:
         print(str(exc), file=stderr)
@@ -263,7 +271,7 @@ def _bundle(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
     from datetime import UTC, datetime, timedelta  # noqa: PLC0415
 
     from catchup_core.bundles import BundleError, enroll_producer, export_fetch, load_producer_key  # noqa: PLC0415
-    from catchup_core.runtime import _default_loaders, build_fetchers, load_runtime_config  # noqa: PLC0415
+    from catchup_core.runtime import load_runtime_config  # noqa: PLC0415
 
     root = Path(__file__).resolve().parents[2]
     try:
@@ -285,8 +293,20 @@ def _bundle(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
             raise BundleError("producer is not enrolled on this machine; run bundle-enroll first")
         now = datetime.now(UTC)
         since = (now - timedelta(days=args.days)).isoformat()
-        handler_loader, auth_loader = _default_loaders()
-        fetch = build_fetchers(config, since, handler_loader, auth_loader, {args.source: True})[args.source]()
+        from catchup_core.policy import authorize_source  # noqa: PLC0415
+        from catchup_core.runtime import _default_loaders, build_deps, build_fetchers  # noqa: PLC0415
+        authority = build_deps(CatchupRequest("bundle_export", config.viewer, "cli", mode=ExecutionMode.SHADOW),
+                               inspection=False)
+        try:
+            authorize_source(authority.ledger, authority.subjects, authority.ledger._consent_subjects,
+                             f"{args.source}:{spec['account_scope']}", config.viewer, operations=("ingest", "export"))
+            config.subjects = list(authority.subjects)
+            config.consent_required = authority.ledger._consent_subjects
+            handler_loader, auth_loader = _default_loaders()
+            fetch = build_fetchers(config, since, handler_loader, auth_loader,
+                                   {args.source: True}, authority.ledger)[args.source]()
+        finally:
+            authority.ledger.close()
         path = export_fetch(
             Path(str(spec["dir"])).expanduser(), key, fetch, namespace=str(spec.get("namespace", "personal")),
             recipient=str(spec["recipient"]), authority_generation=int(spec.get("authority_generation", 1)),

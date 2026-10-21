@@ -13,15 +13,19 @@ def journal(finalized: bool, failures: bool = False) -> sqlite3.Connection:
     db = sqlite3.connect(":memory:")
     db.execute("CREATE TABLE stage_journal(catchup_id, stage, status)")
     db.execute("CREATE TABLE signal_failures(signal_id)")
+    db.execute("CREATE TABLE capability_evidence(seq INTEGER PRIMARY KEY,capability,state)")
     if finalized:
         db.execute("INSERT INTO stage_journal VALUES('c','FINALIZED','committed')")
+        for cap in ("RA-01", "RA-03", "RA-16"):
+            state = "degraded" if failures and cap != "RA-03" else "last succeeded"
+            db.execute("INSERT INTO capability_evidence(capability,state) VALUES(?,?)", (cap,state))
     if failures:
         db.execute("INSERT INTO signal_failures VALUES('s')")
     return db
 
 
 def states(db, *, domains=("kids_school",), measured=False):
-    cfg = {"domains": list(domains)} if domains else {}
+    cfg = {"domains": list(domains), "reviewed_capabilities": ["RA-01"] if measured else []} if domains else {}
     return {c["id"]: c for c in runtime_states(REPO, cfg, db, measured, extractor_configured=True)}
 
 
@@ -34,6 +38,8 @@ def test_exercised_is_last_succeeded_and_measured_needs_release_evidence():
     ok = states(journal(True))
     assert ok["RA-01"] == {"id": "RA-01", "state": "last succeeded", "measured": "no"}
     assert states(journal(True), measured=True)["RA-01"]["measured"] == "yes"
+    assert ok["RA-05"]["state"] == "unknown"
+    assert states(journal(True), measured=True)["RA-11"]["measured"] == "no"
 
 
 def test_failures_degrade_coverage_capabilities_and_missing_code_is_not_implemented():

@@ -38,7 +38,7 @@ def model_for(text_to_value):
                 i = message.index(quote)
                 items.append({"predicate": pred, "value": value, "subject_id": subject, "quote": quote,
                               "span": [i, i + len(quote)]})
-        return json.dumps({"candidates": items})
+        return json.dumps({"complete": True, "candidates": items})
     return run
 
 
@@ -336,7 +336,7 @@ def test_partially_invalid_extraction_keeps_valid_candidates(world):
         good = {"predicate": "exam_registration_deadline", "value": "2026-10-14", "subject_id": "kid1",
                 "quote": QUOTE, "span": [i, i + len(QUOTE)]}
         bad = dict(good, predicate="wire_money")
-        return json.dumps({"candidates": [good, bad]})
+        return json.dumps({"complete": True, "candidates": [good, bad]})
     result = co.run_catchup(req(), make({"school_email": email(), "calendar": cal()}, extractor=mixed))
     assert FailureClass.SCHEMA_REJECTED in result.failures and result.artifact_ids
     assert result.status is RunStatus.DEGRADED

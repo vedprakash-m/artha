@@ -318,15 +318,19 @@ class TestGenerateIdentityCompactMode:
         # Non-compact includes everything
         # _assemble_artha_md writes to config/Artha.md and returns None.
         # Verify by checking the output file size with each mode.
-        artha_md = Path("config/Artha.md")
+        artha_md = tmp_path / "Artha.md"
+        monkeypatch.setattr(gi, "_CORE_PATH", core_path)
+        monkeypatch.setattr(gi, "_ASSEMBLED_PATH", artha_md)
+        monkeypatch.setattr(gi, "_ARTHA_DIR", tmp_path)
 
         gi._assemble_artha_md("Identity block.", compact=True)
         compact_size = artha_md.stat().st_size if artha_md.exists() else 0
+        compact_text = artha_md.read_text()
 
         gi._assemble_artha_md("Identity block.", compact=False)
         no_compact_size = artha_md.stat().st_size if artha_md.exists() else 0
 
         # non-compact uses full core.md which must be larger than compact extraction
-        assert no_compact_size >= compact_size, (
-            f"Expected --no-compact output ({no_compact_size}B) >= compact ({compact_size}B)"
-        )
+        assert compact_size > 0 and no_compact_size > 0
+        assert "Step 0: Run preflight" not in compact_text and "§R" in compact_text
+        assert "Step 0: Run preflight" in artha_md.read_text()

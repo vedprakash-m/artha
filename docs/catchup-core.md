@@ -117,7 +117,12 @@ through a hand-run, signed, encrypted, immutable bundle in the sync folder. Ther
 change. It refuses: hand-off-only types (money, credentials, legal, permanent deletion; extend with
 `live_trial.handoff_only` in `config/actions.yaml`), expired or unreadable-expiry proposals, standing/automatic
 approvals (they prepare, a person executes), and sensitive outbound content without exactly one named recipient.
-Executor sub-process isolation with a network allowlist is still open (Stage 6).
+Registered handlers execute in a bounded child process with a fixed provider egress policy (`lib/action_process.py`).
+The child strips unrelated environment variables, refuses other providers and process launches, and expires on parent
+loss or timeout. This contains trusted handler execution; it is not an OS sandbox. Platform credential access and
+provider behavior still require live validation. Unregistered handlers remain hand-off only.
+Sensitive outbound recipients must be registered in the trusted action configuration (`named_recipients`), including
+health content whose sensitivity was accidentally left at `standard`.
 
 ## Say it your way
 `brief everything` / "show everything" runs the comparison with `--format deep`: every Open Item and State File listed.
@@ -131,3 +136,68 @@ releases the duplicate guard). Both are audited.
 
 ## Channels are gone
 The Telegram, Slack and Discord code, the always-on engine and the nudge daemon were removed (see `docs/channels.md`).
+
+
+## Runtime closure (WP-13)
+
+- Fetch completion and bundle acknowledgments follow durable evidence ingestion. Bundle schema v2 preserves calendar
+  metadata and cancellations; re-export old v1 bundles. Signed acknowledgments bind the producer, recipient, scope,
+  sequence and authority generation; a crash before acknowledgment replays safely.
+- Runtime retrieval rejects unresolved household IDs. The profile retains generated person IDs so a corrected name,
+  corrected birth date or key rotation cannot silently change the identity. Parental grants do not become adult consent.
+- Bundle ingestion/export rechecks current operation permissions. Full snapshot export refuses inaccessible data;
+  a permission-filtered portable household exchange remains a later deliverable. The local owner can forget retained
+  data after revocation. Restores retain the sealed deletion history and quarantine action snapshots.
+- Grounded obligation names link independent messages; contradictory independent sources dispute rather than creating
+  two current deadlines. Missing identity is not guessed. Non-pilot obligations are validated as source spans and passed
+  to the incumbent as review commitments, with no permission to mutate pilot records or dispatch actions.
+- Freshness follows the exact evidence/account scope, including enums and appointments. Historical explanations use
+  historical status/provenance/validity. Corrections add notices to affected Briefing history without changing its text.
+- Snapshots include encrypted State Files and YAML, detect changing database/curated inputs, and expire old generations
+  during Catch-up (default 30 days, always preserving one current generation). Approved rollback bytes must decrypt and
+  pass database integrity checks. No background cleanup process is installed.
+- Capability health uses per-capability operation evidence. “Measured” additionally requires reviewed consented case IDs
+  in the approved scorecard's `capability_reviews`, not a passing test count or an unrelated finalized Catch-up.
+
+## Documents and Goal observations
+
+`cli.py ingest <file.pdf> --subject <name> --shadow` imports a text PDF after scoped permission checks. Original bytes and
+page text are encrypted locally; extraction runs in a short-lived process with byte/page/time limits. Image-only or
+unreadable pages stay incomplete. No OCR result is asserted as a verified field. `documents:manual` consent is separate
+from permission to read another person's mail. Original document ingestion is local and does not upload the PDF.
+
+An explicitly authored active Goal can declare a minimum metric:
+
+```yaml
+metric:
+  kind: on_time_obligations
+  domain: kids_school
+  predicate: exam_registration_deadline
+  target: 3
+  period_days: 30
+  freshness_hours: 48
+  sources: [school_email, calendar]
+```
+
+Catch-up and `goals` derive observations from visible current Facts and completion evidence, persist them encrypted,
+and recompute after corrections. Missing coverage, unresolved interpretation and stale or disputed evidence produce
+unknown progress. Goals without an authored metric continue to show authored progress as not re-verified.
+
+## Review feedback
+
+`cli.py review --shadow` lists pending feedback. `cli.py review <id> --label correct|incorrect|handled|timing --shadow`
+labels its saved encrypted replay bundle. Correctness counters are grouped by Domain/severity; handled/timing responses
+are not counted as correctness labels. Explicit Fact corrections also capture their prior input bundle for review.
+No feedback automatically becomes personal memory.
+
+## Remaining release work
+
+Cutover remains disabled. Required live evidence includes scoped source/query validation, consented shadow outcomes,
+source-negative critical-case review, cross-Domain usefulness, Goal correction/recomputation, supported-platform
+credentials/cancellation/recovery, and measured workload, latency, cost and owner effort. Source freshness and source
+precedence in the scorecard must match measured inputs and the actual runtime pack.
+
+Later scope still includes household assignment/acceptance, emergency/custodian recovery, permission-filtered portable
+exchange, broad Goal/Sprint metrics and standing responsibility plans, and OCR/vision expansion. The optional action
+track still needs complete evidence/authorization/provider-version preconditions and broader provider-specific live
+validation. None of those capabilities are implied by the fixes or by green local checks.

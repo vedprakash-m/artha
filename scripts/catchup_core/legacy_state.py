@@ -11,6 +11,7 @@ presented as "nothing there".
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -48,6 +49,7 @@ class LegacyStateAdapter:
 
     def run(self, signals: Sequence[str], *, budget_seconds: float) -> IncumbentOutput:
         conclusions: list[IncumbentConclusion] = []
+        conclusions.extend(_incoming(signals))
         coverage: list[CoverageEntry] = []
         locked: list[str] = []
         if not self._dir.is_dir():
@@ -104,3 +106,17 @@ class LegacyStateAdapter:
             f"due {item.get('deadline') or 'unknown'}; from your records [src: {item.get('id', 'unknown')}]", version,
             kind="open_item", due=str(item.get("deadline") or ""))
             for item in items]
+
+
+def _incoming(signals: Sequence[str]) -> list[IncumbentConclusion]:
+    output: list[IncumbentConclusion] = []
+    seen = set()
+    for signal in signals:
+        item = json.loads(signal)
+        identity = (item["signal_id"], item["domain"], item["quote"])
+        if identity not in seen:
+            seen.add(identity)
+            output.append(IncumbentConclusion(item["domain"],
+                f"{item['domain']}: review source obligation — {item['quote']} "
+                f"[src: signal:{item['signal_id']}]", item["version"], kind="obligation"))
+    return output

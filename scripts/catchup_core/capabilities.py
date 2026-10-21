@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -69,14 +70,17 @@ CAPABILITIES: tuple[Capability, ...] = (
                (_T + "test_rule_of_two.py", "tests/unit/test_tool_guard.py"), ("RA-18.AC1",)),
     Capability("RA-19", "Household coordination", "later", (), (), ("RA-19.AC1",)),
     Capability("RA-20", "Portable export, emergency access, accessibility", "later", (_C + "backup.py",), (_T + "test_user_surfaces.py",), ("RA-20.AC1",)),
-    Capability("RA-21", "Document ingestion and extraction (text baseline only)", "later", (), (), ("RA-21.AC1",)),
+    Capability("RA-21", "Document ingestion and extraction (text baseline only)", "pilot", (_C + "documents.py",),
+               (_T + "test_documents.py",), ("RA-21.AC1",)),
     Capability("RA-22", "Feedback loop and precision tracking", "pilot", (_C + "views.py", _C + "migrations/0007_replay.sql"),
                (_T + "test_user_surfaces.py",), ("RA-22.AC1",)),
     Capability("RA-23", "Beliefs view, forget receipts and third-party data", "reduced", (_C + "ledger.py", _C + "commands.py"),
                (_T + "test_ledger.py", _T + "test_user_surfaces.py"), ("RA-23.AC1",)),
     Capability("RA-24", "Action policy, executor and activity view (pause flag, held types)", "reduced",
-               (_C + "commands.py", "scripts/action_executor.py", "scripts/lib/action_policy.py"),
-               ("tests/unit/test_action_executor.py", "tests/unit/test_action_policy.py"), ("RA-24.AC1",)),
+               (_C + "commands.py", "scripts/action_executor.py", "scripts/lib/action_policy.py",
+                "scripts/lib/action_process.py"),
+               ("tests/unit/test_action_executor.py", "tests/unit/test_action_policy.py",
+                "tests/unit/test_action_process.py"), ("RA-24.AC1",)),
     Capability("RA-25", "Standing responsibilities and Goal plans", "later", (), (), ("RA-25.AC1",)),
 )
 
@@ -112,9 +116,13 @@ def manifest(root: Path, previous: Mapping[str, object] | None = None) -> dict[s
     from catchup_core import CORE_CONTRACT_VERSION  # noqa: PLC0415
     spec = root / "specs" / "re-artha.md"
     digest = hashlib.sha256(spec.read_bytes()).hexdigest() if spec.is_file() else (previous or {}).get("spec_sha256", "")
+    paths = sorted({path for capability in CAPABILITIES for path in (*capability.modules, *capability.tests)})
+    implementation = "\n".join(path + ":" + hashlib.sha256((root / path).read_bytes()).hexdigest()
+                                for path in paths if (root / path).is_file())
     return {
         "spec": "specs/re-artha.md", "spec_version": "0.8.0", "spec_sha256": digest,
         "contract_version": CORE_CONTRACT_VERSION,
+        "implementation_sha256": hashlib.sha256(implementation.encode()).hexdigest(),
         "acceptance": {a: {"capability": c.id, "scope": c.scope, "modules": list(c.modules), "tests": list(c.tests)}
                        for c in CAPABILITIES for a in c.acceptance},
     }
@@ -123,14 +131,10 @@ def manifest(root: Path, previous: Mapping[str, object] | None = None) -> dict[s
 def runtime_states(root: Path, config: Mapping[str, object], db: sqlite3.Connection | None,
                    release_ok: bool, *, extractor_configured: bool) -> list[dict[str, str]]:
     """Per capability: disabled | not configured | unknown | last succeeded | degraded | not implemented."""
-    exercised = False
-    degraded = False
+    evidence: dict[str, str] = {}
     if db is not None:
-        try:
-            exercised = db.execute("SELECT 1 FROM stage_journal WHERE stage='FINALIZED' AND status='committed' LIMIT 1").fetchone() is not None
-            degraded = db.execute("SELECT 1 FROM signal_failures LIMIT 1").fetchone() is not None
-        except sqlite3.Error:
-            pass
+        with suppress(sqlite3.Error):
+            evidence = dict(db.execute("SELECT capability,state FROM capability_evidence ORDER BY seq"))
     domains = config.get("domains") or []
     out: list[dict[str, str]] = []
     for cap in CAPABILITIES:
@@ -141,9 +145,10 @@ def runtime_states(root: Path, config: Mapping[str, object], db: sqlite3.Connect
             state = "disabled"
         elif not domains or (not extractor_configured and cap.id in ("RA-02", "RA-07")):
             state = "not configured"
-        elif not exercised:
-            state = "unknown"
         else:
-            state = "degraded" if degraded and cap.id in ("RA-01", "RA-16") else "last succeeded"
-        out.append({"id": cap.id, "state": state, "measured": "yes" if release_ok and state == "last succeeded" else "no"})
+            state = evidence.get(cap.id, "unknown")
+        reviewed = config.get("reviewed_capabilities", [])
+        reviewed = reviewed if isinstance(reviewed, list) else []
+        out.append({"id": cap.id, "state": state,
+                    "measured": "yes" if release_ok and cap.id in reviewed and state == "last succeeded" else "no"})
     return out

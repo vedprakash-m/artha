@@ -24,10 +24,9 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "why":
         return views.safe_projection(views.explain(led, deps.blobs, viewer, args.fact_id, as_of=args.as_of))
     if args.command == "forget":
-        # Source-level deletion needs the person's consent as well as local viewer authority.
-        from catchup_core.policy import authorize_source  # noqa: PLC0415
-        authorize_source(led, tuple(led._consent_subjects), led._consent_subjects,
-                         f"{args.connector}:{args.scope}", viewer)
+        # The authenticated local owner can remove retained data after consent is revoked.
+        if viewer != led._owner:
+            raise LedgerError("source deletion requires the local owner")
         receipt = led.forget(args.connector, args.scope, args.upstream)
         return {"deleted_signals": receipt.deleted_signals, "deleted_facts": receipt.deleted_facts,
                 "deleted_alerts": receipt.deleted_alerts, "minimal_audit": receipt.minimal_audit,
@@ -47,6 +46,17 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
         if args.apply is None:
             return {"before": fact.value, "after": value, "apply_version": fact.recorded_at,
                     "instruction": "Review this diff, then repeat with --apply <apply_version>."}
+        if args.apply != fact.recorded_at:
+            raise ValueError("Fact changed since the correction preview")
+        # Capture the old evidence before the correction replaces its active spans.
+        correction_key = f"correction:{fact.fact_id}:{fact.recorded_at}"
+        led.upsert_alert(correction_key, domain=fact.domain, primary_subject_id=fact.primary_subject_id,
+                         severity="P4", fact_ids=(fact.fact_id,))
+        fid = views.feedback(led, viewer, correction_key, "useful", "Explicit correction", deps.now())
+        views.replay_case(led, deps.blobs, viewer, correction_key, "correct", "Explicit correction", fid,
+                          deps.now(), led._path.parent / "replay")
+        with led.transaction() as db:
+            db.execute("UPDATE feedback SET response='correct' WHERE feedback_id=?", (fid,))
         views.correct(led, viewer, fact.fact_id, value, args.apply)
         return {"corrected": fact.fact_id, "provenance": "user_confirmed"}
     if args.command == "health":
@@ -54,11 +64,29 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             "capabilities": _capability_states(led, workspace, deps),
             "coverage": [{"connector": r["connector"], "status": r["status"],
                           "last_verified": r["completed_at"]} for r in led.coverage_rows()],
-            "uninterpreted_signals": len(led.unresolved_signals()), "feedback": views.precision(led)}
+            "uninterpreted_signals": len(led.unresolved_signals()), "feedback": views.precision(led, viewer),
+            "reviewed_alert_classes": views.class_precision(led, viewer)}
+    if args.command == "review":
+        return {"review": views.review_feedback(led, viewer, led._path.parent / "replay",
+                                                args.feedback_id, args.label, deps.now())}
     if args.command == "history":
         return {"briefings": [dict(r) for r in led.conn.execute(
-            "SELECT catchup_id,version,published_at,status FROM briefings ORDER BY published_at DESC LIMIT 30")]}
+            "SELECT b.catchup_id,b.version,b.published_at,b.status,(SELECT count(*) FROM correction_notices n "
+            "WHERE n.catchup_id=b.catchup_id) AS correction_notices "
+            "FROM briefings b ORDER BY published_at DESC LIMIT 30")]}
     if args.command == "export":
+        from catchup_core.policy import authorize_source  # noqa: PLC0415
+        for row in led.conn.execute("SELECT fact_id,primary_subject_id,domain FROM facts"):
+            led.get_fact(row["fact_id"], viewer)
+            authorize_source(led, (row["primary_subject_id"],), led._consent_subjects,
+                             row["domain"], viewer, operations=("export",))
+            for co_subject in led.conn.execute("SELECT subject_id FROM fact_subjects WHERE fact_id=?",
+                                               (row["fact_id"],)):
+                authorize_source(led, (co_subject[0],), led._consent_subjects,
+                                 row["domain"], viewer, operations=("export",))
+        for row in led.coverage_rows():
+            authorize_source(led, tuple(led._consent_subjects), led._consent_subjects,
+                             f"{row['connector']}:{row['account_scope']}", viewer, operations=("export",))
         cipher = led._cipher
         if cipher is None:
             raise LedgerError("export requires the encryption key")
@@ -75,12 +103,26 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
         atomic_bytes(led._path.parent / "inbox" / f"{capture_id}.ae1",
                      cipher.encrypt(payload, aad=capture_id.encode())[0])
         return {"captured": capture_id, "next": "Reviewed during the next Catch-up."}
+    if args.command == "ingest":
+        from catchup_core.documents import ingest  # noqa: PLC0415
+        names = [sid for sid, name in deps.subject_labels.items() if name.casefold() == args.subject.casefold()]
+        subject = names[0] if len(names) == 1 else args.subject
+        return {"document": ingest(Path(args.path).expanduser(), subject, led, viewer, deps.now()),
+                "next": "Page evidence will be reviewed at the next Catch-up; unread pages remain unverified."}
     if args.command in ("items", "goals"):
         from catchup_core.curated import read_state, records  # noqa: PLC0415
         from catchup_core.policy import authorize_source  # noqa: PLC0415
         name = "open_items" if args.command == "items" else "goals"
-        authorize_source(led, tuple(led._consent_subjects), led._consent_subjects, f"curated:{name}", viewer)
-        return {args.command: records(read_state(workspace / "state", name), name)}
+        subjects = (viewer,) if name == "goals" else tuple(led._consent_subjects)
+        authorize_source(led, subjects, led._consent_subjects, f"curated:{name}", viewer)
+        authored = records(read_state(workspace / "state", name), name)
+        if name == "goals":
+            from catchup_core.runtime import _goal_lines  # noqa: PLC0415
+            lines = _goal_lines(workspace / "state", ledger=led, viewer=viewer, now=deps.now(),
+                                today=deps.now().date(),
+                                required_sources=tuple(s.connector for s in deps.pack.sources if s.required))
+            return {"goals": authored, "observations": lines}
+        return {args.command: authored}
     if args.command == "activity":
         path = led._path.parent.parent / "actions.db"
         if not path.is_file():
@@ -116,9 +158,18 @@ def _capability_states(led: Any, workspace: Path, deps: Deps) -> list[dict[str, 
                                         host=str(config.policy.get("release", {}).get("authority_host", ""))),
                          config.policy, viewer=config.viewer, domains=config.domains)
         measured = True
+        from catchup_core.policy import _approved_file, verify_rollback  # noqa: PLC0415
+        verify_rollback(config.policy, led._cipher)
+        scorecard = json.loads(_approved_file(config.policy["release"]["scorecard"], "scorecard"))
+        reviewed = [cap for cap, review in scorecard.get("capability_reviews", {}).items()
+                    if review.get("owner_signed_at") and review.get("outcome") == "passed"
+                    and review.get("case_ids") and set(review["case_ids"]) <= {
+                        c["case_id"] for c in scorecard["evaluations"] if c.get("consented_live") is True}]
     except Exception:
         measured = False
-    return runtime_states(_CODE_ROOT, {"domains": list(config.domains)}, led.conn, measured,
+        reviewed = []
+    return runtime_states(_CODE_ROOT, {"domains": list(config.domains), "reviewed_capabilities": reviewed},
+                          led.conn, measured,
                           extractor_configured=True)
 
 

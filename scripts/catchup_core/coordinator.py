@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -75,6 +76,9 @@ class ConnectorFetch:
     blind_spots: tuple[str, ...] = ()
     required: bool = True
     cancelled: tuple[str, ...] = ()
+    # The consumer acknowledges only after every local evidence commit succeeds.
+    commit: Callable[[], None] | None = field(default=None, compare=False, repr=False)
+    completed_at: str | None = None
 
 
 class StageFault(RuntimeError):
@@ -158,9 +162,6 @@ class _Run:
             return []
         if got.error is not None:
             self.failures.append(got.error)
-        self.led.set_coverage(got.connector, got.account_scope, got.status.value, got.blind_spots,
-                              completed_at=_iso(self.now) if got.status is CoverageStatus.COMPLETE else None,
-                              catchup_id=self.request.catchup_id)
         created: list[str] = []
         for upstream in got.cancelled:
             self.led.cancel_calendar(got.connector, got.account_scope, upstream)
@@ -185,6 +186,13 @@ class _Run:
                 self.led.put_calendar(got.connector, got.account_scope, rec.upstream_id, sid, rec.calendar)
             if rec.incomplete:
                 self.led.record_failure(sid, "content", FailureClass.DECODE.value)
+        # Partial batches may replay idempotently; they must never advance a cursor.
+        if got.commit is not None:
+            got.commit()
+        self.led.set_coverage(got.connector, got.account_scope, got.status.value, got.blind_spots,
+                              completed_at=(got.completed_at or _iso(self.now))
+                              if got.status is CoverageStatus.COMPLETE else None,
+                              catchup_id=self.request.catchup_id)
         return created
 
     def _stage_fetch(self) -> tuple[str, ...]:
@@ -237,6 +245,7 @@ class _Run:
             return False
         klass = d.source_class.get(row["connector"], row["connector"])
         candidates: list[ex.Candidate] = []
+        incumbent_candidates: list[dict[str, object]] = []
         pending_count = len(self._pending)
         complete = True
         for start in range(0, len(text), 7600):  # overlap retains sentences crossing an excerpt boundary
@@ -247,6 +256,9 @@ class _Run:
                 complete = False
                 continue
             complete = complete and parsed.complete and not parsed.rejections
+            for other in parsed.other_obligations:
+                a, b = other["span"]
+                incumbent_candidates.append({**other, "span": [a + start, b + start]})
             for candidate in parsed.candidates:
                 candidates.append(ex.Candidate(candidate.predicate, candidate.value, candidate.subject_id,
                     sid, (candidate.span[0] + start, candidate.span[1] + start), candidate.quote,
@@ -266,13 +278,14 @@ class _Run:
                 self.led.record_failure(sid, "extract", FailureClass.EXTRACT.value)
                 self.failures.append(FailureClass.EXTRACT)
                 return False  # independent obligations need explicit identity, never date-as-identity
-        unique = {(c.predicate, c.subject_id, str(c.value), c.span): c for c in candidates}
+        unique = {(c.predicate, c.subject_id, str(c.value), c.span, c.obligation_ref): c for c in candidates}
         self.led.put_candidates(sid, [{
             "predicate": c.predicate,
             "value": c.value.isoformat() if hasattr(c.value, "isoformat") else c.value,
             "subject_id": c.subject_id, "span": list(c.span), "quote": c.quote,
-            "obligation_key": ids.evidence_id(d.id_key, f"{origin}|{c.subject_id}|{c.predicate}|{c.obligation_ref}")}
-            for c in unique.values()])
+            "obligation_key": ids.evidence_id(d.id_key,
+                f"{_obligation_origin(c.obligation_ref, text, origin)}|{c.subject_id}|{c.predicate}")}
+            for c in unique.values()] + incumbent_candidates)
         self.led.set_processing_state(sid, ProcessingState.EXTRACTED)
         return True
 
@@ -319,6 +332,8 @@ class _Run:
         rows = self.led.signals_in_state(ProcessingState.EXTRACTED)
         for row in rows:
             for payload in self.led.candidates_for(row["signal_id"]):
+                if payload.get("kind") == "incumbent":
+                    continue
                 kind = self.deps.pack.predicates[payload["predicate"]].type
                 cands.append(ex.Candidate(
                     payload["predicate"], _typed(kind, payload["value"]), payload["subject_id"],
@@ -337,8 +352,15 @@ class _Run:
         return str(row["connector"]) if row else ""
 
     def _triage(self) -> TriageResult:
-        freshness = {r["connector"]: datetime.fromisoformat(r["completed_at"].replace("Z", "+00:00"))
-                     for r in self.led.coverage_rows() if r["completed_at"]}
+        freshness = {}
+        for row in self.led.conn.execute("SELECT s.signal_id,s.occurred_at,s.observed_at,c.completed_at "
+                "FROM signals s JOIN connector_coverage c ON s.connector=c.connector "
+                "AND s.account_scope=c.account_scope"):
+            # An incremental fetch does not re-verify older documentary evidence.
+            stamp = row["occurred_at"] or row["observed_at"]
+            if row["completed_at"]:
+                freshness[row["signal_id"]] = min(datetime.fromisoformat(s.replace("Z", "+00:00"))
+                    for s in (stamp, row["completed_at"]))
         result = triage(
             self.led, self.deps.pack, self.now, viewer=self.deps.viewer, freshness=freshness,
             calendar=(*self.led.calendar_for(self.deps.viewer), *self.deps.calendar()),
@@ -414,12 +436,22 @@ class _Run:
     def _incumbent_output(self) -> IncumbentOutput:
         """The guarded incumbent runs once per Catch-up (never writes, never publishes)."""
         if self._incumbent is None:
-            self._incumbent = self.deps.incumbent.run([])
+            from catchup_core.policy import authorize_source  # noqa: PLC0415
+            permitted = []
+            for row in self.led.signals_in_state(ProcessingState.RECONCILED):
+                for payload in self.led.candidates_for(row["signal_id"]):
+                    if payload.get("kind") != "incumbent":
+                        continue
+                    authorize_source(self.led, [payload["subject_id"]], self.led._consent_subjects,
+                                     f"{row['connector']}:{row['account_scope']}", self.deps.viewer)
+                    permitted.append(json.dumps({**payload, "signal_id": row["signal_id"],
+                                                  "version": row["upstream_version"]}))
+            self._incumbent = self.deps.incumbent.run(permitted)
             self.failures.extend(self._incumbent.failures)
         return self._incumbent
 
     # ── driver ───────────────────────────────────────────────────────────────
-    def run(self) -> CatchupResult:
+    def run(self) -> CatchupResult:  # noqa: PLR0915 - the ordered stage machine is intentionally explicit
         req, led = self.request, self.led
         self.stage(Stage.CREATED, lambda: ())
         self.deps.preflight()
@@ -428,6 +460,10 @@ class _Run:
         self.stage(Stage.NORMALIZE, self._stage_normalize)
         self.stage(Stage.EXTRACT, self._stage_extract)
         self.stage(Stage.RECONCILE, self._stage_reconcile)
+        if self.led.conn.execute("SELECT 1 FROM facts LIMIT 1").fetchone():
+            self.led.record_capability("RA-02", req.catchup_id)
+        if self.led.conn.execute("SELECT 1 FROM signals LIMIT 1").fetchone():
+            self.led.record_capability("RA-07", req.catchup_id, succeeded=not self.led.unresolved_signals())
 
         triaged = self._triage()
         self.stage(Stage.TRIAGE, lambda: tuple(a.obligation_key for a in triaged.alerts))
@@ -439,7 +475,8 @@ class _Run:
         line = self.deps.coverage_line()
 
         conclusions = self._incumbent_output().conclusions
-        legacy = [c.text for c in conclusions if c.kind != "open_item"]
+        legacy = [c.text for c in conclusions if c.kind == "record"]
+        incumbent_lines = [c.text for c in conclusions if c.kind == "obligation"]
         open_items = [OpenItemLine(c.text, _parse_day(c.due)) for c in conclusions if c.kind == "open_item"]
         goals = self.deps.goal_lines()
         fmt = req.briefing_format
@@ -448,7 +485,7 @@ class _Run:
             return compose(self.now, triaged, evidence_for=evidence, coverage_line=line, coverage_gaps=gaps,
                            unresolved_signals=unresolved, legacy_lines=legacy, goal_lines=goals,
                            subject_labels=self.deps.subject_labels, fmt=fmt, open_items=open_items,
-                           calendar_line=cal_line)
+                           calendar_line=cal_line, incumbent_lines=incumbent_lines)
         briefing = build(self._evidence_for(triaged))
         self.stage(Stage.COMPOSE, lambda: ())
         problems = validate_briefing(briefing.text, briefing.evidence, has_gaps=has_gaps)
@@ -476,6 +513,12 @@ class _Run:
         status = CatchupResult.derive_status(tuple(coverage), failures)
         if (unresolved or triaged.uncertain) and status is RunStatus.COMPLETE:
             status = RunStatus.DEGRADED
+        for capability in ("RA-01", "RA-04", "RA-08", "RA-16", "RA-17"):
+            led.record_capability(capability, req.catchup_id, succeeded=status is RunStatus.COMPLETE)
+        if triaged.alerts:
+            led.record_capability("RA-03", req.catchup_id)
+        if triaged.cross_domain:
+            led.record_capability("RA-13", req.catchup_id)
         return CatchupResult(
             req.catchup_id, req.mode, status, coverage=tuple(coverage), briefing_id=briefing_id,
             briefing_version=version, reason_unpublished=None if briefing_id else "shadow run",
@@ -547,6 +590,19 @@ def _parse_day(raw: str) -> date | None:
         return date.fromisoformat(raw[:10]) if raw else None
     except ValueError:
         return None
+
+
+def _obligation_origin(reference: str, text: str, upstream: str) -> str:
+    """Cross-message links require a grounded name, never a date or an invented model ID.
+
+    Equal names can still disagree: reconciliation disputes conflicting independent sources.
+    Without a grounded name we preserve separate evidence rather than guess a merge.
+    """
+    tokens = re.findall(r"[a-z0-9]+", reference.casefold())
+    words = set(re.findall(r"[a-z0-9]+", text.casefold()))
+    if tokens and all(t in words for t in tokens) and any(not t.isdigit() for t in tokens):
+        return "named:" + "-".join(tokens)
+    return "source:" + upstream + "|" + reference
 
 
 def _typed(kind: str, raw: object) -> object:

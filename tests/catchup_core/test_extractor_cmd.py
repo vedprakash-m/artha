@@ -22,7 +22,7 @@ Allowed predicates (name: type [allowed values]):
 - accommodation_status: enum [none, requested, approved, expired]
 
 Schema:
-{"candidates": []}
+{"complete": true, "candidates": []}
 
 <untrusted>
 Message text here.
@@ -75,7 +75,7 @@ Allowed predicates (name: type [allowed values]):
 - appointment_time: datetime (ISO-8601 with offset)
 
 Schema:
-{"candidates": []}
+{"complete": true, "candidates": []}
 
 <untrusted>
 Doctor appointment on 2026-10-28T09:30:00-07:00.

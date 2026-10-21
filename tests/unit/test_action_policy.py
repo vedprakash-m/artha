@@ -42,7 +42,9 @@ def test_standing_and_automatic_approvals_only_prepare():
 
 
 def test_sensitive_content_needs_exactly_one_named_recipient():
-    assert check_policy(proposal(sensitivity="high", to="doc@clinic.org"), "owner", NOW)[0]
+    assert not check_policy(proposal(sensitivity="high", to="doc@clinic.org"), "owner", NOW)[0]
+    assert check_policy(proposal(sensitivity="high", to="doc@clinic.org"), "owner", NOW,
+                        named_recipients=frozenset({"doc@clinic.org"}))[0]
     for to in ("a@b.com, c@d.com", ["a@b.com", "c@d.com"], "all@school.org", "team@x.org", "", None):
         params = {"to": to} if to is not None else {}
         assert not check_policy(proposal(sensitivity="critical", **params), "owner", NOW)[0], to

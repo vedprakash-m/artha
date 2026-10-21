@@ -23,6 +23,7 @@ LEGACY_MAP: dict[str, ActionStatus] = {
     "deferred": ActionStatus.DEFERRED,
     "approved": ActionStatus.APPROVED,
     "executing": ActionStatus.UNKNOWN,        # may have reached the provider: never assume otherwise
+    "unknown": ActionStatus.UNKNOWN,
     "succeeded": ActionStatus.SUCCEEDED,
     "failed": ActionStatus.FAILED,
     "rejected": ActionStatus.REJECTED,

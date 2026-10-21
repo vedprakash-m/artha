@@ -29,9 +29,12 @@ def release_scorecard():
         "evaluations": [{"case_id": "live", "domain": "kids_school", "consented_live": True,
                          "expected": ["a"], "surfaced": ["a"]}],
         "bounds": {"kids_school": {"minimum_precision": 0.8, "minimum_recall": 1,
-            "max_source_age_hours": 48, "source_precedence": ["school_email"], "normal_workload": {"signals": 20},
+            "max_source_age_hours": 48,
+            "source_precedence": {name:list(pred.authority) for name,pred in PACK.predicates.items()},
+            "normal_workload": {"signals": 20},
             "maximum_review_minutes": 15, "maximum_p95_seconds": 180, "maximum_monthly_usd": 50}},
-        "measurements": {"kids_school": {"review_minutes": 5, "p95_seconds": 100, "monthly_usd": 10}}}
+        "measurements": {"kids_school": {"review_minutes": 5, "p95_seconds": 100, "monthly_usd": 10,
+            "workload":{"signals":20}, "source_age_hours":{"school_email":1, "calendar":1}}}}
 
 
 @pytest.fixture
@@ -44,7 +47,7 @@ def app(tmp_path):
     fid = led.put_fact(FactInput(domain="kids_school", predicate="exam_registration_deadline",
         value="2026-10-14", primary_subject_id="kid1", observed_at=NOW.isoformat(), evidence=((sid, 0, 30),)))
     led.upsert_alert("exam", domain="kids_school", primary_subject_id="kid1", severity="P1", fact_ids=[fid])
-    deps = co.Deps(led, PACK, blobs, KEY, {}, lambda _: '{"candidates":[]}', ["kid1"], "owner", lambda: NOW)
+    deps = co.Deps(led, PACK, blobs, KEY, {}, lambda _: '{"complete":true,"candidates":[]}', ["kid1"], "owner", lambda: NOW)
     (tmp_path / "state").mkdir()
     yield tmp_path, deps, fid, sid
     led.close()

@@ -93,7 +93,8 @@ def test_consent_expiry_compares_instants_across_offsets(tmp_path):
 def test_terminal_projection_is_readable_and_inert():
     text = views.render("beliefs", {"beliefs": [{"fact_id": "f1", "predicate": "<b>date</b>",
                        "value": "2026-10-14", "status": "unknown"}]})
-    assert "f1: date" in text and "<b>" not in text
+    assert "date" in text and "f1" not in text and "<b>" not in text
+    assert "f1:" in views.render("beliefs", {"beliefs":[{"fact_id":"f1", "predicate":"date"}]},detail=True)
     assert views.render("beliefs", {"beliefs": []}) == "No beliefs recorded here."
     assert "deleted signals: 1" in views.render("forget", {"deleted_signals": 1})
 

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from catchup_core.contracts import CatchupRequest, ExecutionMode
+from catchup_core.crypto import EnvelopeCipher
 from catchup_core.ledger import Ledger, PermissionDenied
 from catchup_core.scorecard import Case, score
 
@@ -73,6 +74,20 @@ def _validate_domains(result: Mapping[str, Any], domains: Sequence[str]) -> None
                 or evaluated.recall < float(bounds["minimum_recall"])):
             raise PermissionDenied(f"{domain} failed precision/recall or safety gates")
         measurements = result.get("measurements", {}).get(domain, {})
+        from catchup_core.domain_pack import load_pack_file  # noqa: PLC0415
+        pack = load_pack_file(Path(__file__).parent / "packs" / f"{domain}.yaml")
+        precedence = {name: list(predicate.authority) for name, predicate in pack.predicates.items()}
+        if bounds["source_precedence"] != precedence:
+            raise PermissionDenied(f"{domain} release source precedence differs from the runtime pack")
+        if measurements.get("workload") != bounds["normal_workload"]:
+            raise PermissionDenied(f"{domain} workload measurement does not match the approved workload")
+        source_ages = measurements.get("source_age_hours", {})
+        for source in pack.sources:
+            if source.required:
+                age = source_ages.get(source.connector)
+                if (not isinstance(age, int | float) or isinstance(age, bool)
+                        or not 0 <= age <= min(source.freshness_hours, float(bounds["max_source_age_hours"]))):
+                    raise PermissionDenied(f"{domain} lacks passing scoped freshness measurements")
         for metric, bound in (("review_minutes", "maximum_review_minutes"), ("p95_seconds", "maximum_p95_seconds"),
                               ("monthly_usd", "maximum_monthly_usd")):
             value = measurements.get(metric)
@@ -93,10 +108,31 @@ def _approved_file(record: Any, label: str) -> bytes:
     return data
 
 
+def verify_rollback(config: Mapping[str, Any], cipher: EnvelopeCipher) -> None:
+    """Release needs a decryptable, internally consistent snapshot, not just a magic prefix."""
+    import sqlite3  # noqa: PLC0415
+    from contextlib import closing  # noqa: PLC0415
+
+    from catchup_core.backup import read_snapshot  # noqa: PLC0415
+    try:
+        record = config["release"]["rollback_snapshot"]
+        _approved_file(record, "rollback snapshot")
+        files = read_snapshot(Path(record["path"]).expanduser(), cipher)
+        with closing(sqlite3.connect(":memory:")) as db:
+            db.deserialize(files["ledger.db"])
+            if (db.execute("PRAGMA integrity_check").fetchone()[0] != "ok"
+                    or db.execute("PRAGMA foreign_key_check").fetchone()):
+                raise ValueError("snapshot integrity failed")
+    except Exception as exc:
+        raise PermissionDenied("rollback snapshot could not be decrypted and verified") from exc
+
+
 def authorize_source(ledger: Ledger, subjects: Sequence[str], required: frozenset[str],
-                     scope: str, viewer: str) -> None:
+                     scope: str, viewer: str, *, operations: Sequence[str] = ("ingest", "disclose", "view")) -> None:
     for subject in subjects:
+        if ledger._known_subjects is not None and subject not in ledger._known_subjects:
+            raise PermissionDenied("source has an unresolved person; resolve identity before access")
         if subject in required:
-            for operation in ("ingest", "disclose", "view"):
+            for operation in operations:
                 if not ledger.consent_active(subject, operation, viewer, scope=scope):
                     raise PermissionDenied(f"source requires {subject}'s scoped {operation} consent")

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -249,7 +250,7 @@ def _print_validate_summary(profile: dict) -> None:
 # Identity block generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_identity_block(profile: dict) -> str:
+def _build_identity_block(profile: dict, *, today: date | None = None) -> str:
     """Generate the §1 Identity & Context markdown block from profile."""
     lines: list[str] = []
 
@@ -320,6 +321,13 @@ def _build_identity_block(profile: dict) -> str:
     for child in children:
         c_name = child.get("name", "Child")
         c_age = child.get("age", "")
+        if child.get("dob"):
+            try:
+                birthday = date.fromisoformat(str(child["dob"]))
+                day = today or date.today()
+                c_age = day.year - birthday.year - ((day.month, day.day) < (birthday.month, birthday.day))
+            except ValueError:
+                c_age = "unknown"
         c_grade = child.get("grade", "")
         school = child.get("school", {}) or {}
         s_name = school.get("name", "")
@@ -506,6 +514,9 @@ def _extract_sections(core_text: str) -> dict[str, str]:
     # We keep: §1 (behavior), §4 (privacy), §5 (commands), §6 (routing), §7 (capabilities)
     # We exclude: §2-§3 (workflow + routing table — in separate files), §8-§14 (meta, in core.md only)
     sections: dict[str, str] = {}
+    router = re.search(r"^## §R .*?(?=^## |\Z)", core_text, re.MULTILINE | re.DOTALL)
+    if router:
+        sections["router"] = router.group().rstrip()
 
     # Find §1 (behavior/directives) — from start to before §2
     m_s1 = re.search(r"^## §1 ", core_text, re.MULTILINE)
@@ -591,7 +602,7 @@ def _assemble_artha_md(identity_block: str, compact: bool = True) -> None:
         else:
             compact_body = "\n\n".join(filter(None, [
                 sections.get("behavior", ""),
-                _COMMAND_ROUTER_TABLE,
+                sections.get("router", _COMMAND_ROUTER_TABLE),
                 sections.get("privacy", ""),
                 sections.get("commands", ""),
                 sections.get("routing_table", ""),
@@ -602,7 +613,7 @@ def _assemble_artha_md(identity_block: str, compact: bool = True) -> None:
                 "## §2 — Catch-Up Workflow\n\n"
                 "The catch-up workflow is in `config/workflow/` files.\n"
                 "Load them as directed by §R above.\n"
-                "Full canonical step definitions are in `config/Artha.core.md`.\n"
+                "Full canonical step definitions are in `config/workflow/catchup.md`.\n"
             )
             assembled = header + identity_block + "\n\n---\n\n" + compact_body + workflow_ref
 

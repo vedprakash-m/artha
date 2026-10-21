@@ -7,7 +7,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from pathlib import Path
 
@@ -54,15 +54,19 @@ def atomic_bytes(path: Path, data: bytes) -> None:
 
 def encrypted_snapshot(path: Path, ledger: Path, cipher: EnvelopeCipher, *,
                        blobs: Path | None = None, curated: Mapping[str, bytes] | None = None,
-                       action_db: Path | None = None, idempotent: bool = False) -> None:
+                       action_db: Path | None = None, idempotent: bool = False,
+                       guard: Callable[[], bool] = lambda: True) -> None:
     if path.exists():
         if not idempotent:
             raise LedgerError("snapshot destination already exists; choose a new name")
         read_snapshot(path, cipher)  # idempotent finalize; never overwrite a generation
         return
-    files: dict[str, str] = {"ledger.db": base64.b64encode(database_bytes(ledger)).decode()}
+    ledger_image = database_bytes(ledger)
+    files: dict[str, str] = {"ledger.db": base64.b64encode(ledger_image).decode()}
+    action_image = None
     if action_db is not None and action_db.exists():
-        files["actions.db"] = base64.b64encode(database_bytes(action_db)).decode()
+        action_image = database_bytes(action_db)
+        files["actions.db"] = base64.b64encode(action_image).decode()
     if blobs is not None:
         for blob in sorted(blobs.glob("evd_*.blob")):
             files[f"blobs/{blob.name}"] = base64.b64encode(blob.read_bytes()).decode()
@@ -73,6 +77,9 @@ def encrypted_snapshot(path: Path, ledger: Path, cipher: EnvelopeCipher, *,
     payload = json.dumps({"schema": "artha.snapshot.v1", "dispatchable": False, "files": files},
                          sort_keys=True).encode()
     envelope, _ = cipher.encrypt(payload, aad=b"artha.snapshot.v1")
+    if (database_bytes(ledger) != ledger_image or not guard()
+            or (action_image is not None and action_db is not None and database_bytes(action_db) != action_image)):
+        raise LedgerError("snapshot inputs changed during capture; retry from a quiescent generation")
     # Verify before publishing the immutable snapshot.
     if cipher.decrypt(envelope, aad=b"artha.snapshot.v1") != payload:
         raise LedgerError("encrypted snapshot verification failed")

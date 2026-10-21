@@ -75,6 +75,7 @@ class ExtractionResult:
     failure: FailureClass | None = None
     failure_detail: str = ""
     complete: bool = True
+    other_obligations: tuple[dict[str, Any], ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -109,6 +110,7 @@ def build_request(pack: DomainPack, signal: NormalizedSignal, subjects: Sequence
         .replace("{{predicates}}", "\n".join(predicates))
         .replace("{{message}}", excerpt)
     )
+    prompt = f"Source observation time: {signal.observed_at or 'unknown'}\n" + prompt
     return ExtractionRequest(prompt=prompt, signal_id=signal.signal_id)
 
 
@@ -155,7 +157,27 @@ def parse_output(output: str, pack: DomainPack, signal: NormalizedSignal,
             rejected.append(Rejection(index, reason))
         else:
             accepted.append(reason)
-    return ExtractionResult(tuple(accepted), tuple(rejected), complete=data.get("complete", True) is True)
+    others = []
+    raw_others = data.get("other_obligations", [])
+    if not isinstance(raw_others, list) or len(raw_others) + len(items) > MAX_CANDIDATES:
+        return ExtractionResult(tuple(accepted), complete=False)
+    for item in raw_others:
+        allowed_domains = {"finance", "health", "home", "immigration", "travel", "calendar", "insurance",
+                           "vehicle", "learning", "digital", "comms", "employment", "kids_school"}
+        if (not isinstance(item, dict) or item.get("domain") not in allowed_domains
+                or item.get("domain") in set(pack.predicate_domains.values()) | {pack.domain}
+                or item.get("subject_id") not in allowed):
+            rejected.append(Rejection(-1, "invalid non-pilot obligation"))
+            continue
+        checked = _check_evidence(item, signal.text)
+        if isinstance(checked, str):
+            rejected.append(Rejection(-1, checked))
+            continue
+        start, end, quote = checked
+        others.append({"kind": "incumbent", "domain": item["domain"], "subject_id": item["subject_id"],
+                       "span": [start, end], "quote": quote})
+    return ExtractionResult(tuple(accepted), tuple(rejected), complete=data.get("complete") is True,
+                            other_obligations=tuple(others))
 
 
 def _check_evidence(item: dict[str, Any], text: str) -> tuple[int, int, str] | str:

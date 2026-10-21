@@ -11,7 +11,7 @@ from catchup_core.actions import ActionStatus
 def test_every_legacy_status_has_a_target():
     legacy = {"pending", "modifying", "approved", "rejected", "deferred", "executing", "succeeded", "failed",
               "expired", "cancelled"}
-    assert set(LEGACY_MAP) == legacy
+    assert set(LEGACY_MAP) == legacy | {"unknown"}
     assert all(isinstance(v, ActionStatus) for v in LEGACY_MAP.values())
 
 

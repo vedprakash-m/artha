@@ -50,9 +50,9 @@ from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
 from catchup_core.exchange import ExchangeExtractor
 from catchup_core.incumbent import GuardedIncumbent
-from catchup_core.ledger import KeyringSealedStore, Ledger
+from catchup_core.ledger import KeyringSealedStore, Ledger, PermissionDenied
 from catchup_core.legacy_state import LegacyStateAdapter
-from catchup_core.policy import authorize_source, validate_release
+from catchup_core.policy import authorize_source, validate_release, verify_rollback
 
 __all__ = ["RuntimeConfig", "RuntimeConfigError", "build_deps", "command_extractor", "load_runtime_config",
            "local_root", "make_file_publisher"]
@@ -152,6 +152,10 @@ def build_fetchers(
     for pack_name, spec in config.sources.items():
         def run(pack_name: str = pack_name, spec: Mapping[str, Any] = spec) -> ConnectorFetch:
             try:
+                if str(spec.get("namespace", "personal")) != "personal":
+                    raise PermissionError("Work sources cannot enter personal context")
+                if ledger is None and config.consent_required:
+                    raise PermissionDenied("fetch requires the current consent ledger")
                 if ledger is not None:
                     authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
                                      f"{pack_name}:{spec['account_scope']}", config.viewer)
@@ -193,7 +197,7 @@ def _default_loaders() -> tuple[Callable[[str], Any], Callable[[str], Mapping[st
     return handler, auth
 
 
-def build_deps(
+def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency wiring
     request: CatchupRequest,
     *,
     repo_root: Path | str | None = None,
@@ -218,7 +222,7 @@ def build_deps(
                      config.policy, viewer=config.viewer, domains=domains)
     pack = _load_packs(domains)
     source_class = {**{name: str(spec.get("class", name)) for name, spec in config.sources.items()},
-                    "capture": "parent_note"}
+                    "capture": "parent_note", "documents": "official_document"}
     validate_source_classes(pack, source_class)
     if inspection and not (local / "ledger.db").is_file():
         raise RuntimeConfigError("no Catch-up recorded here yet; start with catchup --shadow")
@@ -227,6 +231,8 @@ def build_deps(
     id_provider = KeyringKeyProvider("artha-ledger-ids", backend=keyring_backend)
     cipher = EnvelopeCipher(cipher_provider)
     id_key = _id_key(id_provider)
+    if request.mode is ExecutionMode.AUTHORITATIVE and not inspection:
+        verify_rollback(config.policy, cipher)
     if config.policy.get("household_from_profile") is True:
         _bind_household(config, root, id_key, (now or (lambda: datetime.now(UTC)))().astimezone(pack.timezone).date())
     if keyring_backend is None:
@@ -243,6 +249,8 @@ def build_deps(
     ext_cmd = env.get("ARTHA_EXTRACTOR_CMD") or config.extractor_cmd
     fetchers = build_fetchers(config, since, handler_loader, auth_loader, required, ledger)
     fetchers["capture"] = _capture_fetcher(local, cipher, config.viewer)
+    from catchup_core.documents import fetch_documents  # noqa: PLC0415
+    fetchers["documents"] = lambda: fetch_documents(ledger, config.viewer)
     fetchers.update(_bundle_fetchers(config, ledger, keyring_backend, required, clock))
     def curated_reader(name: str) -> str:
         from catchup_core.curated import read_state  # noqa: PLC0415
@@ -250,15 +258,21 @@ def build_deps(
         authorize_source(ledger, subjects, config.consent_required, f"curated:{name}", config.viewer)
         return read_state(root / "state", name)
     def finalize(catchup_id: str) -> None:
-        curated = {p.name: p.read_bytes() for p in (root / "state").glob("*.md")}
+        curated = {p.name: p.read_bytes() for p in (root / "state").iterdir()
+                   if p.is_file() and p.name.endswith((".md", ".md.age", ".yaml", ".yml"))}
+        def unchanged() -> bool:
+            return all((root / "state" / name).read_bytes() == data for name, data in curated.items())
         encrypted_snapshot(local / "snapshots" / f"{catchup_id}.ae1", local / "ledger.db", cipher,
                            blobs=local / "blobs", curated=curated,
                            action_db=local.parent / "actions.db" if request.mode.value == "authoritative" else None,
-                           idempotent=True)
+                           idempotent=True, guard=unchanged)
+        _prune_snapshots(local / "snapshots", now_fn(), int(config.policy.get("snapshot_retention_days", 30)))
         atomic_bytes(local / "health.json", json.dumps({"last_catch_up": now_fn().isoformat(),
             "catchup_id": catchup_id, "mode": request.mode.value}).encode())
     inputs = json.dumps(config.policy, sort_keys=True) + str(ext_cmd)
     inputs += "".join((_PACKS / f"{d}.yaml").read_text() for d in domains)
+    inputs += "".join(p.read_text() for p in sorted(Path(__file__).parent.glob("*.py")))
+    inputs += "".join(p.read_text() for p in sorted((Path(__file__).parent / "prompts").glob("*.md")))
     return Deps(
         ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
         fetchers=fetchers,
@@ -271,7 +285,9 @@ def build_deps(
         publisher=make_file_publisher(local, now_fn, cipher=cipher),
         coverage_line=_coverage_line,
         finalizer=finalize,
-        goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader, today=now_fn().date()),
+        goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader, today=now_fn().date(),
+                                       ledger=ledger, viewer=config.viewer, now=now_fn(),
+                                       required_sources=tuple(s.connector for s in pack.sources if s.required)),
         goal_domains=lambda: _goal_domains(root / "state", reader=curated_reader),
         input_version=hashlib.sha256(inputs.encode()).hexdigest(),
         subjects_for=lambda connector, text: _subjects_for(config, connector, text),
@@ -282,7 +298,21 @@ def build_deps(
 def _bind_household(config: RuntimeConfig, root: Path, key: ids.HmacKey, today: Any) -> None:
     from catchup_core.household import members  # noqa: PLC0415
     try:
-        people = members(yaml.safe_load((root / "config/user_profile.yaml").read_text()), key, config.viewer, today)
+        profile_path = root / "config/user_profile.yaml"
+        profile = yaml.safe_load(profile_path.read_text())
+        people = members(profile, key, config.viewer, today)
+        # Preserve the initial keyed IDs in the authored profile. Later name/DOB edits
+        # or key rotation must not silently turn old adult data into an unknown minor.
+        family = profile["family"]
+        records = ([family["spouse"]] if family.get("spouse", {}).get("name")
+                   and family["spouse"].get("enabled", True) else []) + family.get("children", [])
+        changed = False
+        for record, person in zip(records, people[1:], strict=True):
+            if not record.get("id"):
+                record["id"] = person.subject_id
+                changed = True
+        if changed:
+            atomic_bytes(profile_path, yaml.safe_dump(profile, sort_keys=False, allow_unicode=True).encode())
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise RuntimeConfigError("household identity could not be resolved from the profile") from exc
     config.subjects = [person.subject_id for person in people]
@@ -313,6 +343,7 @@ def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, ci
         is_new = not (local / "ledger.db").exists()
         ledger = Ledger(local / "ledger.db", id_key=id_key, cipher=cipher, owner_id=config.viewer,
                         consent_subjects=config.consent_required,
+                        known_subjects=frozenset(config.subjects),
                         sealed=KeyringSealedStore(keyring_backend, request.mode.value)).open()
         try:
             ledger.migrate(backup=_backup_for(local, cipher=cipher))
@@ -343,6 +374,20 @@ def _purge_archives(local: Path, ledger: Ledger, catchup_ids: Sequence[str]) -> 
     for row in ledger.conn.execute("SELECT upstream_id FROM tombstones WHERE connector='capture'"):
         if re.fullmatch(r"cap_[A-Za-z0-9]+", row[0]):
             (local / "inbox" / f"{row[0]}.ae1").unlink(missing_ok=True)
+    for row in ledger.conn.execute("SELECT upstream_id FROM tombstones WHERE connector='documents'"):
+        document = row[0].split(":", 1)[0]
+        if re.fullmatch(r"doc_[a-f0-9]+", document):
+            (local / "documents" / f"{document}.ae1").unlink(missing_ok=True)
+
+
+def _prune_snapshots(directory: Path, now: datetime, retention_days: int) -> None:
+    if not 1 <= retention_days <= 365:
+        raise RuntimeConfigError("snapshot retention must be between 1 and 365 days")
+    snapshots = sorted(directory.glob("*.ae1"), key=lambda p: p.stat().st_mtime, reverse=True)
+    cutoff = (now - timedelta(days=retention_days)).timestamp()
+    for path in snapshots[1:]:
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
 
 
 def validate_source_classes(pack: DomainPack, source_class: Mapping[str, str]) -> None:
@@ -366,6 +411,10 @@ def _bundle_fetchers(config: RuntimeConfig, ledger: Ledger, keyring_backend: Any
     out: dict[str, Callable[[], ConnectorFetch]] = {}
     for name, spec in specs.items():
         def run(name: str = str(name), spec: Mapping[str, Any] = spec) -> ConnectorFetch:
+            if spec.get("namespace", "personal") != "personal":
+                raise PermissionDenied("Work bundles cannot enter personal context")
+            authorize_source(ledger, config.sources.get(name, {}).get("subjects", config.subjects),
+                             ledger._consent_subjects, f"{name}:{spec['account_scope']}", config.viewer)
             key = load_producer_key(str(spec["producer"]), keyring_backend)
             keys = {key.producer: key} if key is not None else {}
             row = ledger.conn.execute("SELECT MAX(generation) FROM authority_generation").fetchone()
@@ -443,14 +492,25 @@ def _goal_domains(state: Path, *, reader: Callable[[str], str] | None = None) ->
 
 
 def _goal_lines(state: Path, *, reader: Callable[[str], str] | None = None,
-                today: date | None = None) -> list[str]:
+                today: date | None = None, ledger: Ledger | None = None, viewer: str = "owner",
+                now: datetime | None = None, required_sources: Sequence[str] = ()) -> list[str]:
     """One line per active Goal: next action, whether it is due or overdue, and the last authored progress."""
     try:
         goals = _active_goals(state, reader)
     except (OSError, RuntimeError, ValueError):
         return ["Goals unavailable; progress is unknown."]
+    from catchup_core.goals import observe_goals  # noqa: PLC0415
     output = []
+    if ledger is not None and now is not None:
+        for authored in goals:
+            try:
+                output.extend(observe_goals(ledger, [authored], viewer, now, required_sources=required_sources))
+            except (ValueError, KeyError, TypeError):
+                output.append(f"{authored.get('title', 'Goal')}: observation unknown; check the metric definition.")
+                ledger.record_capability("RA-11", str(authored.get("id", "unknown")), succeeded=False)
     for goal in goals:
+        if isinstance(goal.get("metric"), dict) and goal["metric"].get("kind") == "on_time_obligations" and ledger:
+            continue
         observed = goal.get("last_progress") or "unknown"
         next_action = goal.get("next_action") or "next action unknown"
         timing = ""
