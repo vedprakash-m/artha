@@ -106,6 +106,7 @@ class Deps:
     preflight: Callable[[], None] = lambda: None
     finalizer: Callable[[str], None] = lambda _cid: None
     goal_lines: Callable[[], Sequence[str]] = lambda: ()
+    plan_lines: Callable[[], Sequence[str]] = lambda: ()
     #: Domains of active Goals; used only as a ranking tie-break (never lifts an ineligible Alert).
     goal_domains: Callable[[], Collection[str]] = lambda: ()
     input_version: str = ""
@@ -484,6 +485,7 @@ class _Run:
         def build(evidence: Mapping[str, list[tuple[str, str, str, str]]]) -> Briefing:
             return compose(self.now, triaged, evidence_for=evidence, coverage_line=line, coverage_gaps=gaps,
                            unresolved_signals=unresolved, legacy_lines=legacy, goal_lines=goals,
+                           plan_lines=self.deps.plan_lines(),
                            subject_labels=self.deps.subject_labels, fmt=fmt, open_items=open_items,
                            calendar_line=cal_line, incumbent_lines=incumbent_lines)
         briefing = build(self._evidence_for(triaged))

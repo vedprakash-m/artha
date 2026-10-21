@@ -289,6 +289,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
                                        ledger=ledger, viewer=config.viewer, now=now_fn(),
                                        required_sources=tuple(s.connector for s in pack.sources if s.required)),
         goal_domains=lambda: _goal_domains(root / "state", reader=curated_reader),
+        plan_lines=lambda: _plan_lines(root / "state", reader=curated_reader, today=now_fn().date()),
         input_version=hashlib.sha256(inputs.encode()).hexdigest(),
         subjects_for=lambda connector, text: _subjects_for(config, connector, text),
         subject_labels=config.subject_labels,
@@ -481,6 +482,15 @@ def _active_goals(state: Path, reader: Callable[[str], str] | None) -> list[dict
     from catchup_core.curated import read_state, records  # noqa: PLC0415
     goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
     return [g for g in goals if g.get("status") == "active"]
+
+
+def _plan_lines(state: Path, *, reader: Callable[[str], str] | None = None, today: date) -> list[str]:
+    """Milestones of active Goals, evaluated read-only; an unreadable Goals file contributes nothing."""
+    from catchup_core.plans import evaluate_plans, plan_lines  # noqa: PLC0415
+    try:
+        return plan_lines(evaluate_plans(_active_goals(state, reader), today))
+    except (OSError, RuntimeError, ValueError):
+        return []
 
 
 def _goal_domains(state: Path, *, reader: Callable[[str], str] | None = None) -> set[str]:

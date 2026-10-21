@@ -147,6 +147,10 @@ def _trim_words(lines: list[str], limit: int) -> list[str]:
     return out
 
 
+def _bullets(title: str, items: Sequence[str]) -> list[str]:
+    return [title, *(f"• {sanitize(item, 200)}" for item in items), ""] if items else []
+
+
 def _records_section(legacy_lines: Sequence[str], fmt: BriefingFormat) -> list[str]:
     """State Files that are only 'from your records': listed in deep, counted in standard, absent otherwise."""
     if not legacy_lines:
@@ -182,6 +186,7 @@ def compose(
     coverage_gaps: Sequence[str] = (),
     unresolved_signals: int = 0,
     goal_lines: Sequence[str] = (),
+    plan_lines: Sequence[str] = (),
     legacy_lines: Sequence[str] = (),
     subject_labels: Mapping[str, str] | None = None,
     fmt: BriefingFormat = BriefingFormat.STANDARD,
@@ -233,8 +238,8 @@ def compose(
     lines += _records_section(legacy_lines, fmt)
     if incumbent_lines:
         lines += ["OTHER COMMITMENTS TO REVIEW"] + [f"• {sanitize(t, 700)}" for t in incumbent_lines] + [""]
-    if goal_lines and not brief:
-        lines += ["GOALS"] + [f"• {sanitize(g, 200)}" for g in goal_lines] + [""]
+    if not brief:
+        lines += _bullets("GOALS", goal_lines) + _bullets("GOAL PLANS", plan_lines)
     lines += _verdict_lines(result, quiet, coverage_gaps, unresolved_signals)
 
     if result.next_check_by:
