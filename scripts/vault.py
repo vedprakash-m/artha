@@ -1240,6 +1240,20 @@ def do_read(domain: str) -> None:
         sys.exit(1)
 
 
+def do_write(domain: str) -> None:
+    """Encrypt stdin as one domain in memory (validated, versioned, atomic); no plaintext file is created."""
+    try:
+        from catchup_core.vault import AgeVault
+        pub = get_public_key()
+        key = get_private_key()          # needed to validate the replacement against the previous version
+        vault = AgeVault(STATE_DIR, identity=lambda: key, recipient=pub)
+        path = vault.write(domain, sys.stdin.read())
+        print(f"wrote {path.name}")
+    except Exception as exc:
+        print(f"Error writing {domain}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         _print_usage(exit_code=1)
@@ -1255,6 +1269,11 @@ def main() -> None:
         do_status()
     elif cmd == "health":
         do_health()
+    elif cmd == "write":
+        if len(sys.argv) < 3:
+            print("Usage: vault.py write <domain>   (new content on stdin)", file=sys.stderr)
+            sys.exit(1)
+        do_write(sys.argv[2])
     elif cmd in ("read", "cat"):
         if len(sys.argv) < 3:
             print("Usage: vault.py read <domain>", file=sys.stderr)

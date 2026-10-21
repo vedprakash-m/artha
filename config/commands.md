@@ -23,6 +23,7 @@ Sub-commands:
 - `/brief deep` — extended briefing with trend analysis, coaching, scenarios (`--format deep`)
 - `/brief standard` — force full §8.1 standard format (`--format standard`)
 - `/brief digest` — force digest format (§8.7) (`--format digest`)
+- `/brief everything` (also "show everything") — deep format with every Open Item and every State File listed (`--format deep`)
 
 ### `/catch-up` (legacy alias for `/brief`)
 Same as `/brief`. All sub-commands still work: `/catch-up flash`, `/catch-up deep`, `/catch-up standard`.
@@ -428,7 +429,7 @@ Guided interview to systematically populate state files. Replaces empty/bootstra
    c. Update last_updated timestamp
    d. Show completion summary:
       "✅ [domain].md populated: [N] fields written, verification passed"
-   e. If domain is encrypted: vault.py decrypt → write → verify → vault.py encrypt
+   e. If domain is encrypted: vault.py read <domain> → edit in memory → vault.py write <domain> → verify
 
 5. Detection rules for population status:
    - `updated_by: bootstrap` → ⚠ placeholder

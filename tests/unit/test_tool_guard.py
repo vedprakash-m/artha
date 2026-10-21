@@ -47,3 +47,18 @@ def test_main_exit_codes_and_fail_open():
     assert tg.main(io.StringIO(json.dumps(bash("ls")))) == 0
     assert tg.main(io.StringIO("not json")) == 0
     assert tg.decide({"tool_name": "Bash", "tool_input": "weird"}) is None
+
+
+def test_text_that_merely_mentions_a_forbidden_command_is_not_a_command():
+    heredoc = "python3 - <<'EOF'\nprint('python3 scripts/vault.py decrypt')\nEOF"
+    assert tg.decide(bash(heredoc), domains=D) is None
+    assert tg.decide(bash("grep -rn 'vault.py decrypt' config"), domains=D) is None
+    assert tg.decide(bash("echo 'cat state/finance.md'"), domains=D) is None
+    assert tg.decide(bash("git commit -m 'stop using --yolo with claude'"), domains=D) is None
+
+
+def test_a_forbidden_command_after_a_separator_is_still_found():
+    assert tg.decide(bash("ls && python3 scripts/vault.py decrypt"), domains=D)
+    assert tg.decide(bash("FOO=1 python3 scripts/vault.py decrypt"), domains=D)
+    assert tg.decide(bash("ls; cat state/finance.md"), domains=D)
+    assert tg.decide(bash("cd x\nclaude --dangerously-skip-permissions"), domains=D)

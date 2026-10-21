@@ -85,12 +85,13 @@ python scripts/preflight.py --advisory
 **OAuth/Token dual-failure rule:** If MS Graph token is BOTH expired AND network is blocked,
 report both separately (token fix is actionable from Mac even if network fix isn't).
 
-### Step 1 — Decrypt sensitive state
+### Step 1 — Sensitive state is read in memory (no bulk decrypt)
 
-**Skip in read-only mode** → log `⏭️ Step 1 skipped — read-only mode`
+Do not decrypt State Files to disk (re-artha §10.6; the harness denies it). Read a protected domain only when a step needs it:
 
 ```bash
-python scripts/vault.py decrypt
+python3 scripts/vault.py read <domain>          # prints the plaintext, writes nothing
+python3 scripts/vault.py write <domain> < new_content.md   # validated, versioned, encrypted from memory
 ```
 If `age` not installed or key not in credential store: log warning and continue.
 

@@ -1107,3 +1107,45 @@ class TestVaultHookFallback:
             f"vault_hook.SENSITIVE_DOMAINS missing domains: {sorted(missing)}. "
             f"These domains contain sensitive data and must trigger stray-file warnings."
         )
+
+
+class TestInMemoryWrite:
+    """`vault.py write <domain>` is the in-memory counterpart of `read` (re-artha 10.6)."""
+
+    def test_write_encrypts_stdin_through_agevault_without_a_plaintext_file(self, monkeypatch, capsys, tmp_path):
+        import io
+        import sys
+        import types
+        written = {}
+
+        class FakeVault:
+            def __init__(self, state_dir, *, identity, recipient):
+                written["init"] = (state_dir, recipient)
+
+            def write(self, name, text):
+                written["call"] = (name, text)
+                return tmp_path / f"{name}.md.age"
+
+        monkeypatch.setitem(sys.modules, "catchup_core.vault", types.SimpleNamespace(AgeVault=FakeVault))
+        monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
+        monkeypatch.setattr(vault, "get_private_key", lambda: "AGE-SECRET-KEY-1")
+        monkeypatch.setattr(sys, "stdin", io.StringIO("---\ndomain: kids\n---\nbody\n"))
+        vault.do_write("kids")
+        assert written["call"] == ("kids", "---\ndomain: kids\n---\nbody\n")
+        assert "wrote kids.md.age" in capsys.readouterr().out
+        assert not (tmp_path / "kids.md").exists()
+
+    def test_write_failure_exits_nonzero_and_names_the_domain(self, monkeypatch, capsys):
+        import sys
+        import types
+
+        class Broken:
+            def __init__(self, *a, **k):
+                raise RuntimeError("no key")
+
+        monkeypatch.setitem(sys.modules, "catchup_core.vault", types.SimpleNamespace(AgeVault=Broken))
+        monkeypatch.setattr(vault, "get_public_key", lambda: "age1pub")
+        monkeypatch.setattr(vault, "get_private_key", lambda: "k")
+        with pytest.raises(SystemExit) as exc:
+            vault.do_write("kids")
+        assert exc.value.code == 1 and "Error writing kids" in capsys.readouterr().err

@@ -49,6 +49,38 @@ def _plaintext_state(text: str, domains: tuple[str, ...]) -> str | None:
     return match.group(1) if match else None
 
 
+_HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?\n\s*\1\b", re.DOTALL)
+_SPLIT = re.compile(r"\n|;|&&|\|\|?")
+_TEXT_ONLY = {"echo", "printf"}
+
+
+def _segments(command: str) -> list[tuple[str, str]]:
+    """(program, segment) for each simple command; heredoc bodies are data, not commands."""
+    stripped = _HEREDOC.sub("", command)
+    out: list[tuple[str, str]] = []
+    for part in _SPLIT.split(stripped):
+        words = part.split()
+        while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=\S*", words[0]):
+            words.pop(0)
+        if words:
+            out.append((words[0].rsplit("/", 1)[-1], part))
+    return out
+
+
+def _bash_reason(command: str, allow_decrypt: bool, domains: tuple[str, ...]) -> str | None:
+    for program, segment in _segments(command):
+        if program in _TEXT_ONLY:
+            continue
+        if _BYPASS.search(segment) and _LAUNCHER.search(segment) and program not in {"grep", "rg", "git"}:
+            return "launching a model CLI with a permission-bypassing flag is not allowed (re-artha §6.6)"
+        if program.startswith("python") and _DECRYPT.search(segment) and not allow_decrypt:
+            return "`vault.py decrypt` writes plaintext to disk; use `vault.py read <domain>` (re-artha §10.6)"
+        found = _plaintext_state(segment, domains)
+        if found:
+            return f"state/{found}.md is vault-protected; read it with `vault.py read {found}`"
+    return None
+
+
 def decide(payload: dict[str, Any], *, allow_decrypt: bool = False,
            domains: tuple[str, ...] | None = None) -> str | None:
     """Return a denial reason, or None to allow."""
@@ -58,15 +90,8 @@ def decide(payload: dict[str, Any], *, allow_decrypt: bool = False,
         return None
     domains = domains if domains is not None else _domains()
     if tool == "Bash":
-        command = str(args.get("command", ""))
-        if _BYPASS.search(command) and _LAUNCHER.search(command):
-            return "launching a model CLI with a permission-bypassing flag is not allowed (re-artha §6.6)"
-        if _DECRYPT.search(command) and not allow_decrypt:
-            return "`vault.py decrypt` writes plaintext to disk; use `vault.py read <domain>` (re-artha §10.6)"
-        found = _plaintext_state(command, domains)
-        if found:
-            return f"state/{found}.md is vault-protected; read it with `vault.py read {found}`"
-    elif tool in {"Read", "Edit", "Write", "NotebookEdit", "Grep", "Glob"}:
+        return _bash_reason(str(args.get("command", "")), allow_decrypt, domains)
+    if tool in {"Read", "Edit", "Write", "NotebookEdit", "Grep", "Glob"}:
         target = " ".join(str(args.get(k, "")) for k in ("file_path", "path", "pattern", "notebook_path"))
         found = _plaintext_state(target, domains)
         if found:
