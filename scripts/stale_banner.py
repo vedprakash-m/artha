@@ -56,6 +56,40 @@ def read_last_catch_up(health_check: Path) -> str | None:
     return m.group(1).strip() if m else None
 
 
+def read_core_catch_up(core_health: Path) -> str | None:
+    """Last *authoritative* core Catch-up (shadow runs write elsewhere and never count)."""
+    try:
+        data = json.loads(Path(core_health).read_text(encoding="utf-8"))
+        return str(data["last_catch_up"]) if data.get("mode") == "authoritative" else None
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        return None
+
+
+def latest(*stamps: str | None) -> str | None:
+    """Most recent parseable timestamp; unparseable values are ignored unless nothing else exists."""
+    parsed: list[tuple[datetime, str]] = []
+    for stamp in stamps:
+        if stamp:
+            try:
+                parsed.append((_parse(stamp), stamp))
+            except ValueError:
+                continue
+    if parsed:
+        return max(parsed)[1]
+    return next((s for s in stamps if s), None)
+
+
+def take_stop_failures(local: Path) -> list[str]:
+    """Show omissions recorded by the Stop hook once, then clear them."""
+    path = Path(local) / "stop-hook-failures.log"
+    try:
+        lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        path.unlink()
+    except OSError:
+        return []
+    return lines[-3:]
+
+
 def build_banner(
     *, now: str | None, last_catch_up: str | None, entries: dict[str, Any],
     threshold_hours: float = THRESHOLD_HOURS,
@@ -105,6 +139,7 @@ def _default_paths() -> tuple[Path, Path]:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     hc, cov = _default_paths()
+    core_health = cov.parent / "catchup_core" / "health.json"
     now: str | None = None
     it = iter(argv)
     for arg in it:
@@ -112,6 +147,8 @@ def main(argv: list[str] | None = None) -> int:
             hc = Path(next(it, str(hc)))
         elif arg == "--coverage":
             cov = Path(next(it, str(cov)))
+        elif arg == "--core-health":
+            core_health = Path(next(it, str(core_health)))
         elif arg == "--now":
             now = next(it, None)
         elif arg == "--coverage-line":
@@ -126,7 +163,10 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, AttributeError):
         entries = {}
     try:
-        print(build_banner(now=now, last_catch_up=read_last_catch_up(hc), entries=entries))
+        core = read_core_catch_up(core_health)
+        print(build_banner(now=now, last_catch_up=latest(read_last_catch_up(hc), core), entries=entries))
+        for failure in take_stop_failures(cov.parent):
+            print(f"⚠ Previous session ended with an omission: {failure}")
     except Exception as exc:  # noqa: BLE001 — a banner must never break a session
         print(f"Last Catch-up: unknown ({type(exc).__name__}).")
     return 0

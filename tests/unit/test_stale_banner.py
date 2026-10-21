@@ -72,3 +72,25 @@ def test_main_prints_banner_and_exits_zero(tmp_path, capsys):
     rc = sb.main(["--health-check", str(hc), "--coverage", str(cov), "--now", NOW])
     assert rc == 0
     assert "Last Catch-up" in capsys.readouterr().out
+
+
+def test_core_catch_up_counts_when_authoritative_and_is_newer(tmp_path):
+    import json
+    import stale_banner as sb
+    core = tmp_path / "health.json"
+    core.write_text(json.dumps({"last_catch_up": "2026-10-20T10:00:00+00:00", "mode": "authoritative"}))
+    assert sb.read_core_catch_up(core) == "2026-10-20T10:00:00+00:00"
+    assert sb.latest("2026-10-11T15:50:00Z", sb.read_core_catch_up(core)) == "2026-10-20T10:00:00+00:00"
+
+
+def test_shadow_or_unreadable_core_health_never_renews_freshness(tmp_path):
+    import json
+    import stale_banner as sb
+    core = tmp_path / "health.json"
+    core.write_text(json.dumps({"last_catch_up": "2026-10-20T10:00:00+00:00", "mode": "shadow"}))
+    assert sb.read_core_catch_up(core) is None
+    core.write_text("{not json")
+    assert sb.read_core_catch_up(core) is None
+    assert sb.read_core_catch_up(tmp_path / "missing.json") is None
+    assert sb.latest(None, None) is None
+    assert sb.latest("garbage", None) == "garbage"
