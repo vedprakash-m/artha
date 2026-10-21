@@ -15,11 +15,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-__all__ = ["COMPLETE_GOAL", "MIN_RUNS", "P95_GATE_SECONDS", "read_runs", "summarize"]
+__all__ = ["COMPLETE_GOAL", "MIN_RUNS", "P95_GATE_SECONDS", "TRACE_SCHEMA", "read_runs", "summarize", "to_trace"]
 
 P95_GATE_SECONDS = 180.0         # PRD: full Catch-up under three minutes, provisional pilot gate (10.4)
 COMPLETE_GOAL = 0.95             # PRD: at least 95 % complete Catch-ups
 MIN_RUNS = 5                     # fewer runs than this are reported but never judged
+TRACE_SCHEMA = "artha.trace.v1"      # OTLP/JSON-shaped; pinned so a convention change never alters old files
 MONTHLY_BUDGET_USD = 50.0        # PRD: under $50 a month at the stated cadence (provisional pilot gate)
 
 
@@ -92,3 +93,50 @@ def estimate_cost(runs: Sequence[dict[str, Any]], pricing: dict[str, Any] | None
                 "within_monthly_budget": monthly <= MONTHLY_BUDGET_USD, "prices_as_of": str(pricing["as_of"]),
                 "estimate": "approximate (characters converted to tokens; assistant-side usage is not visible)"})
     return out
+
+
+def _hex(seed: str, length: int) -> str:
+    import hashlib  # noqa: PLC0415
+    return hashlib.sha256(seed.encode()).hexdigest()[:length]
+
+
+def to_trace(entry: dict[str, Any], *, version: str = "0") -> dict[str, Any]:
+    """One OpenTelemetry-shaped trace (OTLP/JSON resourceSpans) for a run, built from its metrics line.
+
+    A root span for the Catch-up and one child span per stage that ran, laid out in sequence from the run's start.
+    Attributes carry status, mode and counts only; no prompt, answer, subject or evidence content ever enters a trace,
+    so exporting one is not a disclosure path (re-artha 6.6.5: content capture in traces is off).
+    """
+    catchup = str(entry.get("catchup_id", ""))
+    trace_id = _hex("trace|" + catchup, 32)
+    try:
+        start = int(datetime.fromisoformat(str(entry["at"]).replace("Z", "+00:00")).timestamp() * 1_000_000_000)
+    except (KeyError, ValueError):
+        start = 0
+    total = int(float(entry.get("total_seconds", 0)) * 1_000_000_000)
+    root_id = _hex("span|" + catchup + "|root", 16)
+
+    def attr(key: str, value: Any) -> dict[str, Any]:
+        kind = "intValue" if isinstance(value, int) and not isinstance(value, bool) else (
+            "boolValue" if isinstance(value, bool) else "stringValue")
+        return {"key": key, "value": {kind: value if kind != "stringValue" else str(value)}}
+
+    spans = [{
+        "traceId": trace_id, "spanId": root_id, "name": "catchup", "kind": 1,
+        "startTimeUnixNano": str(start), "endTimeUnixNano": str(start + total),
+        "attributes": [attr("artha.status", entry.get("status", "")), attr("artha.mode", entry.get("mode", "")),
+                       attr("artha.model_requests", int(entry.get("model_requests", 0))),
+                       attr("artha.resumed", bool(entry.get("resumed", False)))],
+        "status": {"code": 2 if entry.get("status") == "blocked" else 1},
+    }]
+    cursor = start
+    for stage, seconds in (entry.get("stages") or {}).items():
+        length = int(float(seconds) * 1_000_000_000)
+        spans.append({
+            "traceId": trace_id, "spanId": _hex(f"span|{catchup}|{stage}", 16), "parentSpanId": root_id,
+            "name": f"stage.{str(stage).lower()}", "kind": 1, "startTimeUnixNano": str(cursor),
+            "endTimeUnixNano": str(cursor + length), "attributes": [attr("artha.stage", stage)], "status": {"code": 1}})
+        cursor += length
+    return {"schema": TRACE_SCHEMA, "resourceSpans": [{
+        "resource": {"attributes": [attr("service.name", "artha.catchup_core"), attr("service.version", version)]},
+        "scopeSpans": [{"scope": {"name": "catchup_core"}, "spans": spans}]}]}

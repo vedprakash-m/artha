@@ -279,6 +279,7 @@ def build_deps(  # noqa: PLR0915 - explicit environment boundary and dependency 
         extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
         model_log=_model_log_writer(local, now_fn),
         metrics=_metrics_writer(local, now_fn),
+        trace=_trace_writer(local, now_fn),
         provider_label=(f"command:{ext_cmd.split()[0].rsplit('/', 1)[-1]}" if ext_cmd else "session-assistant"),
         subjects=config.subjects, viewer=config.viewer, now=now_fn,
         source_class=source_class,
@@ -457,6 +458,20 @@ def _metrics_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[
         fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    return write
+
+
+def _trace_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[str, object]], None]:
+    """Append-only monthly JSONL of OTLP-shaped traces (no content), private to the owner."""
+    from catchup_core import CORE_CONTRACT_VERSION  # noqa: PLC0415
+    from catchup_core.metrics import to_trace  # noqa: PLC0415
+
+    def write(entry: dict[str, object]) -> None:
+        path = local / "traces" / f"{now():%Y-%m}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(to_trace(entry, version=CORE_CONTRACT_VERSION), sort_keys=True) + "\n")
     return write
 
 

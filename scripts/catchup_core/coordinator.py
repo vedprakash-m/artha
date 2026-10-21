@@ -122,6 +122,8 @@ class Deps:
     #: Per-run performance record sink (status, seconds, stage seconds, model requests); never content.
     metrics: Callable[[dict[str, object]], None] = lambda _entry: None
     perf: Callable[[], float] = time.monotonic
+    #: Trace sink (OTLP/JSON-shaped, content-free); receives the same entry as ``metrics``.
+    trace: Callable[[dict[str, object]], None] = lambda _entry: None
 
 
 def _iso(dt: datetime) -> str:
@@ -615,13 +617,18 @@ def run_catchup(request: CatchupRequest, deps: Deps) -> CatchupResult:
 
 def _record_metrics(deps: Deps, run: _Run, request: CatchupRequest, status: str, started: float) -> None:
     """One line per run; a failing sink must never change the outcome of a Catch-up."""
-    with contextlib.suppress(Exception):
-        deps.metrics({
+    try:
+        entry: dict[str, object] = {
             "catchup_id": request.catchup_id, "mode": request.mode.value, "status": status,
             "at": _iso(run.now), "total_seconds": round(deps.perf() - started, 3), "stages": dict(run.timings),
             "model_requests": run.model_requests, "prompt_chars": run.prompt_chars, "answer_chars": run.answer_chars,
             "resumed": bool(run.done - set(run.timings)),
-        })
+        }
+    except Exception:
+        return
+    for sink in (deps.metrics, deps.trace):                  # independent: one failing sink never skips the other
+        with contextlib.suppress(Exception):
+            sink(entry)
 
 
 def _parse_day(raw: str) -> date | None:

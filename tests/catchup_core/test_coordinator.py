@@ -488,3 +488,30 @@ def test_a_paused_run_is_recorded_and_a_failing_sink_changes_nothing(world):
     d2 = make({"school_email": email(), "calendar": cal()})
     d2.metrics = broken
     assert co.run_catchup(req("cu_ok"), d2).briefing_id                     # the Briefing is unaffected
+
+
+def test_a_run_emits_a_trace_with_the_same_entry_and_a_failing_trace_sink_changes_nothing(world):
+    ledger, _b, make, _p = world
+    traces = []
+    d = make({"school_email": email(), "calendar": cal()})
+    d.trace = traces.append
+    co.run_catchup(req("cu_trace"), d)
+    assert traces[0]["catchup_id"] == "cu_trace" and "stages" in traces[0]
+    d2 = make({"school_email": email(), "calendar": cal()})
+
+    def broken(_entry):
+        raise OSError("disk full")
+    d2.trace = broken
+    assert co.run_catchup(req("cu_trace_ok"), d2).briefing_id
+
+
+def test_a_failing_metrics_sink_does_not_skip_the_trace(world):
+    ledger, _b, make, _p = world
+    traces = []
+
+    def broken(_entry):
+        raise OSError("disk full")
+    d = make({"school_email": email(), "calendar": cal()})
+    d.metrics, d.trace = broken, traces.append
+    co.run_catchup(req("cu_independent"), d)
+    assert traces
