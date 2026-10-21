@@ -62,7 +62,7 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "health":
         return {"integrity": led.integrity_check(), "schema": led.schema_version(),
             "capabilities": _capability_states(led, workspace, deps),
-            "performance": _performance(led),
+            "performance": _performance(led, workspace),
             "coverage": [{"connector": r["connector"], "status": r["status"],
                           "last_verified": r["completed_at"]} for r in led.coverage_rows()],
             "uninterpreted_signals": len(led.unresolved_signals()), "feedback": views.precision(led, viewer),
@@ -190,7 +190,13 @@ def _action_resolution(args: Namespace, viewer: str, workspace: Path) -> dict[st
     return {"action": args.action_id, "status": result.status, "message": result.message}
 
 
-def _performance(led: Any) -> dict[str, Any]:
-    """Latency and complete-run numbers from this machine's own runs (shadow runs live in a sibling directory)."""
-    from catchup_core.metrics import read_runs, summarize  # noqa: PLC0415
-    return summarize(read_runs(led._path.parent / "metrics"))
+def _performance(led: Any, workspace: Path) -> dict[str, Any]:
+    """Latency, complete-run ratio and an approximate cost from this machine's own runs."""
+    from catchup_core.metrics import estimate_cost, read_runs, summarize  # noqa: PLC0415
+    from catchup_core.runtime import RuntimeConfigError, load_runtime_config  # noqa: PLC0415
+    runs = read_runs(led._path.parent / "metrics")
+    try:
+        pricing = load_runtime_config(workspace / "config" / "catchup_core.yaml").policy.get("pricing")
+    except RuntimeConfigError:
+        pricing = None
+    return {**summarize(runs), "cost": estimate_cost(runs, pricing if isinstance(pricing, dict) else None)}

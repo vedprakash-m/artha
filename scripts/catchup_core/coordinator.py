@@ -140,6 +140,8 @@ class _Run:
         self.done = set(self.led.committed_stages(request.catchup_id))
         self.timings: dict[str, float] = {}
         self.model_requests = 0
+        self.prompt_chars = 0
+        self.answer_chars = 0
         self.versions = {"policy": request.policy_version, "pack": deps.pack.version,
                          "schema": str(request.schema_version),
                          "runtime": deps.input_version,
@@ -306,6 +308,7 @@ class _Run:
         request = ex.build_request(self.deps.pack, signal, subjects)
         Broker().check("extractor", tools=request.tools, private_data=True, untrusted_data=True)
         self.model_requests += 1
+        self.prompt_chars += len(request.prompt)
         self.deps.model_log({
             "at": _iso(self.now), "catchup_id": self.request.catchup_id, "purpose": "extract",
             "provider": self.deps.provider_label, "data_class": self.deps.pack.confidentiality.value,
@@ -318,6 +321,7 @@ class _Run:
             return None
         except Exception:
             output = ""
+        self.answer_chars += len(output)
         parsed = ex.parse_output(output, self.deps.pack, signal, subjects)
         if parsed.rejections:
             self.failures.append(FailureClass.SCHEMA_REJECTED)
@@ -615,7 +619,8 @@ def _record_metrics(deps: Deps, run: _Run, request: CatchupRequest, status: str,
         deps.metrics({
             "catchup_id": request.catchup_id, "mode": request.mode.value, "status": status,
             "at": _iso(run.now), "total_seconds": round(deps.perf() - started, 3), "stages": dict(run.timings),
-            "model_requests": run.model_requests, "resumed": bool(run.done - set(run.timings)),
+            "model_requests": run.model_requests, "prompt_chars": run.prompt_chars, "answer_chars": run.answer_chars,
+            "resumed": bool(run.done - set(run.timings)),
         })
 
 

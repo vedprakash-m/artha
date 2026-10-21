@@ -228,3 +228,16 @@ All three are read-only, evaluated at each Catch-up, and absent files contribute
 * **Performance.** Each run appends one line (status, seconds, stage seconds, model requests; no content) to
   `~/.artha-local/catchup_core/metrics/YYYY-MM.jsonl`. `health` reports p50/p95 against the provisional 3-minute gate and the
   share of complete runs against the 95% goal, and refuses to judge fewer than five runs.
+
+## Cost estimate (approximate, from sizes only)
+Each run also records prompt and answer *sizes* in characters (never content). Add your own dated prices to
+`config/catchup_core.yaml` and `health` reports `usd_per_run` and `projected_monthly_usd` against the $50 gate:
+```yaml
+pricing:
+  input_usd_per_million_tokens: 3.0
+  output_usd_per_million_tokens: 15.0
+  as_of: 2026-10-01
+  chars_per_token: 4        # optional; default 4
+  runs_per_month: 30        # optional; the cadence the projection assumes
+```
+Assistant-side usage is not visible to Artha, so this is an estimate and says so; without pricing it reports sizes only.

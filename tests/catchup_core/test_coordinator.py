@@ -464,6 +464,7 @@ def test_every_run_records_stage_seconds_and_model_requests_without_content(worl
     assert entry["catchup_id"] == "cu_metrics" and entry["status"] == result.status.value and entry["mode"] == "authoritative"
     assert {"FETCH", "EXTRACT", "COMMIT"} <= set(entry["stages"]) and entry["total_seconds"] > 0
     assert entry["model_requests"] >= 1 and entry["resumed"] is False
+    assert entry["prompt_chars"] > 100 and entry["answer_chars"] >= 0
     assert "Registration" not in json.dumps(entry)
 
 

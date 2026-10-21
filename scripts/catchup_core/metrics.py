@@ -20,6 +20,7 @@ __all__ = ["COMPLETE_GOAL", "MIN_RUNS", "P95_GATE_SECONDS", "read_runs", "summar
 P95_GATE_SECONDS = 180.0         # PRD: full Catch-up under three minutes, provisional pilot gate (10.4)
 COMPLETE_GOAL = 0.95             # PRD: at least 95 % complete Catch-ups
 MIN_RUNS = 5                     # fewer runs than this are reported but never judged
+MONTHLY_BUDGET_USD = 50.0        # PRD: under $50 a month at the stated cadence (provisional pilot gate)
 
 
 def read_runs(directory: Path, *, limit: int = 100) -> list[dict[str, Any]]:
@@ -65,3 +66,29 @@ def summarize(runs: Sequence[dict[str, Any]], *, now: datetime | None = None) ->
         "model_requests_per_run": round(sum(int(r.get("model_requests", 0)) for r in finished) / len(finished), 2),
         "verdict": verdict, "as_of": now.isoformat() if now else None,
     }
+
+
+def estimate_cost(runs: Sequence[dict[str, Any]], pricing: dict[str, Any] | None) -> dict[str, Any]:
+    """Cash-cost estimate from prompt and answer *sizes* (characters), never content.
+
+    Assistant-mediated extraction reports no token counts, so this converts characters with a declared
+    ``chars_per_token`` and the owner's dated prices.  It is an estimate and says so; without pricing it reports
+    the sizes only.  ``runs_per_month`` is the cadence the monthly projection assumes (default 30).
+    """
+    finished = [r for r in runs if r.get("status") in ("complete", "degraded", "blocked")]
+    prompt = sum(int(r.get("prompt_chars", 0)) for r in finished)
+    answer = sum(int(r.get("answer_chars", 0)) for r in finished)
+    out: dict[str, Any] = {"runs": len(finished), "prompt_chars": prompt, "answer_chars": answer}
+    needed = ("input_usd_per_million_tokens", "output_usd_per_million_tokens", "as_of")
+    if not finished or not pricing or any(k not in pricing for k in needed):
+        out["estimate"] = ("unavailable: add pricing (input/output USD per million tokens and an as_of date) "
+                           "to the config")
+        return out
+    per_token = float(pricing.get("chars_per_token", 4)) or 4.0
+    per_run = (prompt / per_token * float(pricing["input_usd_per_million_tokens"])
+               + answer / per_token * float(pricing["output_usd_per_million_tokens"])) / 1_000_000 / len(finished)
+    monthly = per_run * float(pricing.get("runs_per_month", 30))
+    out.update({"usd_per_run": round(per_run, 4), "projected_monthly_usd": round(monthly, 2),
+                "within_monthly_budget": monthly <= MONTHLY_BUDGET_USD, "prices_as_of": str(pricing["as_of"]),
+                "estimate": "approximate (characters converted to tokens; assistant-side usage is not visible)"})
+    return out

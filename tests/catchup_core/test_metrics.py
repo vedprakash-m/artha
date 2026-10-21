@@ -49,3 +49,22 @@ def test_runtime_writer_appends_private_monthly_lines(tmp_path):
     write({"total_seconds": 2.5, "status": "degraded"})
     path = tmp_path / "metrics" / "2026-10.jsonl"
     assert len(path.read_text().splitlines()) == 2 and oct(path.stat().st_mode & 0o777) == "0o600"
+
+
+def test_cost_needs_pricing_and_never_pretends_to_be_exact():
+    from catchup_core.metrics import MONTHLY_BUDGET_USD, estimate_cost
+    runs = [run(10, prompt_chars=40_000, answer_chars=4_000) for _ in range(4)]
+    none = estimate_cost(runs, None)
+    assert none["prompt_chars"] == 160_000 and none["estimate"].startswith("unavailable")
+    assert "usd_per_run" not in estimate_cost(runs, {"input_usd_per_million_tokens": 1})
+    priced = estimate_cost(runs, {"input_usd_per_million_tokens": 3.0, "output_usd_per_million_tokens": 15.0,
+                                  "as_of": "2026-10-01"})
+    # 10,000 prompt tokens and 1,000 answer tokens per run: $0.03 + $0.015
+    assert priced["usd_per_run"] == 0.045 and priced["projected_monthly_usd"] == 1.35
+    assert priced["within_monthly_budget"] is True and priced["prices_as_of"] == "2026-10-01"
+    assert "approximate" in priced["estimate"]
+    huge = estimate_cost(runs, {"input_usd_per_million_tokens": 3000, "output_usd_per_million_tokens": 15000,
+                                "as_of": "x", "runs_per_month": 60, "chars_per_token": 2})
+    assert huge["within_monthly_budget"] is False and huge["projected_monthly_usd"] > MONTHLY_BUDGET_USD
+    assert estimate_cost([], {"input_usd_per_million_tokens": 1, "output_usd_per_million_tokens": 1,
+                              "as_of": "x"})["estimate"].startswith("unavailable")
