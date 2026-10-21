@@ -80,7 +80,7 @@ def artha_dir(tmp_path):
         "    ai_signals: false\n"
     )
     (tmp_path / "config" / "actions.yaml").write_text(
-        "schema_version: '2.0'\nactions:\n"
+        "schema_version: '2.0'\nlive_trial:\n  held: []\nactions:\n"
         "  email_send:\n"
         "    enabled: true\n"
         "    friction: standard\n"

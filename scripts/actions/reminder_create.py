@@ -107,6 +107,7 @@ def execute(proposal: ActionProposal) -> ActionResult:
     params = proposal.parameters
     list_name: str = params.get("list_name", "Artha")
     title: str = params.get("title", "")
+    dispatch_started = False
 
     try:
         token = _get_token()
@@ -114,9 +115,12 @@ def execute(proposal: ActionProposal) -> ActionResult:
 
         task_body = _build_task_body(params)
         url = f"{_GRAPH_TODO_BASE}/{list_id}/tasks"
+        dispatch_started = True
         created = _graph_request(url, method="POST", body=task_body, access_token=token)
 
         task_id = created.get("id", "")
+        if not task_id:
+            raise RuntimeError("provider did not return a verifiable task receipt")
 
         return ActionResult(
             status="success",
@@ -133,9 +137,12 @@ def execute(proposal: ActionProposal) -> ActionResult:
         )
 
     except Exception as e:
+        rejected = isinstance(e, urllib.error.HTTPError) and 400 <= e.code < 500
+        uncertain = dispatch_started and not rejected
         return ActionResult(
-            status="failure",
-            message=f"Failed to create To Do task: {e}",
+            status="unknown" if uncertain else "failure",
+            message=("Reminder outcome is unknown; verify with the provider before retrying."
+                     if uncertain else f"Failed to create To Do task: {e}"),
             data={"error": str(e), "title": title, "list_name": list_name},
             reversible=False,
             reverse_action=None,
@@ -208,20 +215,13 @@ def _graph_request(
 
 
 def _resolve_list_id(token: str, list_name: str) -> str:
-    """Find the To Do list ID by display name.  Creates the list if not found."""
+    """Require one existing list. Creating a list is a separate, unapproved effect."""
     lists_resp = _graph_request(_GRAPH_TODO_BASE, access_token=token)
-    for lst in lists_resp.get("value", []):
-        if lst.get("displayName", "").lower() == list_name.lower():
-            return lst["id"]
-
-    # Auto-create the list if it doesn't exist
-    created = _graph_request(
-        _GRAPH_TODO_BASE,
-        method="POST",
-        body={"displayName": list_name},
-        access_token=token,
-    )
-    return created["id"]
+    matches = [lst["id"] for lst in lists_resp.get("value", [])
+               if lst.get("displayName", "").casefold() == list_name.casefold()]
+    if len(matches) != 1:
+        raise ValueError("Choose one existing, unambiguous To Do list before approving this reminder")
+    return str(matches[0])
 
 
 def _build_task_body(params: dict[str, Any]) -> dict[str, Any]:

@@ -45,6 +45,19 @@ def test_unknown_is_a_valid_nonterminal_status_and_result():
     assert "unknown" in VALID_RESULT_STATUSES
 
 
+def test_status_and_receipt_rollback_together(queue):
+    import sqlite3
+    _to_executing(queue)
+    queue._conn.execute("CREATE TRIGGER fail_receipt BEFORE UPDATE OF result_status ON actions "
+                        "BEGIN SELECT RAISE(ABORT, 'simulated full disk'); END")
+    queue._conn.commit()
+    with pytest.raises(sqlite3.DatabaseError):
+        queue.record_result("p-1", ActionResult(status="success", message="done", data={"id": "r"},
+            reversible=False, reverse_action=None), "2026-10-12T00:00:00+00:00")
+    row = queue.get_raw("p-1")
+    assert row["status"] == "executing" and row["result_status"] is None
+
+
 def test_executing_may_become_unknown_and_unknown_may_be_reconciled(queue):
     _to_executing(queue)
     assert queue.transition("p-1", "unknown", actor="system:executor") == "executing"
@@ -208,12 +221,12 @@ def test_preview_is_bound_to_the_payload_it_showed(queue):
     assert not ok
 
 
-def test_legacy_rows_without_a_hash_are_accepted(queue):
+def test_legacy_rows_without_a_hash_require_review(queue):
     p = proposal()
     queue.propose(p)
     queue._conn.execute("UPDATE actions SET payload_hash = NULL WHERE id='p-1'")
     queue._conn.commit()
-    assert queue.verify_payload_binding("p-1", p) == (True, "")
+    assert queue.verify_payload_binding("p-1", p)[0] is False
 
 
 def test_approval_records_the_hash_it_approved(queue):
@@ -236,11 +249,11 @@ REPO_ACTIONS_YAML = Path(__file__).resolve().parents[2] / "config" / "actions.ya
 
 def test_held_types_are_read_from_config(tmp_path):
     (tmp_path / "config").mkdir()
-    assert ae._load_held_action_types(tmp_path) == frozenset()          # no file: nothing held
+    assert ae._load_held_action_types(tmp_path) == frozenset({"*"})  # missing policy fails closed
     (tmp_path / "config" / "actions.yaml").write_text("live_trial:\n  held: [email_send, slack_send]\nactions: {}\n")
     assert ae._load_held_action_types(tmp_path) == {"email_send", "slack_send"}
     (tmp_path / "config" / "actions.yaml").write_text("live_trial: not-a-mapping\nactions: {}\n")
-    assert ae._load_held_action_types(tmp_path) == frozenset()
+    assert ae._load_held_action_types(tmp_path) == frozenset({"*"})
 
 
 def test_repo_config_trials_reminders_and_holds_outbound_communication():

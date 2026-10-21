@@ -23,6 +23,7 @@ Ref: specs/act.md §5
 from __future__ import annotations
 
 import importlib
+import hashlib
 import json
 import os
 import re
@@ -685,10 +686,10 @@ class ActionExecutor:
         so the queue is never left in a corrupted intermediate state if a
         validation gate fires.
         """
-        if self._read_only:
+        if self._read_only or (self._artha_dir / "config" / "actions.paused").exists():
             return ActionResult(
                 status="failure",
-                message="Read-only environment: action execution is disabled.",
+                message="Action execution is disabled: this environment is read-only or actions are paused.",
                 data=None,
                 reversible=False,
                 reverse_action=None,
@@ -716,19 +717,21 @@ class ActionExecutor:
                 reversible=False,
                 reverse_action=None,
             )
-        if proposal.preview_required and not (raw or {}).get("preview_shown_at"):
+        config = _load_action_configs(self._artha_dir).get(proposal.action_type, {})
+        if not config.get("enabled", False):
+            return ActionResult(status="failure", message="Action is disabled by current policy.", data=None,
+                                reversible=False, reverse_action=None)
+        if (proposal.preview_required or config.get("preview_required", False)) and not (raw or {}).get("preview_shown_at"):
             return ActionResult(
                 status="failure",
                 message=(
                     "Preview required before approval. Run '--show' in the terminal "
-                    "or tap Preview in Telegram first."
+                    "to review the exact payload first."
                 ),
                 data=None,
                 reversible=False,
                 reverse_action=None,
             )
-
-        config = self._action_configs.get(proposal.action_type, {})
 
         # 2b. Payload binding — the approval applies only to the payload that was proposed/previewed
         bound, bind_reason = self._queue.verify_payload_binding(action_id, proposal)
@@ -743,7 +746,8 @@ class ActionExecutor:
             )
 
         # 2c. Live-trial hold — types not yet promoted may be proposed and queued but never executed
-        if proposal.action_type in self._held_types:
+        held_types = _load_held_action_types(self._artha_dir)
+        if proposal.action_type in held_types or "*" in held_types:
             _audit_log(self._artha_dir, f"ACTION_HELD | id:{action_id} | type:{proposal.action_type}")
             return ActionResult(
                 status="failure",
@@ -852,7 +856,12 @@ class ActionExecutor:
         # 7. Transition APPROVED → EXECUTING (THE POINT OF NO RETURN IS AFTER THIS)
         executed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
-            self._queue.transition(action_id, "executing", actor="system:executor")
+            from action_queue import compute_payload_hash  # noqa: PLC0415
+            operation_key = hashlib.sha256(json.dumps({"type": proposal.action_type,
+                "domain": proposal.domain, "parameters": proposal.parameters},
+                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            self._queue.transition(action_id, "executing", actor="system:executor",
+                expected_payload_hash=compute_payload_hash(proposal), operation_key=operation_key)
         except ValueError as e:
             return ActionResult(
                 status="failure",
@@ -883,11 +892,13 @@ class ActionExecutor:
                 action_id, result, executed_at, pubkey=self._get_pubkey()
             )
         except Exception as e:
-            # Critical: result could not be saved. Log to audit but return result.
             _audit_log(
                 self._artha_dir,
                 f"ACTION_RESULT_SAVE_FAILED | id:{action_id} | error:{e}",
             )
+            return ActionResult(status="unknown", message="The provider may have acted, but its receipt "
+                "could not be committed. Reconcile before retrying.", data=None,
+                reversible=False, reverse_action=None)
 
         # 7b. Bridge result write (executor machine only; no-op if bridge disabled)
         self._maybe_write_bridge_result(action_id, result)
@@ -1501,11 +1512,14 @@ def _load_held_action_types(artha_dir: Path) -> frozenset[str]:
         import yaml  # PyYAML  # noqa: PLC0415
         with open(actions_yaml, encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        held = (data.get("live_trial") or {}).get("held") or []
+        policy = data.get("live_trial")
+        if not isinstance(policy, dict) or not isinstance(policy.get("held"), list):
+            return frozenset({"*"})
+        held = policy["held"]
         return frozenset(str(t) for t in held)
     except Exception as exc:
         _log.warning(f"load_held_action_types_failed error={exc}")
-        return frozenset()
+        return frozenset({"*"})
 
 
 def _resolve_defer_time(until: str) -> str:

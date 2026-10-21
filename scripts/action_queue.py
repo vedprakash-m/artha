@@ -627,6 +627,9 @@ class ActionQueue:
 
     def _migrate_schema_if_needed(self) -> None:
         """Apply additive schema migrations idempotently."""
+        self._conn.execute("CREATE TABLE IF NOT EXISTS effect_operations ("
+            "operation_key TEXT PRIMARY KEY,action_id TEXT NOT NULL,payload_hash TEXT NOT NULL,"
+            "status TEXT NOT NULL,receipt TEXT)")
         table_columns = {
             "actions": {
                 "bridge_synced": "INTEGER NOT NULL DEFAULT 0",
@@ -1025,7 +1028,7 @@ class ActionQueue:
     def verify_payload_binding(self, action_id: str, proposal: Any) -> tuple[bool, str]:
         """True when the payload about to execute is the one that was proposed (and previewed).
 
-        Rows created before payload binding existed have no hash and are accepted; a stored
+        Rows created before payload binding existed require a fresh preview; a stored
         hash that no longer matches the payload — or a preview taken of another payload —
         refuses the approval (RA-05).
         """
@@ -1033,7 +1036,7 @@ class ActionQueue:
             "SELECT payload_hash, preview_payload_hash FROM actions WHERE id = ?", (action_id,)
         ).fetchone()
         if not row or not row["payload_hash"]:
-            return True, ""
+            return False, "legacy proposal needs a newly bound preview before approval"
         current = compute_payload_hash(proposal)
         if row["payload_hash"] != current:
             return False, "the payload changed after it was proposed; review and approve it again"
@@ -1048,6 +1051,8 @@ class ActionQueue:
         actor: str,
         context: dict[str, Any] | None = None,
         approved_by: str | None = None,
+        expected_payload_hash: str | None = None,
+        operation_key: str | None = None,
     ) -> str:
         """Atomically transition action to a new status.
 
@@ -1098,8 +1103,12 @@ class ActionQueue:
             # Expected-status predicate: a concurrent session that already moved this action
             # makes this UPDATE match nothing, so it loses instead of overwriting (RA-05).
             params = [*updates.values(), action_id, from_status]
+            binding = ""
+            if expected_payload_hash is not None:
+                binding = " AND payload_hash=? AND approved_payload_hash=?"
+                params.extend([expected_payload_hash, expected_payload_hash])
             cur = self._conn.execute(
-                f"UPDATE actions SET {set_clause} WHERE id = ? AND status = ?", params
+                f"UPDATE actions SET {set_clause} WHERE id = ? AND status = ?{binding}", params
             )
             if cur.rowcount != 1:
                 raise ConcurrentTransitionError(
@@ -1107,6 +1116,12 @@ class ActionQueue:
                     f"transition to '{to_status}' not applied"
                 )
             self._audit(self._conn, action_id, from_status, to_status, actor, context)
+            if to_status == "executing" and operation_key:
+                try:
+                    self._conn.execute("INSERT INTO effect_operations VALUES(?,?,?,'executing',NULL)",
+                                       (operation_key, action_id, expected_payload_hash or ""))
+                except sqlite3.IntegrityError as exc:
+                    raise ConcurrentTransitionError("this logical operation was already claimed") from exc
 
         return from_status
 
@@ -1139,20 +1154,31 @@ class ActionQueue:
 
         # RA-05: an inconclusive result is UNKNOWN (reconciled later), never "failed".
         new_status = {"success": "succeeded", "unknown": "unknown"}.get(result.status, "failed")
-        from_status = self.transition(
-            action_id, new_status, actor="system:executor",
-            context={"result_status": result.status}
-        )
-
         with self._conn:
-            self._conn.execute(
-                """UPDATE actions SET
+            row = self._conn.execute("SELECT status FROM actions WHERE id=?", (action_id,)).fetchone()
+            if not row:
+                raise ValueError("action disappeared before its outcome was recorded")
+            from_status = row["status"]
+            _validate_transition(from_status, new_status, "system:executor")
+            cur = self._conn.execute(
+                """UPDATE actions SET status = ?,
                    result_status = ?, result_message = ?, result_data = ?,
                    executed_at = ?, updated_at = ?
-                   WHERE id = ?""",
-                (result.status, message, result_data_json, executed_at,
-                 self._now_utc(), action_id),
+                   WHERE id = ? AND status = ?""",
+                (new_status, result.status, message, result_data_json, executed_at,
+                 self._now_utc(), action_id, from_status),
             )
+            if cur.rowcount != 1:
+                raise ConcurrentTransitionError("action changed before its outcome committed")
+            self._audit(self._conn, action_id, from_status, new_status, "system:executor",
+                        {"result_status": result.status})
+            if new_status == "failed":
+                self._conn.execute("UPDATE actions SET idempotency_expires_at=? WHERE id=?",
+                                   (self._now_utc(), action_id))
+                self._conn.execute("DELETE FROM effect_operations WHERE action_id=?", (action_id,))
+            else:
+                self._conn.execute("UPDATE effect_operations SET status=?,receipt=? WHERE action_id=?",
+                                   (new_status, result_data_json, action_id))
 
     def get(
         self, action_id: str, privkey: str | None = None

@@ -35,9 +35,9 @@ schema_version: "2.0"
 live_trial:
   trial:
     - reminder_create
+  held:
     - calendar_create
     - calendar_modify
-  held:
     - email_send
     - email_reply
     - whatsapp_send
@@ -118,12 +118,12 @@ actions:
       max_per_hour: 30
       max_per_day: 100
     pii_check: false             # calendar events rarely contain PII
-    preview_required: false
-    l2_eligible: true
+    preview_required: true
+    l2_eligible: false
     provider_dedup_mode: search_before_create
     core_surface: true
     audit: true
-    autonomy_floor: false        # CAN be pre-approved at Trust Level 2
+    autonomy_floor: true         # exact human review required before any future promotion
     description: "Create Google Calendar event (calendar.events scope — already authorized)"
 
   calendar_modify:
@@ -141,12 +141,12 @@ actions:
       max_per_hour: 20
       max_per_day: 50
     pii_check: false
-    preview_required: false
+    preview_required: true
     l2_eligible: false
     provider_dedup_mode: search_before_create
     core_surface: true
     audit: true
-    autonomy_floor: false
+    autonomy_floor: true
     description: "Modify or reschedule existing Google Calendar event"
 
   # ── Reminders & Tasks ────────────────────────────────────────────────────
@@ -166,8 +166,8 @@ actions:
       max_per_hour: 30
       max_per_day: 200
     pii_check: false
-    preview_required: false
-    l2_eligible: true
+    preview_required: true
+    l2_eligible: false
     provider_dedup_mode: search_before_create
     core_surface: true
     audit: true

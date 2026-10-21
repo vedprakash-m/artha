@@ -48,7 +48,7 @@ def artha_dir(tmp_path):
 
     # Minimal actions.yaml — dict-keyed format matching real config/actions.yaml
     (tmp_path / "config" / "actions.yaml").write_text(
-        "schema_version: '2.0'\nactions:\n"
+        "schema_version: '2.0'\nlive_trial:\n  held: []\nactions:\n"
         "  email_send:\n"
         "    enabled: true\n"
         "    friction: standard\n"
