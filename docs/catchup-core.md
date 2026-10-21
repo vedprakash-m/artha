@@ -214,3 +214,17 @@ validation. None of those capabilities are implied by the fixes or by green loca
   sub-processes); a child that returns no receipt leaves the action `unknown`.
 * `docs/traceability-register.md` maps every requirement to acceptance IDs, code and tests and records the PRD
   feature-group dispositions; it is generated and drift-checked together with the capability register.
+
+## Responsibilities, household tasks and performance
+All three are read-only, evaluated at each Catch-up, and absent files contribute nothing.
+* **Standing responsibilities (RA-25)** in `state/responsibilities.md`: `id`, `outcome`, `allowed_operations`
+  (only `read`, `draft`, `propose`; anything else is reported and ignored), `cadence_days`, `last_checked`,
+  `next_check`, `completion_evidence`, `stop_condition`, `status`. A due check appears under `RESPONSIBILITIES`;
+  "completed" without evidence stays open as unverified.
+* **Household tasks (RA-19)** in `state/household_tasks.md`: `id`, `obligation`, `subject`, `owner`,
+  `status` (`proposed`, `accepted`, `refused`, `done`), `assigned_on`, `escalate_after_days`, `completion_evidence`,
+  `visible_to`. The `HOUSEHOLD` section shows escalations, refusals, owner-less tasks, duplicates (remind once) and
+  tasks marked done without evidence; a task is shown only to the people in `visible_to`. Artha never contacts anyone.
+* **Performance.** Each run appends one line (status, seconds, stage seconds, model requests; no content) to
+  `~/.artha-local/catchup_core/metrics/YYYY-MM.jsonl`. `health` reports p50/p95 against the provisional 3-minute gate and the
+  share of complete runs against the 95% goal, and refuses to judge fewer than five runs.
