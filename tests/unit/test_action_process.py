@@ -95,6 +95,7 @@ def _child_diagnostics(operation="execute"):
     envelope = json.dumps({"module": "actions.reminder_create", "proposal": asdict(proposal()), "parent": os.getpid(),
                            "timeout": 20, "operation": operation, "since": "x"})
     env = {k: v for k, v in os.environ.items() if k in action_process._CHILD_ENV}
+    env["ARTHA_NO_REEXEC"] = "1"
     done = subprocess.run([sys.executable, action_process.__file__], input=envelope, capture_output=True, text=True,
                           env=env, timeout=60, check=False)
     return f"rc={done.returncode} stdout={done.stdout[-300:]!r} stderr={done.stderr[-900:]!r}"
@@ -151,7 +152,7 @@ def test_reconcile_runs_in_the_same_bounded_child_and_passes_the_approval_time()
     result = action_process.execute("actions.reminder_create", proposal(), 5, runner=runner,
                                     operation="reconcile", since="2026-10-20T10:00:00Z")
     assert result.status == "unknown" and seen["operation"] == "reconcile" and seen["since"] == "2026-10-20T10:00:00Z"
-    assert set(seen["env"]) <= set(action_process._CHILD_ENV)
+    assert set(seen["env"]) <= set(action_process._CHILD_ENV) | {"ARTHA_NO_REEXEC"}
     assert not any(k.endswith(("TOKEN", "SECRET", "KEY", "PASSWORD")) for k in seen["env"])
     with pytest.raises(ValueError):
         action_process.execute("actions.reminder_create", proposal(), 5, operation="delete")
@@ -188,3 +189,14 @@ def test_the_child_environment_keeps_interpreter_loading_variables_and_nothing_s
     action_process.execute("actions.reminder_create", proposal(), 1, runner=runner)
     assert seen.get("LD_LIBRARY_PATH") == "/opt/python/lib" and "GITHUB_TOKEN" not in seen
     assert "MSGRAPH_CLIENT_SECRET" not in seen
+
+
+def test_child_environment_stops_the_venv_relaunch_guard_from_killing_a_correct_interpreter():
+    seen = {}
+
+    def runner(argv, **kwargs):
+        seen.update(kwargs["env"])
+        return SimpleNamespace(returncode=0, stdout=json.dumps(
+            {"status": "success", "message": "ok", "data": None, "reversible": False, "reverse_action": None}))
+    action_process.execute("actions.reminder_create", proposal(), 1, runner=runner)
+    assert seen["ARTHA_NO_REEXEC"] == "1"

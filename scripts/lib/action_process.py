@@ -66,6 +66,7 @@ def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subpr
             "failure", "This action has no isolated provider policy; use an instruction sheet.", None, False, None
         )
     environment = {k: v for k, v in os.environ.items() if k in _CHILD_ENV}
+    environment["ARTHA_NO_REEXEC"] = "1"          # the child already runs on the right interpreter; never re-exec into a venv
     envelope = {"module": module, "proposal": asdict(proposal), "parent": os.getpid(), "timeout": timeout,
                 "operation": operation, "since": since}
     try:
