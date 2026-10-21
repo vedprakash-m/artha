@@ -34,7 +34,7 @@ import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +44,7 @@ from catchup_core import ids
 from catchup_core.adapters import fetch_via_handler
 from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
 from catchup_core.blobs import EncryptedBlobStore
-from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode
+from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode, FailureClass
 from catchup_core.coordinator import ConnectorFetch, ConnectorRecord, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
@@ -243,6 +243,7 @@ def build_deps(
     ext_cmd = env.get("ARTHA_EXTRACTOR_CMD") or config.extractor_cmd
     fetchers = build_fetchers(config, since, handler_loader, auth_loader, required, ledger)
     fetchers["capture"] = _capture_fetcher(local, cipher, config.viewer)
+    fetchers.update(_bundle_fetchers(config, ledger, keyring_backend, required, clock))
     def curated_reader(name: str) -> str:
         from catchup_core.curated import read_state  # noqa: PLC0415
         subjects = [config.viewer] if name == "goals" else config.subjects
@@ -270,7 +271,8 @@ def build_deps(
         publisher=make_file_publisher(local, now_fn, cipher=cipher),
         coverage_line=_coverage_line,
         finalizer=finalize,
-        goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader),
+        goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader, today=now_fn().date()),
+        goal_domains=lambda: _goal_domains(root / "state", reader=curated_reader),
         input_version=hashlib.sha256(inputs.encode()).hexdigest(),
         subjects_for=lambda connector, text: _subjects_for(config, connector, text),
         subject_labels=config.subject_labels,
@@ -354,6 +356,33 @@ def validate_source_classes(pack: DomainPack, source_class: Mapping[str, str]) -
                 f"set 'class:' on it in config/catchup_core.yaml (one of: {', '.join(sorted(ranked))})")
 
 
+def _bundle_fetchers(config: RuntimeConfig, ledger: Ledger, keyring_backend: Any, required: Mapping[str, bool],
+                     clock: Callable[[], datetime]) -> dict[str, Callable[[], ConnectorFetch]]:
+    """A source configured under ``bundles:`` is read from hand-run ingest bundles instead of a live Connector."""
+    from catchup_core.bundles import import_bundles, load_producer_key  # noqa: PLC0415
+    specs = config.policy.get("bundles") or {}
+    if not isinstance(specs, dict):
+        raise RuntimeConfigError("'bundles' must map a source name to its bundle settings")
+    out: dict[str, Callable[[], ConnectorFetch]] = {}
+    for name, spec in specs.items():
+        def run(name: str = str(name), spec: Mapping[str, Any] = spec) -> ConnectorFetch:
+            key = load_producer_key(str(spec["producer"]), keyring_backend)
+            keys = {key.producer: key} if key is not None else {}
+            row = ledger.conn.execute("SELECT MAX(generation) FROM authority_generation").fetchone()
+            result = import_bundles(
+                Path(str(spec["dir"])).expanduser(), keys, name=name, namespace=str(spec.get("namespace", "personal")),
+                recipient=str(spec["recipient"]), account_scope=str(spec["account_scope"]),
+                authority_generation=int(row[0] or 1), now=clock(), required=required.get(name, True),
+                max_age_hours=float(spec.get("max_age_hours", 48)))
+            if key is None:
+                return ConnectorFetch(name, str(spec["account_scope"]), (), CoverageStatus.UNAVAILABLE,
+                                      FailureClass.AUTH, ("producer is not enrolled on this machine",),
+                                      required.get(name, True))
+            return result.fetch
+        out[str(name)] = run
+    return out
+
+
 def _model_log_writer(local: Path, now: Callable[[], datetime]) -> Callable[[dict[str, str]], None]:
     """Append-only monthly JSONL of *who may have seen what* (provider, data class, purpose), no content."""
     def write(entry: dict[str, str]) -> None:
@@ -399,19 +428,41 @@ def _capture_fetcher(local: Path, cipher: EnvelopeCipher, viewer: str) -> Callab
     return fetch
 
 
-def _goal_lines(state: Path, *, reader: Callable[[str], str] | None = None) -> list[str]:
+def _active_goals(state: Path, reader: Callable[[str], str] | None) -> list[dict[str, Any]]:
     from catchup_core.curated import read_state, records  # noqa: PLC0415
+    goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
+    return [g for g in goals if g.get("status") == "active"]
+
+
+def _goal_domains(state: Path, *, reader: Callable[[str], str] | None = None) -> set[str]:
+    """Categories of active Goals, lower-cased; unreadable Goals simply contribute nothing."""
     try:
-        goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
+        return {str(g["category"]).lower() for g in _active_goals(state, reader) if g.get("category")}
+    except (OSError, RuntimeError, ValueError):
+        return set()
+
+
+def _goal_lines(state: Path, *, reader: Callable[[str], str] | None = None,
+                today: date | None = None) -> list[str]:
+    """One line per active Goal: next action, whether it is due or overdue, and the last authored progress."""
+    try:
+        goals = _active_goals(state, reader)
     except (OSError, RuntimeError, ValueError):
         return ["Goals unavailable; progress is unknown."]
     output = []
     for goal in goals:
-        if goal.get("status") != "active":
-            continue
         observed = goal.get("last_progress") or "unknown"
         next_action = goal.get("next_action") or "next action unknown"
-        output.append(f"{goal.get('id', 'Goal')}: {goal.get('title', '')}; {next_action}; "
+        timing = ""
+        due = str(goal.get("next_action_date") or "")[:10]
+        if today is not None and due:
+            try:
+                days = (date.fromisoformat(due) - today).days
+                timing = (f" (overdue by {-days} day{'s' if days != -1 else ''})" if days < 0
+                          else " (due today)" if days == 0 else f" (due in {days} day{'s' if days != 1 else ''})")
+            except ValueError:
+                timing = " (date unreadable)"
+        output.append(f"{goal.get('id', 'Goal')}: {goal.get('title', '')}; {next_action}{timing}; "
                       f"authored observation {observed}, not re-verified [src: state:goals]")
     return output
 

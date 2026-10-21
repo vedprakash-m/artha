@@ -119,3 +119,65 @@ def test_curated_reader_rejects_bad_names_and_parses_records(tmp_path):
     assert records("---\nplain: 1\n---\n", "goals") == []
     items = "- id: OI-1\n  status: open\n- id: OI-2\n  status: done\n"
     assert [i["id"] for i in records(items, "open_items")] == ["OI-1"]
+
+
+GOALS = ("---\ngoals:\n"
+         "  - {id: G1, title: Save, status: active, category: finance, next_action: deposit, next_action_date: '2026-10-18'}\n"
+         "  - {id: G2, title: Fit, status: active, next_action: run, next_action_date: '2026-10-25'}\n"
+         "  - {id: G3, title: Old, status: done, category: health}\n---\n")
+
+
+def test_goal_lines_say_when_the_next_action_is_due_or_overdue(tmp_path):
+    from datetime import date
+    lines = rt._goal_lines(tmp_path, reader=lambda _n: GOALS, today=date(2026, 10, 20))
+    assert "overdue by 2 days" in lines[0] and "due in 5 days" in lines[1]
+    assert rt._goal_lines(tmp_path, reader=lambda _n: GOALS, today=date(2026, 10, 18))[0].count("due today") == 1
+    bad = GOALS.replace("2026-10-25", "soon")
+    assert "date unreadable" in rt._goal_lines(tmp_path, reader=lambda _n: bad, today=date(2026, 10, 20))[1]
+
+
+def test_goal_domains_are_active_categories_only_and_failure_means_none(tmp_path):
+    assert rt._goal_domains(tmp_path, reader=lambda _n: GOALS) == {"finance"}
+
+    def broken(_n):
+        raise OSError("locked")
+    assert rt._goal_domains(tmp_path, reader=broken) == set()
+
+
+def test_bundle_sources_import_through_the_runtime_and_unenrolled_producers_are_unavailable(tmp_path):
+    from catchup_core.bundles import ProducerKey, export_bundle
+    from catchup_core.contracts import CoverageStatus
+    from catchup_core.coordinator import ConnectorRecord
+    key = ProducerKey("win-host", b"w" * 32)
+    export_bundle(tmp_path, key, namespace="personal", recipient="mac", account_scope="school", authority_generation=1,
+                  sequence=1, records=[ConnectorRecord("m1", "text")], requested_since="2026-10-01T00:00:00Z",
+                  completed_until="2026-10-20T10:00:00+00:00", created_at=NOW())
+
+    class Keyring:
+        def __init__(self, secret):
+            self.secret = secret
+
+        def get_password(self, _s, _n):
+            import base64
+            return base64.b64encode(self.secret).decode() if self.secret else None
+
+    class Ledger:
+        class conn:                                           # noqa: N801 - minimal stand-in
+            @staticmethod
+            def execute(_sql):
+                return types_namespace(fetchone=lambda: (None,))
+
+    def types_namespace(**kw):
+        import types
+        return types.SimpleNamespace(**kw)
+
+    cfg = types_namespace(policy={"bundles": {"school_email": {
+        "producer": "win-host", "dir": str(tmp_path), "recipient": "mac", "account_scope": "school"}}})
+    fetchers = rt._bundle_fetchers(cfg, Ledger(), Keyring(b"w" * 32), {"school_email": True}, NOW)
+    got = fetchers["school_email"]()
+    assert got.status is CoverageStatus.COMPLETE and [r.text for r in got.records] == ["text"]
+    missing = rt._bundle_fetchers(cfg, Ledger(), Keyring(None), {"school_email": True}, NOW)["school_email"]()
+    assert missing.status is CoverageStatus.UNAVAILABLE and "not enrolled" in missing.blind_spots[0]
+    with pytest.raises(rt.RuntimeConfigError):
+        rt._bundle_fetchers(types_namespace(policy={"bundles": ["x"]}), Ledger(), Keyring(None), {}, NOW)
+    assert rt._bundle_fetchers(types_namespace(policy={}), Ledger(), Keyring(None), {}, NOW) == {}

@@ -170,3 +170,18 @@ def test_unparsable_values_are_skipped_safely(env):
     put(env, "appointment_time", "later")
     r = run(env)
     assert [a.state for a in r.alerts] == ["no_deadline"]       # unknown stays visible, never guessed
+
+
+def test_goal_relevance_is_a_tie_break_only():
+    from catchup_core.triage import AlertDraft, _rank_key
+    def alert(key, sev, domain="kids_school", lua=date(2026, 10, 14)):
+        return AlertDraft(key, domain, "kid1", "p", "f", sev, lua, lua, 1, "actionable")
+    p1_other = alert("b", Severity.P1, "finance")
+    p2_goal = alert("a", Severity.P2)
+    assert _rank_key(p1_other, {}, {"kids_school"}) < _rank_key(p2_goal, {}, {"kids_school"})      # severity wins
+    early = alert("z", Severity.P1, "finance", date(2026, 10, 13))
+    late_goal = alert("a", Severity.P1, "kids_school", date(2026, 10, 14))
+    assert _rank_key(early, {}, {"kids_school"}) < _rank_key(late_goal, {}, {"kids_school"})        # date wins
+    same_a, same_b = alert("a", Severity.P1, "finance"), alert("b", Severity.P1, "kids_school")
+    assert _rank_key(same_b, {}, {"kids_school"}) < _rank_key(same_a, {}, {"kids_school"})          # tie: goal first
+    assert _rank_key(same_a, {}, set()) < _rank_key(same_b, {}, set())                              # no goals: key order

@@ -89,6 +89,8 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             db.row_factory = sqlite3.Row
             return {"activity": [dict(r) for r in db.execute(
                 "SELECT id,action_type,domain,status,created_at FROM actions ORDER BY created_at DESC LIMIT 50")]}
+    if args.command in ("reconcile", "resolve"):
+        return _action_resolution(args, viewer, workspace)
     if args.command in ("pause", "resume"):
         path = workspace / "config" / "actions.paused"
         if args.command == "pause":
@@ -118,3 +120,17 @@ def _capability_states(led: Any, workspace: Path, deps: Deps) -> list[dict[str, 
         measured = False
     return runtime_states(_CODE_ROOT, {"domains": list(config.domains)}, led.conn, measured,
                           extractor_configured=True)
+
+
+def _action_resolution(args: Namespace, viewer: str, workspace: Path) -> dict[str, Any]:
+    """Close an ``unknown`` action: ask the provider (`reconcile`) or record a person's decision (`resolve`)."""
+    import importlib  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    scripts = str(workspace / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    # Loaded dynamically: the incumbent action layer is outside the strictly typed surface.
+    executor = importlib.import_module("action_executor").ActionExecutor(workspace)
+    result = (executor.reconcile(args.action_id) if args.command == "reconcile"
+              else executor.resolve_unknown(args.action_id, args.outcome, viewer))
+    return {"action": args.action_id, "status": result.status, "message": result.message}

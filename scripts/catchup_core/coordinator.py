@@ -21,7 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
@@ -102,6 +102,8 @@ class Deps:
     preflight: Callable[[], None] = lambda: None
     finalizer: Callable[[str], None] = lambda _cid: None
     goal_lines: Callable[[], Sequence[str]] = lambda: ()
+    #: Domains of active Goals; used only as a ranking tie-break (never lifts an ineligible Alert).
+    goal_domains: Callable[[], Collection[str]] = lambda: ()
     input_version: str = ""
     subjects_for: Callable[[str, str], Sequence[str]] | None = None
     subject_labels: Mapping[str, str] = field(default_factory=dict)
@@ -340,7 +342,7 @@ class _Run:
         result = triage(
             self.led, self.deps.pack, self.now, viewer=self.deps.viewer, freshness=freshness,
             calendar=(*self.led.calendar_for(self.deps.viewer), *self.deps.calendar()),
-            obligation_states=self.deps.obligation_states(),
+            obligation_states=self.deps.obligation_states(), goal_domains=self.deps.goal_domains(),
             connector_of=self._connector_of,
             source_class_of=lambda sid: self.deps.source_class.get(self._connector_of(sid), self._connector_of(sid)))
         for alert in result.alerts:

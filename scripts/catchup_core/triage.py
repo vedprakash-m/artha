@@ -8,7 +8,7 @@ yields "unknown"/"disputed", never reassurance.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -204,6 +204,13 @@ def _suppressed(ledger: Ledger, fact: FactView, key: str,
                 and datetime.fromisoformat(saved["suppressed_until"]) > now)
 
 
+def _rank_key(a: AlertDraft, relevance: Mapping[str, float], goal_domains: Collection[str]) -> tuple[Any, ...]:
+    """Severity, then useful-action date, then actionability; Goal relevance only breaks remaining ties."""
+    weight = relevance.get(a.obligation_key, 0.0) + (1.0 if a.domain in goal_domains else 0.0)
+    return (a.severity.rank if a.severity else 9, a.latest_useful_action or a.deadline or date.max,
+            0 if a.state == "actionable" else 1, -weight, a.obligation_key)
+
+
 def triage(
     ledger: Ledger,
     pack: DomainPack,
@@ -216,6 +223,7 @@ def triage(
     source_class_of: Any = None,
     connector_of: Any = None,
     goal_relevance: Mapping[str, float] | None = None,
+    goal_domains: Collection[str] = (),
     horizon_days: int = HORIZON_DAYS,
 ) -> TriageResult:
     """Evaluate current Facts against the pack and rank what needs attention."""
@@ -286,8 +294,7 @@ def triage(
                 uncertain.append(key)
 
     def sort_key(a: AlertDraft) -> tuple[Any, ...]:
-        return (a.severity.rank if a.severity else 9, a.latest_useful_action or a.deadline or date.max,
-                0 if a.state == "actionable" else 1, -relevance.get(a.obligation_key, 0.0), a.obligation_key)
+        return _rank_key(a, relevance, goal_domains)
 
     surfaced_states = ("disputed", "unknown_stale", "no_deadline")
     alerts = tuple(sorted((a for a in drafts if a.severity is not None or a.state in surfaced_states),

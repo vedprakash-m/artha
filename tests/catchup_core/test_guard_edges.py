@@ -127,3 +127,47 @@ def test_default_cutover_flag_follows_environment_and_authoritative_runs_stay_di
     monkeypatch.setenv("ARTHA_CUTOVER", "0")
     with pytest.raises(cli.NotConfigured, match="disabled until the pilot is cut over"):
         cli._default_factory(CatchupRequest("cu_x", "owner", "cli", mode=ExecutionMode.AUTHORITATIVE, host="h"))
+
+
+def test_bundle_enroll_command_prints_the_secret_once_and_export_demands_configuration(monkeypatch):
+    store = {}
+    fake = types.SimpleNamespace(get_password=lambda s, n: store.get((s, n)),
+                                 set_password=lambda s, n, v: store.__setitem__((s, n), v))
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+    out, err = io.StringIO(), io.StringIO()
+    assert cli.main(["bundle-enroll", "win-host"], out=out, err=err) == 0
+    shown = json.loads(out.getvalue())
+    assert shown["enrolled"] and len(shown["secret_to_copy_once"]) >= 40 and "--secret" in shown["next"]
+    out2 = io.StringIO()
+    assert cli.main(["bundle-enroll", "win-host", "--secret", shown["secret_to_copy_once"]], out=out2, err=err) == 0
+    assert "secret_to_copy_once" not in json.loads(out2.getvalue())
+    monkeypatch.setattr("catchup_core.runtime.load_runtime_config",
+                        lambda _p: types.SimpleNamespace(policy={}, sources={}))
+    err3 = io.StringIO()
+    assert cli.main(["bundle-export", "school_email"], out=io.StringIO(), err=err3) == 20
+    assert "needs both a 'sources' entry and a 'bundles' entry" in err3.getvalue()
+    bad = io.StringIO()
+    assert cli.main(["bundle-enroll", "x", "--secret", "c2hvcnQ="], out=io.StringIO(), err=bad) == 20
+
+
+def test_reconcile_and_resolve_commands_delegate_to_the_executor_with_the_local_viewer(tmp_path, monkeypatch):
+    calls = []
+
+    class FakeExecutor:
+        def __init__(self, root):
+            calls.append(("init", root))
+
+        def reconcile(self, action_id):
+            calls.append(("reconcile", action_id))
+            return types.SimpleNamespace(status="unknown", message="Still unknown")
+
+        def resolve_unknown(self, action_id, outcome, by):
+            calls.append(("resolve", action_id, outcome, by))
+            return types.SimpleNamespace(status="success", message="Resolved")
+
+    monkeypatch.setitem(sys.modules, "action_executor", types.SimpleNamespace(ActionExecutor=FakeExecutor))
+    deps = types.SimpleNamespace(ledger=None, viewer="owner")
+    shown = commands.execute(Namespace(command="reconcile", action_id="a1"), deps, tmp_path)
+    assert shown == {"action": "a1", "status": "unknown", "message": "Still unknown"}
+    commands.execute(Namespace(command="resolve", action_id="a1", outcome="failed"), deps, tmp_path)
+    assert ("resolve", "a1", "failed", "owner") in calls

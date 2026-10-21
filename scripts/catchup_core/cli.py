@@ -16,7 +16,7 @@ import sys
 import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -79,6 +79,16 @@ def _default_factory(request: CatchupRequest) -> Deps:
         raise NotConfigured(str(exc)) from exc
 
 
+def _add_bundle_commands(sub: Any) -> None:
+    """Hand-run multi-machine data path (re-artha 6.10)."""
+    enroll = sub.add_parser("bundle-enroll", help="create or import the shared secret for an ingest-bundle producer")
+    enroll.add_argument("producer")
+    enroll.add_argument("--secret", default=None, help="base64 secret printed by enrollment on the other machine")
+    export = sub.add_parser("bundle-export", help="fetch one source here and publish an ingest bundle (hand-run)")
+    export.add_argument("source")
+    export.add_argument("--days", type=int, default=30, help="history window for this export")
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="catchup_core", add_help=True)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -94,8 +104,9 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run.add_argument("--host", default="", help="designated authority host (required unless --shadow)")
     run.add_argument("--actor", default=None)
     run.add_argument("--channel", default="cli")
+    _add_bundle_commands(sub)
     for name in ("beliefs", "why", "forget", "feedback", "correct", "health", "history", "items",
-                 "goals", "capture", "export", "restore", "activity", "pause", "resume"):
+                 "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve"):
         command = sub.add_parser(name)
         command.add_argument("--json", action="store_true")
         command.add_argument("--shadow", action="store_true")
@@ -121,6 +132,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
             command.add_argument("--days", type=int, default=7)
         elif name == "capture":
             command.add_argument("text")
+        elif name in ("reconcile", "resolve"):
+            command.add_argument("action_id")
+            if name == "resolve":
+                command.add_argument("outcome", choices=("succeeded", "failed"))
         elif name in ("export", "restore"):
             command.add_argument("path")
             if name == "restore":
@@ -148,6 +163,8 @@ def main(argv: Sequence[str] | None = None, *, deps_factory: DepsFactory = _defa
         return int(ExitCode.USAGE_ERROR) if exc.code not in (0, None) else 0
     if args.command == "restore":
         return _restore(args, stdout, stderr)
+    if args.command in ("bundle-enroll", "bundle-export"):
+        return _bundle(args, stdout, stderr)
     if args.command != "catchup":
         return _inspect(args, stdout, stderr)
     return _catchup(args, deps_factory, stdout, stderr, stdin)
@@ -236,6 +253,50 @@ def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
     finally:
         if deps is not None:
             deps.ledger.close()
+
+
+def _bundle(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
+    """Hand-run multi-machine data path (re-artha 6.10): no listener, no replication, records only."""
+    import importlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from catchup_core.bundles import BundleError, enroll_producer, export_fetch, load_producer_key  # noqa: PLC0415
+    from catchup_core.runtime import _default_loaders, build_fetchers, load_runtime_config  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2]
+    try:
+        backend = importlib.import_module("keyring")
+        if args.command == "bundle-enroll":
+            secret = enroll_producer(args.producer, backend, args.secret)
+            shown = {"producer": args.producer, "enrolled": True}
+            if not args.secret:
+                shown["secret_to_copy_once"] = secret
+                shown["next"] = f"On the other machine run: bundle-enroll {args.producer} --secret <that value>"
+            print(json.dumps(shown), file=stdout)
+            return 0
+        config = load_runtime_config(root / "config" / "catchup_core.yaml")
+        spec = (config.policy.get("bundles") or {}).get(args.source)
+        if not isinstance(spec, dict) or args.source not in config.sources:
+            raise BundleError(f"{args.source!r} needs both a 'sources' entry and a 'bundles' entry in the config")
+        key = load_producer_key(str(spec["producer"]), backend)
+        if key is None:
+            raise BundleError("producer is not enrolled on this machine; run bundle-enroll first")
+        now = datetime.now(UTC)
+        since = (now - timedelta(days=args.days)).isoformat()
+        handler_loader, auth_loader = _default_loaders()
+        fetch = build_fetchers(config, since, handler_loader, auth_loader, {args.source: True})[args.source]()
+        path = export_fetch(
+            Path(str(spec["dir"])).expanduser(), key, fetch, namespace=str(spec.get("namespace", "personal")),
+            recipient=str(spec["recipient"]), authority_generation=int(spec.get("authority_generation", 1)),
+            since=since, now=now)
+        host = socket.gethostname().split(".")[0]
+        print(json.dumps({"published": path.name, "records": len(fetch.records), "host": host}), file=stdout)
+        return 0
+    except (BundleError, OSError, ValueError, KeyError, RuntimeError) as exc:
+        print(str(exc), file=stderr)
+        return int(ExitCode.BLOCKED)
 
 
 def _restore(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:
