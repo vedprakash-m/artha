@@ -45,6 +45,7 @@ from actions.base import (
 from action_queue import ActionQueue, _compute_idempotency_fields
 from trust_enforcer import TrustEnforcer
 from action_rate_limiter import ActionRateLimiter, RateLimitError
+from lib.action_policy import check_policy
 
 try:
     from lib.logger import get_logger as _get_logger
@@ -834,6 +835,19 @@ class ActionExecutor:
                     reverse_action=None,
                 )
 
+        # 5c. Deterministic policy guard (RA-24): hand-off tier, expiry, standing approvals, recipient class
+        policy_ok, policy_reason = check_policy(
+            proposal, approved_by, datetime.now(timezone.utc), handoff_types=_load_handoff_action_types(self._artha_dir))
+        if not policy_ok:
+            _audit_log(self._artha_dir, f"ACTION_POLICY_BLOCKED | id:{action_id} | reason:{policy_reason}")
+            return ActionResult(
+                status="failure",
+                message=f"Policy guard blocked: {policy_reason}",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
+
         # 6. Transition PENDING → APPROVED (only if still pending)
         if current_status == "pending":
             try:
@@ -1110,6 +1124,45 @@ class ActionExecutor:
     def list_pending(self) -> list[ActionProposal]:
         """Alias for pending() — spec-compliant name."""
         return self.pending()
+
+    def reconcile(self, action_id: str) -> ActionResult:
+        """Resolve an ``unknown`` action against the provider; only a provider-confirmed effect closes it (RA-05)."""
+        row = self._queue.get_raw(action_id)
+        if not row or row["status"] != "unknown":
+            return ActionResult(status="failure", message="Only an action in 'unknown' can be reconciled.",
+                                data=None, reversible=False, reverse_action=None)
+        proposal = self._queue.get(action_id, privkey=self._get_privkey())
+        handler = self._get_handler(row["action_type"])
+        check = getattr(handler, "reconcile", None)
+        if proposal is None or check is None:
+            return ActionResult(status="unknown", message="This action type cannot be verified with its provider; "
+                                "resolve it by hand with resolve_unknown().", data=None, reversible=False,
+                                reverse_action=None)
+        result = check(proposal, since=str(row.get("approved_at") or row.get("created_at") or ""))
+        if result.status == "success":
+            self._queue.record_result(action_id, result, datetime.now(timezone.utc).isoformat())
+            _audit_log(self._artha_dir, f"ACTION_RECONCILED | id:{action_id} | outcome:confirmed")
+        return result
+
+    def resolve_unknown(self, action_id: str, outcome: str, resolved_by: str) -> ActionResult:
+        """A person decides an unverifiable ``unknown`` action: 'succeeded' (it happened) or 'failed' (it did not).
+
+        Saying 'failed' releases the duplicate guard so the action can be proposed again, so this is human-only
+        and audited; automatic and standing approvers are refused.
+        """
+        if outcome not in ("succeeded", "failed") or resolved_by.startswith(("system:", "standing:", "auto")):
+            return ActionResult(status="failure", message="A person must choose 'succeeded' or 'failed'.",
+                                data=None, reversible=False, reverse_action=None)
+        row = self._queue.get_raw(action_id)
+        if not row or row["status"] != "unknown":
+            return ActionResult(status="failure", message="Only an action in 'unknown' can be resolved.",
+                                data=None, reversible=False, reverse_action=None)
+        result = ActionResult(status="success" if outcome == "succeeded" else "failure",
+                              message=f"Resolved by {resolved_by}: {outcome}", data={"resolved_by": resolved_by},
+                              reversible=False, reverse_action=None)
+        self._queue.record_result(action_id, result, datetime.now(timezone.utc).isoformat())
+        _audit_log(self._artha_dir, f"ACTION_UNKNOWN_RESOLVED | id:{action_id} | outcome:{outcome} | by:{resolved_by}")
+        return result
 
     def approved(self) -> list[ActionProposal]:
         """Return all APPROVED actions awaiting execution (cancellable)."""
@@ -1503,6 +1556,19 @@ def _load_action_configs(artha_dir: Path) -> dict[str, Any]:
     except Exception as exc:
         _log.warning(f"load_action_configs_failed error={exc}")
         return {}
+
+
+def _load_handoff_action_types(artha_dir: Path) -> frozenset[str]:
+    """``live_trial.handoff_only`` from config/actions.yaml: types Artha prepares but never executes."""
+    try:
+        import yaml  # noqa: PLC0415
+        data = yaml.safe_load((artha_dir / "config" / "actions.yaml").read_text(encoding="utf-8")) or {}
+        policy = data.get("live_trial")
+        listed = policy.get("handoff_only") if isinstance(policy, dict) else None
+        return frozenset(str(t) for t in listed) if isinstance(listed, list) else frozenset()
+    except Exception as exc:  # noqa: BLE001 — an unreadable list falls back to the built-in name patterns
+        _log.warning(f"load_handoff_action_types_failed error={exc}")
+        return frozenset()
 
 
 def _load_held_action_types(artha_dir: Path) -> frozenset[str]:

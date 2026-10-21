@@ -149,6 +149,36 @@ def execute(proposal: ActionProposal) -> ActionResult:
         )
 
 
+def reconcile(proposal: ActionProposal, *, since: str) -> ActionResult:
+    """Look for the task an ``unknown`` attempt may have created (re-artha RA-05).
+
+    The provider has no idempotency key for tasks, so only *presence* is conclusive: exactly one task with the exact
+    title, created at or after the approval, confirms the effect.  Anything else (none, several, or a lookup that
+    fails) stays ``unknown`` for a person to resolve.  Absence never proves that nothing happened: the task may have
+    been created and then deleted.
+    """
+    params = proposal.parameters
+    title = str(params.get("title", ""))
+    list_name = str(params.get("list_name", "Artha"))
+    try:
+        token = _get_token()
+        list_id = _resolve_list_id(token, list_name)
+        escaped = title.replace("'", "''")
+        found = _graph_request(f"{_GRAPH_TODO_BASE}/{list_id}/tasks?$filter=title eq '{escaped}'&$top=10",
+                               access_token=token)
+        tasks = [t for t in found.get("value", []) if str(t.get("createdDateTime", "")) >= since]
+    except Exception as exc:  # noqa: BLE001 — a failed lookup is not evidence either way
+        return ActionResult(status="unknown", message=f"Could not check the provider: {type(exc).__name__}",
+                            data={"title": title}, reversible=False, reverse_action=None)
+    if len(tasks) == 1 and tasks[0].get("id"):
+        return ActionResult(status="success", message=f"Confirmed with the provider: '{title}' exists",
+                            data={"task_id": tasks[0]["id"], "list_id": list_id, "list_name": list_name, "title": title,
+                                  "reconciled": True}, reversible=False, reverse_action=None)
+    reason = "several matching tasks" if tasks else "no matching task found"
+    return ActionResult(status="unknown", message=f"Still unknown ({reason}); a person must confirm.",
+                        data={"title": title, "candidates": len(tasks)}, reversible=False, reverse_action=None)
+
+
 def build_reverse_proposal(
     original: ActionProposal,
     result_data: dict[str, Any],
@@ -173,27 +203,17 @@ def health_check() -> bool:
 # ---------------------------------------------------------------------------
 
 def _get_token() -> str:
-    """Load MS Graph access token from token file."""
-    try:
-        from lib.auth import get_auth_token  # noqa: PLC0415
-        token = get_auth_token("msgraph")
-        if token:
-            return token
-    except Exception:
-        pass
+    """A *refreshed* MS Graph access token.
 
-    # Fallback: read token file directly
-    import json
-    import os
-    token_file = os.path.join(
-        str(Path(__file__).resolve().parent.parent.parent),
-        ".tokens", "msgraph-token.json",
-    )
-    if os.path.exists(token_file):
-        with open(token_file) as f:
-            data = json.load(f)
-        return data.get("access_token", "")
-    raise RuntimeError("MS Graph token not found. Run: python scripts/setup_msgraph_oauth.py")
+    The previous implementation called a function that does not exist and then fell back to a stale token file, which
+    produced HTTP 401 at execution time.  ``load_msgraph_token`` refreshes through ``ensure_valid_token``; if that
+    fails the action fails before dispatch with a message that says how to fix it.
+    """
+    from lib.auth import load_msgraph_token  # noqa: PLC0415
+    token = load_msgraph_token().get("access_token", "")
+    if not token:
+        raise RuntimeError("MS Graph token not found. Run: python scripts/setup_msgraph_oauth.py")
+    return str(token)
 
 
 def _graph_request(

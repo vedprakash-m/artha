@@ -507,3 +507,71 @@ class TestHandlerLoading:
         for k, v in _HANDLER_MAP.items():
             assert ".." not in v
             assert v.startswith("actions.")
+
+
+class TestPolicyGuardWiring:
+    def test_a_policy_refusal_stops_execution_before_any_state_change(self, executor, monkeypatch):
+        import action_executor as ae
+        with patch.object(executor, "_get_handler") as mock_get:
+            mock_h = MagicMock()
+            mock_h.validate.return_value = (True, "")
+            mock_get.return_value = mock_h
+            proposal = executor.propose(action_type="email_send", domain="test", title="Mail",
+                                        parameters={"to": "a@b.com", "subject": "Hi", "body": "Hello"})
+        monkeypatch.setattr(ae, "check_policy", lambda *_a, **_k: (False, "hand-off only"))
+        result = executor.approve(proposal.id, approved_by="owner")
+        assert result.status == "failure" and "Policy guard blocked: hand-off only" in result.message
+        assert executor._queue.get_raw(proposal.id)["status"] == "pending"
+
+
+class TestUnknownReconciliation:
+    """RA-05: an uncertain effect closes only on provider confirmation or a person's decision."""
+
+    def _unknown(self, executor):
+        with patch.object(executor, "_get_handler") as mock_get:
+            mock_h = MagicMock()
+            mock_h.validate.return_value = (True, "")
+            mock_get.return_value = mock_h
+            proposal = executor.propose(action_type="reminder_create", domain="test", title="Remind",
+                                        parameters={"title": "Call school"})
+        with executor._queue._conn:
+            executor._queue._conn.execute("UPDATE actions SET status='unknown' WHERE id=?", (proposal.id,))
+        return proposal
+
+    def test_provider_confirmation_closes_the_action_as_succeeded(self, executor):
+        from actions.base import ActionResult
+        proposal = self._unknown(executor)
+        handler = MagicMock()
+        handler.reconcile.return_value = ActionResult(status="success", message="Confirmed", data={"task_id": "t1"},
+                                                      reversible=False, reverse_action=None)
+        with patch.object(executor, "_get_handler", return_value=handler):
+            result = executor.reconcile(proposal.id)
+        assert result.status == "success" and executor._queue.get_raw(proposal.id)["status"] == "succeeded"
+
+    def test_absence_or_a_handler_without_reconcile_stays_unknown(self, executor):
+        from actions.base import ActionResult
+        proposal = self._unknown(executor)
+        handler = MagicMock()
+        handler.reconcile.return_value = ActionResult(status="unknown", message="no match", data=None,
+                                                      reversible=False, reverse_action=None)
+        with patch.object(executor, "_get_handler", return_value=handler):
+            assert executor.reconcile(proposal.id).status == "unknown"
+        with patch.object(executor, "_get_handler", return_value=MagicMock(spec=[])):
+            assert "resolve it by hand" in executor.reconcile(proposal.id).message
+        assert executor._queue.get_raw(proposal.id)["status"] == "unknown"
+
+    def test_only_unknown_actions_can_be_reconciled_or_resolved(self, executor):
+        with patch.object(executor, "_get_handler") as mock_get:
+            mock_get.return_value = MagicMock(validate=MagicMock(return_value=(True, "")))
+            pending = executor.propose(action_type="reminder_create", domain="test", title="R",
+                                       parameters={"title": "x"})
+        assert executor.reconcile(pending.id).status == "failure"
+        assert executor.resolve_unknown(pending.id, "failed", "owner").status == "failure"
+
+    def test_resolution_is_human_only_and_failed_releases_the_duplicate_guard(self, executor):
+        proposal = self._unknown(executor)
+        for who in ("system:executor", "standing:weekly", "auto"):
+            assert executor.resolve_unknown(proposal.id, "failed", who).status == "failure"
+        assert executor.resolve_unknown(proposal.id, "maybe", "owner").status == "failure"
+        assert executor.resolve_unknown(proposal.id, "failed", "owner").status == "failure"      # a person decides: no effect
+        assert executor._queue.get_raw(proposal.id)["status"] == "failed"
