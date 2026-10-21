@@ -130,3 +130,23 @@ def test_goal_plans_show_in_standard_and_deep_but_not_in_short_formats():
     assert "GOAL PLANS" in cp.compose(now, empty, fmt=BriefingFormat.DEEP, **kw).text
     assert "GOAL PLANS" not in cp.compose(now, empty, fmt=BriefingFormat.FLASH, **kw).text
     assert "GOAL PLANS" not in cp.compose(now, empty, fmt=BriefingFormat.DIGEST, **kw).text
+
+
+def test_responsibilities_show_in_standard_but_not_in_short_formats():
+    from catchup_core.contracts import BriefingFormat
+    from catchup_core.triage import TriageResult
+    empty = TriageResult((), (), (), None, False)
+    now = datetime(2026, 10, 20, 9, tzinfo=timezone.utc)
+    kw = dict(evidence_for={}, coverage_line="Coverage: ok.", responsibility_lines=["R1: check now — Renew"])
+    assert "RESPONSIBILITIES" in cp.compose(now, empty, **kw).text
+    assert "RESPONSIBILITIES" not in cp.compose(now, empty, fmt=BriefingFormat.DIGEST, **kw).text
+
+
+def test_household_section_shows_in_standard_only():
+    from catchup_core.contracts import BriefingFormat
+    from catchup_core.triage import TriageResult
+    empty = TriageResult((), (), (), None, False)
+    now = datetime(2026, 10, 20, 9, tzinfo=timezone.utc)
+    kw = dict(evidence_for={}, coverage_line="Coverage: ok.", coordination_lines=["H1: RSVP — waiting"])
+    assert "HOUSEHOLD" in cp.compose(now, empty, **kw).text
+    assert "HOUSEHOLD" not in cp.compose(now, empty, fmt=BriefingFormat.FLASH, **kw).text

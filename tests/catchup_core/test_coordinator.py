@@ -450,3 +450,40 @@ def test_every_model_request_leaves_a_disclosure_record_without_the_prompt(world
     assert seen and all(e["purpose"] == "extract" and e["provider"] == "session-assistant" for e in seen)
     assert all(e["request_id"].startswith("evd_") and "Registration" not in json.dumps(e) for e in seen)
     assert {"data_class", "retention", "catchup_id", "at"} <= set(seen[0])
+
+
+def test_every_run_records_stage_seconds_and_model_requests_without_content(world):
+    ledger, _b, make, _p = world
+    seen = []
+    ticks = iter(range(0, 10_000))
+    d = make({"school_email": email(), "calendar": cal()})
+    d.metrics = seen.append
+    d.perf = lambda: float(next(ticks))
+    result = co.run_catchup(req("cu_metrics"), d)
+    entry = seen[0]
+    assert entry["catchup_id"] == "cu_metrics" and entry["status"] == result.status.value and entry["mode"] == "authoritative"
+    assert {"FETCH", "EXTRACT", "COMMIT"} <= set(entry["stages"]) and entry["total_seconds"] > 0
+    assert entry["model_requests"] >= 1 and entry["resumed"] is False
+    assert "Registration" not in json.dumps(entry)
+
+
+def test_a_paused_run_is_recorded_and_a_failing_sink_changes_nothing(world):
+    ledger, _b, make, _p = world
+    seen = []
+    from catchup_core.exchange import AwaitingExtraction, ExtractionPending, PendingRequest
+    d = make({"school_email": email(), "calendar": cal()})
+
+    def pause(prompt):
+        raise ExtractionPending(PendingRequest("r1", prompt))
+    d.extractor = pause
+    d.metrics = seen.append
+    import pytest
+    with pytest.raises(AwaitingExtraction):
+        co.run_catchup(req("cu_paused"), d)
+    assert seen[0]["status"] == "paused"
+
+    def broken(_entry):
+        raise OSError("disk full")
+    d2 = make({"school_email": email(), "calendar": cal()})
+    d2.metrics = broken
+    assert co.run_catchup(req("cu_ok"), d2).briefing_id                     # the Briefing is unaffected

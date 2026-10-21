@@ -70,7 +70,8 @@ def test_read_and_review_commands_share_the_same_facts(app):
     assert health["integrity"] is True
     states = {c["id"]: c for c in health["capabilities"]}
     assert states["RA-01"]["state"] == "not configured" and states["RA-01"]["measured"] == "no"   # no config here
-    assert states["RA-19"]["state"] == "not implemented"
+    assert states["RA-19"]["state"] == "disabled"                   # later-scope: built, not yet part of the pilot
+    assert health["performance"]["verdict"] == "no finished runs recorded yet"
     assert commands.execute(args("history"), deps, root) == {"briefings": []}
     response = commands.execute(args("feedback", obligation="exam", response="useful", reason="helped"), deps, root)
     assert response["feedback_id"] and b"helped" not in deps.ledger._path.read_bytes()

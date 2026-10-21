@@ -51,8 +51,9 @@ CAPABILITIES: tuple[Capability, ...] = (
                (_T + "test_adapters.py", _T + "test_bundles.py"), ("RA-08.AC1",)),
     Capability("RA-09", "Privacy, Work isolation and channels", "pilot", (_C + "policy.py", "scripts/tool_guard.py"),
                ("tests/unit/test_tool_guard.py", _T + "test_release_regressions.py"), ("RA-09.AC1",)),
-    Capability("RA-10", "Capability and evaluation ledger", "pilot", (_C + "capabilities.py", "tools/gen_capability_register.py"),
-               ("tests/dev/test_capability_register.py",), ("RA-10.AC1",)),
+    Capability("RA-10", "Capability and evaluation ledger (with per-run latency records)", "pilot",
+               (_C + "capabilities.py", _C + "metrics.py", "tools/gen_capability_register.py"),
+               ("tests/dev/test_capability_register.py", _T + "test_metrics.py"), ("RA-10.AC1",)),
     Capability("RA-11", "Goal and Sprint intelligence (minimum observation)", "pilot", (_C + "goals.py",),
                (_T + "test_goals_scorecard_cli.py",), ("RA-11.AC1",)),
     Capability("RA-12", "Household permission and consent (v0)", "pilot", (_C + "household.py", _C + "policy.py"),
@@ -68,7 +69,8 @@ CAPABILITIES: tuple[Capability, ...] = (
                (_T + "test_triage.py", "tests/unit/test_stale_banner.py", "tests/unit/test_session_stop.py"), ("RA-17.AC1",)),
     Capability("RA-18", "Security architecture and harness enforcement", "pilot", (_C + "rule_of_two.py", "scripts/tool_guard.py"),
                (_T + "test_rule_of_two.py", "tests/unit/test_tool_guard.py"), ("RA-18.AC1",)),
-    Capability("RA-19", "Household coordination", "later", (), (), ("RA-19.AC1",)),
+    Capability("RA-19", "Household coordination (shared obligations, acceptance, escalation; read-only)", "later",
+               (_C + "coordination.py",), (_T + "test_coordination.py",), ("RA-19.AC1",)),
     Capability("RA-20", "Portable export, emergency access, accessibility", "later", (_C + "backup.py",), (_T + "test_user_surfaces.py",), ("RA-20.AC1",)),
     Capability("RA-21", "Document ingestion and extraction (text baseline only)", "pilot", (_C + "documents.py",),
                (_T + "test_documents.py",), ("RA-21.AC1",)),
@@ -81,8 +83,9 @@ CAPABILITIES: tuple[Capability, ...] = (
                 "scripts/lib/action_process.py"),
                ("tests/unit/test_action_executor.py", "tests/unit/test_action_policy.py",
                 "tests/unit/test_action_process.py"), ("RA-24.AC1",)),
-    Capability("RA-25", "Goal plans (milestones evaluated at Catch-up; responsibilities records not built)", "later",
-               (_C + "plans.py",), (_T + "test_plans.py",), ("RA-25.AC1",)),
+    Capability("RA-25", "Goal plans and standing responsibilities (evaluated at Catch-up, read-only)", "later",
+               (_C + "plans.py", _C + "responsibilities.py"), (_T + "test_plans.py", _T + "test_responsibilities.py"),
+               ("RA-25.AC1",)),
 )
 
 

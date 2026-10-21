@@ -187,6 +187,8 @@ def compose(
     unresolved_signals: int = 0,
     goal_lines: Sequence[str] = (),
     plan_lines: Sequence[str] = (),
+    responsibility_lines: Sequence[str] = (),
+    coordination_lines: Sequence[str] = (),
     legacy_lines: Sequence[str] = (),
     subject_labels: Mapping[str, str] | None = None,
     fmt: BriefingFormat = BriefingFormat.STANDARD,
@@ -239,7 +241,9 @@ def compose(
     if incumbent_lines:
         lines += ["OTHER COMMITMENTS TO REVIEW"] + [f"• {sanitize(t, 700)}" for t in incumbent_lines] + [""]
     if not brief:
-        lines += _bullets("GOALS", goal_lines) + _bullets("GOAL PLANS", plan_lines)
+        lines += (_bullets("GOALS", goal_lines) + _bullets("GOAL PLANS", plan_lines)
+                  + _bullets("RESPONSIBILITIES", responsibility_lines)
+                  + _bullets("HOUSEHOLD", coordination_lines))
     lines += _verdict_lines(result, quiet, coverage_gaps, unresolved_signals)
 
     if result.next_check_by:
