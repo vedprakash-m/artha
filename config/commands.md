@@ -8,15 +8,20 @@
 ---
 
 ### `/brief` (primary) — Briefing Command
-
+ 
 Full catch-up pipeline. Format determined by Step 2b logic (default: `headline` for 4–48h gaps).
 Equivalent natural language: "catch me up", "morning briefing", "SITREP", "what did I miss".
 
+Execution:
+```bash
+python -m scripts.catchup_core.cli catchup --host $(hostname -s) --format standard
+```
+
 Sub-commands:
-- `/brief flash` — force flash format (§8.8) regardless of gap
-- `/brief deep` — extended briefing with trend analysis, coaching, scenarios
-- `/brief standard` — force full §8.1 standard format (alias: "show everything")
-- `/brief digest` — force digest format (§8.7)
+- `/brief flash` — force flash format (§8.8) regardless of gap (`--format flash`)
+- `/brief deep` — extended briefing with trend analysis, coaching, scenarios (`--format deep`)
+- `/brief standard` — force full §8.1 standard format (`--format standard`)
+- `/brief digest` — force digest format (§8.7) (`--format digest`)
 
 ### `/catch-up` (legacy alias for `/brief`)
 Same as `/brief`. All sub-commands still work: `/catch-up flash`, `/catch-up deep`, `/catch-up standard`.

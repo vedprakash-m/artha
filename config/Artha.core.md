@@ -185,7 +185,12 @@ Every **factual claim** in briefing prose MUST carry one of these inline tokens 
 
 
 
-**Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up`
+**Triggers:** "catch me up", "what did I miss", "morning briefing", "SITREP", "run catch-up", or `/catch-up` / `brief`
+
+**Authoritative Pipeline Execution (re-artha v0.8.0):**
+```bash
+python -m scripts.catchup_core.cli catchup --host $(hostname -s) --format standard
+```
 
 > **Composable modules:** For customization and phase-level documentation,
 > see `config/workflow/README.md`. The workflow is organized into 5 phases:
@@ -228,11 +233,12 @@ If `integrations.workiq.enabled: true` in `config/user_profile.yaml`: load `conf
 into context before Step 0. All WorkIQ-specific steps (preflight check, Step 4 fetch,
 Steps 8o–8r cross-domain analysis) are defined in that overlay. On Mac: skip silently.
 
-### Step 1 — Decrypt sensitive state
+### Step 1 — Decrypt sensitive state (In-Memory Access, D-27)
 ```bash
-python3 scripts/vault.py decrypt
+python3 scripts/vault.py read <domain>
 ```
-If `age` is not installed or key not in credential store, log a warning but continue — state files may be in plaintext during initial setup.
+To access encrypted domain state without leaving decrypted plaintext files on disk, use in-memory decryption (`python3 scripts/vault.py read <domain>` or programmatically `from foundation import get_age_vault; text = get_age_vault().read(domain)`).
+Legacy batch decryption to disk (`python3 scripts/vault.py decrypt`) is deprecated and should only be used when explicitly requested for offline file editing.
 
 ### Step 1b — Pull To Do completion status
 If `config/artha_config.yaml` exists with `todo_lists:` and `.tokens/msgraph-token.json` is present:

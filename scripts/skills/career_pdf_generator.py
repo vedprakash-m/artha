@@ -270,6 +270,8 @@ class CareerPdfGenerator(BaseSkill):
         rendered_html = template_html
 
         if self.variant == "visual":
+            # Rewrite font paths relative to tmp/
+            rendered_html = rendered_html.replace("../../fonts/", "../fonts/")
             fragments = _render_visual_fragments(cv_final)
             rendered_html = rendered_html.replace("{{NAME_FIRST}}", fragments["name_first"])
             rendered_html = rendered_html.replace("{{NAME_LAST}}", fragments["name_last"])
@@ -753,11 +755,22 @@ def _render_visual_fragments(cv_md: str) -> Dict[str, str]:
     summary = sections.get("Summary", "")
     tagline = _extract_tagline(summary)
 
+    # Strip tagline line from summary body to avoid duplication with sidebar tagline
+    summary_body = summary
+    summary_lines = summary.strip().split("\n")
+    first_nonblank = next((i for i, l in enumerate(summary_lines) if l.strip()), None)
+    if first_nonblank is not None and re.match(
+        r"^([A-Z][a-zA-Z\s,]+?)\s*[—–·.]", summary_lines[first_nonblank].strip()
+    ):
+        summary_body = "\n".join(summary_lines[first_nonblank + 1:]).lstrip()
+
     main_parts: list[str] = []
     if summary:
         main_parts.append("<h2>Professional Summary</h2>")
-        main_parts.append(_md_to_html(summary))
-    # Core Competencies intentionally suppressed in visual — Skills sidebar covers keywords.
+        main_parts.append(_md_to_html(summary_body))
+    if sections.get("Core Competencies"):
+        comp_html = _md_to_html(sections["Core Competencies"]).replace("<p>", "").replace("</p>", "").strip()
+        main_parts.append(f'<div class="keyword-strip"><strong>Core strengths:</strong> {comp_html}</div>')
     if sections.get("Professional Experience"):
         main_parts.append("<h2>Experience</h2>")
         exp_html = _md_to_html(sections["Professional Experience"])
@@ -766,6 +779,11 @@ def _render_visual_fragments(cv_md: str) -> Dict[str, str]:
     if sections.get("Projects"):
         main_parts.append("<h2>Projects</h2>")
         proj_html = _md_to_html(sections["Projects"])
+        proj_html = _format_role_headers(proj_html)
+        main_parts.append(proj_html)
+    elif sections.get("Selected Projects"):
+        main_parts.append("<h2>Selected Projects</h2>")
+        proj_html = _md_to_html(sections["Selected Projects"])
         proj_html = _format_role_headers(proj_html)
         main_parts.append(proj_html)
 
@@ -830,21 +848,20 @@ def _extract_tagline(summary: str) -> str:
 
 
 def _render_contact_html(contact_line: str) -> str:
-    """Render 'A · B · C' contact line as icon-prefixed divs."""
+    """Render 'A · B · C' contact line as label-prefixed divs."""
     parts = [p.strip() for p in re.split(r"\s*·\s*", contact_line) if p.strip()]
     out: list[str] = []
     for p in parts:
         if "@" in p:
-            icon = "\U0001F4E7"  # 📧 email
+            out.append(f'<div class="contact-line"><strong>Email:</strong> <a href="mailto:{p}">{p}</a></div>')
         elif "linkedin" in p.lower():
-            icon = "\U0001F517"  # 🔗 linkedin
+            out.append(f'<div class="contact-line"><strong>LinkedIn:</strong> <a href="https://{p}">{p}</a></div>')
         elif re.search(r"\.(net|com|io|org|ai|dev|co|me)(/|$)", p.lower()):
-            icon = "\U0001F310"  # 🌐 web
+            out.append(f'<div class="contact-line"><strong>Web:</strong> <a href="https://{p}">{p}</a></div>')
+        elif re.search(r"^\+?[\d][\d\s\-\(\)\.]{6,}$", p.strip()):
+            out.append(f'<div class="contact-line"><strong>Phone:</strong> {p}</div>')
         else:
-            icon = "\U0001F4CD"  # 📍 location
-        out.append(
-            f'<div class="contact-line"><span class="contact-icon">{icon}</span>{p}</div>'
-        )
+            out.append(f'<div class="contact-line"><strong>Location:</strong> {p}</div>')
     return "\n".join(out)
 
 

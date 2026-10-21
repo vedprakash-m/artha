@@ -78,7 +78,7 @@ from foundation import (
     SENSITIVE_FILES, KC_SERVICE, KC_ACCOUNT, STALE_THRESHOLD, LOCK_TTL,
     log, die,
     get_private_key, get_public_key,
-    check_age_installed, age_decrypt, age_encrypt,
+    check_age_installed, get_age_bin, age_decrypt, age_encrypt,
     _normalize_sensitive_files,
 )
 
@@ -308,7 +308,7 @@ def _restore_bak(plain_file: Path, domain: str, reason: str) -> bool:
     try:
         with open(bak, encoding="utf-8", errors="replace") as f:
             first_line = f.readline()
-        if not first_line.startswith("---"):
+        if domain != "audit" and not first_line.startswith("---"):
             log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: backup_invalid_yaml")
             print(f"  WARNING: Backup for {domain}.md has invalid YAML — skipping restore", file=sys.stderr)
             return False
@@ -699,7 +699,7 @@ def do_decrypt() -> None:
                 # Post-decrypt validation: YAML frontmatter?
                 # .md files start with '---'; .yaml files start with '#' or a YAML key.
                 # For .yaml files we just check non-empty (already checked above).
-                if ext == ".md":
+                if ext == ".md" and domain != "audit":
                     with open(tmp_plain, encoding="utf-8", errors="replace") as f:
                         first_line = f.readline()
                     if not first_line.startswith("---"):
@@ -1012,7 +1012,7 @@ def do_status() -> None:
 
     print()
     if check_age_installed():
-        result = subprocess.run(["age", "--version"], capture_output=True, text=True)
+        result = subprocess.run([get_age_bin(), "--version"], capture_output=True, text=True)
         version = result.stdout.strip() or result.stderr.strip() or "unknown"
         print(f"age: ✓ {version}")
     else:
@@ -1103,7 +1103,7 @@ def do_health() -> None:
 
     # 1. age tool installed
     if check_age_installed():
-        result = subprocess.run(["age", "--version"], capture_output=True, text=True)
+        result = subprocess.run([get_age_bin(), "--version"], capture_output=True, text=True)
         version = (result.stdout.strip() or result.stderr.strip() or "unknown")
         print(f"  age: ✓ {version}")
     else:
@@ -1217,12 +1217,27 @@ def _print_usage(exit_code: int = 1) -> None:
     print()
     print("  decrypt      — unlock sensitive state files for a catch-up session")
     print("  encrypt      — lock sensitive state files after catch-up + GFS backup")
+    print("  read <dom>   — decrypt and print domain in-memory via AgeVault (never touches disk)")
     print("  status       — show current encryption state (read-only)")
     print("  health       — exit 0 if vault is healthy; exit 1 otherwise (for preflight)")
     print("  store-key    — store age private key from a file into the OS credential store")
     print("  release-lock — force-clear a stale session lock (manual recovery)")
     print("  auto-lock    — encrypt if lock TTL exceeded (called by watchdog/cron)")
     sys.exit(exit_code)
+
+
+def do_read(domain: str) -> None:
+    """Read and decrypt one domain in-memory via AgeVault (never touches disk)."""
+    try:
+        from catchup_core.vault import AgeVault
+        key = get_private_key()
+        pub = get_public_key()
+        vault = AgeVault(STATE_DIR, identity=lambda: key, recipient=pub)
+        content = vault.read(domain)
+        sys.stdout.write(content)
+    except Exception as exc:
+        print(f"Error reading {domain}: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:
@@ -1240,6 +1255,11 @@ def main() -> None:
         do_status()
     elif cmd == "health":
         do_health()
+    elif cmd in ("read", "cat"):
+        if len(sys.argv) < 3:
+            print("Usage: vault.py read <domain>", file=sys.stderr)
+            sys.exit(1)
+        do_read(sys.argv[2])
     elif cmd in ("store-key", "store_key"):
         if len(sys.argv) < 3:
             print("Usage: vault.py store-key <keyfile>", file=sys.stderr)

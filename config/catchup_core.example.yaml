@@ -1,0 +1,44 @@
+# config/catchup_core.example.yaml
+# Template for catchup_core runtime configuration (re-artha §6.5, §6.10, §12.6)
+# Copy to config/catchup_core.yaml (which is git-ignored) and customize for your installation.
+
+sources:
+  # Maps pack source names (e.g. from packs/kids_school.yaml) to configured connectors
+  school_email:
+    connector: gmail
+    account_scope: personal
+    kwargs:
+      query: "label:school"
+  calendar:
+    connector: google_calendar
+    account_scope: family
+
+# Enabled domain packs (located in scripts/catchup_core/packs/*.yaml)
+domains:
+  - kids_school
+  - finance
+  - immigration
+  - health
+  - home
+
+# List of household subject identifiers (tokenized or alias strings)
+subjects:
+  - child_1
+  - child_2
+  # - adult_child  # Add if adult child data is monitored
+
+# Adults whose restricted data requires explicit recorded consent (RA-12 v0, D-24)
+consent_required: []
+# consent_required:
+#   - adult_child
+
+# Authorized viewer role for the primary session
+viewer: owner
+
+# Enable authoritative cutover (re-artha §12.6, §12.8)
+# When true, 'catchup_core catchup' can publish authoritative briefings to briefings/
+cutover: false
+
+# Automated extractor command (re-artha §6.6, D-28)
+# Reads prompt on stdin, returns {"candidates": [...]} on stdout.
+extractor_cmd: "python3 scripts/catchup_core/extractor_cmd.py"

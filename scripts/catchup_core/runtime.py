@@ -40,14 +40,14 @@ from catchup_core.blobs import EncryptedBlobStore
 from catchup_core.contracts import CatchupRequest, CoverageStatus
 from catchup_core.coordinator import ConnectorFetch, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
-from catchup_core.domain_pack import DomainPack, PackError, load_pack_file
+from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
 from catchup_core.exchange import ExchangeExtractor
 from catchup_core.incumbent import GuardedIncumbent
 from catchup_core.ledger import FileSealedStore, Ledger
 from catchup_core.legacy_state import LegacyStateAdapter
 
 __all__ = ["RuntimeConfig", "RuntimeConfigError", "build_deps", "command_extractor", "load_runtime_config",
-           "local_root"]
+           "local_root", "make_file_publisher"]
 
 _PACKS = Path(__file__).parent / "packs"
 
@@ -58,11 +58,15 @@ class RuntimeConfigError(RuntimeError):
 
 class RuntimeConfig:
     def __init__(self, sources: Mapping[str, Mapping[str, Any]], subjects: list[str], viewer: str,
-                 consent_required: frozenset[str] = frozenset()):
+                 consent_required: frozenset[str] = frozenset(), cutover: bool = False,
+                 extractor_cmd: str | None = None, domains: tuple[str, ...] = ("kids_school",)):
         self.sources = {k: dict(v) for k, v in sources.items()}
         self.subjects = subjects
         self.viewer = viewer
         self.consent_required = consent_required
+        self.cutover = cutover
+        self.extractor_cmd = extractor_cmd
+        self.domains = tuple(domains)
 
 
 def local_root(environ: Mapping[str, str] | None = None) -> Path:
@@ -93,8 +97,14 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
     unknown = sorted(set(required) - set(subjects))
     if unknown:
         raise RuntimeConfigError(f"'consent_required' names subjects not in 'subjects': {', '.join(unknown)}")
+    cutover = bool(data.get("cutover", False))
+    extractor_cmd = data.get("extractor_cmd")
+    cfg_domains = data.get("domains")
+    domains = tuple(cfg_domains) if isinstance(cfg_domains, list) else ("kids_school",)
     return RuntimeConfig(sources, [str(s) for s in subjects], str(data.get("viewer", "owner")),
-                         frozenset(required))
+                         frozenset(required), cutover=cutover,
+                         extractor_cmd=str(extractor_cmd) if extractor_cmd else None,
+                         domains=domains)
 
 
 def command_extractor(command: str | None, *, timeout: float = 120.0,
@@ -174,11 +184,18 @@ def build_deps(
     config = load_runtime_config(root / "config" / "catchup_core.yaml")
     local = local_root(env)
 
-    domains = request.pilot_domains or ("kids_school",)
-    try:
-        pack: DomainPack = load_pack_file(_PACKS / f"{domains[0]}.yaml")
-    except PackError as exc:
-        raise RuntimeConfigError(str(exc)) from exc
+    domains = request.pilot_domains or config.domains or ("kids_school",)
+    loaded: list[DomainPack] = []
+    for d in domains:
+        p_path = _PACKS / f"{d}.yaml"
+        if p_path.is_file():
+            try:
+                loaded.append(load_pack_file(p_path))
+            except PackError as exc:
+                raise RuntimeConfigError(str(exc)) from exc
+    if not loaded:
+        raise RuntimeConfigError(f"no valid domain packs found for: {domains}")
+    pack: DomainPack = composite_pack(loaded)
 
     cipher_provider = KeyringKeyProvider("artha-ledger", backend=keyring_backend)
     id_provider = KeyringKeyProvider("artha-ledger-ids", backend=keyring_backend)
@@ -197,16 +214,30 @@ def build_deps(
         handler_loader, auth_loader = _default_loaders()
     since = (datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     required = {s.connector: s.required for s in pack.sources}
+    now_fn = now or (lambda: datetime.now(UTC))
+    ext_cmd = env.get("ARTHA_EXTRACTOR_CMD") or config.extractor_cmd
     return Deps(
         ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,
         fetchers=build_fetchers(config, since, handler_loader, auth_loader, required),
-        extractor=(command_extractor(env["ARTHA_EXTRACTOR_CMD"]) if env.get("ARTHA_EXTRACTOR_CMD")
-                   else ExchangeExtractor()),
-        subjects=config.subjects, viewer=config.viewer, now=now or (lambda: datetime.now(UTC)),
+        extractor=(command_extractor(ext_cmd) if ext_cmd else ExchangeExtractor()),
+        subjects=config.subjects, viewer=config.viewer, now=now_fn,
         source_class={name: name for name in config.sources},
         incumbent=GuardedIncumbent(LegacyStateAdapter(root / "state", domains, datetime.now(UTC))),
+        publisher=make_file_publisher(root, now_fn),
         coverage_line=_coverage_line,
     )
+
+
+def make_file_publisher(repo_root: Path, now: Callable[[], datetime]) -> Callable[[str, str, int], None]:
+    """Publisher that writes the canonical briefing file to briefings/YYYY-MM-DD.md."""
+    def publish(catchup_id: str, text: str, version: int) -> None:
+        briefings_dir = repo_root / "briefings"
+        briefings_dir.mkdir(parents=True, exist_ok=True)
+        today = now().strftime("%Y-%m-%d")
+        dest = briefings_dir / f"{today}.md" if version == 1 else briefings_dir / f"{today}.v{version}.md"
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(text)
+    return publish
 
 
 def _coverage_line() -> str:

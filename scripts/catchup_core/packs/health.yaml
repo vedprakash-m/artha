@@ -1,0 +1,30 @@
+# Health Domain pack v0 (re-artha §8, RA-14).
+domain: health
+version: 0.1.0
+confidentiality: restricted
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  health_cal:
+    holidays: []
+sources:
+  - {connector: calendar, required: true, freshness_hours: 48}
+  - {connector: gmail, required: false, freshness_hours: 72}
+predicates:
+  - {name: doctor_appointment, type: datetime, high_stakes: true, authority: [provider_notice, calendar]}
+  - {name: prescription_refill_date, type: date, lead_days: 5, authority: [pharmacy_notice, email_notice]}
+  - {name: lab_result_status, type: enum, values: [normal, abnormal, pending], high_stakes: true, authority: [lab_report, portal_notice]}
+  - {name: vaccine_due_date, type: date, authority: [clinic_notice, school_notice]}
+alert_rules:
+  - {predicate: lab_result_status, when: "value == 'abnormal'", severity: P1}
+  - {predicate: prescription_refill_date, when: "0 <= days_until <= 3", severity: P2}
+  - {predicate: prescription_refill_date, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: health_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - appointment_vs_school_schedule
+fixtures_dir: tests/fixtures/health/

@@ -9,8 +9,17 @@ import pytest
 
 from catchup_core import vault as vt
 
-AGE = shutil.which("age")
-KEYGEN = shutil.which("age-keygen")
+def _find_bin(name: str) -> str | None:
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+AGE = _find_bin("age")
+KEYGEN = _find_bin("age-keygen")
 needs_age = pytest.mark.skipif(not (AGE and KEYGEN), reason="age / age-keygen not installed")
 
 DOC = "---\ndomain: kids\n---\n# Kids\n- OI-001 register\n- OI-002 forms\n"

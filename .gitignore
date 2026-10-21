@@ -23,6 +23,11 @@ config/domain_autonomy_state.yaml
 config/watches.yaml
 # Action quality user preferences — contains personal autopay services, sender domains, overrides (PII)
 config/user_context.yaml
+# Catchup core runtime configuration — contains personal subject IDs and connector mappings
+config/catchup_core.yaml
+# Vault decryption lock / collision markers (ephemeral, machine-local)
+*.artha-decrypted*
+.artha-decrypted*
 # Channel push artifacts (ephemeral, machine-local)
 state/.channel_push_marker_*.json
 state/.channel_listener.pid
@@ -305,8 +310,13 @@ skills/
 
 # Personal CV content baked into a script — local only (re-artha WP-00 privacy audit)
 scripts/career_docx_visual_google.py
+scripts/career_docx_visual.py
+scripts/render_openai_cv.py
+agency.toml
 
 # Local tooling artifacts
 coverage.xml
 .coverage
 .mypy_cache/
+.antigravitycli/
+scratch/

@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -399,8 +400,13 @@ def _preflight_azure_auth() -> tuple[bool, str]:
     Returns (ok: bool, message: str).
     """
     try:
+        # On Windows, `az` is a .cmd shim; subprocess.run() in list form does
+        # not apply PATHEXT resolution the way a shell does, so resolve the
+        # actual executable path via shutil.which() first (falls back to
+        # bare "az" on platforms where it's a real binary on PATH).
+        az_path = shutil.which("az") or "az"
         result = subprocess.run(
-            ["az", "account", "show", "--query", "user.name", "-o", "tsv"],
+            [az_path, "account", "show", "--query", "user.name", "-o", "tsv"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0 and result.stdout.strip():

@@ -174,12 +174,14 @@ def _coverage_tree(tmp_path: Path, *, tested: bool) -> Path:
 
 
 def test_coverage_gate_fails_below_floor(tmp_path):
+    pytest.importorskip("pytest_cov")
     tree = _coverage_tree(tmp_path, tested=False)
     result = make(tree, "coverage", CORE_PKG="pkg", CORE_TESTS="pkgtests", COV_MIN="90")
     assert result.returncode != 0
 
 
 def test_coverage_gate_passes_at_full_coverage(tmp_path):
+    pytest.importorskip("pytest_cov")
     tree = _coverage_tree(tmp_path, tested=True)
     result = make(tree, "coverage", CORE_PKG="pkg", CORE_TESTS="pkgtests", COV_MIN="90")
     assert result.returncode == 0, result.stdout + result.stderr

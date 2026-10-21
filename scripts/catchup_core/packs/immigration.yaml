@@ -1,0 +1,32 @@
+# Immigration Domain pack v0 (re-artha §8, RA-14).
+domain: immigration
+version: 0.1.0
+confidentiality: restricted
+impact: critical
+bindings:
+  local_tz: America/Los_Angeles
+  uscis_cal:
+    holidays: []
+sources:
+  - {connector: gmail, required: true, freshness_hours: 48}
+predicates:
+  - {name: case_status, type: enum, values: [received, pending, rfe_issued, approved, denied], high_stakes: true, authority: [official_notice, attorney_email]}
+  - {name: rfe_deadline, type: date, high_stakes: true, lead_days: 14, authority: [official_notice, attorney_email]}
+  - {name: ead_expiry, type: date, high_stakes: true, lead_days: 90, authority: [official_document, official_notice]}
+  - {name: i94_expiry, type: date, high_stakes: true, lead_days: 90, authority: [official_document, official_notice]}
+  - {name: biometrics_appointment, type: datetime, high_stakes: true, authority: [official_notice, attorney_email]}
+alert_rules:
+  - {predicate: rfe_deadline, when: "0 <= days_until <= 14", severity: P1}
+  - {predicate: ead_expiry, when: "0 <= days_until <= 90", severity: P1}
+  - {predicate: i94_expiry, when: "0 <= days_until <= 90", severity: P1}
+  - {predicate: case_status, when: "value == 'rfe_issued'", severity: P1}
+  - {predicate: case_status, when: "value == 'denied'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: uscis_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - immigration_vs_travel
+fixtures_dir: tests/fixtures/immigration/

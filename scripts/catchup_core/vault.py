@@ -30,7 +30,7 @@ from pathlib import Path
 
 __all__ = [
     "AgeVault", "DestructiveWrite", "StructureReport", "VaultError", "VaultUnavailable", "check_write",
-    "record_ids", "split_monthly", "validate_structure",
+    "find_age_bin", "record_ids", "split_monthly", "validate_structure",
 ]
 
 _RECORD_ID = re.compile(r"\b(?:OI|DEC|SCN|SIG|G|SPR|CON)-\d+\b")
@@ -130,6 +130,18 @@ def split_monthly(audit_text: str) -> dict[str, str]:
 
 
 # ── age access ────────────────────────────────────────────────────────────────
+def find_age_bin(custom: str | None = None) -> str | None:
+    """Locate the age binary, checking PATH and common installation directories."""
+    if custom:
+        return custom
+    found = shutil.which("age")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/age", "/usr/local/bin/age"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
 
 class AgeVault:
     def __init__(
@@ -143,7 +155,7 @@ class AgeVault:
         self._dir = Path(state_dir)
         self._identity = identity
         self._recipient = recipient
-        self._age = age_bin or shutil.which("age")
+        self._age = find_age_bin(age_bin)
 
     def _require(self) -> str:
         if not self._age:

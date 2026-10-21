@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{{COMPANY}} — {{ROLE}} (Visual)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{COMPANY}} - {{ROLE}} (Visual)</title>
   <style>
     /* ================================================================
-       Artha Career CV Template — Visual variant
-       Two-column layout for LinkedIn / portfolio display.
-       NOT ATS-safe (table columns break many parsers).
-       Use for Workday/Greenhouse applications → cv-template.html instead.
-       Self-hosted fonts resolved from fonts/ (no CDN).
+       Artha Career CV Template - Visual variant (Modernized + Denser)
+       Two-column flex layout for PDF and screen display.
+       Self-hosted fonts resolved relative to output/career/.
+       NOTE: If rendering from a different directory, adjust font URLs.
     ================================================================ */
 
     @font-face {
@@ -17,295 +17,339 @@
       font-weight: 400;
       font-display: swap;
       src: local('Space Grotesk'),
-           url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+           url('../../fonts/SpaceGrotesk-Regular.woff2') format('woff2');
     }
     @font-face {
       font-family: 'Space Grotesk';
       font-weight: 700;
       font-display: swap;
       src: local('Space Grotesk Bold'), local('Space Grotesk'),
-           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+           url('../../fonts/SpaceGrotesk-Bold.woff2') format('woff2');
     }
     @font-face {
       font-family: 'DM Sans';
       font-weight: 400;
       font-display: swap;
       src: local('DM Sans'),
-           url('../fonts/DMSans-Regular.woff2') format('woff2');
+           url('../../fonts/DMSans-Regular.woff2') format('woff2');
     }
     @font-face {
       font-family: 'DM Sans';
       font-weight: 500;
       font-display: swap;
       src: local('DM Sans Medium'), local('DM Sans'),
-           url('../fonts/DMSans-Medium.woff2') format('woff2');
+           url('../../fonts/DMSans-Medium.woff2') format('woff2');
     }
     @font-face {
       font-family: 'DM Sans';
       font-weight: 700;
       font-display: swap;
       src: local('DM Sans Bold'), local('DM Sans'),
-           url('../fonts/DMSans-Bold.woff2') format('woff2');
+           url('../../fonts/DMSans-Bold.woff2') format('woff2');
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
+    @media print {
+      @page {
+        size: Letter;
+        margin: 0;
+      }
+      body {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+    }
+
     html, body {
       font-family: 'DM Sans', -apple-system, 'Helvetica Neue', Arial, sans-serif;
-      font-size: 9.5pt;
-      line-height: 1.35;
-      color: #1f2937;
+      font-size: 8.75pt;
+      line-height: 1.26;
+      color: #334155; /* Slate-700 */
       background: #fff;
       width: 8.5in;
+      margin: 0 auto;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
-    /* Two-column layout */
-    table.layout {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
+    /* Fixed background for multi-page sidebar continuity */
+    body {
+      background: linear-gradient(to right, #0f172a 0%, #0f172a 28%, #ffffff 28%, #ffffff 100%);
+    }
+
+    /* Flex Layout */
+    .layout {
+      display: flex;
+      flex-direction: row;
       min-height: 11in;
+      width: 100%;
     }
-    td.sidebar {
-      width: 32%;
-      background: #0a192f;
-      color: #cbd5e1;
-      padding: 0.32in 0.25in 0.22in 0.28in;
-      vertical-align: top;
+    
+    .sidebar {
+      width: 28%;
+      color: #94a3b8; /* Slate-400 */
+      padding: 0.26in 0.16in 0.16in 0.24in;
+      display: flex;
+      flex-direction: column;
     }
-    td.main {
-      width: 68%;
-      padding: 0.32in 0.32in 0.22in 0.32in;
-      vertical-align: top;
+    
+    .main {
+      width: 72%;
       background: #fff;
+      padding: 0.26in 0.26in 0.16in 0.23in;
+      display: flex;
+      flex-direction: column;
     }
 
-    /* Sidebar — name */
-    td.sidebar h1 {
-      font-family: 'Space Grotesk', Georgia, serif;
-      font-size: 19pt;
+    /* Sidebar - name */
+    .sidebar h1 {
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 16.5pt;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #fff;
-      line-height: 1.02;
+      color: #f8fafc; /* Slate-50 */
+      line-height: 1.1;
       margin-bottom: 4px;
     }
-    td.sidebar h1 .name-last {
+    .sidebar h1 .name-last {
       display: block;
-      color: #7dd3fc;
+      color: #38bdf8; /* Light Blue-400 Accent */
     }
-    td.sidebar .tagline {
-      font-family: 'DM Sans';
+    .sidebar .tagline {
+      font-family: 'DM Sans', sans-serif;
       font-size: 9pt;
-      color: #93c5fd;
-      font-style: italic;
+      font-weight: 500;
+      color: #7dd3fc;
       margin-bottom: 12px;
-      letter-spacing: 0.3px;
-    }
-
-    /* Sidebar — section headings */
-    td.sidebar h2 {
-      font-family: 'Space Grotesk', Georgia, serif;
-      font-size: 7.75pt;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      color: #fff;
-      margin-top: 16px;
-      margin-bottom: 6px;
-      padding-bottom: 2px;
-      border-bottom: 0.75px solid rgba(147, 197, 253, 0.5);
-    }
-
-    /* Sidebar — contact lines */
-    td.sidebar .contact-line {
-      font-size: 8.5pt;
-      color: #e2e8f0;
-      margin-bottom: 4px;
-      padding-left: 17px;
-      position: relative;
-      line-height: 1.35;
-    }
-    td.sidebar .contact-icon {
-      position: absolute;
-      left: 0;
-      top: 0;
-      color: #7dd3fc;
-    }
-
-    /* Sidebar — bullets */
-    td.sidebar ul { list-style: none; padding-left: 0; margin: 0 0 4px 0; }
-    td.sidebar li {
-      padding-left: 12px;
-      position: relative;
-      font-size: 8.5pt;
-      line-height: 1.38;
-      margin-bottom: 3px;
-      color: #e2e8f0;
-    }
-    td.sidebar li::before {
-      content: "▸";
-      color: #7dd3fc;
-      position: absolute;
-      left: 0;
-      top: 0;
-    }
-    td.sidebar strong { color: #fff; font-weight: 700; }
-    td.sidebar p {
-      font-size: 8.5pt;
-      line-height: 1.38;
-      margin-bottom: 4px;
-      color: #e2e8f0;
-    }
-
-    /* Sidebar — education entry */
-    td.sidebar .edu-entry {
-      margin-bottom: 10px;
-      padding-left: 0;
-    }
-    td.sidebar .edu-degree {
-      font-family: 'Space Grotesk', Georgia, serif;
-      font-size: 8.75pt;
-      font-weight: 700;
-      color: #fff;
-      display: block;
-      margin-bottom: 1px;
-    }
-    td.sidebar .edu-institution {
-      font-size: 8pt;
-      color: #cbd5e1;
-      display: block;
+      letter-spacing: 0.2px;
       line-height: 1.3;
     }
-    td.sidebar .edu-year {
-      font-size: 7.75pt;
-      color: #93c5fd;
-      display: block;
-      margin-top: 1px;
+
+    /* Sidebar - section headings */
+    .sidebar h2 {
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 8.2pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #f1f5f9;
+      margin-top: 11px;
+      margin-bottom: 5px;
+      padding-bottom: 3px;
+      border-bottom: 1px solid #334155; /* Slate-700 */
     }
 
-    /* Sidebar — skill group */
-    td.sidebar .skill-group { margin-bottom: 10px; }
-    td.sidebar .skill-label {
-      font-family: 'Space Grotesk', Georgia, serif;
-      font-size: 8pt;
+    /* Sidebar - contact lines */
+    .sidebar .contact-line {
+      font-size: 8.2pt;
+      color: #cbd5e1; /* Slate-300 */
+      margin-bottom: 4px;
+      padding-left: 0;
+      line-height: 1.3;
+    }
+    .sidebar a {
+      color: #cbd5e1;
+      text-decoration: none;
+    }
+    .sidebar a:hover {
+      color: #38bdf8;
+    }
+
+    /* Sidebar - bullets */
+    .sidebar ul { list-style: none; padding-left: 0; margin: 0 0 6px 0; }
+    .sidebar li {
+      padding-left: 12px;
+      position: relative;
+      font-size: 8.2pt;
+      line-height: 1.3;
+      margin-bottom: 3px;
+      color: #cbd5e1;
+    }
+    .sidebar li::before {
+      content: "•";
+      color: #38bdf8;
+      position: absolute;
+      left: 0;
+      top: 0;
+      font-size: 9.5pt;
+      line-height: 1.3;
+    }
+    .sidebar strong { color: #f8fafc; font-weight: 700; }
+    .sidebar p {
+      font-size: 8.2pt;
+      line-height: 1.3;
+      margin-bottom: 5px;
+      color: #cbd5e1;
+    }
+
+    /* Sidebar - education entry */
+    .sidebar .edu-entry {
+      margin-bottom: 8px;
+      padding-left: 0;
+    }
+    .sidebar .edu-degree {
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 8.2pt;
       font-weight: 700;
-      color: #7dd3fc;
+      color: #f8fafc;
       display: block;
       margin-bottom: 1px;
+      line-height: 1.24;
+    }
+    .sidebar .edu-institution {
+      font-size: 7.8pt;
+      color: #cbd5e1;
+      display: block;
+      line-height: 1.24;
+      margin-bottom: 1px;
+    }
+    .sidebar .edu-year {
+      font-size: 7.8pt;
+      color: #94a3b8;
+      display: block;
+      font-family: 'Space Grotesk', sans-serif;
+    }
+
+    /* Sidebar - skill group */
+    .sidebar .skill-group { margin-bottom: 10px; }
+    .sidebar .skill-label {
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 7.8pt;
+      font-weight: 700;
+      color: #38bdf8;
+      display: block;
+      margin-bottom: 2px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
-    td.sidebar .skill-value {
-      font-size: 8.25pt;
-      color: #e2e8f0;
-      line-height: 1.35;
+    .sidebar .skill-value {
+      font-size: 8.2pt;
+      color: #cbd5e1;
+      line-height: 1.3;
     }
 
-    /* Main column — section headings */
-    td.main h2 {
-      font-family: 'Space Grotesk', Georgia, serif;
+    /* Main column - section headings */
+    .main h2 {
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
       font-size: 9pt;
       font-weight: 700;
-      color: #0a192f;
+      color: #0f172a; /* Slate-900 */
       text-transform: uppercase;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       margin-top: 8px;
       margin-bottom: 4px;
       padding-bottom: 3px;
-      border-bottom: 1.5px solid #0a192f;
+      border-bottom: 1.5px solid #e2e8f0; /* Slate-200 */
     }
-    td.main h2:first-of-type { margin-top: 0; }
+    .main h2:first-of-type { margin-top: 0; }
 
-    /* Main — role block */
-    .role-block { margin-top: 8px; margin-bottom: 2px; page-break-inside: avoid; }
+    /* Main - role block */
+    .role-block { margin-top: 7px; margin-bottom: 3px; page-break-inside: avoid; }
     .role-meta {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
+      margin-bottom: 2px;
     }
     .company {
-      font-family: 'Space Grotesk', Georgia, serif;
-      font-size: 10.25pt;
+      font-family: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
+      font-size: 9.5pt;
       font-weight: 700;
-      color: #0a192f;
+      color: #0f172a;
       line-height: 1.2;
+      white-space: normal;
     }
     .role-date {
-      font-size: 8.5pt;
-      color: #6b7280;
+      flex-shrink: 0;
+      font-size: 8.2pt;
+      color: #64748b; /* Slate-500 */
+      font-family: 'Space Grotesk', sans-serif;
+      font-weight: 500;
       white-space: nowrap;
-      margin-left: 12px;
+      margin-left: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
     .role-title {
-      font-size: 9.25pt;
-      color: #374151;
-      font-style: italic;
-      margin-top: 1px;
-      line-height: 1.25;
-      margin-bottom: 2px;
+      font-size: 9pt;
+      color: #0284c7; /* Light Blue-600 */
+      font-weight: 700;
+      margin-bottom: 3px;
+      line-height: 1.24;
     }
 
-    td.main p {
-      font-size: 9.25pt;
-      margin-bottom: 2px;
-      color: #1f2937;
-    }
-    td.main strong { color: #0a192f; font-weight: 700; }
-    td.main ul {
-      list-style-type: disc;
-      padding-left: 16px;
-      margin-top: 3px;
+    .main p {
+      font-size: 8.6pt;
       margin-bottom: 3px;
+      color: #334155;
+      line-height: 1.22;
     }
-    td.main li {
-      font-size: 9.25pt;
-      line-height: 1.38;
+    .main strong { color: #0f172a; font-weight: 700; }
+    
+    .main ul {
+      list-style-type: none;
+      padding-left: 0;
+      margin-top: 3px;
+      margin-bottom: 4px;
+    }
+    .main li {
+      font-size: 8.6pt;
+      line-height: 1.22;
       margin-bottom: 2px;
-      color: #1f2937;
+      color: #334155;
+      padding-left: 12px;
+      position: relative;
     }
-    td.main li::marker { color: #0a192f; }
+    .main li::before {
+      content: "•";
+      color: #94a3b8; /* Slate-400 */
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
 
     /* Core-competencies keyword strip under summary */
     .keyword-strip {
-      font-size: 8.5pt;
-      color: #1e3a5f;
-      background: #eff6ff;
-      padding: 5px 8px;
+      font-size: 8.3pt;
+      color: #334155; /* Slate-700 */
+      background: transparent;
+      padding: 0;
       margin-top: 4px;
-      border-left: 2px solid #93c5fd;
-      line-height: 1.4;
+      margin-bottom: 5px;
+      line-height: 1.22;
+      font-weight: 400;
+    }
+    .keyword-strip strong {
+      font-weight: 700;
+      color: #0f172a;
     }
 
     hr { display: none; }
     h2, .role-block { page-break-after: avoid; }
-    ul, p { page-break-inside: avoid; }
-    .pdf-meta { display: none !important; }
   </style>
 </head>
 <body>
-  <table class="layout">
-    <tr>
-      <td class="sidebar">
-        <h1>{{NAME_FIRST}}<span class="name-last">{{NAME_LAST}}</span></h1>
-        <div class="tagline">{{TAGLINE}}</div>
+  <div class="layout">
+    <div class="sidebar">
+      <h1>{{NAME_FIRST}}<span class="name-last">{{NAME_LAST}}</span></h1>
+      <div class="tagline">{{TAGLINE}}</div>
 
-        <h2>Contact</h2>
-        {{CONTACT_HTML}}
+      <h2>Contact</h2>
+      {{CONTACT_HTML}}
 
-        <h2>Education</h2>
-        {{EDUCATION_HTML}}
+      <h2>Education</h2>
+      {{EDUCATION_HTML}}
 
-        <h2>Skills</h2>
-        {{SKILLS_HTML}}
-      </td>
-      <td class="main">
-        {{MAIN_HTML}}
-      </td>
-    </tr>
-  </table>
-  <div class="pdf-meta">
+      <h2>Skills</h2>
+      {{SKILLS_HTML}}
+    </div>
+    <div class="main">
+      {{MAIN_HTML}}
+    </div>
+  </div>
+  <div class="pdf-meta" style="display: none !important;">
     Generated: {{DATE}} | Company: {{COMPANY}} | Role: {{ROLE}}
     | Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
     | ATS Keywords: {{KEYWORDS}}

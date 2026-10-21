@@ -25,10 +25,15 @@ tools:
   - read
   - edit
   - search
+  - workiq
+  - bluebird
+  - ado
 ---
 <!-- Agency metadata: version=0.1.0, spec=.archive/specs/work.md (historical), tier=msft, audience=Microsoft employee -->
 <!-- Agency tools (not VS Code built-ins): bash, write, workiq/*, bluebird/* are granted via Agency runtime -->
-<!-- Deferred MCPs (uncomment when available via agency mcp list): ado, icm -->
+<!-- ado/icm are registered mcp-servers above but not yet shown as "predefined" by
+     `agency mcp list` in this environment; tool grant added defensively so the
+     sub-agent can bind them once agency recognizes them. -->
 
 # Artha Work OS — Microsoft Tier (M365 + ADO + WorkIQ + ICM + Bluebird)
 

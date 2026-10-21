@@ -15,11 +15,28 @@ import dataclasses
 import sys
 import uuid
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TextIO
 
-from catchup_core.contracts import BriefingFormat, CatchupRequest, CatchupResult, ContractError, ExecutionMode, ExitCode
-from catchup_core.coordinator import Deps, run_catchup
-from catchup_core.exchange import AwaitingExtraction, ExchangeExtractor, parse_responses, render_bundle
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from catchup_core.contracts import (  # noqa: E402
+    BriefingFormat,
+    CatchupRequest,
+    CatchupResult,
+    ContractError,
+    ExecutionMode,
+    ExitCode,
+)
+from catchup_core.coordinator import Deps, run_catchup  # noqa: E402
+from catchup_core.exchange import (  # noqa: E402
+    AwaitingExtraction,
+    ExchangeExtractor,
+    parse_responses,
+    render_bundle,
+)
 
 __all__ = ["main", "parse_args"]
 
@@ -31,10 +48,28 @@ class NotConfigured(RuntimeError):
 
 
 def _default_factory(request: CatchupRequest) -> Deps:
-    """Real wiring, **shadow only**: an authoritative run needs the cut-over decision (§12.6)."""
-    if request.mode is not ExecutionMode.SHADOW:
+    """Real wiring: allows authoritative runs when cutover is active or configured."""
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from catchup_core.runtime import RuntimeConfigError, build_deps, load_runtime_config  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2]
+    cfg_path = root / "config" / "catchup_core.yaml"
+    cutover = False
+    if cfg_path.is_file():
+        try:
+            cfg = load_runtime_config(cfg_path)
+            cutover = cfg.cutover
+        except Exception:  # noqa: S110
+            pass
+    if os.environ.get("ARTHA_CUTOVER") == "1":
+        cutover = True
+    elif os.environ.get("ARTHA_CUTOVER") == "0":
+        cutover = False
+
+    if request.mode is not ExecutionMode.SHADOW and not cutover:
         raise NotConfigured("authoritative runs are disabled until the pilot is cut over; use --shadow")
-    from catchup_core.runtime import RuntimeConfigError, build_deps  # noqa: PLC0415
     try:
         return build_deps(request)
     except (RuntimeConfigError, OSError) as exc:
@@ -51,6 +86,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     run.add_argument("--format", choices=[f.value for f in BriefingFormat], default="standard")
     run.add_argument("--responses", default=None, metavar="PATH|-",
                      help="answers to a paused run's extraction requests (JSON; '-' reads stdin)")
+    run.add_argument("--domain", action="append", default=None, dest="domains",
+                     help="domain pack to run (repeatable, default: from config or kids_school)")
     run.add_argument("--host", default="", help="designated authority host (required unless --shadow)")
     run.add_argument("--actor", default="user")
     run.add_argument("--channel", default="cli")
@@ -79,7 +116,8 @@ def main(argv: Sequence[str] | None = None, *, deps_factory: DepsFactory = _defa
         request = CatchupRequest(
             catchup_id=args.id or f"cu_{uuid.uuid4().hex[:12]}", actor=args.actor, channel=args.channel,
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
-            briefing_format=BriefingFormat(args.format), host=args.host)
+            briefing_format=BriefingFormat(args.format), host=args.host,
+            pilot_domains=tuple(args.domains) if args.domains else ())
     except ContractError as exc:
         print(f"usage error: {exc}", file=stderr)
         return int(ExitCode.USAGE_ERROR)

@@ -241,9 +241,25 @@ def get_public_key() -> str:
 # Encryption primitives
 # ---------------------------------------------------------------------------
 
+def _find_age_bin() -> str | None:
+    """Return path to age binary, checking PATH and common macOS/Linux locations."""
+    found = shutil.which("age")
+    if found:
+        return found
+    for candidate in ("/opt/homebrew/bin/age", "/usr/local/bin/age"):
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def get_age_bin() -> str:
+    """Return path to age binary (e.g. /opt/homebrew/bin/age or age on PATH)."""
+    return _find_age_bin() or "age"
+
+
 def check_age_installed() -> bool:
-    """Return True if the `age` CLI is available on PATH."""
-    return shutil.which("age") is not None
+    """Return True if the `age` CLI is available on PATH or standard install paths."""
+    return _find_age_bin() is not None
 
 
 def age_decrypt(privkey: str, input_path: Path, output_path: Path) -> bool:
@@ -256,8 +272,9 @@ def age_decrypt(privkey: str, input_path: Path, output_path: Path) -> bool:
     try:
         with os.fdopen(tmpfd, "w") as f:
             f.write(privkey)
+        age_cmd = _find_age_bin() or "age"
         result = subprocess.run(
-            ["age", "--decrypt", "--identity", tmppath,
+            [age_cmd, "--decrypt", "--identity", tmppath,
              "--output", str(output_path), str(input_path)],
             capture_output=True, text=True,
         )
@@ -274,8 +291,9 @@ def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
 
     Returns True on success.
     """
+    age_cmd = _find_age_bin() or "age"
     result = subprocess.run(
-        ["age", "--recipient", pubkey,
+        [age_cmd, "--recipient", pubkey,
          "--output", str(output_path), str(input_path)],
         capture_output=True, text=True,
     )

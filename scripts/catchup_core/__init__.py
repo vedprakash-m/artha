@@ -6,6 +6,13 @@ the incumbent path until a work package cuts a Domain over.  Strictly typed
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
 __all__ = ["CORE_CONTRACT_VERSION"]
 
 #: Bumped when a persisted or cross-process contract in this package changes.

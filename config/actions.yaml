@@ -33,14 +33,15 @@ schema_version: "2.0"
 # execute them.  Promote a type by deleting it from this list (a commit-visible,
 # one-line decision) after its predecessor has run clean in the audit trail.
 live_trial:
-  trial: [reminder_create]
+  trial:
+    - reminder_create
+    - calendar_create
+    - calendar_modify
   held:
     - email_send
     - email_reply
     - whatsapp_send
     - slack_send
-    - calendar_create
-    - calendar_modify
 
 actions:
 

@@ -188,3 +188,22 @@ def test_stale_ledger_blocks_build(tmp_path):
         (local / "catchup_core" / f"ledger.db{suffix}").unlink(missing_ok=True)
     with pytest.raises(rt.RuntimeConfigError, match="sealed deletion checkpoint"):
         rt.build_deps(request, repo_root=repo, environ=env, keyring_backend=kr, **loaders)
+
+
+def test_build_deps_multiple_pilot_domains_creates_composite_pack(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "state").mkdir(parents=True)
+    write_cfg(repo)
+    local = tmp_path / "local"
+    request = CatchupRequest("cu_multi", "u", "c", mode=ExecutionMode.SHADOW,
+                             pilot_domains=("kids_school", "finance"))
+    kr = FakeKeyring()
+    env = {"ARTHA_LOCAL_DIR": str(local)}
+    loaders = dict(handler_loader=lambda n: None, auth_loader=lambda n: {})
+    deps = rt.build_deps(request, repo_root=repo, environ=env, keyring_backend=kr, **loaders)
+    try:
+        assert deps.pack.domain == "kids_school+finance"
+        assert "bill_due_date" in deps.pack.predicates
+        assert "exam_registration_deadline" in deps.pack.predicates
+    finally:
+        deps.ledger.close()

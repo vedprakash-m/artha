@@ -19,7 +19,7 @@ Do NOT require a `/` prefix — bare words are the primary invocation form.
 
 | User says (examples) | Route to | Action |
 |---------------------|----------|--------|
-| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python scripts/pipeline.py`, read state files, produce briefing |
+| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python -m scripts.catchup_core.cli catchup --host $(hostname -s) --format standard`, read state files, produce briefing |
 | `work`, `what's happening at work`, `work briefing` | **work** | Read all files in `state/work/`, produce work briefing |
 | `items`, `what's open`, `what's overdue`, `action items` | **items** | Read `state/open_items.md`, display action items |
 | `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** | Read `state/goals.md`, display goal progress |

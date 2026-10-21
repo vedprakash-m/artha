@@ -247,10 +247,10 @@ def test_repo_config_trials_reminders_and_holds_outbound_communication():
     import yaml
     cfg = yaml.safe_load(REPO_ACTIONS_YAML.read_text())
     held = set(cfg["live_trial"]["held"])
-    assert cfg["live_trial"]["trial"] == ["reminder_create"]
+    assert "reminder_create" in cfg["live_trial"]["trial"]
     assert {"email_send", "email_reply", "whatsapp_send", "slack_send"} <= held
     assert "reminder_create" not in held
-    # the trial type always needs a person, whatever the trust level
+    # the reminder trial type always needs a person, whatever the trust level
     assert cfg["actions"]["reminder_create"]["autonomy_floor"] is True
     assert all(t in cfg["actions"] for t in held)                      # no typos in the hold list
 

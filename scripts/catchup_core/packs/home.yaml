@@ -1,0 +1,29 @@
+# Home Domain pack v0 (re-artha §8, RA-14).
+domain: home
+version: 0.1.0
+confidentiality: sensitive
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  home_cal:
+    holidays: []
+sources:
+  - {connector: gmail, required: true, freshness_hours: 48}
+predicates:
+  - {name: mortgage_due_date, type: date, high_stakes: true, lead_days: 5, authority: [lender_statement, email_notice]}
+  - {name: property_tax_due, type: date, high_stakes: true, lead_days: 14, authority: [county_notice, tax_statement]}
+  - {name: maintenance_schedule, type: date, lead_days: 2, authority: [service_notice, email_notice]}
+  - {name: hoa_fee_due, type: date, lead_days: 7, authority: [hoa_statement, email_notice]}
+alert_rules:
+  - {predicate: mortgage_due_date, when: "0 <= days_until <= 3", severity: P1}
+  - {predicate: property_tax_due, when: "0 <= days_until <= 14", severity: P2}
+  - {predicate: property_tax_due, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: home_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - maintenance_vs_calendar
+fixtures_dir: tests/fixtures/home/

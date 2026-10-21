@@ -90,8 +90,27 @@ def fetch_via_handler(
              for s in scopes if s.status in ("failed", "truncated")]
     if rejected:
         blind.append(f"{rejected} record(s) rejected by the validator")
+
+    try:
+        from lib.connector_coverage import ConnectorRun, CoverageStore  # noqa: PLC0415
+        store = CoverageStore()
+        c_run = ConnectorRun(
+            connector=name,
+            records=len(records),
+            rejected=rejected,
+            rejection_reasons=[f"{rejected} record(s) rejected"] if rejected else [],
+            error=None,
+            scopes=scopes,
+            elapsed=0.0,
+        )
+        collector.add(c_run)
+        store.record(c_run)
+    except Exception:  # noqa: S110
+        pass
+
     if blind:
         return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.DEGRADED,
                               FailureClass.SCHEMA_REJECTED if rejected else FailureClass.PROVIDER,
                               blind_spots=tuple(blind), required=required)
     return ConnectorFetch(name, account_scope, tuple(records), CoverageStatus.COMPLETE, None, required=required)
+

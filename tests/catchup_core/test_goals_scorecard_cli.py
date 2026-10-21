@@ -94,7 +94,8 @@ def test_empty_scorecard_is_vacuously_clean():
 
 # ── cli ───────────────────────────────────────────────────────────────────
 
-def test_authoritative_default_factory_is_disabled_until_cutover():
+def test_authoritative_default_factory_is_disabled_until_cutover(monkeypatch):
+    monkeypatch.setenv("ARTHA_CUTOVER", "0")
     err = io.StringIO()
     assert cli.main(["catchup", "--json", "--host", "mac"], out=io.StringIO(), err=err) == 30
     assert "cut over" in err.getvalue()

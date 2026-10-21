@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 import operator
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -36,6 +36,7 @@ __all__ = [
     "Predicate",
     "RuleResult",
     "Source",
+    "composite_pack",
     "load_pack",
     "load_pack_file",
 ]
@@ -420,3 +421,61 @@ def load_pack_file(path: Path | str, bindings: Mapping[str, Any] | None = None) 
     except (OSError, yaml.YAMLError) as exc:
         raise PackError(f"cannot read pack {path}: {exc}") from exc
     return load_pack(data, bindings)
+
+
+def composite_pack(packs: Sequence[DomainPack]) -> DomainPack:
+    """Compose multiple domain packs into a single combined pack."""
+    if not packs:
+        raise PackError("cannot compose empty sequence of packs")
+    if len(packs) == 1:
+        return packs[0]
+
+    domain = "+".join(p.domain for p in packs)
+    version = packs[0].version
+    conf_order = {Confidentiality.ORDINARY: 0, Confidentiality.SENSITIVE: 1, Confidentiality.RESTRICTED: 2}
+    confidentiality = max((p.confidentiality for p in packs), key=lambda c: conf_order.get(c, 0))
+
+    impact_order = {"advisory": 0, "consequential": 1, "critical": 2}
+    impact = max((p.impact for p in packs), key=lambda i: impact_order.get(i, 0))
+
+    sources_by_connector: dict[str, Source] = {}
+    for p in packs:
+        for s in p.sources:
+            if s.connector not in sources_by_connector or s.required:
+                sources_by_connector[s.connector] = s
+    sources = tuple(sources_by_connector.values())
+
+    predicates: dict[str, Predicate] = {}
+    for p in packs:
+        for name, pred in p.predicates.items():
+            if name in predicates and predicates[name] != pred:
+                raise PackError(f"predicate conflict in composite pack: {name}")
+            predicates[name] = pred
+
+    rules: list[AlertRule] = []
+    for p in packs:
+        rules.extend(p.rules)
+
+    holidays: set[date] = set()
+    for p in packs:
+        holidays.update(p.holidays)
+
+    cross_cases: list[str] = []
+    for p in packs:
+        cross_cases.extend(p.cross_domain_cases)
+
+    return DomainPack(
+        domain=domain,
+        version=version,
+        confidentiality=confidentiality,
+        impact=impact,
+        sources=sources,
+        predicates=predicates,
+        rules=tuple(rules),
+        timezone=packs[0].timezone,
+        timezone_name=packs[0].timezone_name,
+        holidays=frozenset(holidays),
+        end_dates=packs[0].end_dates,
+        cross_domain_cases=tuple(cross_cases),
+        fixtures_dir="",
+    )

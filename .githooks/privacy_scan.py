@@ -43,6 +43,7 @@ FORBIDDEN_PATTERNS = [
     "config/artha_config.yaml",
     "config/Artha.identity.md",
     "config/routing.yaml",
+    "config/catchup_core.yaml",
     "config/contacts.md",
     "config/contacts.md.age",
     ".artha-decrypted",
@@ -442,7 +443,12 @@ def scan_items(items: Iterable[tuple[str, str | None, str]], guard: Path = PII_G
 # ─── gitleaks ───────────────────────────────────────────────────────────────
 
 def gitleaks_binary() -> str | None:
-    return os.environ.get("ARTHA_GITLEAKS") or shutil.which("gitleaks")
+    return (
+        os.environ.get("ARTHA_GITLEAKS")
+        or shutil.which("gitleaks")
+        or ("/opt/homebrew/bin/gitleaks" if os.path.isfile("/opt/homebrew/bin/gitleaks") else None)
+        or ("/usr/local/bin/gitleaks" if os.path.isfile("/usr/local/bin/gitleaks") else None)
+    )
 
 
 def _gitleaks_findings(report: str) -> list[Finding]:

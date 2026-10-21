@@ -1,0 +1,29 @@
+# Finance Domain pack v0 (re-artha §8, RA-14).
+domain: finance
+version: 0.1.0
+confidentiality: restricted
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  holiday_cal:
+    holidays: []
+sources:
+  - {connector: gmail, required: true, freshness_hours: 48}
+predicates:
+  - {name: bill_due_date, type: date, high_stakes: true, lead_days: 3, authority: [bill_statement, email_notice]}
+  - {name: autopay_status, type: enum, values: [enrolled, failed, paused, inactive], high_stakes: true, authority: [bill_statement, email_notice]}
+  - {name: statement_balance, type: text, authority: [bill_statement, email_notice]}
+  - {name: subscription_renewal, type: date, lead_days: 7, authority: [provider_notice, email_notice]}
+alert_rules:
+  - {predicate: bill_due_date, when: "0 <= days_until <= 3", severity: P2}
+  - {predicate: bill_due_date, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+  - {predicate: autopay_status, when: "value == 'failed'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: holiday_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - bill_vs_cashflow
+fixtures_dir: tests/fixtures/finance/

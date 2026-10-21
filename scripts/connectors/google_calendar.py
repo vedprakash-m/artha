@@ -104,14 +104,14 @@ def fetch(
         try:
             from profile_loader import get as _pget  # type: ignore[import]
             _ids = _pget("integrations.google_calendar.calendar_ids")
-            if isinstance(_ids, dict):
-                calendar_ids = list(_ids.values()) or ["primary"]
-            elif isinstance(_ids, list):
-                calendar_ids = _ids or ["primary"]
-            elif _ids:
-                calendar_ids = [str(_ids)]
-            else:
-                calendar_ids = ["primary"]
+            raw_items = list(_ids.values()) if isinstance(_ids, dict) else (_ids if isinstance(_ids, list) else [_ids])
+            clean_ids: list[str] = []
+            for item in raw_items:
+                if isinstance(item, str) and item.strip():
+                    clean_ids.append(item.strip())
+                elif isinstance(item, list):
+                    clean_ids.extend(str(sub).strip() for sub in item if isinstance(sub, str) and sub.strip())
+            calendar_ids = clean_ids or ["primary"]
         except Exception:
             calendar_ids = ["primary"]
 
