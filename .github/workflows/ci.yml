@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main", "develop"]
+
+jobs:
+  # ── Lint + Syntax ────────────────────────────────────────────────────────
+  lint:
+    name: Syntax check (py_compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Syntax check all Python files
+        run: |
+          python -m compileall -q -x '(__pycache__|\.archive|\.venv)' scripts tests tools artha.py
+          echo "✓ Syntax OK"
+
+  # ── Ruff Linter ───────────────────────────────────────────────────────────
+  ruff:
+    name: Ruff lint (F811, F401, F841)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - name: Run ruff
+        run: |
+          ruff check scripts/ tests/ tools/ --config pyproject.toml
+          ruff check scripts/catchup_core --config scripts/catchup_core/ruff.toml
+
+  # ── Import Convention ─────────────────────────────────────────────────────
+  import-check:
+    name: No dual-import patterns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check for 'from scripts.X' inside scripts/ (parse errors fail)
+        run: python tools/import_check.py scripts
+      - name: No new direct state writes (ratcheted baseline)
+        run: python tools/lint_state_writes.py .
+
+  # ── Test Suite ────────────────────────────────────────────────────────────
+  tests:
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('scripts/requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r scripts/requirements.txt
+          pip install pytest pytest-mock pytest-cov mypy
+
+      - name: Install age (Linux native encryption tests)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          command -v age age-keygen
+
+      - name: Install age (macOS native encryption tests)
+        if: runner.os == 'macOS'
+        run: |
+          brew install age
+          command -v age age-keygen
+
+      - name: Create required runtime directories
+        run: |
+          # Career Search output directories (FR-25 — not committed, created at setup)
+          mkdir -p output/career briefings/career
+          echo "✓ Runtime directories created"
+
+      - name: Debug environment
+        run: |
+          python --version
+          python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE _t USING fts5(x)'); print('FTS5: OK')" || echo 'FTS5: NOT AVAILABLE'
+          python -c "import sqlite3; print('SQLite:', sqlite3.sqlite_version)"
+          python -c "import pydantic; print('pydantic:', pydantic.__version__)"
+
+      - name: Collect tests (diagnostic)
+        run: python -m pytest tests/ --ignore=tests/work --co -q 2>&1 || true
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+      - name: Run tests (isolated workspace — never against live data)
+        run: python tools/run_tests_isolated.py tests -v --tb=long --ignore=tests/work
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  # ── New core: coverage floor + strict typing ──────────────────────────────
+  core-quality:
+    name: catchup_core coverage + strict mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r scripts/requirements.txt pytest pytest-mock pytest-cov mypy diff-cover
+      - name: Install age (in-memory vault tests run for real, not skipped)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - name: Coverage floor (>= 85% combined, line and branch)
+        run: make coverage PYTHON=python
+      - name: Changed-line coverage (>= 85%)
+        env:
+          DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        run: |
+          DIFF_RANGE_NOTATION=...
+          if [[ "$DIFF_BASE" =~ ^0+$ ]]
+          then
+            DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
+            DIFF_RANGE_NOTATION=..
+          fi
+          make diff-coverage PYTHON=python DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
+      - name: Hook and policy modules coverage (>= 85% combined)
+        run: make coverage-harness PYTHON=python
+      - name: Strict mypy
+        run: make mypy PYTHON=python
+
+  # ── Connector handler imports ─────────────────────────────────────────────
+  core-windows:
+    name: Catch-up Windows contracts (${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r scripts/requirements.txt pytest pytest-mock
+      - name: Install age (Windows native encryption tests)
+        run: |
+          choco install age --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Command age, age-keygen -ErrorAction Stop
+      - name: Isolated core and native credential/action contracts
+        run: >-
+          python tools/run_tests_isolated.py tests/catchup_core
+          tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py
+          tests/unit/test_action_process.py tests/unit/test_action_quarantine.py
+          tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
+          -q --tb=short
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  # ── Connector handler imports ─────────────────────────────────────────────
+  connectors-syntax:
+    name: Connector handler syntax + import
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal deps
+        run: pip install pyyaml
+      - name: Syntax check all connector handlers
+        run: |
+          for f in scripts/connectors/*.py; do
+            python -m py_compile "$f" && echo "OK $f"
+          done
+      - name: Validate connectors.yaml parses
+        run: |
+          python -c "
+          import yaml, os
+          path = 'config/connectors.yaml'
+          if not os.path.exists(path):
+              path = 'config/channels.example.yaml'
+              if not os.path.exists(path):
+                  print('connectors.yaml not in repo (gitignored — user-specific config). Skipping.')
+                  raise SystemExit(0)
+          with open(path) as f:
+              cfg = yaml.safe_load(f)
+          names = list((cfg or {}).get('connectors', cfg or {}).keys())
+          print(f'{path}: {len(names)} entries — {names}')
+          "
+      - name: Validate actions.yaml parses
+        run: |
+          python -c "
+          import yaml
+          with open('config/actions.yaml') as f:
+              cfg = yaml.safe_load(f)
+          actions = list(cfg.get('actions', {}).keys())
+          print(f'actions.yaml: {len(actions)} actions — {actions}')
+          "
+
+  # ── Schema Validation ─────────────────────────────────────────────────────
+  schema-validation:
+    name: Validate example profile against schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install pyyaml jsonschema
+      - name: Validate example profile
+        run: |
+          python -c "
+          import json, yaml, jsonschema
+          with open('config/user_profile.example.yaml') as f:
+              profile = yaml.safe_load(f)
+          with open('config/user_profile.schema.json') as f:
+              schema = json.load(f)
+          jsonschema.validate(instance=profile, schema=schema)
+          print('✓ user_profile.example.yaml validates against schema')
+          "

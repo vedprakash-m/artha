@@ -1,0 +1,174 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "artha"
+version = "5.1.0"
+description = "Personal Intelligence OS — AI-powered life management"
+readme = "README.md"
+license = {text = "AGPL-3.0-or-later"}
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0.1",
+    "keyring>=25.0.0",
+    "jsonschema>=4.20.0",
+    "pydantic>=2.5,<3.0",
+    "cryptography>=42.0.0",
+]
+
+[project.optional-dependencies]
+google = [
+    "google-api-python-client>=2.100,<3.0",
+    "google-auth>=2.23,<3.0",
+    "google-auth-oauthlib>=1.1.0",
+    "google-auth-httplib2>=0.1.1",
+]
+microsoft = [
+    "msal>=1.28,<2.0",
+    "requests>=2.31.0",
+]
+apple = [
+    "caldav>=1.3.0",
+    "vobject>=0.9.6",
+    # Apple Reminders via EventKit (macOS only — CONNECT Phase 3)
+    "pyobjc-framework-EventKit>=9.0; sys_platform=='darwin'",
+]
+skills = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+]
+messaging = [
+    "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chromium_reader.git",
+]
+channels = [
+    # websockets>=12.0 is required for Slack Socket Mode and Discord Gateway.
+    # Install with: pip install 'artha[channels]'
+    "websockets>=12.0",
+    # Optional: use python-telegram-bot>=21 for richer Telegram features.
+    # The built-in urllib-based adapter (scripts/channels/telegram.py) requires
+    # no additional dependencies.
+    # "python-telegram-bot>=21.0",
+]
+graph = [
+    "graspologic>=3.3.0",
+]
+all = ["artha[google,microsoft,apple,skills,channels,messaging,graph]"]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-mock>=3.11.0",
+    "pytest-snapshot>=0.9.0",
+    "pytest-timeout>=2.1.0",
+    "datadiff>=2.2.0",
+    "anyio[trio]>=4.0.0",
+]
+
+[project.scripts]
+artha = "artha:main"
+
+[project.urls]
+Repository = "https://github.com/vedprakash-m/artha"
+Documentation = "https://github.com/vedprakash-m/artha/tree/main/docs"
+
+[tool.setuptools]
+py-modules = ["artha"]
+packages = [
+    "scripts",
+    "scripts.lib",
+    "scripts.skills",
+    "scripts.connectors",
+    "scripts.actions",
+    "scripts.channels",
+    "scripts.middleware",
+    "scripts.schemas",
+    # PAY-DEBT v1.0 decomposed subpackages (Phases 3–5)
+    "scripts.work",
+    "scripts.channel",
+    "scripts.preflight",
+    "scripts.narrative",
+    "scripts.catchup_core",
+]
+
+[tool.setuptools.package-data]
+"scripts.catchup_core" = ["migrations/*.sql", "packs/*.yaml"]
+
+# ---------------------------------------------------------------------------
+# Ruff — lightweight linter catching bugs that py_compile misses
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["scripts", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "F811",   # redefinition of unused name (caught Bug 2: duplicate health_check)
+]
+# Future: add "F401" (unused import) and "F841" (unused variable) once
+# pre-existing violations are cleaned up.
+
+# ---------------------------------------------------------------------------
+# Pytest configuration
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals", "work"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "prompt_regression: marks tests as prompt regression tests",
+]
+
+# ---------------------------------------------------------------------------
+# Mypy — strict type checking for narrative/ subpackage
+# ---------------------------------------------------------------------------
+[tool.mypy]
+mypy_path = "scripts"
+explicit_package_bases = true
+python_version = "3.11"
+strict = false
+warn_unused_ignores = true
+warn_return_any = false
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "narrative.*"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "catchup_core.*"
+strict = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_optional = true
+
+[tool.coverage.run]
+branch = true
+source = ["scripts/catchup_core"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+# Incumbent modules imported by catchup_core adapters are not part of the strict surface.
+[[tool.mypy.overrides]]
+module = ["schemas.*", "lib.*"]
+ignore_errors = true
+
+# New credential controls must not inherit the incumbent lib.* exemption.
+[[tool.mypy.overrides]]
+module = ["lib.credentials", "lib.credential_migration", "lib.action_credentials"]
+ignore_errors = false
+strict = true

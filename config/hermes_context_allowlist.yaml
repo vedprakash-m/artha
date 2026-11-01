@@ -1,0 +1,48 @@
+# hermes_context_allowlist.yaml — Artha × Hermes context export allowlist
+# Ref: specs/h-int.md §16.3
+#
+# IMPORTANT: This is a hard architectural boundary.
+# Only source_domain values listed below may appear in sensor.artha_context.
+# Work OS data (state/work/*, employment, WorkIQ, M365) is NEVER exported.
+
+# Personal OS domains allowed in sensor.artha_context.
+# Any source_domain not listed here is silently excluded.
+allowed_domains:
+  - finance          # personal bills, budget (no account numbers — §6.2)
+  - insurance        # policy reminders (no policy numbers — §6.2)
+  - health           # appointment reminders (no diagnoses — §6.2)
+  - kids             # school, activities (no names — §6.2)
+  - home             # maintenance, utilities
+  - digital          # subscriptions, accounts (no passwords)
+  - travel           # trip reminders (no itinerary details)
+  - learning         # courses, certifications (personal only)
+  - shopping         # reminders
+  - wellness         # personal wellness goals
+  - social           # social commitments
+  - calendar         # personal calendar only
+
+# Explicitly excluded — even if items exist in open_items.md.
+# Listed here for documentation purposes; enforcement is via the allowlist above
+# (anything not in allowed_domains is excluded by default).
+excluded_domains:
+  - employment       # may contain work-sensitive context
+  - career           # job search contains confidential comp data
+  - immigration      # sensitive case details excluded per §6.2
+  - estate           # sensitive legal details
+  - finance_detailed # account-level financial data
+
+# Goal categories allowed for export.
+# Must match category values used in state/goals.md.
+allowed_goal_categories:
+  - fitness
+  - health
+  - learning
+  - personal
+  - wellness
+  - academic         # personal academic work (not corporate job search)
+
+# Calendar sources blocked from export (Work OS calendars).
+# Must stay in sync with _CALENDAR_SOURCE_TAGS in scripts/calendar_writer.py.
+blocked_calendar_sources:
+  - msgraph_calendar    # M365 / work calendar
+  - workiq_calendar     # WorkIQ corporate calendar

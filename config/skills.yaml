@@ -1,0 +1,463 @@
+skills:
+  uscis_status:
+    enabled: true
+    priority: P0
+    cadence: every_run
+    class: background
+    goal_refs: []
+    zero_value_fields: [case_status, receipt_number]
+  # property_tax is the generalized skill (reads provider URL from user_profile.yaml).
+  # king_county_tax is a backward-compatibility alias for the same skill.
+  property_tax:
+    enabled: false  # Enable for new installations; king_county_tax entry below covers existing users
+    priority: P1
+    cadence: daily
+    class: background
+    goal_refs: []
+  king_county_tax:
+    enabled: true
+    priority: P1
+    cadence: daily
+    class: background
+    goal_refs: []
+    zero_value_fields: [tax_amount]
+  visa_bulletin:
+    enabled: true
+    priority: P0
+    cadence: weekly
+    class: goal-bearing
+    goal_refs: []
+  noaa_weather:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    trigger_keywords: ["hike", "summit", "trail", "peak"]
+  nhtsa_recalls:
+    enabled: true
+    priority: P1
+    cadence: weekly
+    class: operational
+    goal_refs: []
+  passport_expiry:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: goal-bearing
+    goal_refs: []
+    requires_vault: true
+    safety_critical: false
+    description: "Check passport expiry dates from decrypted immigration state. Alerts at 180/90/60 days."
+  subscription_monitor:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "Detect subscription price increases and trial-to-paid conversions from state/digital.md."
+  financial_resilience:
+    enabled: true
+    priority: P1
+    cadence: weekly
+    class: background
+    goal_refs: []
+    requires_vault: true
+    safety_critical: false
+    description: "Compute monthly burn rate, emergency fund runway, and single-income stress scenario from state/finance.md."
+
+  # ── New skills added 2026-03-15 (U-9.1 to U-9.5) ─────────────────────
+
+  relationship_pulse:
+    enabled: false  # re-artha D-14: inferred relationship profiles retired
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "Check contact freshness across circles. Nudges stale relationships; cadence-aware."
+
+  occasion_tracker:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "7-day lookahead for birthdays, anniversaries, Indian festivals, US holidays. Greeting suggestions."
+
+  bill_due_tracker:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: goal-bearing
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "Extract bill due dates from occasions.md. Alert 7/3/1 days before due, flag overdue."
+
+  whatsapp_last_contact:
+    enabled: false  # re-artha D-14: inferred contact profiles and birthdays retired
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    platform: macos_only
+    description: "Refresh Last WA dates and relationship warmth from local WhatsApp ChatStorage.sqlite. Surfaces stale contacts per circle cadence and infers birthdays from sent wishes."
+
+  credit_monitor:
+    enabled: true
+    priority: P1
+    cadence: daily
+    class: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "Scan state files for credit monitoring signals. Hard inquiries, score changes, fraud alerts."
+
+  school_calendar:
+    enabled: true
+    priority: P1
+    cadence: daily
+    class: goal-bearing
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: "Track school-district events for each child. Alert 3 days ahead. Scans kids.md for grade alerts."
+
+  # ── IoT / Home (ARTHA-IOT Wave 2) ───────────────────────────────────────
+
+  home_device_monitor:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    execution_after: pipeline
+    requires_vault: false
+    safety_critical: false
+    requires_connector: homeassistant
+    description: >
+      Monitor Home Assistant devices: Ring offline (CRITICAL), smart lights/switches
+      offline (MONITORED), energy anomalies >30%, printer supply <20%, spa temp
+      variance >5°F. Emits DomainSignals for ActionComposer routing.
+
+  home_intelligence:
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class: operational
+    goal_refs: []
+    execution_after: pipeline
+    requires_vault: false
+    safety_critical: false
+    requires_connector: homeassistant
+    description: >
+      Always-on home awareness layer. Part 1: Ring motion triage with camera
+      classification, weather/presence context, and corroboration logic.
+      Part 2: Anomaly scan (Govee temp/humidity, camera offline, lights left on).
+      Part 3: Presence commands (who's home, where is everyone).
+
+  # ── CONNECT v1.0.0 Phase 2 Skills ───────────────────────────────────────
+
+  mental_health_utilization:
+    enabled: true
+    priority: P1
+    cadence: weekly
+    class: background
+    goal_refs: []
+    requires_vault: true
+    safety_critical: false
+    description: >
+      Track EAP session utilization and therapy appointment patterns.
+      Alerts when session limits are approaching or appointments have been
+      consistently cancelled. Never accesses or interprets clinical content.
+
+  # ── AI Trend Radar (specs/ai-posts.md PR-3) ───────────────────────────
+
+  ai_trend_radar:
+    enabled: true
+    priority: P2
+    cadence: daily
+    class: background
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    description: >
+      Distill AI signals from newsletter emails and RSS feeds.
+      Applies Topic Interest Graph boost scoring. Outputs ranked
+      signals to tmp/ai_trend_signals.json for briefing + Telegram.
+
+# ==========================================================================
+# Work OS Skills (§22) — registered in Phase 0 (Step 0C.3)
+# All work skills write to state/work/ only; never read personal state.
+# command_namespace: work scopes them to the work surface.
+# ==========================================================================
+
+  # KB Quality Check — scores all domain KBs on 7 dimensions; triggers improvement ─────
+  kb_quality_check:
+    enabled: true
+    priority: P1
+    cadence: daily
+    class: background
+    requires_vault: false
+    safety_critical: false
+    command_namespace: work
+    quality_threshold: 9.5
+    description: >
+      Score all 12 domain KBs on 7 quality dimensions (accuracy, completeness,
+      freshness, structure, kusto, cross_refs, actionability) on a 0–10 scale.
+      Writes results to state/kb_quality_results.json. If any KB < threshold,
+      spawns kb_improver.py as a non-blocking background process.
+      Briefing surfaces overall_avg score and improvement status.
+
+  # P0 — Background Connector Refresh (§8.7, §22) ────────────────────────
+
+  work_background_refresh:
+    class: "scripts.skills.work_background_refresh.WorkBackgroundRefreshSkill"
+    enabled: true
+    priority: P0
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: all
+    command_namespace: work
+    description: >
+      Pull-triggered work connector refresh — runs all available providers and updates
+      state/work/ atomically (§8.7). This is the P0 work skill: all read-path
+      /work commands depend on the state files it keeps fresh.
+      Triggered as a post-commit stage of /catch-up (when work.refresh.run_on_catchup: true)
+      + on-demand via /work refresh. No daemon, no scheduler — pure pull model (§3.9).
+
+  # P1 — Core operational skills ─────────────────────────────────────────
+
+  work_meeting_prep:
+    class: "scripts.skills.work_meeting_prep.WorkMeetingPrepSkill"
+    enabled: false
+    priority: P1
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Autonomous prep card generation for the next N upcoming meetings.
+      Reads work-calendar and work-people state; writes prep cards to
+      state/work/work-calendar.md meeting sections. Phase 1 implementation.
+
+  work_connect_prep:
+    class: "scripts.skills.work_connect_prep.WorkConnectPrepSkill"
+    enabled: false
+    priority: P1
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems, workiq_bridge]
+    description: >
+      Connect cycle goal tracking, evidence collection, and submission draft
+      generation (§7.6). Matches work-career evidence to Connect goals.
+      Generates calibration defense brief on --calibration flag.
+
+  # P2 — Operational intelligence skills ─────────────────────────────────
+
+  work_sprint_report:
+    class: "scripts.skills.work_sprint_report.WorkSprintReportSkill"
+    enabled: false
+    priority: P2
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems]
+    description: >
+      Auto-generate sprint status summary including Delivery Feasibility Score
+      (§11.5). Writes to state/work/work-projects.md sprint section.
+
+  work_comms_digest:
+    class: "scripts.skills.work_comms_digest.WorkCommsDigestSkill"
+    enabled: false
+    priority: P2
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Daily work comms digest without full catch-up overhead.
+      Writes digest section to state/work/work-comms.md.
+
+  work_boundary_check:
+    class: "scripts.skills.work_boundary_check.WorkBoundaryCheckSkill"
+    enabled: false
+    priority: P2
+    cadence: weekly
+    requires_vault: false
+    safety_critical: false
+    run_on: all
+    command_namespace: work
+    description: >
+      Weekly work-life boundary audit. Computes boundary_score and
+      focus_availability_score. Updates work_load_pulse.json bridge
+      artifact for personal surface consumption (§9.3).
+
+  # P3 — Content production and enrichment skills ─────────────────────────
+
+  work_source_capture:
+    class: "scripts.skills.work_source_capture.WorkSourceCaptureSkill"
+    enabled: false
+    priority: P3
+    cadence: daily
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [workiq_bridge]
+    description: >
+      Auto-detect and propose data source URLs found in meeting notes
+      and email metadata. Requires user confirmation before writing to
+      state/work/work-sources.md. Phase 2 auto-capture implementation.
+
+  work_newsletter_digest:
+    class: "scripts.skills.work_newsletter_digest.WorkNewsletterDigestSkill"
+    enabled: false
+    priority: P2
+    cadence: on-demand
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems]
+    description: >
+      Assembles newsletter draft from sprint data, decisions, and
+      accomplishments via the Narrative Engine (§7.8). Output is always
+      a draft for human review — never sent automatically.
+
+  work_lt_deck_assist:
+    class: "scripts.skills.work_lt_deck_assist.WorkLtDeckAssistSkill"
+    enabled: false
+    priority: P2
+    cadence: on-demand
+    requires_vault: false
+    safety_critical: false
+    run_on: windows
+    command_namespace: work
+    requires_connectors: [ado_workitems, workiq_bridge]
+    description: >
+      Generates structured deck content from projects, career evidence, and
+      data sources via the Narrative Engine (§7.8). Outputs Markdown sections
+      ready to paste into a deck — not PowerPoint files.
+
+  # ── Career Search Intelligence skills ──────────────────────────────────
+
+  career_pdf_generator:
+    class: "scripts.skills.career_pdf_generator.CareerPdfGenerator"
+    enabled: true        # Always enabled; skill guards on campaign.status internally
+    priority: P1
+    cadence: on-demand   # Triggered by /career pdf <NNN> or auto-proposed at score >= 4.0
+    requires_vault: false
+    safety_critical: false
+    command_namespace: career
+    requires_connectors: []
+    optional_connectors: []
+    requires_packages: [playwright]  # Run: pip install playwright && playwright install chromium
+    description: >
+      Generate ATS-optimized CV PDF from evaluation report and cv.md.
+      Uses Python playwright for HTML -> PDF rendering (Space Grotesk + DM Sans fonts).
+      Reads Block E personalization plan from evaluation report for per-JD tailoring.
+      Activation guard: skips if no active career campaign.
+
+  # Phase 2 — registered but disabled until Phase 2 implementation
+  portal_scanner:
+    class: "scripts.skills.portal_scanner.PortalScanner"
+    enabled: true
+    priority: P1
+    cadence: on_demand   # Triggered by career_search_agent.py (precompute --domain career)
+    requires_vault: false
+    safety_critical: false
+    command_namespace: career
+    requires_connectors: []
+    optional_connectors: []
+    description: >
+      Scan Greenhouse, Ashby, Lever portals for new matching listings.
+      Deduplicates against tracker entries using token-set ratio (Jaccard >=0.85).
+      Reads config from config/career_portals.yaml.
+
+  # ── CONNECT Phase 4 — Watch Monitor (ac-int.md P4) ──────────────────────
+
+  watch_monitor:
+    class: "scripts.skills.watch_monitor.WatchMonitorSkill"
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class_label: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: false
+    command_namespace: watch
+    requires_connectors: []
+    optional_connectors: [reddit, rss_feed]
+    description: >
+      Keyword-filter watch_snapshot.jsonl against config/watches.yaml.
+      Routes high-urgency + score>50 matches to immediate Telegram alert
+      (max 3/watch/day via keyring). All other matches written to
+      state/watch_backlog.yaml for morning briefing digest. Zero LLM calls
+      (DP-3 deterministic). Ref: specs/ac-int.md §7.3.
+
+  # ── CONNECT Phase 6 — Fitness Coach (ac-int.md P6) ──────────────────────
+
+  fitness_coach:
+    class: "scripts.skills.fitness_coach.FitnessCoachSkill"
+    enabled: true
+    priority: P1
+    cadence: every_run
+    class_label: operational
+    goal_refs: [G-001, G-002]
+    requires_vault: false
+    safety_critical: false
+    command_namespace: health
+    requires_connectors: []
+    optional_connectors: []
+    description: >
+      Read ~/.artha-local/workouts.jsonl and state/goals.md to compute
+      Mailbox Peak training goal progress (G-001 distance, G-002 elevation).
+      Provides ack context for workout_log Telegram handler. Best-effort:
+      silently omits goal section if goals.md absent or fields missing.
+      Ref: specs/ac-int.md §8.
+
+  # ── iMessage Appointment Tracker ─────────────────────────────────────────
+  # Closes the gap where provider appointment reminders arrive via SMS/iMessage
+  # and are never seen by Gmail or Google Calendar connectors.
+
+  imessage_appointments:
+    enabled: true
+    priority: P0
+    cadence: every_run
+    class_label: operational
+    goal_refs: []
+    requires_vault: false
+    safety_critical: true
+    command_namespace: calendar
+    requires_connectors: []
+    optional_connectors: [imessage_local]
+    run_on: darwin
+    description: >
+      Read ~/Library/Messages/chat.db (macOS only, lookback 14 days).
+      Detect appointment reminder and confirmation texts from medical,
+      dental, therapy, school, and other provider senders. Extract date,
+      time, provider name, and recipient (Child1/Child2/Spouse/Ved).
+      Surface as 🔴 CRITICAL (today), 🟠 URGENT (tomorrow/day-after),
+      or 🟡 STANDARD (within 7 days). Output feeds directly into catch-up
+      Step 7b OI creation — any appointment within 48h that lacks an OI
+      must have one created immediately. Skipped silently on Windows/Linux.
+

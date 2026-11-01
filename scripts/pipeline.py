@@ -1,0 +1,2558 @@
+#!/usr/bin/env python3
+"""
+scripts/pipeline.py — Artha declarative connector pipeline orchestrator.
+
+Reads config/connectors.yaml, loads each enabled connector, authenticates
+via lib/auth.py, and streams JSONL records to stdout.  Wraps every fetch
+in the shared retry logic from lib/retry.py.
+
+Usage
+-----
+    python scripts/pipeline.py [OPTIONS]
+
+Options
+-------
+    --since  DATETIME   ISO-8601 start timestamp (default: 48 h ago)
+    --source SOURCE     Fetch only the named connector (repeatable)
+    --health            Run health checks for all enabled connectors, exit 0
+                        if all pass; exit 1 if any fail
+    --list              List all configured connectors and their status
+    --dry-run           Validate config and auth, skip actual fetch
+    --verbose           Verbose logging to stderr
+
+Exit codes
+----------
+    0   All connectors fetched successfully (or health-check passed)
+    1   One or more connectors health-check failed
+    2   Configuration error (bad YAML, missing handler module, etc.)
+    3   Partial success — at least one connector errored but others succeeded
+
+Ref: supercharge.md §5.3–5.8
+"""
+from __future__ import annotations
+
+import argparse
+import importlib
+import inspect
+import json
+import os
+import platform
+import sys
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Bootstrap path so scripts/ is importable
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+# Ensure correct venv before third-party imports (no-op if already in venv or CI)
+try:
+    from _bootstrap import reexec_in_venv  # type: ignore[import]
+    reexec_in_venv()
+except ImportError:
+    pass  # Running standalone without project structure; continue
+
+try:
+    import yaml  # type: ignore[import]
+except ImportError:
+    print(
+        "ERROR: PyYAML not installed.  Run: pip install pyyaml",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+from lib.auth import load_auth_context  # type: ignore[import]
+from lib.logger import get_logger, begin_session_trace as _begin_session_trace  # type: ignore[import]
+from lib.retry import with_retry  # type: ignore[import]
+from catchup_core.session_lock import (  # noqa: E402
+    SessionBusy, default_installation_dir, require_active_installation, writer_fence,
+)
+
+try:
+    from middleware.guardrail_registry import GuardrailRegistry as _GuardrailRegistry  # type: ignore[import]
+    from middleware.guardrails import GuardrailViolation as _GuardrailViolation, TripwireResult as _TripwireResult  # type: ignore[import]
+    _GUARDRAILS_AVAILABLE = True
+except ImportError:
+    _GuardrailRegistry = None  # type: ignore[assignment]
+    _GuardrailViolation = Exception  # type: ignore[assignment,misc]
+    _TripwireResult = None  # type: ignore[assignment]
+    _GUARDRAILS_AVAILABLE = False
+
+# DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation — hard import (never optional).
+# If schemas/ is missing from sys.path the ImportError surfaces at startup with a clear message.
+from schemas.connector_record import validate_record as _validate_connector_record  # noqa: E402
+_SCHEMA_VALIDATION_AVAILABLE = True  # kept for backward compat with any external references
+
+# WP-02 (re-artha §6.13): per-run connector coverage — rejections degrade the exact scope.
+from lib.connector_coverage import (  # noqa: E402
+    ConnectorRun as _ConnectorRun,
+    CoverageCollector as _CoverageCollector,
+    CoverageStore as _CoverageStore,
+    coverage_line as _coverage_line,
+)
+
+_log = get_logger("pipeline")
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+_CONNECTORS_YAML = _REPO_ROOT / "config" / "connectors.yaml"
+_HEALTH_CHECK_MD = _REPO_ROOT / "state" / "health-check.md"
+_CONNECTOR_PKG = "connectors"
+_CHECKPOINT_JSON = _REPO_ROOT / "state" / "checkpoint.json"
+_CONNECTOR_STATE_DIR = _REPO_ROOT / "state" / "connectors"
+
+# Connector staleness TTL thresholds (spec §2.1.3 FETCH state)
+_STALE_WARN_SECS  = 4  * 3600   # >4 h  → warn
+_STALE_ERROR_SECS = 24 * 3600   # >24 h → error
+_STALE_CRIT_SECS  = 72 * 3600   # >72 h → critical
+
+# Security allowlist — only these module paths may ever be loaded dynamically.
+# YAML cannot override this; it is a hard-coded security boundary.
+# To add a connector: register it here AND in connectors.yaml via PR.
+_ALLOWED_MODULES: frozenset[str] = frozenset({
+    "connectors.google_email",
+    "connectors.msgraph_email",
+    "connectors.imap_email",
+    "connectors.google_calendar",
+    "connectors.msgraph_calendar",
+    "connectors.caldav_calendar",
+    "connectors.canvas_lms",
+    "connectors.onenote",
+    # Work domain connectors (opt-in — Wave 1)
+    "connectors.workiq_bridge",
+    "connectors.ado_workitems",
+    # Work domain connectors (opt-in — Wave 2)
+    "connectors.outlookctl_bridge",
+    # Messaging connectors (local DB — opt-in)
+    "connectors.whatsapp_local",
+    "connectors.imessage_local",
+    # IoT connector (LAN-only, opt-in — ARTHA-IOT Wave 1)
+    "connectors.homeassistant",
+    # Messaging connectors (cloud API — opt-in — CONNECT Phase 1)
+    "connectors.slack",
+    # Task manager connectors (opt-in — CONNECT Phase 3)
+    "connectors.todoist",
+    "connectors.apple_reminders",
+    # Financial connectors (opt-in — CONNECT Phase 5)
+    "connectors.plaid_connector",
+    # Feed connectors (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.rss_feed",
+    # API discovery connector (stdlib-only, no auth — PR-3 AI Radar)
+    "connectors.api_discovery",
+    # Reddit connector (added manually)
+    "connectors.reddit",
+})
+
+
+def _derive_handler_map(config: dict[str, Any]) -> dict[str, str]:
+    """Build connector handler map from connectors.yaml, validated against allowlist.
+
+    Each top-level entry may specify a 'module' field; if absent, defaults to
+    'connectors.<connector_name>'.  Only modules in _ALLOWED_MODULES are loaded.
+
+    Emits [CRITICAL] and returns an empty dict if config is empty or malformed.
+    """
+    try:
+        raw = config.get("connectors", {})
+        if not raw:
+            print(
+                "[CRITICAL] connectors.yaml empty or missing 'connectors' key — no connectors loaded.",
+                file=sys.stderr,
+            )
+            return {}
+        result: dict[str, str] = {}
+        for name, cfg in raw.items():
+            if not isinstance(cfg, dict):
+                continue
+            if not cfg.get("enabled", True):
+                continue
+            # Prefer explicit 'module' field; fall back to deriving stem from
+            # fetch.handler path ("scripts/connectors/google_email.py" → "connectors.google_email")
+            # before using the YAML key as a last resort ("connectors.gmail" would be wrong
+            # when the module file is named differently, e.g. google_email.py).
+            if "module" in cfg:
+                module = cfg["module"]
+            else:
+                handler_path = cfg.get("fetch", {}).get("handler", "")
+                if "/" in handler_path:
+                    stem = Path(handler_path).stem  # "google_email"
+                    module = f"connectors.{stem}"
+                else:
+                    module = f"connectors.{name}"
+            if module not in _ALLOWED_MODULES:
+                print(
+                    f"[SECURITY] module {module!r} not in allowlist, skipping {name!r}",
+                    file=sys.stderr,
+                )
+                continue
+            result[name] = module
+        if not result:
+            print(
+                "[CRITICAL] connectors.yaml parsed but no enabled+allowlisted connectors found.",
+                file=sys.stderr,
+            )
+        return result
+    except Exception as exc:
+        print(
+            f"[CRITICAL] connectors.yaml unreadable — no connectors loaded. Fix YAML and re-run. ({exc})",
+            file=sys.stderr,
+        )
+        return {}
+
+
+
+# ---------------------------------------------------------------------------
+# Config loader
+# ---------------------------------------------------------------------------
+
+def load_connectors_config() -> dict[str, Any]:
+    """Load and validate config/connectors.yaml.  Exit 2 on error."""
+    if not _CONNECTORS_YAML.exists():
+        print(
+            f"ERROR: connector registry not found at {_CONNECTORS_YAML}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    try:
+        with open(_CONNECTORS_YAML) as fh:
+            cfg = yaml.safe_load(fh)
+    except yaml.YAMLError as exc:
+        print(f"ERROR: failed to parse connectors.yaml: {exc}", file=sys.stderr)
+        sys.exit(2)
+    return cfg or {}
+
+
+def _normalize_connectors(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize connectors config to a list of dicts, each with a 'name' key.
+
+    Supports both formats:
+      - Dict format (current): {gmail: {type: ...}, outlook_email: {type: ...}}
+      - List format (future):  [{name: gmail, type: ...}, {name: outlook_email, ...}]
+    """
+    raw = cfg.get("connectors", {})
+    if isinstance(raw, list):
+        return raw  # already list format
+    # Dict format: inject 'name' key from the dict key
+    return [
+        {"name": name, **conf}
+        for name, conf in raw.items()
+        if isinstance(conf, dict)
+    ]
+
+
+def _write_platform_skip_sentinel(
+    connector_name: str,
+    current_platform: str,
+    run_on: object,
+) -> None:
+    """DEBT-SYNC-001: Write a sentinel JSON to state/connectors/ when a connector is
+    platform-skipped.  Other machines (or preflight) can inspect the sentinel to
+    distinguish intentional-skip from stale-connector scenarios.
+
+    File: state/connectors/<name>_platform_skipped.json
+    """
+    import json as _json_sent
+    _artha_dir_sent = Path(__file__).resolve().parent.parent
+    sentinel_dir = _artha_dir_sent / "state" / "connectors"
+    try:
+        sentinel_dir.mkdir(parents=True, exist_ok=True)
+        sentinel_path = sentinel_dir / f"{connector_name}_platform_skipped.json"
+        payload = {
+            "connector": connector_name,
+            "skipped_on_platform": current_platform,
+            "run_on": run_on if isinstance(run_on, list) else [run_on],
+            "skipped_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        sentinel_path.write_text(_json_sent.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass  # sentinel writes are best-effort — never crash the pipeline
+
+
+def _enabled_connectors(
+    cfg: dict[str, Any], source_filter: list[str] | None, exclude_sources: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Return list of connector configs that are enabled (and optionally filtered).
+
+    ``exclude_sources`` removes named connectors after the include filter — the
+    capability the mixed-path coordinator needs to keep pilot scopes out of the
+    incumbent fetch (re-artha §6.14).
+    """
+    current_platform = platform.system().lower()  # "darwin", "windows", "linux"
+    result = []
+    for conn in _normalize_connectors(cfg):
+        if not conn.get("enabled", True):
+            continue
+        if source_filter and conn["name"] not in source_filter:
+            continue
+        if exclude_sources and conn["name"] in exclude_sources:
+            continue
+        run_on = conn.get("run_on", "all")
+        if run_on != "all":
+            allowed = [run_on] if isinstance(run_on, str) else run_on
+            if current_platform not in allowed:
+                print(
+                    f"[pipeline] SKIP {conn['name']} — "
+                    f"platform {current_platform} not in run_on: {run_on}",
+                    file=sys.stderr,
+                )
+                # DEBT-SYNC-001: write a platform-skipped sentinel so other machines know
+                # this connector was intentionally skipped (not stale) on this platform.
+                _write_platform_skip_sentinel(conn["name"], current_platform, run_on)
+                continue
+        result.append(conn)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Handler loader
+# ---------------------------------------------------------------------------
+
+
+def _load_handler(handler_path: str) -> Any:
+    """Dynamically import and return a connector handler module.
+
+    Accepts:
+      - Filesystem path: "scripts/connectors/google_email.py"
+      - Dot-notation:    "connectors.google_email"
+      - Prefixed:        "scripts.connectors.google_email"
+
+    Security: Only modules in _ALLOWED_MODULES may be loaded (§3.9.6).
+    """
+    if "/" in handler_path:
+        # Filesystem path → derive module from stem
+        stem = Path(handler_path).stem  # "google_email"
+        module_name = f"{_CONNECTOR_PKG}.{stem}"
+    else:
+        # Dot-notation: normalise to "connectors.X"
+        module_name = handler_path.lstrip(".")
+        if not module_name.startswith(_CONNECTOR_PKG + "."):
+            module_name = _CONNECTOR_PKG + "." + module_name.split(".")[-1]
+
+    # DEBT-PLUG-001: Hard allowlist enforcement — no filesystem plugin scan.
+    # _ALLOWED_MODULES is a genuine security boundary; YAML cannot override it.
+    # To add a connector: register it in _ALLOWED_MODULES + connectors.yaml via PR.
+    if module_name not in _ALLOWED_MODULES:
+        raise ImportError(
+            f"Handler '{module_name}' is not in the connector allowlist. "
+            f"To add a connector, register it in _ALLOWED_MODULES and connectors.yaml. "
+            f"Allowed: {sorted(_ALLOWED_MODULES)}."
+        )
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as exc:
+        raise ImportError(
+            f"Cannot load handler '{module_name}': {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Low-level connector fetch (module-level; used by run_pipeline + fetch_single)
+# ---------------------------------------------------------------------------
+
+def _fetch_one(
+    name: str,
+    handler: Any,
+    auth_ctx: dict,
+    fetch_cfg: dict,
+    retry_cfg: dict,
+    *,
+    since: str,
+    registry: "_GuardrailRegistry | None" = None,
+    coverage: "_CoverageCollector | None" = None,
+) -> tuple[str, list[str], float, str | None]:
+    """Fetch one connector; return (name, jsonl_lines, elapsed_sec, error).
+
+    Extracted from run_pipeline() inner scope so it can be reused by
+    fetch_single() for callers that need direct per-connector access.
+
+    When ``coverage`` is given, the run's outcome (records, rejected records,
+    handler-reported scope failures, error) is added to it so a rejected record
+    degrades the exact scope instead of silently shrinking the result.
+    """
+    t0 = time.monotonic()
+    extra_kwargs: dict[str, Any] = {}
+    for key, val in fetch_cfg.items():
+        if key not in ("handler", "max_results"):
+            extra_kwargs[key] = val
+    max_results = fetch_cfg.get("max_results", 200)
+    max_retries = retry_cfg.get("max_attempts", 3)
+    base_delay = retry_cfg.get("base_delay_seconds", 1.0)
+    backoff_mult = retry_cfg.get("backoff_multiplier", 2.0)
+    max_delay = retry_cfg.get("max_delay_seconds", 30.0)
+
+    lines: list[str] = []
+
+    # ── AFW-1: Tool guardrail check before fetch ──────────────────────────────
+    if registry is not None and _GUARDRAILS_AVAILABLE and _TripwireResult is not None:
+        try:
+            _ctx = {"connector": name, "action_type": f"connector.{name}"}
+            _gr_out = registry.run_tool_guardrails(_ctx, fetch_cfg)
+            if _gr_out.result != _TripwireResult.PASS:
+                elapsed = time.monotonic() - t0
+                _g_err = f"guardrail:{_gr_out.result.value} — {_gr_out.message}"
+                if coverage is not None:
+                    coverage.add(_ConnectorRun(name, 0, 0, [], _g_err, [], elapsed))
+                return (name, [], elapsed, _g_err)
+        except Exception as _gr_exc:  # noqa: BLE001
+            # Guardrail failure must never silently drop data — log and continue
+            _log.warning("guardrail.tool.error", connector=name, error=str(_gr_exc))
+
+    _val_errors: list[int] = [0]  # DEBT-009: mutable cell for nonlocal reference
+    _val_reasons: list[str] = []   # first few rejection reasons (no record content)
+
+    def _do_fetch() -> int:
+        count = 0
+        for record in handler.fetch(
+            since=since,
+            max_results=max_results,
+            auth_context=auth_ctx,
+            source_tag=name,
+            **extra_kwargs,
+        ):
+            # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
+            # Malformed records are SKIPPED with a WARNING (never crash pipeline).
+            try:
+                _validated = _validate_connector_record(record)
+            except (TypeError, ValueError) as _vex:
+                _val_errors[0] += 1
+                if len(_val_reasons) < 5:
+                    _val_reasons.append(str(_vex)[:160])
+                _log.warning(
+                    "schema.validation_error",
+                    connector=name,
+                    error=str(_vex),
+                )
+                print(
+                    f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
+                    file=sys.stderr,
+                )
+                continue
+            # D-21: connectors keep native fields; consumers still get a derived date_iso.
+            if "date_iso" not in record:
+                record["date_iso"] = _validated.date_iso
+            lines.append(json.dumps(record, ensure_ascii=False, default=str))
+            count += 1
+        return count
+
+    _tracker_cm = coverage.track(name) if coverage is not None else None
+    _tracker = _tracker_cm.__enter__() if _tracker_cm is not None else None
+
+    def _finish(error: str | None, elapsed: float) -> None:
+        if _tracker_cm is not None:
+            _tracker_cm.__exit__(None, None, None)
+        if coverage is not None:
+            coverage.add(_ConnectorRun(
+                connector=name, records=len(lines), rejected=_val_errors[0],
+                rejection_reasons=list(_val_reasons), error=error,
+                scopes=list(_tracker.scopes) if _tracker is not None else [], elapsed=elapsed,
+            ))
+
+    try:
+        with_retry(
+            _do_fetch,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            backoff_mult=backoff_mult,
+            max_delay=max_delay,
+            context=f"pipeline.{name}",
+            label=name,
+        )
+        elapsed = time.monotonic() - t0
+        _finish(None, elapsed)
+        return (name, lines, elapsed, None)
+    except Exception as exc:
+        elapsed = time.monotonic() - t0
+        _finish(str(exc), elapsed)
+        return (name, lines, elapsed, str(exc))
+
+
+def _record_coverage(
+    collector: "_CoverageCollector",
+    store: "_CoverageStore | None" = None,
+    *,
+    at: str | None = None,
+) -> str:
+    """Persist this run's connector coverage and return the compact Briefing line.
+
+    Counts and statuses only (no record content).  A failure to persist never
+    aborts the pipeline, but the returned line still reflects this run.
+    """
+    store = store or _CoverageStore()
+    runs: list[Any] = []
+    try:
+        for run in collector.runs:
+            history = store.history(run.connector)
+            runs.append(run.with_history(history))
+            store.record(run, at=at)
+        entries = store.load().get("connectors", {})
+    except OSError as exc:
+        print(f"[pipeline] WARNING: coverage persistence failed: {exc}", file=sys.stderr)
+        runs = list(collector.runs)
+        entries = {}
+    return _coverage_line(runs, entries, now=at)
+
+
+def _post_fetch_checks(
+    runs: list[Any],
+    entries: dict[str, Any],
+    *,
+    error_count: int,
+    now: str | None = None,
+) -> list[Any]:
+    """Post-fetch gate checks that read this run's coverage and persisted history.
+
+    They replace callbacks that returned ``True`` unconditionally.  A failure
+    names the exact scope; it degrades coverage and never aborts the Catch-up.
+    """
+    from lib.connector_coverage import CHRONIC_GAP_DAYS  # noqa: PLC0415
+    from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+
+    def at_least_one_connector_succeeded() -> bool:
+        return not runs or error_count < len(runs)
+
+    def no_degraded_or_unavailable_scope() -> bool:
+        return all(r.status() == "complete" for r in runs)
+
+    def no_chronic_connector_failure() -> bool:
+        current = _dt.fromisoformat(now.replace("Z", "+00:00")) if now else _dt.now(_tz.utc)
+        for entry in entries.values():
+            since = (entry or {}).get("failing_since")
+            if since:
+                age = (current - _dt.fromisoformat(since.replace("Z", "+00:00"))).days
+                if age >= CHRONIC_GAP_DAYS:
+                    return False
+        return True
+
+    return [at_least_one_connector_succeeded, no_degraded_or_unavailable_scope,
+            no_chronic_connector_failure]
+
+
+def _post_process_checks(
+    runs: list[Any],
+    *,
+    total_records: int,
+    output_path: "Path | None",
+) -> list[Any]:
+    """Post-process gate: no record was silently dropped and the snapshot exists."""
+
+    def no_rejected_records() -> bool:
+        return all(r.rejected == 0 for r in runs)
+
+    def output_snapshot_written() -> bool:
+        if output_path is None or total_records == 0:
+            return True
+        try:
+            return Path(output_path).is_file() and Path(output_path).stat().st_size > 0
+        except OSError:
+            return False
+
+    return [no_rejected_records, output_snapshot_written]
+
+
+def _gate_failure_message(gate: str, result: Any) -> str:
+    failed = [c["name"] for c in result.checks if not c["passed"]]
+    return f"Quality gate '{gate}' FAILED — {', '.join(failed) or 'unknown check'}"
+
+
+def fetch_single(
+    connector_name: str,
+    cfg: dict[str, Any],
+    *,
+    auth_ctx: dict | None = None,
+    verbose: bool = False,
+    since: str | None = None,
+    **extra_fetch: Any,
+) -> tuple[list[str], float, str | None]:
+    """Fetch a single named connector; returns (lines, elapsed_sec, error).
+
+    Routes through the security allowlist (_load_handler) and retry logic,
+    making it safe for callers outside pipeline.py (e.g. work_loop.py) to
+    trigger a fetch without bypassing core pipeline security controls.
+
+    Args:
+        connector_name: Key name in the connectors config (e.g. "msgraph_calendar").
+        cfg:            Full connectors config dict (from load_connectors_config()).
+        auth_ctx:       Pre-loaded auth context dict.  If None, loads from config.
+        verbose:        Emit per-connector stderr progress messages.
+        since:          ISO-8601 timestamp lower bound.  Defaults to 48 h ago.
+        **extra_fetch:  Additional fetch parameters that override connector config
+                        (e.g. max_results=50, window_days=7, folders=["inbox"]).
+
+    Returns:
+        (lines, elapsed_sec, error) — error is None on success.
+    """
+    if since is None:
+        since = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    # Locate connector config entry
+    all_conns = _normalize_connectors(cfg)
+    conn_cfg: dict[str, Any] | None = next(
+        (c for c in all_conns if c.get("name") == connector_name), None
+    )
+    if conn_cfg is None:
+        return ([], 0.0, f"connector '{connector_name}' not found in config")
+
+    handler_path = conn_cfg.get("fetch", {}).get("handler", "")
+    if not handler_path:
+        # Derive from connector name
+        handler_path = f"connectors.{connector_name}"
+
+    try:
+        handler = _load_handler(handler_path)
+    except ImportError as exc:
+        return ([], 0.0, str(exc))
+
+    resolved_auth = auth_ctx
+    if resolved_auth is None:
+        try:
+            resolved_auth = load_auth_context(conn_cfg)
+        except Exception as exc:
+            return ([], 0.0, f"auth error: {exc}")
+
+    # Build fetch and retry configs, applying caller overrides
+    base_fetch_cfg = dict(conn_cfg.get("fetch", {}))
+    base_fetch_cfg.update(extra_fetch)
+    retry_cfg = conn_cfg.get("retry", {})
+
+    _name, lines, elapsed, error = _fetch_one(
+        connector_name, handler, resolved_auth, base_fetch_cfg, retry_cfg, since=since
+    )
+    if verbose:
+        status = "✓" if error is None else "✗"
+        print(
+            f"[pipeline] {status} {connector_name}: {len(lines)} records in {elapsed:.1f}s",
+            file=sys.stderr,
+        )
+    return (lines, elapsed, error)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline run
+# ---------------------------------------------------------------------------
+
+def _validate_output_path(raw: str, artha_dir: Path) -> Path:
+    """Validate --output path is safe: must resolve inside the machine-local directory.
+
+    Plaintext fetched content must not live in the cloud-synced workspace
+    (re-artha §12.2 item 6); ``tmp/`` inside the workspace is therefore rejected.
+    Also blocks path traversal (e.g. '../../etc/passwd').  ``artha_dir`` is kept
+    for call-site compatibility.
+    """
+    from lib.local_paths import resolve_local_output  # noqa: PLC0415
+    return resolve_local_output(str(raw))
+
+
+@writer_fence()
+def run_pipeline(
+    cfg: dict[str, Any],
+    *,
+    since: str,
+    source_filter: list[str] | None = None,
+    dry_run: bool = False,
+    verbose: bool = False,
+    output_path: Path | None = None,
+    force_wave0_justification: str | None = None,
+    resume: bool = False,
+    exclude_sources: list[str] | None = None,
+) -> int:
+    """Run the fetch pipeline.  Streams JSONL to stdout.
+
+    Uses ThreadPoolExecutor to fetch from all enabled connectors in parallel
+    (§2 Step 4: "Fetch IN PARALLEL — all sources simultaneously").
+    Results are buffered per-connector and flushed to stdout sequentially
+    to avoid interleaved JSONL output.
+
+    Returns:
+        0  all connectors succeeded
+        3  partial success (≥1 error)
+    """
+    require_active_installation(Path(__file__).resolve().parents[1])
+    if output_path is not None:
+        require_active_installation(output_path)
+    _begin_session_trace()  # AFW-11: set session_trace_id for all log events this run
+
+    # ── Blueprint 1: session_id + FSM telemetry ────────────────────────────────
+    _session_id = _generate_session_id()
+    try:
+        from lib.telemetry import set_session_id as _set_sid, emit as _emit_tel  # type: ignore[import]
+        _set_sid(_session_id)
+        _emit_tel("pipeline.session_start", extra={"session_id": _session_id})
+    except Exception:
+        def _emit_tel(*_a, **_kw) -> None:  # type: ignore[misc]
+            pass
+
+    # ── PREFLIGHT: checkpoint recovery ────────────────────────────────────────
+    if _CHECKPOINT_JSON.exists():
+        try:
+            _ckpt = json.loads(_CHECKPOINT_JSON.read_text(encoding="utf-8"))
+            _ckpt_sid = _ckpt.get("session_id", "unknown")
+            _ckpt_state = _ckpt.get("last_completed_state", "unknown")
+            _ckpt_ts = _ckpt.get("created_at", "unknown")
+            print(
+                f"\u26a1 Checkpoint detected from session {_ckpt_sid}: "
+                f"last completed {_ckpt_state} (checkpoint written at {_ckpt_ts}). "
+                f"Options: (a) resume \u2014 pass --resume, or (b) restart normally.",
+                file=sys.stderr,
+            )
+            if resume:
+                try:
+                    _CHECKPOINT_JSON.unlink(missing_ok=True)  # type: ignore[call-arg]
+                except TypeError:
+                    if _CHECKPOINT_JSON.exists():  # Python 3.7 compat
+                        _CHECKPOINT_JSON.unlink()
+                _emit_tel(
+                    "pipeline.checkpoint_resume",
+                    extra={
+                        "session_id": _session_id,
+                        "resumed_from_session": _ckpt_sid,
+                        "resumed_from_state": _ckpt_state,
+                    },
+                )
+                print(f"\u26a1 Resuming from state: {_ckpt_state}", file=sys.stderr)
+            else:
+                _emit_tel(
+                    "pipeline.checkpoint_detected",
+                    extra={
+                        "session_id": _session_id,
+                        "checkpoint_session": _ckpt_sid,
+                        "checkpoint_state": _ckpt_state,
+                    },
+                )
+        except Exception:
+            pass  # Checkpoint recovery is non-fatal
+
+    # ── PREFLIGHT: idempotency prune + PENDING surface ───────────────────────
+    try:
+        from lib.idempotency import IdempotencyStore as _IStore  # type: ignore[import]
+        _istore = _IStore()
+        _pruned = _istore.prune_expired()
+        _pending_keys = _istore.list_pending()
+        if _pending_keys:
+            print(
+                f"\u26a0 {len(_pending_keys)} pending action(s) from a prior crashed session "
+                f"detected. Resolve before executing new actions.",
+                file=sys.stderr,
+            )
+            for _pk in _pending_keys:
+                print(
+                    f"  \u2022 {_pk.get('action_type', 'unknown')} "
+                    f"\u2014 created {_pk.get('created_at', '?')}",
+                    file=sys.stderr,
+                )
+        _emit_tel(
+            "preflight.idempotency_check",
+            extra={
+                "pruned": _pruned,
+                "pending": len(_pending_keys),
+                "session_id": _session_id,
+            },
+        )
+    except Exception:
+        pass  # Non-fatal
+
+    # ── PREFLIGHT: Wave 0 gate override (--force-wave0) ──────────────────────
+    if force_wave0_justification is not None:
+        try:
+            import importlib as _implib
+            _te = _implib.import_module("trust_enforcer")
+            _te._check_wave0_gate(force_wave0_justification)  # type: ignore[attr-defined]
+        except Exception:
+            pass  # Non-fatal; gate bypass proceeds regardless
+
+    # ── PREFLIGHT: prune old reasoning traces ─────────────────────────────────
+    _prune_old_traces()
+
+    # Step 0 (EAR-8): Heartbeat preflight — surface agent fleet health alerts
+    _agent_fleet_alerts: str = ""
+    try:
+        from lib.agent_registry import AgentRegistry as _AgentRegistry  # noqa: PLC0415
+        from lib.agent_heartbeat import AgentHeartbeat as _AgentHeartbeat  # noqa: PLC0415
+        _hb_reg = _AgentRegistry.load(str(Path(__file__).resolve().parent.parent / "config"))
+        _hb = _AgentHeartbeat(_hb_reg)
+        _hb_alerts = _hb.check()
+        if _hb_alerts:
+            _alert_lines = "\n".join(a.format_line() for a in _hb_alerts)
+            _agent_fleet_alerts = f"\n§ Agent Fleet Health\n{_alert_lines}\n"
+    except Exception:
+        pass  # Heartbeat is non-blocking — never halt the pipeline
+
+    # ── PREFLIGHT: CostGuard initialization (ST-03) ──────────────────────────
+    _cost_guard = None
+    try:
+        from lib.cost_guard import BudgetConfig as _BudgetConfig, CostGuard as _CostGuard  # type: ignore[import]
+        _artha_cfg_path = _REPO_ROOT / "config" / "artha_config.yaml"
+        _cg_raw: dict = {}
+        if _artha_cfg_path.exists():
+            with open(_artha_cfg_path, encoding="utf-8") as _cg_fh:
+                _cg_raw = yaml.safe_load(_cg_fh) or {}
+        _cost_guard = _CostGuard()
+        for _ag_id, _ag_limits in (_cg_raw.get("cost_budgets", {}).get("agents", {}) or {}).items():
+            _cost_guard.set_budget(
+                _ag_id,
+                _BudgetConfig(
+                    daily_limit_usd=float(_ag_limits.get("daily_limit_usd", 1.0)),
+                    monthly_limit_usd=float(_ag_limits.get("monthly_limit_usd", 20.0)),
+                ),
+            )
+    except Exception:
+        _cost_guard = None  # Non-fatal — fail-open per spec §15.4.3
+
+    # Step 0a (A2.2): Sentinel-file preflight — detect in-progress agent DB writes
+    # If ~/.artha-local/.<domain>_writing exists and its mtime is <60 s old, the
+    # domain agent is mid-write.  We note the warning and continue using the last
+    # snapshot (state/<domain>.md) written by the agent before this run.
+    _SENTINEL_DOMAINS = [
+        ("readiness", ".readiness_writing"),
+        ("capital",   ".capital_writing"),
+        ("tribe",     ".tribe_writing"),
+        ("logistics", ".logistics_writing"),
+    ]
+    _local_dir = default_installation_dir()
+    for _sentinel_domain, _sentinel_name in _SENTINEL_DOMAINS:
+        _sf = _local_dir / _sentinel_name
+        try:
+            if _sf.exists() and (time.time() - _sf.stat().st_mtime) < 60:
+                _warn = (
+                    f"\u26a0 {_sentinel_domain.capitalize()} database write in progress "
+                    f"\u2014 using last snapshot"
+                )
+                print(_warn, file=sys.stderr)
+                _agent_fleet_alerts += f"\n{_warn}"
+        except OSError:
+            pass  # Sentinel check is non-blocking
+
+    connectors = _enabled_connectors(cfg, source_filter, exclude_sources)
+    if not connectors:
+        print("[pipeline] No connectors enabled — nothing to do.", file=sys.stderr)
+        return 0
+
+    error_count = 0
+    total_records = 0
+    validation_errors = 0  # DEBT-009: count of records failing schema validation
+    timing: dict[str, float] = {}
+    pipeline_start = time.monotonic()
+    all_classified_lines: list[str] = []  # collected for --output snapshot
+
+    # §15.3: sentinel so standalone hermes export defers if pipeline is mid-run
+    _sentinel_path = _REPO_ROOT / "tmp" / ".pipeline_running"
+    try:
+        _sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+        _sentinel_path.touch()
+    except Exception:
+        _sentinel_path = None  # type: ignore[assignment]  # best-effort
+
+    # Pre-validate: build work items (handler + auth loaded before threading)
+    work_items: list[tuple[str, Any, dict, dict, dict]] = []  # (name, handler, auth, fetch_cfg, retry_cfg)
+    for conn in connectors:
+        name = conn["name"]
+        handler_path = conn.get("fetch", {}).get("handler", "")
+        if not handler_path:
+            print(f"[pipeline] SKIP {name} — no fetch.handler defined", file=sys.stderr)
+            continue
+        try:
+            handler = _load_handler(handler_path)
+        except ImportError as exc:
+            print(f"[pipeline] ERROR {name}: {exc}", file=sys.stderr)
+            error_count += 1
+            continue
+        try:
+            auth_ctx = load_auth_context(conn)
+        except Exception as exc:
+            print(f"[pipeline] ERROR {name} auth: {exc}", file=sys.stderr)
+            error_count += 1
+            continue
+        if dry_run:
+            print(f"[pipeline] DRY-RUN {name} — auth OK, skipping fetch", file=sys.stderr)
+            continue
+        work_items.append((name, handler, auth_ctx, conn.get("fetch", {}), conn.get("retry", {})))
+
+    if not work_items:
+        # §15.3: clean up sentinel on this early-exit path too
+        try:
+            if _sentinel_path is not None:
+                _sentinel_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return 3 if error_count > 0 else 0
+
+    # ── Blueprint 1: FETCH step enter + connector staleness TTL evaluation ─────
+    _emit_tel("pipeline.step_enter", extra={"step": "FETCH", "session_id": _session_id})
+    _fetch_t0 = time.monotonic()
+    for _wname, _, _, _, _ in work_items:
+        _stale = _check_connector_staleness(_wname)
+        if _stale:
+            _stale_msg = f"[pipeline] STALE:{_stale.upper()} {_wname} — connector state exceeds TTL"
+            print(_stale_msg, file=sys.stderr)
+            _emit_tel(
+                "pipeline.staleness",
+                extra={"connector": _wname, "severity": _stale, "session_id": _session_id},
+            )
+
+    # Run all connectors in parallel using module-level _fetch_one()
+    max_workers = min(len(work_items), 8)
+    # AFW-1: One registry instance shared across all connector threads (thread-safe read-only)
+    _registry = _GuardrailRegistry() if _GUARDRAILS_AVAILABLE and _GuardrailRegistry is not None else None
+    _coverage = _CoverageCollector()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_fetch_one, name, handler, auth, fcfg, rcfg, since=since, registry=_registry,
+                            coverage=_coverage): name
+            for name, handler, auth, fcfg, rcfg in work_items
+        }
+        for future in as_completed(futures):
+            conn_name = futures[future]
+            try:
+                name, lines, elapsed, err = future.result()
+            except _GuardrailViolation as exc:  # non-recoverable policy violation
+                print(f"[pipeline] GUARDRAIL VIOLATION {conn_name}: {exc}", file=sys.stderr)
+                _log.error("guardrail.violation", connector=conn_name, error=str(exc))
+                error_count += 1
+                _coverage.add(_ConnectorRun(conn_name, 0, 0, [], f"guardrail violation: {exc}", [], 0.0))
+                continue
+            except Exception as exc:
+                print(f"[pipeline] ERROR {conn_name}: {exc}", file=sys.stderr)
+                error_count += 1
+                _coverage.add(_ConnectorRun(conn_name, 0, 0, [], str(exc), [], 0.0))
+                continue
+
+            timing[name] = round(elapsed, 2)
+
+            if err:
+                print(f"[pipeline] ERROR {name}: {err}", file=sys.stderr)
+                error_count += 1
+                _log.error("connector.fetch", connector=name, records=0, ms=round(elapsed * 1000), error=err)
+                # S-08: persist partial for failed connector (non-fatal)
+                try:
+                    from lib.partial_writer import PartialResult as _PartialResult, write_partial as _write_partial  # noqa: PLC0415
+                    _write_partial(_REPO_ROOT, _PartialResult(
+                        run_id=_session_id,
+                        provider=name,
+                        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        status="error",
+                        data={},
+                        error=str(err),
+                    ))
+                except Exception:
+                    pass  # S-08 is non-fatal
+            else:
+                # Flush buffered lines to stdout (sequential to prevent interleave)
+                # Apply email marketing classifier inline if available
+                classified_lines = _classify_email_lines(lines, verbose=verbose)
+                for line in classified_lines:
+                    print(line)
+                if output_path is not None:
+                    all_classified_lines.extend(classified_lines)
+                total_records += len(classified_lines)
+                # DEBT-009: accumulate validation error count from connector
+                # (stored as side-channel via the schema validation cell)
+                _log.info("connector.fetch", connector=name, records=len(classified_lines), ms=round(elapsed * 1000), error=None)
+                if verbose:
+                    print(
+                        f"[pipeline] ✓ {name}: {len(classified_lines)} records in {elapsed:.1f}s",
+                        file=sys.stderr,
+                    )
+                # S-08: persist partial for successful connector (non-fatal)
+                try:
+                    from lib.partial_writer import PartialResult as _PartialResult, write_partial as _write_partial  # noqa: PLC0415
+                    _write_partial(_REPO_ROOT, _PartialResult(
+                        run_id=_session_id,
+                        provider=name,
+                        timestamp=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        status="ok",
+                        data={"record_count": len(classified_lines)},
+                    ))
+                except Exception:
+                    pass  # S-08 is non-fatal
+
+    pipeline_elapsed = round(time.monotonic() - pipeline_start, 2)
+    timing["_total"] = pipeline_elapsed
+
+    # WP-02: per-connector coverage (rejected records degrade the exact scope).
+    validation_errors = sum(r.rejected for r in _coverage.runs)
+    _coverage_summary = _record_coverage(_coverage)
+    print(f"[pipeline] {_coverage_summary}", file=sys.stderr)
+
+    # S-08: assemble partials after all connectors complete (non-fatal)
+    _assembly_warnings: list[str] = []
+    try:
+        from lib.partial_writer import assemble_partials as _assemble_partials  # noqa: PLC0415
+        _, _assembly_warnings = _assemble_partials(_REPO_ROOT, _session_id)
+    except Exception:
+        pass  # S-08 is non-fatal
+    for _aw in _assembly_warnings:
+        print(f"[pipeline] partial-assembly warning: {_aw}", file=sys.stderr)
+
+    # S-01: post_fetch quality gate (non-fatal — warn on failure, never abort).
+    # Checks read coverage artifacts; they used to return True unconditionally.
+    try:
+        from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
+        _gate_entries = _CoverageStore().load().get("connectors", {})
+        _pf_gate = _evaluate_gate(
+            "post_fetch",
+            _post_fetch_checks(_coverage.runs, _gate_entries, error_count=error_count),
+            max_retries=0,
+        )
+        if not _pf_gate.passed:
+            print(f"[pipeline] ⚠ {_gate_failure_message('post_fetch', _pf_gate)}", file=sys.stderr)
+    except Exception:
+        pass  # Quality gate is non-fatal
+
+    # ── Blueprint 1: FETCH step exit + checkpoint write ────────────────────────
+    _emit_tel(
+        "pipeline.step_exit",
+        extra={
+            "step": "FETCH",
+            "session_id": _session_id,
+            "latency_ms": round((time.monotonic() - _fetch_t0) * 1000),
+            "total_records": total_records,
+            "error_count": error_count,
+        },
+    )
+    _write_checkpoint(
+        session_id=_session_id,
+        last_completed_state="FETCH",
+        state_outputs={
+            "FETCH": {
+                "signal_count": total_records,
+                "error_count": error_count,
+                "connectors_run": [n for n, *_ in work_items],
+            }
+        },
+    )
+
+    # Emit timing summary to stderr
+    print(
+        f"[pipeline] Done: {total_records} records, {error_count} errors, "
+        f"{pipeline_elapsed:.1f}s wall-clock ({max_workers} workers)",
+        file=sys.stderr,
+    )
+    if verbose:
+        for cname, t in sorted(timing.items()):
+            if not cname.startswith("_"):
+                print(f"[pipeline]   {cname}: {t:.2f}s", file=sys.stderr)
+
+    # Write timing metrics to tmp/pipeline_metrics.json
+    _write_pipeline_metrics(timing, total_records, error_count, validation_errors,
+                            session_id=_session_id)
+
+    # DEBT-019: Write per-connector freshness timestamps + cross-platform staleness check
+    _update_connector_freshness(
+        artha_dir=_REPO_ROOT,
+        fetched_connectors=[n for n, *_ in work_items if n not in timing or timing.get(n, 0) >= 0],
+        all_cfg_connectors=_normalize_connectors(cfg),
+        current_platform=platform.system().lower(),
+    )
+
+    # EAR-8: Print agent fleet health alerts to stderr (zero-noise when no alerts)
+    if _agent_fleet_alerts:
+        print(_agent_fleet_alerts, file=sys.stderr)
+
+    # Atomic snapshot write to --output path (fresh per run, no append)
+    if output_path is not None and all_classified_lines:
+        # AFW-4: compact fetch-phase output before writing snapshot.
+        # No-op when harness.compaction.enabled = false (the default).
+        write_lines = all_classified_lines
+        try:
+            from context_offloader import compact_phase_output as _compact  # type: ignore[import]  # noqa: PLC0415
+            _raw = "\n".join(all_classified_lines)
+            _compacted = _compact("fetch", _raw)
+            if _compacted is not _raw:  # compaction was applied (not a no-op)
+                write_lines = [ln for ln in _compacted.splitlines() if ln]
+        except Exception:  # noqa: BLE001
+            pass  # scorer unavailable — write raw lines
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = output_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                for line in write_lines:
+                    fh.write(line + "\n")
+            try:
+                os.chmod(tmp_path, 0o600)  # fetched email content: owner-only
+            except OSError:
+                pass
+            tmp_path.replace(output_path)  # atomic rename — no partial reads
+            if verbose:
+                print(
+                    f"[pipeline] --output: wrote {len(write_lines)} records to {output_path}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:
+            print(f"[pipeline] WARNING: --output write failed: {exc}", file=sys.stderr)
+
+    # ── Session end: write reasoning trace ──────────────────────────────────────
+    _write_reasoning_trace(
+        session_id=_session_id,
+        connectors_run=[n for n, *_ in work_items],
+        signal_count=total_records,
+        error_count=error_count,
+        elapsed_secs=pipeline_elapsed,
+    )
+
+    # ── Session end: cost-to-intelligence ratio logging ─────────────────────────
+    _emit_cost_ratio_telemetry(_session_id)
+
+    # ── §2.1.6 CLASSIFY — F-B1 D1c: planner + tf-idf tier removed 2026-05-16 ──
+    # Classification is handled by the LLM step. The planner API was unavailable
+    # for 38+ days (243 degraded_mode events); tf-idf produced 94% UNCLASSIFIED.
+    # LLM-only classification is the committed path. tfidf_router.py is retired.
+    _emit_tel("pipeline.step_enter", extra={"step": "CLASSIFY", "session_id": _session_id})
+    _emit_tel("pipeline.step_exit", extra={"step": "CLASSIFY", "session_id": _session_id})
+
+    # S-01: post_process quality gate (non-fatal — warn on failure, never abort).
+    try:
+        from lib.quality_gate import evaluate_gate as _evaluate_gate  # noqa: PLC0415
+        _pp_gate = _evaluate_gate(
+            "post_process",
+            _post_process_checks(_coverage.runs, total_records=total_records, output_path=output_path),
+            max_retries=0,
+        )
+        if not _pp_gate.passed:
+            print(f"[pipeline] ⚠ {_gate_failure_message('post_process', _pp_gate)}", file=sys.stderr)
+    except Exception:
+        pass  # Quality gate is non-fatal
+
+    # ── Home events buffer merge (spec §P2.4) ────────────────────────────────
+    # Merge ~/.artha-local/home_events_buffer.jsonl → state/home_events.md before exit.
+    # state_writer is the sole write path for state files.
+    try:
+        _merge_home_events_buffer(_REPO_ROOT)
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: home_events merge failed: {_exc}", file=sys.stderr)
+
+    # ── Step 22: Hermes context export (spec FR-HI §7.3, Mac-only) ──────────
+    # Writes sensor.artha_context to HA after every successful pipeline run.
+    # Non-blocking: failure is logged but never aborts pipeline completion.
+    _t0_hermes = time.monotonic()
+    try:
+        from export_hermes_context import export_hermes_context as _hermes_export  # noqa: PLC0415
+        _hermes_ok = _hermes_export(_REPO_ROOT, dry_run=dry_run)
+        _hermes_ms = int((time.monotonic() - _t0_hermes) * 1000)
+        _emit_tel(
+            "hermes.context_export",
+            extra={"status": "ok" if _hermes_ok else "skip", "ms": _hermes_ms},
+        )
+        if _hermes_ok:
+            print("[pipeline] Hermes context exported to HA sensor.artha_context",
+                  flush=True)
+    except Exception as _exc:
+        _hermes_ms = int((time.monotonic() - _t0_hermes) * 1000)
+        _emit_tel("hermes.context_export",
+                  extra={"status": "fail", "ms": _hermes_ms, "error": str(_exc)[:200]})
+        print(f"[pipeline] WARNING: Hermes context export failed (non-blocking): {_exc}",
+              file=sys.stderr)
+        try:
+            from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+            _now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            _audit = _REPO_ROOT / "state" / "audit.md"
+            with _audit.open("a", encoding="utf-8") as _fh:
+                _fh.write(
+                    f"| {_now} | HERMES_CONTEXT_EXPORT_FAIL"
+                    f" | error:{str(_exc)[:200]} |\n"
+                )
+        except Exception:  # noqa: BLE001
+            pass  # audit write failure is never blocking
+
+    # DEBT-WORK-001: Write last_personal_pipeline_run to bridge artifact so work
+    # OS can check personal freshness without reading personal state files directly.
+    try:
+        import json as _json_bp
+        _pulse_path = _REPO_ROOT / "state" / "bridge" / "work_load_pulse.json"
+        if _pulse_path.exists():
+            _pulse = _json_bp.loads(_pulse_path.read_text(encoding="utf-8"))
+        else:
+            _pulse = {}
+        _pulse["last_personal_pipeline_run"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        _pulse["pipeline_status"] = "ok"
+        _pulse_path.parent.mkdir(parents=True, exist_ok=True)
+        _pulse_path.write_text(_json_bp.dumps(_pulse, indent=2), encoding="utf-8")
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: bridge freshness update failed: {_exc}", file=sys.stderr)
+
+    # ── Bridge Health section in health-check.md (spec §13) ─────────────────
+    try:
+        _write_bridge_health_section(_REPO_ROOT)
+    except Exception as _exc:
+        print(f"[pipeline] WARNING: bridge health write failed: {_exc}", file=sys.stderr)
+
+    # ── Action Layer: auto-invoke orchestrator (Phase 3 — specs/action.md) ──
+    # Runs after all connectors finish and pipeline_output.jsonl is written.
+    # Non-blocking: never fails the pipeline. Writes status to tmp/ for the AI.
+    _action_status_path = _REPO_ROOT / "tmp" / "action_layer_status.txt"
+    try:
+        import subprocess as _subprocess
+        _action_status_path.parent.mkdir(parents=True, exist_ok=True)
+        _ao_result = _subprocess.run(
+            [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--run"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(_REPO_ROOT),
+        )
+        _list_result = _subprocess.run(
+            [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--list"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(_REPO_ROOT),
+        )
+        import re as _re
+        _queued_match = _re.search(r"Proposals queued:\s*(\d+)", _ao_result.stdout)
+        _new_count = int(_queued_match.group(1)) if _queued_match else 0
+        _pending_match = _re.search(r"PENDING ACTIONS \((\d+)\)", _list_result.stdout)
+        _pending_count = int(_pending_match.group(1)) if _pending_match else 0
+
+        _status = "OK"
+        if _ao_result.returncode != 0 or _list_result.returncode != 0:
+            _status = (
+                f"DEGRADED | run_rc={_ao_result.returncode} "
+                f"list_rc={_list_result.returncode}"
+            )
+
+        _status_parts = [
+            f"{_status} | {_new_count} new proposals | {_pending_count} pending",
+            _ao_result.stdout.strip(),
+        ]
+        if _ao_result.stderr.strip():
+            _status_parts.append("--- ACTION STDERR ---")
+            _status_parts.append(_ao_result.stderr.strip())
+        if _list_result.stdout.strip():
+            _status_parts.append("--- CURRENT ACTION QUEUE ---")
+            _status_parts.append(_list_result.stdout.strip())
+        if _list_result.stderr.strip():
+            _status_parts.append("--- ACTION LIST STDERR ---")
+            _status_parts.append(_list_result.stderr.strip())
+
+        _action_status_path.write_text(
+            "\n".join(part for part in _status_parts if part)
+        )
+        if _ao_result.stdout.strip():
+            print(_ao_result.stdout, flush=True)
+        if _list_result.stdout.strip() and "PENDING ACTIONS" in _list_result.stdout:
+            print(_list_result.stdout, flush=True)
+    except Exception as _ao_exc:  # noqa: BLE001
+        _action_status_path.write_text(
+            f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}"
+        )
+        print(f"[pipeline] WARNING: action layer failed: {_ao_exc}", file=sys.stderr)
+
+    # §15.3: remove pipeline sentinel before exit (hermes standalone may now proceed)
+    try:
+        if _sentinel_path is not None:
+            _sentinel_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return 3 if error_count > 0 else 0
+
+
+# ---------------------------------------------------------------------------
+# Bridge helpers
+# ---------------------------------------------------------------------------
+
+@writer_fence()
+def _merge_home_events_buffer(artha_dir: Path) -> None:
+    """Merge home_events_buffer.jsonl into state/home_events.md.
+
+    - Reads each JSONL line from the buffer.
+    - Appends new events to state/home_events.md via state_writer.write().
+    - Applies rolling_7d GC: retains only events from the last 7 days.
+    - Truncates the buffer file after a successful merge.
+    - Handles missing files gracefully (normal state before Phase 2 is live).
+    """
+    import json as _json
+    # DEBT-037: Buffer moved from OneDrive-synced tmp/ to local-only ~/.artha-local/
+    # to prevent IoT telemetry from being indexed by OneDrive cloud sync.
+    buffer_path = default_installation_dir() / "home_events_buffer.jsonl"
+    state_path  = artha_dir / "state" / "home_events.md"
+    require_active_installation(state_path, buffer_path)
+
+    if not buffer_path.exists():
+        return
+
+    try:
+        raw_lines = buffer_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+
+    new_events = []
+    for raw in raw_lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            ev = _json.loads(raw)
+            new_events.append(ev)
+        except (ValueError, _json.JSONDecodeError):
+            pass
+
+    if not new_events:
+        return
+
+    # ── Read existing events ───────────────────────────────────────────────
+    existing_lines: list[str] = []
+    if state_path.exists():
+        try:
+            content = state_path.read_text(encoding="utf-8")
+            # Strip YAML frontmatter
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                body = parts[2] if len(parts) >= 3 else ""
+            else:
+                body = content
+            for ln in body.splitlines():
+                ln = ln.strip()
+                if ln.startswith("- ts:"):
+                    existing_lines.append(ln)
+        except OSError:
+            pass
+
+    # ── Append new events ──────────────────────────────────────────────────
+    for ev in new_events:
+        ts    = ev.get("ts", "")
+        event = ev.get("event", "unknown")
+        parts_kv = [f"ts: {ts}", f"event: {event}"]
+        for k, v in ev.items():
+            if k not in ("ts", "event") and v is not None:
+                parts_kv.append(f"{k}: {v}")
+        existing_lines.append("- " + "  ".join(parts_kv))
+
+    # ── rolling_7d GC ─────────────────────────────────────────────────────
+    import re as _re
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    kept: list[str] = []
+    for ln in existing_lines:
+        m = _re.search(r"ts:\s*(\S+)", ln)
+        if m:
+            try:
+                ev_dt = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+                if ev_dt >= cutoff:
+                    kept.append(ln)
+                # else: drop (older than 7d)
+            except ValueError:
+                kept.append(ln)  # unparseable ts — keep to be safe
+        else:
+            kept.append(ln)
+
+    # ── Write via state_writer ─────────────────────────────────────────────
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    frontmatter = (
+        "---\n"
+        'schema_version: "1.0"\n'
+        f'last_updated: "{now_iso}"\n'
+        'description: "Append-only log of home events from OpenClaw."\n'
+        "---\n\n"
+        "## Events\n\n"
+    )
+    body_text = frontmatter + "\n".join(kept) + ("\n" if kept else "")
+
+    try:
+        from lib.state_writer import write as _sw_write  # type: ignore[import]
+        result = _sw_write(
+            state_path,
+            body_text,
+            domain="home",
+            source="pipeline",
+            snapshot=False,
+            pii_check=False,
+        )
+        if not result.success:
+            print('[pipeline] WARNING: home events were not persisted; buffer retained', file=sys.stderr)
+            return
+    except ImportError:
+        # state_writer not available (e.g., running tests without full install)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(body_text, encoding="utf-8")
+    except Exception as exc:
+        print(f"[pipeline] WARNING: state_writer failed for home_events.md: {exc}", file=sys.stderr)
+        return
+
+    # ── Truncate buffer after successful write ─────────────────────────────
+    try:
+        buffer_path.open("w").close()
+    except OSError:
+        pass
+
+
+@writer_fence()
+def _write_bridge_health_section(artha_dir: Path) -> None:
+    """Write/update the ## Bridge Health table in state/health-check.md (spec §13).
+
+    # DEAD-CODE-OPENCLAW: claw bridge retired v7.18.0. bridge_enabled always False.
+    Non-fatal: silently returns if health-check.md does not exist.
+    """
+    import re as _re
+    import json as _json
+
+    health_md = artha_dir / "state" / "health-check.md"
+    require_active_installation(health_md)
+    if not health_md.exists():
+        return
+
+    # Bridge config retired — always disabled
+    bridge_enabled = False
+    hmac_version = "—"
+
+    # ── Parse audit.md for bridge events ─────────────────────────────────────
+    audit_path = artha_dir / "state" / "audit.md"
+    last_push_ts = "—"
+    last_received_ts = "—"
+    clock_drift_ms: str = "—"
+    peer_version: str = "—"
+    peer_uptime: str = "—"
+    sent_24h = 0
+    received_24h = 0
+
+    if audit_path.exists():
+        try:
+            audit_text = audit_path.read_text(encoding="utf-8")
+            cutoff_dt = datetime.now(timezone.utc) - timedelta(hours=24)
+
+            # Match lines like: 2026-04-09T12:34:56Z BRIDGE_PUSH ...
+            push_matches = _re.findall(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)\s+BRIDGE_PUSH", audit_text
+            )
+            if push_matches:
+                last_push_ts = push_matches[-1]
+            # Count those within last 24h
+            for ts_str in push_matches:
+                try:
+                    evt_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if evt_dt >= cutoff_dt:
+                        sent_24h += 1
+                except ValueError:
+                    pass
+
+            recv_matches = _re.findall(
+                r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*)\s+BRIDGE_M2M_RECEIVED", audit_text
+            )
+            if recv_matches:
+                last_received_ts = recv_matches[-1]
+            # Count those within last 24h
+            for ts_str in recv_matches:
+                try:
+                    evt_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    if evt_dt >= cutoff_dt:
+                        received_24h += 1
+                except ValueError:
+                    pass
+
+            # Pong data: BRIDGE_CLOCK_DRIFT lines carry drift_ms, version, uptime
+            pong_matches = _re.findall(
+                r"BRIDGE_CLOCK_DRIFT\s+drift_ms=(\S+).*?version=(\S+).*?uptime=(\S+)", audit_text
+            )
+            if pong_matches:
+                last_pong = pong_matches[-1]
+                clock_drift_ms = last_pong[0]
+                peer_version = last_pong[1]
+                peer_uptime = last_pong[2]
+        except OSError:
+            pass
+
+    # ── Count DLQ entries ─────────────────────────────────────────────────────
+    dlq_path = default_installation_dir() / "bridge_dlq.yaml"
+    dlq_depth = 0
+    if dlq_path.exists():
+        try:
+            import yaml as _yaml
+            with dlq_path.open("r", encoding="utf-8") as fh:
+                dlq_data = _yaml.safe_load(fh) or []
+            if isinstance(dlq_data, list):
+                dlq_depth = len(dlq_data)
+        except Exception:
+            dlq_depth = -1  # unreadable
+
+    # ── Build the Bridge Health table ─────────────────────────────────────────
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    status_icon = "✅" if bridge_enabled else "⏸"
+    dlq_icon = "✅" if dlq_depth == 0 else ("⚠️" if dlq_depth < 5 else "❌")
+
+    section_lines = [
+        f"\n## Bridge Health — {ts}\n",
+        "\n",
+        "| Metric | Value |\n",
+        "|--------|-------|\n",
+        f"| Bridge enabled | `{bridge_enabled}` {status_icon} |\n",
+        f"| HMAC key version | `{hmac_version}` |\n",
+        f"| Last BRIDGE_PUSH | `{last_push_ts}` |\n",
+        f"| Last M2M received | `{last_received_ts}` |\n",
+        f"| Messages sent (24h) | `{sent_24h}` |\n",
+        f"| Messages received (24h) | `{received_24h}` |\n",
+        f"| DLQ depth | `{dlq_depth}` {dlq_icon} |\n",
+        f"| Peer version | `{peer_version}` |\n",
+        f"| Peer uptime | `{peer_uptime}` |\n",
+        f"| Clock drift (ms) | `{clock_drift_ms}` |\n",
+    ]
+
+    try:
+        # Replace any existing Bridge Health section, or append if absent
+        existing = health_md.read_text(encoding="utf-8")
+        # Strip old Bridge Health section (from its heading to next ## or EOF)
+        cleaned = _re.sub(
+            r"\n## Bridge Health[^\n]*\n.*?(?=\n## |\Z)", "", existing, flags=_re.DOTALL
+        )
+        with health_md.open("w", encoding="utf-8") as fh:
+            fh.write(cleaned.rstrip("\n"))
+            fh.writelines(section_lines)
+    except OSError:
+        pass  # Non-fatal
+
+
+# ---------------------------------------------------------------------------
+# Blueprint 1 helpers — session_id, FSM telemetry, staleness check, checkpoint
+# ---------------------------------------------------------------------------
+
+def _generate_session_id() -> str:
+    """Generate a session ID per spec §2.1.2 format: YYYYMMDD_hex8."""
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d")
+    hex_part = uuid.uuid4().hex[:8]
+    return f"{date_part}_{hex_part}"
+
+
+def _check_connector_staleness(connector_name: str) -> str | None:
+    """Check staleness of connector state file.
+
+    Reads ``state/connectors/{connector_name}_state.yaml`` for a
+    ``last_fetched_at`` ISO-8601 field.  Returns a severity string
+    ("warn", "error", "critical") if the threshold is exceeded, else None.
+    """
+    try:
+        import re as _re
+        state_file = _CONNECTOR_STATE_DIR / f"{connector_name}_state.yaml"
+        if not state_file.exists():
+            return None
+        raw = state_file.read_text(encoding="utf-8")
+        m = _re.search(r"last_fetched_at:\s*['\"]?([^'\"\n]+)['\"]?", raw)
+        if not m:
+            return None
+        last_fetched = datetime.fromisoformat(m.group(1).strip().rstrip("Z").rstrip("+00:00"))
+        if last_fetched.tzinfo is None:
+            last_fetched = last_fetched.replace(tzinfo=timezone.utc)
+        age_secs = (datetime.now(timezone.utc) - last_fetched).total_seconds()
+        if age_secs >= _STALE_CRIT_SECS:
+            return "critical"
+        if age_secs >= _STALE_ERROR_SECS:
+            return "error"
+        if age_secs >= _STALE_WARN_SECS:
+            return "warn"
+    except Exception:
+        pass
+    return None
+
+
+@writer_fence()
+def _write_checkpoint(
+    session_id: str,
+    last_completed_state: str,
+    state_outputs: dict,
+    interrupted_at: str | None = None,
+) -> None:
+    """Atomically write state/checkpoint.json per spec §2.1.3 schema."""
+    require_active_installation(_CHECKPOINT_JSON)
+    checkpoint: dict = {
+        "schema_version": 1,
+        "session_id": session_id,
+        "last_completed_state": last_completed_state,
+        "state_outputs": state_outputs,
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z",
+    }
+    if interrupted_at:
+        checkpoint["pipeline_interrupted_at"] = interrupted_at
+    try:
+        _CHECKPOINT_JSON.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = _CHECKPOINT_JSON.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(checkpoint, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp_path.replace(_CHECKPOINT_JSON)
+    except Exception:
+        pass  # Checkpoint is non-fatal; never halt pipeline on write failure
+
+
+class BoundaryBreachError(RuntimeError):
+    """Raised when tool boundary violations exceed 3 per session (spec §2.5.1)."""
+
+
+# Prohibited tool-call patterns per spec §2.5.1 Worker Tool Contract
+_BOUNDARY_PROHIBITED_PATTERNS: tuple[str, ...] = (
+    "send_message",
+    "execute_action",
+    "write_state",
+)
+_BOUNDARY_BREACH_THRESHOLD = 3
+
+
+def _check_tool_boundary(
+    worker_response: str,
+    domain: str,
+    session_id: str,
+    violation_count: list,  # Single-element mutable counter: [int]
+) -> bool:
+    """Inspect a Worker response for prohibited tool-call patterns.
+
+    This is the Orchestrator audit assertion (spec §2.5.1 compensating controls).
+    Deterministic gate — not an LLM judgment.
+
+    Args:
+        worker_response:  The raw textual response from the Worker/Planner.
+        domain:           Domain scope string (for telemetry).
+        session_id:       Current session_id (for telemetry).
+        violation_count:  Single-element list acting as a mutable int counter.
+                          Pass ``[0]`` from the caller; the function mutates it.
+
+    Returns:
+        ``True`` if the response is clean (no violations detected).
+        ``False`` if a violation was detected — caller must discard Worker output
+        and mark the domain as STALE.
+
+    Raises:
+        BoundaryBreachError: If violation_count[0] exceeds
+            ``_BOUNDARY_BREACH_THRESHOLD`` after incrementing.
+    """
+    import re as _re
+
+    found_violations: list[str] = []
+    for pattern in _BOUNDARY_PROHIBITED_PATTERNS:
+        # Match stand-alone function / tool name (word boundary)
+        if _re.search(r"\b" + _re.escape(pattern) + r"\b", worker_response):
+            found_violations.append(pattern)
+
+    if not found_violations:
+        return True  # Clean
+
+    # Violation detected — increment counter and emit to telemetry
+    violation_count[0] += 1
+    try:
+        from lib.telemetry import emit_tool_boundary_violation  # type: ignore[import]
+        emit_tool_boundary_violation(
+            domain=domain,
+            patterns_found=found_violations,
+            violation_number=violation_count[0],
+            session_id=session_id,
+        )
+    except Exception:
+        pass
+
+    if violation_count[0] > _BOUNDARY_BREACH_THRESHOLD:
+        try:
+            from lib.telemetry import emit  # type: ignore[import]
+            emit(
+                "pipeline.boundary_breach",
+                domain=domain,
+                extra={
+                    "session_id": session_id,
+                    "total_violations": violation_count[0],
+                },
+            )
+        except Exception:
+            pass
+        raise BoundaryBreachError(
+            f"Tool boundary violations ({violation_count[0]}) exceeded threshold "
+            f"({_BOUNDARY_BREACH_THRESHOLD}) in session {session_id}. "
+            "Session terminated — all pending actions held for next session."
+        )
+
+    return False  # Violation but threshold not yet exceeded
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 helpers — reasoning traces (§5.1) + cost ratio (§5.2)
+# ---------------------------------------------------------------------------
+
+_TRACES_DIR = _REPO_ROOT / "state" / "traces"
+_TRACE_RETENTION_DAYS = 30
+
+
+@writer_fence()
+def _write_reasoning_trace(
+    session_id: str,
+    connectors_run: list,
+    signal_count: int,
+    error_count: int,
+    elapsed_secs: float,
+) -> None:
+    """Write session reasoning trace to state/traces/session_{session_id}.md.
+
+    PII-scrubbed before write per §5.1.  Non-fatal.
+    """
+    require_active_installation(_TRACES_DIR)
+    try:
+        import hashlib as _hl
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+        connector_hashes = [
+            _hl.sha256(c.encode()).hexdigest()[:12] for c in connectors_run
+        ]
+        raw_content = (
+            f"# Reasoning Trace \u2014 session {session_id}\n\n"
+            f"- **timestamp**: {ts}\n"
+            f"- **session_id**: {session_id}\n"
+            f"- **signal_count**: {signal_count}\n"
+            f"- **error_count**: {error_count}\n"
+            f"- **elapsed_secs**: {elapsed_secs}\n"
+            f"- **connectors_run_hash**: {connector_hashes}\n\n"
+            f"## Worker Invocations\n\n"
+            f"*(Phase 2 \u2014 no domain workers active in this session. "
+            f"Worker trace records populate here in Phase 3.)*\n"
+        )
+        # PII scrub before write
+        safe_content = raw_content
+        try:
+            import pii_guard as _pii  # type: ignore[import]
+            safe_content, _ = _pii._apply_filter(raw_content)  # type: ignore[attr-defined]
+        except Exception:
+            pass  # Fallback: write as-is (no PII in metadata-only trace)
+        _TRACES_DIR.mkdir(parents=True, exist_ok=True)
+        trace_path = _TRACES_DIR / f"session_{session_id}.md"
+        tmp_path = trace_path.with_suffix(".tmp")
+        tmp_path.write_text(safe_content, encoding="utf-8")
+        tmp_path.replace(trace_path)
+    except Exception:
+        pass  # Non-fatal \u2014 trace write never blocks the pipeline
+
+
+@writer_fence()
+def _prune_old_traces() -> None:
+    """Delete reasoning trace files older than _TRACE_RETENTION_DAYS.
+
+    Called at PREFLIGHT per §5.1 retention policy.
+    """
+    require_active_installation(_TRACES_DIR)
+    try:
+        if not _TRACES_DIR.exists():
+            return
+        import time as _time
+        cutoff = _time.time() - (_TRACE_RETENTION_DAYS * 86400)
+        pruned = 0
+        for trace_file in _TRACES_DIR.glob("session_*.md"):
+            try:
+                if trace_file.stat().st_mtime < cutoff:
+                    trace_file.unlink()
+                    pruned += 1
+            except OSError:
+                pass
+        if pruned:
+            try:
+                from lib.telemetry import emit as _tel_emit  # type: ignore[import]
+                _tel_emit("preflight.traces_pruned", extra={"pruned": pruned})
+            except Exception:
+                pass
+    except Exception:
+        pass  # Non-fatal
+
+
+def _emit_cost_ratio_telemetry(session_id: str) -> None:
+    """Compute and emit per-domain cost-to-intelligence ratios (§5.2).
+
+    Reads ``cost-per-domain`` events from state/telemetry.jsonl over a
+    rolling 30-day window.  Emits ``domain.cost_ratio`` per domain.
+    Surfaces a demotion recommendation if ratio < 0.5 for \u226514 sessions.
+    Non-fatal \u2014 never blocks the pipeline.
+    """
+    try:
+        telemetry_path = _REPO_ROOT / "state" / "telemetry.jsonl"
+        if not telemetry_path.exists():
+            return
+        cutoff_ts = (datetime.now(timezone.utc).timestamp() - (30 * 86400))
+        domain_totals: dict[str, dict] = {}
+        with telemetry_path.open(encoding="utf-8") as _fh:
+            for _line in _fh:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    _ev = json.loads(_line)
+                except json.JSONDecodeError:
+                    continue
+                if _ev.get("event") != "cost-per-domain":
+                    continue
+                try:
+                    _ev_ts = datetime.fromisoformat(
+                        _ev.get("timestamp", "").rstrip("Z")
+                    ).timestamp()
+                    if _ev_ts < cutoff_ts:
+                        continue
+                except Exception:
+                    continue
+                _dom = _ev.get("domain", "unknown")
+                if _dom not in domain_totals:
+                    domain_totals[_dom] = {
+                        "actions_accepted": 0,
+                        "actions_proposed": 0,
+                        "estimated_cost_usd": 0.0,
+                        "session_count": 0,
+                    }
+                _t = domain_totals[_dom]
+                _t["actions_accepted"] += int(_ev.get("actions_accepted", 0))
+                _t["actions_proposed"] += int(_ev.get("actions_proposed", 0))
+                _t["estimated_cost_usd"] += float(_ev.get("estimated_cost_usd", 0.0))
+                _t["session_count"] += 1
+        if not domain_totals:
+            return
+        try:
+            from lib.telemetry import emit as _tel_emit  # type: ignore[import]
+        except Exception:
+            return
+        for _dom, _totals in domain_totals.items():
+            _value_score = _totals["actions_accepted"] / max(1, _totals["actions_proposed"])
+            _cost_score = _totals["estimated_cost_usd"]
+            _ratio = _value_score / _cost_score if _cost_score > 0 else 0.0
+            _tel_emit(
+                "domain.cost_ratio",
+                extra={
+                    "domain": _dom,
+                    "value_score": round(_value_score, 4),
+                    "cost_score": round(_cost_score, 6),
+                    "ratio": round(_ratio, 4),
+                    "session_count_30d": _totals["session_count"],
+                    "session_id": session_id,
+                },
+            )
+            if _ratio < 0.5 and _totals["session_count"] >= 14:
+                print(
+                    f"\u26a0 Recommendation: [{_dom}] domain has cost-to-intelligence "
+                    f"ratio {_ratio:.3f} < 0.5 over {_totals['session_count']} sessions "
+                    f"(est. ${_cost_score:.4f} cost, {_totals['actions_accepted']} accepted actions). "
+                    f"Consider switching it to Manual trigger.",
+                    file=sys.stderr,
+                )
+    except Exception:
+        pass  # Non-fatal
+
+
+def _classify_email_lines(lines: list[str], verbose: bool = False) -> list[str]:
+    """Apply email marketing classification to buffered JSONL lines.
+
+    Each email record gains a ``marketing: bool`` and optional
+    ``marketing_category: str`` field.  Non-email records and unparseable
+    lines are returned unchanged.
+
+    Falls back silently if email_classifier is unavailable (e.g. fresh
+    install) — records pass through without classification tags.
+    """
+    try:
+        from email_classifier import classify_records  # type: ignore[import]
+    except ImportError:
+        return lines  # Classifier not yet available — pass through unchanged
+
+    records: list[dict] = []
+    idx_map: list[int] = []  # maps records index → original lines index
+    for i, line in enumerate(lines):
+        try:
+            records.append(json.loads(line))
+            idx_map.append(i)
+        except json.JSONDecodeError:
+            pass
+
+    if not records:
+        return lines
+
+    classify_records(records)
+
+    # Reconstruct lines list with classified records
+    result = list(lines)
+    for rec, orig_idx in zip(records, idx_map):
+        result[orig_idx] = json.dumps(rec, ensure_ascii=False, default=str)
+
+    if verbose:
+        marketing_count = sum(1 for r in records if r.get("marketing"))
+        if marketing_count:
+            print(
+                f"[pipeline] email_classifier: {marketing_count}/{len(records)} records tagged marketing",
+                file=sys.stderr,
+            )
+
+    return result
+
+
+@writer_fence()
+def _write_pipeline_metrics(
+    timing: dict[str, float], total_records: int, error_count: int,
+    validation_errors: int = 0,
+    session_id: str | None = None,
+    model_version: str | None = None,
+) -> None:
+    """Persist pipeline run metrics to tmp/pipeline_metrics.json."""
+    metrics_path = _REPO_ROOT / "tmp" / "pipeline_metrics.json"
+    require_active_installation(metrics_path)
+    metrics_path.parent.mkdir(exist_ok=True)
+    entry: dict = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "total_records": total_records,
+        "error_count": error_count,
+        "validation_errors": validation_errors,  # DEBT-009
+        "connector_timing": {k: v for k, v in timing.items() if not k.startswith("_")},
+        "wall_clock_seconds": timing.get("_total", 0),
+    }
+    if session_id is not None:
+        entry["session_id"] = session_id
+    if model_version is not None:
+        entry["model_version"] = model_version
+    try:
+        # Append to metrics log (keep last 50 runs)
+        existing = []
+        if metrics_path.exists():
+            existing = json.loads(metrics_path.read_text())
+            if not isinstance(existing, list):
+                existing = []
+        existing.insert(0, entry)
+        existing = existing[:50]
+        metrics_path.write_text(json.dumps(existing, indent=2))
+    except Exception:
+        pass  # Non-fatal
+
+
+@writer_fence()
+def _update_connector_freshness(
+    artha_dir: Path,
+    fetched_connectors: list[str],
+    all_cfg_connectors: list[dict],
+    current_platform: str,
+) -> None:
+    """DEBT-019: Write per-connector freshness timestamps; check cross-platform staleness.
+
+    Writes state/connectors/connector_freshness.json with per-connector:
+      {"connector_name": {"last_fetch": "ISO_TIMESTAMP", "machine": "HOSTNAME"}}
+
+    For platform-skipped connectors, reads the JSON (synced via OneDrive) and
+    emits CRITICAL warning if last_fetch exceeds 72h.
+    """
+    import socket as _socket  # noqa: PLC0415
+    freshness_dir = artha_dir / "state" / "connectors"
+    freshness_path = freshness_dir / "connector_freshness.json"
+    require_active_installation(freshness_path)
+
+    # Load existing freshness data (synced from other machines via OneDrive)
+    existing: dict[str, dict] = {}
+    try:
+        if freshness_path.exists():
+            existing = json.loads(freshness_path.read_text(encoding="utf-8"))
+            if not isinstance(existing, dict):
+                existing = {}
+    except Exception:
+        existing = {}
+
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    machine = _socket.gethostname()
+
+    # Update freshness for connectors successfully fetched this run
+    for name in fetched_connectors:
+        existing[name] = {"last_fetch": now_iso, "machine": machine}
+
+    # Check staleness for platform-skipped connectors
+    fetched_set = set(fetched_connectors)
+    _CRITICAL_STALE_HOURS = 72
+    for conn in all_cfg_connectors:
+        cname = conn.get("name", "")
+        run_on = conn.get("run_on", "all")
+        if run_on == "all" or cname in fetched_set:
+            continue  # Not platform-skipped
+        # This connector was skipped on this platform
+        prior = existing.get(cname)
+        if prior and prior.get("last_fetch"):
+            try:
+                last_dt = datetime.fromisoformat(prior["last_fetch"].replace("Z", "+00:00"))
+                age_h = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+                if age_h > _CRITICAL_STALE_HOURS:
+                    print(
+                        f"[pipeline] CRITICAL: {cname} (run_on={run_on}) last fetched "
+                        f"{age_h:.0f}h ago on {prior.get('machine', '?')} — data is critically stale",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[pipeline] INFO: {cname} (run_on={run_on}) last fetched "
+                        f"{age_h:.0f}h ago on {prior.get('machine', '?')}",
+                        file=sys.stderr,
+                    )
+            except (ValueError, TypeError):
+                pass
+
+    # Write updated freshness data (atomic)
+    try:
+        freshness_dir.mkdir(parents=True, exist_ok=True)
+        import tempfile as _tmpfile  # noqa: PLC0415
+        with _tmpfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=str(freshness_dir),
+            prefix=".connector_freshness_tmp_", suffix=".json", delete=False
+        ) as _tmp:
+            json.dump(existing, _tmp, indent=2)
+            _tmp_path = _tmp.name
+        os.replace(_tmp_path, str(freshness_path))
+    except Exception as exc:
+        print(f"[pipeline] WARNING: connector_freshness write failed: {exc}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+def run_health_checks(
+    cfg: dict[str, Any],
+    source_filter: list[str] | None = None,
+    verbose: bool = False,
+) -> int:
+    """Run health check for all enabled connectors.
+
+    Returns:
+        0  all connectors healthy
+        1  one or more connectors unhealthy
+    """
+    connectors = _enabled_connectors(cfg, source_filter)
+    if not connectors:
+        print("[pipeline] No connectors enabled.", file=sys.stderr)
+        return 0
+
+    results: list[tuple[str, bool]] = []
+
+    for conn in connectors:
+        if not isinstance(conn, dict):
+            continue
+        name = conn["name"]
+        health_check_cfg = conn.get("health_check")
+
+        # Explicitly disabled: health_check: false in YAML
+        if health_check_cfg is False:
+            print(f"[health] SKIP {name} — health_check disabled", file=sys.stderr)
+            continue
+
+        handler_path = (
+            (health_check_cfg.get("handler") if isinstance(health_check_cfg, dict) else None)
+            or conn.get("fetch", {}).get("handler", "")
+        )
+        if not handler_path:
+            print(f"[health] SKIP {name} — no handler defined", file=sys.stderr)
+            continue
+
+        try:
+            handler = _load_handler(handler_path)
+        except ImportError as exc:
+            print(f"[health] ERROR {name}: cannot load handler — {exc}", file=sys.stderr)
+            results.append((name, False))
+            continue
+
+        try:
+            auth_ctx = load_auth_context(conn)
+        except Exception as exc:
+            print(f"[health] ERROR {name}: auth failed — {exc}", file=sys.stderr)
+            results.append((name, False))
+            continue
+
+        # Pass fetch-config keys (e.g. ha_url) as kwargs, same as fetch() does.
+        # Filter to only kwargs the health_check() function actually accepts to
+        # avoid TypeError when fetch-only keys (default_max_results, etc.) are present.
+        fetch_cfg = conn.get("fetch", {})
+        extra_kwargs: dict[str, Any] = {
+            k: v for k, v in fetch_cfg.items() if k not in ("handler", "max_results")
+        }
+        try:
+            hc_sig = inspect.signature(handler.health_check)
+            hc_params = set(hc_sig.parameters)
+            # If the function accepts **kwargs, pass everything; otherwise filter
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in hc_sig.parameters.values()
+            )
+            if not has_var_keyword:
+                extra_kwargs = {k: v for k, v in extra_kwargs.items() if k in hc_params}
+        except (ValueError, TypeError):
+            pass  # introspection failed — pass kwargs as-is and let it fail naturally
+
+        try:
+            ok = handler.health_check(auth_ctx, **extra_kwargs)
+        except Exception as exc:
+            print(f"[health] ERROR {name}: {exc}", file=sys.stderr)
+            ok = False
+
+        results.append((name, ok))
+        status = "✓" if ok else "✗"
+        # Always print per-connector status — silence is ambiguous for health gates
+        print(f"[health] {status} {name}", file=sys.stderr)
+
+    _write_health_report(results)
+
+    failed = [name for name, ok in results if not ok]
+    if failed:
+        print(
+            f"[health] FAILED: {', '.join(failed)}",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"[health] All {len(results)} connectors healthy.", file=sys.stderr)
+    return 0
+
+
+def _write_health_report(results: list[tuple[str, bool]]) -> None:
+    """Append a connector health summary to state/health-check.md."""
+    if not _HEALTH_CHECK_MD.exists():
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [f"\n## Connector health — {ts}\n"]
+    for name, ok in results:
+        mark = "✅" if ok else "❌"
+        lines.append(f"- {mark} `{name}`\n")
+    try:
+        with open(_HEALTH_CHECK_MD, "a", encoding="utf-8") as fh:
+            fh.writelines(lines)
+    except OSError:
+        pass  # Non-fatal
+
+
+# ---------------------------------------------------------------------------
+# List connectors
+# ---------------------------------------------------------------------------
+
+def list_connectors(cfg: dict[str, Any]) -> None:
+    """Print a table of all configured connectors."""
+    connectors = _normalize_connectors(cfg)
+    if not connectors:
+        print("(no connectors configured)")
+        return
+    col_w = max(len(c["name"]) for c in connectors) + 2
+    print(f"{'NAME':<{col_w}} {'STATUS':<10} {'PLATFORM':<10} {'TYPE':<20} HANDLER")
+    print("-" * 90)
+    for conn in connectors:
+        enabled = "enabled" if conn.get("enabled", True) else "disabled"
+        run_on = conn.get("run_on", "all")
+        if isinstance(run_on, list):
+            run_on = ",".join(run_on)
+        ctype = conn.get("type", "")
+        handler = conn.get("fetch", {}).get("handler", "(none)")
+        print(f"{conn['name']:<{col_w}} {enabled:<10} {run_on:<10} {ctype:<20} {handler}")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _default_since() -> str:
+    """Return ISO-8601 timestamp for 48 hours ago."""
+    dt = datetime.now(timezone.utc) - timedelta(hours=48)
+    return dt.isoformat()
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="pipeline.py",
+        description="Artha declarative connector pipeline — fetch data from all sources.",
+    )
+    p.add_argument(
+        "--since",
+        metavar="DATETIME",
+        default=_default_since(),
+        help="ISO-8601 start timestamp (default: 48 h ago)",
+    )
+    p.add_argument(
+        "--source",
+        metavar="NAME",
+        action="append",
+        dest="sources",
+        help="Fetch only this connector (repeatable)",
+    )
+    p.add_argument(
+        "--exclude-source",
+        metavar="NAME",
+        action="append",
+        dest="exclude_sources",
+        help="Do not fetch this connector (repeatable; applied after --source)",
+    )
+    p.add_argument(
+        "--health",
+        action="store_true",
+        help="Run health checks and exit (exit 0=all OK, 1=failures)",
+    )
+    p.add_argument(
+        "--list",
+        action="store_true",
+        dest="list_connectors",
+        help="List all configured connectors",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate config + auth but skip fetching",
+    )
+    p.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Verbose logging to stderr",
+    )
+    p.add_argument(
+        "--output", "-o",
+        metavar="PATH",
+        default=None,
+        help="Write JSONL output to this file path inside tmp/ (fresh snapshot per run, atomic write)",
+    )
+    p.add_argument(
+        "--force-wave0",
+        action="store_true",
+        dest="force_wave0",
+        help="Bypass Wave 0 gate for this session only (requires --justification)",
+    )
+    p.add_argument(
+        "--justification",
+        metavar="REASON",
+        default=None,
+        help="Override justification string required when using --force-wave0",
+    )
+    p.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume pipeline from last checkpoint (if state/checkpoint.json exists)",
+    )
+    p.add_argument(
+        "--mode",
+        choices=["standard", "digest"],
+        default="standard",
+        help="'digest' generates a scheduled lightweight brief from plaintext state (no LLM, no vault)",
+    )
+    p.add_argument(
+        "--skip-vault",
+        action="store_true",
+        dest="skip_vault",
+        help="Exclude vault-encrypted domains (finance, immigration, health, home). Used with --mode=digest.",
+    )
+    return p.parse_args(argv)
+
+
+def _ingest_pending_briefs() -> None:
+    """Ingest any staged briefings from interactive surfaces.
+
+    Scans tmp/briefing_incoming_<runtime>.md files written by LLM sessions
+    (VS Code, Gemini CLI, Claude Code, Copilot CLI) and archives them into
+    briefings/ via briefing_archive.save() with all safety gates intact.
+
+    Called at the top of main() before connector machinery loads, so ingestion
+    runs on every pipeline startup regardless of --dry-run or other flags.
+    Files that fail ingestion are renamed to .failed for manual inspection.
+    """
+    from lib import briefing_archive  # noqa: PLC0415
+
+    try:
+        from lib.telemetry import emit as _emit_tel  # type: ignore[import]  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        def _emit_tel(*_a: object, **_kw: object) -> None:  # type: ignore[misc]
+            pass
+
+    tmp_dir = _REPO_ROOT / "tmp"
+    if not tmp_dir.exists():
+        return
+
+    for path in sorted(tmp_dir.glob("briefing_incoming_*.md")):
+        runtime = path.stem.replace("briefing_incoming_", "")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue  # Vanished between glob and read — skip silently
+        _emit_tel("briefing.archive_attempt", extra={"runtime": runtime, "bytes": len(text)})
+        try:
+            result = briefing_archive.save(
+                text,
+                source="interactive_cli",
+                runtime=runtime,
+                session_id=None,  # auto-generated by save() via _generate_session_id_fallback()
+            )
+            if result["status"] in ("ok", "skipped"):
+                path.unlink(missing_ok=True)
+                _emit_tel(f"briefing.archive_{result['status']}", extra={"runtime": runtime})
+            else:
+                path.rename(path.with_suffix(".failed"))
+                _emit_tel(
+                    "briefing.archive_failed",
+                    extra={"runtime": runtime, "error": result.get("error")},
+                )
+        except Exception as exc:  # noqa: BLE001
+            try:
+                path.rename(path.with_suffix(".failed"))
+            except OSError:
+                pass
+            _emit_tel(
+                "briefing.archive_failed",
+                extra={"runtime": runtime, "error": str(exc)},
+            )
+
+
+def _cmd_archive_brief(raw_path: str) -> int:
+    """Archive a briefing draft to briefings/YYYY-MM-DD.md.
+
+    Intended as an early-exit subcommand: validates path, reads draft,
+    delegates to briefing_archive.save(), prints a JSON result, and returns
+    an exit code.  Never invokes run_pipeline.
+
+    Returns:
+        0 — ok or skipped
+        1 — failed (draft missing and no today entry, or save error)
+        2 — security violation (path traversal / absolute path)
+    """
+    import json as _json  # noqa: PLC0415
+    import datetime as _dt  # noqa: PLC0415
+    from lib import briefing_archive as _ba  # noqa: PLC0415
+
+    # ── Security: path-traversal guard ───────────────────────────────────
+    # Must be a relative path inside tmp/
+    if (
+        raw_path.startswith("/")
+        or raw_path.startswith("\\")
+        or (len(raw_path) >= 2 and raw_path[1] == ":")  # Windows absolute (C:\...)
+        or not raw_path.startswith("tmp/")
+        or ".." in raw_path.replace("\\", "/").split("/")
+    ):
+        result = {"status": "failed", "error": "path must be inside tmp/"}
+        print(_json.dumps(result))
+        return 2
+
+    draft_path = _REPO_ROOT / raw_path
+
+    today = _dt.datetime.now().strftime("%Y-%m-%d")
+    today_briefing = _REPO_ROOT / "briefings" / f"{today}.md"
+
+    # ── Draft missing ─────────────────────────────────────────────────────
+    if not draft_path.exists():
+        if today_briefing.exists():
+            result = {"status": "skipped", "reason": "path_missing_but_today_exists"}
+            print(_json.dumps(result))
+            return 0
+        result = {"status": "failed", "error": f"draft not found: {raw_path}"}
+        print(_json.dumps(result))
+        return 1
+
+    text = draft_path.read_text(encoding="utf-8")
+
+    save_result = _ba.save(text, source="vscode")
+    print(_json.dumps(save_result))
+    return 0 if save_result["status"] in ("ok", "skipped") else 1
+
+
+# ---------------------------------------------------------------------------
+# Digest brief engine (F-D1) — plaintext state only, no LLM, no vault
+# ---------------------------------------------------------------------------
+
+_VAULT_DOMAINS = frozenset({"immigration", "finance", "health", "home"})
+_DIGEST_LOCK = _REPO_ROOT / "tmp" / "scheduled_brief.lock"
+_DIGEST_STALE_SECS = 7200  # 2 hours
+
+
+def _digest_append_audit(line: str) -> None:
+    """Best-effort append to state/audit.md; never raises."""
+    try:
+        audit = _REPO_ROOT / "state" / "audit.md"
+        with audit.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _digest_open_items(today: str) -> str:
+    """Return markdown section listing P0/P1 open items due today or overdue."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "open_items.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Split into item blocks on leading "- id:"
+    blocks = _re.split(r"\n(?=- id:)", text)
+    urgent = []
+    for block in blocks:
+        pri = _re.search(r"priority:\s*(P\d)", block)
+        dl = _re.search(r"deadline:\s*(\d{4}-\d{2}-\d{2})", block)
+        status = _re.search(r"status:\s*(\w+)", block)
+        desc = _re.search(r'description:\s*"?(.+?)"?\s*$', block, _re.MULTILINE)
+        if not (pri and dl and status):
+            continue
+        if status.group(1) != "open":
+            continue
+        if pri.group(1) in ("P0", "P1") and dl.group(1) <= today:
+            label = "🔴 OVERDUE" if dl.group(1) < today else "🟡 DUE TODAY"
+            summary = desc.group(1)[:120] if desc else "(no description)"
+            urgent.append(f"- **[{pri.group(1)}]** {label} ({dl.group(1)}): {summary}")
+    if not urgent:
+        return "## Open Items\n_No P0/P1 items due today or overdue._"
+    return "## Open Items\n" + "\n".join(urgent)
+
+
+def _digest_goals() -> str:
+    """Return markdown section showing active goal sprints."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "goals.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Find active goals with a sprint block
+    active = _re.findall(
+        r"- id: (G-\d+).*?title: ([^\n]+).*?status: active.*?(?:sprint:.*?status: active.*?(?:end_date: (\S+))?)?",
+        text, _re.DOTALL
+    )
+    if not active:
+        return "## Goals\n_No active sprints._"
+    lines = []
+    for gid, title, end in active[:5]:
+        end_str = f" (ends {end})" if end else ""
+        lines.append(f"- **{gid}** {title.strip()}{end_str}")
+    return "## Goals\n" + "\n".join(lines)
+
+
+def _digest_calendar() -> str:
+    """Return markdown section with next-48h events from state/calendar.md."""
+    path = _REPO_ROOT / "state" / "calendar.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    # Extract last_updated to check staleness
+    import re as _re
+    updated = _re.search(r"last_updated:\s*\"?(\d{4}-\d{2}-\d{2})", text)
+    if updated:
+        return f"## Calendar\n_Calendar state last updated {updated.group(1)} — run connector to refresh._"
+    return ""
+
+
+def _digest_health_summary() -> str:
+    """Return one-line health summary from state/health-check.md frontmatter."""
+    import re as _re
+    path = _REPO_ROOT / "state" / "health-check.md"
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    catchup = _re.search(r"catch_up_count:\s*(\d+)", text)
+    last = _re.search(r"last_catch_up:\s*\"?(\d{4}-\d{2}-\d{2})", text)
+    if catchup and last:
+        return f"## Health\n_Total catch-ups: {catchup.group(1)}. Last: {last.group(1)}._"
+    return ""
+
+
+def _run_digest_mode() -> int:
+    """Generate a scheduled digest brief from plaintext state. Always returns 0."""
+    import datetime as _dt
+    import shutil
+    import subprocess
+
+    today = _dt.date.today().isoformat()
+    now_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    digest_path = _REPO_ROOT / "briefings" / f"{today}-digest.md"
+
+    # Idempotency: one digest per day
+    if digest_path.exists():
+        _digest_append_audit(f"{today} | digest | status=skipped | reason=already_exists")
+        return 0
+
+    # Stale-lock eviction then exclusive-create lock
+    _DIGEST_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    if _DIGEST_LOCK.exists():
+        import time as _time
+        age = _time.time() - _DIGEST_LOCK.stat().st_mtime
+        if age > _DIGEST_STALE_SECS:
+            _DIGEST_LOCK.unlink(missing_ok=True)
+        else:
+            _digest_append_audit(f"{today} | digest | status=skipped | reason=lock_held")
+            return 0
+    try:
+        open(_DIGEST_LOCK, "x").close()  # atomic exclusive create
+    except FileExistsError:
+        _digest_append_audit(f"{today} | digest | status=skipped | reason=lock_contention")
+        return 0
+
+    try:
+        sections = [
+            s for s in [
+                _digest_open_items(today),
+                _digest_goals(),
+                _digest_calendar(),
+                _digest_health_summary(),
+            ] if s
+        ]
+        footer = (
+            "\n---\n_Vault-encrypted domains (finance, immigration, health, home) "
+            "not included — run `brief` for the full briefing._\n"
+        )
+        content = (
+            f"---\nbriefing_format: digest\ngenerated_at: {now_iso}\n---\n\n"
+            f"# Artha Digest — {today}\n\n"
+            + ("\n\n".join(sections) if sections else "_No items found._")
+            + footer
+        )
+        digest_path.write_text(content, encoding="utf-8")
+
+        # Desktop copy for visibility on wake
+        desktop = Path.home() / "Desktop" / f"Artha-Brief-{today}.md"
+        try:
+            shutil.copy2(digest_path, desktop)
+        except Exception:  # noqa: BLE001
+            pass
+
+        # macOS notification
+        try:
+            subprocess.run(
+                ["osascript", "-e", 'display notification "Morning brief ready" with title "Artha"'],
+                timeout=5, check=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        _digest_append_audit(
+            f"{today} | digest | status=ok | sections={len(sections)} | path={digest_path.name}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        _digest_append_audit(f"{today} | digest | status=error | error={exc!r:.200}")
+    finally:
+        _DIGEST_LOCK.unlink(missing_ok=True)
+
+    return 0  # launchd must not retry
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        with writer_fence(_REPO_ROOT):
+            return _main(argv)
+    except SessionBusy as exc:
+        print(f'REFUSED: {exc}', file=sys.stderr)
+        return 3
+
+
+def _main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    # F-D1: digest mode bypasses the full connector pipeline
+    if args.mode == "digest":
+        return _run_digest_mode()
+
+    _ingest_pending_briefs()
+
+    cfg = load_connectors_config()
+
+    if args.list_connectors:
+        list_connectors(cfg)
+        return 0
+
+    if args.health:
+        return run_health_checks(cfg, source_filter=args.sources, verbose=args.verbose)
+
+    output_path: Path | None = None
+    if args.output:
+        try:
+            output_path = _validate_output_path(args.output, _REPO_ROOT)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+
+    if args.force_wave0 and not args.justification:
+        print("ERROR: --force-wave0 requires --justification '<reason>'", file=sys.stderr)
+        return 2
+
+    return run_pipeline(
+        cfg,
+        since=args.since,
+        source_filter=args.sources,
+        dry_run=args.dry_run,
+        verbose=args.verbose,
+        output_path=output_path,
+        force_wave0_justification=args.justification if args.force_wave0 else None,
+        resume=args.resume,
+        exclude_sources=args.exclude_sources,
+    )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

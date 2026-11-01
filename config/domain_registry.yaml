@@ -1,0 +1,1439 @@
+# config/domain_registry.yaml — Artha Domain Registry
+# Version: 1.1 | Updated: 2026-04-07
+#
+# Single manifest for every domain: dependencies, sensitivity, loading rules,
+# auto-enable conditions, and household type applicability.
+#
+# Used by:
+#   - profile_loader.py: available_domains(), toggle_domain(), domain_registry()
+#   - generate_identity.py: prompt assembly (only enabled domains)
+#   - Artha.core.md §lazy loading: always_load field for Tier 1 context optimization
+#   - vault_guard.py: derives SENSITIVE_DOMAINS dynamically
+#   - domain_index.py: routing keyword Layer 1 match
+#
+# Ref: specs/enhance.md §2.2, §9.2; specs/prd-reloaded.md §4.2, §3.4
+#
+# ROUTING KEYWORD ORDERING CONVENTION (B1 — specs/prd-reloaded.md §4.2):
+#   routing_keywords lists MUST begin with multi-word phrases before single-word terms.
+#   Rationale: Layer 1 matching scans in order; multi-word phrases consume more signal
+#   and produce fewer false-positive single-domain matches. Single-word terms placed
+#   first cause premature matches before multi-word candidates are reached.
+#   domain_index.py emits WARNING if any domain's first keyword is a single-word term.
+#
+# DEPRECATED DOMAIN CONVENTIONS:
+#   Domains marked enabled: false with migrated_to: <target> are retained for backward
+#   compatibility with existing state files. Their state and prompt files remain readable.
+#   Do NOT delete deprecated entries — they preserve backward-compat routing fallbacks.
+
+schema_version: "1.0"
+
+domains:
+
+  # ── Always-load domains (finance, immigration, health, calendar, comms, goals) ──────
+  # These load on every catch-up regardless of email signal.
+  # Rationale: false-negative risk too high for deadlines and reminders.
+
+  immigration:
+    label: "Immigration & Visa"
+    description: "USCIS filings, visa status, passport, travel docs"
+    sensitivity: high
+    staleness_ttl_days: 90
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/immigration.md"
+    state_file: "state/immigration.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you have an active immigration case or visa?"
+    routing_keywords:
+      - USCIS
+      - I-765
+      - I-485
+      - I-140
+      - visa
+      - receipt notice
+      - EAD
+      - green card
+      - Form I-
+      - H-1B
+      - H-4
+      - PERM
+      - Fragomen
+      - priority date
+      - labor condition
+      - I-539
+      - I-131
+    alert_thresholds:
+      red: "Visa expires in <30 days, case denied"
+      orange: "Visa expires in <90 days, RFE received"
+      yellow: "Priority date advanced, new form available"
+      blue: "Receipt notice received, status update"
+
+  finance:
+    label: "Finance & Banking"
+    description: "Bills, bank accounts, credit cards, investments, taxes"
+    sensitivity: high
+    staleness_ttl_days: 30
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/finance.md"
+    state_file: "state/finance.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track bills and bank accounts?"
+    routing_keywords:
+      - bill
+      - statement
+      - payment due
+      - bank
+      - credit card
+      - invoice
+      - tax
+      - refund
+      - transfer
+      - subscription
+      # Gig & platform income routing (I-03: specs/improve.md)
+      - Stripe
+      - PayPal
+      - Venmo
+      - Upwork
+      - Fiverr
+      - Etsy
+      - "1099-K"
+      - "1099-NEC"
+      - payout
+      - "earnings summary"
+      - "direct deposit"
+      - DoorDash
+      - "Uber earnings"
+      - Discover
+      - FICO
+      - autopay
+      - balance
+      - JPMCB
+      - credit score
+      - charge
+      - loan
+      - mortgage payment
+    alert_thresholds:
+      red: "Bill 10+ days overdue, unusual charge >$500"
+      orange: "Bill due within 7 days, subscription price increase"
+      yellow: "Bill due within 14 days, statement available"
+      blue: "Payment confirmed, receipt"
+
+  health:
+    label: "Healthcare"
+    description: "Doctor appointments, prescriptions, insurance, lab results"
+    sensitivity: high
+    staleness_ttl_days: 90
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/health.md"
+    state_file: "state/health.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track medical appointments and prescriptions?"
+    routing_keywords:
+      - appointment
+      - prescription
+      - pharmacy
+      - lab results
+      - insurance
+      - EOB
+      - doctor
+      - clinic
+      - diagnosis
+      - medication
+      # Mental health / behavioral wellness (CONNECT §5.1)
+      - therapy
+      - therapist
+      - counseling
+      - counselor
+      - behavioral health
+      - psychiatry
+      - psychiatric
+      - EAP
+      - employee assistance program
+      - mental health
+      - BetterHelp
+      - Talkspace
+      - Spring Health
+      - Lyra
+    alert_thresholds:
+      red: "Prescription runs out in <7 days, missed appointment"
+      orange: "Appointment in <48 hours, prescription due for refill"
+      yellow: "Lab results available, appointment in <1 week"
+      blue: "Appointment confirmation, EOB received"
+
+  calendar:
+    label: "Calendar & Events"
+    description: "Appointments, reminders, events, schedules"
+    sensitivity: standard
+    staleness_ttl_days: 7
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/calendar.md"
+    state_file: "state/calendar.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [google_calendar]
+    optional_connectors: [outlook_calendar, icloud_calendar]
+    auto_enable_when: []
+    routing_keywords:
+      - calendar
+      - meeting
+      - event
+      - appointment
+      - reminder
+      - birthday
+      - holiday
+      - deadline
+      - due date
+      - Ramzan
+      - Diwali
+      - Eid
+      - Navami
+      - Navratri
+
+  comms:
+    label: "Communications"
+    description: "Important messages, follow-ups, pending conversations"
+    sensitivity: standard
+    staleness_ttl_days: 7
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/comms.md"
+    state_file: "state/comms.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [imessage, whatsapp_export]
+    auto_enable_when: []
+    routing_keywords:
+      - message
+      - email
+      - reply
+      - follow up
+      - RSVP
+      - Evite
+      - Nextdoor
+      - WhatsApp
+      - text
+      - conversation
+      - reach out
+
+  goals:
+    label: "Goals & Habits"
+    description: "Personal and family goals, habit tracking, progress"
+    sensitivity: standard
+    staleness_ttl_days: 30
+    always_load: true
+    phase: existing
+    prompt_file: "prompts/goals.md"
+    state_file: "state/goals.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - goal
+      - habit
+      - sprint
+      - milestone
+      - certification
+      - cert
+      - AI-102
+      - Mailbox Peak
+      - hike
+      - training
+      - stalled
+      - progress
+
+  # ── Standard lazy-loaded domains ──────────────────────────────────────────
+
+  home:
+    label: "Home & Housing"
+    description: "Mortgage/rent, maintenance, utilities, insurance"
+    sensitivity: standard
+    staleness_ttl_days: 180
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/home.md"
+    state_file: "state/home.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - mortgage
+      - rent
+      - lease
+      - HOA
+      - maintenance
+      - utility
+      - electric
+      - water
+      - repairs
+
+  employment:
+    label: "Employment & Work"
+    description: "Payroll, HR, benefits, performance reviews"
+    sensitivity: high      # DEBT-006: salary, RSU, comp data = high PII; vault-protected
+    staleness_ttl_days: 90
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/employment.md"
+    state_file: "state/employment.md.age"
+    requires_vault: true   # DEBT-006: encrypted at rest like immigration/finance
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  kids:
+    label: "Kids & School"
+    description: "School events, homework, grades, activities"
+    sensitivity: high      # DEBT-034: child data = high PII; vault-protected
+    staleness_ttl_days: 30
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/kids.md"
+    state_file: "state/kids.md.age"
+    requires_vault: true   # DEBT-034: encrypted at rest
+    enabled_by_default: false
+    household_types: [family, multi_gen]
+    requires_connectors: []
+    optional_connectors: [canvas_lms]
+    auto_enable_when:
+      - condition: "family.children is non-empty"
+        field: "family.children"
+        operator: "non_empty"
+    routing_keywords:
+      - school
+      - homework
+      - grade
+      - canvas
+      - teacher
+      - PTA
+      - field trip
+      - report card
+      - assignment
+      - academic
+      - sports registration
+      - missing assignment
+      - quiz
+      - Aavya
+      - Aarav
+      - semester
+
+  travel:
+    label: "Travel"
+    description: "Flights, hotels, itineraries, passport"
+    sensitivity: standard
+    staleness_ttl_days: 30
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/travel.md"
+    state_file: "state/travel.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - flight
+      - hotel
+      - booking
+      - itinerary
+      - airline
+      - reservation
+      - travel insurance
+
+  learning:
+    label: "Learning"
+    description: "Online courses, certifications, skills development"
+    sensitivity: standard
+    staleness_ttl_days: 90
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/learning.md"
+    state_file: "state/learning.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  shopping:
+    label: "Shopping"
+    description: "Online orders, returns, price tracking"
+    sensitivity: standard
+    staleness_ttl_days: 30
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/shopping.md"
+    state_file: "state/shopping.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - order
+      - Amazon
+      - delivered
+      - shipping
+      - return
+      - subscribe
+      - S&S
+      - Subscribe & Save
+      - tracking
+      - purchase
+      - Costco
+      - Walmart
+
+  social:
+    label: "Social & Relationships"
+    description: "Events, birthdays, relationship maintenance"
+    sensitivity: standard
+    staleness_ttl_days: 90
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/social.md"
+    state_file: "state/social.md"
+    requires_vault: false
+    enabled_by_default: false
+    enabled: false
+    migrated_to: tribe
+    # Deprecated: relationship decay scoring and outreach drafts now owned by `tribe` domain (EAR-3).
+    # State file state/social.md retained as TribeAgent write target for backward compatibility.
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  digital:
+    label: "Digital & Subscriptions"
+    description: "App subscriptions, digital services, domain names"
+    sensitivity: standard
+    staleness_ttl_days: 180
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/digital.md"
+    state_file: "state/digital.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  insurance:
+    label: "Insurance"
+    description: "Health, auto, home/renter, life insurance policies"
+    sensitivity: high
+    staleness_ttl_days: 90
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/insurance.md"
+    state_file: "state/insurance.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - insurance
+      - policy
+      - premium
+      - claim
+      - deductible
+      - Allstate
+      - coverage
+      - quote
+      - renew
+      - beneficiary
+
+  estate:
+    label: "Estate & Legal"
+    description: "Will, trusts, POA, beneficiaries"
+    sensitivity: high
+    staleness_ttl_days: 365
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/estate.md"
+    state_file: "state/estate.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, multi_gen]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  vehicle:
+    label: "Vehicle"
+    description: "Car registration, maintenance, insurance"
+    sensitivity: high
+    staleness_ttl_days: 90
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/vehicle.md"
+    state_file: "state/vehicle.md.age"
+    requires_vault: true
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - car
+      - vehicle
+      - EV6
+      - Kia
+      - Mazda
+      - CX-50
+      - registration
+      - VIN
+      - charging
+      - ChargePoint
+      - oil change
+      - tire
+      - DMV
+
+  boundary:
+    label: "Boundaries & Digital Wellness"
+    description: "Screen time, balance, personal boundaries"
+    sensitivity: standard
+    staleness_ttl_days: 30
+    always_load: false
+    phase: existing
+    prompt_file: "prompts/boundary.md"
+    state_file: "state/boundary.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  decisions:
+    label: "Decisions & Scenarios"
+    description: "Active decision log, scenario analysis"
+    sensitivity: standard
+    staleness_ttl_days: 30
+    always_load: false
+    phase: existing
+    prompt_file: null
+    state_file: "state/decisions.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+
+  # ── Phase 1b new domains ──────────────────────────────────────────────────
+
+  pets:
+    label: "Pets & Animal Care"
+    description: "Pet health, vaccinations, medications, vet appointments"
+    sensitivity: standard
+    staleness_ttl_days: 90
+    always_load: false
+    phase: phase_1b
+    prompt_file: "prompts/pets.md"
+    state_file: "state/pets.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "domains.pets.animals is non-empty"
+        field: "domains.pets.animals"
+        operator: "non_empty"
+    routing_keywords:
+      - vaccination
+      - rabies
+      - flea
+      - heartworm
+      - pet insurance
+      - grooming
+      - boarding
+      - vet appointment
+    alert_thresholds:
+      red: "Vaccination overdue"
+      orange: "Vaccination due within 30 days, medication refill due"
+      yellow: "Annual wellness check due, license renewal within 60 days"
+      blue: "Grooming/boarding confirmations"
+
+  # ── Phase 2 new domains ───────────────────────────────────────────────────
+
+  caregiving:
+    label: "Caregiving & Elder Care"
+    description: "Care recipient health, facility communications, coordination"
+    sensitivity: high
+    staleness_ttl_days: 30
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/caregiving.md"
+    state_file: "state/caregiving.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, multi_gen]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "family.care_recipients is non-empty"
+        field: "family.care_recipients"
+        operator: "non_empty"
+    routing_keywords:
+      - caregiver
+      - caregiving
+      - elder care
+      - aging parent
+      - assisted living
+      - nursing home
+      - skilled nursing
+      - home health
+      - Medicare
+      - Medicaid
+      - adult day care
+      - hospice
+      - respite care
+      - power of attorney elder
+      - guardianship
+      - memory care
+      - dementia
+      - Alzheimer
+    alert_thresholds:
+      red: "Medication missed >48h, emergency contact needed"
+      orange: "Appointment tomorrow, medication refill <7 days, POA renewal due"
+      yellow: "Communication gap >5 days, annual care plan review"
+      blue: "Care plan update received, new facility communication"
+
+  business:
+    label: "Side Business / Freelance"
+    description: "Invoices, clients, quarterly taxes, expenses"
+    sensitivity: high
+    staleness_ttl_days: 30
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/business.md"
+    state_file: "state/business.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when:
+      - condition: "domains.business.entity_name is set"
+        field: "domains.business.entity_name"
+        operator: "truthy"
+    routing_keywords:
+      - invoice
+      - payout
+      - earnings
+      - 1099
+      - contractor
+      - freelance
+      - client payment
+      - Stripe
+      - PayPal
+      - Square
+      - Shopify
+      - Etsy
+      - Upwork
+      - Fiverr
+      - QuickBooks
+      - FreshBooks
+      - quarterly estimated tax
+      - self-employed
+    alert_thresholds:
+      red: "1099-K threshold crossed, quarterly tax due in <3 days"
+      orange: "Invoice unpaid >30 days, quarterly estimated tax due <14 days"
+      yellow: "New client payment received, platform payout processed"
+      blue: "Monthly revenue summary available"
+
+  wellness:
+    label: "Fitness & Wellness"
+    description: "Activity, sleep, nutrition, wearable data"
+    sensitivity: standard
+    staleness_ttl_days: 14
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/wellness.md"
+    state_file: "state/wellness.md"
+    requires_vault: false
+    enabled_by_default: false
+    enabled: false
+    migrated_to: health
+    # Deprecated: biometric readiness signals now owned by `readiness` domain (EAR-3).
+    # General health/wellness goals owned by `health` domain.
+    # State file state/wellness.md retained for backward compatibility.
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health, strava, garmin]
+    auto_enable_when: []
+    routing_keywords:
+      - fitness
+      - workout
+      - exercise
+      - gym
+      - yoga
+      - steps
+      - calories
+      - sleep
+      - nutrition
+      - weight
+      - BMI
+      - Peloton
+      - ClassPass
+      - Strava
+      - Garmin
+      - Fitbit
+    alert_thresholds:
+      orange: "Exercise goal behind by >2 sessions this week"
+      yellow: "No activity logged in 3+ days, gym membership renewal"
+      blue: "New personal record, streak milestone"
+
+  community:
+    label: "Community & Volunteering"
+    description: "Donations, volunteer hours, community organizations"
+    sensitivity: standard
+    staleness_ttl_days: 180
+    always_load: false
+    phase: phase_2
+    prompt_file: "prompts/community.md"
+    state_file: "state/community.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    routing_keywords:
+      - volunteer
+      - donation
+      - contribution
+      - tax receipt
+      - community service
+      - PTA
+      - temple
+      - church
+      - mosque
+      - synagogue
+      - gurdwara
+      - GoFundMe
+      - donorbox
+      - charitable
+      - nonprofit
+    alert_thresholds:
+      orange: "Membership renewal due <30 days, volunteer commitment tomorrow"
+      yellow: "Donation receipt received (log for tax), community event this week"
+      blue: "Annual giving summary available, volunteer hours milestone"
+
+  # ── Work Domains (opt-in, disabled by default) ─────────────────────────────
+  # Requires: WorkIQ (M365 calendar/email/Teams/people) and/or Azure CLI (ADO)
+  # Enable via: /bootstrap work
+  # These domains have ZERO impact on personal-only users.
+  # All state files (state/work-*.md) are gitignored — never committed to GitHub.
+
+  work-calendar:
+    label: "Work Calendar"
+    description: "Corporate calendar events, meetings, Teams calls, scheduling conflicts"
+    sensitivity: standard
+    always_load: false          # On-signal only (Mon-Fri when workiq enabled)
+    phase: phase_work
+    prompt_file: "prompts/work-calendar.md"
+    state_file: "state/work/work-calendar.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: [outlookctl_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want to track your work calendar in Artha?"
+    routing_keywords:
+      - standup
+      - sprint planning
+      - sprint review
+      - retrospective
+      - "1:1"
+      - one-on-one
+      - team sync
+      - all-hands
+      - office hours
+      - design review
+      - code review
+    alert_thresholds:
+      red: "Meeting starts in <15 minutes with unreviewed prep material"
+      orange: "Double-booked slot today, meeting with skip-level or VP+"
+      yellow: "3+ hours of back-to-back meetings, no lunch break"
+      blue: "Meeting cancelled, new recurring meeting added"
+    command_namespace: work
+
+  work-comms:
+    label: "Work Communications"
+    description: "Work email triage, Teams messages needing response"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-comms.md"
+    state_file: "state/work/work-comms.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to surface work emails and Teams messages that need your response?"
+    routing_keywords:
+      - action required
+      - please review
+      - needs your input
+      - feedback requested
+      - approval needed
+      - sign-off
+      - blocking on you
+    alert_thresholds:
+      red: "VP+ email awaiting response >24h, escalation from manager"
+      orange: "Manager email unanswered >12h, cross-team request >24h"
+      yellow: "5+ unacknowledged threads, Teams DM with action request"
+      blue: "FYI-only threads, automated notifications filtered"
+    command_namespace: work
+
+  work-projects:
+    label: "Work Projects"
+    description: "Azure DevOps work items, sprint status, blockers"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-projects.md"
+    state_file: "state/work/work-projects.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [ado_workitems]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.azure_devops.enabled is true"
+        field: "integrations.azure_devops.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you use Azure DevOps for work item tracking?"
+      - "What is your ADO organization URL? (e.g. https://dev.azure.com/myorg)"
+      - "What is your primary ADO project name?"
+    routing_keywords:
+      - work item
+      - bug
+      - user story
+      - task
+      - sprint
+      - iteration
+      - pull request
+      - PR review
+      - deployment
+      - release
+      - pipeline
+      - blocked
+    alert_thresholds:
+      red: "Work item past target date, P0/P1 bug assigned, blocked item >48h"
+      orange: "Sprint ends in <3 days with active items, new P2 bug"
+      yellow: "Work item state changed, new items assigned to me"
+      blue: "Item completed, PR merged, sprint started"
+    command_namespace: work
+  work-people:
+    label: "Work People"
+    description: "Meeting prep context: org chart, roles, collaboration history"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-people.md"
+    state_file: "state/work/work-people.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: [microsoft_graph]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want meeting prep context (role, team, history) for people you meet?"
+    routing_keywords: []
+    alert_thresholds:
+      red: "Meeting with skip-level in <2h, no context available"
+      orange: "First meeting with someone new today — no prior interaction on record"
+      yellow: "Org change detected (manager change, team restructure)"
+      blue: "Collaboration summary updated for recurring 1:1"
+    command_namespace: work
+
+  work-notes:
+    label: "Work Notes"
+    description: "Recently edited documents, Loop pages, and shared artifacts"
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-notes.md"
+    state_file: "state/work/work-notes.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: [workiq_bridge]
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want a weekly digest of documents and pages you have been editing?"
+    routing_keywords:
+      - recent docs
+      - documents
+      - loop
+      - sharepoint
+      - onenote
+      - working on
+      - shared doc
+    alert_thresholds:
+      red: ""
+      orange: "Shared document modified by collaborator awaiting your review"
+      yellow: "Document you own was edited by someone else in last 24h"
+      blue: "Weekly digest of document activity"
+    command_namespace: work
+
+  work-boundary:
+    label: "Work Boundary"
+    description: "After-hours creep detection, focus erosion tracking, meeting overload, work-life balance scoring"
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-boundary.md"
+    state_file: "state/work/work-boundary.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to track your work-life boundary health?"
+    routing_keywords:
+      - after hours
+      - overtime
+      - work-life balance
+      - burnout
+      - focus time
+      - meeting overload
+    alert_thresholds:
+      red: "After-hours work 3+ consecutive weeks increasing, boundary score <0.3"
+      orange: "Meeting load >6h/day for 3+ days this week, no focus blocks"
+      yellow: "After-hours email or Teams activity detected"
+      blue: "Weekly boundary score update"
+    command_namespace: work
+
+  work-career:
+    label: "Work Career Evidence"
+    description: "Continuous evidence capture for review cycles, accomplishment memory, impact tracking. Cross-references work-accomplishments.md ledger for exhaustive chronological evidence."
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-career.md"
+    state_file: "state/work/work-career.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge, ado_workitems]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to capture career evidence from your work activity?"
+    routing_keywords:
+      - accomplishment
+      - shipped
+      - impact
+      - review
+      - promo
+      - evidence
+      - recognition
+    alert_thresholds:
+      red: ""
+      orange: "Review cycle deadline in <2 weeks, evidence gaps detected"
+      yellow: "New career evidence captured from meeting or project completion"
+      blue: "Monthly evidence summary available"
+    command_namespace: work
+
+  work-performance:
+    label: "Work Performance & Connect OS"
+    description: "Connect goals, manager 1:1 pivot tracking, commitment ledger, stakeholder influence map, narrative assembly. Consumes work-accomplishments.md ledger for Connect evidence assembly."
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-performance.md"
+    state_file: "state/work/work-performance.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge, ado_workitems]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to track your Connect goals and manager operating rhythm?"
+      - "What is your current review cycle? (H1/H2, annual, quarterly)"
+    routing_keywords:
+      - connect
+      - goals
+      - 1:1
+      - manager
+      - calibration
+      - rewards
+      - performance
+    alert_thresholds:
+      red: "Connect submission deadline in <1 week with evidence gaps"
+      orange: "Manager 1:1 approaching with unresolved commitments"
+      yellow: "New evidence auto-captured for Connect goal"
+      blue: "Weekly Connect goal progress summary"
+    command_namespace: work
+
+  work-sources:
+    label: "Work Data Sources"
+    description: "Curated registry of dashboard links, Kusto queries, Power BI reports, and data portals"
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: "prompts/work-sources.md"
+    state_file: "state/work/work-sources.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "Do you want Artha to index and search your frequently used dashboards and data sources?"
+    routing_keywords:
+      - dashboard
+      - kusto
+      - power bi
+      - data source
+      - portal
+      - report
+    alert_thresholds:
+      red: ""
+      orange: ""
+      yellow: "New data source auto-captured from meeting or email"
+      blue: "Data source registry updated"
+    command_namespace: work
+
+  work-project-journeys:
+    label: "Work Project Journeys"
+    description: "Long-running program timelines with milestone evidence, scope arcs, and ADO/IcM/doc provenance. Canonical source for /work promo-case and Connect narrative."
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-project-journeys.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    routing_keywords:
+      - journey
+      - project timeline
+      - milestone
+      - scope arc
+      - promo case
+    alert_thresholds:
+      red: ""
+      orange: ""
+      yellow: "New milestone evidence appended to project journey"
+      blue: "Project journey updated"
+    command_namespace: work
+
+  work-org-calendar:
+    label: "Work Org Calendar"
+    description: "Org-level milestone dates — Connect deadlines, rewards season, fiscal year close, headcount planning, promo nomination windows. 30-day lookahead alerts surfaced in /work briefing."
+    sensitivity: standard
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-org-calendar.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    routing_keywords:
+      - connect deadline
+      - rewards season
+      - fiscal year
+      - headcount
+      - promo nomination
+      - org calendar
+    alert_thresholds:
+      red: "Org milestone within 7 days"
+      orange: "Org milestone within 14 days"
+      yellow: "Org milestone within 30 days"
+      blue: "Org calendar updated"
+    command_namespace: work
+
+  work-products:
+    label: "Work Product Knowledge"
+    description: "Durable product/technology knowledge base — architecture, components, dependencies, team ownership. Survives project completion. Index + per-product deep files."
+    sensitivity: standard
+    always_load: false           # Trigger-loaded: only when meeting/query references a product
+    phase: phase_work
+    prompt_file: "prompts/work-products.md"
+    state_file: "state/work/work-products.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [workiq_bridge]
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions:
+      - "What products does your team own or contribute to? (one per line)"
+      - "What is the primary architecture layer? (data plane, control plane, offering, platform)"
+    routing_keywords:
+      - product
+      - architecture
+      - data plane
+      - control plane
+      - offering
+      - platform
+      - component
+      - dependency
+      - tech stack
+      - service
+      - system design
+    alert_thresholds:
+      red: ""
+      orange: "Product architecture change detected in meeting notes or design review"
+      yellow: "New product dependency discovered from cross-team interaction"
+      blue: "Product knowledge updated from meeting context"
+    command_namespace: work
+
+  work-incidents:
+    label: "Work Incidents"
+    description: "IcM incident tracking — active incidents, severity trends, MTTR, recurring monitors. Data from Kusto golden queries GQ-050–GQ-057 via icmcluster.kusto.windows.net."
+    sensitivity: elevated
+    always_load: false
+    phase: phase_work
+    prompt_file: null
+    state_file: "state/work/work-incidents.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - condition: "integrations.workiq.enabled is true"
+        field: "integrations.workiq.enabled"
+        operator: "truthy"
+    setup_questions: []
+    routing_keywords:
+      - incident
+      - IcM
+      - sev 0
+      - sev 1
+      - sev 2
+      - outage
+      - livesite
+      - on-call
+      - MTTR
+      - repair
+    alert_thresholds:
+      red: "New Sev 0/1 incident on ProgramX fleet"
+      orange: "Active Sev 2 incident age >7 days; MTTR regression"
+      yellow: "New incident created on ProgramX-related tenant"
+      blue: "Weekly incident summary updated"
+    command_namespace: work
+
+  # ── ACT-Reloaded domains (E2, E13) ──────────────────────────────────────
+  inbox:
+    label: "Inbox / Knowledge Capture"
+    description: "Quick-capture notes, reminders, and fleeting ideas added via /remember"
+    sensitivity: standard
+    always_load: false
+    phase: core
+    prompt_file: null
+    state_file: "state/inbox.md"
+    requires_vault: false
+    enabled_by_default: true
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to capture quick notes and reminders via /remember?"
+    routing_keywords:
+      - remember
+      - note
+      - inbox
+      - capture
+      - jot down
+    alert_thresholds:
+      red: ""
+      orange: "More than 20 unreviewed inbox items"
+      yellow: "Inbox items older than 7 days not triaged"
+      blue: "New inbox items captured"
+
+  relationships:
+    label: "Relationships"
+    description: "Relationship health tracker — contact cadence, stale connections, nurturing"
+    sensitivity: elevated
+    always_load: false
+    phase: core
+    prompt_file: "prompts/social.md"
+    state_file: "state/relationships.md"
+    requires_vault: false
+    enabled_by_default: true
+    enabled: false
+    migrated_to: tribe
+    # Deprecated: relationship decay scoring now owned by `tribe` domain (EAR-3).
+    # State file state/relationships.md retained for backward compatibility.
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want to track relationship health and get nudges for overdue contact?"
+    routing_keywords:
+      - relationships
+      - relationship pulse
+      - contacts
+      - reach out
+      - stale contact
+      - friend
+      - family contact
+    alert_thresholds:
+      red: "Core relationship stale > 30 days"
+      orange: "3+ relationships past their cadence threshold"
+      yellow: "Relationship approaching stale threshold"
+      blue: "Relationship pulse updated"
+
+  # ── EAR-3 Pre-computed Domain Agents (specs/prd-reloaded.md §3) ─────────────
+  # Keywords ordered: multi-word phrases FIRST, then single-word terms (B1 convention).
+
+  readiness:
+    label: "Biological Readiness"
+    description: "Cognitive readiness index from biometric pre-computation; calendar restructuring proposals"
+    sensitivity: medium
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/readiness.md"
+    state_file: "state/readiness.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [apple_health]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to pre-compute a daily readiness score from Apple Health data?"
+    routing_keywords:
+      - calendar reschedule
+      - deep work
+      - hrv
+      - sleep
+      - recovery
+      - energy
+      - readiness
+      - biometric
+      - focus
+      - fatigue
+    alert_thresholds:
+      orange: "Readiness score below threshold for 2+ consecutive days"
+      yellow: "Single low-HRV or sleep event (monitoring only — no proposal)"
+      blue: "Daily readiness score updated"
+
+  logistics:
+    label: "Logistics & Asset Lifecycle"
+    description: "Appliance warranties, subscription renewals, receipt tracking, procurement shopping list"
+    sensitivity: low
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/logistics.md"
+    state_file: "state/logistics.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to track appliance warranties and subscription renewals?"
+    routing_keywords:
+      - insurance quote
+      - subscription cancel
+      - warranty
+      - appliance
+      - receipt
+      - filter
+      - renewal
+      - procurement
+      - household
+    alert_thresholds:
+      red: "Warranty expired with no renewal action"
+      orange: "Warranty or subscription expires within 30 days"
+      yellow: "Renewal window opening in 60 days"
+      blue: "Logistics state rebuilt"
+
+  tribe:
+    label: "Tribe & Relationships"
+    description: "Relationship decay scoring, reconnect rankings, outreach draft staging"
+    sensitivity: medium
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/tribe.md"
+    state_file: "state/social.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [whatsapp_export]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to track relationship decay and stage reconnect drafts?"
+    routing_keywords:
+      - haven't spoken
+      - catch up with
+      - follow up
+      - relationship
+      - reconnect
+      - contact
+      - network
+      - outreach
+      - CRM
+    alert_thresholds:
+      orange: "3+ contacts past their decay threshold"
+      yellow: "Reconnect opportunity identified"
+      blue: "Tribe decay scores updated"
+
+  career_search:
+    label: "Career Search Intelligence"
+    description: "Structured job evaluation, ATS-optimized CV generation, application pipeline tracking — active during campaign only"
+    sensitivity: high
+    staleness_ttl_days: 7
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/career_search.md"
+    state_file: "state/career_search.md.age"
+    requires_vault: true
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: []
+    auto_enable_when:
+      - goal_category: career
+        goal_status: active
+    setup_questions:
+      - "Are you actively searching for a new job?"
+    routing_keywords:
+      - job opportunity
+      - career search
+      - interview scheduled
+      - offer received
+      - job opening
+      - new role
+      - career eval
+      - apply for
+      - JD
+      - job description
+      - Greenhouse
+      - Lever
+      - Ashby
+      - careers page
+    alert_thresholds:
+      red: "Interview within 24h, offer received, offer deadline within 48h"
+      orange: "Interview within 48h, application deadline approaching"
+      yellow: "New portal matches, velocity below target"
+      blue: "Evaluation complete, PDF generated"
+
+  capital:
+    label: "Capital & Treasury"
+    description: "90-day cash-flow projection, liquidity alerts, sweep proposals with amount-confirm gate"
+    sensitivity: high
+    staleness_ttl_days: 1
+    always_load: false
+    phase: ear3
+    prompt_file: "prompts/capital.md"
+    state_file: "state/finance_forecast.md"
+    requires_vault: false
+    enabled_by_default: false
+    household_types: [family, couple, single, multi_gen, roommates]
+    requires_connectors: []
+    optional_connectors: [plaid]
+    auto_enable_when: []
+    setup_questions:
+      - "Do you want Artha to run 90-day cash-flow projections and flag liquidity events?"
+    routing_keywords:
+      - cash flow
+      - property tax
+      - liquidity
+      - forecast
+      - treasury
+      - sweep
+      - vanguard
+      - investment
+      - budget predict
+    alert_thresholds:
+      red: "Projected negative balance within 14 days"
+      orange: "Liquidity buffer below threshold within 30 days"
+      yellow: "Large scheduled outflow approaching"
+      blue: "90-day projection updated"

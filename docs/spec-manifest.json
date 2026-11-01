@@ -1,0 +1,942 @@
+{
+  "acceptance": {
+    "RA-01.AC1": {
+      "capability": "RA-01",
+      "modules": [
+        "scripts/catchup_core/coordinator.py",
+        "scripts/catchup_core/adapters.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_coordinator.py",
+        "tests/catchup_core/test_adapters.py",
+        "tests/catchup_core/test_recovery_failures.py"
+      ]
+    },
+    "RA-02.AC1": {
+      "capability": "RA-02",
+      "modules": [
+        "scripts/catchup_core/reconcile.py",
+        "scripts/catchup_core/extract.py",
+        "scripts/catchup_core/ledger.py",
+        "scripts/catchup_core/schema_history.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_fact_reconcile.py",
+        "tests/catchup_core/test_extract.py",
+        "tests/catchup_core/test_ledger.py",
+        "tests/catchup_core/test_schema_history.py"
+      ]
+    },
+    "RA-03.AC1": {
+      "capability": "RA-03",
+      "modules": [
+        "scripts/catchup_core/triage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_triage.py"
+      ]
+    },
+    "RA-04.AC1": {
+      "capability": "RA-04",
+      "modules": [
+        "scripts/catchup_core/compose.py",
+        "scripts/catchup_core/views.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_compose.py",
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-05.AC1": {
+      "capability": "RA-05",
+      "modules": [
+        "scripts/catchup_core/actions.py",
+        "scripts/catchup_core/action_mapping.py",
+        "scripts/action_queue.py",
+        "scripts/action_executor.py",
+        "scripts/action_orchestrator.py",
+        "scripts/actions/calendar_modify.py",
+        "scripts/actions/todo_sync_action.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/catchup_core/test_actions.py",
+        "tests/catchup_core/test_action_evidence_preconditions.py",
+        "tests/catchup_core/test_action_mapping.py",
+        "tests/unit/test_action_hardening.py",
+        "tests/unit/test_reminder_reconcile.py",
+        "tests/unit/test_action_queue_durability.py",
+        "tests/unit/test_action_quarantine.py",
+        "tests/unit/test_calendar_action_versions.py"
+      ]
+    },
+    "RA-06.AC1": {
+      "capability": "RA-06",
+      "modules": [
+        "scripts/lib/memory_policy.py",
+        "scripts/catchup_core/commands.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/unit/test_memory_policy.py",
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-07.AC1": {
+      "capability": "RA-07",
+      "modules": [
+        "scripts/catchup_core/exchange.py",
+        "scripts/catchup_core/extractor_cmd.py",
+        "scripts/catchup_core/resources.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_exchange.py",
+        "tests/catchup_core/test_extractor_cmd.py",
+        "tests/catchup_core/test_resource_usage.py",
+        "tests/catchup_core/test_resource_runtime.py",
+        "tests/catchup_core/test_resource_lifecycle_controls.py"
+      ]
+    },
+    "RA-08.AC1": {
+      "capability": "RA-08",
+      "modules": [
+        "scripts/catchup_core/adapters.py",
+        "scripts/catchup_core/bundles.py",
+        "scripts/schemas/connector_record.py",
+        "scripts/connectors/google_calendar.py",
+        "scripts/connectors/msgraph_calendar.py",
+        "scripts/connectors/caldav_calendar.py",
+        "scripts/connectors/apple_reminders.py",
+        "scripts/connectors/google_email.py",
+        "scripts/connectors/msgraph_email.py",
+        "scripts/connectors/imap_email.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_adapters.py",
+        "tests/catchup_core/test_bundles.py",
+        "tests/unit/test_google_calendar_coverage.py",
+        "tests/unit/test_calendar_handlers_coverage.py",
+        "tests/unit/test_apple_reminders.py",
+        "tests/catchup_core/test_provider_cursor_chains.py",
+        "tests/catchup_core/test_provider_observation_lifecycle.py"
+      ]
+    },
+    "RA-09.AC1": {
+      "capability": "RA-09",
+      "modules": [
+        "scripts/catchup_core/policy.py",
+        "scripts/catchup_core/mcp.py",
+        "scripts/catchup_core/work_cache.py",
+        "scripts/catchup_core/work_privacy.py",
+        "scripts/lib/work_publication.py",
+        "scripts/tool_guard.py",
+        "scripts/lib/credentials.py",
+        "scripts/connectors/workiq_bridge.py",
+        "scripts/lib/local_paths.py",
+        "scripts/lib/workiq_health.py",
+        "scripts/post_work_refresh.py",
+        "scripts/backfill/backfill_runner.py",
+        "scripts/narrative/__init__.py",
+        "scripts/preflight/integration_checks.py",
+        "scripts/preflight/_types.py",
+        "scripts/preflight.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/unit/test_tool_guard.py",
+        "tests/catchup_core/test_release_regressions.py",
+        "tests/catchup_core/test_mcp.py",
+        "tests/unit/test_credentials_providers.py",
+        "tests/catchup_core/test_work_cache.py",
+        "tests/catchup_core/test_work_privacy.py",
+        "tests/unit/test_work_publication.py",
+        "tests/unit/test_work_cache_integration.py"
+      ]
+    },
+    "RA-10.AC1": {
+      "capability": "RA-10",
+      "modules": [
+        "scripts/catchup_core/capabilities.py",
+        "scripts/catchup_core/metrics.py",
+        "scripts/catchup_core/corpus.py",
+        "scripts/catchup_core/corpus_cli.py",
+        "scripts/catchup_core/ledger.py",
+        "scripts/catchup_core/coordinator.py",
+        "scripts/catchup_core/commands.py",
+        "tools/gen_capability_register.py",
+        "tools/benchmark_core.py",
+        "tools/run_tests_isolated.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/dev/test_capability_register.py",
+        "tests/catchup_core/test_metrics.py",
+        "tests/catchup_core/test_benchmark.py",
+        "tests/catchup_core/test_corpus.py",
+        "tests/catchup_core/test_corpus_boundaries.py",
+        "tests/catchup_core/test_corpus_provenance.py",
+        "tests/catchup_core/test_release_acceptance_v4.py",
+        "tests/dev/test_isolated_runner.py",
+        "tests/dev/test_private_work_verification.py"
+      ]
+    },
+    "RA-11.AC1": {
+      "capability": "RA-11",
+      "modules": [
+        "scripts/catchup_core/goals.py",
+        "scripts/catchup_core/goal_metrics.py",
+        "scripts/catchup_core/packs/goals.yaml",
+        "scripts/goals_writer.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_goals_scorecard_cli.py",
+        "tests/catchup_core/test_goal_metrics.py",
+        "tests/catchup_core/test_weekly_goals.py",
+        "tests/catchup_core/test_goals_product.py",
+        "tests/catchup_core/test_wiring.py",
+        "tests/catchup_core/test_goal_leading_indicators.py",
+        "tests/unit/test_goals_writer.py"
+      ]
+    },
+    "RA-12.AC1": {
+      "capability": "RA-12",
+      "modules": [
+        "scripts/catchup_core/household.py",
+        "scripts/catchup_core/policy.py",
+        "scripts/catchup_core/curated.py",
+        "scripts/catchup_core/runtime.py",
+        "scripts/catchup_core/legacy_state.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_household.py",
+        "tests/catchup_core/test_release_regressions.py",
+        "tests/catchup_core/test_curated_permissions.py"
+      ]
+    },
+    "RA-13.AC1": {
+      "capability": "RA-13",
+      "modules": [
+        "scripts/catchup_core/triage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_kids_school_scenarios.py"
+      ]
+    },
+    "RA-14.AC1": {
+      "capability": "RA-14",
+      "modules": [
+        "scripts/catchup_core/domain_pack.py",
+        "scripts/catchup_core/packs/kids_school.yaml",
+        "scripts/catchup_core/packs/vehicle.yaml"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_domain_pack.py",
+        "tests/catchup_core/test_composite_pack.py",
+        "tests/catchup_core/test_domain_pack_contracts.py",
+        "tests/catchup_core/test_domain_pack_additional.py"
+      ]
+    },
+    "RA-15.AC1": {
+      "capability": "RA-15",
+      "modules": [
+        "scripts/catchup_core/commands.py",
+        "scripts/catchup_core/views.py",
+        "scripts/catchup_core/user_config.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py",
+        "tests/catchup_core/test_integrated_surfaces.py",
+        "tests/catchup_core/test_user_config_sources.py"
+      ]
+    },
+    "RA-16.AC1": {
+      "capability": "RA-16",
+      "modules": [
+        "scripts/catchup_core/coordinator.py",
+        "scripts/lib/connector_coverage.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_recovery_failures.py",
+        "tests/unit/test_stale_banner.py",
+        "tests/unit/test_connector_coverage.py"
+      ]
+    },
+    "RA-17.AC1": {
+      "capability": "RA-17",
+      "modules": [
+        "scripts/catchup_core/triage.py",
+        "scripts/stale_banner.py",
+        "scripts/session_stop.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_triage.py",
+        "tests/unit/test_stale_banner.py",
+        "tests/unit/test_session_stop.py"
+      ]
+    },
+    "RA-18.AC1": {
+      "capability": "RA-18",
+      "modules": [
+        "scripts/catchup_core/rule_of_two.py",
+        "scripts/catchup_core/crypto.py",
+        "scripts/tool_guard.py",
+        "scripts/lib/credentials.py",
+        "scripts/lib/credential_migration.py",
+        "scripts/migrate_credentials.py",
+        "scripts/google_auth.py",
+        "scripts/setup_msgraph_oauth.py",
+        "scripts/preflight/oauth_checks.py",
+        "scripts/lib/auth.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_rule_of_two.py",
+        "tests/catchup_core/test_crypto.py",
+        "tests/unit/test_tool_guard.py",
+        "tests/unit/test_credentials.py",
+        "tests/unit/test_credential_migration.py",
+        "tests/unit/test_hook_portability.py"
+      ]
+    },
+    "RA-19.AC1": {
+      "capability": "RA-19",
+      "modules": [
+        "scripts/catchup_core/coordination.py"
+      ],
+      "scope": "later",
+      "tests": [
+        "tests/catchup_core/test_coordination.py"
+      ]
+    },
+    "RA-20.AC1": {
+      "capability": "RA-20",
+      "modules": [
+        "scripts/catchup_core/backup.py",
+        "scripts/catchup_core/privacy_history.py",
+        "scripts/catchup_core/ledger.py",
+        "scripts/catchup_core/checkpoint.py",
+        "scripts/catchup_core/checkpoint_cli.py",
+        "scripts/catchup_core/session_lock.py",
+        "scripts/catchup_core/recovery_registry.py",
+        "scripts/catchup_core/authority_transfer.py",
+        "scripts/catchup_core/interchange.py",
+        "scripts/catchup_core/recovery_quarantine.py",
+        "scripts/catchup_core/quarantine_review.py",
+        "scripts/catchup_core/recovery_access.py",
+        "scripts/catchup_core/quarantine_fs_windows.py",
+        "scripts/catchup_core/storage_adoption.py",
+        "scripts/lib/local_paths.py",
+        "scripts/lib/logger.py"
+      ],
+      "scope": "later",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py",
+        "tests/catchup_core/test_privacy_anchor_capacity.py",
+        "tests/catchup_core/test_state_checkpoint.py",
+        "tests/catchup_core/test_state_checkpoint_cli.py",
+        "tests/catchup_core/test_restore_quarantine.py",
+        "tests/catchup_core/test_installation_fence.py",
+        "tests/catchup_core/test_checkpoint_restore_integrity.py",
+        "tests/catchup_core/test_recovery_registry.py",
+        "tests/unit/test_recovery_registry_writers.py",
+        "tests/catchup_core/test_authority_retirement.py",
+        "tests/catchup_core/test_spend_continuity_registry.py",
+        "tests/catchup_core/test_legacy_writer_fence.py",
+        "tests/catchup_core/test_recovery_quarantine.py",
+        "tests/catchup_core/test_quarantine_review.py",
+        "tests/catchup_core/test_recovery_access.py",
+        "tests/catchup_core/test_quarantine_restore.py",
+        "tests/catchup_core/test_recovery_quarantine_cli.py",
+        "tests/catchup_core/test_quarantine_fs_windows.py",
+        "tests/catchup_core/test_session_lock.py",
+        "tests/catchup_core/test_storage_adoption.py",
+        "tests/catchup_core/test_preservation_bounded.py",
+        "tests/unit/test_pipeline_output_path.py",
+        "tests/unit/test_structured_logger.py"
+      ]
+    },
+    "RA-21.AC1": {
+      "capability": "RA-21",
+      "modules": [
+        "scripts/catchup_core/documents.py",
+        "scripts/catchup_core/ocr.py",
+        "scripts/catchup_core/field_confirmation.py"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_documents.py",
+        "tests/catchup_core/test_ocr.py",
+        "tests/catchup_core/test_field_confirmation.py",
+        "tests/catchup_core/test_document_field_runtime.py"
+      ]
+    },
+    "RA-22.AC1": {
+      "capability": "RA-22",
+      "modules": [
+        "scripts/catchup_core/views.py",
+        "scripts/catchup_core/migrations/0007_replay.sql"
+      ],
+      "scope": "pilot",
+      "tests": [
+        "tests/catchup_core/test_user_surfaces.py"
+      ]
+    },
+    "RA-23.AC1": {
+      "capability": "RA-23",
+      "modules": [
+        "scripts/catchup_core/ledger.py",
+        "scripts/catchup_core/commands.py",
+        "scripts/catchup_core/retention.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/catchup_core/test_ledger.py",
+        "tests/catchup_core/test_user_surfaces.py",
+        "tests/catchup_core/test_retention.py"
+      ]
+    },
+    "RA-24.AC1": {
+      "capability": "RA-24",
+      "modules": [
+        "scripts/catchup_core/commands.py",
+        "scripts/action_executor.py",
+        "scripts/lib/action_policy.py",
+        "scripts/lib/action_process.py",
+        "scripts/lib/action_credentials.py",
+        "scripts/actions/__init__.py",
+        "scripts/lib/action_evidence.py",
+        "scripts/catchup_core/fact_access.py"
+      ],
+      "scope": "reduced",
+      "tests": [
+        "tests/unit/test_action_executor.py",
+        "tests/unit/test_action_policy.py",
+        "tests/unit/test_action_policy_freshness.py",
+        "tests/unit/test_action_process.py",
+        "tests/unit/test_action_credentials.py",
+        "tests/unit/test_action_evidence_dispatch.py",
+        "tests/unit/test_action_provider_preconditions.py"
+      ]
+    },
+    "RA-25.AC1": {
+      "capability": "RA-25",
+      "modules": [
+        "scripts/catchup_core/plans.py",
+        "scripts/catchup_core/responsibilities.py"
+      ],
+      "scope": "later",
+      "tests": [
+        "tests/catchup_core/test_plans.py",
+        "tests/catchup_core/test_responsibilities.py"
+      ]
+    }
+  },
+  "boundary_cases": {
+    "RA-01.AC1.active-account-inventory": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_coordinator.py::test_replaced_account_history_is_not_a_current_required_scope"
+    },
+    "RA-01.AC1.current-coverage-header": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_coordinator.py::test_default_coverage_header_uses_current_required_scopes"
+    },
+    "RA-01.AC1.google-malformed-page": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_google_calendar_coverage.py::test_malformed_google_page_preserves_other_valid_calendar_data"
+    },
+    "RA-01.AC1.graph-empty-page": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_handlers_coverage.py::test_graph_empty_intermediate_page_cannot_hide_later_events"
+    },
+    "RA-01.AC1.graph-final-page-cap": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_handlers_coverage.py::test_graph_cap_within_final_page_is_truncated"
+    },
+    "RA-01.AC1.graph-malformed-page": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_handlers_coverage.py::test_graph_malformed_later_page_keeps_valid_positives"
+    },
+    "RA-01.AC1.kernel-cutover-fence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_cutover_fence.py::test_direct_runtime_cannot_bypass_configured_false_with_environment_opt_in"
+    },
+    "RA-01.AC1.live-release-artifacts": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_real_runtime_rechecks_approved_artifacts_after_construction"
+    },
+    "RA-01.AC1.release-withdrawal-publication": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_actual_publication_stops_when_release_evidence_is_withdrawn_at_commit"
+    },
+    "RA-02.AC1.cancel-independent": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_calendar_cancellation_preserves_independent_support"
+    },
+    "RA-02.AC1.clock-rollback": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_temporal_instants.py::test_clock_offset_and_rollback_do_not_move_version_backwards"
+    },
+    "RA-02.AC1.historical-source-time": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_user_surfaces.py::test_historical_explanation_uses_the_selected_observation_time"
+    },
+    "RA-02.AC1.instant-cutoff": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_temporal_instants.py::test_historical_cutoff_accepts_equivalent_instants"
+    },
+    "RA-02.AC1.schema-history": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_schema_history.py::test_changed_applied_migration_cannot_be_hidden_by_the_version_number"
+    },
+    "RA-02.AC1.schema-journal-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_schema_history.py::test_process_death_keeps_schema_history_and_version_atomic"
+    },
+    "RA-02.AC1.subsecond-history": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_temporal_instants.py::test_subsecond_writes_keep_history_and_review_order"
+    },
+    "RA-02.AC1.utf8-coordinates": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_utf8_span_contract_and_mid_character_rejection"
+    },
+    "RA-03.AC1.canonical-completion": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_open_item_completion_is_shared_by_items_and_briefing_without_authored_writes"
+    },
+    "RA-04.AC1.curated-resume": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_curated_change_invalidates_a_resumed_draft"
+    },
+    "RA-05.AC1.exact-review": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_action_versions.py::test_exact_preview_includes_fields_hidden_by_the_old_abbreviated_view"
+    },
+    "RA-05.AC1.legacy-quarantine": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_action_quarantine.py::test_uncertain_history_reenters_active_queue_and_blocks_regeneration"
+    },
+    "RA-05.AC1.provider-version": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_action_versions.py::test_changed_calendar_version_cannot_write"
+    },
+    "RA-05.AC1.quarantine-crash": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_action_quarantine.py::test_process_death_rolls_back_quarantine_and_upgrade_marker"
+    },
+    "RA-05.AC1.restore-queue-fence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_restore_quarantine.py::test_restored_queue_cannot_redirect_to_live_database"
+    },
+    "RA-07.AC1.command-capability": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_extractor_command_cannot_launch_a_tool_capable_cli"
+    },
+    "RA-07.AC1.exchange-identity": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_exchange.py::test_response_identity_and_cohort_are_checked_separately_from_answer_text"
+    },
+    "RA-08.AC1.account-volume-history": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_adapters.py::test_volume_history_is_scoped_to_account_and_filter"
+    },
+    "RA-08.AC1.calendar-discovery": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_calendar_handlers_coverage.py::test_graph_calendar_discovery_pages_are_part_of_source_coverage"
+    },
+    "RA-08.AC1.calendar-scope": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_calendar_ids_and_cancellations_are_scoped_by_calendar"
+    },
+    "RA-08.AC1.interrupted-cancellation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_adapters.py::test_cancellation_before_iterator_failure_is_not_lost"
+    },
+    "RA-08.AC1.interrupted-positives": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_audit_completion.py::test_actual_interrupted_adapter_keeps_positives_and_last_complete_watermark"
+    },
+    "RA-08.AC1.provider-cancellation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_google_calendar_coverage.py::test_actual_handler_cancellation_withdraws_only_its_calendar"
+    },
+    "RA-09.AC1.checkpoint-root-conflict": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_profile_dependency_cannot_override_work_content_boundary"
+    },
+    "RA-09.AC1.checkpoint-work-credentials": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_personal_checkpoint_excludes_known_work_credential_artifacts"
+    },
+    "RA-09.AC1.cloud-filter-reparse": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_work_cache.py::test_windows_cloud_filter_reparse_on_legacy_checkout_succeeds_while_root_reparse_blocks"
+    },
+    "RA-09.AC1.work-credential-scope": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_credentials_providers.py::test_sharepoint_uses_only_work_record"
+    },
+    "RA-10.AC1.bounded-history": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_metrics.py::test_reading_recent_metrics_has_bounded_memory_for_a_large_torn_prefix"
+    },
+    "RA-10.AC1.logical-pauses": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_metrics.py::test_logical_catchup_combines_pause_work_and_wait_without_counting_replays_twice"
+    },
+    "RA-10.AC1.lost-append": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_coordinator.py::test_health_detects_an_invocation_whose_entire_telemetry_append_was_lost"
+    },
+    "RA-10.AC1.missing-sequence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_metrics.py::test_missing_middle_invocation_cannot_be_hidden_by_a_known_start_and_finish"
+    },
+    "RA-10.AC1.observed-model": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_exchange.py::test_returned_shadow_output_records_whether_model_identity_was_reported"
+    },
+    "RA-10.AC1.output-evaluation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_corpus_boundaries.py::test_actual_returned_briefing_is_scored_separately_from_labels"
+    },
+    "RA-10.AC1.release-runtime-cohort": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_approved_scorecard_from_a_different_runtime_cohort_cannot_enable_cutover"
+    },
+    "RA-11.AC1.completion-version": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_goal_completion_version_changes_invalidate_identical_resumed_prose"
+    },
+    "RA-11.AC1.concurrent-writer": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_goals_writer.py::test_independent_writer_refuses_live_lock_then_retry_preserves_both_changes"
+    },
+    "RA-11.AC1.link-ambiguity": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_unverified_or_mismatched_open_item_links_cannot_establish_goal_progress"
+    },
+    "RA-11.AC1.link-duplicates": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_repeated_open_item_link_cannot_double_count_one_completion"
+    },
+    "RA-11.AC1.link-query-generation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_changed_linked_item_during_query_blocks_a_stale_goal_answer"
+    },
+    "RA-11.AC1.metric-next-action": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_goal_metrics.py::test_briefing_keeps_verified_metric_and_authored_action_with_exact_dependencies"
+    },
+    "RA-11.AC1.open-item-link": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_linked_goal_and_plan_share_the_current_open_item_completion_version"
+    },
+    "RA-11.AC1.sprint-calibration-needs-tolerance": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_wiring.py::test_given_a_sprint_without_an_authored_tolerance_when_weekly_then_no_calibration_is_shown"
+    },
+    "RA-11.AC1.tradeoff-proposal-only": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_wiring.py::test_given_authored_competing_goals_one_ahead_and_one_behind_when_weekly_then_a_proposal_only_line_appears"
+    },
+    "RA-11.AC1.weekly-correction-erasure": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_weekly_goals.py::test_correction_and_forgetting_recompute_weekly_input_versions"
+    },
+    "RA-11.AC1.weekly-readonly": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_weekly_goals.py::test_weekly_command_and_mcp_share_the_read_only_goal_model"
+    },
+    "RA-11.AC1.weekly-source-values": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_weekly_goals.py::test_quantity_weekly_change_keeps_exact_units_dates_and_dependencies"
+    },
+    "RA-12.AC1.completion-parent-scope": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_parent_goal_revocation_applies_to_child_completion_evidence"
+    },
+    "RA-12.AC1.completion-transaction": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_completion_checks_reviewed_permissions_inside_its_write_transaction"
+    },
+    "RA-12.AC1.corpus-revocation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_corpus_boundaries.py::test_corpus_and_coverage_withhold_revoked_source_and_unknown_provenance"
+    },
+    "RA-12.AC1.correct-operation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_view_consent_does_not_authorize_correction_or_its_side_effects"
+    },
+    "RA-12.AC1.curated-private-bounds": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_curated_permissions.py::test_withheld_records_cannot_consume_bounds_or_inject_validation_gaps"
+    },
+    "RA-12.AC1.curated-record-scope": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_curated_permissions.py::test_runtime_and_command_keep_allowed_goals_without_unrelated_adult_consent"
+    },
+    "RA-12.AC1.curated-revocation-race": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_curated_permissions.py::test_permission_change_during_projection_refuses_the_entire_read"
+    },
+    "RA-12.AC1.delivery-recheck": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_publication_rechecks_permissions_after_the_last_stage_boundary"
+    },
+    "RA-14.AC1.component-calendars": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_triage.py::test_composite_deadlines_use_their_own_domain_calendar_and_local_day"
+    },
+    "RA-14.AC1.core-neutrality": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_core_modules_when_scanned_then_no_new_module_names_a_domain"
+    },
+    "RA-14.AC1.deny-beats-allow": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack_contracts.py::test_given_allow_and_deny_rules_when_resolved_then_deny_wins_and_unmatched_is_unknown"
+    },
+    "RA-14.AC1.second-domain-composite": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_vehicle_pack_composed_with_another_then_both_domains_stay_separate"
+    },
+    "RA-14.AC1.second-domain-loads": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_vehicle_pack_when_loaded_then_it_is_strict_and_declares_what_it_lacks"
+    },
+    "RA-14.AC1.second-domain-triage": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts_without_vehicle_code"
+    },
+    "RA-14.AC1.source-freshness": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_composite_pack.py::test_composite_preserves_strictest_source_freshness_and_all_versions"
+    },
+    "RA-14.AC1.typed-policy": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_domain_pack.py::test_pack_policy_fields_are_typed_instead_of_coerced"
+    },
+    "RA-16.AC1.failed-runtime-resources": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_runtime_resources.py::test_actual_builder_closes_open_ledger_after_a_wiring_failure"
+    },
+    "RA-16.AC1.interrupted-ledger-resources": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_runtime_resources.py::test_interrupted_inner_ledger_setup_closes_its_handle"
+    },
+    "RA-18.AC1.authority-transfer-fence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_cutover_fence.py::test_authority_transfer_requires_quiescence_or_revocation_and_checkpoint_and_fences_old_host"
+    },
+    "RA-18.AC1.credential-migration-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_credential_migration.py::test_migration_process_death_retains_recoverable_generations"
+    },
+    "RA-18.AC1.credential-migration-race": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_credential_migration.py::test_client_persistence_failure_and_input_race_preserve_originals"
+    },
+    "RA-18.AC1.credential-process-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_credentials.py::test_process_death_at_head_publication_preserves_complete_generations"
+    },
+    "RA-18.AC1.key-loss-enrollment": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_runtime.py::test_existing_installation_never_reenrolls_missing_keys"
+    },
+    "RA-18.AC1.portable-hook-processes": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_hook_portability.py::test_generated_commands_start_real_interpreter_with_unicode_stdin_and_space_paths"
+    },
+    "RA-18.AC1.windows-hook-protocol": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_hook_portability.py::test_supported_windows_and_copilot_tool_spellings_keep_real_denials"
+    },
+    "RA-20.AC1.approved-rollback-bytes": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_rollback_verification_decodes_the_one_approved_read"
+    },
+    "RA-20.AC1.capture-database-generation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint.py::test_database_change_after_member_capture_blocks_publication"
+    },
+    "RA-20.AC1.capture-fence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_checkpoint_holds_the_installation_fence_in_a_real_competing_process"
+    },
+    "RA-20.AC1.capture-process-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint.py::test_killed_capture_leaves_no_published_artifact_and_next_start_reports_the_orphan"
+    },
+    "RA-20.AC1.corpus-restore": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_corpus_boundaries.py::test_old_snapshot_privacy_replay_erases_corpus_and_legacy_restore_is_blocked"
+    },
+    "RA-20.AC1.escrow-integrity": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint.py::test_checkpoint_authentication_also_covers_recovery_escrow"
+    },
+    "RA-20.AC1.external-action-store": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_external_action_store_cannot_be_omitted"
+    },
+    "RA-20.AC1.file-root-wal": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint.py::test_explicit_database_file_root_captures_wal_without_sibling_data"
+    },
+    "RA-20.AC1.key-generation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_key_rotation_during_checkpoint_requires_a_new_capture"
+    },
+    "RA-20.AC1.legacy-privacy-anchor": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_privacy_anchor_capacity.py::test_legacy_head_reads_without_mutation_then_migrates_with_exact_history"
+    },
+    "RA-20.AC1.new-dependency": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_new_external_dependency_during_capture_blocks_publication"
+    },
+    "RA-20.AC1.passphrase-inspection": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_passphrase_only_inspection_needs_no_host_keys_and_cannot_activate"
+    },
+    "RA-20.AC1.preservation-gate": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_cutover_fence.py::test_incomplete_preservation_or_recovery_evidence_blocks_activation"
+    },
+    "RA-20.AC1.privacy-competing-writers": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_privacy_anchor_capacity.py::test_competing_processes_cannot_reinterpret_the_same_generation"
+    },
+    "RA-20.AC1.privacy-os-limit": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_privacy_anchor_capacity.py::test_large_privacy_history_fits_bounded_windows_os_anchor_and_replays_exactly"
+    },
+    "RA-20.AC1.privacy-publication-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_privacy_anchor_capacity.py::test_process_death_before_or_after_os_head_keeps_an_authenticated_replay"
+    },
+    "RA-20.AC1.recovery-payload": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_recovery_cannot_report_success_for_a_damaged_payload"
+    },
+    "RA-20.AC1.restore-competing-writers": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_quiescence_and_writer_fences_block_competing_writers_and_restored_trees"
+    },
+    "RA-20.AC1.restore-escrow-completeness": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_escrow_and_restore_keys_cover_recovery_credentials_bundles_and_privacy_heads"
+    },
+    "RA-20.AC1.restore-frame-pinning": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_in_place_rewrite_after_preflight_refuses_before_releasing_substituted_plaintext"
+    },
+    "RA-20.AC1.restore-physical-verify": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_physical_output_must_match_before_privacy_replay"
+    },
+    "RA-20.AC1.restore-process-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_killed_restore_process_leaves_only_inactive_marked_tree"
+    },
+    "RA-20.AC1.restore-runtime-fence": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_restore_quarantine.py::test_restored_runtime_is_blocked_before_configuration_or_key_access"
+    },
+    "RA-20.AC1.restore-single-handle": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_pathname_replacement_keeps_original_handle_and_ignores_substituted_file"
+    },
+    "RA-20.AC1.restore-sqlite-integrity": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_authenticated_sqlite_still_needs_physical_integrity_checks"
+    },
+    "RA-20.AC1.storage-adoption-descendants": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_storage_adoption.py::test_native_stored_acl_projection_effective_access_and_inheritance_preservation"
+    },
+    "RA-20.AC1.storage-adoption-process-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_storage_adoption.py::test_real_process_death_exposes_partial_state_and_requires_fresh_review"
+    },
+    "RA-20.AC1.unreadable-subtree": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint.py::test_unreadable_directory_cannot_disappear_from_inventory"
+    },
+    "RA-20.AC1.windows-registry-process-death": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_recovery_registry.py::test_windows_registry_process_death_preserves_pending_intent_and_excludes_capture"
+    },
+    "RA-20.AC1.work-destination": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_primary_destination_cannot_be_synced_or_inside_the_repository"
+    },
+    "RA-20.AC1.work-key-isolation": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_has_separate_envelope_and_shared_vault_recovery_only"
+    },
+    "RA-20.AC1.work-privacy-gate": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_cannot_bypass_privacy_gate_by_omitting_profile"
+    },
+    "RA-23.AC1.corpus-erasure": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_corpus_boundaries.py::test_corpus_label_erasure_is_journaled_and_cannot_reappear"
+    },
+    "RA-23.AC1.scoped-erasure": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_legacy_calendar_erasure_survives_calendar_namespacing"
+    },
+    "RA-24.AC1.atomic-rate-limit": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_action_policy_freshness.py::test_two_processes_cannot_both_claim_the_last_current_policy_rate_slot"
+    },
+    "RA-24.AC1.child-policy-withdrawal": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_action_policy_freshness.py::test_real_child_rechecks_policy_before_loading_any_provider"
+    },
+    "RA-24.AC1.current-dispatch-policy": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/unit/test_action_policy_freshness.py::test_worker_refuses_stale_dispatch_authority_before_consuming_it"
+    },
+    "RA-25.AC1.completion-binding": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_explicit_completion_binds_the_record_and_survives_reopen"
+    },
+    "RA-25.AC1.invalid-record": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_release_boundaries.py::test_malformed_responsibilities_are_visible_without_crashing"
+    },
+    "RA-25.AC1.prepared-instructions": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_plans.py::test_instruction_sheet_is_retained_in_the_encrypted_catchup_artifact"
+    },
+    "RA-25.AC1.source-checks": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_responsibilities.py::test_runtime_checks_only_visible_fresh_scopes_and_pending_signals"
+    },
+    "RA-25.AC1.stop-correction": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_responsibilities.py::test_verified_stop_is_informational_and_correction_removes_the_quiet_claim"
+    }
+  },
+  "contract_version": "0.8.0",
+  "implementation_sha256": "1f4949d5b346f467efdfd6556dd91f134a0578fe85ddb346c333c91784388525",
+  "spec": "specs/re-artha.md",
+  "spec_sha256": "183dba6b7f4ab8172e2c58c52088c6d55aa1917be38135479dee627fc4020609",
+  "spec_version": "0.8.0"
+}

@@ -1,0 +1,52 @@
+# Immigration Domain pack v0 (re-artha §8, RA-14).
+domain: immigration
+version: 0.2.0
+confidentiality: restricted
+impact: critical
+compatibility:
+  core_contract: 1.0.0
+retention:
+  max_days: 730
+  audit_days: 180
+permissions:
+  - {scope: primary, predicates: [case_status, rfe_deadline, ead_expiry, i94_expiry, biometrics_appointment], effect: allow}
+  - {scope: household, predicates: [case_status, rfe_deadline, ead_expiry, i94_expiry, biometrics_appointment], effect: allow}
+policy_bindings:
+  retention: {policy_id: retention_standard, version: 1.0.0}
+  permissions: {policy_id: permissions_standard, version: 1.0.0}
+  compatibility: {policy_id: compatibility_standard, version: 1.0.0}
+  source_authority: {policy_id: authority_standard, version: 1.0.0}
+  jurisdiction: {policy_id: jurisdiction_standard, version: 1.0.0}
+  effective_interval: {policy_id: interval_standard, version: 1.0.0}
+bindings:
+  local_tz: America/Los_Angeles
+  uscis_cal:
+    holidays: []
+sources:
+  - {connector: immigration_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: case_status, type: enum, values: [received, pending, rfe_issued, approved, denied], high_stakes: true, authority: [official_notice, attorney_email],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: rfe_deadline, type: date, high_stakes: true, lead_days: 14, authority: [official_notice, attorney_email],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: ead_expiry, type: date, high_stakes: true, lead_days: 90, authority: [official_document, official_notice],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: i94_expiry, type: date, high_stakes: true, lead_days: 90, authority: [official_document, official_notice],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: biometrics_appointment, type: datetime, high_stakes: true, authority: [official_notice, attorney_email],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+alert_rules:
+  - {predicate: rfe_deadline, when: "0 <= days_until <= 14", severity: P1}
+  - {predicate: ead_expiry, when: "0 <= days_until <= 90", severity: P1}
+  - {predicate: i94_expiry, when: "0 <= days_until <= 90", severity: P1}
+  - {predicate: case_status, when: "value == 'rfe_issued'", severity: P1}
+  - {predicate: case_status, when: "value == 'denied'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: uscis_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - immigration_vs_travel
+fixtures_dir: tests/fixtures/immigration/

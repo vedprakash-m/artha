@@ -1,0 +1,23 @@
+# Owner-authored dated measurements; this pack is opt-in and never enables itself.
+domain: goals
+version: 0.1.0
+confidentiality: restricted
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  goal_cal:
+    holidays: []
+sources:
+  - {connector: capture, required: true, freshness_hours: 48, class: parent_note}
+predicates:
+  - {name: goal_quantity, type: text, authority: [parent_note, official_document]}
+  - {name: goal_checkin, type: text, authority: [parent_note, official_document]}
+alert_rules: []
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: goal_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases: []
+fixtures_dir: tests/fixtures/goals/

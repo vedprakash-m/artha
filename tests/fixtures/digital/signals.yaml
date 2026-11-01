@@ -1,0 +1,35 @@
+# Synthetic Digital fixtures (invented senders). Each case must ground with extract.supports_value.
+domain: digital
+cases:
+  - id: digital-001
+    from: billing@example-streaming.test
+    observed_at: "2026-10-28T09:00:00+00:00"
+    message: "Example Streaming: your annual plan renews on November 4, 2026. No action is needed to keep watching."
+    predicate: subscription_renewal_date
+    value: "2026-11-04"
+    quote: "your annual plan renews on November 4, 2026"
+    subject: example_streaming
+  - id: digital-002
+    from: registrar@example-domains.test
+    observed_at: "2026-10-20T15:30:00+00:00"
+    message: "Example Domains reminder: example-family.test expires on 2026-11-15. Renew now to keep it."
+    predicate: domain_expiry_date
+    value: "2026-11-15"
+    quote: "example-family.test expires on 2026-11-15"
+    subject: example_family_test
+  - id: digital-003
+    from: billing@example-cloud-notes.test
+    observed_at: "2026-10-30T11:00:00+00:00"
+    message: "Example Cloud Notes: Payment failed for your Pro licence. Update your card to avoid interruption."
+    predicate: payment_failed
+    value: failed
+    quote: "Payment failed for your Pro licence"
+    subject: example_cloud_notes
+  - id: digital-004
+    from: billing@example-photo-editor.test
+    observed_at: "2026-10-30T12:00:00+00:00"
+    message: "Example Photo Editor: Payment declined. Please update your billing details."
+    predicate: payment_failed
+    value: failed
+    quote: "Payment declined"
+    subject: example_photo_editor

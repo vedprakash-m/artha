@@ -1,0 +1,33 @@
+---
+name: east-asian-american
+description: |
+  East Asian family with strong academic emphasis and career focus. Filial piety
+  and respect for elders are core values. Educational achievement is a primary
+  family metric. Extended family ties maintained across Pacific.
+domain_priorities:
+  kids: P0
+  finance: P0
+  learning: P1
+  health: P1
+occasions:
+  - name: Lunar New Year
+    type: cultural
+    calendar: lunisolar
+    greeting: true
+  - name: Mid-Autumn Festival
+    type: cultural
+    calendar: lunisolar
+    greeting: true
+  - name: Dragon Boat Festival
+    type: cultural
+    calendar: lunisolar
+    greeting: false
+  - name: Qingming Festival
+    type: cultural
+    calendar: lunisolar
+    greeting: false
+traits:
+  academic_emphasis: high
+  extended_family_ties: active
+  immigration_awareness: true
+  career_focus: high

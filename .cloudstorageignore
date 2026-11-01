@@ -1,0 +1,11 @@
+# .cloudstorageignore — OneDrive exclusions for Artha workspace
+# Syntax: one path or glob per line.  Lines starting with # are comments.
+# Reference: https://support.microsoft.com/en-us/office/select-which-onedrive-files-to-sync-98b8b011-8b94-419b-aa9b-0f9bdb67b1b0
+
+# ~/.artha-local/ contains SQLite WAL/SHM files and ephemeral databases that
+# must NOT be cloud-synced (OneDrive would corrupt open WAL journals).
+# Backed up instead via scripts/backup.py → artha-local-dbs target (R8).
+~/.artha-local/
+
+# Ephemeral tmp/ files (session caches, heartbeat JSON, agent state)
+tmp/

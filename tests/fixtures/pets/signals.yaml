@@ -1,0 +1,27 @@
+# Synthetic Pets fixtures (invented clinic, county and pet names). Each case must ground with extract.supports_value.
+domain: pets
+cases:
+  - id: pets-001
+    from: reminders@example-vet-clinic.test
+    observed_at: "2026-10-25T16:00:00+00:00"
+    message: "Example Vet Clinic: Biscuit's rabies booster is due November 8, 2026. Call us to book."
+    predicate: vaccination_due_date
+    value: "2026-11-08"
+    quote: "rabies booster is due November 8, 2026"
+    subject: pet_biscuit
+  - id: pets-002
+    from: appointments@example-vet-clinic.test
+    observed_at: "2026-10-29T18:00:00+00:00"
+    message: "Example Vet Clinic: Biscuit has a check-up on November 3, 2026 at 10:30 am."
+    predicate: vet_appointment_date
+    value: "2026-11-03"
+    quote: "check-up on November 3, 2026"
+    subject: pet_biscuit
+  - id: pets-003
+    from: licensing@example-county-animal-services.test
+    observed_at: "2026-10-22T17:00:00+00:00"
+    message: "Example County Animal Services: the pet licence for Biscuit expires 2026-11-12. Renew online."
+    predicate: licence_renewal_date
+    value: "2026-11-12"
+    quote: "pet licence for Biscuit expires 2026-11-12"
+    subject: pet_biscuit

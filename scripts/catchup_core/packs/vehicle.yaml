@@ -1,0 +1,35 @@
+# Vehicle Domain pack v0 (re-artha RA-14). Thresholds are starting values the owner may override.
+# Retention is left undeclared on purpose: no period is set until the owner chooses one.
+domain: vehicle
+version: 0.3.0
+confidentiality: sensitive
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  vehicle_cal:
+    holidays: []
+sources:
+  - {connector: vehicle_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: registration_renewal_date, type: date, high_stakes: true, lead_days: 14, jurisdiction: [US-WA],
+     authority: [licensing_notice, email_notice],
+     hint: "the date the vehicle registration or tabs expire"}
+  - {name: recall_status, type: enum, values: [none, open, remedied], high_stakes: true,
+     authority: [manufacturer_notice, email_notice],
+     aliases: {open: [issued]},
+     hint: "whether a safety recall is open (unrepaired, newly issued) or remedied; obligation_ref: the make only, e.g. mazda"}
+  - {name: service_due_date, type: date, lead_days: 7, authority: [service_notice, email_notice],
+     hint: "the date routine service or an inspection is due"}
+alert_rules:
+  - {predicate: registration_renewal_date, when: "0 <= days_until <= 14", severity: P2}
+  - {predicate: registration_renewal_date, when: "0 <= days_until <= 3", severity: P1}
+  - {predicate: registration_renewal_date, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+  - {predicate: recall_status, when: "value == 'open'", severity: P2}
+  - {predicate: service_due_date, when: "0 <= days_until <= 7", severity: P3}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: vehicle_cal
+  latest_useful_action: due_minus_lead_time
+fixtures_dir: tests/fixtures/vehicle/

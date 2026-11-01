@@ -1,0 +1,55 @@
+# Finance Domain pack v0 (re-artha §8, RA-14).
+domain: finance
+version: 0.7.0
+confidentiality: restricted
+impact: consequential
+compatibility:
+  core_contract: 1.0.0
+retention:
+  max_days: 365
+  audit_days: 90
+permissions:
+  - {scope: primary, predicates: [bill_due_date, autopay_status, payment_status, statement_balance, subscription_renewal], effect: allow}
+  - {scope: household, predicates: [bill_due_date, autopay_status, payment_status], effect: allow}
+  - {scope: household, predicates: [statement_balance, subscription_renewal], effect: deny}
+policy_bindings:
+  retention: {policy_id: retention_standard, version: 1.0.0}
+  permissions: {policy_id: permissions_standard, version: 1.0.0}
+  compatibility: {policy_id: compatibility_standard, version: 1.0.0}
+  source_authority: {policy_id: authority_standard, version: 1.0.0}
+  jurisdiction: {policy_id: jurisdiction_standard, version: 1.0.0}
+  effective_interval: {policy_id: interval_standard, version: 1.0.0}
+bindings:
+  local_tz: America/Los_Angeles
+  holiday_cal:
+    holidays: []
+sources:
+  - {connector: finance_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: bill_due_date, type: date, high_stakes: true, lead_days: 3, authority: [bill_statement, email_notice],
+     hint: "the date a payment is due; obligation_ref: the biller name only, e.g. discover; skip marketing and receipts",
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: autopay_status, type: enum, values: [enrolled, failed, paused, inactive], high_stakes: true, authority: [bill_statement, email_notice],
+     hint: "state only when the mail says autopay is on, off, paused or that a payment failed; name the biller in obligation_ref",
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: payment_status, type: enum, values: [paid, received], resolves: bill_due_date, authority: [bill_statement, email_notice],
+     hint: "paid: paid in full; received: any payment received or posted (owner rule, amount not compared); obligation_ref: the biller name only, e.g. discover",
+     aliases: {received: [posted, being processed, payment successful, successful payment, payment success, success payment]},
+     unless: [failed, declined, returned, reversed, unsuccessful, insufficient funds, scheduled, pending, will post, will be posted,
+              canceled, cancelled],
+     jurisdiction: [US], effective_interval: {start: 2026-01-01, end: 2030-01-01}}
+  - {name: statement_balance, type: text, authority: [bill_statement, email_notice]}
+  - {name: subscription_renewal, type: date, lead_days: 7, authority: [provider_notice, email_notice]}
+alert_rules:
+  - {predicate: bill_due_date, when: "0 <= days_until <= 3", severity: P2}
+  - {predicate: bill_due_date, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+  - {predicate: autopay_status, when: "value == 'failed'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: holiday_cal
+  latest_useful_action: due_minus_lead_time
+cross_domain_cases:
+  - bill_vs_cashflow
+fixtures_dir: tests/fixtures/finance/

@@ -1,0 +1,22 @@
+# Coverage settings for the security harness on POSIX hosts (macOS, Linux).
+#
+# Identical to [tool.coverage] in pyproject.toml except that blocks guarded by an
+# explicit Windows test (`sys.platform == 'win32'`, `os.name == 'nt'`) are not
+# measured: they cannot execute here.  Windows runs use pyproject.toml unchanged, so
+# the same 85% floor applies to those blocks on the host that can run them.
+# `tests/dev/test_check_canaries.py` pins this file to the shared settings.
+[tool.coverage.run]
+branch = true
+source = ["scripts/catchup_core"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if sys\\.platform == ['\"]win32['\"]",
+    "if os\\.name == ['\"]nt['\"]",
+]

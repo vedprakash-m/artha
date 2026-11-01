@@ -1,0 +1,221 @@
+# Golden-set eval fixtures for Artha briefing quality evaluation
+#
+# Each entry defines an input briefing text and expected eval outcomes.
+# All content is 100% fictional — no real user data (DD-5).
+#
+# Usage: loaded by tests/eval/test_golden_set.py as parametrized test cases.
+# Ref: specs/eval.md EV-12, rubric.yaml
+#
+# Schema:
+#   - id: unique fixture identifier
+#     description: what this fixture tests
+#     expected: pass | fail   (pass = high quality, fail = low quality)
+#     min_quality_score: minimum (for pass) or null
+#     max_quality_score: maximum (for fail) or null
+#     dimension_checks: {dimension: {min: N, max: N}}
+#     briefing: |
+#       multiline briefing text
+
+version: "1.0.0"
+
+fixtures:
+  # ── GOLDEN (expected-pass) ────────────────────────────────────────────
+
+  - id: golden-full-briefing
+    description: "Complete multi-domain briefing with dates, actions, and urgency"
+    expected: pass
+    min_quality_score: 60
+    dimension_checks:
+      actionability: {min: 10}
+      specificity: {min: 8}
+      completeness: {min: 8}
+    briefing: |
+      # Catch-Up Briefing — 2026-02-10
+
+      ## 🎯 ONE THING
+      File I-485 application by 2026-02-28 — attorney appointment booked for Feb 15.
+      [U×I×A = 27] [immigration]
+
+      ## IMMIGRATION 🔴
+      - Priority date current as of Feb 2026 Visa Bulletin — file within 18 days.
+      - Medical exam (I-693) completed 2025-12-10, valid until 2027-12-10.
+      - Action: Gather Form I-485 supplement documents by Feb 13.
+
+      ## FINANCE
+      - 🟠 Tax return deadline: file by Apr 15. W-2 received from employer Jan 31.
+      - Mortgage auto-pay $3,200 confirmed for Feb 15.
+      - Emergency fund balance: $12,400 (target: $15,000). Transfer $500 by Feb 20.
+
+      ## HEALTH
+      - Annual physical: Feb 25. Fasting bloodwork required — schedule by Feb 18.
+      - Prescription: metformin 90-day supply expires Feb 28 — refill by Feb 21.
+
+      ## KIDS
+      - School conference Feb 12 at 4pm — conflicts with 3:30pm work meeting. Reschedule work meeting.
+
+      ## GOALS
+      - Q1: "Complete USCIS filing" — 4/5 milestones done, on track.
+      - Reading: 3/12 books. Current: "Thinking, Fast and Slow" (42% complete).
+
+  - id: golden-finance-deep
+    description: "Finance-focused briefing with specific numbers and deadlines"
+    expected: pass
+    min_quality_score: 55
+    dimension_checks:
+      specificity: {min: 10}
+      actionability: {min: 8}
+    briefing: |
+      # Catch-Up Briefing — 2026-03-01
+
+      ## 🎯 ONE THING
+      Submit estimated Q1 tax payment ($4,200) by April 15.
+      [U×I×A = 18] [finance]
+
+      ## FINANCE
+      - 🔴 URGENT: Estimated tax Q1 payment $4,200 due Apr 15 — set up IRS Direct Pay by Mar 15.
+      - 🟠 401k contribution hit 2026 limit ($23,500). Switch to after-tax by next payroll.
+      - Checking balance: $8,700. Upcoming auto-pays total $5,200 in March.
+      - Savings rate: 22% of gross (target: 25%). Increase auto-transfer by $300/mo.
+      - Credit card statement: $2,100 (due Mar 15). All charges verified.
+
+  - id: golden-health-alerts
+    description: "Health domain with urgent medication and appointment actions"
+    expected: pass
+    min_quality_score: 50
+    dimension_checks:
+      actionability: {min: 12}
+      signal_purity: {min: 8}
+    briefing: |
+      # Catch-Up Briefing — 2026-01-20
+
+      ## 🎯 ONE THING
+      Refill metformin before Jan 28 expiry.
+      [U×I×A = 18] [health]
+
+      ## HEALTH
+      - 🔴 Prescription: metformin 90-day supply expires 2026-01-28. Call pharmacy today.
+      - 🟠 Schedule dermatology follow-up by Feb 15 — referral expires in 30 days.
+      - Blood pressure log: Jan avg 128/82 (target: <130/80). Continue monitoring.
+      - Action: Upload Jan health data to patient portal before Feb 5 appointment.
+
+  - id: golden-cross-domain-conflict
+    description: "Cross-domain reasoning with calendar conflicts"
+    expected: pass
+    min_quality_score: 55
+    dimension_checks:
+      completeness: {min: 8}
+      calibration: {min: 6}
+    briefing: |
+      # Catch-Up Briefing — 2026-04-01
+
+      ## 🎯 ONE THING
+      Resolve travel-vs-visa conflict: H-1B renewal interview Apr 20 conflicts with booked LA trip Apr 18-22.
+      [U×I×A = 27] [immigration]
+
+      ## ⚠️ CROSS-DOMAIN CONFLICTS
+      - Immigration interview (Apr 20, DC) conflicts with travel (LA, Apr 18-22). Cancel or rebook flight.
+      - Tax filing deadline (Apr 15) overlaps with heavy meeting week (Apr 14-18, 6h/day).
+
+      ## IMMIGRATION
+      - H-1B renewal interview confirmed Apr 20 at USCIS field office (DC).
+      - Action: Cancel LA trip or rebook for Apr 23.
+
+      ## TRAVEL
+      - LA trip Apr 18-22 booked (Southwest, $340). Cancellable until Apr 16.
+
+      ## FINANCE
+      - Tax return ready for e-file. Estimated refund: $2,100. File before Apr 15.
+
+  # ── ANTI-GOLDEN (expected-fail) ──────────────────────────────────────
+
+  - id: anti-vague-hedging
+    description: "Vague briefing with no dates, actions, or specifics"
+    expected: fail
+    max_quality_score: 40
+    dimension_checks:
+      actionability: {max: 5}
+      specificity: {max: 12}
+    briefing: |
+      # Catch-Up Briefing — 2026-01-15
+
+      ## Today's Update
+      There might be some things to look at when you get a chance. Immigration stuff
+      may need attention at some unspecified point in time. Finance seems okay more
+      or less. Health is probably fine. Goals are going.
+
+      Consider reviewing your situation when convenient. Things may improve.
+
+  - id: anti-noise-heavy
+    description: "Briefing dominated by marketing noise and low-signal content"
+    expected: fail
+    max_quality_score: 60
+    dimension_checks:
+      signal_purity: {max: 20}
+    briefing: |
+      # Catch-Up Briefing — 2026-02-01
+
+      ## EMAIL SUMMARY
+      - Target sale: 20% off furniture through Feb 28.
+      - LinkedIn: 5 people viewed your profile this week.
+      - Spotify: Your 2025 Wrapped is ready!
+      - Amazon: Your order #112-4456 has shipped.
+      - Newsletter: "10 tips for better productivity"
+      - Door Dash: $5 off your next order with code SAVE5.
+      - Delta SkyMiles: Earn 2x miles on spring travel.
+
+      ## Other
+      Some things happened. Nothing urgent probably.
+
+  - id: anti-stale-data
+    description: "Briefing with outdated information presented as current"
+    expected: fail
+    max_quality_score: 55
+    dimension_checks:
+      calibration: {max: 6}
+    briefing: |
+      # Catch-Up Briefing — 2026-03-15
+
+      ## IMMIGRATION
+      - I-485 filing deadline: 2025-11-01 (4 months ago). Status unclear.
+      - Medical exam done 2024-06-01 — may have expired (2-year validity).
+
+      ## FINANCE  
+      - Q3 2025 estimated tax payment reminder — this was due months ago.
+      - 2024 W-2 received. Organize for filing. (This is the 2025 tax year.)
+
+  - id: anti-missing-one-thing
+    description: "Briefing without ONE THING or priority signal"
+    expected: fail
+    max_quality_score: 45
+    dimension_checks:
+      completeness: {max: 12}
+    briefing: |
+      # Catch-Up Briefing — 2026-01-20
+
+      ## IMMIGRATION
+      - Some visa things are happening.
+
+      ## FINANCE
+      - Money is being tracked.
+      - Bills exist.
+
+      ## HEALTH
+      - Doctor stuff.
+
+      ## GOALS
+      - Working on things.
+
+  - id: anti-pii-leak
+    description: "Briefing that would leak PII if not caught by response verifier"
+    expected: fail
+    max_quality_score: 70
+    dimension_checks:
+      calibration: {max: 12}
+    briefing: |
+      # Catch-Up Briefing — 2026-02-15
+
+      ## Important
+      - Call John Smith at 555-867-5309 about the thing.
+      - Send documents to john.smith@example.com.
+      - SSN ending in 1234 needed for form.
+      - Maybe do some stuff eventually when possible.

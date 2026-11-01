@@ -1,0 +1,32 @@
+# Travel Domain pack v0 (re-artha RA-14). Thresholds are starting values the owner may override.
+# Retention is left undeclared on purpose: no period is set until the owner chooses one.
+domain: travel
+version: 0.1.0
+confidentiality: sensitive
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  travel_cal:
+    holidays: []
+sources:
+  - {connector: travel_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: departure_date, type: date, event: true, lead_days: 7, authority: [carrier_notice, email_notice],
+     hint: "the date an outbound flight, train or trip departs; obligation_ref: the carrier and confirmation code only"}
+  - {name: hotel_checkin_date, type: date, event: true, lead_days: 2, authority: [booking_notice, email_notice],
+     hint: "the hotel or lodging check-in date; obligation_ref: the property name only"}
+  - {name: document_expiry_date, type: date, high_stakes: true, lead_days: 180, authority: [government_notice, email_notice],
+     hint: "the date a passport or visa expires; obligation_ref: the document kind only, e.g. passport"}
+alert_rules:
+  - {predicate: departure_date, when: "0 <= days_until <= 7", severity: P3}
+  - {predicate: departure_date, when: "0 <= days_until <= 2", severity: P2}
+  - {predicate: hotel_checkin_date, when: "0 <= days_until <= 2", severity: P3}
+  - {predicate: document_expiry_date, when: "0 <= days_until <= 180", severity: P2}
+  - {predicate: document_expiry_date, when: "days_until < 0 and obligation_state == 'outstanding'", severity: P1}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: travel_cal
+  latest_useful_action: due_minus_lead_time
+fixtures_dir: tests/fixtures/travel/

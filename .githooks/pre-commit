@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""
+pre-commit — Artha PII & secrets guard
+=======================================
+Thin entry point: the policy lives in ``.githooks/privacy_scan.py`` so that
+pre-commit, pre-push, ``make pii-scan`` and CI all enforce the same rules.
+
+Layers: forbidden names, secret/PII regexes, pii_guard.py, gitleaks (--staged).
+Fails closed when a scanner cannot run.
+
+Install:  git config core.hooksPath .githooks
+Ref: docs/security.md §1, re-artha §12.9 (WP-00)
+"""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import privacy_scan  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(privacy_scan.report(privacy_scan.scan_staged(), "Pre-commit"))

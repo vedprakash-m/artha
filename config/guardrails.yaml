@@ -1,0 +1,328 @@
+# config/guardrails.yaml — Artha guardrail configuration
+#
+# Controls which guardrails are active, their mode (blocking/parallel),
+# and any per-guardrail thresholds.
+#
+# All guardrails are additionally gated on harness.wave0.complete.
+# If wave0.complete=false, each guardrail logs a WARNING and continues.
+#
+# Ref: specs/agent-fw.md §3.1 (AFW-1)
+
+wave0_gate: hard  # DEBT-GUARD-001: Now enforced. Raises RuntimeError in all guarded paths
+                  # when harness.wave0.complete=false (hard) or bypasses with WARNING (soft).
+                  # Override: set env ARTHA_WAVE0_OVERRIDE=<reason> — writes to state/audit.md.
+                  # Tests: set ARTHA_WAVE0_OVERRIDE=pytest in conftest.py fixture.
+
+# ── Idempotency Windows (specs/harden.md §2.3.2) ──────────────────────────────
+# Deduplication window per action type.  Parsed by scripts/lib/idempotency.py.
+# Format: Nd (days) | Nh (hours) | Nm (minutes)
+idempotency_windows:
+  scheduling:    7d   # Appointment / meeting booking
+  financial:     30d  # Transfers, payments, subscriptions
+  communication: 48h  # Email, calendar invites, messages
+  default:       24h  # All other action types
+  # DEBT-013: Domain-qualified instruction_sheet windows
+  # Format: instruction_sheet_{domain}: <duration>
+  # Tried BEFORE the unqualified 'instruction_sheet' fallback.
+  instruction_sheet:             24h  # baseline for instruction_sheet (matches default)
+  instruction_sheet_immigration: 30d  # visa/passport events are annual cadence
+  instruction_sheet_finance:     30d  # tax and financial planning events
+  instruction_sheet_estate:      30d  # estate review and legal events
+  instruction_sheet_insurance:   30d  # policy reviews and renewals
+  instruction_sheet_iot:         4h   # smart home events are high-frequency
+  instruction_sheet_comms:       48h  # RD-01: form deadline reminders (business day cadence)
+
+input:
+  - name: vault_access
+    class: VaultAccessGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: prompt_injection
+    class: PromptInjectionGuardrail
+    enabled: true
+    mode: blocking
+
+tool:
+  - name: rate_limit
+    class: RateLimitGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: connector_health
+    class: ConnectorHealthGuardrail
+    enabled: true
+    mode: blocking
+    config:
+      max_failures: 3
+
+  # FR-32.9: Meeting transcript content is untrusted input — scan before routing
+  # to any state file. Reuses injection_detector.py (no new Python module).
+  # Ref: specs/pm-starter-kit.md §5.9 (FR-32.9), guardrails registration D-6.
+  - name: meeting_routing_injection_scan
+    class: MeetingRoutingInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # Discard the proposal and log ⚠️ injection-scan-blocked if triggered
+      on_detection: discard_and_log
+      # Only active during reflect Step 2b (meeting synthesis routing)
+      scope: reflect_step_2b
+
+output:
+  - name: device_suppress
+    class: DeviceSuppressGR
+    enabled: true
+    mode: blocking
+
+  - name: pii_output
+    class: PiiOutputGuardrail
+    enabled: true
+    mode: blocking
+
+  - name: data_quality
+    class: DataQualityGuardrail
+    enabled: true
+    mode: blocking
+    config:
+      q_score_threshold: 0.5
+
+  - name: friction_gate
+    class: FrictionGateGuardrail
+    enabled: true
+    mode: blocking
+
+# ── Domain Guardrails (PRD-Reloaded §8, R4) ──────────────────────────────────
+# New domain guardrails for Readiness, Logistics, Tribe, and Capital.
+# Implemented in scripts/middleware/guardrails.py.
+# All domain guardrails are blocking by default.
+# Ref: PRD-Reloaded §8.2 (R4), §8.3, §8.4, §8.5, §8.6
+
+domain:
+  # Readiness domain
+  - name: readiness_fallback
+    class: ReadinessFallbackGR
+    enabled: true
+    mode: blocking
+    config:
+      # Surface graceful fallback when Apple Health export is absent or >36h stale
+      max_data_age_hours: 36
+
+  - name: readiness_no_inference
+    class: ReadinessNoInferenceGR
+    enabled: true
+    mode: blocking
+    config:
+      # Prohibit calendar change proposals when readiness_score is null or <20
+      min_score_for_proposals: 20
+
+  # Logistics domain
+  - name: logistics_injection
+    class: LogisticsInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # PII scrub THEN injection scan on all OCR/receipt output (§8.3, F1)
+      # fail_safe: true means HALT (not pass-through) on scan error
+      fail_safe: true
+
+  - name: logistics_pii_boundary
+    class: LogisticsPIIBoundaryGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block any logistics entity that leaks PII into Amazon deeplinks
+      block_pii_in_deeplinks: true
+
+  # Tribe domain
+  - name: tribe_rate_limit
+    class: TribeRateLimitGR
+    enabled: true
+    mode: blocking
+    config:
+      # Hard cap: max 5 outreach drafts per catch-up run (§8.6)
+      max_drafts_per_session: 5
+
+  - name: tribe_no_auto_send
+    class: TribeNoAutoSendGR
+    enabled: true
+    mode: blocking
+    config:
+      # Tribe domain MUST stage drafts via pr_manager.py — never auto-send
+      require_content_stage: true
+
+  # Capital domain
+  - name: capital_source_citation
+    class: CapitalSourceCitationGR
+    enabled: true
+    mode: blocking
+    config:
+      # Every Capital proposal must include state file + line citation (§8.4)
+      require_source_citation: true
+
+  - name: capital_amount_confirm
+    class: CapitalAmountConfirmGR
+    enabled: true
+    mode: blocking
+    config:
+      # Any action >$200 requires user to re-type the amount (anti-hallucination gate §8.4)
+      amount_threshold: 200
+      # Reject (not prompt-again) if typed amount doesn't match proposed amount
+      reject_on_mismatch: true
+
+  # Career Search domain guardrails (specs/career-ops.md §14, N-F1)
+  # GUARDRAIL_CLASSES dict and __all__ registration required in scripts/middleware/guardrails.py
+  # P0 test: _ALLOWED_SKILLS must include career guardrails (AR-1)
+
+  - name: career_jd_injection
+    class: CareerJDInjectionGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block JD content containing LLM instructions, tool calls, or bash commands
+      # Auth wall detection runs BEFORE this guardrail (W-F5 ordering)
+      block_on_injection_patterns: true
+      # Patterns triggering injection flag
+      injection_signals:
+        - "<system>"
+        - "</system>"
+        - "Ignore previous instructions"
+        - "You are now"
+        - "bash -c"
+        - "os.system"
+        - "subprocess"
+      log_event: true   # Always write CAREER-GUARDRAIL trace entry (N-F4)
+
+  - name: career_no_auto_submit
+    class: CareerNoAutoSubmitGR
+    enabled: true
+    mode: blocking
+    config:
+      # Hard rule: Artha NEVER submits job applications (CS-2, career-ops ethical stance)
+      # Any action_proposal with action_type containing 'submit' or 'apply' is blocked
+      block_auto_submit: true
+      block_action_types: ["submit_application", "auto_apply", "application_submit"]
+
+  - name: career_pii_output
+    class: CareerPiiOutputGR
+    enabled: true
+    mode: blocking
+    config:
+      # Redact phone numbers in career output; block SSN / tax ID
+      redact_phone: true
+      block_ssn: true
+      allow_comp_data: true   # Compensation data permitted (needed for cross-domain)
+      allow_employer_name: true
+
+  - name: career_ethics
+    class: CareerEthicsGR
+    enabled: true
+    mode: blocking
+    config:
+      # Block apply recommendations when composite score < ethics_score_floor
+      ethics_score_floor: 4.0
+
+  - name: career_cv_modification
+    class: CvModificationGR
+    enabled: true
+    mode: blocking
+    config:
+      # Require explicit_approval=True in context before any write to cv.md
+      require_explicit_approval: true
+
+  - name: career_outreach
+    class: CareerOutreachGR
+    enabled: true
+    mode: blocking
+    config:
+      # Max outreach drafts per session; preview_shown=True required before finalizing
+      max_drafts_per_session: 5
+      require_preview: true
+
+# ── Device-Level Domain Suppression ──────────────────────────────────────────
+# Suppress specific domains from briefings and catch-up output on matching
+# hostnames. Career search activity must never surface on a work device.
+# Checked by: LLM compose layer (reads this config at briefing time) and
+# DeviceSuppressGR guardrail (pipeline enforcement).
+# To add a device: append hostname + suppress_domains list below.
+device_suppress:
+  - hostname: CPC-vemis-DJD0M          # Microsoft work laptop
+    suppress_domains:
+      - career_search
+    reason: "Career campaign items must not appear on employer-issued device"
+
+# RD-05: Contextual name scrubbing for email subject PII
+pii_guard:
+  contextual_name_scrubbing: true
+  # When true, pii_guard applies a NAME_IN_SUBJECT pattern that redacts
+  # human names appearing after "for", "re:", "fw:", or "appointment for"
+  # in email subjects.  May have false positives on org names like
+  # "For All Seasons" — review and set to false if too aggressive.
+
+# RD-27: Per-domain Net-Negative Write Guard thresholds.
+# The default vault integrity guard blocks encryption if the new plaintext
+# is < 80% of the existing .age file size. Some domains (e.g., finance, health)
+# regularly produce condensed summaries that legitimately reduce file size.
+# Set a lower threshold (e.g., 0.6) to reduce false positives for those domains.
+# Parsed by scripts/vault.py:is_integrity_safe() when encrypting.
+net_negative_write_guard:
+  default_threshold: 0.80     # 80% default — blocks encrypt if plaintext < 80% of .age
+  domain_thresholds:
+    finance: 0.60             # Financial summaries can legitimately condense ~40%
+    health: 0.65              # Health records often condensed from raw appointment notes
+    transactions: 0.55        # Transaction logs may be heavily summarised
+
+# ── DC-3: Reflect Audit Gate ─────────────────────────────────────────────────
+# Blocking gate applied after state-file writes in every reflect/work-reflect run.
+# 6 blocking checks must pass before reflect can be declared complete.
+# On failure after max_iterations, all reflect state files are rolled back from snapshot.
+# Snapshot dir is created pre-write and deleted on audit success.
+# Ref: specs/datacop.md §DC-3 (approved 2026-04-22)
+
+audit_gate:
+  blocking_checks: 6
+  max_iterations: 2
+  on_exceed: rollback
+  snapshot_dir: tmp/reflect-snapshots
+
+# ── ST-07: Governance Rings (specs/steal.md §14.1) ───────────────────────────
+rings:
+  ring_0:
+    name: encrypted_state_writes
+    description: "Encrypted vault writes — requires explicit user confirmation"
+    allowed_operations: [vault_write, state_encrypt]
+    requires_user_confirmation: true
+  ring_1:
+    name: state_writes_and_connector_fetch
+    description: "State file writes and external connector fetches"
+    allowed_operations: [state_write, connector_fetch, action_execute]
+    requires_user_confirmation: false
+  ring_2:
+    name: read_state_and_generate
+    description: "Read state files and generate LLM output"
+    allowed_operations: [state_read, llm_generate, briefing_write]
+    requires_user_confirmation: false
+  ring_3:
+    name: read_only
+    description: "Read-only access to state and config"
+    allowed_operations: [state_read, config_read]
+    requires_user_confirmation: false
+
+blocked_patterns:
+  - pattern: "subprocess\\.call|os\\.system|eval\\("
+    reason: "Shell injection prevention"
+    severity: hard_block
+  - pattern: "DROP TABLE|DELETE FROM|TRUNCATE"
+    reason: "Destructive database operations blocked"
+    severity: hard_block
+  - pattern: "password|secret|api_key|private_key"
+    reason: "Credential exfiltration prevention (in non-vault outputs)"
+    severity: warn
+
+pii_retention:
+  encrypted_domains:
+    - immigration
+    - finance
+    - health
+  retention_days: 365
+  enforce_ttl: true

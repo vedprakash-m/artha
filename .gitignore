@@ -1,0 +1,334 @@
+# --- User data (NEVER committed) ---
+# Personal profile - created by /bootstrap
+config/user_profile.yaml
+# To Do list IDs - generated at setup
+config/artha_config.yaml
+# Legacy config - consolidated into user_profile.yaml
+config/settings.md
+# User-specific sender->domain routing
+config/routing.yaml
+# Generated Identity block - personal data
+config/Artha.identity.md
+# Channel bridge live config — contains recipient IDs (PII)
+config/channels.yaml
+# OpenClaw Home Bridge config — contains LAN endpoint URL and bot name (personal infra; never committed)
+config/claw_bridge.yaml
+config/claw_bridge.yaml.bak
+# User-specific connector config — contains credential key names and token paths
+config/connectors.yaml
+config/connectors.yaml.bak
+# Per-domain autonomy levels — runtime user state (trip history, cooldown dates)
+config/domain_autonomy_state.yaml
+# Watch monitor keyword config — contains personal interest topics (immigration, finance, etc.)
+config/watches.yaml
+# Action quality user preferences — contains personal autopay services, sender domains, overrides (PII)
+config/user_context.yaml
+# Catchup core runtime configuration — contains personal subject IDs and connector mappings
+config/catchup_core.yaml
+# Vault decryption lock / collision markers (ephemeral, machine-local)
+*.artha-decrypted*
+.artha-decrypted*
+# Channel push artifacts (ephemeral, machine-local)
+state/.channel_push_marker_*.json
+state/.channel_listener.pid
+state/.channel_listener.heartbeat
+state/.pending_pushes/
+# Bridge drop-files (ephemeral; synced via OneDrive, not Git)
+state/.action_bridge/
+# User-specific prompt extensions
+config/prompt-overlays/*.md
+# Keep the README
+!config/prompt-overlays/README.md
+
+# --- Local archive (personal specs, notes with PII — never committed) ---
+.archive/
+knowledge/
+ai-demo-day/
+obsidian/
+
+# --- Specs directory — only canonical specs are committed ---
+# All specs/ files are ignored by default; only the 3 canonical specs are
+# whitelisted below. Working/draft specs stay local.
+specs/*
+!specs/artha-prd.md
+!specs/artha-tech-spec.md
+!specs/artha-ux-spec.md
+
+# --- State files (all user-generated, ALL subdirectories) ---
+state/*.md
+state/*.md.age
+state/*.yaml
+state/*.yaml.age
+# JSON runtime state (skills cache, catch-up run history — personal data, not committed)
+state/*.json
+state/*.json.age
+# Career state subdirectory (personal job application data — never committed)
+state/career/
+
+# Content directory — posts, drafts, voice profile, gallery, radar backlog (never committed)
+state/content/
+# Work OS state — personal work data (never committed)
+state/work/
+# Bridge artifacts — aggregate signals with potential PII (never committed)
+state/bridge/
+# Eval files — test evaluation data
+state/work/eval/
+# SQLite databases (actions.db, etc.) — user data, not committed
+state/*.db
+state/*.db-shm
+state/*.db-wal
+# Reasoning traces — per-session LLM reasoning (harden.md §5.1); PII-scrubbed but local-only
+state/traces/
+# Connector health/state subdirectory (harden.md §2.3.1; last_fetched_at timestamps)
+state/connectors/
+# Immigration state subdirectory (personal PII — never committed)
+state/immi/
+# Travel state subdirectory (trip plans, booking details — personal PII)
+state/travel/
+# KB audit log (LLM observability — machine-local, never committed)
+state/audit/
+!state/.gitkeep
+!state/templates/
+
+# --- GFS backup snapshots (ZIP-per-day, stored at project root) ---
+backups/
+
+# --- Briefing and summary archives ---
+# Daily briefing files are personal (never committed)
+briefings/*.md
+briefings/*.lock
+briefings/career/
+summaries/
+
+# --- Email archives and raw review files ---
+# Inbox sync directory (raw email/calendar data ingested by inbox_process.py — personal, never committed)
+inbox/
+emails_*.jsonl
+review_*.txt
+*.jsonl
+!tests/fixtures/*.jsonl
+!tests/fixtures/**/*.jsonl
+gmail_*.jsonl
+icloud_*.jsonl
+outlook_*.jsonl
+*_errors.txt
+*_err.txt
+# filesystem write probe
+test-write.txt
+# test runner output artifacts
+test_out.txt
+test_results.txt
+test_results2.txt
+test_results3.txt
+tests_output.txt
+tests_output2.txt
+last_tests.txt
+tests/_out.txt
+# Work OS test artifacts — generated output, not source
+tests/work/_pytest_results.txt
+# Scratch test runner scripts (local dev tools, not part of public repo)
+run_tests.ps1
+run_tests.py
+run_tests2.py
+scripts/_run_tests_internal.py
+
+# --- Token and credential files ---
+.tokens/
+*.token.json
+# Finalization audit (re-artha 12.8): defence in depth for secrets that are not in the folders above
+.env
+.env.*
+!.env.example
+*-token.json
+*credentials*.json
+*creds*.json
+*.pem
+*.p12
+*.pfx
+id_rsa*
+
+# --- Virtual environments ---
+.venv/
+.venv-win/
+.venv-docx/
+
+# --- Python bytecode ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# --- Test / lint caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+coverage-harness.xml
+
+# --- Personal development setup docs (machine-specific paths) ---
+docs/cross-platform-git-setup.md
+
+# --- OneDrive artifacts and conflict copies ---
+# No machine-name patterns here: keep this file free of personal identifiers.
+# state/*.age is a superset of state/*.md.age etc. and also covers OneDrive
+# conflict-copy variants (e.g. state/foo.md-MACHINENAME.age).
+*conflicted*
+state/*.age
+.DS_Store
+
+# --- IDE settings ---
+.vscode/
+
+# --- AI CLI internal scratch files (Gemini, etc.) ---
+.gemini_security/
+.gemini/
+
+# --- Archive and working directories ---
+.archive/
+.claude/
+tmp/
+visuals/
+# xHealth Shiproom app (personal health data and dashboards — never committed)
+scripts/work/xhealth/
+
+# --- Assembled instruction file (contains personal identity) ---
+config/Artha.md
+
+# --- Artha reference docs extracted from Artha.core.md (employer-specific tool references) ---
+config/Artha.reference.md
+
+# --- WorkIQ and platform overlays (employer-specific integration configs) ---
+config/overlays/*.md
+
+# --- Reflect protocol (contains PII: personal email alias, employer info) ---
+config/reflect-protocol.md
+
+# --- Work OS scripts (contain employer-specific config references) ---
+# The public repo ships example/framework code; actual work scripts with
+# employer-specific connector wiring are local-only.
+scripts/work_loop.py
+scripts/work_bootstrap.py
+scripts/work_warm_start.py
+scripts/work_domain_writers.py
+scripts/work_reader.py
+scripts/work_notes.py
+scripts/work/
+
+# --- Work OS tests (import above gitignored work scripts) ---
+tests/work/
+
+# --- External agent drop folder, registry, and work-specific agent configs ---
+# These contain personal work context (team names, ADO IDs, tool-specific instructions)
+# Only the 3 canonical artha-work*.md agent definitions (already tracked) are public.
+config/agents/external/
+config/agents/external-registry.yaml
+config/agents/*.agent.md
+
+# --- VS Code agent discovery shims for internal/work-specific agents ---
+# .github/agents/ is scanned by VS Code for runSubagent() — files must exist locally.
+# Only artha-work-*.md (3 canonical files, already tracked) are public.
+# Any agent embedding internal service names (internal service names, etc.) is gitignored.
+.github/agents/storage-*.md
+.github/agents/*-expert.md
+.github/agents/*-advisor.md
+.github/agents/*-analyst.md
+.github/agents/icm-*.md
+.github/agents/xpf-*.md
+.github/agents/ado-*.md
+.github/agents/kusto-*.md
+
+# --- Decrypted state transient files ---
+.artha-decrypted
+
+# --- Runtime lock and ephemeral files ---
+.artha-op-lock
+*.bak
+state/*.bak*
+state/.preflight_write_test
+state/*.lock
+state/*.yaml.age.*
+state/*.md.age.*
+
+# --- macOS LaunchAgent plists (contain machine-specific paths and username) ---
+# hermes-home.skill is already covered by *.skill above
+# The plist has hardcoded venv + repo paths; users create from the spec template.
+artha.hermes-context.plist
+*.launchagent.plist
+# F-D1 morning-brief job — contains hardcoded /Users/<username>/ path (PII)
+scripts/com.artha.morning-brief.plist
+
+# --- OneDrive conflict copies ---
+# OneDrive git-shadow directory (sync artefact)
+.git 2/
+*.pre-*-bak
+
+# --- Career Search PII files (specs/career-ops.md §7.4 security requirements) ---
+# cv.md, cv-short.md, and article-digest.md contain PII — NEVER commit to git
+# Store at ~/.artha-local/ (outside repo). Root-level fallback locations protected here.
+# career_cover_letter.py contains hardcoded full name, location, and immigration status.
+# imessage_appointments.py contains hardcoded phone numbers and medical provider names.
+scripts/skills/career_cover_letter.py
+scripts/skills/imessage_appointments.py
+cv.md
+cv-short.md
+article-digest.md
+# Compiled fonts (binary — generated by scripts/install_fonts.sh)
+fonts/*.woff2
+fonts/*.woff
+fonts/*.ttf
+
+# --- Career Search generated outputs (personal data — never committed) ---
+# Entire directories are gitignored — CI creates them via mkdir -p
+output/career/
+briefings/career/
+# Career audit trace (JSONL — covered by *.jsonl above, but explicit for clarity)
+state/career_audit.jsonl
+# Local career cache (~/.artha-local/career/ is outside repo — already safe)
+
+# --- MCP Hybrid Connector files (employer-specific connector wiring) ---
+# Config files with internal service names / connector references
+config/work_connector_policy.yaml
+config/enghub_service_scope.yaml
+# Work OS connector modules (contain employer-specific integration logic)
+scripts/lib/workiq_circuit_breaker.py
+scripts/lib/work_connector_router.py
+scripts/lib/mcp_formatter.py
+scripts/lib/enghub_manager.py
+scripts/schemas/briefing_block.py
+# MCP hybrid test files (import above gitignored modules)
+tests/lib/test_workiq_circuit_breaker.py
+tests/lib/test_work_connector_router.py
+tests/lib/test_mcp_formatter.py
+tests/lib/test_enghub_manager.py
+
+# --- Obsidian vault (personal notes — never committed) ---
+.obsidian/
+
+# --- OneNote export folder (personal — never committed) ---
+OneNote/
+
+# --- AI Studio skill packages and local skill directory ---
+# home-intelligence.skill and skills/ contain personal entity names
+# (camera names, family member names from Home Assistant) — never committed
+*.skill
+skills/
+# But scripts/skills/ is the Python skill module (no PII) — commit it
+!scripts/skills/
+
+# Personal CV content baked into a script — local only (re-artha WP-00 privacy audit)
+scripts/career_docx_visual_google.py
+scripts/career_docx_visual.py
+scripts/render_openai_cv.py
+agency.toml
+
+# Local tooling artifacts
+coverage.xml
+.coverage
+.mypy_cache/
+.antigravitycli/
+scratch/

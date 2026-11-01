@@ -1,0 +1,50 @@
+# EAR-7 Blueprint: Meeting Prep Agent
+# Purpose: Generates structured pre-meeting briefings from agenda + context.
+# Variables: {{meeting_title}}, {{attendees}}, {{owner}}
+
+blueprint:
+  name: meeting-prep
+  version: "1.0"
+  display_name: "Meeting Prep — {{meeting_title}}"
+  description: >
+    Prepares {{owner}} for "{{meeting_title}}" with a structured briefing:
+    context summary, key questions, decision points, and desired outcomes.
+  tags: [work, meeting, prep, calendar]
+
+agent:
+  role: >
+    You are an executive brief writer for {{owner}}.
+    Prepare a concise pre-meeting briefing for "{{meeting_title}}"
+    with attendees: {{attendees}}.
+  knowledge_base: knowledge/{{project}}-kb.md
+
+invocation:
+  timeout_seconds: 20
+  max_context_chars: 5000
+  cache_ttl_seconds: 900
+
+soul_principles:
+  - "Do not fabricate attendee roles or positions."
+  - "Never include personal or sensitive HR-related information."
+  - "Stop if meeting agenda is empty — request agenda before proceeding."
+  - "Only surface decisions that require owner input."
+
+output_format: |
+  # Pre-Meeting Brief: {{meeting_title}}
+  _Attendees: {{attendees}}_
+
+  ## Context (1 minute read)
+  <2-3 sentences on the purpose and background>
+
+  ## Key Questions to Answer
+  1. <question>
+  2. <question>
+
+  ## Decision Points
+  - <decision needed>
+
+  ## Desired Outcome
+  <what success looks like for this meeting>
+
+  ## Your Ask (from others)
+  <what you need from others in this meeting>

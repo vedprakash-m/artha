@@ -1,0 +1,36 @@
+# Digital Domain pack v0 (re-artha W2b): subscriptions, domain names and software licences.
+# Thresholds are starting values the owner may override. Retention is left undeclared on purpose.
+domain: digital
+version: 0.1.0
+confidentiality: sensitive
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  digital_cal:
+    holidays: []
+sources:
+  - {connector: digital_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: subscription_renewal_date, type: date, lead_days: 7, lapse_days: 0,
+     authority: [provider_notice, email_notice],
+     hint: "the date a subscription or software licence renews; obligation_ref: the service name only"}
+  - {name: domain_expiry_date, type: date, high_stakes: true, lead_days: 30,
+     authority: [registrar_notice, email_notice],
+     hint: "the date a registered domain name expires; obligation_ref: the domain name"}
+  - {name: payment_failed, type: enum, values: [failed, ok], high_stakes: true,
+     authority: [provider_notice, email_notice],
+     aliases: {failed: [declined]},
+     hint: "failed: the mail says a subscription or licence payment failed or was declined; obligation_ref: the service name only"}
+alert_rules:
+  - {predicate: subscription_renewal_date, when: "0 <= days_until <= 7", severity: P3}
+  - {predicate: subscription_renewal_date, when: "0 <= days_until <= 2", severity: P2}
+  - {predicate: domain_expiry_date, when: "0 <= days_until <= 30", severity: P2}
+  - {predicate: domain_expiry_date, when: "0 <= days_until <= 7", severity: P1}
+  - {predicate: payment_failed, when: "value == 'failed'", severity: P2}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: digital_cal
+  latest_useful_action: due_minus_lead_time
+fixtures_dir: tests/fixtures/digital/

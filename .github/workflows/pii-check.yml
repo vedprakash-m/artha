@@ -1,0 +1,56 @@
+name: PII Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  privacy-gate:
+    name: Privacy gate (secrets, PII, forbidden files, owner identifiers)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the whole pushed range is scanned, not only the tip
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          VER=8.30.1
+          BASE=https://github.com/gitleaks/gitleaks/releases/download/v${VER}
+          curl -sSfL -o gl.tgz "${BASE}/gitleaks_${VER}_linux_x64.tar.gz"
+          curl -sSfL -o gl.sum "${BASE}/gitleaks_${VER}_checksums.txt"
+          grep "gitleaks_${VER}_linux_x64.tar.gz" gl.sum | sed 's#gitleaks_.*#gl.tgz#' | sha256sum -c -
+          tar -xzf gl.tgz gitleaks
+          sudo mv gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan every tracked file
+        run: python .githooks/privacy_scan.py --tracked
+
+      - name: Scan every commit in the pushed range
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="origin/${{ github.base_ref }}..HEAD"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              RANGE="HEAD"
+            else
+              RANGE="${BEFORE}..${{ github.sha }}"
+            fi
+          fi
+          echo "scanning range: $RANGE"
+          # shellcheck disable=SC2086
+          python .githooks/privacy_scan.py --range $RANGE
+
+      - name: Verify demo fixtures contain no real PII
+        run: python scripts/demo_catchup.py --verify

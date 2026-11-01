@@ -1,0 +1,3 @@
+{"id":"goal-entry-1","text":"G1 2026-10-12 125.25 USD","predicate":"goal_quantity","subject_id":"owner","synthetic":true}
+{"id":"goal-entry-2","text":"G2 2026-10-12 done","predicate":"goal_checkin","subject_id":"owner","synthetic":true}
+{"id":"goal-entry-3","text":"G2 2026-10-11 skipped","predicate":"goal_checkin","subject_id":"owner","synthetic":true}

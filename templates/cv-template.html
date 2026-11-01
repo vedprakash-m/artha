@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{COMPANY}} — {{ROLE}}</title>
+  <style>
+    /* ================================================================
+       Artha Career CV Template v4.1
+       ATS-optimized, single-column layout (no tables/columns in body)
+       Self-hosted fonts: Space Grotesk (display) + DM Sans (body)
+       Fonts resolved locally via @font-face with local() fallback;
+       woff2 files live in fonts/ (see scripts/install_fonts.sh).
+       No CDN requests at render time.
+    ================================================================ */
+
+    /* ── Self-hosted fonts (no CDN) ── */
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Space Grotesk';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: local('Space Grotesk Bold'), local('Space Grotesk'),
+           url('../fonts/SpaceGrotesk-Bold.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: local('DM Sans'),
+           url('../fonts/DMSans-Regular.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-style: normal;
+      font-weight: 500;
+      font-display: swap;
+      src: local('DM Sans Medium'), local('DM Sans'),
+           url('../fonts/DMSans-Medium.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'DM Sans';
+      font-style: normal;
+      font-weight: 700;
+      font-display: swap;
+      src: local('DM Sans Bold'), local('DM Sans'),
+           url('../fonts/DMSans-Bold.woff2') format('woff2');
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      font-family: 'DM Sans', -apple-system, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 9.5pt;
+      line-height: 1.3;
+      color: #1f2937;
+      background: #fff;
+      width: 8.5in;
+    }
+
+    .page { padding: 0.22in 0.5in 0.2in; }
+
+    /* ── Name — Space Grotesk display face ── */
+    h1 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 17pt;
+      font-weight: 600;
+      letter-spacing: -0.1px;
+      color: #0a192f;
+      line-height: 1.1;
+      margin-bottom: 2px;
+    }
+
+    /* ── Contact line ── */
+    h1 + p {
+      font-size: 8.75pt;
+      color: #6b7280;
+      margin-bottom: 0;
+      padding-bottom: 5px;
+      border-bottom: 1.5px solid #0a192f;
+      letter-spacing: 0.1px;
+    }
+
+    /* ── Section headings ── */
+    h2 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.8px;
+      color: #1e3a5f;
+      border-bottom: 0.75px solid #93c5fd;
+      padding-bottom: 2px;
+      margin-top: 6px;
+      margin-bottom: 3px;
+    }
+
+    /* ── Role block ── */
+    .role-block { margin-top: 5px; margin-bottom: 0; }
+
+    .role-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .company {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #0a192f;
+      line-height: 1.2;
+    }
+
+    .role-date {
+      font-size: 8.25pt;
+      color: #9ca3af;
+      white-space: nowrap;
+      margin-left: 18px;
+      font-style: normal;
+    }
+
+    .role-title {
+      font-size: 9.25pt;
+      color: #374151;
+      font-style: italic;
+      margin-top: 1px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      font-family: 'Space Grotesk', Georgia, serif;
+      font-size: 10pt;
+      font-weight: 700;
+      color: #0a192f;
+      margin-top: 5px;
+      margin-bottom: 1px;
+    }
+
+    p {
+      font-size: 9pt;
+      margin-bottom: 2px;
+      color: #1f2937;
+    }
+
+    strong { color: #1e3a5f; font-weight: 700; }
+
+    ul {
+      list-style-type: disc;
+      padding-left: 14px;
+      margin-top: 2px;
+      margin-bottom: 1px;
+    }
+
+    li {
+      font-size: 9pt;
+      line-height: 1.28;
+      margin-bottom: 1px;
+      color: #1f2937;
+    }
+
+    /* ── Education — single-column rows only; ATS-safe (no layout tables) ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 9pt;
+      margin-top: 4px;
+    }
+
+    td, th {
+      text-align: left;
+      padding: 2px 8px 2px 0;
+      vertical-align: top;
+    }
+
+    th {
+      font-weight: 600;
+      color: #374151;
+      border-bottom: 0.75px solid #e5e7eb;
+      padding-bottom: 3px;
+    }
+
+    td:last-child { color: #6b7280; }
+
+    hr { display: none; }
+
+    .role-block, h2 { page-break-after: avoid; }
+    ul, p { page-break-inside: avoid; }
+
+    .pdf-meta { display: none !important; }
+
+    @media print {
+      html, body { font-size: 9.25pt; }
+      h1 { font-size: 16pt; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div id="cv-body">{{CV_CONTENT}}</div>
+    <div class="pdf-meta">
+      Generated: {{DATE}} | Company: {{COMPANY}} | Role: {{ROLE}}
+      | Score: {{SCORE}} | Archetype: {{ARCHETYPE}}
+      | ATS Keywords: {{KEYWORDS}}
+    </div>
+  </div>
+</body>
+</html>

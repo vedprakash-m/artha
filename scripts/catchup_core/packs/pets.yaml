@@ -1,0 +1,30 @@
+# Pets Domain pack v0 (re-artha W2b). Thresholds are starting values the owner may override.
+# Retention is left undeclared on purpose: no period is set until the owner chooses one.
+domain: pets
+version: 0.1.0
+confidentiality: sensitive
+impact: consequential
+bindings:
+  local_tz: America/Los_Angeles
+  pets_cal:
+    holidays: []
+sources:
+  - {connector: pets_email, required: true, freshness_hours: 48}
+predicates:
+  - {name: vaccination_due_date, type: date, lead_days: 14, authority: [clinic_notice, email_notice],
+     hint: "the date a pet vaccination or booster is due; obligation_ref: the vaccine name"}
+  - {name: vet_appointment_date, type: date, event: true, authority: [clinic_notice, calendar],
+     hint: "the day of a booked vet appointment; obligation_ref: the visit type, e.g. check-up"}
+  - {name: licence_renewal_date, type: date, lead_days: 14, authority: [licensing_notice, email_notice],
+     hint: "the date a pet licence or registration expires or must be renewed"}
+alert_rules:
+  - {predicate: vaccination_due_date, when: "0 <= days_until <= 14", severity: P2}
+  - {predicate: vet_appointment_date, when: "0 <= days_until <= 7", severity: P3}
+  - {predicate: licence_renewal_date, when: "0 <= days_until <= 14", severity: P2}
+deadline_arithmetic:
+  timezone: local_tz
+  date_only: unspecified_unless_the_source_states_a_time
+  end_dates: exclusive
+  business_days: pets_cal
+  latest_useful_action: due_minus_lead_time
+fixtures_dir: tests/fixtures/pets/

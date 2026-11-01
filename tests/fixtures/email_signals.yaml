@@ -1,0 +1,71 @@
+# tests/fixtures/email_signals.yaml — DEBT-EVAL-001
+# Email fixtures with expected signal_type extractions for the signal pipeline integration test.
+# Each entry: input email record + expected matched signal_type (or null for no-match).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Precision cases: these MUST fire the expected signal_type
+- id: "fix_001"
+  email:
+    id: "e001"
+    subject: "Rent reminder — payment due December 31, 2026"
+    from: "landlord@properties.com"
+    snippet: "Your rent of $2,400 is due on 2026-12-31. Please pay on time."
+  expect_signal: "bill_due"
+  expect_match: true
+
+- id: "fix_002"
+  email:
+    id: "e002"
+    subject: "Passport renewal application — submit by June 1"
+    from: "travel@alerts.com"
+    snippet: "Your passport renewal application deadline is June 1, 2026. Submit by June 1 to avoid travel disruption."
+  expect_signal: "form_deadline"
+  expect_match: true
+
+- id: "fix_003"
+  email:
+    id: "e003"
+    subject: "Action required: Tax payment due April 15"
+    from: "notifications@irs.gov"
+    snippet: "Your 2025 federal taxes: amount due $2,400. Pay by April 15 to avoid penalties."
+  expect_signal: "bill_due"
+  expect_match: true
+
+- id: "fix_004"
+  email:
+    id: "e004"
+    subject: "Doctor appointment confirmed — Thursday at 3 PM"
+    from: "appointments@healthclinic.com"
+    snippet: "Your appointment with Dr. Smith is confirmed for Thursday, April 10 at 3:00 PM."
+  expect_signal: "appointment_confirmed"
+  expect_match: true
+
+# Recall cases: ambiguous wording — may or may not fire (mark expect_match: false for no-fire guarantee)
+- id: "fix_005"
+  email:
+    id: "e005"
+    subject: "Newsletter: Tips for better health"
+    from: "newsletter@healthblog.com"
+    snippet: "This week: eating better, sleeping more, and exercise routines."
+  expect_signal: null
+  expect_match: false   # marketing noise — must NOT produce a high-confidence signal
+
+# Precision: financial amount triggers
+- id: "fix_006"
+  email:
+    id: "e006"
+    subject: "Your credit card statement is ready"
+    from: "statements@bank.com"
+    snippet: "Your statement for March 2026 is ready. Minimum payment due: $45.00 by April 20."
+  expect_signal: "bill_due"
+  expect_match: true
+
+# Edge: PII in metadata must not survive raw into signal (companion check for DEBT-SIG-004)
+- id: "fix_007"
+  email:
+    id: "e007"
+    subject: "OTP: 482391 — do not share"
+    from: "security@bank.com"
+    snippet: "Your one-time password is 482391. Valid for 5 minutes."
+  expect_signal: null
+  expect_match: false   # OTP emails should not generate signals

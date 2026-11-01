@@ -1,0 +1,129 @@
+"""WP-01 / §6.12: Artha owns no background footprint (scheduler entry, daemon, listener)."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from preflight.footprint_checks import check_background_footprint  # noqa: E402
+
+
+class _Runner:
+    """Scripted command runner: maps the first two argv tokens to stdout."""
+
+    def __init__(self, outputs):
+        self.outputs = outputs
+        self.calls = []
+
+    def __call__(self, argv):
+        self.calls.append(argv)
+        for key, out in self.outputs.items():
+            if list(argv[: len(key)]) == list(key):
+                return 0, out
+        return 1, ""
+
+
+def test_clean_mac_passes(tmp_path):
+    runner = _Runner({("launchctl", "list"): "PID\tStatus\tLabel\n-\t0\tcom.apple.thing\n",
+                      ("crontab", "-l"): "", ("lsof",): ""})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert res.passed, res.message
+
+
+def test_loaded_launchd_job_is_a_footprint(tmp_path):
+    runner = _Runner({("launchctl", "list"): "-\t0\tartha.hermes-context\n"})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert not res.passed and "artha.hermes-context" in res.message
+
+
+def test_vault_watchdog_is_no_longer_an_exception(tmp_path):
+    runner = _Runner({("launchctl", "list"): "-\t0\tcom.artha.vault-watchdog\n"})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert not res.passed and "vault-watchdog" in res.message
+
+
+def test_installed_but_unloaded_definition_is_reported(tmp_path):
+    agents = tmp_path / "Library" / "LaunchAgents"
+    agents.mkdir(parents=True)
+    (agents / "artha.hermes-context.plist").write_text("<plist/>")
+    (agents / "com.apple.other.plist").write_text("<plist/>")
+    runner = _Runner({("launchctl", "list"): ""})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert not res.passed
+    assert "artha.hermes-context.plist" in res.message
+    assert "com.apple.other" not in res.message
+
+
+def test_cron_entry_is_a_footprint(tmp_path):
+    runner = _Runner({("launchctl", "list"): "", ("crontab", "-l"): "*/5 * * * * python3 /x/artha/scripts/nudge_daemon.py\n"})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert not res.passed and "cron" in res.message.lower()
+
+
+def test_listening_artha_process_is_a_footprint(tmp_path):
+    lsof = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\npython3 123 ved 5u IPv4 0 0t0 TCP 127.0.0.1:8765 (LISTEN)\n"
+    ps = "123 python3 /Users/x/Artha/scripts/channel_listener.py\n"
+    runner = _Runner({("launchctl", "list"): "", ("lsof",): lsof, ("ps",): ps})
+    res = check_background_footprint(runner=runner, platform="darwin", home=tmp_path)
+    assert not res.passed and "channel_listener" in res.message
+
+
+def test_linux_timer_detected(tmp_path):
+    out = "NEXT LEFT LAST PASSED UNIT ACTIVATES\nMon n/a n/a n/a artha-channel.timer artha-channel.service\n"
+    runner = _Runner({("systemctl",): out})
+    res = check_background_footprint(runner=runner, platform="linux", home=tmp_path)
+    assert not res.passed and "artha-channel.timer" in res.message
+
+
+def test_windows_tasks_detected_including_watchdog(tmp_path):
+    out = "TaskName: \\ArthaChannelListener\nStatus: Ready\n\nTaskName: \\ArthaVaultWatchdog\nStatus: Ready\n"
+    runner = _Runner({("schtasks",): out, ("netstat",): ""})
+    res = check_background_footprint(runner=runner, platform="win32", home=tmp_path)
+    assert not res.passed
+    assert "ArthaChannelListener" in res.message and "ArthaVaultWatchdog" in res.message
+    assert "Unregister-ScheduledTask" in res.fix_hint and "launchctl" not in res.fix_hint
+
+
+_NETSTAT = ("Active Connections\n\n  Proto  Local Address  Foreign Address  State  PID\n"
+            "  TCP    127.0.0.1:8765  0.0.0.0:0  LISTENING  4321\n"
+            "  TCP    0.0.0.0:445     0.0.0.0:0  LISTENING  4\n"
+            "  TCP    10.0.0.2:5000   1.2.3.4:443  ESTABLISHED  77\n")
+
+
+def test_windows_listening_artha_process_is_a_footprint(tmp_path):
+    procs = ('4 System\n77 C:\\py\\python.exe C:\\x\\Artha\\scripts\\artha_engine.py\n'
+             '4321 C:\\py\\python.exe "C:\\x\\Artha\\scripts\\channel_listener.py" --port 8765\n')
+    runner = _Runner({("schtasks",): "", ("netstat",): _NETSTAT, ("powershell",): procs})
+    res = check_background_footprint(runner=runner, platform="win32", home=tmp_path)
+    assert not res.passed and "channel_listener" in res.message
+    assert "artha_engine" not in res.message  # PID 77 is not listening
+
+
+def test_windows_clean_host_passes_and_other_listeners_are_ignored(tmp_path):
+    runner = _Runner({("schtasks",): "TaskName: \\OneDrive Standalone Update\n", ("netstat",): _NETSTAT,
+                      ("powershell",): "4 System\n4321 C:\\Program Files\\Other\\server.exe\n"})
+    res = check_background_footprint(runner=runner, platform="win32", home=tmp_path)
+    assert res.passed, res.message
+
+
+def test_windows_process_query_failure_is_unverified(tmp_path):
+    runner = _Runner({("schtasks",): "", ("netstat",): _NETSTAT})
+    res = check_background_footprint(runner=runner, platform="win32", home=tmp_path)
+    assert not res.passed and "powershell" in res.message and "unverified" in res.message
+
+
+def test_inventory_tool_failure_is_reported_not_passed(tmp_path):
+    def broken(argv):
+        raise OSError("launchctl missing")
+    res = check_background_footprint(runner=broken, platform="darwin", home=tmp_path)
+    assert not res.passed and "could not" in res.message.lower()
+
+
+def test_nonzero_inventory_is_unknown_even_with_empty_output(tmp_path):
+    result = check_background_footprint(runner=lambda _args: (2, ""), platform="darwin", home=tmp_path)
+    assert not result.passed and "unverified" in result.message

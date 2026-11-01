@@ -1,0 +1,602 @@
+# config/actions.yaml — Artha Declarative Action Registry
+# Schema version 2.0
+#
+# SECURITY CONTRACT
+# -----------------
+# - autonomy_floor: true  → ALWAYS requires explicit human approval
+#                           regardless of trust level, configuration, or user override.
+#                           Hard-coded in TrustEnforcer — NOT bypassable.
+# - pii_check: true       → pii_guard.py scans all non-allowlisted parameter fields
+#                           before enqueueing AND before execution.
+# - enabled: false        → action is known but cannot be executed; AI informs user.
+#
+# v2.0 Changes from v1.0
+# -----------------------
+# - schema_version replaces version
+# - handler now points to scripts/actions/ modules
+# - New fields: min_trust, sensitivity, timeout_sec, retry, reversible,
+#               undo_window_sec, rate_limit, autonomy_floor, pii_allowlist
+# - friction vocabulary: low | standard | high  ("medium" → "standard")
+# - Key renames: send_email → email_send, send_whatsapp → whatsapp_send,
+#                add_calendar_event → calendar_create
+#
+# Ref: specs/action.md
+
+schema_version: "2.0"
+
+# LIVE TRIAL (re-artha WP-09, D-26)
+# ---------------------------------
+# While the hardened action lifecycle (unknown outcomes, compare-and-set claims,
+# payload-bound approval) is being proven, reminder_create is the only outbound
+# action type on trial: it affects only the owner's own list and is reversible.
+# Types under `held` may still be proposed and queued, but approve() refuses to
+# execute them.  Promote a type by deleting it from this list (a commit-visible,
+# one-line decision) after its predecessor has run clean in the audit trail.
+live_trial:
+  trial:
+    - reminder_create
+  held:
+    - calendar_create
+    - calendar_modify
+    - email_send
+    - email_reply
+    - whatsapp_send
+    - slack_send
+
+actions:
+
+  # ── Email ────────────────────────────────────────────────────────────────
+
+  email_send:
+    handler: "scripts/actions/email_send.py"
+    enabled: true
+    friction: standard           # individual review each time
+    min_trust: 1                 # Trust Level 1+ required
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false                 # no retry for sent emails
+    reversible: true
+    undo_window_sec: 30          # 30-second Gmail unsend window
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
+    pii_check: true
+    pii_allowlist:               # these fields are INTENDED to contain personal data
+      - "to"
+      - "cc"
+      - "bcc"
+      - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: lineage_check
+    core_surface: true
+    audit: true
+    autonomy_floor: true         # ALWAYS requires human approval — not bypassable
+    description: "Send email via Gmail API on behalf of user"
+
+  email_reply:
+    handler: "scripts/actions/email_reply.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: true
+    undo_window_sec: 30
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
+    pii_check: true
+    pii_allowlist:
+      - "to"
+      - "cc"
+      - "bcc"
+      - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: lineage_check
+    core_surface: true
+    audit: true
+    autonomy_floor: true
+    description: "Reply to email thread via Gmail API"
+
+  # ── Calendar ─────────────────────────────────────────────────────────────
+
+  calendar_create:
+    handler: "scripts/actions/calendar_create.py"
+    enabled: true
+    friction: low                # batch-approvable at Trust Level 1
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 3600        # 1 hour to undo (delete created event)
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 100
+    pii_check: false             # calendar events rarely contain PII
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: search_before_create
+    core_surface: true
+    audit: true
+    autonomy_floor: true         # exact human review required before any future promotion
+    description: "Create Google Calendar event (calendar.events scope — already authorized)"
+
+  calendar_modify:
+    handler: "scripts/actions/calendar_modify.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 3600
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 50
+    pii_check: false
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: search_before_create
+    core_surface: true
+    audit: true
+    autonomy_floor: true
+    description: "Modify or reschedule existing Google Calendar event"
+
+  # ── Reminders & Tasks ────────────────────────────────────────────────────
+
+  reminder_create:
+    handler: "scripts/actions/reminder_create.py"
+    enabled: true
+    friction: low
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: true
+    retry_max: 2
+    reversible: true
+    undo_window_sec: 86400       # 24 hours
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: false
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: search_before_create
+    core_surface: true
+    audit: true
+    autonomy_floor: true         # live trial (D-26): every execution needs explicit human approval
+    description: "Create reminder in Microsoft To Do"
+
+  todo_sync:
+    handler: "scripts/actions/todo_sync_action.py"
+    enabled: true
+    friction: low
+    min_trust: 0                 # automated sync; works at Trust Level 0
+    sensitivity: standard
+    timeout_sec: 30
+    retry: true
+    retry_max: 2
+    reversible: false
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
+    pii_check: false
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: source_of_truth
+    core_surface: true
+    audit: true
+    autonomy_floor: true
+    description: "Bidirectional sync with Microsoft To Do"
+
+  # ── Messaging ────────────────────────────────────────────────────────────
+
+  whatsapp_send:
+    handler: "scripts/actions/whatsapp_send.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 15
+    retry: false
+    reversible: false            # WhatsApp messages cannot be recalled via API
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
+    pii_check: true
+    pii_allowlist:
+      - "phone_number"
+      - "recipient_name"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: none
+    core_surface: true
+    audit: true
+    autonomy_floor: true         # ALWAYS requires human approval
+    description: "Send WhatsApp message (Phase 1: URL scheme; Phase 2: Cloud API)"
+
+  slack_send:
+    handler: "scripts/actions/slack_send.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false             # no retry for sent messages
+    reversible: false        # Slack messages cannot be recalled via API
+    rate_limit:
+      max_per_hour: 20
+      max_per_day: 100
+    pii_check: true
+    pii_allowlist:
+      - "channel"
+    preview_required: true
+    l2_eligible: false
+    provider_dedup_mode: none
+    core_surface: false
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Send message to a Slack channel or user via chat.postMessage"
+
+  # ── CONNECT Phase 3 — Task Manager Sync ──────────────────────────────────
+
+  todoist_sync:
+    handler: "scripts/actions/todoist_sync.py"
+    enabled: false               # Ved does not use Todoist — disabled Apr 2026
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: false        # Task creation in Todoist cannot be auto-reversed
+    l2_eligible: false
+    preview_required: false
+    provider_dedup_mode: search_before_create
+    core_surface: false
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: true
+    pii_allowlist:
+      - "title"
+      - "description"
+      - "project"
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Create a task in Todoist (single-writer: Artha writes once, Todoist owns)"
+
+  apple_reminders_sync:
+    handler: "scripts/actions/apple_reminders_sync.py"
+    enabled: true
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: false
+    run_on: darwin           # macOS only
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: true
+    pii_allowlist:
+      - "title"
+      - "notes"
+    audit: true
+    autonomy_floor: true     # ALWAYS requires human approval
+    description: "Create a reminder in Apple Reminders via EventKit (macOS only, single-writer)"
+
+  # ── Content Generation ───────────────────────────────────────────────────
+
+  instruction_sheet:
+    handler: "scripts/actions/instruction_sheet.py"
+    enabled: true
+    friction: low
+    min_trust: 0                 # read-only; generates text only; no external side effects
+    sensitivity: standard
+    timeout_sec: 10
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 30
+      max_per_day: 200
+    pii_check: false
+    preview_required: false
+    l2_eligible: true
+    provider_dedup_mode: none
+    core_surface: true
+    audit: true
+    autonomy_floor: false
+    description: "Generate step-by-step instruction sheet (no external execution)"
+
+  # ── Pipeline ─────────────────────────────────────────────────────────────
+
+  run_pipeline:
+    handler: "scripts/pipeline.py"
+    enabled: false               # Not in actions/_HANDLER_MAP — invoke pipeline.py directly
+    friction: low
+    min_trust: 0
+    sensitivity: standard
+    timeout_sec: 120
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 10
+      max_per_day: 50
+    pii_check: false
+    audit: false                 # pipeline logs its own output
+    autonomy_floor: false
+    description: "Fetch fresh data from all enabled connectors (read-only)"
+
+  # ── Phase 2 (disabled until API integrations are configured) ─────────────
+
+  bill_pay:
+    handler: "scripts/actions/bill_pay.py"
+    enabled: false               # Phase 2 — Plaid integration required
+    friction: high               # NEVER batch-approvable
+    min_trust: 1
+    sensitivity: critical
+    timeout_sec: 60
+    retry: false
+    reversible: false
+    rate_limit:
+      max_per_hour: 5
+      max_per_day: 20
+    pii_check: true
+    pii_allowlist:
+      - "from_account"
+      - "payee"
+    audit: true
+    autonomy_floor: true         # ALWAYS requires human approval — financial transaction
+    description: "Pay a bill via Plaid ACH transfer (Phase 2)"
+
+  appointment_book:
+    handler: "scripts/actions/appointment_book.py"
+    enabled: false               # Phase 2
+    friction: standard
+    min_trust: 1
+    sensitivity: standard
+    timeout_sec: 30
+    retry: false
+    reversible: true
+    undo_window_sec: 3600
+    rate_limit:
+      max_per_hour: 5
+      max_per_day: 10
+    pii_check: true
+    pii_allowlist:
+      - "provider_name"
+      - "patient_name"
+    audit: true
+    autonomy_floor: false
+    description: "Book appointment (Phase 2 — Zocdoc/Calendly API)"
+    params:
+      since: "{since_iso}"
+      source: "{source | optional}"
+    pii_check: false
+    audit: false
+
+  run_health_check:
+    type: api_call
+    enabled: true
+    handler: "scripts/pipeline.py"
+    requires_approval: false
+    friction: low
+    description: >
+      Run connector health checks and append results to state/health-check.md.
+    params:
+      source: "{source | optional}"
+    pii_check: false
+    audit: false
+
+  # ── Community extension example ────────────────────────────────────────────
+  # Channel Push is now handled by scripts/channel_push.py (Step 20 of catch-up).
+  # Configure via config/channels.yaml — see config/channels.example.yaml.
+  # send_telegram:
+  #   type: api_call
+  #   enabled: false
+  #   handler: "scripts/channels/telegram.py"
+  #   requires_approval: true
+  #   friction: low
+  #   description: >
+  #     Send a Telegram message via a configured bot.
+  #     Requires ARTHA_TELEGRAM_BOT_TOKEN in keyring and a chat_id.
+  #   params:
+  #     bot_token_key: "artha-telegram-bot-token"
+  #     chat_id: "{telegram_chat_id}"
+  #     text: "{message_text}"
+  #   pii_check: true
+  #   audit: true
+
+  # ── Instruction sheet actions (I-09, I-10: specs/improve.md §7) ──────────
+  # These actions generate human-readable step-by-step guides — no script execution.
+  # The AI generates the guide from its knowledge base; handler is null.
+  # type: instruction_sheet means the AI produces the output, not a Python script.
+
+  cancel_subscription:
+    type: instruction_sheet
+    enabled: true
+    handler: null                     # no script — AI generates from knowledge
+    requires_approval: false          # read-only guide generation
+    friction: low
+    description: >
+      Generate a step-by-step cancellation guide for a specific subscription.
+      Include: direct URL to cancellation page, phone number for phone-only
+      cancellations, estimated time to complete, known retention tactics and
+      how to decline them. Output as a numbered action list.
+    params:
+      service_name: "{service}"
+    pii_check: false
+    audit: true
+
+  dispute_charge:
+    type: instruction_sheet
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    description: >
+      Generate a step-by-step guide for disputing a charge with a merchant
+      or credit card company. Include: merchant contact information, credit
+      card dispute process (phone + online), documentation needed, timeline,
+      and CFPB complaint as escalation path.
+    params:
+      merchant: "{merchant}"
+      amount: "{amount}"
+      reason: "{reason}"
+    pii_check: false
+    audit: true
+
+  # ── Work OS Actions ──────────────────────────────────────────────────────
+  # command_namespace: work — all actions below are work-surface only.
+  # These follow the same action registry pattern as personal actions.
+
+  work_meeting_prep_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate meeting prep cards with attendee context, open threads,
+      preparation gaps, and readiness scoring. Read-safe artifact generation.
+    pii_check: true
+    audit: true
+
+  work_focus_block_propose:
+    type: calendar_proposal
+    enabled: true
+    handler: null
+    requires_approval: true
+    friction: standard
+    command_namespace: work
+    description: >
+      Propose a focus block on the calendar to protect deep work time.
+      Requires explicit user approval before any calendar modification.
+    pii_check: false
+    audit: true
+
+  work_item_comment:
+    type: ado_write
+    enabled: false
+    handler: null
+    requires_approval: true
+    friction: high
+    command_namespace: work
+    description: >
+      Add a comment to an Azure DevOps work item. Disabled by default.
+      Requires explicit enablement and approval for each invocation.
+    pii_check: true
+    audit: true
+
+  work_followup_draft:
+    type: draft_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate a draft follow-up message after a meeting or comms thread.
+      Draft only — never sends. User reviews and sends manually.
+    pii_check: true
+    audit: true
+
+  work_boundary_acknowledge:
+    type: alert_disposition
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Acknowledge or dismiss a work boundary alert. Feeds back into
+      threshold tuning for future alert relevance.
+    pii_check: false
+    audit: true
+
+  work_open_item_sync:
+    type: state_sync
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Sync work-derived tasks into work open items state file.
+      Reads from meeting notes, sprint items, and commitments.
+    pii_check: false
+    audit: true
+
+  work_meeting_notes_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Generate post-meeting summary with decisions, commitments,
+      unresolved items, and follow-up actions. Read-safe generation.
+    pii_check: true
+    audit: true
+
+  work_connect_evidence_capture:
+    type: evidence_collection
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Auto-collect Connect goal evidence from meetings, chats, and project
+      completions. Maps evidence to declared goals.
+    pii_check: true
+    audit: true
+
+  work_source_capture:
+    type: registry_update
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Extract and register data source URLs from meetings and email.
+      Proposes sources for user confirmation before registration.
+    pii_check: false
+    audit: true
+
+  work_newsletter_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Assemble newsletter draft from sprint data, decisions, and accomplishments
+      via Narrative Engine. Draft only — never sends.
+    pii_check: true
+    audit: true
+
+  work_deck_generate:
+    type: artifact_generation
+    enabled: true
+    handler: null
+    requires_approval: false
+    friction: low
+    command_namespace: work
+    description: >
+      Assemble structured deck content from projects, career evidence, and data
+      sources via Narrative Engine. Draft only.
+    pii_check: true
+    audit: true

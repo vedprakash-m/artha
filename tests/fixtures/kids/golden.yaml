@@ -1,0 +1,27 @@
+---
+domain: kids
+schema_version: "1.0"
+extraction_signals:
+  - signal: assignment_due
+    keywords: ["Math", "Chapter 5 Quiz", "March 13"]
+    source_id: kids-001
+    required: true
+  - signal: gpa
+    value: "3.75"
+    source_id: kids-002
+    required: true
+  - signal: permission_slip_deadline
+    value: "March 20"
+    source_id: kids-003
+    required: true
+  - signal: school_closure
+    keywords: ["March 17", "closed"]
+    source_id: kids-004
+    required: true
+  - signal: parent_teacher_conference
+    keywords: ["March 25", "4:00 PM"]
+    source_id: kids-005
+    required: true
+
+routing_domain: kids
+alert_level_expected: orange  # Assignment due + permission slip + school closure
