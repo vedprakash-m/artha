@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — `goals_authority`: keep Goals with the incumbent, 2026-11-01
+
+| Change | Modified files | Tests |
+|---|---|---|
+| New config key `goals_authority` (`core` default, `incumbent`; any other value is refused). With `incumbent` the Briefing says "Goals are kept by the incumbent; this Catch-up does not read them." instead of reporting "Goals unavailable" and "Goal plans unavailable" as coverage gaps that made every run exit 10. | `scripts/catchup_core/runtime.py` | `test_runtime.py::test_goals_authority_accepts_only_core_or_incumbent`, `::test_goals_kept_by_the_incumbent_are_disclosed_but_do_not_degrade_the_run` |
+| Temporary CI diagnostic on the Windows job that prints who owns files the runner creates, to confirm the elevated-runner cause of the Windows contract failures. | `.github/workflows/ci.yml` | none (diagnostic, `continue-on-error`) |
+
 ### Added / Fixed — public release hardening and re-artha live fixes, 2026-11-01
 
 | Change | Modified files | Tests |

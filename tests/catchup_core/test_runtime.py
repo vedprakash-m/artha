@@ -460,3 +460,19 @@ def test_runtime_source_policy_is_typed_before_any_fetch(tmp_path, field, value)
     write_cfg(tmp_path, sources={'school_email': spec})
     with pytest.raises(rt.RuntimeConfigError):
         rt.load_runtime_config(tmp_path / 'config/catchup_core.yaml')
+
+
+def test_goals_authority_accepts_only_core_or_incumbent(tmp_path):
+    path = tmp_path / 'config' / 'catchup_core.yaml'
+    for value in ('core', 'incumbent'):
+        write_cfg(tmp_path, goals_authority=value)
+        assert rt.load_runtime_config(path).policy['goals_authority'] == value
+    write_cfg(tmp_path, goals_authority='shared')
+    with pytest.raises(rt.RuntimeConfigError, match='goals_authority'):
+        rt.load_runtime_config(path)
+
+
+def test_goals_kept_by_the_incumbent_are_disclosed_but_do_not_degrade_the_run():
+    goals, plans = rt._goals_held_by_incumbent(), rt._no_goal_plans()
+    assert goals.gaps == () and plans.gaps == ()
+    assert goals.lines and 'incumbent' in goals.lines[0] and 'does not read' in goals.lines[0]

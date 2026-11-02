@@ -178,6 +178,16 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $bin
           $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
+      - name: Diagnose Windows file ownership (temporary, shows who owns files the runner creates)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          whoami /user
+          whoami /groups | Select-String 'Administrators|Mandatory Label'
+          $probe = Join-Path $env:RUNNER_TEMP 'owner-probe.txt'
+          Set-Content -Path $probe -Value 'x'
+          "new file owner: " + (Get-Acl $probe).Owner
+          "temp dir owner: " + (Get-Acl $env:RUNNER_TEMP).Owner
       - name: Isolated core and native credential/action contracts
         run: >-
           python tools/run_tests_isolated.py tests/catchup_core

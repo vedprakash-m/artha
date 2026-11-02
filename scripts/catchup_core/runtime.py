@@ -114,6 +114,7 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
             raise RuntimeConfigError(f'{field} must be an integer in 1..{maximum}')
     if not isinstance(data.get('viewer', 'owner'), str) or not data.get('viewer', 'owner').strip():
         raise RuntimeConfigError('viewer needs a resolved identifier')
+    _validate_goals_authority(data)
     if data.get('extractor_cmd') is not None and not isinstance(data['extractor_cmd'], str):
         raise RuntimeConfigError('extractor_cmd must be a command string')
     sources = data.get("sources")
@@ -143,6 +144,11 @@ def load_runtime_config(path: Path | str) -> RuntimeConfig:
                          frozenset(required), cutover=cutover,
                          extractor_cmd=str(extractor_cmd) if extractor_cmd else None,
                          domains=domains, policy=data)
+
+
+def _validate_goals_authority(data: Mapping[str, Any]) -> None:
+    if data.get('goals_authority', 'core') not in ('core', 'incumbent'):
+        raise RuntimeConfigError("goals_authority must be 'core' or 'incumbent'")
 
 
 def _validate_runtime_sources(sources: Mapping[str, Any]) -> None:
@@ -480,12 +486,14 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
             items_publisher=lambda alerts: core_items.publish(
                 root / "state" / "core_open_items.md", core_items.render(alerts, config.subject_labels)),
             reminder_proposer=reminder_hook(lambda: _action_executor(root), config.subject_labels),
-            goal_lines=lambda: _goal_lines(root / "state", reader=curated_reader, today=now_fn().date(),
-                                           ledger=ledger, viewer=config.viewer, now=now_fn(),
-                                           required_sources=tuple(s.connector for s in pack.sources if s.required)),
+            goal_lines=(_goals_held_by_incumbent if config.policy.get('goals_authority') == 'incumbent' else
+                        lambda: _goal_lines(root / "state", reader=curated_reader, today=now_fn().date(),
+                                            ledger=ledger, viewer=config.viewer, now=now_fn(),
+                                            required_sources=tuple(s.connector for s in pack.sources if s.required))),
             goal_domains=lambda: _goal_domains(root / "state", reader=curated_reader),
-            plan_lines=lambda: _plan_lines(root / "state", reader=curated_reader, today=now_fn().date(),
-                                           ledger=ledger, viewer=config.viewer),
+            plan_lines=(_no_goal_plans if config.policy.get('goals_authority') == 'incumbent' else
+                        lambda: _plan_lines(root / "state", reader=curated_reader, today=now_fn().date(),
+                                            ledger=ledger, viewer=config.viewer)),
             responsibility_lines=lambda: _responsibility_lines(
                 root / "state", reader=curated_reader, today=now_fn().date(), now=now_fn(),
                 ledger=ledger, viewer=config.viewer),
@@ -823,6 +831,16 @@ def _active_goals(state: Path, reader: Callable[[str], str] | None) -> list[dict
     from catchup_core.curated import read_state, records  # noqa: PLC0415
     goals = records(reader("goals") if reader else read_state(state, "goals"), "goals")
     return [g for g in goals if g.get("status") == "active"]
+
+
+def _goals_held_by_incumbent() -> ContextLines:
+    """Goals the owner keeps with the incumbent: say so in the Briefing instead of reporting a coverage gap."""
+    return ContextLines(("Goals are kept by the incumbent; this Catch-up does not read them.",), ())
+
+
+def _no_goal_plans() -> ContextLines:
+    """Plans derive from Goals, so they are also out of scope when the incumbent keeps the Goals."""
+    return ContextLines((), ())
 
 
 def _plan_lines(state: Path, *, reader: Callable[[str], str] | None = None, today: date,
