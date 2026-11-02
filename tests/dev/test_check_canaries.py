@@ -279,7 +279,8 @@ def test_ci_native_encryption_jobs_install_age_before_tests(job):
     installs = [step for step in steps[:test_step] if "install" in step.get("name", "").lower()
                 and "age" in step.get("run", "")]
     if job == "core-windows":
-        assert any("choco install age" in step["run"] for step in installs)
+        assert any("FiloSottile/age/releases" in step["run"] and "Get-FileHash" in step["run"]
+                   and "Get-Command age, age-keygen" in step["run"] for step in installs)
     else:
         assert any("apt-get install" in step["run"] and "age" in step["run"]
                    and "Linux" in step.get("if", "") for step in installs)

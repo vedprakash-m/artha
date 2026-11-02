@@ -935,7 +935,7 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "1f4949d5b346f467efdfd6556dd91f134a0578fe85ddb346c333c91784388525",
+  "implementation_sha256": "07919b4475de3a1b0c04f6d9748280a3cbc0fbc95353b6fb5cbe2d551b73a139",
   "spec": "specs/re-artha.md",
   "spec_sha256": "183dba6b7f4ab8172e2c58c52088c6d55aa1917be38135479dee627fc4020609",
   "spec_version": "0.8.0"

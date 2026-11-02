@@ -268,7 +268,9 @@ def test_one_alert_per_obligation_updated_not_duplicated(led):
 def test_open_item_description_is_encrypted(led):
     led.put_open_item("OI-001", owner="ved", description="Register Child1 for the SAT", deadline="2026-10-19")
     raw = led.conn.execute("SELECT description_encrypted FROM open_items").fetchone()[0]
-    assert "SAT" not in raw
+    # A 3-letter token can appear by chance in random base64; the whole phrase cannot.
+    assert "Register Child1 for the SAT" not in raw
+    assert b"Register Child1 for the SAT" not in __import__("base64").b64decode(raw)
     item = led.get_open_item("OI-001")
     assert item["description"] == "Register Child1 for the SAT" and item["state"] == "open"
     led.put_open_item("OI-001", owner="ved", description="done now", state="done")
