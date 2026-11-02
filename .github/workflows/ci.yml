@@ -165,9 +165,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r scripts/requirements.txt pytest pytest-mock
       - name: Install age (Windows native encryption tests)
+        shell: pwsh
         run: |
-          choco install age --yes --no-progress
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Chocolatey has no `age` package; use the pinned upstream release and verify it.
+          $version = 'v1.3.1'
+          $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
+          $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
+          Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $bin = Join-Path $env:RUNNER_TEMP 'age'
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
       - name: Isolated core and native credential/action contracts
         run: >-
