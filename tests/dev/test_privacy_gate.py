@@ -222,6 +222,29 @@ def test_first_push_audits_whole_history(sandbox, remote):
     assert sandbox.git("push", "origin", "main", check=False).returncode != 0
 
 
+def test_push_refuses_commits_authored_with_a_personal_email(sandbox, remote):
+    sandbox.commit("base")
+    sandbox.write("src/a.txt", "fine\n")
+    sandbox.git("add", "-A")
+    sandbox.extra_env = {"GIT_AUTHOR_EMAIL": "person@example.com", "GIT_COMMITTER_EMAIL": "person@example.com"}
+    sandbox.git("commit", "-q", "-m", "personal")
+    sandbox.extra_env = {}
+    result = sandbox.git("push", "origin", "main", check=False)
+    assert result.returncode != 0
+    assert "not a GitHub noreply address" in out(result)
+
+
+def test_push_allows_commits_authored_with_a_github_noreply_email(sandbox, remote):
+    sandbox.commit("base")
+    sandbox.write("src/a.txt", "fine\n")
+    sandbox.git("add", "-A")
+    sandbox.extra_env = {"GIT_AUTHOR_EMAIL": "handle@users.noreply.github.com",
+                         "GIT_COMMITTER_EMAIL": "handle@users.noreply.github.com"}
+    sandbox.git("commit", "-q", "-m", "noreply")
+    sandbox.extra_env = {}
+    assert sandbox.git("push", "origin", "main", check=False).returncode == 0
+
+
 def test_range_scan_unit_reports_missing_git_repo(tmp_path):
     sys.path.insert(0, str(HOOKS))
     import privacy_scan  # noqa: PLC0415

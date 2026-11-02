@@ -562,11 +562,27 @@ def scan_staged(repo: Path = ARTHA_DIR, guard: Path = PII_GUARD, binary: str | N
         return [Finding("(git)", f"scanner unavailable: {exc} (fail closed)")]
 
 
+# Commit identity is published with every commit, so a personal address must never leave the machine.
+# `.invalid` is reserved by RFC 2606 and never a real mailbox (test fixtures use it).
+_PUBLISHABLE_EMAIL = re.compile(r"(@users\.noreply\.github\.com|\.invalid)$", re.IGNORECASE)
+
+
+def identity_findings(repo: Path, commits: list[str]) -> list[Finding]:
+    findings: list[Finding] = []
+    for commit in commits:
+        line = _git_ok(["log", "-1", "--format=%ae%x09%ce", commit], repo).strip()
+        for email in {e.strip() for e in line.split("\t")}:
+            if email and not _PUBLISHABLE_EMAIL.search(email):
+                findings.append(Finding("(commit identity)", "author or committer email is not a GitHub noreply address",
+                                        commit))
+    return findings
+
+
 def scan_range(repo: Path, rev_args: list[str], guard: Path = PII_GUARD,
                binary: str | None = None) -> list[Finding]:
     try:
         commits = commits_in(repo, rev_args)
-        findings: list[Finding] = []
+        findings: list[Finding] = identity_findings(repo, commits)
         for commit in commits:
             findings += scan_items(commit_items(repo, commit), guard, repo)
         if commits:
