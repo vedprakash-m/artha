@@ -9,6 +9,21 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added / Fixed — public release hardening and re-artha live fixes, 2026-11-01
+
+| Change | Modified files | Tests |
+|---|---|---|
+| `consent grant` opened the ledger read-only, so a real grant failed after the person typed their name. A grant now counts as a mutation (`cli._mutates`); `consent list` stays read-only. | `scripts/catchup_core/cli.py` | `test_consent_cli.py` (grant mutates, list does not); `test_wiring.py` now asserts the `usage` mutation through the helper |
+| Personal checkpoint inventory was blocked by the empty `authoritative.json.lock` and `shadow.json.lock` files that Catch-up runs leave in the spend-seal directory. Those two lock names are accepted (regular, single-link); any other stray file still blocks. | `scripts/catchup_core/checkpoint_cli.py` | `test_state_checkpoint_cli.py::test_spend_seal_lock_files_do_not_block_capture_but_other_artifacts_do` |
+| The privacy gate now refuses to push commits whose author or committer email is not a GitHub noreply address (or a reserved `.invalid` test address). Commit identity is published with every commit and was not scanned before. | `.githooks/privacy_scan.py` | `test_privacy_gate.py` (personal email refused, noreply allowed) |
+| Two quarantine review tests replaced the last ciphertext byte with a constant and failed about 1 run in 256 when the byte already matched; a helper now flips it. | `tests/catchup_core/test_quarantine_review.py` | helper test plus both parametrized cases |
+| Ledger test searched random base64 for a 3-letter token; it now checks the whole plaintext phrase. | `tests/catchup_core/test_ledger.py` | `test_open_item_description_is_encrypted` |
+| CI installs `age` on Windows from the pinned upstream v1.3.1 release with a SHA-256 check (Chocolatey has no such package). The canary test accepts the new step. | `.github/workflows/ci.yml`, `tests/dev/test_check_canaries.py` | `test_ci_native_encryption_jobs_install_age_before_tests` |
+| Public tree scrubbed of owner-specific location, persona, school, employer and internal program names; history replaced by a single commit. Code identifiers, file names and regexes were left unchanged. | docs, prompts, config prose, `scripts/pr_manager.py` persona strings, test fixtures | full isolated suite (9,783 passed before the manifest refresh) |
+
+Known open: the Windows contract jobs fail on GitHub-hosted runners with `filesystem object belongs to another owner`
+(elevated runner; new files are owned by Administrators). The fix needs a Windows session and a security review.
+
 ### Verified — Windows Work UAT, 2026-11-01
 
 The isolated tracked Work/UAT/checkpoint selection passed **558 tests** with one dependency-version warning;
