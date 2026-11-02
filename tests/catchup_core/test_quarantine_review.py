@@ -18,6 +18,19 @@ from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 NOW = datetime(2026, 10, 25, tzinfo=timezone.utc)
 
 
+def _flip_last_byte(path) -> None:
+    """Always change the file: replacing the last byte with a constant is a no-op one time in 256."""
+    data = path.read_bytes()
+    path.write_bytes(data[:-1] + bytes([data[-1] ^ 0x01]))
+
+
+def test_tamper_helper_changes_a_file_that_already_ends_in_the_old_constant(tmp_path):
+    path = tmp_path / 'blob'
+    path.write_bytes(b'abcx')
+    _flip_last_byte(path)
+    assert path.read_bytes() != b'abcx'
+
+
 @pytest.mark.parametrize('suffix', ['.txt', '.md', '.csv'])
 @pytest.mark.parametrize('size', [0, 262144])
 def test_view_exact_utf8_without_attestation_or_persistence(store, suffix, size):
@@ -410,7 +423,7 @@ def test_actual_changed_ciphertext_or_blocked_member_refuses(tmp_path, mutation)
         actual.block_paths(['repo/state/notes.md'], 'known erasure')
     else:
         chunk = actual.root / actual.inventory()[0]['chunks'][0]['name']
-        chunk.write_bytes(chunk.read_bytes()[:-1] + b'x')
+        _flip_last_byte(chunk)
     with pytest.raises(ValueError):
         release(actual, member_id, 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (actual.root.parent / 'reviewed-exports/notes.md.ae1').exists()
@@ -1038,7 +1051,7 @@ def test_read_export_requires_unchanged_current_binding(store, monkeypatch, chan
     elif change == 'blocked':
         store.catalog['entries'][0]['state'] = 'blocked'
     elif change == 'ciphertext':
-        output.write_bytes(output.read_bytes()[:-1] + b'x')
+        _flip_last_byte(output)
     elif change == 'key':
         store.cipher = EnvelopeCipher(StaticKeyProvider({1: b'z' * 32}))
     elif change == 'denied':
