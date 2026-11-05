@@ -60,15 +60,15 @@ def third_party(deps) -> None:
 
 
 def scenario(runner, report: h.Report) -> None:
-    fact = h.first_fact(runner, report)
+    fact = h.first_fact(runner, report, shadow=True)
     if fact is None:
         return
-    h.beliefs(runner, report, expected="every row states status, provenance and observation time",
+    h.beliefs(runner, report, expected="every row states status, provenance and observation time", shadow=True,
               check=lambda rows: all(r["status"] and r["provenance"] and r["observed_at"] for r in rows))
     domain, subject = fact["domain"], fact["subject"]
-    h.beliefs(runner, report, "--domain", domain, expected=f"only {domain} rows",
+    h.beliefs(runner, report, "--domain", domain, expected=f"only {domain} rows", shadow=True,
               check=lambda rows: bool(rows) and all(r["domain"] == domain for r in rows))
-    h.beliefs(runner, report, "--subject", subject, expected=f"only rows about {subject}",
+    h.beliefs(runner, report, "--subject", subject, expected=f"only rows about {subject}", shadow=True,
               check=lambda rows: bool(rows) and all(r["subject"] == subject for r in rows))
     h.run_step(runner, report, ["why", fact["fact_id"], h.SHADOW], "why quotes evidence or states provenance",
                lambda o: o.ok and (o.data["evidence"] or o.data["provenance"]))

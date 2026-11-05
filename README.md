@@ -126,6 +126,11 @@ make check     # lint + tests + PII scan + schema validation
 make start     # re-run setup.sh from scratch
 ```
 
+The package manifest lists only public Python packages; private Work and channel implementations
+are not required to install this checkout. Core migrations, Domain packs and extraction prompts
+are included as package data. Optional Work features still require their private implementation;
+installing the package does not provision runtime configuration or credentials.
+
 ```bash
 python artha.py --doctor   # 11-point health check for your installation
 ```

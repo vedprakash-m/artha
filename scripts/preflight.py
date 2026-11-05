@@ -54,6 +54,8 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from connectors.workiq_bridge import WORKIQ_VERSION_PIN
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,7 +71,6 @@ STALE_LOCK_SECONDS = 1800   # 30 minutes
 TOKEN_EXPIRY_WARN_SECONDS = 300  # warn within 5 min of expiry
 WORKIQ_CACHE_FILE = ""  # Optional test override; default is resolved in machine-local Work storage.
 WORKIQ_CACHE_MAX_AGE = 86400  # 24 hours
-WORKIQ_VERSION_PIN = "0.x"   # pinned version constraint, NOT @latest
 
 # Force UTF-8 output in child processes (Windows cp1252 can't encode ✓/✗)
 _SUBPROCESS_ENV = {**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -624,6 +625,8 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     stubs = []
     for tpl in templates:
         target = os.path.join(STATE_DIR, tpl)
+        if os.path.isfile(target + ".age"):
+            continue
         if not os.path.exists(target):
             missing.append(tpl)
         elif _is_bootstrap_stub(target):
@@ -718,23 +721,17 @@ def check_planning_signals() -> CheckResult:
         )
     try:
         sys.path.insert(0, SCRIPTS_DIR)
-        from planning_signals import load, validate  # type: ignore
+        from planning_signals import active_signals_are_stale, load, validate  # type: ignore
 
         doc = load(path)
-        errors = validate(doc)
+        errors = validate(doc, today=date.today())
         if errors:
             return CheckResult(
                 "planning_signals.md", "P1", False,
                 f"planning_signals.md schema warning: {errors[0]}",
                 fix_hint="Run: python3 scripts/planning_signals.py validate",
             )
-        active = [s for s in doc.signals if not s.get("materialized")]
-        try:
-            updated = date.fromisoformat(str(doc.frontmatter.get("last_updated")))
-            stale = bool(active and (date.today() - updated).days >= 2)
-        except ValueError:
-            stale = bool(active)
-        if stale:
+        if active_signals_are_stale(doc, today=date.today()):
             return CheckResult(
                 "planning_signals.md", "P1", False,
                 "planning_signals.md has active signals but has not been updated in 2+ days",
@@ -1246,27 +1243,31 @@ def check_ha_connectivity() -> CheckResult:
 
     Only runs if homeassistant.enabled is true in connectors.yaml.
     Silently passes (skip message) if the connector is disabled.
-    Returns a warning (not failure) when off-LAN — normal for travel/work.
+    Unavailable or unverified connectivity is a failed P1 advisory, never a P0 block.
     """
     _name = "Home Assistant"
 
     # Load connector config
-    _connectors_path = os.path.join(ARTHA_DIR, "config", "connectors.yaml")
-    if not os.path.exists(_connectors_path):
-        return CheckResult(_name, "P1", True, "connectors.yaml not found — skipped ✓")
-
+    import yaml as _yaml
+    from lib.config_loader import load_config as _load_config
     try:
-        import yaml as _yaml
-        with open(_connectors_path, encoding="utf-8") as _f:
-            _cfg = _yaml.safe_load(_f) or {}
-        _ha = (_cfg.get("connectors") or {}).get("homeassistant") or {}
-    except Exception as exc:
-        return CheckResult(_name, "P1", True, f"Could not read connectors.yaml ({exc}) — skipped ✓")
+        _cfg = _load_config("connectors", os.path.join(ARTHA_DIR, "config"), strict=True)
+    except (OSError, _yaml.YAMLError, UnicodeError, ValueError) as exc:
+        return CheckResult(_name, "P1", False, f"Could not read connectors.yaml ({type(exc).__name__})")
+    if not isinstance(_cfg, dict) or not isinstance(_cfg.get("connectors"), dict):
+        return CheckResult(_name, "P1", False, "Invalid connectors.yaml: expected connectors mapping")
+    _ha = _cfg["connectors"].get("homeassistant", {})
+    if not isinstance(_ha, dict) or not isinstance(_ha.get("enabled", False), bool):
+        return CheckResult(_name, "P1", False, "Invalid HA configuration: expected mapping and boolean enabled")
 
     if not _ha.get("enabled", False):
         return CheckResult(_name, "P1", True, "HA connector not enabled — skipped ✓")
 
-    _ha_url = ((_ha.get("fetch") or {}).get("ha_url") or "").rstrip("/")
+    _fetch_cfg = _ha.get("fetch", {})
+    if not isinstance(_fetch_cfg, dict):
+        return CheckResult(_name, "P1", False, "Invalid HA configuration: expected fetch mapping")
+    _ha_url = _fetch_cfg.get("ha_url")
+    _ha_url = _ha_url.strip().rstrip("/") if isinstance(_ha_url, str) else ""
     if not _ha_url:
         return CheckResult(
             _name, "P1", False,
@@ -1278,8 +1279,8 @@ def check_ha_connectivity() -> CheckResult:
     try:
         import keyring as _keyring
         _token = _keyring.get_password("artha-ha-token", "artha") or ""
-    except Exception:
-        _token = ""
+    except Exception as exc:
+        return CheckResult(_name, "P1", False, f"HA token store unavailable ({type(exc).__name__})")
 
     if not _token:
         return CheckResult(
@@ -1293,7 +1294,6 @@ def check_ha_connectivity() -> CheckResult:
         if SCRIPTS_DIR not in sys.path:
             sys.path.insert(0, SCRIPTS_DIR)
         from connectors.homeassistant import health_check as _ha_health  # type: ignore[import]
-        _fetch_cfg = _ha.get("fetch") or {}
         _ok = _ha_health(
             {"provider": "homeassistant", "method": "api_key", "api_key": _token},
             **{k: v for k, v in _fetch_cfg.items() if k != "handler"},
@@ -1312,12 +1312,12 @@ def check_ha_connectivity() -> CheckResult:
         _msg = str(exc)
         if "LAN gate" in _msg or "not reachable" in _msg or "Cannot connect" in _msg:
             return CheckResult(
-                _name, "P1", True,
-                f"HA not on current network (off-LAN) — skipped ✓ ({_ha_url})",
+                _name, "P1", False,
+                "HA unavailable on current network — connectivity not verified",
             )
         return CheckResult(
             _name, "P1", False,
-            f"HA check error: {_msg[:120]}",
+            f"HA check error: {type(exc).__name__}",
             fix_hint="Run: python scripts/pipeline.py --health --source homeassistant",
         )
 
@@ -1470,27 +1470,17 @@ def check_ext_agent_discovery() -> CheckResult:
     """
     # Gate: only run if external agents feature is enabled
     try:
-        import yaml as _yaml
-        _cfg_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
-        if not os.path.exists(_cfg_path):
-            return CheckResult("ext agent discovery", "P1", True,
-                               "artha_config.yaml absent — ext agent check skipped ✓")
-        with open(_cfg_path, encoding="utf-8") as _f:
-            _artha_cfg = _yaml.safe_load(_f) or {}
-        _ea_block = (
-            _artha_cfg.get("harness", {})
-            .get("agentic", {})
-            .get("external_agents", {})
-        )
-        if not _ea_block.get("enabled", False):
+        from preflight.integration_checks import _external_agent_settings
+        _enabled, _discovery_enabled = _external_agent_settings(ARTHA_DIR)
+        if not _enabled:
             return CheckResult("ext agent discovery", "P1", True,
                                "External agents not enabled — skipped ✓")
-        if not _ea_block.get("discovery", {}).get("enabled", True):
+        if not _discovery_enabled:
             return CheckResult("ext agent discovery", "P1", True,
                                "Agent discovery disabled in config — skipped ✓")
-    except Exception as exc:
-        return CheckResult("ext agent discovery", "P1", True,
-                           f"Could not read artha_config.yaml ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent discovery", "P1", False,
+                           "External-agent configuration is unreadable or invalid")
 
     # Load registry to know already-registered agent names
     registered_names: set[str] = set()
@@ -1500,10 +1490,11 @@ def check_ext_agent_discovery() -> CheckResult:
         from lib.agent_registry import AgentRegistry  # noqa: PLC0415
         _registry_path = os.path.join(ARTHA_DIR, "config", "agents", "external-registry.yaml")
         if os.path.exists(_registry_path):
-            _reg = AgentRegistry.load(os.path.join(ARTHA_DIR, "config"))
+            _reg = AgentRegistry.load(Path(ARTHA_DIR) / "config", strict=True)
             registered_names = {a.name for a in (_reg.active_agents() if hasattr(_reg, 'active_agents') else [])}
     except Exception:
-        pass  # Registry missing or not yet built — treat all drops as unregistered
+        return CheckResult("ext agent discovery", "P1", False,
+                           "External-agent registry is unreadable or invalid")
 
     # Scan drop folder
     drop_dir = os.path.join(ARTHA_DIR, "config", "agents", "external")
@@ -1553,24 +1544,14 @@ def check_ext_agent_health() -> CheckResult:
     """
     # Gate: only run if external agents feature is enabled
     try:
-        import yaml as _yaml
-        _cfg_path = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
-        if not os.path.exists(_cfg_path):
-            return CheckResult("ext agent health", "P1", True,
-                               "artha_config.yaml absent — ext agent health check skipped ✓")
-        with open(_cfg_path, encoding="utf-8") as _f:
-            _artha_cfg = _yaml.safe_load(_f) or {}
-        _ea_block = (
-            _artha_cfg.get("harness", {})
-            .get("agentic", {})
-            .get("external_agents", {})
-        )
-        if not _ea_block.get("enabled", False):
+        from preflight.integration_checks import _external_agent_settings
+        _enabled, _ = _external_agent_settings(ARTHA_DIR)
+        if not _enabled:
             return CheckResult("ext agent health", "P1", True,
                                "External agents not enabled — skipped ✓")
-    except Exception as exc:
-        return CheckResult("ext agent health", "P1", True,
-                           f"Could not read artha_config.yaml ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent health", "P1", False,
+                           "External-agent configuration is unreadable or invalid")
 
     # Load registry
     try:
@@ -1581,11 +1562,11 @@ def check_ext_agent_health() -> CheckResult:
         if not os.path.exists(_registry_path):
             return CheckResult("ext agent health", "P1", True,
                                "No agent registry found — skipped ✓")
-        _reg = AgentRegistry.load(os.path.join(ARTHA_DIR, "config"))
+        _reg = AgentRegistry.load(Path(ARTHA_DIR) / "config", strict=True)
         _all_agents = list(_reg.all_agents()) if hasattr(_reg, "all_agents") else []
-    except Exception as exc:
-        return CheckResult("ext agent health", "P1", True,
-                           f"Could not load agent registry ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent health", "P1", False,
+                           "External-agent registry is unreadable or invalid")
 
     if not _all_agents:
         return CheckResult("ext agent health", "P1", True,
@@ -1625,6 +1606,7 @@ def check_state_registry_staleness() -> CheckResult:
     EAR-3 / PRD §3.5 (A2).
     """
     from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
+    import glob  # noqa: PLC0415
 
     registry_path = Path(os.path.join(ARTHA_DIR, "config", "state_registry.yaml"))
     if not registry_path.exists():
@@ -1639,8 +1621,8 @@ def check_state_registry_staleness() -> CheckResult:
         entries = reg_data.get("state_files", []) or []
     except Exception as exc:
         return CheckResult(
-            "state registry staleness", "P1", True,
-            f"Could not read state_registry.yaml ({exc}) — skipped ✓",
+            "state registry staleness", "P1", False,
+            f"Could not read state_registry.yaml ({exc})",
         )
 
     if not entries:
@@ -1663,16 +1645,18 @@ def check_state_registry_staleness() -> CheckResult:
         if not resolved.is_absolute():
             resolved = Path(ARTHA_DIR) / path_str
 
-        if not resolved.exists():
+        candidates = sorted(set(glob.glob(str(resolved)) + glob.glob(str(resolved) + ".age")))
+        if not candidates:
             missing.append(path_str)
             continue
 
-        try:
-            age_hours = (now_ts - resolved.stat().st_mtime) / 3600
-            if age_hours > max_hours:
-                stale.append(f"{path_str} ({age_hours:.0f}h > {max_hours}h)")
-        except OSError:
-            missing.append(path_str)
+        for candidate in candidates:
+            try:
+                age_hours = (now_ts - Path(candidate).stat().st_mtime) / 3600
+                if age_hours > max_hours:
+                    stale.append(f"{candidate} ({age_hours:.0f}h > {max_hours}h)")
+            except OSError:
+                missing.append(candidate)
 
     if not stale and not missing:
         return CheckResult(
@@ -1955,7 +1939,7 @@ def check_eval_alerts() -> CheckResult:
 
     try:
         import yaml  # type: ignore[import]
-        raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return CheckResult(
             "eval alerts", "P1", False,
@@ -1963,9 +1947,15 @@ def check_eval_alerts() -> CheckResult:
             fix_hint="Delete or repair state/eval_alerts.yaml",
         )
 
-    alert_list = raw.get("alerts", [])
-    if not isinstance(alert_list, list):
-        return CheckResult("eval alerts", "P1", True, "eval_alerts.yaml has no alerts list")
+    if (not isinstance(raw, dict) or "alerts" not in raw
+            or not isinstance(raw["alerts"], list)
+            or any(not isinstance(alert, dict) for alert in raw["alerts"])):
+        return CheckResult(
+            "eval alerts", "P1", False,
+            "eval_alerts.yaml has an invalid alerts list",
+            fix_hint="Repair state/eval_alerts.yaml to contain an alerts list of mappings",
+        )
+    alert_list = raw["alerts"]
 
     p0_active = [
         a for a in alert_list
@@ -2122,7 +2112,16 @@ def check_skill_index() -> CheckResult:
             f"{counts.get('enabled', 0)}/{counts.get('configured', 0)} "
             "configured skills enabled"
         )
-        missing = index.get("enabled_missing_modules", [])
+        import platform  # noqa: PLC0415
+
+        current_platform = platform.system().lower()
+        entries = {entry["name"]: entry for entry in index.get("skills", [])}
+        missing = []
+        for name in index.get("enabled_missing_modules", []):
+            run_on = entries.get(name, {}).get("run_on") or "all"
+            allowed = [run_on] if isinstance(run_on, str) else run_on
+            if run_on == "all" or current_platform in allowed:
+                missing.append(name)
         if missing:
             names = ", ".join(str(name) for name in missing[:5])
             suffix = "..." if len(missing) > 5 else ""
@@ -2515,12 +2514,18 @@ def check_slo_burn_rate() -> CheckResult:
         from slo_engine import get_engine  # type: ignore
         engine = get_engine(artha_dir=ARTHA_DIR)
         report = engine.status()
-        burning = [s for s in report.slos if s.burn_rate is not None and s.burn_rate > 1.0]
+        burning = [s for s in report.slos.values() if s.burn_rate is not None and s.burn_rate > 1.0]
         if burning:
-            names = ", ".join(s.name for s in burning)
+            names = ", ".join(s.slo_id for s in burning)
             return CheckResult(
-                "SLO burn rate (ST-04)", "P2", True,
+                "SLO burn rate (ST-04)", "P2", False,
                 f"SLO error budget burning fast (>1.0x): {names}",
+            )
+        unsampled = [s.slo_id for s in report.slos.values() if s.sample_count == 0]
+        if not report.slos or unsampled:
+            return CheckResult(
+                "SLO burn rate (ST-04)", "P2", False,
+                "SLO samples unavailable: " + (", ".join(unsampled) or "no registered SLOs"),
             )
         return CheckResult(
             "SLO burn rate (ST-04)", "P2", True,
@@ -2528,8 +2533,8 @@ def check_slo_burn_rate() -> CheckResult:
         )
     except Exception as exc:
         return CheckResult(
-            "SLO burn rate (ST-04)", "P2", True,
-            f"SLO burn rate check skipped: {exc}",
+            "SLO burn rate (ST-04)", "P2", False,
+            f"SLO burn rate check failed: {exc}",
         )
 
 
@@ -2913,7 +2918,7 @@ def main() -> None:
         action="store_true",
         help=(
             "First-run / setup-checklist mode: OAuth and connector failures are shown as "
-            "'not yet configured' (\u25cb) rather than hard blocks (⛔). "
+            "'not yet configured' rather than hard blocks. "
             "Exits 0 when only expected setup steps remain."
         ),
     )

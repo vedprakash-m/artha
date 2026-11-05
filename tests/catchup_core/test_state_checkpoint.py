@@ -488,7 +488,6 @@ def test_missing_root_and_bad_profile_block(world):
         ck.create("Bad Name", roots, out, CIPHER, {}, PASS, now=NOW, lock_path=tmp / "l")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="uses fork-free subprocess with POSIX modes")
 def test_separate_process_change_is_detected(world):                                  # AC3, real process
     import subprocess
     roots, out, _, tmp = world

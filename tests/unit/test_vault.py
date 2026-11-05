@@ -406,10 +406,17 @@ class TestEncryptTriggersBackup:
         age.write_text("x" * 500)
         (mock_vault_env / ".artha-decrypted").touch()
         (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
+        registry = [{
+            "name": "immigration",
+            "source_type": "state_encrypted",
+            "source_path": age,
+            "restore_path": "state/immigration.md.age",
+        }]
 
         with patch("vault.check_age_installed", return_value=True), \
              patch("vault.get_public_key", return_value="age1mock"), \
-             patch("vault.age_encrypt", side_effect=_fake_encrypt):
+             patch("vault.age_encrypt", side_effect=_fake_encrypt), \
+             patch("backup.load_backup_registry", return_value=registry):
             vault.do_encrypt()
 
         zip_files = list(foundation._config["BACKUP_DIR"].rglob("*.zip"))
@@ -635,7 +642,7 @@ class TestEncryptSafetyNet:
 # ---------------------------------------------------------------------------
 
 class TestPartialValidation:
-    """Tests that validate-backup updates last_validate on partial success."""
+    """Partial validation stays visible without refreshing full-success health."""
 
     @staticmethod
     def _make_zip(backup_dir, tier, date_str, files_dict):
@@ -676,31 +683,25 @@ class TestPartialValidation:
         backup_mod._save_manifest(m)
         return zip_path
 
-    def test_partial_success_updates_last_validate(self, mock_vault_env, capsys):
-        """When 1/2 files validates, last_validate is still updated."""
+    def test_failed_payload_preserves_last_validate_and_fails(self, mock_vault_env, capsys):
+        """One invalid payload prevents full-archive freshness from advancing."""
         import backup as backup_mod
         backup_dir = foundation._config["BACKUP_DIR"]
         self._seed_multi_file_zip(backup_dir)
-
-        call_count = [0]
-        def partial_decrypt(key, infile, outfile):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return False  # first file fails
-            outfile.write_text("---\nschema_version: '1.0'\n---\n# Finance\n" + "word " * 50)
-            return True
+        previous = backup_mod._load_manifest()["last_validate"]
 
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-key"), \
-             patch("backup.age_decrypt", side_effect=partial_decrypt):
+             patch("backup._age_decrypt_bytes", side_effect=RuntimeError("synthetic decrypt failure")), \
+             pytest.raises(SystemExit) as error:
             backup_mod.do_validate_backup()
 
+        assert error.value.code == 1
         m = backup_mod._load_manifest()
-        assert m["last_validate"] is not None
+        assert m["last_validate"] == previous
         assert m.get("last_validate_errors") == 1
         out = capsys.readouterr().out
-        assert "1 passed" in out
-        assert "1 failed" in out
+        assert "BACKUP VALIDATION FAIL" in out
 
     def test_full_success_clears_error_count(self, mock_vault_env, capsys):
         """When all files validate, last_validate_errors is removed from manifest."""
@@ -718,13 +719,10 @@ class TestPartialValidation:
         m["last_validate_errors"] = 3  # leftover from prior partial success
         backup_mod._save_manifest(m)
 
-        def good_decrypt(key, infile, outfile):
-            outfile.write_text("---\nschema_version: '1.0'\n---\n# Finance\n" + "word " * 50)
-            return True
-
         with patch("backup.check_age_installed", return_value=True), \
              patch("backup.get_private_key", return_value="mock-key"), \
-             patch("backup.age_decrypt", side_effect=good_decrypt):
+             patch("backup._age_decrypt_bytes",
+                   return_value=b"---\nschema_version: '1.0'\n---\n# Finance\n" + b"word " * 50):
             backup_mod.do_validate_backup()
 
         m = backup_mod._load_manifest()

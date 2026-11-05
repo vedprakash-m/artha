@@ -34,6 +34,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from lib.connector_coverage import report_scope
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -41,7 +43,7 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
 _CACHE_IMPLEMENTATION = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
-WORKIQ_VERSION_PIN = "0.x"
+WORKIQ_VERSION_PIN = "0.4.1"
 SUBPROCESS_TIMEOUT = 90   # seconds — WorkIQ queries take 37-72s each
 TEAMS_AI_TOTAL_TIMEOUT = 300  # seconds — hard wall-clock cap for all 6 channel queries
 PARSE_RETRY_ONCE = True   # retry once with explicit format reminder if 0 items parsed
@@ -626,6 +628,8 @@ def fetch(
 
     if mode not in _QUERIES:
         raise ValueError(f"[workiq_bridge] Unknown mode: {mode!r}")
+    if mode == "people" and (not isinstance(person_name, str) or not person_name.strip()):
+        raise ValueError("WorkIQ people mode requires a nonempty person_name")
     try:
         cache = _load_cache()
     except RuntimeError:
@@ -675,14 +679,18 @@ def fetch(
             return
 
     raw_narrative: Optional[str] = None  # populated by rich pass 1
+    query_incomplete = False
 
     def _call_workiq(question: str) -> str:
         """Call WorkIQ via MCP (if available) or subprocess fallback."""
-        if use_mcp:
-            mcp_result = _ask_workiq_mcp(question)
-            if mcp_result is not None:
-                return mcp_result
-        return _ask_workiq(question)
+        try:
+            if use_mcp:
+                mcp_result = _ask_workiq_mcp(question)
+                if mcp_result is not None:
+                    return mcp_result
+            return _ask_workiq(question)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"WorkIQ query timed out ({mode})") from None
 
     # Build query from template
     if mode == "teams_ai":
@@ -698,6 +706,8 @@ def fetch(
                     f"reached — skipping remaining channels after {len(records)} records.",
                     file=sys.stderr,
                 )
+                query_incomplete = True
+                report_scope("teams_ai:remaining", "truncated", reason="query_budget_exhausted")
                 break
             ch_query = _QUERIES["teams_ai"].format(
                 channel_name=ch_name, lookback_days=lookback_days,
@@ -707,6 +717,8 @@ def fetch(
             except (RuntimeError, subprocess.TimeoutExpired) as exc:
                 print(f"[workiq_bridge] teams_ai channel {ch_name!r} failed: {exc}",
                       file=sys.stderr)
+                query_incomplete = True
+                report_scope(f"teams_ai:{ch_name}", "failed", reason="query_failed")
                 continue
             ch_records = _parse_teams_ai(ch_raw, redact_kws, channel_override=ch_name)
             records.extend(ch_records)
@@ -719,8 +731,6 @@ def fetch(
         elif mode == "teams":
             query = query_bank["teams"].format(lookback=lookback, lookback_days=lookback_days)
         elif mode == "people":
-            if not person_name:
-                return
             query = query_bank["people"].format(person_name=person_name)
         elif mode == "documents":
             query = query_bank["documents"].format(lookback_days=lookback_days)
@@ -736,7 +746,12 @@ def fetch(
             except (RuntimeError, subprocess.TimeoutExpired) as exc:
                 print(f"[workiq_bridge] rich pass-1 failed ({mode}): {exc}",
                       file=sys.stderr)
+                query_incomplete = True
+                report_scope(f"{mode}:narrative", "failed", reason="query_failed")
                 # Graceful degradation: fall through to structured-only
+            if not query_incomplete and (not raw_narrative or not raw_narrative.strip()):
+                query_incomplete = True
+                report_scope(f"{mode}:narrative", "failed", reason="empty_narrative")
 
             # Pass 2 always uses the structured _QUERIES template
             structured_query: str
@@ -760,13 +775,7 @@ def fetch(
             except RuntimeError as exc:
                 print(f"[workiq_bridge] rich pass-2 failed ({mode}): {exc}",
                       file=sys.stderr)
-                return
-            except subprocess.TimeoutExpired:
-                print(
-                    f"[workiq_bridge] WorkIQ timed out on pass-2 ({mode})",
-                    file=sys.stderr,
-                )
-                return
+                raise
         else:
             # ---- Single-pass (brief mode, backward-compatible) ----
             try:
@@ -774,13 +783,7 @@ def fetch(
             except RuntimeError as exc:
                 print(f"[workiq_bridge] fetch failed ({mode}): {exc}",
                       file=sys.stderr)
-                return
-            except subprocess.TimeoutExpired:
-                print(
-                    f"[workiq_bridge] WorkIQ timed out after {SUBPROCESS_TIMEOUT}s ({mode})",
-                    file=sys.stderr,
-                )
-                return
+                raise
 
         # Parse
         records = []
@@ -792,17 +795,16 @@ def fetch(
                     " IMPORTANT: Do NOT include a header row. "
                     "Each line must have exactly 7 fields separated by pipes."
                 )
-                try:
-                    raw2 = _call_workiq(explicit_query)
-                    records = _parse_calendar(raw2, redact_kws)
-                    if not records:
-                        print(
-                            "[workiq_bridge] calendar parse still 0 after retry — "
-                            "possible WorkIQ format change. Session skipped.",
-                            file=sys.stderr,
-                        )
-                except (RuntimeError, subprocess.TimeoutExpired):
-                    pass
+                raw2 = _call_workiq(explicit_query)
+                records = _parse_calendar(raw2, redact_kws)
+                if not records:
+                    print(
+                        "[workiq_bridge] calendar parse still 0 after retry — "
+                        "possible WorkIQ format change.",
+                        file=sys.stderr,
+                    )
+            if not records and raw.strip():
+                raise RuntimeError("WorkIQ calendar response could not be parsed")
         elif mode == "email":
             records = _parse_email(raw, redact_kws)
         elif mode == "teams":
@@ -815,6 +817,14 @@ def fetch(
     if source_tag:
         for r in records:
             r.setdefault("source", source_tag)
+
+    if query_incomplete:
+        if not records:
+            raise RuntimeError("WorkIQ query coverage incomplete; no usable records")
+        for record in records:
+            record.setdefault("processing_gaps", []).append("workiq_query_coverage_incomplete")
+            yield record
+        return
 
     # Cache and yield — include raw_narrative when available
     _set_cached(mode, cache_key, records, cache, raw_narrative=raw_narrative)

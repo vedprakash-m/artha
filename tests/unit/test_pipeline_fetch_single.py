@@ -97,7 +97,7 @@ class TestFetchSingleSinceDefault:
 
         captured_since: list[str] = []
 
-        def _fake_fetch_one(name, handler, auth_ctx, fetch_cfg, retry_cfg, *, since):
+        def _fake_fetch_one(name, handler, auth_ctx, fetch_cfg, retry_cfg, *, since, coverage):
             captured_since.append(since)
             return (name, [], 0.0, None)
 
@@ -124,7 +124,7 @@ class TestFetchSingleExtraFetchOverrides:
 
         captured_fetch_cfg: list[dict] = []
 
-        def _fake_fetch_one(name, handler, auth_ctx, fetch_cfg, retry_cfg, *, since):
+        def _fake_fetch_one(name, handler, auth_ctx, fetch_cfg, retry_cfg, *, since, coverage):
             captured_fetch_cfg.append(dict(fetch_cfg))
             return (name, [], 0.0, None)
 

@@ -22,6 +22,7 @@ Requirements (before running):
 
 Usage:
   python scripts/setup_google_oauth.py
+  python scripts/setup_google_oauth.py --read-only (Gmail and Calendar reads only)
   python scripts/setup_google_oauth.py --status    (check current creds)
   python scripts/setup_google_oauth.py --revoke    (remove all tokens)
 
@@ -212,7 +213,7 @@ def _store_credentials(client_id: str, client_secret: str) -> None:
         sys.exit(1)
 
 
-def _run_oauth_flow(service_name: str) -> None:
+def _run_oauth_flow(service_name: str, *, read_only: bool = False) -> None:
     """Run the OAuth browser consent flow for Gmail or Calendar."""
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
     if scripts_dir not in sys.path:
@@ -229,7 +230,7 @@ def _run_oauth_flow(service_name: str) -> None:
     print("  (If no browser opens, check for a URL printed above)")
     try:
         build_service(service_name, "v3" if service_name == "calendar" else "v1",
-                      force_reauth=True)
+                      force_reauth=True, read_only=read_only)
         print(f"  ✓ {service_name} authorized and token stored.")
     except Exception as exc:
         print(f"\n  ✗ OAuth flow failed: {exc}")
@@ -311,7 +312,7 @@ def revoke_tokens() -> None:
 # Connection test
 # ---------------------------------------------------------------------------
 
-def _test_connections() -> None:
+def _test_connections(*, read_only: bool = False) -> bool:
     """Verify that both Gmail and Calendar APIs respond correctly."""
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
     if scripts_dir not in sys.path:
@@ -323,9 +324,10 @@ def _test_connections() -> None:
         print("ERROR: google_auth.py not found.")
         sys.exit(1)
 
+    ok = True
     print("\nTesting Gmail connection...")
     try:
-        gmail   = build_service("gmail", "v1")
+        gmail   = build_service("gmail", "v1", read_only=read_only)
         profile = gmail.users().getProfile(userId="me").execute()
         email   = profile.get("emailAddress", "unknown")
         msgs    = profile.get("messagesTotal", 0)
@@ -333,29 +335,35 @@ def _test_connections() -> None:
         masked = email if "@" not in email else f"{email[0]}***@{email.split('@')[-1]}"
         print(f"  ✓ Gmail OK: {masked} ({msgs:,} messages)")
     except Exception as exc:
+        ok = False
         print(f"  ✗ Gmail test failed: {exc}")
 
     print("\nTesting Calendar connection...")
     try:
-        cal  = build_service("calendar", "v3")
+        cal  = build_service("calendar", "v3", read_only=read_only)
         res  = cal.calendarList().list().execute()
         cals = res.get("items", [])
         print(f"  ✓ Calendar OK: {len(cals)} calendars visible")
         for c in cals[:3]:
             print(f"    • {c.get('summary', 'unknown')}")
     except Exception as exc:
+        ok = False
         print(f"  ✗ Calendar test failed: {exc}")
+    return ok
 
 
 # ---------------------------------------------------------------------------
 # Main wizard
 # ---------------------------------------------------------------------------
 
-def run_setup() -> None:
+def run_setup(*, read_only: bool = False) -> None:
     """Full interactive setup wizard."""
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("  ARTHA — Google OAuth Setup Wizard")
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    if read_only:
+        print("Read-only mode: Gmail and Calendar reads only; fresh consent required.")
+        print("No email sending, event writes or Drive access will be requested.\n")
 
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
     if scripts_dir not in sys.path:
@@ -374,24 +382,27 @@ def run_setup() -> None:
         _store_credentials(client_id, client_secret)
 
     # Step 2: Gmail OAuth (skip if token already stored)
-    if status.get("gmail_token_stored"):
+    if status.get("gmail_token_stored") and not read_only:
         print("\nSTEP 2 — Authorize Gmail Access")
         print("  ✓ Token already stored — skipping. (Use --reauth to force.)")
     else:
         print("\nSTEP 2 — Authorize Gmail Access")
-        _run_oauth_flow("gmail")
+        _run_oauth_flow("gmail", read_only=read_only)
 
     # Step 3: Calendar OAuth (skip if token already stored)
-    if status.get("gcal_token_stored"):
+    if status.get("gcal_token_stored") and not read_only:
         print("\nSTEP 3 — Authorize Calendar Access")
         print("  ✓ Token already stored — skipping. (Use --reauth to force.)")
     else:
         print("\nSTEP 3 — Authorize Calendar Access")
-        _run_oauth_flow("calendar")
+        _run_oauth_flow("calendar", read_only=read_only)
 
     # Step 4: test
     print("\nSTEP 4 — Verifying Connections")
-    _test_connections()
+    connections_ok = _test_connections(read_only=read_only)
+    if read_only and not connections_ok:
+        print("Read-only Google connection verification failed; setup is incomplete.", file=sys.stderr)
+        sys.exit(1)
 
     print("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("  Setup complete!")
@@ -414,6 +425,8 @@ def main() -> None:
                         help="Show current credential status")
     parser.add_argument("--revoke", action="store_true",
                         help="Remove all Artha Google tokens from Keychain")
+    parser.add_argument("--read-only", action="store_true",
+                        help="Request only Gmail and Calendar read access, with fresh consent")
     args = parser.parse_args()
 
     if args.status:
@@ -421,7 +434,7 @@ def main() -> None:
     elif args.revoke:
         revoke_tokens()
     else:
-        run_setup()
+        run_setup(read_only=args.read_only)
 
 
 if __name__ == "__main__":

@@ -157,6 +157,44 @@ def test_missing_age_binary_fails_closed(tmp_path):
     with pytest.raises(vt.VaultUnavailable):
         v.read("kids")
 
+@pytest.mark.parametrize("name", ["", r"..\escape", r"folder\finance", r"C:\finance", "finance:stream"])
+def test_vault_rejects_nonportable_state_names_before_io(tmp_path, name):
+    vault = vt.AgeVault(tmp_path, identity=lambda: "unused", recipient="age1unused")
+    with pytest.raises(vt.VaultError, match="invalid vault name"):
+        vault.path_for(name)
+    assert not list(tmp_path.iterdir())
+
+
+def test_windows_portable_age_installation_is_discovered(monkeypatch, tmp_path):
+    monkeypatch.setattr(vt.shutil, "which", lambda _: None)
+    monkeypatch.setattr(vt.os.path, "isfile", lambda _: False)
+    monkeypatch.setattr(vt, "sys", type("Platform", (), {"platform": "win32"}), raising=False)
+    monkeypatch.setattr(vt.Path, "home", lambda: tmp_path)
+    executable = tmp_path / ".artha-tools" / "age" / "age.exe"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"synthetic executable path, never executed")
+    assert vt.find_age_bin() == str(executable)
+
+
+@needs_age
+def test_curated_encrypted_read_uses_selected_directory_and_no_plaintext(monkeypatch, tmp_path, keypair):
+    import foundation
+    from catchup_core.curated import read_state
+
+    secret, public = keypair
+    configured, selected = tmp_path / "configured", tmp_path / "selected"
+    monkeypatch.setitem(foundation._config, "STATE_DIR", configured)
+    monkeypatch.setattr(foundation, "get_public_key", lambda: public)
+    monkeypatch.setattr(foundation, "get_private_key", lambda: secret)
+    vt.AgeVault(configured, identity=lambda: secret, recipient=public).write("kids", DOC)
+    expected = DOC + "- OI-003 selected directory\n"
+    vt.AgeVault(selected, identity=lambda: secret, recipient=public).write("kids", expected)
+
+    assert read_state(selected, "kids") == expected
+    assert read_state(configured, "kids") == DOC
+    assert sorted(path.name for path in selected.iterdir()) == ["kids.md.age"]
+    assert sorted(path.name for path in configured.iterdir()) == ["kids.md.age"]
+
 
 def test_portable_identity_uses_stdin_without_a_key_file(monkeypatch, tmp_path):
     from types import SimpleNamespace

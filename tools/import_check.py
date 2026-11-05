@@ -49,7 +49,7 @@ def main(argv: list[str]) -> int:
         print("Use 'from X import ...' instead (scripts/ is on sys.path).")
     if errors or hits:
         return 1
-    print(f"✓ No dual-import patterns ({count} files scanned)")
+    print(f"No dual-import patterns ({count} files scanned)")
     return 0
 
 

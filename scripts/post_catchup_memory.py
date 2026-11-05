@@ -269,11 +269,14 @@ def _write_eval_alerts(new_anomalies: list[dict], artha_dir: Path) -> None:
     existing: list[dict] = []
     if alerts_path.exists():
         try:
-            raw = alerts_path.read_text(encoding="utf-8")
-            loaded = yaml.safe_load(raw) or {}
-            existing = loaded.get("alerts", [])
-        except Exception:  # noqa: BLE001
-            existing = []
+            loaded = yaml.safe_load(alerts_path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError("Existing evaluation alerts file is invalid") from exc
+        if not isinstance(loaded, dict) or "alerts" not in loaded:
+            raise ValueError("Existing evaluation alerts must contain an alerts list")
+        existing = loaded["alerts"]
+        if not isinstance(existing, list) or any(not isinstance(alert, dict) for alert in existing):
+            raise ValueError("Existing evaluation alerts must contain a list of mappings")
 
     # Escalate unacked P1s older than 24h
     for alert in existing:
@@ -330,6 +333,7 @@ def _write_eval_alerts(new_anomalies: list[dict], artha_dir: Path) -> None:
             os.unlink(tmp_path_str)
         except OSError:
             pass
+        raise
 
 
 def _run_log_digest(artha_dir: Path) -> None:
@@ -360,17 +364,13 @@ def rebuild_self_model(artha_dir: Path) -> bool:
 
     Idempotent and safe to run at any time.  Does not re-extract facts.
     """
-    try:
-        from self_model_writer import SelfModelWriter  # noqa: PLC0415
-        writer = SelfModelWriter()
-        return writer.update(
-            memory_path=artha_dir / "state" / "memory.md",
-            health_check_path=artha_dir / "state" / "health-check.md",
-            self_model_path=artha_dir / "state" / "self_model.md",
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"⚠️  Self-model rebuild failed: {exc}", file=sys.stderr)
-        return False
+    from self_model_writer import SelfModelWriter  # noqa: PLC0415
+    writer = SelfModelWriter()
+    return writer.update(
+        memory_path=artha_dir / "state" / "memory.md",
+        health_check_path=artha_dir / "state" / "health-check.md",
+        self_model_path=artha_dir / "state" / "self_model.md",
+    )
 
 
 def _discover_latest_briefing(artha_dir: Path) -> Path | None:
@@ -438,7 +438,11 @@ def main() -> int:
 
     # --rebuild-self-model mode
     if args.rebuild_self_model:
-        updated = rebuild_self_model(artha_dir)
+        try:
+            updated = rebuild_self_model(artha_dir)
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️  Self-model rebuild failed: {exc}", file=sys.stderr)
+            return 2
         print("✅ Self-model rebuilt." if updated else "ℹ️  Self-model unchanged.")
         return 0
 

@@ -50,6 +50,21 @@ def _make_entity(entity_id: str, state: str = "on", attrs: dict | None = None, l
 
 _VALID_AUTH = {"provider": "homeassistant", "method": "api_key", "api_key": "mock-token-abc123"}
 
+@pytest.mark.parametrize("operation", ["fetch", "health"])
+def test_http_request_authenticates_with_supplied_token(monkeypatch, operation):
+    from connectors import homeassistant as connector
+    response = MagicMock(status_code=200)
+    response.json.return_value = [] if operation == "fetch" else {"message": "API running."}
+    request = MagicMock(return_value=response)
+    monkeypatch.setattr(connector.requests, "get", request)
+    monkeypatch.setattr(connector, "_check_lan_or_raise", lambda _: None)
+    monkeypatch.setattr(connector, "_write_entity_cache", MagicMock())
+    if operation == "fetch":
+        assert list(fetch(since="", max_results=10, auth_context=_VALID_AUTH, ha_url="http://ha.invalid:8123")) == []
+    else:
+        assert health_check(_VALID_AUTH, ha_url="http://ha.invalid:8123")
+    assert request.call_args.kwargs["headers"]["Authorization"] == "Bearer " + _VALID_AUTH["api_key"]
+
 # ── _domain_of ────────────────────────────────────────────────────────────────
 
 class TestDomainOf:

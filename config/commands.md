@@ -1017,9 +1017,13 @@ Auto-detects which horizon is due (daily/weekly/monthly/quarterly) and runs the 
 sweep → extract → score → reconcile → synthesize → draft pipeline.
 
 **MANDATORY in LLM context:** Before writing any state, you MUST execute the
-WorkIQ data collection protocol in `config/reflect-protocol.md`. This requires
-running 4 identity-scoped WorkIQ queries (emails, meetings, ADO items, incidents)
-for the exact reflection window. Do NOT skip this step — state file quality depends on it.
+Work data collection protocol in `config/reflect-protocol.md`. This requires all six
+protocol queries for the exact reflection window: four WorkIQ queries (emails, meetings,
+incidents, and SharePoint activity), ADO work items via `kusto-ado` or Azure CLI, and
+Teams messages via Teams MCP. Do NOT skip this step — state file quality depends on it.
+Run full closes in agent context: the standalone Python reflection engine cannot ingest
+the query results or enforce the Q1/Q2 close gate, so its full-close command refuses to
+run. Read-only `--status` and `--audit` remain available from the script.
 - `/work reflect daily` — force daily close
 - `/work reflect weekly` — force weekly reflection
 - `/work reflect monthly` — force monthly retrospective
@@ -1425,4 +1429,3 @@ Portals: LinkedIn · Anthropic · OpenAI · Wellfound · YC Work at a Startup
 Target tier_a: Anthropic · OpenAI · Scale AI · Databricks · Cohere
 Comp floor: $310,000 total; comp_ceiling_stretch: $550,000
 Goal ref: G-005 ("Land Senior AI role by 2026-Q3")
-

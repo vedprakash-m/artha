@@ -347,15 +347,18 @@ def test_retirement_serializes_with_a_real_dispatch_claim(host, monkeypatch):
     assert after.returncode == 3 and b'issued a retirement receipt' in after.stdout
 
 
-@pytest.mark.skipif(__import__('os').name == 'nt',reason='POSIX SIGKILL process-death proof')
 @pytest.mark.parametrize('phase',['retirement_quiesced','retirement_paused','retirement_marker_persisted','retirement_persisted'])
 def test_real_process_death_during_retirement_keeps_a_recoverable_fence(host, phase):
+    import os
     import signal
+
+    kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
     source = str(Path(protocol.__file__).parent.parent)
     code = '''
 import os,signal,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
+kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
 from catchup_core import authority_transfer as p
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.ids import HmacKey
@@ -363,7 +366,7 @@ from catchup_core.ledger import Ledger
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 p._verify_checkpoint = lambda *_: {'generation':'ck_synthetic', 'profile':'personal'}
 def boundary(phase):
-    if phase == sys.argv[5]: os.kill(os.getpid(),signal.SIGKILL)
+    if phase == sys.argv[5]: os.kill(os.getpid(),kill_signal)
 p._phase = boundary
 with Ledger(Path(sys.argv[3]),id_key=HmacKey(1,b'i'*32),cipher=EnvelopeCipher(StaticKeyProvider({1:b't'*32})),
             owner_id='owner',clock=lambda:'2026-10-24T12:00:00Z') as ledger:
@@ -372,7 +375,8 @@ with Ledger(Path(sys.argv[3]),id_key=HmacKey(1,b'i'*32),cipher=EnvelopeCipher(St
 '''
     dead = subprocess.run([sys.executable,'-c',code,source,str(host[0]),str(host[1]._path),str(host[3]),phase],
                           capture_output=True,timeout=20)
-    assert dead.returncode == -signal.SIGKILL, dead.stderr
+    expected_exit = signal.SIGTERM if os.name == 'nt' else -signal.SIGKILL
+    assert dead.returncode == expected_exit, dead.stderr
     if phase == 'retirement_persisted':
         with pytest.raises(ValueError,match='issued a retirement receipt'):
             protocol.require_dispatch_authority(host[2]._conn,host='old-host')

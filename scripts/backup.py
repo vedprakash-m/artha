@@ -41,17 +41,23 @@ from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
+import re
+import sqlite3
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import zipfile
+from contextlib import contextmanager
 from datetime import date as _date_type, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, NoReturn
 
 try:
     import yaml as _yaml  # PyYAML — in requirements.txt
@@ -65,7 +71,7 @@ from foundation import (
     log, die,
     get_public_key, get_private_key,
     check_age_installed, age_encrypt, age_decrypt,
-    is_valid_age_file,
+    is_valid_age_file, _find_age_bin,
     KC_SERVICE, KC_ACCOUNT,
 )
 
@@ -84,6 +90,9 @@ BACKUP_MANIFEST = _config["BACKUP_MANIFEST"]
 GFS_RETENTION: dict[str, int | None] = {
     "daily": 7, "weekly": 4, "monthly": 12, "yearly": None,
 }
+_PUBLICATION_THREAD_LOCK = threading.RLock()
+_SOURCE_TYPES = {"state_encrypted", "state_plain", "config", "local_db"}
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 
 # ---------------------------------------------------------------------------
@@ -214,19 +223,35 @@ def _file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _load_manifest() -> dict:
-    """Load backups/manifest.json; return empty structure on missing or corrupt file."""
-    manifest_path = _config["BACKUP_MANIFEST"]
-    if manifest_path.exists():
-        try:
-            return json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    return {"last_validate": None, "snapshots": {}}
+@contextmanager
+def _publication_lock() -> Iterator[None]:
+    """Serialize archive/catalog publication across threads and processes."""
+    with _PUBLICATION_THREAD_LOCK:
+        lock_path = _config["BACKUP_DIR"] / ".publication.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                import msvcrt
+
+                lock_file.seek(0)
+                if not lock_file.read(1):
+                    lock_file.write(b"\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                unlock = lambda: msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                unlock = lambda: fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            try:
+                yield
+            finally:
+                unlock()
 
 
-def _save_manifest(manifest: dict) -> None:
-    """Atomically overwrite manifest.json via a .tmp sibling."""
+def _save_manifest_unlocked(manifest: dict) -> None:
     manifest_path = _config["BACKUP_MANIFEST"]
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = Path(str(manifest_path) + ".tmp")
@@ -236,6 +261,420 @@ def _save_manifest(manifest: dict) -> None:
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         log(f"MANIFEST_SAVE_FAILED | error: {exc}")
+        raise RuntimeError("Backup catalog publication failed.") from exc
+
+
+def _safe_relative_path(value: Any) -> bool:
+    if not isinstance(value, str) or not value or "\0" in value or "\\" in value:
+        return False
+    parts = value.split("/")
+    return (
+        not value.startswith("/")
+        and all(part not in ("", ".", "..") and ":" not in part for part in parts)
+        and Path(value).as_posix() == value
+    )
+
+
+def _safe_stream_name(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value not in (".", "..")
+        and not any(char in value for char in ':/\\\0<>\"|?*')
+        and not any(ord(char) < 32 for char in value)
+    )
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return False
+    if path.is_symlink():
+        return True
+    attributes = getattr(info, "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def _safe_destination(root: Path, restore_path: str) -> Path:
+    if not _safe_relative_path(restore_path):
+        raise ValueError(f"unsafe restore path: {restore_path!r}")
+    base = root.resolve()
+    destination = root.joinpath(*restore_path.split("/"))
+    if not destination.resolve(strict=False).is_relative_to(base):
+        raise ValueError(f"restore path escapes root: {restore_path!r}")
+    current = root
+    for part in restore_path.split("/"):
+        current = current / part
+        if _is_link_or_reparse(current):
+            raise ValueError(f"linked restore destination: {restore_path!r}")
+    return destination
+
+
+def _age_encrypt_bytes(recipient: str, plaintext: bytes) -> bytes:
+    age_cmd = _find_age_bin()
+    if not age_cmd:
+        raise RuntimeError("age CLI not found; cannot encrypt payload")
+    result = subprocess.run(
+        [age_cmd, "--recipient", recipient],
+        input=plaintext,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout:
+        raise RuntimeError("age payload encryption failed")
+    return result.stdout
+
+
+def _age_decrypt_bytes(identity: str, ciphertext: bytes) -> bytes:
+    age_cmd = _find_age_bin()
+    if not age_cmd:
+        raise RuntimeError("age CLI not found; cannot decrypt payload")
+    fd, ciphertext_path = tempfile.mkstemp(prefix="artha_age_payload_", suffix=".age")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(ciphertext)
+        result = subprocess.run(
+            [age_cmd, "--decrypt", "--identity", "-", ciphertext_path],
+            input=(identity.rstrip() + "\n").encode("utf-8"),
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError("age payload decryption failed")
+        return result.stdout
+    finally:
+        Path(ciphertext_path).unlink(missing_ok=True)
+
+
+def _sqlite_online_snapshot(source_path: Path) -> bytes:
+    """Serialize a consistent read-only SQLite snapshot, including committed WAL data."""
+    if not source_path.is_file():
+        raise FileNotFoundError(source_path)
+    source = target = None
+    try:
+        source_uri = source_path.resolve().as_uri() + "?mode=ro"
+        source = sqlite3.connect(source_uri, uri=True, timeout=30)
+        source.execute("PRAGMA query_only=ON")
+        target = sqlite3.connect(":memory:")
+        source.backup(target)
+        image = target.serialize()
+        if not image.startswith(b"SQLite format 3\0"):
+            raise ValueError("online backup did not produce a SQLite image")
+        if image[18:20] == b"\x02\x02":
+            image = image[:18] + b"\x01\x01" + image[20:]
+        return image
+    finally:
+        if target is not None:
+            target.close()
+        if source is not None:
+            source.close()
+
+
+def _validate_sqlite_image(content: bytes) -> None:
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.deserialize(content)
+        if connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            raise ValueError("SQLite integrity check failed")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise ValueError("SQLite foreign key check failed")
+    except sqlite3.Error as exc:
+        raise ValueError(f"invalid SQLite image: {exc}") from exc
+    finally:
+        connection.close()
+
+
+def _supports_named_streams() -> bool:
+    return os.name == "nt"
+
+
+def _read_named_streams(source_path: Path) -> dict[str, bytes]:
+    if not _supports_named_streams():
+        return {}
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class StreamData(ctypes.Structure):
+        _fields_ = [("size", ctypes.c_longlong), ("name", ctypes.c_wchar * 296)]
+
+    find_first = kernel32.FindFirstStreamW
+    find_first.argtypes = [ctypes.c_wchar_p, ctypes.c_int, ctypes.POINTER(StreamData), ctypes.c_uint]
+    find_first.restype = ctypes.c_void_p
+    find_next = kernel32.FindNextStreamW
+    find_next.argtypes = [ctypes.c_void_p, ctypes.POINTER(StreamData)]
+    find_next.restype = ctypes.c_int
+    close_handle = kernel32.FindClose
+    close_handle.argtypes = [ctypes.c_void_p]
+    close_handle.restype = ctypes.c_int
+    data = StreamData()
+    handle = find_first(str(source_path), 0, ctypes.byref(data), 0)
+    if handle == ctypes.c_void_p(-1).value:
+        error = ctypes.get_last_error()
+        if error == 38:
+            return {}
+        raise OSError(error, "Unable to enumerate NTFS streams", str(source_path))
+
+    streams = {}
+    try:
+        while True:
+            stream_name = data.name
+            if stream_name != "::$DATA":
+                match = re.fullmatch(r":(.+):\$DATA", stream_name)
+                if not match or not _safe_stream_name(match.group(1)):
+                    raise ValueError(f"unsupported NTFS stream name: {stream_name!r}")
+                name = match.group(1)
+                with open(f"{source_path}:{name}", "rb") as stream:
+                    streams[name] = stream.read()
+            if not find_next(handle, ctypes.byref(data)):
+                error = ctypes.get_last_error()
+                if error != 38:
+                    raise OSError(error, "Unable to enumerate NTFS streams", str(source_path))
+                break
+    finally:
+        close_handle(handle)
+    return streams
+
+
+def _write_named_stream(destination: Path, name: str, content: bytes) -> None:
+    if not _supports_named_streams():
+        raise OSError("native named-stream support is unavailable")
+    if not _safe_stream_name(name):
+        raise ValueError(f"unsafe NTFS stream name: {name!r}")
+    with open(f"{destination}:{name}", "wb") as stream:
+        stream.write(content)
+
+
+def _unique_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _descriptor(value: Any, *, version: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("invalid payload descriptor")
+    entry = value.get("entry")
+    if version == "3":
+        if not isinstance(entry, str) or not re.fullmatch(r"payload/[A-Za-z0-9_-]+\.age", entry):
+            raise ValueError("unsafe version-3 payload entry")
+    elif not _safe_relative_path(entry):
+        raise ValueError("unsafe version-2 archive entry")
+    digest = value.get("sha256")
+    size = value.get("size")
+    if not isinstance(digest, str) or not _SHA256_RE.fullmatch(digest):
+        raise ValueError("invalid payload checksum")
+    if type(size) is not int or size < 0:
+        raise ValueError("invalid payload size")
+    return {"entry": entry, "sha256": digest, "size": size}
+
+
+def _archive_records(
+    zf: zipfile.ZipFile,
+    internal: Any,
+    expected_catalog: dict | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    if not isinstance(internal, dict):
+        raise ValueError("invalid backup manifest")
+    version = internal.get("artha_backup_version")
+    if version not in ("2", "3"):
+        raise ValueError(f"unsupported backup version: {version!r}")
+    if (
+        not isinstance(internal.get("created"), str)
+        or not internal["created"]
+        or not isinstance(internal.get("date"), str)
+        or not isinstance(internal.get("tier"), str)
+        or internal["tier"] not in GFS_RETENTION
+    ):
+        raise ValueError("invalid backup metadata")
+    try:
+        _date_type.fromisoformat(internal["date"])
+    except ValueError as exc:
+        raise ValueError("invalid backup date") from exc
+    files = internal.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError("empty or invalid file manifest")
+
+    records: list[dict[str, Any]] = []
+    archive_entries: list[str] = []
+    restore_paths: set[str] = set()
+    stream_count = 0
+    for key, meta in files.items():
+        if not isinstance(meta, dict):
+            raise ValueError("invalid file record")
+        source_type = meta.get("source_type")
+        name = meta.get("name")
+        restore_path = meta.get("restore_path")
+        if source_type not in _SOURCE_TYPES or not isinstance(name, str) or not name:
+            raise ValueError("invalid source type or file name")
+        if not _safe_relative_path(restore_path) or restore_path in restore_paths:
+            raise ValueError("unsafe or duplicate restore path")
+        if (
+            (source_type in ("state_encrypted", "state_plain") and not restore_path.startswith("state/"))
+            or (source_type == "state_encrypted" and not restore_path.endswith(".age"))
+            or (source_type == "config" and not restore_path.startswith("config/"))
+            or (source_type == "local_db"
+                and (not restore_path.startswith(".artha-local/")
+                     or Path(restore_path).suffix.lower() not in (".db", ".sqlite", ".sqlite3")))
+        ):
+            raise ValueError("restore path does not match source type")
+        restore_paths.add(restore_path)
+
+        if version == "2":
+            descriptor = _descriptor({
+                "entry": key,
+                "sha256": meta.get("sha256"),
+                "size": meta.get("size"),
+            }, version=version)
+            expected_entry = restore_path if source_type == "state_encrypted" else restore_path + ".age"
+            if descriptor["entry"] != expected_entry:
+                raise ValueError("version-2 payload path does not match restore path")
+            streams = {}
+        else:
+            if key != restore_path:
+                raise ValueError("version-3 file key does not match restore path")
+            descriptor = _descriptor(meta.get("data"), version=version)
+            streams_value = meta.get("streams")
+            if not isinstance(streams_value, dict):
+                raise ValueError("invalid stream manifest")
+            streams = {}
+            for stream_name, stream_descriptor in streams_value.items():
+                if not _safe_stream_name(stream_name):
+                    raise ValueError("unsafe named-stream name")
+                if stream_name in streams:
+                    raise ValueError("duplicate named-stream name")
+                streams[stream_name] = _descriptor(stream_descriptor, version=version)
+            stream_count += len(streams)
+
+        archive_entries.append(descriptor["entry"])
+        archive_entries.extend(stream["entry"] for stream in streams.values())
+        records.append({
+            "restore_path": restore_path,
+            "source_type": source_type,
+            "name": name,
+            "data": descriptor,
+            "streams": streams,
+        })
+
+    names = [info.filename for info in zf.infolist()]
+    if any(info.is_dir() for info in zf.infolist()):
+        raise ValueError("unexpected archive directory entry")
+    if len(names) != len(set(names)) or len(archive_entries) != len(set(archive_entries)):
+        raise ValueError("duplicate archive entry")
+    if set(names) != set(archive_entries) | {"manifest.json"}:
+        raise ValueError("MANIFEST COVERAGE FAIL: archive inventory mismatch")
+    if expected_catalog is not None:
+        file_count = expected_catalog.get("file_count")
+        if type(file_count) is not int or file_count != len(records):
+            raise ValueError("catalog file count mismatch")
+        if expected_catalog.get("date") != internal["date"] or expected_catalog.get("tier") != internal["tier"]:
+            raise ValueError("catalog metadata mismatch")
+        catalog_stream_count = expected_catalog.get("stream_count", 0)
+        if type(catalog_stream_count) is not int or catalog_stream_count != stream_count:
+            raise ValueError("catalog stream count mismatch")
+    return version, records
+
+
+def _validate_content(source_type: str, restore_path: str, content: bytes) -> None:
+    logical_path = restore_path[:-4] if source_type == "state_encrypted" and restore_path.endswith(".age") else restore_path
+    suffix = Path(logical_path).suffix.lower()
+    if source_type == "local_db":
+        _validate_sqlite_image(content)
+        return
+    if suffix == ".md" and source_type in ("state_plain", "state_encrypted"):
+        if not content:
+            raise ValueError("EMPTY markdown payload")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("markdown payload is not UTF-8") from exc
+        if not text.lstrip().startswith("---"):
+            raise ValueError("YAML frontmatter missing")
+        if len(text.split()) < 30:
+            raise ValueError("SHORT markdown payload")
+        return
+    if suffix == ".json":
+        try:
+            json.loads(content)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid JSON payload") from exc
+    elif suffix in (".yaml", ".yml"):
+        if _yaml is None:
+            raise ValueError("YAML validation is unavailable")
+        try:
+            _yaml.safe_load(content.decode("utf-8"))
+        except (UnicodeDecodeError, _yaml.YAMLError) as exc:
+            raise ValueError("invalid YAML payload") from exc
+    elif not content:
+        raise ValueError("empty payload")
+
+
+def _verify_payloads(
+    zf: zipfile.ZipFile,
+    records: list[dict[str, Any]],
+    identity: str,
+) -> list[dict[str, Any]]:
+    verified = []
+    for record in records:
+        payload = record["data"]
+        ciphertext = zf.read(payload["entry"])
+        if len(ciphertext) != payload["size"] or hashlib.sha256(ciphertext).hexdigest() != payload["sha256"]:
+            raise ValueError(f"CHECKSUM or SIZE FAIL: {payload['entry']}")
+        try:
+            plaintext = _age_decrypt_bytes(identity, ciphertext)
+        except RuntimeError as exc:
+            raise ValueError(f"DECRYPT FAIL: {payload['entry']}") from exc
+        _validate_content(record["source_type"], record["restore_path"], plaintext)
+        stream_values = {}
+        for stream_name, descriptor in record["streams"].items():
+            stream_ciphertext = zf.read(descriptor["entry"])
+            if (len(stream_ciphertext) != descriptor["size"]
+                    or hashlib.sha256(stream_ciphertext).hexdigest() != descriptor["sha256"]):
+                raise ValueError(f"STREAM CHECKSUM or SIZE FAIL: {descriptor['entry']}")
+            try:
+                stream_values[stream_name] = _age_decrypt_bytes(identity, stream_ciphertext)
+            except RuntimeError as exc:
+                raise ValueError(f"STREAM DECRYPT FAIL: {descriptor['entry']}") from exc
+        verified.append({
+            **record,
+            "ciphertext": ciphertext,
+            "plaintext": plaintext,
+            "stream_values": stream_values,
+        })
+    return verified
+
+
+def _load_manifest() -> dict:
+    """Load the catalog; only a genuinely missing file starts an empty history."""
+    manifest_path = _config["BACKUP_MANIFEST"]
+    try:
+        manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_pairs,
+        )
+    except FileNotFoundError:
+        return {"last_validate": None, "snapshots": {}}
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        log(f"MANIFEST_READ_FAILED | error_type: {type(exc).__name__}")
+        raise RuntimeError("Backup catalog could not be read; existing file left unchanged.") from exc
+    if (
+        not isinstance(manifest, dict)
+        or not isinstance(manifest.get("snapshots", {}), dict)
+        or any(not isinstance(meta, dict) for meta in manifest.get("snapshots", {}).values())
+    ):
+        log("MANIFEST_READ_FAILED | reason: invalid_catalog_structure")
+        raise RuntimeError("Backup catalog structure is invalid; existing file left unchanged.")
+    return manifest
+
+
+def _save_manifest(manifest: dict) -> None:
+    """Atomically overwrite manifest.json via a .tmp sibling under the publication lock."""
+    with _publication_lock():
+        _save_manifest_unlocked(manifest)
 
 
 def _get_backup_tier(d: "_date_type") -> str:
@@ -257,13 +696,12 @@ def _get_backup_tier(d: "_date_type") -> str:
 
 
 def _prune_backups(tier: str, keep_n: int) -> None:
-    """Remove oldest ZIP snapshots in tier_dir beyond keep_n retention limit.
+    """Apply retention while serializing catalog and archive updates."""
+    with _publication_lock():
+        _prune_backups_locked(tier, keep_n)
 
-    Last-known-good protection (#6): before deleting a ZIP, verify that every
-    domain checksum it contains also exists in at least one other retained
-    snapshot (across ALL tiers). If a ZIP is the sole carrier of a domain's
-    checksum, it is pinned and not pruned.
-    """
+
+def _prune_backups_locked(tier: str, keep_n: int) -> None:
     backup_dir = _config["BACKUP_DIR"]
     tier_dir   = backup_dir / tier
     if not tier_dir.exists():
@@ -277,6 +715,7 @@ def _prune_backups(tier: str, keep_n: int) -> None:
     # Build a global domain→set-of-checksums map from ALL retained snapshots
     # (i.e. snapshots that are NOT candidates for pruning in this call)
     candidates = {f"{tier}/{z.name}" for z in zips[: len(zips) - keep_n]}
+    removable = []
 
     for old_zip in zips[: len(zips) - keep_n]:
         key = f"{tier}/{old_zip.name}"
@@ -305,14 +744,19 @@ def _prune_backups(tier: str, keep_n: int) -> None:
         if pinned:
             candidates.discard(key)
             continue
+        removable.append(old_zip)
 
+    if not removable:
+        return
+    for old_zip in removable:
+        snapshots.pop(f"{tier}/{old_zip.name}", None)
+    _save_manifest_unlocked(manifest)
+    for old_zip in removable:
         try:
             old_zip.unlink()
-            snapshots.pop(key, None)
             log(f"BACKUP_PRUNED | zip: {old_zip.name} | tier: {tier} | retention: {keep_n}")
         except OSError as exc:
             log(f"BACKUP_PRUNE_FAILED | zip: {old_zip.name} | error: {exc}")
-    _save_manifest(manifest)
 
 
 def _zip_archive_path(entry: dict) -> str:
@@ -366,122 +810,203 @@ def backup_snapshot(registry: list, today: "_date_type | None" = None) -> int:
         log(f"BACKUP_MKDIR_FAILED | tier: {tier} | error: {exc}")
         return 0
 
+    restore_paths = [e.get("restore_path") for e in registry]
+    if (
+        any(not _safe_relative_path(path) for path in restore_paths)
+        or len(restore_paths) != len(set(restore_paths))
+        or any(e.get("source_type") not in _SOURCE_TYPES for e in registry)
+    ):
+        log("BACKUP_ABORT | reason: invalid_registry")
+        return 0
+
     need_encrypt = any(e["source_type"] != "state_encrypted" for e in registry)
     pubkey: "str | None" = None
     if need_encrypt:
         try:
             pubkey = get_public_key()
         except SystemExit:
-            log("BACKUP_PUBKEY_MISSING | plain/config files will be skipped this run")
+            log("BACKUP_ABORT | reason: age_recipient_missing")
+            return 0
 
     zip_name = f"{date_str}.zip"
     dest     = tier_dir / zip_name
     dest_tmp = Path(str(dest) + ".tmp")
 
-    internal_files: dict = {}
-    backed_up = 0
+    internal_files: dict[str, dict[str, Any]] = {}
+    staged_payloads: list[Path] = []
+    stream_count = 0
+    payload_number = 0
 
-    with tempfile.TemporaryDirectory(prefix="artha_backup_") as staging:
-        staging_path = Path(staging)
+    try:
+        with tempfile.TemporaryDirectory(prefix="artha_backup_") as staging:
+            staging_path = Path(staging)
 
-        for entry in registry:
-            name         = entry["name"]
-            source_type  = entry["source_type"]
-            source_path  = entry["source_path"]
-            restore_path = entry["restore_path"]
-            arc_path     = _zip_archive_path(entry)
+            def put_payload(content: bytes, *, encrypt: bool) -> dict[str, Any]:
+                nonlocal payload_number
+                payload_number += 1
+                entry_name = f"payload/{payload_number:08d}.age"
+                staged = staging_path / entry_name
+                staged.parent.mkdir(parents=True, exist_ok=True)
+                payload = _age_encrypt_bytes(pubkey or "", content) if encrypt else content
+                staged.write_bytes(payload)
+                staged_payloads.append(staged)
+                return {
+                    "entry": entry_name,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "size": len(payload),
+                }
 
-            if not source_path.exists():
-                continue
+            for entry in registry:
+                name = entry["name"]
+                source_type = entry["source_type"]
+                source_path = Path(entry["source_path"])
+                restore_path = entry["restore_path"]
+                if not source_path.exists():
+                    log(f"BACKUP_ABORT | name: {name} | reason: missing_source")
+                    return 0
+                if source_type == "state_encrypted" and not is_valid_age_file(source_path):
+                    log(f"BACKUP_ABORT | name: {name} | reason: invalid_age_file")
+                    return 0
 
-            staged = staging_path / arc_path
-            staged.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                if source_type == "state_encrypted":
-                    if not is_valid_age_file(source_path):
-                        size = source_path.stat().st_size
-                        log(f"BACKUP_SKIP | name: {name} | reason: invalid_age_file (size={size})")
-                        continue
-                    shutil.copy2(str(source_path), str(staged))
+                if source_type == "local_db":
+                    try:
+                        database_image = _sqlite_online_snapshot(source_path)
+                        _validate_sqlite_image(database_image)
+                        data_descriptor = put_payload(database_image, encrypt=True)
+                    except (OSError, sqlite3.Error, ValueError, RuntimeError) as exc:
+                        log(f"BACKUP_ABORT | name: {name} | reason: sqlite_snapshot_failed | error: {exc}")
+                        return 0
+                elif source_type == "state_encrypted":
+                    payload_number += 1
+                    entry_name = f"payload/{payload_number:08d}.age"
+                    staged = staging_path / entry_name
+                    staged.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source_path, staged)
+                    staged_payloads.append(staged)
+                    data_descriptor = {
+                        "entry": entry_name,
+                        "sha256": _file_sha256(staged),
+                        "size": staged.stat().st_size,
+                    }
                 else:
-                    if not pubkey:
-                        log(f"BACKUP_SKIP | name: {name} | reason: no_pubkey")
-                        continue
-                    if not age_encrypt(pubkey, source_path, staged):
-                        staged.unlink(missing_ok=True)
-                        log(f"BACKUP_ENCRYPT_FAILED | name: {name}")
-                        continue
-                    if not staged.exists():
-                        log(f"BACKUP_ENCRYPT_FAILED | name: {name} | reason: no_output")
-                        continue
-            except OSError as exc:
-                staged.unlink(missing_ok=True)
-                log(f"BACKUP_STAGE_FAILED | name: {name} | error: {exc}")
-                continue
+                    payload_number += 1
+                    entry_name = f"payload/{payload_number:08d}.age"
+                    staged = staging_path / entry_name
+                    staged.parent.mkdir(parents=True, exist_ok=True)
+                    if not pubkey or not age_encrypt(pubkey, source_path, staged) or not staged.is_file():
+                        log(f"BACKUP_ABORT | name: {name} | reason: encrypt_failed")
+                        return 0
+                    staged_payloads.append(staged)
+                    data_descriptor = {
+                        "entry": entry_name,
+                        "sha256": _file_sha256(staged),
+                        "size": staged.stat().st_size,
+                    }
 
-            sha256 = _file_sha256(staged)
-            internal_files[arc_path] = {
-                "name":         name,
-                "restore_path": restore_path,
-                "sha256":       sha256,
-                "size":         staged.stat().st_size,
-                "source_type":  source_type,
+                try:
+                    named_streams = _read_named_streams(source_path)
+                    if named_streams and not pubkey:
+                        pubkey = get_public_key()
+                    stream_descriptors = {}
+                    for stream_name, stream_content in named_streams.items():
+                        if not _safe_stream_name(stream_name):
+                            raise ValueError(f"unsafe named-stream name: {stream_name!r}")
+                        if not pubkey:
+                            raise RuntimeError("age recipient is unavailable for named-stream encryption")
+                        stream_descriptors[stream_name] = put_payload(stream_content, encrypt=True)
+                        stream_count += 1
+                except (OSError, RuntimeError, ValueError, SystemExit) as exc:
+                    log(f"BACKUP_ABORT | name: {name} | reason: named_stream_capture_failed | error: {exc}")
+                    return 0
+
+                internal_files[restore_path] = {
+                    "restore_path": restore_path,
+                    "source_type": source_type,
+                    "name": name,
+                    "data": data_descriptor,
+                    "streams": stream_descriptors,
+                }
+                log(f"BACKUP_OK | name: {name} | tier: {tier} | date: {date_str}")
+
+            if not internal_files:
+                return 0
+
+            internal_manifest = {
+                "artha_backup_version": "3",
+                "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "date": date_str,
+                "tier": tier,
+                "files": internal_files,
             }
-            backed_up += 1
-            log(f"BACKUP_OK | name: {name} | tier: {tier} | date: {date_str} | sha256: {sha256[:16]}...")
+            manifest_path = staging_path / "manifest.json"
+            manifest_path.write_text(json.dumps(internal_manifest, indent=2, sort_keys=True) + "\n",
+                                     encoding="utf-8")
+            with zipfile.ZipFile(dest_tmp, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for staged in sorted(staged_payloads):
+                    archive.write(staged, staged.relative_to(staging_path).as_posix())
+                archive.write(manifest_path, "manifest.json")
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
+        dest_tmp.unlink(missing_ok=True)
+        log(f"BACKUP_ZIP_FAILED | tier: {tier} | date: {date_str} | error: {exc}")
+        return 0
 
-        if backed_up == 0:
-            return 0
+    rollback_path = None
+    preserve_rollback = False
+    zip_sha256 = _file_sha256(dest_tmp)
+    key = f"{tier}/{zip_name}"
+    try:
+        with _publication_lock():
+            outer = _load_manifest()
+            outer.setdefault("snapshots", {})
+            if dest.exists():
+                fd, rollback_name = tempfile.mkstemp(prefix=f"{zip_name}.rollback-", dir=tier_dir)
+                os.close(fd)
+                rollback_path = Path(rollback_name)
+                shutil.copy2(dest, rollback_path)
+            outer["snapshots"][key] = {
+                "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "date": date_str,
+                "file_count": len(internal_files),
+                "stream_count": stream_count,
+                "sha256": zip_sha256,
+                "size": dest_tmp.stat().st_size,
+                "tier": tier,
+                "domain_checksums": {
+                    item["name"]: item["data"]["sha256"] for item in internal_files.values()
+                },
+            }
+            os.replace(dest_tmp, dest)
+            try:
+                _save_manifest_unlocked(outer)
+            except Exception:
+                if rollback_path is not None:
+                    try:
+                        os.replace(rollback_path, dest)
+                        rollback_path = None
+                    except OSError:
+                        preserve_rollback = True
+                        raise
+                else:
+                    dest.unlink(missing_ok=True)
+                raise
+    except Exception as exc:
+        dest_tmp.unlink(missing_ok=True)
+        if rollback_path is not None and not preserve_rollback:
+            rollback_path.unlink(missing_ok=True)
+        log(f"BACKUP_PUBLISH_FAILED | tier: {tier} | date: {date_str} | error: {exc}")
+        return 0
+    if rollback_path is not None:
+        rollback_path.unlink(missing_ok=True)
 
-        # Write internal manifest.json into staging dir
-        internal_manifest = {
-            "artha_backup_version": "2",
-            "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "date":    date_str,
-            "tier":    tier,
-            "files":   internal_files,
-        }
-        (staging_path / "manifest.json").write_text(
-            json.dumps(internal_manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-
-        # Pack staging dir into ZIP atomically
-        try:
-            with zipfile.ZipFile(str(dest_tmp), "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                for abs_p in sorted(staging_path.rglob("*")):
-                    if abs_p.is_file():
-                        zf.write(str(abs_p), str(abs_p.relative_to(staging_path)))
-            os.replace(str(dest_tmp), str(dest))
-        except OSError as exc:
-            dest_tmp.unlink(missing_ok=True)
-            log(f"BACKUP_ZIP_FAILED | tier: {tier} | date: {date_str} | error: {exc}")
-            return 0
-
-    # Update outer manifest catalog (with per-domain checksums for prune protection #6)
-    zip_sha256 = _file_sha256(dest)
-    domain_checksums = {
-        meta["name"]: meta["sha256"]
-        for meta in internal_files.values()
-    }
-    outer = _load_manifest()
-    outer.setdefault("snapshots", {})
-    outer["snapshots"][f"{tier}/{zip_name}"] = {
-        "created":           datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "date":              date_str,
-        "file_count":        backed_up,
-        "sha256":            zip_sha256,
-        "size":              dest.stat().st_size,
-        "tier":              tier,
-        "domain_checksums":  domain_checksums,
-    }
-    _save_manifest(outer)
+    backed_up = len(internal_files)
 
     # Prune old ZIPs per tier
     for t, keep_n in GFS_RETENTION.items():
         if keep_n is not None:
-            _prune_backups(t, keep_n)
+            try:
+                _prune_backups(t, keep_n)
+            except Exception as exc:
+                log(f"BACKUP_PRUNE_FAILED | tier: {t} | error: {exc}")
 
     print(f"  GFS backup: {backed_up} file(s) -> {tier}/{zip_name}")
 
@@ -510,12 +1035,20 @@ def backup_snapshot(registry: list, today: "_date_type | None" = None) -> int:
             log("AUTO_VALIDATE_FAILED | non_fatal | snapshot_was_created_successfully")
 
     # KB database backup (non-fatal) — runs after prune + validate
+    knowledge_graph = None
     try:
         from lib.knowledge_graph import KnowledgeGraph  # noqa: PLC0415
-        KnowledgeGraph().backup(tier=tier)
+        knowledge_graph = KnowledgeGraph()
+        knowledge_graph.backup(tier=tier)
         log(f"KB_BACKUP_OK | tier: {tier}")
     except Exception as kb_exc:
         log(f"KB_BACKUP_FAILED | tier: {tier} | error: {kb_exc}")
+    finally:
+        if knowledge_graph is not None:
+            try:
+                knowledge_graph.close()
+            except Exception as close_exc:
+                log(f"KB_CLOSE_FAILED | tier: {tier} | error: {close_exc}")
 
     return backed_up
 
@@ -526,7 +1059,14 @@ def _select_backup_zip(date_str: "str | None", manifest: dict) -> "str | None":
     date_str given → find first matching ZIP across any tier.
     Otherwise      → newest ZIP by date field.
     """
-    snapshots = manifest.get("snapshots", {})
+    snapshots = {
+        key: meta for key, meta in manifest.get("snapshots", {}).items()
+        if _safe_relative_path(key)
+        and len(key.split("/")) == 2
+        and key.split("/", 1)[0] in GFS_RETENTION
+        and key.lower().endswith(".zip")
+        and isinstance(meta.get("date"), str)
+    }
     if not snapshots:
         return None
     if date_str:
@@ -541,6 +1081,7 @@ def _restore_from_zip(
     dry_run:   bool,
     data_only: bool = False,
     confirm:   bool = False,
+    expected_catalog: dict | None = None,
 ) -> None:
     """Core restore logic shared by do_restore() and do_install().
 
@@ -560,144 +1101,130 @@ def _restore_from_zip(
     SHA-256 verified before writing. Existing files overwritten.
     """
     artha_dir = _config["ARTHA_DIR"]
-
-    if not check_age_installed():
-        die("'age' not installed.")
-    privkey = get_private_key()
-
     if not zip_path.exists():
         die(f"Backup ZIP not found: {zip_path}")
-
+    if expected_catalog is not None:
+        expected_digest = expected_catalog.get("sha256")
+        try:
+            actual_digest = _file_sha256(zip_path)
+        except OSError:
+            die(f"Backup ZIP not found: {zip_path}")
+        if not isinstance(expected_digest, str) or actual_digest != expected_digest:
+            die(f"Backup ZIP checksum failed: {zip_path.name}")
     try:
-        zf_handle = zipfile.ZipFile(str(zip_path), "r")
+        zf_context = zipfile.ZipFile(zip_path, "r")
     except zipfile.BadZipFile as exc:
         die(f"Corrupt ZIP file {zip_path.name}: {exc}")
 
-    with zf_handle as zf:
+    with zf_context as zf:
         try:
-            with zf.open("manifest.json") as mf:
-                internal = json.load(mf)
-        except Exception as exc:
-            die(f"Cannot read internal manifest in {zip_path.name}: {exc}")
+            internal = json.loads(zf.read("manifest.json").decode("utf-8"),
+                                  object_pairs_hook=_unique_json_pairs)
+            version, records = _archive_records(zf, internal, expected_catalog)
+            for record in records:
+                _safe_destination(artha_dir, record["restore_path"])
+            if any(record["streams"] for record in records) and not _supports_named_streams():
+                raise ValueError("native named-stream support is unavailable; refusing stream-bearing restore")
+        except (KeyError, OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            die(f"Backup archive validation failed: {exc}")
 
-        files = internal.get("files", {})
+        selected = records
         if data_only:
-            files = {k: v for k, v in files.items() if v.get("source_type") != "config"}
+            selected = [record for record in selected if record["source_type"] != "config"]
         if domain:
-            files = {k: v for k, v in files.items() if v.get("name") == domain}
-            if not files:
+            selected = [record for record in selected if record["name"] == domain]
+            if not selected:
                 print(f"No files for domain {domain!r} in {zip_path.name}.")
                 sys.exit(1)
 
-        snap_date  = internal.get("date", "unknown")
-        snap_tier  = internal.get("tier", "unknown")
+        snap_date = internal.get("date", "unknown")
+        snap_tier = internal.get("tier", "unknown")
         scope_note = " (state only — config skipped)" if data_only else ""
-        if dry_run:
-            print(f"DRY RUN — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note} — no files will be written\n")
-        elif not confirm:
-            # Show preview and require --confirm (#7)
-            print(f"PREVIEW — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note}\n")
-            for arc_path, meta in sorted(files.items()):
-                restore_path = meta.get("restore_path", "")
-                source_type  = meta.get("source_type", "state_encrypted")
-                action = "copy" if source_type == "state_encrypted" else "decrypt"
-                print(f"  would {action}: {arc_path!s:<55} -> {restore_path}")
-            print(f"\n  Add --confirm to execute this restore.")
+        if dry_run or not confirm:
+            label = "DRY RUN" if dry_run else "PREVIEW"
+            print(f"{label} — snapshot {snap_tier}/{snap_date} ({zip_path.name}){scope_note}\n")
+            for record in sorted(selected, key=lambda item: item["restore_path"]):
+                action = "copy" if record["source_type"] == "state_encrypted" else "decrypt"
+                print(f"  would {action}: {record['restore_path']!s:<55} -> {record['restore_path']}")
+                for stream_name in record["streams"]:
+                    print(f"    named stream: {stream_name}")
+            if not dry_run:
+                print("\n  Add --confirm to execute this restore.")
             return
 
-        zip_ver = internal.get("artha_backup_version", "unknown")
-        if zip_ver != "2":
-            print(f"  WARNING: ZIP backup version {zip_ver} — expected 2. Attempting restore.")
+        if not check_age_installed():
+            die("'age' not installed.")
+        identity = get_private_key()
+        try:
+            verified = _verify_payloads(zf, records, identity)
+        except (OSError, ValueError, RuntimeError, sqlite3.Error, zipfile.BadZipFile) as exc:
+            die(f"Backup archive validation failed; no files were restored: {exc}")
 
-        errors   = 0
+        selected_paths = {record["restore_path"] for record in selected}
+        selected_verified = [record for record in verified if record["restore_path"] in selected_paths]
+        pre_restore_dir = _config["BACKUP_DIR"] / "pre-restore"
+        if _is_link_or_reparse(pre_restore_dir):
+            die("Pre-restore backup directory is linked; refusing restore.")
+        pre_restore_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        backed = 0
+        try:
+            for record in selected_verified:
+                live = _safe_destination(artha_dir, record["restore_path"])
+                if not live.is_file():
+                    continue
+                old_streams = _read_named_streams(live)
+                safe_name = record["restore_path"].replace("/", "__")
+                dest_bak = pre_restore_dir / f"{ts}__{safe_name}"
+                shutil.copy2(live, dest_bak)
+                for stream_name, stream_content in old_streams.items():
+                    _write_named_stream(dest_bak, stream_name, stream_content)
+                backed += 1
+        except (OSError, ValueError) as exc:
+            die(f"Pre-restore protection failed; no files were restored: {exc}")
+        if backed:
+            log(f"PRE_RESTORE_BACKUP | files: {backed} | dir: pre-restore/ | ts: {ts}")
+            print(f"  Pre-restore backup: {backed} live file(s) saved to backups/pre-restore/")
+
+        errors = 0
         restored = 0
-
-        # Pre-restore backup: snapshot current live files before overwriting (#7)
-        if not dry_run:
-            pre_restore_dir = _config["BACKUP_DIR"] / "pre-restore"
-            pre_restore_dir.mkdir(parents=True, exist_ok=True)
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-            backed = 0
-            for arc_path, meta in files.items():
-                rp = meta.get("restore_path", "")
-                live = artha_dir / rp
-                if live.exists():
-                    safe_name = rp.replace("/", "__").replace("\\\\", "__")
-                    dest_bak = pre_restore_dir / f"{ts}__{safe_name}"
-                    try:
-                        shutil.copy2(str(live), str(dest_bak))
-                        backed += 1
-                    except OSError:
-                        pass
-            if backed:
-                log(f"PRE_RESTORE_BACKUP | files: {backed} | dir: pre-restore/ | ts: {ts}")
-                print(f"  Pre-restore backup: {backed} live file(s) saved to backups/pre-restore/")
-
-        with tempfile.TemporaryDirectory(prefix="artha_restore_") as tmpdir:
-            tmppath = Path(tmpdir)
-
-            for arc_path, meta in sorted(files.items()):
-                restore_path = meta.get("restore_path", "")
-                source_type  = meta.get("source_type", "state_encrypted")
-                dest         = artha_dir / restore_path
-
-                # Read from ZIP and verify SHA-256
-                try:
-                    zip_data = zf.read(arc_path)
-                except KeyError:
-                    print(f"  \u2717 MISSING in ZIP:  {arc_path}")
-                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: missing_in_zip")
-                    errors += 1
-                    continue
-
-                actual_sha256   = hashlib.sha256(zip_data).hexdigest()
-                expected_sha256 = meta.get("sha256", "")
-                if expected_sha256 and actual_sha256 != expected_sha256:
-                    print(f"  \u2717 CHECKSUM FAIL:   {arc_path}")
-                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: checksum_mismatch")
-                    errors += 1
-                    continue
-
-                if dry_run:
-                    action = "copy" if source_type == "state_encrypted" else "decrypt"
-                    print(f"  would {action}: {arc_path!s:<55} -> {restore_path}")
-                    continue
-
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest_tmp = Path(str(dest) + ".tmp")
-
-                try:
-                    if source_type == "state_encrypted":
-                        dest_tmp.write_bytes(zip_data)
-                        os.replace(str(dest_tmp), str(dest))
-                    else:
-                        extracted = tmppath / Path(arc_path).name
-                        extracted.write_bytes(zip_data)
-                        if not age_decrypt(privkey, extracted, dest_tmp):
-                            dest_tmp.unlink(missing_ok=True)
-                            print(f"  \u2717 DECRYPT FAILED:  {arc_path}")
-                            log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: decrypt_failed")
-                            errors += 1
-                            continue
-                        os.replace(str(dest_tmp), str(dest))
-                except OSError as exc:
-                    dest_tmp.unlink(missing_ok=True)
-                    print(f"  \u2717 WRITE FAILED:    {arc_path}: {exc}")
-                    log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {arc_path} | reason: write_error")
-                    errors += 1
-                    continue
-
-                print(f"  \u2713 {restore_path}")
-                log(f"RESTORE_OK | zip: {zip_path.name} | file: {arc_path} | dest: {restore_path} | type: {source_type}")
-                restored += 1
+        for record in selected_verified:
+            destination = _safe_destination(artha_dir, record["restore_path"])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if _is_link_or_reparse(destination):
+                print(f"  \u2717 WRITE FAILED: linked destination {record['restore_path']}")
+                errors += 1
+                continue
+            staged = None
+            try:
+                fd, staged_name = tempfile.mkstemp(
+                    prefix=".artha-restore-", suffix=".tmp", dir=destination.parent,
+                )
+                staged = Path(staged_name)
+                content = record["ciphertext"] if record["source_type"] == "state_encrypted" else record["plaintext"]
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(content)
+                for stream_name, stream_content in record["stream_values"].items():
+                    _write_named_stream(staged, stream_name, stream_content)
+                os.replace(staged, destination)
+            except (OSError, ValueError) as exc:
+                if staged is not None:
+                    staged.unlink(missing_ok=True)
+                print(f"  \u2717 WRITE FAILED: {record['restore_path']}: {exc}")
+                log(f"RESTORE_FAIL | zip: {zip_path.name} | file: {record['restore_path']} | reason: write_error")
+                errors += 1
+                continue
+            print(f"  \u2713 {record['restore_path']}")
+            log(f"RESTORE_OK | zip: {zip_path.name} | file: {record['restore_path']} "
+                f"| type: {record['source_type']} | streams: {len(record['streams'])}")
+            restored += 1
 
     print()
-    if not dry_run:
-        if errors == 0:
-            print(f"Restore complete: {restored} file(s) restored from {zip_path.name}.")
-        else:
-            print(f"Restore: {restored} restored, {errors} failed.")
-            sys.exit(1)
+    if errors == 0:
+        print(f"Restore complete: {restored} file(s) restored from {zip_path.name} (version {version}).")
+    else:
+        print(f"Restore: {restored} restored, {errors} failed.")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -762,17 +1289,7 @@ def do_validate_backup(
     domain:   "str | None" = None,
     date_str: "str | None" = None,
 ) -> None:
-    """Validate backup ZIP — never touches live state.
-
-    Opens the newest ZIP (or the one matching --date). For each file:
-      1. SHA-256 inside ZIP matches internal manifest (bit-rot detection)
-      2. age_decrypt succeeds
-      3. Decrypted output non-empty
-      4. YAML frontmatter (for state files)
-      5. Word count >= 30 (for state files)
-
-    Updates manifest.last_validate on full success.
-    """
+    """Validate selected encrypted payloads entirely in memory."""
     backup_dir = _config["BACKUP_DIR"]
 
     if not check_age_installed():
@@ -780,9 +1297,18 @@ def do_validate_backup(
     privkey  = get_private_key()
     manifest = _load_manifest()
 
+    def fail_validation(message: str, reason: str) -> NoReturn:
+        print(message)
+        log(f"BACKUP_VALIDATE_FAIL | reason: {reason}")
+        manifest["last_validate_errors"] = 1
+        _save_manifest(manifest)
+        sys.exit(1)
+
     if not manifest.get("snapshots"):
-        print("No backups found. Run backup.py snapshot first to create initial backups.")
-        return
+        fail_validation(
+            "No backups found. Run backup.py snapshot first to create initial backups.",
+            "no_backups",
+        )
 
     zip_key = _select_backup_zip(date_str, manifest)
     if not zip_key:
@@ -793,123 +1319,46 @@ def do_validate_backup(
 
     # Verify outer ZIP checksum first
     expected_zip_sha256 = manifest["snapshots"][zip_key].get("sha256", "")
-    if expected_zip_sha256 and _file_sha256(zip_path) != expected_zip_sha256:
-        print(f"  \u2717 ZIP CHECKSUM FAIL: {zip_key}")
-        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | reason: zip_checksum_mismatch")
-        sys.exit(1)
-
-    errors    = 0
-    validated = 0
+    if not expected_zip_sha256 or _file_sha256(zip_path) != expected_zip_sha256:
+        fail_validation(
+            f"  \u2717 ZIP CHECKSUM FAIL: {zip_key}",
+            f"zip_checksum_missing_or_mismatch | zip: {zip_key}",
+        )
 
     try:
-        with zipfile.ZipFile(str(zip_path), "r") as zf:
-            try:
-                with zf.open("manifest.json") as mf:
-                    internal = json.load(mf)
-            except Exception as exc:
-                print(f"  \u2717 MANIFEST READ FAIL: {zip_key}: {exc}")
-                sys.exit(1)
-
-            files_to_check = internal.get("files", {})
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            internal = json.loads(zf.read("manifest.json").decode("utf-8"),
+                                  object_pairs_hook=_unique_json_pairs)
+            version, records = _archive_records(
+                zf, internal, manifest["snapshots"][zip_key],
+            )
+            selected = records
             if domain:
-                files_to_check = {k: v for k, v in files_to_check.items()
-                                  if v.get("name") == domain}
-                if not files_to_check:
+                selected = [record for record in records if record["name"] == domain]
+                if not selected:
                     print(f"No files for domain {domain!r} in {zip_key}.")
                     sys.exit(1)
+            verified = _verify_payloads(zf, selected, privkey)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, RuntimeError,
+            KeyError, zipfile.BadZipFile, sqlite3.Error) as exc:
+        fail_validation(
+            f"  \u2717 BACKUP VALIDATION FAIL: {zip_key}: {exc}",
+            f"archive_or_payload_invalid | zip: {zip_key}",
+        )
 
-            with tempfile.TemporaryDirectory(prefix="artha_validate_") as tmpdir:
-                tmppath = Path(tmpdir)
+    for record in verified:
+        digest = record["data"]["sha256"]
+        log(f"BACKUP_VALIDATE_OK | zip: {zip_key} | file: {record['restore_path']} "
+            f"| type: {record['source_type']} | streams: {len(record['streams'])} | sha256: {digest[:16]}")
+        print(f"  \u2713 {record['restore_path']} type={record['source_type']} "
+              f"streams={len(record['streams'])} sha256={digest[:14]}...")
 
-                for arc_path, meta in sorted(files_to_check.items()):
-                    source_type = meta.get("source_type", "state_encrypted")
-
-                    # Read from ZIP
-                    try:
-                        zip_data = zf.read(arc_path)
-                    except KeyError:
-                        print(f"  \u2717 MISSING in ZIP:  {arc_path}")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: missing_in_zip")
-                        errors += 1
-                        continue
-
-                    # 1. SHA-256
-                    actual_sha256   = hashlib.sha256(zip_data).hexdigest()
-                    expected_sha256 = meta.get("sha256", "")
-                    if expected_sha256 and actual_sha256 != expected_sha256:
-                        print(f"  \u2717 CHECKSUM FAIL:   {arc_path}")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: checksum_mismatch")
-                        errors += 1
-                        continue
-
-                    # 2. Decrypt
-                    extracted = tmppath / (Path(arc_path).name + ".enc")
-                    decrypted = tmppath / (Path(arc_path).stem + ".dec")
-                    extracted.write_bytes(zip_data)
-                    if not age_decrypt(privkey, extracted, decrypted):
-                        print(f"  \u2717 DECRYPT FAIL:    {arc_path}")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: decrypt_failed")
-                        errors += 1
-                        continue
-
-                    # 3. Non-empty
-                    if not decrypted.exists() or decrypted.stat().st_size == 0:
-                        print(f"  \u2717 EMPTY:           {arc_path}")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: empty_content")
-                        errors += 1
-                        continue
-
-                    content    = decrypted.read_text(encoding="utf-8", errors="replace")
-                    word_count = len(content.split())
-
-                    # Config files don't need YAML/word-count checks
-                    if source_type == "config":
-                        print(f"  \u2713 {arc_path:<55} type=config words={word_count} sha256={actual_sha256[:14]}...")
-                        log(f"BACKUP_VALIDATE_OK | zip: {zip_key} | file: {arc_path} | type: config | words: {word_count}")
-                        validated += 1
-                        continue
-
-                    # 4. YAML frontmatter
-                    if not content.lstrip().startswith("---"):
-                        print(f"  \u2717 NO YAML:         {arc_path}")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: missing_yaml_frontmatter")
-                        errors += 1
-                        continue
-
-                    # 5. Word count >= 30
-                    if word_count < 30:
-                        print(f"  \u2717 TOO SHORT:       {arc_path} ({word_count} words)")
-                        log(f"BACKUP_VALIDATE_FAIL | zip: {zip_key} | file: {arc_path} | reason: content_too_short | words: {word_count}")
-                        errors += 1
-                        continue
-
-                    print(f"  \u2713 {arc_path:<55} type={source_type:<17} words={word_count} sha256={actual_sha256[:14]}...")
-                    log(f"BACKUP_VALIDATE_OK | zip: {zip_key} | file: {arc_path} | type: {source_type} | words: {word_count} | sha256: {actual_sha256[:16]}")
-                    validated += 1
-
-    except zipfile.BadZipFile as exc:
-        print(f"  \u2717 CORRUPT ZIP: {zip_key}: {exc}")
-        sys.exit(1)
-
-    print()
-    if validated > 0:
-        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        manifest["last_validate"] = now_iso
-        if errors > 0:
-            manifest["last_validate_errors"] = errors
-        else:
-            manifest.pop("last_validate_errors", None)
+    if domain is None:
+        manifest["last_validate"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        manifest.pop("last_validate_errors", None)
         _save_manifest(manifest)
-
-    if errors == 0 and validated > 0:
-        print(f"Backup validation: \u2713 {validated} file(s) valid  [{zip_key}]")
-    elif errors > 0 and validated > 0:
-        print(f"Backup validation: \u2713 {validated} passed, \u2717 {errors} failed  [{zip_key}]")
-        print(f"  last_validate updated (partial success). Fix failing files to reach full pass.")
-    else:
-        print(f"Backup validation: \u2717 {errors} failure(s), {validated} passed  [{zip_key}]")
-        if errors > 0:
-            sys.exit(1)
+    print(f"Backup validation: \u2713 {len(verified)} file(s) valid  [{zip_key}]"
+          f" (version {version})")
 
 
 def do_restore(
@@ -947,7 +1396,10 @@ def do_restore(
     zip_path = backup_dir / zip_key
     scope = "state only" if data_only else "state + config"
     print(f"Restoring from {zip_key} ({scope}) ...")
-    _restore_from_zip(zip_path, domain, dry_run, data_only=data_only, confirm=confirm)
+    _restore_from_zip(
+        zip_path, domain, dry_run, data_only=data_only, confirm=confirm,
+        expected_catalog=manifest["snapshots"][zip_key],
+    )
 
 
 def do_install(

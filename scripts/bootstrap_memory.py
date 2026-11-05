@@ -22,6 +22,7 @@ Ref: specs/mem.md Phase 4
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -41,32 +42,38 @@ def _seed_procedures(artha_dir: Path, dry_run: bool = False) -> int:
     seeds_path = _SCRIPTS_DIR / "bootstrap_seeds.yaml"
     if not seeds_path.exists():
         return 0
-    try:
-        import yaml  # noqa: PLC0415
-        data = yaml.safe_load(seeds_path.read_text(encoding="utf-8")) or {}
-        procedures = data.get("procedures", [])
-        proc_dir = artha_dir / "state" / "learned_procedures"
-        written = 0
-        for proc in procedures:
-            domain = proc.get("domain", "general")
-            trigger_slug = proc.get("trigger_slug", "unknown")
-            content = proc.get("content", "").strip()
-            if not content:
-                continue
-            filename = f"{domain}-{trigger_slug}.md"
-            dest = proc_dir / filename
-            if dest.exists():
-                continue  # Idempotent — never overwrite existing procedures
-            if dry_run:
-                print(f"  [dry-run] would write {filename}")
-            else:
-                proc_dir.mkdir(parents=True, exist_ok=True)
-                dest.write_text(content + "\n", encoding="utf-8")
-            written += 1
-        return written
-    except Exception as exc:  # noqa: BLE001
-        print(f"⚠️  Procedure seeding failed: {exc}", file=sys.stderr)
-        return 0
+    import yaml  # noqa: PLC0415
+    data = yaml.safe_load(seeds_path.read_text(encoding="utf-8")) or {}
+    procedures = data.get("procedures", [])
+    proc_dir = artha_dir / "state" / "learned_procedures"
+    artha_root = artha_dir.resolve()
+    proc_root = proc_dir.resolve()
+    if proc_root != artha_root / "state" / "learned_procedures":
+        raise ValueError("Procedure directory escapes Artha root")
+    written = 0
+    for proc in procedures:
+        domain = proc.get("domain", "general")
+        trigger_slug = proc.get("trigger_slug", "unknown")
+        content = proc.get("content", "").strip()
+        if not content:
+            continue
+        if not isinstance(domain, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", domain):
+            raise ValueError("Invalid procedure domain in bootstrap seed")
+        if not isinstance(trigger_slug, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", trigger_slug):
+            raise ValueError("Invalid procedure trigger slug in bootstrap seed")
+        filename = f"{domain}-{trigger_slug}.md"
+        dest = proc_dir / filename
+        if not dest.resolve().is_relative_to(proc_root):
+            raise ValueError("Procedure path escapes learned procedures directory")
+        if dest.exists():
+            continue  # Idempotent — never overwrite existing procedures
+        if dry_run:
+            print(f"  [dry-run] would write {filename}")
+        else:
+            proc_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content + "\n", encoding="utf-8")
+        written += 1
+    return written
 
 
 def main() -> int:
@@ -116,12 +123,14 @@ def main() -> int:
     print(f"📂 Processing {len(briefing_files)} briefing(s)...")
     all_facts = []
     seen_ids: set[str] = set()
+    extraction_failed = False
 
     for bf in briefing_files:
         try:
             facts = extract_facts_from_summary(bf, artha_dir)
         except Exception as exc:  # noqa: BLE001
             print(f"  ⚠️  {bf.name}: extraction failed ({exc})", file=sys.stderr)
+            extraction_failed = True
             continue
 
         # Batch-level deduplication — earliest occurrence wins
@@ -140,7 +149,7 @@ def main() -> int:
             print(f"  [{f.type}/{f.domain}] {f.statement[:90]}")
         # Still seed procedures in dry-run (shows what would happen)
         _seed_procedures(artha_dir, dry_run=True)
-        return 0
+        return int(extraction_failed)
 
     # Single persist_facts() call — AR-1 consolidation fires exactly once
     persisted = persist_facts(all_facts, artha_dir) if all_facts else 0
@@ -150,7 +159,13 @@ def main() -> int:
     if proc_count:
         print(f"✅ Seeded {proc_count} procedure(s) to state/learned_procedures/")
 
-    return 0
+    if extraction_failed:
+        print(
+            "Bootstrap incomplete: one or more briefings failed extraction; "
+            "successfully extracted facts may have been persisted.",
+            file=sys.stderr,
+        )
+    return int(extraction_failed)
 
 
 if __name__ == "__main__":

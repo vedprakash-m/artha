@@ -12,9 +12,11 @@ Tests cover:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -156,3 +158,72 @@ class TestReexecMissingVenv:
         with pytest.raises(SystemExit) as exc_info:
             bs.reexec_in_venv(mode="standard")
         assert exc_info.value.code == 1
+
+
+class TestEnsureDepsInstalled:
+    def test_does_not_install_when_all_required_modules_exist(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(importlib.util, "find_spec", lambda _name: object())
+        monkeypatch.setattr(bs, "_REQUIREMENTS", tmp_path / "requirements.txt")
+        install = []
+        monkeypatch.setattr(bs.subprocess, "run", lambda *a, **k: install.append((a, k)))
+
+        bs._ensure_deps_installed()
+
+        assert install == []
+
+    def test_installs_missing_modules_and_rechecks_after_success(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(bs, "_REQUIREMENTS", tmp_path / "requirements.txt")
+        bs._REQUIREMENTS.write_text("dependencies\n", encoding="utf-8")
+        availability = iter([
+            None,
+            object(), object(), object(),
+            object(), object(), object(), object(),
+        ])
+        monkeypatch.setattr(importlib.util, "find_spec", lambda _name: next(availability))
+        install = []
+        monkeypatch.setattr(
+            bs.subprocess, "run",
+            lambda *a, **k: (install.append((a, k)) or SimpleNamespace(returncode=0)),
+        )
+
+        bs._ensure_deps_installed()
+
+        assert len(install) == 1
+
+    def test_exits_if_dependency_install_fails(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(bs, "_REQUIREMENTS", tmp_path / "requirements.txt")
+        bs._REQUIREMENTS.write_text("dependencies\n", encoding="utf-8")
+        monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+        monkeypatch.setattr(bs.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=1))
+
+        with pytest.raises(SystemExit) as exc_info:
+            bs._ensure_deps_installed()
+
+        assert exc_info.value.code == 1
+        assert "pip install failed" in capsys.readouterr().err.lower()
+
+    def test_exits_if_requirements_file_is_missing(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(bs, "_REQUIREMENTS", tmp_path / "missing-requirements.txt")
+        monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+
+        with pytest.raises(SystemExit) as exc_info:
+            bs._ensure_deps_installed()
+
+        assert exc_info.value.code == 1
+        assert "requirements.txt not found" in capsys.readouterr().err.lower()
+
+    def test_exits_if_install_succeeds_but_modules_remain_missing(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        monkeypatch.setattr(bs, "_REQUIREMENTS", tmp_path / "requirements.txt")
+        bs._REQUIREMENTS.write_text("dependencies\n", encoding="utf-8")
+        monkeypatch.setattr(importlib.util, "find_spec", lambda _name: None)
+        monkeypatch.setattr(bs.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0))
+
+        with pytest.raises(SystemExit) as exc_info:
+            bs._ensure_deps_installed()
+
+        assert exc_info.value.code == 1
+        assert "remain unavailable" in capsys.readouterr().err.lower()

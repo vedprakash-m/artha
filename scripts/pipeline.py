@@ -384,6 +384,7 @@ def _fetch_one(
     for key, val in fetch_cfg.items():
         if key not in ("handler", "max_results"):
             extra_kwargs[key] = val
+    source_tag = extra_kwargs.pop("source_tag", name)
     max_results = fetch_cfg.get("max_results", 200)
     max_retries = retry_cfg.get("max_attempts", 3)
     base_delay = retry_cfg.get("base_delay_seconds", 1.0)
@@ -391,6 +392,7 @@ def _fetch_one(
     max_delay = retry_cfg.get("max_delay_seconds", 30.0)
 
     lines: list[str] = []
+    seen_lines: set[str] = set()
 
     # ── AFW-1: Tool guardrail check before fetch ──────────────────────────────
     if registry is not None and _GUARDRAILS_AVAILABLE and _TripwireResult is not None:
@@ -412,11 +414,12 @@ def _fetch_one(
 
     def _do_fetch() -> int:
         count = 0
+        attempt_lines: list[str] = []
         for record in handler.fetch(
             since=since,
             max_results=max_results,
             auth_context=auth_ctx,
-            source_tag=name,
+            source_tag=source_tag,
             **extra_kwargs,
         ):
             # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
@@ -440,8 +443,14 @@ def _fetch_one(
             # D-21: connectors keep native fields; consumers still get a derived date_iso.
             if "date_iso" not in record:
                 record["date_iso"] = _validated.date_iso
-            lines.append(json.dumps(record, ensure_ascii=False, default=str))
+            line = json.dumps(record, ensure_ascii=False, default=str)
+            attempt_lines.append(line)
+            if line not in seen_lines:
+                lines.append(line)
+                seen_lines.add(line)
             count += 1
+        # A completed retry supersedes failed prefixes; exhausted retries retain distinct partials.
+        lines[:] = attempt_lines
         return count
 
     _tracker_cm = coverage.track(name) if coverage is not None else None
@@ -589,7 +598,9 @@ def fetch_single(
                         (e.g. max_results=50, window_days=7, folders=["inbox"]).
 
     Returns:
-        (lines, elapsed_sec, error) — error is None on success.
+        (lines, elapsed_sec, error) — error is None only for complete coverage.
+        Valid partial lines are retained when schema rejections or failed/truncated
+        scopes produce an error; this call does not persist coverage history.
     """
     if since is None:
         since = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime(
@@ -626,9 +637,15 @@ def fetch_single(
     base_fetch_cfg.update(extra_fetch)
     retry_cfg = conn_cfg.get("retry", {})
 
+    collector = _CoverageCollector()
     _name, lines, elapsed, error = _fetch_one(
-        connector_name, handler, resolved_auth, base_fetch_cfg, retry_cfg, since=since
+        connector_name, handler, resolved_auth, base_fetch_cfg, retry_cfg, since=since,
+        coverage=collector,
     )
+    if error is None:
+        degraded = [run.describe() for run in collector.runs if run.status() != "complete"]
+        if degraded:
+            error = "; ".join(degraded)
     if verbose:
         status = "✓" if error is None else "✗"
         print(
@@ -1050,7 +1067,7 @@ def run_pipeline(
     # DEBT-019: Write per-connector freshness timestamps + cross-platform staleness check
     _update_connector_freshness(
         artha_dir=_REPO_ROOT,
-        fetched_connectors=[n for n, *_ in work_items if n not in timing or timing.get(n, 0) >= 0],
+        fetched_connectors=[run.connector for run in _coverage.runs if run.status() == "complete"],
         all_cfg_connectors=_normalize_connectors(cfg),
         current_platform=platform.system().lower(),
     )
@@ -1163,22 +1180,6 @@ def run_pipeline(
                 )
         except Exception:  # noqa: BLE001
             pass  # audit write failure is never blocking
-
-    # DEBT-WORK-001: Write last_personal_pipeline_run to bridge artifact so work
-    # OS can check personal freshness without reading personal state files directly.
-    try:
-        import json as _json_bp
-        _pulse_path = _REPO_ROOT / "state" / "bridge" / "work_load_pulse.json"
-        if _pulse_path.exists():
-            _pulse = _json_bp.loads(_pulse_path.read_text(encoding="utf-8"))
-        else:
-            _pulse = {}
-        _pulse["last_personal_pipeline_run"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        _pulse["pipeline_status"] = "ok"
-        _pulse_path.parent.mkdir(parents=True, exist_ok=True)
-        _pulse_path.write_text(_json_bp.dumps(_pulse, indent=2), encoding="utf-8")
-    except Exception as _exc:
-        print(f"[pipeline] WARNING: bridge freshness update failed: {_exc}", file=sys.stderr)
 
     # ── Bridge Health section in health-check.md (spec §13) ─────────────────
     try:

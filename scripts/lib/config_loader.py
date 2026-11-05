@@ -10,6 +10,9 @@ All canonical config file names are listed in ``_CONFIG_FILES`` below.
 dict on every call, so callers may mutate their copy without corrupting the
 cache.  Returns empty dict on error (logged, never raises).  Cache lifetime
 equals the process lifetime — one CLI invocation.
+``strict=True`` propagates read/parse errors and rejects non-mapping roots for
+health checks that must distinguish unreadable configuration from disabled features.
+Strict and best-effort reads use separate cache entries; exceptions are not cached.
 
 **Test isolation:** Use the ``invalidate()`` function (or the ``autouse``
 fixture added to ``tests/conftest.py``) to clear cache state between tests.
@@ -17,8 +20,8 @@ fixture added to ``tests/conftest.py``) to clear cache state between tests.
 **Infrastructure exclusion:** ``pipeline.py``'s ``load_connectors_config()``
 and ``action_executor.py``'s ``_derive_action_map()`` are NOT migrated to
 this loader — they retain frozen fallback dicts for safety-critical routing.
-This loader is for best-effort configuration where empty-dict degradation
-is acceptable.
+Existing callers default to best-effort configuration where empty-dict degradation
+is acceptable; prerequisite checks opt into strict reads.
 
 Ref: specs/pay-debt-reloaded.md §4 WS-2
 """
@@ -52,7 +55,9 @@ _CONFIG_FILES: dict[str, str] = {
 
 
 @lru_cache(maxsize=16)
-def _load_config_cached(name: str, _config_dir: str | None = None) -> dict[str, Any]:
+def _load_config_cached(
+    name: str, _config_dir: str | None = None, strict: bool = False,
+) -> dict[str, Any]:
     """Internal: load YAML and cache the result dict.
 
     Called by load_config() which wraps each call in dict() to return a
@@ -60,36 +65,48 @@ def _load_config_cached(name: str, _config_dir: str | None = None) -> dict[str, 
     """
     filename = _CONFIG_FILES.get(name)
     if filename is None:
+        if strict:
+            raise ValueError("unknown configuration name")
         log.warning("config_loader: unknown config name: %s", name)
         return {}
     config_dir = _config_dir or str(get_config()["CONFIG_DIR"])
     path = Path(config_dir) / filename
     if not path.exists():
+        if strict:
+            raise FileNotFoundError(path)
         log.debug("config_loader: config file not found: %s", path)
         return {}
     try:
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
+        if strict and not isinstance(data, dict):
+            raise ValueError("configuration root must be a mapping")
         return dict(data) if isinstance(data, dict) else {}
     except Exception as exc:
+        if strict:
+            raise
         log.warning("config_loader: failed to load %s: %s", path, exc)
         return {}
 
 
-def load_config(name: str, _config_dir: str | None = None) -> dict[str, Any]:
+def load_config(
+    name: str, _config_dir: str | None = None, *, strict: bool = False,
+) -> dict[str, Any]:
     """Load and cache a config file by canonical name.
 
     Returns a shallow copy of the cached dict on each call, so callers
     may mutate their copy without corrupting the cache.  Returns empty
     dict on error (logged, never raises).  Config is cached for the
     lifetime of the process.
+    With ``strict=True``, read/parse errors propagate and non-mapping roots raise
+    ``ValueError``. Successful strict reads retain caching and shallow-copy behavior.
 
     ``_config_dir`` is exposed as a cache-key parameter so that test
     fixtures pointing at a temporary directory produce a distinct cache
     entry instead of silently returning stale data from the default
     ``CONFIG_DIR``.  Production callers should omit it.
     """
-    return dict(_load_config_cached(name, _config_dir))
+    return dict(_load_config_cached(name, _config_dir, strict))
 
 
 def invalidate(name: str | None = None) -> None:

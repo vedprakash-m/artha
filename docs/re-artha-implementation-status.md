@@ -1,4 +1,893 @@
-# re-artha implementation status — 2026-10-28
+# re-artha implementation status — 2026-11-04
+
+## Full isolated aggregate — 2026-11-04
+
+The current 1,102-file public source workspace completed
+`tools/run_tests_isolated.py -q` on Windows Python 3.12.10: **10,423 passed,
+183 skipped, 20 xfailed, nine warnings**, exit 0 in 6,091.14 seconds
+(1:41:31). The process-local PATH included the previously verified GNU Make
+4.4.1 and Git for Windows POSIX utilities; `PYTHONUTF8=1` kept subprocess
+decoding deterministic. All public development canaries ran; no test or gate
+was skipped or weakened to obtain this result. This is not the private Work
+runtime selection or live/provider acceptance.
+
+After this aggregate, the Windows authority-retirement module was rerun with
+all four abrupt process-death cases enabled: **38 passed**. The authority
+transfer protocol module was then rerun with its five abrupt process-death
+cases enabled: **86 passed**. The Windows quarantine restore module was then
+rerun with all four abrupt process-death cases enabled: **59 passed**. The
+Windows checkpoint capture module also passed **69 tests**, including the
+separate-process input-change race; Windows checkpoint restore integrity
+passed **48 tests, two platform-specific skips**, including native sharing
+denial and restore-directory custody checks. A combined Windows recovery and
+authority cohort covering six modules then passed **382 tests, 70
+platform-specific skips**. The Windows quarantine review and recovery modules
+then passed **230 tests, five platform-specific skips**, and **128 tests**,
+respectively. The later full aggregate result is recorded in the current
+validation continuation below.
+
+The preceding current-source attempt had **10,399 passed, 185 skipped, 20
+xfailed, 22 failed**. One failure was a spend-seal fixture that omitted the
+active shadow seal; the fixture was corrected and the checkpoint/seal
+selection passed **300 tests**. The other 21 failures were development
+canaries lacking GNU Make on the process PATH. Rerunning the aggregate with the
+verified session-local GNU Make resolved those environment failures.
+
+Tracked working-tree, staged, and unpushed-history privacy scans passed with
+checksum-verified Gitleaks 8.30.1 on this checkout before the latest uncommitted
+changes; those results do not cover the current working tree.
+
+## Current Windows validation continuation — 2026-11-04
+
+A later full isolated aggregate on the current source ran **10,462 passed,
+177 skipped, 20 xfailed, 22 failed** in 5,882.15 seconds. The failures were
+one Windows test assertion that depended on pytest storing a restored bound
+method in the instance dictionary, missing GNU Make/POSIX utilities for the
+development canaries, and missing local `mypy`/`msal` test dependencies. The
+test now checks the restored bound method through its public binding, `mypy`
+is declared in the `dev` extra, and the missing tools/dependency were installed
+in the local environment. The isolated affected cohort then passed **96 tests,
+six skipped**. The final full isolated aggregate on this current source state
+completed with **10,484 passed, 177 skipped, 20 xfailed, eight warnings**,
+exit 0 in 5,691.40 seconds (1:34:51) on Windows Python 3.13.17. It ran the
+default public `tests/` selection; the reported skips and expected failures
+remain visible.
+
+The separate CalDAV cursor/lifecycle selection passed **137 tests** after its
+declared Apple connector dependencies were installed into the local
+environment. Ruff, the generated capability-register check and `git diff
+--check` pass. The current working-tree privacy scan subsequently passed with
+checksum-verified Gitleaks 8.30.1, run once without concurrent Gitleaks
+scans. Earlier concurrent/retried invocations returned native scanner errors
+for some files; direct one-file reruns were clean. No scanner errors or
+findings remained in the successful complete working-tree scan.
+
+A combined follow-up cohort reported one failure in the Windows
+storage-adoption process-death test (`before-legacy`): the post-termination
+preview reported `private` rather than `legacy`. The exact case then passed
+alone, and the complete isolated storage-adoption module passed **62 tests**.
+The failure did not recur in the complete aggregate above; no code change was
+made for this non-reproducing result.
+
+An earlier frozen baseline before the subsequent November 3 repairs recorded
+**10,377 passed, 185 skipped, 20 xfailed**, nine warnings, exit 0 in
+6,934.48 seconds. It is not a full-suite validation of the current HEAD.
+
+Operational acceptance remains incomplete. The owner-approved GFS version-3
+contract is implemented in the current worktree. Its focused isolated
+backup/vault suite passed 217 tests with one skip; changed executable-line
+coverage is 562/587 (95.7%), and a synthetic native-age/NTFS-stream round-trip
+matched file and stream bytes. The 10,423-test aggregate above predates these
+GFS and ADO changes. The local ADO ownership-query repair passed the isolated
+159-test connector suite and Ruff, but has not been installed in Artha runtime;
+Work refresh remains stale. The previously passing local working-tree privacy gate scanned repository
+files, not private runtime state, and predates the latest uncommitted changes.
+No production restore, off-host recovery, owner UAT or release/cutover was
+performed. The WorkIQ display-only contract still requires owner approval;
+live Connector prerequisites, provider/UAT evidence, independent recovery
+acceptance and release/cutover approval remain outstanding. Passing tests do
+not clear those gates.
+
+## Checkpoint dependency inventory failure reporting — 2026-11-03
+
+Bundle and acknowledgement discovery now blocks checkpoint capture when a scan
+directory is unavailable or not a directory, or when a matching artifact is
+non-regular, unreadable, malformed, or missing a valid producer identifier.
+The recursive scan and subsequent artifact listing use error-reporting directory
+operations because `Path.rglob()` skipped a simulated nested access denial,
+the second path-glob listing skipped a simulated permission change, and
+`Path.is_dir()` treated root metadata denial as absence. Filename matching
+remains case-insensitive for Windows compatibility. A missing optional machine
+runtime root is allowed, but metadata failures on existing roots block inventory.
+Synthetic regressions cover
+malformed JSON, wrong JSON shape, missing/invalid producer identifiers, denied
+root/nested/repeated reads, non-regular artifacts, invalid scan paths and
+uppercase artifact names. The isolated checkpoint CLI suite passes all 284
+tests, including canonical registry selection with an absent optional runtime
+root. This is a source-level inventory repair only; no
+checkpoint, credential or production State File was read or written, and it
+does not close native recovery acceptance.
+
+## Registered spend-seal absence detection — 2026-11-03
+
+Personal checkpoint inventory now blocks when the recovery registry has an active
+spend-seal entry but the corresponding seal file or the spend-seal directory is
+missing. Pending custody and unreadable or invalid registry metadata continue to
+block rather than being treated as an absent seal. A synthetic regression enrolls
+an active authoritative seal, removes its file and verifies that inventory refuses
+to proceed. The isolated checkpoint CLI suite passes all 284 tests.
+
+## Preflight dependency bootstrap repair — 2026-11-03
+
+`_bootstrap.py` preflight mode now exits nonzero when pip installation fails,
+`scripts/requirements.txt` is missing, or required modules remain unavailable
+after a successful installer exit. This prevents preflight callers from
+continuing with an unverified environment. Five synthetic dependency-bootstrap
+cases cover the ready, repair-success, installer-failure, missing-file and
+post-install-missing paths. The isolated bootstrap test file passes 19 tests;
+overall `_bootstrap.py` module coverage in that selection is 68%, not a
+full-module coverage pass. No dependencies were installed and no provider or
+State File was accessed for these tests.
+
+## Memory bootstrap reporting repair — 2026-11-03
+
+Historical briefing extraction failures now make `scripts/bootstrap_memory.py`
+exit nonzero, including dry runs, while retaining the current behavior of
+persisting facts extracted successfully from other briefings. The command states
+that partial facts may have been persisted. Procedure-seed parsing and write
+failures now propagate instead of being reported as zero procedures seeded.
+Seed-derived domain and trigger fields are restricted to safe filename
+components, and resolved procedure paths are checked against the expected
+Artha-local directory to prevent symlink-based escapes. The isolated synthetic
+`tests/unit/test_memory_policy.py` selection passes all 27 tests with 99%
+combined line/branch coverage for the bootstrap module. This focused result
+does not include these changes in the earlier full-suite aggregate. The
+generated implementation fingerprint check passes. No production State Files
+or briefing data were used.
+
+## Post-catch-up self-model rebuild error reporting — 2026-11-03
+
+`post_catchup_memory.py --rebuild-self-model` previously converted writer
+exceptions into `False`, so the CLI printed "unchanged" and exited 0 after a
+failed rebuild. Writer exceptions now reach the command boundary, which reports
+the failure and exits 2; updated and genuinely unchanged outcomes still exit 0.
+Synthetic CLI regression coverage verifies all three outcomes. No production
+State Files were read or changed.
+
+## Evaluation-alert history preservation — 2026-11-03
+
+The post-catch-up and retrospective writers previously interpreted malformed
+or wrong-shaped `eval_alerts.yaml` as empty history and could replace it while
+publishing anomalies. Both now validate the shared mapping/list schema,
+preserve invalid history and report publication failures. Preflight now fails
+at P1 on missing or malformed alert lists rather than reporting a healthy
+check. The isolated memory/preflight/retrospective selection passes all 43
+tests, including synthetic malformed-YAML and invalid-shape cases across both
+writers and preflight; all test data is isolated.
+
+The follow-up Windows static-gate run found that `tools/import_check.py` raised
+`UnicodeEncodeError` when its checkmark was written to CP1252 output. A direct
+subprocess regression failed before repair; changing only the success text to
+ASCII makes both legacy-encoding and normal clean-tree cases pass. The updated
+isolated `tests/dev` selection passes **222 tests, six skipped**. Repository
+syntax, Ruff, import, state-write ratchet, strict typing (70 core files and
+three credential files) and example-schema gates pass. The 10,377-test
+aggregate above predates this tooling-only change.
+
+## Live readiness continuation — 2026-11-03
+
+Installed preflight repairs recognize encrypted State Files, expand registry globs,
+retain registry-read errors, scope skill advisories to the host without changing the
+global inventory, and distinguish SLO evaluation/no-sample failures from healthy budgets.
+The installed strict preflight exits 0 with every P0 check passing. Missing SLO
+observations remain a visible P2 advisory; no measurements were invented.
+Public code/tests and their generated implementation fingerprint are committed
+locally as `91c1751`; the actual pre-commit privacy hook passed. Nothing was pushed.
+
+The preflight/skill compatibility selection passed 140 tests in the isolated runner.
+The final state-check selection passed 30 tests, including the additional registry I/O
+case. An earlier in-place compatibility invocation passed its assertions but failed the
+hermeticity gate after a legacy skill entrypoint test created nine files in the worktree.
+Only those nine newly generated paths were removed; the production runtime was not
+touched by that test. The passing rerun used the existing isolated runner.
+All 28 changed executable lines across the two preflight implementations are covered
+by the final state-check selection (100%); this is not full-module coverage.
+
+Two more installed source files were fingerprinted, with all original NTFS streams
+preserved. Before Work publication, a same-host encrypted snapshot captured all 185
+state/config files and 16 named streams. Decrypting it in memory reproduced the exact
+manifest, payloads and streams, with no plaintext or private-key files written. This
+is a bounded operational recovery copy, not GFS cadence, an off-host backup or a core
+checkpoint/recovery acceptance result.
+
+The restored v1.2 agent reflection was executed and published in its required order.
+All six source slots were accounted for: Q1/Q2 succeeded, Q3 used the broader live
+ownership/RAMPP1 queries, Q4 retained the indexed incident's evidence date, Q5 explicitly
+remained unavailable, and Q6 excluded protected contents. One attributable output and
+one Open Item were added; no old Open Item was closed and no meeting-routing decision
+or people card was persisted without confirmation. The blocking audit and all seven
+final file/stream fingerprints passed. Actual counts are 375 accomplishments and 197
+WOI rows. The pre-publication count was 196, not 186: the latter omitted ten named
+legacy IDs. The source window ends at 2026-11-03 00:54:48 PST; daily/weekly closes
+advance to that cutoff, while monthly/quarterly closes remain unchanged.
+
+The missing Chromium dependency was restored. A real headless Chromium process
+rendered a 16,958-byte synthetic PDF in memory; no production document was used.
+The production career workflow and owner UAT were not exercised.
+
+The broader installed `pipeline.py --health` probe exits 1: eight Connector checks
+pass, while the enabled legacy Outlook CLI bridge has no executable, Home Assistant
+has no stored credential, and SharePoint references an unallowlisted local handler.
+Several MCP-only entries have no local health handler and are explicitly skipped.
+This result is not overridden by the P0-only preflight pass; all-enabled-Connector
+readiness remains incomplete.
+The SharePoint module does exist, but its dedicated KB-sync signature/output differs
+from the generic Pipeline fetch contract. Adding it to the allowlist alone is not
+a correct repair and was not done.
+Neither the separately authorized Work Graph credential nor the personal Graph
+credential is enrolled. The dedicated SharePoint synchronizer already uses the
+separate Work credential; the generic runtime entry still specifies the personal
+token selector. No personal fallback, scope grant or external document fetch was
+performed.
+
+The Outlook bridge also suppressed those actual missing-CLI failures as empty
+success. Eleven failing isolated regressions reproduced its missing/process/response
+failures and the resulting false complete-coverage outcome. The repaired bridge
+now propagates them; valid empty listings and non-Windows skipping remain unchanged.
+The isolated Work Connector/Pipeline selection passes 140 tests, with 100% line and
+branch coverage of the Outlook module (the 95% module gate passes).
+Its public repair/tests are committed locally as `3523074`; the actual privacy
+hook passed. Nothing was pushed.
+The installed repair is the tenth unique runtime source repair. Its exact
+predecessor and stream inventory were verified and retained. An installed
+`fetch_single` check now returns the real missing-CLI error with no records rather
+than empty success. This repairs reporting, not the absent Outlook prerequisite;
+Classic Outlook/COM and a successful production calendar fetch remain unverified.
+
+The dedicated SharePoint synchronizer had a separate false-completion defect:
+missing/invalid configuration and missing Work credentials could leave an empty
+error list, while cached Work tokens bypassed the existing freshness/refresh helper.
+Eleven initially failing isolated regressions reproduced these paths. The repair
+retains the Work-only credential boundary, reports prerequisite errors and exits
+nonzero with a `failed` label. Explicitly disabled/absent entries remain no-ops.
+The SharePoint/credential compatibility selection passes 127 tests with two existing
+skips. All 23 changed executable sync lines are covered (100%); full-module combined
+coverage is 81%, not 95%. The installed eleventh unique source repair preserves its
+verified predecessor and stream inventory. Its actual CLI now exits 1 with zero
+documents fetched/ingested and the real Work-credential error. No document fetch,
+new scope, enrollment, generic-Pipeline routing or KB publication was performed.
+Code/tests and the generated implementation fingerprint are committed locally as
+`f5ddf2d`; its actual staged privacy hook passed.
+
+A combined isolated preflight/Work Connector/Pipeline/SharePoint/credential cohort
+passes 297 tests with two existing skips and three warnings. This is a targeted
+compatibility result, not a replacement for the older full public aggregate.
+An independent final verification confirms all eleven installed source files match
+both current working code and their latest deployment receipts, including every
+original named stream.
+
+The full working-file and unpushed-history privacy scans completed successfully.
+They were not a frozen source cohort; exact repair commits are separately checked
+by the actual staged privacy hook. The owner was unavailable for the Home Assistant
+scope question, so no enabled Connector was disabled and no consent was inferred.
+
+Recovery continuation removes the legacy file-decryption helper's temporary private-key
+file. The identity now reaches native age through stdin with a 60-second timeout; its
+caller-designated plaintext output API is unchanged. Backup validation no longer advances
+global success freshness after a partial failure or a successful domain-only check.
+Partial failures record their count and exit nonzero; full success still clears old errors.
+The older partial-success compatibility test explicitly expected the false health refresh
+and was updated to assert the corrected fail-closed contract.
+The isolated recovery selection passes 179 tests with one existing skip, including a real
+native-age synthetic binary round-trip. All 11 changed executable recovery lines are
+covered. Code/tests are committed locally as `8e78e1b`; the actual privacy hook passed.
+Both installed files match source and exact predecessor/stream-preserving deployment
+receipts; backup is the twelfth unique repaired runtime source file.
+
+A separate native Windows restore exercise first proved binary/default data and empty
+and nonempty synthetic stream preservation, tamper rejection and overwrite refusal.
+It then restored all 11 encrypted State Files from the earlier protected snapshot into
+a new private session folder, compared ciphertext/stream bytes against the captured
+generation and successfully decrypted each recovered file in memory. Those encrypted
+files have no named streams; the synthetic stream cases do not establish production
+stream restore acceptance. No production files were modified, and no plaintext State
+Files or private-key files were written. This exercise covers only the same-host encrypted
+state subset, not the snapshot's plaintext Work/config files, off-host recovery or a
+cold-start without the current label/stream seed.
+
+Legacy GFS remains unsuitable for a production acceptance run: its ZIP format does not
+preserve named streams, local SQLite copies are not online snapshots, and its validator
+still stages plaintext and applies markdown checks to some non-markdown types.
+These limitations were not cleared by the key-file or validation-freshness repairs.
+
+The continued validator walkthrough found additional false-success paths: no backups,
+empty/incomplete inventories, absent integrity checksums and inconsistent ZIP membership
+could return success or refresh full-validation health. Nine initially failing regressions
+reproduced them; additional cases cover duplicate entries, malformed JSON/metadata, a
+boolean catalog count and corrupt ZIP data. The installed repair requires complete,
+nonempty declared coverage and both checksums before any successful outcome.
+Code/tests are committed locally as `c0f11e7`; its actual staged privacy hook passed.
+
+The same trace exposed a coupled catalog hazard: the existing loader treated corrupt or
+unreadable catalogs as empty history. Recording a validation failure could then replace
+the corrupt catalog with an empty one. Seven failing regressions reproduced this and
+silent atomic-publication failure. The loader now distinguishes missing from invalid,
+leaves invalid catalog bytes unchanged and propagates publication failures. A real
+invalid-UTF-8 file is also covered. This changes every backup catalog reader, including
+health/prune/snapshot/restore paths: invalid history is an explicit failure, not zero
+backups or reconstructed success. Code/tests are committed locally as `08c136e`;
+the actual staged privacy hook passed.
+
+The final combined isolated recovery/preflight/skill/Connector selection passes
+536 tests with two existing skips and three warnings. All 32 changed executable
+completeness/catalog lines are covered (100%); this is not full-module coverage.
+Both later backup deployments retain their exact predecessors and original streams.
+The started new full public aggregate was deliberately stopped before acceptance when
+the additional validator defects were found. It is recorded as cancelled, not passing.
+No passing result is attributed to that cancelled attempt.
+
+The remaining archive-format repair is specified in the local draft
+`specs/operational-recovery.md`. It proposes version-3 ZIP payload/stream descriptors,
+version-2 read compatibility, consistent SQLite images and in-memory typed validation.
+The proposal remains unapproved and unimplemented; no GFS format, schedule, off-host
+destination or production restore was changed.
+
+The owner was unavailable for that archive-format decision. The draft was preserved
+as a review-ready document attachment, not treated as approved; routine source auditing
+continued without implementing version 3.
+
+The WorkIQ bridge had another false-empty boundary: failed brief/rich structured
+queries returned normally, failed rich narratives and channel queries could disappear
+from coverage, and partial channel results could be cached as complete. Twenty-seven
+failing synthetic regressions reproduced these paths, including the actual generic
+fetch wrapper returning zero records with no error. The repaired bridge propagates
+structured failures, reports failed/truncated scopes to an active collector and yields
+usable partial records with processing gaps without caching them. Missing people names
+fail before cache access. Unusable nonempty calendar responses after retry fail rather
+than populating an empty cache. Existing successful response fields are preserved.
+
+The final combined isolated operational cohort now passes 570 tests with two existing
+skips and three warnings. All 36 changed executable WorkIQ lines are covered (100%);
+this is not full-module coverage or a live M365/provider outcome. Code/tests and the
+generated source fingerprint are committed locally as `3cccb60`; the actual privacy
+hook passed. Its installed predecessor/stream receipt is verified, making thirteen
+unique runtime source repairs. The producer-content hash naturally invalidates older
+WorkIQ cache entries, so subsequent requests refresh rather than replay the old producer.
+No live WorkIQ query, new scope, credential enrollment, reflection publication or
+core activation was performed for this repair.
+
+Legacy WorkIQ record identities/timestamps and generic-Pipeline compatibility remain
+unsettled; no upstream identifiers or dates were invented. Active-collector scope reports
+and raw partial-record metadata are not proof that every downstream legacy presentation
+consumes those gaps. The canonical's obsolete synced-workspace Pipeline output example
+was also corrected to match the enforced machine-local path and orchestrator reader.
+
+The subsequent frozen full public-source aggregate at
+`d717d10536846bd3e8df0b8710f2a0317b5f442e` completed successfully on
+2026-11-03 at 12:30:05 UTC: **10,185 passed, 185 skipped, 20 xfailed**, nine
+warnings, 7,114.59 seconds. Both pytest and the core coverage checker exited 0.
+Core coverage is 93.82% line, 89.34% branch and 92.61% combined, exceeding the
+existing 85% floors but not establishing a 95% full-module claim. The checkout
+remained clean at the frozen revision through completion. Evidence is retained in
+the session's `ops-current-operational-aggregate` receipt, log, JUnit XML and coverage
+XML. This run includes the public recovery and WorkIQ source repairs above; it excludes
+private Work producers and does not establish live provider, GFS/off-host recovery,
+owner UAT, release or core-cutover acceptance.
+
+The subsequent Work Connector caller trace reproduced six more failures: standalone
+`fetch_single()` hid schema rejections and failed/truncated scopes, while a configured
+or caller-supplied `source_tag` collided with the dispatcher's keyword before the handler
+ran. Local repair `e8fc4b6` collects per-call coverage without persisting shared history,
+returns explicit degraded errors with usable partial lines retained, and forwards the
+tag once with existing caller-over-configuration precedence. Handler errors, strict
+record validation, authentication selection and the security allowlist remain unchanged.
+Legacy Work callers that branch on an error now choose fallback instead of logging
+false success; this does not establish that they display partial records.
+
+The six-file isolated Pipeline/WorkIQ/security-boundary cohort passes 251 tests with
+three warnings; all six changed executable Pipeline lines are covered. A separate
+installed-source synthetic exercise passed complete, valid-empty, rejected-record and
+partial-scope cases without provider queries or business-state writes. Exact predecessor
+and named-stream deployment checks passed, and the actual staged privacy hook passed.
+This updates the existing Pipeline repair; the unique installed source count remains
+thirteen. The 10,185-test frozen aggregate above predates this repair and is not
+relabelled as a full aggregate of the new revision.
+
+The real WorkIQ handler is covered by a synthetic wrapper regression: dispatch now
+reaches it, but its legacy calendar output is explicitly rejected for missing generic
+record identity. No random identifier or current-clock event timestamp was fabricated.
+Canonical §38.8 requires display-only WorkIQ output; the current legacy shapes and
+strict generic ingestion contract still need reconciliation before this batch route
+is operational. Passing synthetic checks are not live WorkIQ acceptance.
+
+The continued private Work caller trace found false degradation on normal side-effect
+provider returns, terminal HTTP errors retried through the `OSError` branch, and partial
+WorkIQ failures recorded as breaker success. The source-pinned synthetic selection
+against the exact retained predecessor reproduces 16 failed cases (26 pass).
+The repaired selection passes all 42 cases; all 19 changed executable Work lines are
+covered. A final run also exercises the actual ADO method through the wrapper.
+WorkIQ mode errors and open-breaker skips are retained in the result, partial failure
+cannot close the breaker, and handled Kusto exceptions remain explicitly degraded.
+This does not validate the pending WorkIQ display contract or the breaker implementation
+itself: the query and breaker dependencies are synthetic in these tests.
+
+The private source/test bytes are retained in the session's reviewed-source folder,
+not force-added to public Git. Exact predecessor and named-stream installation
+checks passed for `work_loop.py`; its DLP stream remains byte-identical.
+The installed-source synthetic exercise passed normal completion, terminal/transient
+HTTP boundaries and partial WorkIQ failure with no provider queries or business-state
+writes. Public isolation/architecture/Pipeline safeguards separately pass 92 tests
+with three warnings. The installed unique source count remains thirteen.
+The WorkIQ display-only proposal remains unapproved after the owner-unavailable
+response; no contract bypass, new access or production acceptance is inferred.
+
+The summary writer trace then found that READ mode and failed/degraded refreshes
+rewrote `work-summary.md` as newly refreshed, and freshness trusted filesystem mtime.
+Fourteen synthetic cases fail against the exact saved predecessor. The repaired
+selection passes 58 cases with all 20 changed executable freshness lines covered.
+READ and incomplete refreshes retain the prior summary bytes/timestamp; only complete
+collected output can publish a fresh summary, including valid empty provider listings.
+Returned freshness changes after publication succeeds, not before. Recorded aware
+timestamps determine age; missing/invalid/naive/future values remain unknown.
+Per-domain provenance is still separate from the summary's refresh timestamp.
+
+The private reviewed source/test bytes are retained separately, and the installed
+freshness continuation passed exact predecessor and DLP-stream verification.
+A native installed-code exercise used temporary synthetic files to confirm recorded
+age versus mtime, byte/mtime preservation on reads, failed-refresh preservation and
+successful empty-fetch publication. It touched no production State Files or providers.
+The installed unique source count remains thirteen; the public full aggregate above
+does not include these private Work repairs.
+
+The bridge walkthrough reproduced another false-health chain: 0..100 Work scores
+were clamped into a 0..1 schema without normalization, zero/missing values became
+healthy defaults, and the day view expected a nonexistent `payload` envelope.
+The Personal Pipeline also injected fields outside the Work-owned pulse schema.
+Two public ownership regressions and nine numeric/object-schema regressions initially
+fail. The retained private predecessors reproduce 21 failed producer/reader cases.
+
+Public repair `f5c419c` removes the Personal pulse mutation and rejects boolean,
+nonfinite and nonobject bridge values before publication. The private producer now
+normalizes scores, preserves zero and source timestamps, and retains the old pulse
+with explicit errors for missing/invalid/stale provenance. The day view validates
+the flat schema and reports invalid artifacts as unavailable rather than displaying
+perfect scores; unsupported Personal timestamps are no longer consumed. No production
+artifact was migrated or overwritten during this repair.
+
+The public bridge/Pipeline/isolation cohort passes 168 tests with three warnings;
+all five changed executable schema-validator lines are covered. The final private
+producer selection passes 84 cases, with all 31 changed executable producer/reader
+lines covered. These are local synthetic results, not provider or owner UAT.
+All four installed source files passed exact predecessor and named-stream checks.
+A native installed-code exercise confirms 40 becomes 40/100 (not 100/100), zero
+focus is retained, missing metrics preserve the earlier pulse and invalid artifacts
+are unavailable. It used temporary synthetic files only. The reviewed private source
+and test bytes remain outside public Git; the installed unique source count is fifteen.
+
+The refresh persistence trace then found that Agency discovery suppressed direct ADO
+even when enrolled publication later refused Agency, and complete empty calendar/ADO
+results skipped their writers, retaining obsolete snapshot rows. Preflight now keeps
+ADO independent. Explicit collected empty lists reach the existing snapshot writers;
+missing keys retain cached domains. This does not clear append-only history or
+manufacture missing email/Teams results.
+
+The same trace found summary `setdefault` calls preserving previous derived scores
+instead of current metrics, missing domain metrics fabricating perfect delivery, and
+future domain timestamps appearing fresh. Current validated metrics now replace
+cached values, recovered boundary risk is explicitly false, unavailable inputs remove
+those derived fields with errors, and future/naive/invalid domain ages remain unknown.
+Incomplete refreshes still preserve the earlier summary generation.
+
+The exact retained predecessor fails 26 of the final 117 synthetic cases; the repaired
+selection passes all 117, with all 30 changed executable Work lines covered. The
+selection includes actual journaled calendar/project empty-snapshot publication in
+an isolated synthetic enrolled installation. A separate installed-code exercise
+confirms ADO independence, missing versus explicit-empty writer calls, fresh metric
+replacement, invalid metric omission and future-age rejection. It does not query
+providers or write business state. Reviewed private source/test bytes are retained
+outside public Git. Exact predecessor and DLP-stream installation checks pass, and
+all fifteen installed source files independently match current source/latest receipts
+with every named stream intact. The frozen public aggregate above predates these
+private repairs; none of these results establishes live provider or owner acceptance.
+
+The event-publication trace found unsupported activity claims: high-importance
+received mail became `replied` evidence and large calendar invitations became
+`presented_about` evidence. Those automatic inferences are removed. The explicit
+visibility-event writer retains its existing five event types but now rejects
+missing/blank fields, invalid/noncanonical dates, unknown types and non-Work sources
+before publication instead of defaulting the date or claiming a reply. This validates
+the explicit input shape; it does not independently verify the truth of caller-supplied
+evidence. Production journals were not inspected, rewritten or auto-migrated.
+
+The corrected final synthetic selection reproduces 15 failures against the exact
+saved predecessors and passes all 137 cases after repair. All 21 added/changed
+executable writer lines are covered; deletion of the inference path is exercised
+by the incoming-mail/invitation nonpublication assertions. Supported explicit events
+publish through actual journaled synthetic Work storage, while rejected events
+preserve the prior bytes. An earlier intermediate run had a missing synthetic test
+import; the final baseline and passing receipts supersede it.
+Installed-code inference and unwrapped validator/body checks pass separately without
+production enrollment, provider queries or business-state writes. Both source
+installations preserve predecessor bytes and named streams. All sixteen unique
+installed source files independently match current source/latest receipts and every
+named stream. Private implementation/tests remain in reviewed session artifacts,
+not public Git. These checks are not live-provider or owner UAT.
+
+The display-only WorkIQ contract was requested again after local documentation
+commit `b928040`; the owner-unavailable response is not approval. Its implementation
+and the recovery-format proposal remain pending, without a generic-schema bypass,
+new access, cutover or inferred acceptance.
+
+The historical-evidence trace reproduced eleven failures in the then-current private
+selection: batched journey/visibility writes lost staged rows, repeated rows were
+duplicated, prefix project headings or a later project's table misrouted evidence,
+and missing milestone dates became current dates. Both table writers now use the
+existing transactional text-update API, see staged bytes, match the exact section
+and skip identical rows without advancing a generation. Existing rows are retained.
+Journey project/date/milestone fields must be explicit, and the ADO producer requires
+an aware source date, preserving its source month. Publication failures are visible.
+
+The expanded final selection passes 152 synthetic cases with all 38 changed executable
+lines covered (6 loop, 32 writer). It exercises actual enrolled journal transactions
+and batch staging, plus legacy nonenrolled compatibility. This is not encrypted-state
+acceptance: earlier descriptions of these synthetic publication checks as encrypted
+were inaccurate and are corrected above. The separate protected-state restore
+evidence is unchanged. No production historical journal was read or migrated.
+The final expanded predecessor run fails 15 cases (137 pass). Reviewed private
+implementation/tests are retained outside Git. Two installed sources preserve their
+predecessor bytes and streams. A separate installed-code exercise uses a synthetic
+transaction adapter and temporary journal to confirm row preservation, deduplication,
+exact section routing and visible missing-date refusal; the real journal protocol is
+covered by the isolated selection, not that installed adapter exercise. All sixteen
+installed source files and every named stream match current source/latest receipts.
+
+The Kusto writer trace found that a refresh with only unrelated successful queries
+could replace the incident snapshot with "No active incidents." Missing or failed
+GQ-050 is no longer treated as an empty listing. The prior snapshot survives with a
+visible writer error; verified empty active-incident output can publish zero, while
+missing optional incident queries remain labelled unavailable. Failed/malformed
+metric-query rows are rejected before update. Extractors preserve numeric zero,
+including severity zero. Empty outcome maps and query failures are explicit loop
+errors/degradation rather than empty success.
+
+The exact predecessors reproduce 31 failures (152 cases pass). The repaired private
+selection passes all 183 synthetic cases with all 29 changed executable lines covered.
+Tests exercise actual journaled preservation and valid-empty publication; they do not
+query Kusto or production State Files. Installed-code query/formatter/body decisions
+pass with a mocked publication adapter, not production enrollment. Reviewed private
+sources/tests remain outside public Git, and both installed sources preserve original
+streams and predecessor backups. All sixteen unique installed source files and streams
+independently match current source/latest receipts. Live cluster/query acceptance,
+the larger audit and the pending contract/access decisions remain unfinished.
+
+The direct-provider audit found a hard-separation defect in the Work Outlook path:
+it spawned the full Personal Pipeline with `--source outlookctl_bridge`, but that
+source filter does not suppress Personal state merges, health writes, context export
+or action processing. The code path violates the existing FR-19 isolation contract;
+this finding is not evidence that those effects ran on production in this audit.
+The path now uses the existing allowlisted strict single-Connector adapter, with
+explicit coverage/parse errors instead of skipping malformed output. Work Graph
+authentication errors now recommend Work-specific reauthorization rather than the
+Personal enrollment command.
+
+The original six synthetic dispatch/remediation cases fail against the exact saved
+predecessor. The repaired selection passes 190 cases, including an additional actual
+standalone-adapter test that rejects legacy Outlook records without provider identity;
+all six changed executable lines are covered. No generic schema was weakened and
+no identity/date was fabricated. Native Outlook prerequisites and legacy record
+compatibility remain unresolved, independently of this repaired dispatch boundary.
+Installed-code synthetic complete/empty/failure/parse/remediation checks pass, and
+all sixteen unique installed sources and named streams match current source/latest
+receipts. Private reviewed source/tests remain outside public Git. Neither the old
+Personal Pipeline subprocess nor a live provider/production State File was exercised
+by these synthetic checks.
+
+Native Graph tracing found that calendar parsing appended `Z` to negative offsets,
+producing invalid timestamps, and mail parsing omitted read status, importance, folder
+and received fields expected by Work. Public repair `5e41f71` preserves explicit offsets
+and exposes those actual provider fields without inferring response intent. The private
+comms writer counts only explicit false as unread, separately labels unknown read status
+and no longer claims the inbox is clear from this limited result.
+
+Four public cases initially fail; the isolated public native/calendar/Connector cohort
+passes 183 tests with one dependency warning. Both changed executable calendar lines
+are covered; additive dictionary fields have no separate executable coverage lines
+and are verified by exact output assertions. Three private consumer cases fail against
+the writer predecessor (with the repaired native parser), and the expanded private
+selection passes 193 cases with all five changed writer lines covered. The actual
+parser-to-loop-to-journaled-writer chain verifies read/unread/unknown and body exclusion.
+Installed parsing/rendering checks use synthetic payloads and a publication mock,
+not provider access or production enrollment. All eighteen unique installed sources
+and named streams match current source/latest receipts; private reviewed implementation
+and test bytes remain outside public Git. No credentials or production State Files
+were changed, and live Graph readiness remains separately unresolved.
+
+Work health had an independent legacy path accepting Personal token files as Work
+Graph readiness, using file mtime as token age, and unconditionally claiming enforced
+separation and validated bridge schemas. It now reuses the Work-only `msgraph.work`
+platform-store validator and explicitly distinguishes an unexpired credential from
+untested provider access. Unperformed enforcement/artifact checks remain unperformed;
+missing breaker state is reported as not observed rather than healthy.
+
+The final exact isolated predecessor selection fails both new credential-scope cases;
+the repaired private selection passes 195 cases, covering all seven changed executable
+health lines. Provider subprocesses, credentials and State Files are synthetic/mocked,
+so these checks do not establish native provider reachability or production enrollment.
+Reviewed private source/test bytes are retained outside public Git, and the final
+stream-preserving installation plus independent verification matches all nineteen
+unique installed sources and every named stream against source/latest receipts.
+
+The explicit meeting pre-read marker bypassed the Work publication journal with a
+direct notes write. It now reuses the existing transaction-aware evidence-table
+appender, retaining both staged rows in a batch, refusing stale sessions and matching
+the exact section rather than another section's divider. An identical rendered mark
+is a no-op, existing content is retained and missing notes cannot claim success.
+The command records an explicit user assertion, not inferred review.
+
+The expanded exact predecessor selection fails five cases; the repaired isolated
+private selection passes 201 cases with all four changed executable meeting lines
+covered. Actual synthetic journal publication, stale-head refusal, batch retention,
+no-op behavior and the unenrolled legacy path are exercised. This is not encrypted
+State File or real meeting acceptance. Reviewed private source/test bytes are retained
+outside public Git; all twenty unique installed sources and named streams match
+current source/latest deployment receipts after stream-preserving replacement.
+
+Shared Work read helpers also used file-copy mtime as missing freshness evidence,
+silently treated naive times as host-local times, and rendered future ages as fresh.
+They now retain unknown age for missing/malformed/naive/future metadata, use only
+recorded timestamps, and disclose unknown freshness for an existing XPF snapshot.
+Absent optional XPF files keep the existing no-advisory behavior. The coupled
+public file-quality condition (`3abb186`) denies future timestamps freshness credit;
+it does not change provenance weights or nonfuture timestamp/TTL behavior.
+
+Four private predecessor cases and one public future-quality case reproduce the
+defects. The repaired shared-reader/journal/producer selection passes 209 private
+synthetic cases, covering all twelve changed executable helper lines. The public
+recorded-time and existing quality/KB selection passes 51 cases (18 private-dependent
+cases deselected); the changed quality condition is covered on both branches.
+The installed public quality/private helper sources and all named streams were
+verified, bringing the installed unique-source inventory to twenty-two. Private
+reviewed implementation/tests remain outside public Git. These are isolated synthetic
+and source/stream checks, not provider, encrypted-state or owner acceptance.
+
+The warm-start provenance trace found that refresh added `human_authored` to six
+historical State Files merely because their filenames matched and `providers_used`
+was missing. The import code records an automated generator, not evidence of human
+authorship. Removed the sole automatic caller and stamping helper under the existing
+accuracy-first contract. Unknown provenance stays unknown; existing labels and
+generators are not rewritten. The removed helper's comment also overstated its effect:
+the current quality gate does not award the claimed accuracy boost for that label.
+
+Two exact predecessor refresh cases fail for unknown/imported files. The repaired
+private selection passes 212 cases, including actual synthetic journal generation
+and byte-preservation checks over all six files, with existing provider labels retained.
+The implementation is removal-only, so there are no added executable lines to credit.
+Six public tests requiring invented stamps were retired in favor of these actual
+refresh checks; the remaining public quality selection passes 51 cases with twelve
+private-dependent skips. Private reviewed source/tests remain outside public Git;
+all twenty-two installed sources and every named stream match current source/latest
+receipts. No production State Files were changed, and historical provenance labels
+have not been individually verified or migrated.
+
+Graph token preflight could pass a future expiry without an actual access token,
+including an expiry-only refresh response, while unknown expiry skipped the existing
+refresh recovery path. It now reuses the OAuth access-token/lifetime validator before
+and after refresh; unknown/invalid lifetime attempts existing refresh and cannot pass
+without a usable unexpired token. Eleven public cases reproduce the defects; the
+repaired readiness/lifecycle/credential cohort passes 91 cases with all nine changed
+executable lines covered. Installed helper parity and all twenty-three unique source
+files/named streams are independently verified. These tests are isolated and synthetic.
+
+A separate installed metadata-only prerequisite observation at 2026-11-03 14:37 UTC
+confirms all three Graph credential records (Personal, Work, Work-MCP) are absent,
+and HA has no enrolled credential. Existing Google read-only grants refreshed
+successfully with exact read-only scopes and unchanged scope metadata. Outlook CLI
+is absent; Agency, npx and Azure CLI resolve on PATH. The core configuration is still
+absent. No business API or State File was accessed by this probe; Google credential
+refresh is the only requested credential effect. Azure's existing bearer acquisition
+succeeds but the Work availability check returns false; this mismatch is under
+investigation rather than relabelled as an authentication failure.
+
+The ADO prerequisite mismatch was a reproduced Windows executable-resolution failure:
+bare `az` raises `FileNotFoundError`, while resolved `az.cmd` returns an active account.
+Work provider preflight and Work health now resolve Azure CLI before their existing
+subprocess account checks. Five predecessor cases fail; the repaired isolated private
+cohort passes 216 cases, including exact resolved argv, empty/failed account output
+and missing CLI. Both separately executable changed health lines are covered; the
+loop's changed argument continuation has no separate coverage statement and is
+verified by exact argv assertions. Existing scope and authentication logic is retained.
+
+At 2026-11-03 14:46 UTC, the repaired installed Work availability check returns true,
+and an authenticated read-only ADO project-metadata request returns HTTP 200 with the
+expected response shape. No work items, meeting content, credential enrollment or
+business State Files were requested/changed; raw responses and account identities are
+not persisted. This establishes CLI and project-metadata access, not full work-item
+ingestion, refresh completeness or owner UAT. All twenty-three unique installed
+sources and every named stream match current source/latest receipts; private reviewed
+implementation/tests are retained outside public Git.
+
+Work availability and Work health also used unresolved npx launches and selectors
+that could install a package during diagnosis. They now reuse the existing Connector
+resolver and run version-only checks with `--offline --no-install`. Health explicitly
+separates CLI availability from untested authentication and record compatibility.
+Nine original predecessor cases fail; the repaired synthetic selection passes 223
+cases with all eleven initially changed executable lines covered.
+
+The installed offline check initially failed because npm reported the required
+`@microsoft/workiq@0.4.1` package missing. A deliberate dependency restore succeeded,
+but npm 11's cached-range handling still rejected the existing package requested as
+`0.x` under `--no-install`. Exact-version restoration and invocation succeeded.
+The Connector, script preflight and package preflight now share the exact `0.4.1`
+release rather than divergent `0.x` and `latest` selectors. Four public reproducers
+fail before this repair; the repaired public cohort passes 212 cases, with all three
+changed executable lines covered. The private compatibility selection also passes.
+
+Installed verification then exposed a distinct startup false negative: the CLI takes
+about 5.6 seconds on this host, longer than the loop's five-second timeout. The loop
+now uses the existing ten-second Work health limit. Two exact predecessor cases fail;
+the repaired private selection passes all 223 cases. The changed argument continuation
+has no separately counted executable statement; exact subprocess timeout assertions
+verify it. Reviewed private source/tests remain outside public Git.
+
+At 2026-11-03 15:14 UTC, Artha's actual installed offline/no-install availability
+path returns true for `0.4.1` in 5.64 seconds. The version command reports CLI build
+`0.4.1.19742+d4efecc4df8abb308c4d2cda78313dcc3023cebc`. Dependency restoration was an
+explicit separate operation following the missing-package failure, not a side effect
+of the diagnostic. No M365 authentication/business query, scope enrollment, license
+acceptance or business State File write was performed. All twenty-four unique
+installed sources and every named stream match current source/latest receipts.
+Public code/tests are committed locally as `fd16529`; no push occurred.
+This closes CLI readiness only, not the unapproved WorkIQ display contract or actual
+M365 ingestion. The recent 585-pass public readiness cohort predates this exact pin;
+the 212-case selection is current targeted evidence, not a new full aggregate.
+
+HA preflight had another false-success boundary: missing/unreadable configuration
+could pass as a skip, malformed mapping/enablement/fetch values were not consistently
+validated, and selected connectivity exceptions passed as off-LAN skips. The package
+surface additionally used a best-effort cached loader with a different configuration
+root. Both surfaces now read the checked installation explicitly and retain these
+unknown/unavailable outcomes as failed P1 advisories. Valid absent/disabled Connectors
+still skip; missing credentials and unavailable credential storage remain distinct.
+Error labels do not echo parser/provider payloads, and no new P0 gate was added.
+
+The initial isolated selection reproduces 27 failures. Expanded HA/Pipeline checks
+pass 147 cases, covering all 33 changed executable lines. The all-preflight/WorkIQ
+selection passes 322 cases. Separate synthetic HTTP assertions confirm both existing
+HA request paths already authenticate with the supplied token; there was no
+authentication-header defect and no Connector authentication edit.
+
+At 2026-11-03 15:25 UTC, both installed preflight surfaces report failed P1 for the
+actually absent HA credential. A guard verifies that neither calls the device
+provider. No household payload, device API, credential enrollment or business State
+File was read/written. All twenty-five unique installed sources and every named
+stream match current source/latest receipts. Public code/tests are committed locally
+as `1afe99e`; no push occurred. This repairs prerequisite reporting, not missing
+access or live HA/device acceptance.
+
+The fresh full isolated public regression at `32aa62d` completed with 10,292
+passes, 179 skips, 20 expected failures and one failure: the HA repair introduced
+a direct YAML read in the preflight package, violating the shared-loader architecture
+gate. Combined core coverage was 92.61%; the failed aggregate is not acceptance.
+The original log/XML/coverage/receipt remain preserved, not overwritten.
+
+The correction routes both HA surfaces through the existing shared loader with
+opt-in `strict=True`. Strict reads propagate missing/unreadable/invalid-root errors
+instead of turning them into disabled configuration, retain successful-read caching,
+shallow-copy and invalidation semantics, and use cache keys separate from best-effort
+reads. Exceptions are not cached or logged with parser payloads in strict mode.
+Default callers retain the existing best-effort contract; no architecture exemption
+was added. Nine strict-loader cases and the architectural gate fail before correction;
+the repaired loader/architecture/all-preflight/HA/WorkIQ selection passes 398 cases,
+with all seventeen changed executable lines covered.
+
+At 2026-11-03 17:32 UTC, both corrected installed entry surfaces still report the
+actual missing HA credential as failed P1 without calling the device provider.
+All twenty-six unique installed sources and every named stream match current source
+and deployment receipts. Code/tests are committed locally as `17cf63b`; no push,
+credential enrollment or business State File changes occurred. A new complete
+regression is required for this corrected snapshot; the earlier failed aggregate
+and targeted green selection cannot substitute for it.
+
+Two attempts against the corrected snapshot were terminated with Windows
+`0x40010004` (`DBG_TERMINATE_PROCESS`) without a pytest failure result. The first
+preserved partial JUnit XML for 2,369 tests with zero failures/errors before
+termination; the second stopped at 16% with no JUnit file. Their logs and receipts
+are retained and marked interrupted, not passed. No test process remains. A smaller
+final isolated preflight/architecture/HA/Graph/WorkIQ cohort passes 354 tests with
+one existing requests dependency warning in 71 seconds. This is targeted evidence;
+the complete aggregate remains unverified, and the termination cause is unknown.
+
+The external-agent discovery and health checks had a parallel false-success boundary:
+configuration read/shape failures and malformed existing registries could become
+successful skips or healthy-empty results. Both preflight entry surfaces now use the
+shared strict configuration loader and opt-in strict registry parsing; unknown
+readiness is a failed P1 advisory, while valid disabled settings and the existing
+optional-registry behavior remain unchanged. An initial installed synthetic probe
+also caught the monolithic script passing a string to the registry's `Path` API;
+the script now passes a `Path`, with a valid-empty-registry regression for both
+entry surfaces. The source-pinned isolated external-agent/preflight/config-loader/
+architecture selection passes 692 tests with 4 skips.
+
+All three changed source files were installed using exact predecessor fingerprints
+and verified receipts/backups. Installed package and script surfaces each passed
+synthetic missing/bad configuration, disabled-feature, malformed-registry and
+valid-empty-registry cases; no live agent configuration or registry was read.
+Existing runtime named streams were preserved exactly. The source-only named stream
+on `agent_registry.py` was not copied over a runtime file that had no named streams
+before installation.
+
+Planning-signal preflight also treated a missing `last_updated` as current because the
+loader synthesized today's date for existing files, and accepted future dates as fresh.
+Loading now preserves absent metadata, validation rejects invalid/future dates, and
+both preflight surfaces use one active-signal age check. A missing date remains a
+preflight warning until an explicit successful save records it; loading alone cannot
+freshen the file. The initial paired-surface and write-path regressions failed in five
+cases; the final planning-signal/preflight/architecture selection passes 127 tests,
+covers all changed executable lines, and passes Ruff/whitespace checks. This does not
+refresh stale state or prove that Step 8t ran.
+
+An earlier direct in-place expanded test run violated the test suite's hermeticity
+guard by creating generated agent artifacts in `state/work/` and `tmp/`; the exact
+newly created files were removed. The isolated rerun above is the valid test evidence.
+That in-place run also exposed a direct connector import in the ignored local
+`scripts/work_loop.py`; it was not part of this source change and remains an audit
+item. The selected architecture suite passes in the isolated tracked-source copy.
+
+Remaining gaps include GFS/off-host recovery, genuinely missing or unpopulated state,
+absent optional credentials/MCP registrations, independent provider/held-out outcomes,
+the incomplete canonical/code audit and core activation.
+The full passing aggregate recorded below predates these preflight repairs; it is
+not relabeled as a full aggregate of the new source. Cutover and external actions
+remain disabled. Local operational evidence is not owner or release approval.
+
+## Operational takeover repairs — 2026-11-02
+
+The operational audit remains in progress; the canonical review and complete code walkthrough are
+not finished. Source repairs are not full-product acceptance or permission to enable cutover.
+
+| Boundary | Actual outcome |
+|---|---|
+| ADO | Date-only WIQL, schema-valid records, explicit failures, complete batch validation and cap disclosure repaired. An installed read-only probe authenticated and returned a valid empty listing; it did not establish nonempty provider-record coverage or reflection scope. |
+| Protected readers | Shared vault factory, selected-directory binding and portable Windows age discovery repaired; invalid Windows vault names refused. |
+| Encrypted action fields | Installed Windows helper uses ciphertext-only temporary input, key stdin and plaintext stdout. Native synthetic round-trip passed without using the production identity or State Files; no temporary files remained. Legacy bulk decryption is unchanged. |
+| Pipeline | Only complete fetches advance freshness. Successful retry snapshots replace failed prefixes; exhausted retries retain distinct partials with an error. |
+| Public packaging | Explicit package declarations and core prompt data repaired. A clean public wheel built and its core resources/CLI were exercised. Optional private Work implementations are not distributed or provisioned by that wheel. |
+| Work refresh | Removed an empty authentication override in private source. Reviewed synthetic producer verification is source-pinned and local-only; private source/tests remain ignored. |
+| Skill platforms | Six initially failing regressions repaired. Platform eligibility precedes cadence/P0 execution, including forced single-skill mode. Native installed selection skips Mac-only skills on Windows; their absent Mac implementation is not supplied. |
+
+Seven runtime source files are installed and independently fingerprinted, including the subsequent
+foundation continuation. Original bytes and every named NTFS stream were retained in verified backups.
+An initial staging refusal exposed native stream loss with `WriteAllBytes`; no target was replaced
+then. Synthetic checks established stream-preserving writes and atomic replacement before deployment.
+No runtime configuration, State File, enrollment, cutover, listener or external action was changed.
+
+Verification on Windows Python 3.12.10:
+
+| Gate | Actual result |
+|---|---|
+| Integrated Connector/Pipeline/vault/packaging/encryption selection | 430 passed, one skipped; ADO/vault combined line+branch coverage 99.36% against the unchanged 95% selection floor. |
+| Skill routing, cadence, health and Catch-up compatibility | 123 passed, two skipped. All 13 changed executable routing lines are covered (100%); this is not full-module coverage. |
+| Real development canaries | Initially failed because GNU Make was missing. A manifest-verified session-local GNU Make and process-only POSIX/tool PATH restore all 35 canaries; no test or gate was weakened. |
+| Static checks | Repository/core Ruff, strict typing of 70 core files, imports, existing writer ratchet and generated-register checks pass. |
+| Full isolated public suite | Frozen source `71457fe`: 10,075 passed, 185 skipped, 20 xfailed, nine warnings; exit 0 in 7,235.28 seconds. Core coverage: 93.82% line, 89.34% branch, 92.61% combined; both existing 85% floors pass. Completed 2026-11-03 at 08:54 UTC. |
+| Original-source baseline | Source `8d7ad5b`: 9,940 passed, 191 skipped, 20 xfailed, 21 failed and one setup error. All 21 failures required missing GNU Make. The separate native registry publication refusal did not recur in the focused three-case selection or final aggregate; its cause remains unestablished. |
+| Privacy | Full working-tree and unpublished-commit scans and actual staged hooks passed. The initial scan failed closed after two native scanner access violations; its failed observation is retained, not retroactively cleared. |
+
+Public code/tests are committed locally as `96fb12e`. All 15 staged paths matched tested working
+bytes or Git's LF normalization only; the actual pre-commit privacy hook passed. The separate
+privacy-policy selection passed 50 tests with four skips. The full working-tree scan was not a frozen
+source cohort; the staged hooks checked the exact committed repair paths. Source-pinned private producer verification passed again after
+the skill repair; private code and runtime receipts are not included in the public commit.
+The full public suite excludes private Work tests by existing policy; its passing result does not
+replace the separately source-pinned private producer evidence or establish live operational acceptance.
+
+The earlier incumbent Catch-up remains a degraded observation, not fresh acceptance of these repairs.
+At this checkpoint, exact agent reflection was restored but its evidence synthesis, ordered writes
+and close were unfinished; the Nov 3 continuation above records their later execution.
+Core runtime configuration is absent and cutover stays disabled. Incumbent combined
+Catch-up instructions conflict with the technical spec's numeric-only Work bridge; no silent routing
+change was made. Independent recovery, provider/held-out outcomes, supported-platform acceptance,
+owner UAT and release approval remain separate requirements. Nothing is pushed.
 
 ## Current-source Windows run — 2026-10-31
 
@@ -1282,13 +2171,13 @@ must not be read as the current outstanding-work list. The new aggregate is unde
 
 | Workstream | Implemented in the inherited aggregate | Current defects and completion check |
 |---|---|---|
-| Preservation/recovery | Reviewed profile registry, authenticated bounded capture/restore, portable paths, physical/SQLite verification, inspection-only lost-device recovery | Finish legacy/home-directory writer exclusion; fail closed on missing registered spend seal; verify all process/race cases and native recovery separately. Large SQLite/manifest inputs still have explicit bounded limits. |
-| Authority/actions | Queue-first transfer, durable pending state, signed former-host retirement, versioned calendar writes, exact Fact/permission/claim binding and provider-only worker credentials | Repair retirement/dispatch race, retry/profile binding and receipt durability; current export authority for reconciliation queries; preserve undo evidence. Unsupported provider preconditions remain held. Work content checkpoints cannot promote the shared personal Ledger/action authority. |
-| Providers | Opt-in scoped cursor/reset/deletion chains for mail/calendar, complete-listing occurrence withdrawal and partial-positive retention | Run handler→runtime→Ledger cursor-chain tests; native provider parity remains unperformed, so opt-in sync settings remain disabled. |
-| Resources | Durable admissions, fair scope selection, cancellation, encrypted response cache, immutable usage receipts and anti-refund seal | Repair SQLite Row membership bug in fallback fairness and registered-seal absence. Owner approved 2,000 reservations/month (UTC), 64 pending/selection and existing bundle/Catch-up/retry bounds. Cash billing stays unknown without receipts. |
+| Preservation/recovery | Reviewed profile registry, authenticated bounded capture/restore, portable paths, physical/SQLite verification, inspection-only lost-device recovery; inventory blocks missing active spend-seal artifacts; Windows checkpoint capture: 69 passed including a separate-process input-change race; checkpoint restore integrity: 48 passed, 2 platform-specific skips; quarantine review: 230 passed, 5 platform-specific skips; recovery quarantine: 128 passed; quarantine restore: 59 passed including four abrupt process-death boundaries; public legacy-writer fence suite: 21 passed, 8 private Work tests skipped because those sources are absent | Verify the omitted private Work writers and remaining process/race cases; native recovery remains separate. Large SQLite/manifest inputs still have explicit bounded limits. |
+| Authority/actions | Queue-first transfer, durable pending state, signed former-host retirement, versioned calendar writes, exact Fact/permission/claim binding and provider-only worker credentials; transfer protocol: 86 passed on Windows, including all five abrupt process-death cases; retirement: 38 passed on Windows, including all four abrupt process-death cases | No observed credential revocation service or fence on a disconnected former host; provider-specific conditional writes remain unsupported for other action types, and native failover plus owner UAT remain outstanding. Work content checkpoints cannot promote the shared personal Ledger/action authority. |
+| Providers | Opt-in scoped cursor/reset/deletion chains for mail/calendar, complete-listing occurrence withdrawal and partial-positive retention; synthetic handler→runtime→Ledger cursor/lifecycle suites: 137 passed | Native/live provider parity remains unperformed, so opt-in sync settings remain disabled. |
+| Resources | Durable admissions, fair scope selection, cancellation, encrypted response cache, immutable usage receipts and anti-refund seal; fallback fairness uses SQLite Row column keys and runtime refuses missing registered spend history; resource accounting/runtime selections: 74 passed | Native-host validation remains outstanding. Owner-approved limits remain 2,000 reservations/month and 64 pending/selection; cash billing stays unknown without provider receipts. |
 | Retention | Source/replay expiry via deletion journal, anti-resurrection preview and explicit forget | Owner chose explicit `retain_all`/automatic-expiry-disabled for cutover. General document/corpus/Briefing/history/trace expiry remains unsupported and is not claimed complete. Older backups require privacy replay/quarantine. |
-| Product/surfaces | Leading indicators, authored-tolerance Sprint calibration, proposal-only tradeoffs; strict Domain contracts/additional vehicle pack; scoped interchange, custodian/configuration review, document field confirmation | Repair inherited fixtures against actual contracts; verify runtime wiring and correction/permission negatives. Independent usefulness, document accuracy and accessibility UAT remain required. |
-| Release/integration | Isolated tests, strict typing/lint, security and changed-line coverage; generated registers | Register omitted newer modules/providers in the implementation cohort, run current aggregate gates/privacy and record exact evidence. Historical passing totals do not validate uncommitted changes. Enforce missing completeness/workload/held-out/document acceptance requirements in the release verifier. |
+| Product/surfaces | Leading indicators, authored-tolerance Sprint calibration, proposal-only tradeoffs; strict Domain contracts/additional vehicle pack; scoped interchange, custodian/configuration review, document field confirmation; synthetic UAT script suite: 14 passed | Repair remaining inherited fixtures against actual contracts; verify runtime wiring and correction/permission negatives. Independent usefulness, document accuracy, accessibility and owner UAT remain required. The UAT result used scratch data only. |
+| Release/integration | Release acceptance v4, artifact-coherence and slice-release selections: 348 passed; generated-register check passed after latest code changes | Run the complete current aggregate suite and unpushed-history privacy scan. Historical passing totals do not validate the current full source snapshot; native, live and owner acceptance remain separate. |
 
 ### Reproduced mistakes repaired during this takeover
 
@@ -1715,11 +2604,11 @@ Preservation follow-ups from the continuing source audit, in implementation orde
    `artha-bundle-<producer>` signing material and `artha-privacy-<namespace>` heads. Capturing an OAuth file or replay
    capsule does not recover those independent records. Test missing records, chunk/version histories, concurrent
    rotation/revocation and exact profile separation with synthetic backends before native acceptance.
-2. Authenticate the requested profile before materializing any restored members. The current stream restore checks
-   `expected_profile` after writing members, then removes a refused destination. Add a negative fixture proving that
-   a legacy Work checkpoint using personal envelope keys never writes Work plaintext under personal restore policy.
-   Re-read restored physical files for manifest equality before quarantine/privacy transformations; stream equality
-   alone does not test the resulting files. Pin the input across validation and extraction.
+2. Source-level restore ordering is now verified: the requested profile is checked before extraction, input/member
+   fingerprints are rechecked during extraction, and `_verify_restored` validates physical output before privacy
+   replay. `tests/catchup_core/test_checkpoint_restore_integrity.py` passes 48 tests with two skips, including
+   wrong-profile no-write, changed-input and physical-output mismatch cases. This closes those synthetic source
+   gaps only; native platform behavior and owner recovery acceptance remain open.
 3. Prove native path behavior: case/Unicode aliases, Windows reserved/trailing-dot names, reparse points and sync
    locations. Current synthetic tests and lexical resolution are not native filesystem acceptance. Exercise supported
    platform fixtures before claiming complete path isolation, and report intended permission transformations.

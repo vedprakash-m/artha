@@ -66,6 +66,8 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     stubs = []
     for tpl in templates:
         target = os.path.join(STATE_DIR, tpl)
+        if os.path.isfile(target + ".age"):
+            continue
         if not os.path.exists(target):
             missing.append(tpl)
         elif _is_bootstrap_stub(target):
@@ -172,24 +174,17 @@ def check_planning_signals() -> CheckResult:
         )
     try:
         sys.path.insert(0, str(SCRIPTS_DIR))
-        from planning_signals import load, validate  # type: ignore
+        from planning_signals import active_signals_are_stale, load, validate  # type: ignore
 
         doc = load(path)
-        errors = validate(doc)
+        errors = validate(doc, today=date.today())
         if errors:
             return CheckResult(
                 "planning_signals.md", "P1", False,
                 f"planning_signals.md schema warning: {errors[0]}",
                 fix_hint="Run: python3 scripts/planning_signals.py validate",
             )
-        active = [s for s in doc.signals if not s.get("materialized")]
-        stale = False
-        try:
-            updated = date.fromisoformat(str(doc.frontmatter.get("last_updated")))
-            stale = bool(active and (date.today() - updated).days >= 2)
-        except ValueError:
-            stale = bool(active)
-        if stale:
+        if active_signals_are_stale(doc, today=date.today()):
             return CheckResult(
                 "planning_signals.md", "P1", False,
                 "planning_signals.md has active signals but has not been updated in 2+ days",
@@ -440,4 +435,3 @@ def check_prompt_size() -> CheckResult:
         "prompt size (RD-38)", "P2", True,
         f"config/Artha.md is {size:,} bytes ✓ (limit: {_MAX_PROMPT_BYTES:,}B)",
     )
-

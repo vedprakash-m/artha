@@ -39,7 +39,7 @@ def setup(runner: h.ScratchRunner) -> None:
 
 
 def scenario(runner, report: h.Report) -> None:
-    fact = h.first_fact(runner, report)
+    fact = h.first_fact(runner, report, shadow=True)
     if fact is None:
         return
     fid, old = fact["fact_id"], fact["value"]
@@ -50,7 +50,7 @@ def scenario(runner, report: h.Report) -> None:
                          "preview shows before/after and an apply_version; nothing changes",
                          lambda o: o.ok and o.data["before"] == old and o.data["after"] == new
                          and o.data["apply_version"], kind=h.PREVIEW)
-    h.beliefs(runner, report, expected="value unchanged after the preview",
+    h.beliefs(runner, report, expected="value unchanged after the preview", shadow=True,
               check=lambda rows: any(r["fact_id"] == fid and r["value"] == old for r in rows))
     h.run_step(runner, report, ["correct", fid, "--value", new, "--apply", "0", h.SHADOW],
                "a stale apply_version is refused", lambda o: h.refused(o, "changed since"), kind=h.LOCAL_WRITE)

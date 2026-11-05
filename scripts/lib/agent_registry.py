@@ -180,27 +180,45 @@ class AgentRegistry:
     # ------------------------------------------------------------------
 
     @classmethod
-    def load(cls, config_dir: Path) -> "AgentRegistry":
+    def load(cls, config_dir: Path, *, strict: bool = False) -> "AgentRegistry":
         """Load the registry from config/agents/external-registry.yaml.
 
         If the file doesn't exist, returns an empty registry (not an error).
+        With ``strict=True``, malformed registry data raises instead of being
+        treated as an empty registry or partially loaded.
         """
         registry_path = config_dir / "agents" / "external-registry.yaml"
         if not registry_path.exists():
+            if strict:
+                raise FileNotFoundError(registry_path)
             return cls(registry_path=registry_path, agents={})
 
-        raw = _read_yaml(registry_path)
+        raw = _read_yaml(registry_path, strict=strict)
         if not isinstance(raw, dict):
+            if strict:
+                raise ValueError("registry root must be a mapping")
             return cls(registry_path=registry_path, agents={})
+
+        if strict and "agents" not in raw:
+            raise ValueError("registry agents mapping is missing")
+        raw_agents = raw.get("agents", {})
+        if not isinstance(raw_agents, dict):
+            if strict:
+                raise ValueError("registry agents must be a mapping")
+            raw_agents = {}
 
         agents: dict[str, ExternalAgent] = {}
-        for name, entry in (raw.get("agents") or {}).items():
+        for name, entry in raw_agents.items():
             if not isinstance(entry, dict):
+                if strict:
+                    raise ValueError(f"registry entry for {name} must be a mapping")
                 continue
             try:
                 agent = _parse_agent(name, entry)
                 agents[name] = agent
             except (KeyError, ValueError, TypeError):
+                if strict:
+                    raise
                 _log.warning("Skipping malformed registry entry: %s", name,
                              exc_info=True)
 
@@ -397,13 +415,18 @@ class AgentRegistry:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-def _read_yaml(path: Path) -> Any:
+def _read_yaml(path: Path, *, strict: bool = False) -> Any:
     if yaml is None:
+        if strict:
+            raise RuntimeError("PyYAML is required to read the agent registry")
         # Fallback: try safe load via subprocess isn't practical here —
         # return empty dict so registry works without crashing
         return {}
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f)
+    if strict and not isinstance(data, dict):
+        raise ValueError("registry root must be a mapping")
+    return data or {}
 
 
 def _parse_agent(name: str, entry: dict) -> ExternalAgent:

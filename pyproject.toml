@@ -15,6 +15,7 @@ dependencies = [
     "jsonschema>=4.20.0",
     "pydantic>=2.5,<3.0",
     "cryptography>=42.0.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,7 @@ dev = [
     "pytest-timeout>=2.1.0",
     "datadiff>=2.2.0",
     "anyio[trio]>=4.0.0",
+    "mypy>=1.10",
 ]
 
 [project.scripts]
@@ -78,19 +80,19 @@ packages = [
     "scripts.skills",
     "scripts.connectors",
     "scripts.actions",
-    "scripts.channels",
+    "scripts.agents",
+    "scripts.backfill",
     "scripts.middleware",
     "scripts.schemas",
     # PAY-DEBT v1.0 decomposed subpackages (Phases 3–5)
-    "scripts.work",
-    "scripts.channel",
     "scripts.preflight",
+    "scripts.pr_stage",
     "scripts.narrative",
     "scripts.catchup_core",
 ]
 
 [tool.setuptools.package-data]
-"scripts.catchup_core" = ["migrations/*.sql", "packs/*.yaml"]
+"scripts.catchup_core" = ["migrations/*.sql", "packs/*.yaml", "prompts/*.md"]
 
 # ---------------------------------------------------------------------------
 # Ruff — lightweight linter catching bugs that py_compile misses

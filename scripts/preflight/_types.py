@@ -5,13 +5,14 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from connectors.workiq_bridge import WORKIQ_VERSION_PIN
+
 ARTHA_DIR   = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPTS_DIR = os.path.join(ARTHA_DIR, "scripts")
 STATE_DIR   = os.path.join(ARTHA_DIR, "state")
 TOKEN_DIR   = os.path.join(ARTHA_DIR, ".tokens")
 LOCK_FILE          = os.path.join(ARTHA_DIR, ".artha-decrypted")
 WORKIQ_CACHE_FILE = ""  # Optional test override; default is resolved in machine-local Work storage.
-WORKIQ_VERSION_PIN  = "latest"
 WORKIQ_CACHE_MAX_AGE = 86400  # 24 hours
 
 TOKEN_EXPIRY_WARN_SECONDS = 300  # Warn when token expires within 5 minutes
@@ -51,4 +52,3 @@ _REQUIRED_DEPS: dict[str, str] = {
     "requests":   "requests",
     "google":     "google-auth",
 }
-

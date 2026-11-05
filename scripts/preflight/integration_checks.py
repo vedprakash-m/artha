@@ -281,26 +281,31 @@ def check_ha_connectivity() -> CheckResult:
 
     Only runs if homeassistant.enabled is true in connectors.yaml.
     Silently passes (skip message) if the connector is disabled.
-    Returns a warning (not failure) when off-LAN — normal for travel/work.
+    Unavailable or unverified connectivity is a failed P1 advisory, never a P0 block.
     """
     _name = "Home Assistant"
 
     # Load connector config
-    _connectors_path = os.path.join(ARTHA_DIR, "config", "connectors.yaml")
-    if not os.path.exists(_connectors_path):
-        return CheckResult(_name, "P1", True, "connectors.yaml not found — skipped ✓")
-
+    import yaml as _yaml
+    from lib.config_loader import load_config as _load_config
     try:
-        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
-        _cfg = _load_config("connectors")
-        _ha = (_cfg.get("connectors") or {}).get("homeassistant") or {}
-    except Exception as exc:
-        return CheckResult(_name, "P1", True, f"Could not read connectors.yaml ({exc}) — skipped ✓")
+        _cfg = _load_config("connectors", os.path.join(ARTHA_DIR, "config"), strict=True)
+    except (OSError, _yaml.YAMLError, UnicodeError, ValueError) as exc:
+        return CheckResult(_name, "P1", False, f"Could not read connectors.yaml ({type(exc).__name__})")
+    if not isinstance(_cfg, dict) or not isinstance(_cfg.get("connectors"), dict):
+        return CheckResult(_name, "P1", False, "Invalid connectors.yaml: expected connectors mapping")
+    _ha = _cfg["connectors"].get("homeassistant", {})
+    if not isinstance(_ha, dict) or not isinstance(_ha.get("enabled", False), bool):
+        return CheckResult(_name, "P1", False, "Invalid HA configuration: expected mapping and boolean enabled")
 
     if not _ha.get("enabled", False):
         return CheckResult(_name, "P1", True, "HA connector not enabled — skipped ✓")
 
-    _ha_url = ((_ha.get("fetch") or {}).get("ha_url") or "").rstrip("/")
+    _fetch_cfg = _ha.get("fetch", {})
+    if not isinstance(_fetch_cfg, dict):
+        return CheckResult(_name, "P1", False, "Invalid HA configuration: expected fetch mapping")
+    _ha_url = _fetch_cfg.get("ha_url")
+    _ha_url = _ha_url.strip().rstrip("/") if isinstance(_ha_url, str) else ""
     if not _ha_url:
         return CheckResult(
             _name, "P1", False,
@@ -312,8 +317,8 @@ def check_ha_connectivity() -> CheckResult:
     try:
         import keyring as _keyring
         _token = _keyring.get_password("artha-ha-token", "artha") or ""
-    except Exception:
-        _token = ""
+    except Exception as exc:
+        return CheckResult(_name, "P1", False, f"HA token store unavailable ({type(exc).__name__})")
 
     if not _token:
         return CheckResult(
@@ -327,7 +332,6 @@ def check_ha_connectivity() -> CheckResult:
         if SCRIPTS_DIR not in sys.path:
             sys.path.insert(0, SCRIPTS_DIR)
         from connectors.homeassistant import health_check as _ha_health  # type: ignore[import]
-        _fetch_cfg = _ha.get("fetch") or {}
         _ok = _ha_health(
             {"provider": "homeassistant", "method": "api_key", "api_key": _token},
             **{k: v for k, v in _fetch_cfg.items() if k != "handler"},
@@ -346,12 +350,12 @@ def check_ha_connectivity() -> CheckResult:
         _msg = str(exc)
         if "LAN gate" in _msg or "not reachable" in _msg or "Cannot connect" in _msg:
             return CheckResult(
-                _name, "P1", True,
-                f"HA not on current network (off-LAN) — skipped ✓ ({_ha_url})",
+                _name, "P1", False,
+                "HA unavailable on current network — connectivity not verified",
             )
         return CheckResult(
             _name, "P1", False,
-            f"HA check error: {_msg[:120]}",
+            f"HA check error: {type(exc).__name__}",
             fix_hint="Run: python scripts/pipeline.py --health --source homeassistant",
         )
 
@@ -479,6 +483,34 @@ def check_action_handlers() -> CheckResult:
 # EA-11a — External agent discovery
 # ---------------------------------------------------------------------------
 
+def _external_agent_settings(artha_dir: str) -> tuple[bool, bool]:
+    """Read external-agent flags without treating invalid config as disabled."""
+    if SCRIPTS_DIR not in sys.path:
+        sys.path.insert(0, SCRIPTS_DIR)
+    from lib.config_loader import load_config  # noqa: PLC0415
+
+    config = load_config("artha_config", os.path.join(artha_dir, "config"), strict=True)
+    harness = config.get("harness", {})
+    if not isinstance(harness, dict):
+        raise ValueError("harness must be a mapping")
+    agentic = harness.get("agentic", {})
+    if not isinstance(agentic, dict):
+        raise ValueError("harness.agentic must be a mapping")
+    external_agents = agentic.get("external_agents", {})
+    if not isinstance(external_agents, dict):
+        raise ValueError("harness.agentic.external_agents must be a mapping")
+    enabled = external_agents.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise ValueError("external_agents.enabled must be a boolean")
+    discovery = external_agents.get("discovery", {})
+    if not isinstance(discovery, dict):
+        raise ValueError("external_agents.discovery must be a mapping")
+    discovery_enabled = discovery.get("enabled", True)
+    if not isinstance(discovery_enabled, bool):
+        raise ValueError("external_agents.discovery.enabled must be a boolean")
+    return enabled, discovery_enabled
+
+
 def check_ext_agent_discovery() -> CheckResult:
     """P1 non-blocking: Scan config/agents/external/ for unregistered .agent.md files.
 
@@ -488,24 +520,16 @@ def check_ext_agent_discovery() -> CheckResult:
     """
     # Gate: only run if external agents feature is enabled
     try:
-        if SCRIPTS_DIR not in sys.path:
-            sys.path.insert(0, SCRIPTS_DIR)
-        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
-        _artha_cfg = _load_config("artha_config", os.path.join(ARTHA_DIR, "config"))
-        _ea_block = (
-            _artha_cfg.get("harness", {})
-            .get("agentic", {})
-            .get("external_agents", {})
-        )
-        if not _ea_block.get("enabled", False):
+        _enabled, _discovery_enabled = _external_agent_settings(ARTHA_DIR)
+        if not _enabled:
             return CheckResult("ext agent discovery", "P1", True,
                                "External agents not enabled — skipped ✓")
-        if not _ea_block.get("discovery", {}).get("enabled", True):
+        if not _discovery_enabled:
             return CheckResult("ext agent discovery", "P1", True,
                                "Agent discovery disabled in config — skipped ✓")
-    except Exception as exc:
-        return CheckResult("ext agent discovery", "P1", True,
-                           f"Could not load artha_config ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent discovery", "P1", False,
+                           "External-agent configuration is unreadable or invalid")
 
     # Load registry to know already-registered agent names
     registered_names: set[str] = set()
@@ -516,14 +540,15 @@ def check_ext_agent_discovery() -> CheckResult:
         from pathlib import Path as _Path  # noqa: PLC0415
         _registry_path = os.path.join(ARTHA_DIR, "config", "agents", "external-registry.yaml")
         if os.path.exists(_registry_path):
-            _reg = AgentRegistry.load(_Path(ARTHA_DIR) / "config")
+            _reg = AgentRegistry.load(_Path(ARTHA_DIR) / "config", strict=True)
             registered_names = {
                 a.name for a in (
                     _reg.active_agents() if hasattr(_reg, "active_agents") else []
                 )
             }
     except Exception:
-        pass  # Registry missing or not yet built — treat all drops as unregistered
+        return CheckResult("ext agent discovery", "P1", False,
+                           "External-agent registry is unreadable or invalid")
 
     # Scan drop folder
     drop_dir = os.path.join(ARTHA_DIR, "config", "agents", "external")
@@ -575,21 +600,13 @@ def check_ext_agent_health() -> CheckResult:
     """
     # Gate: only run if external agents feature is enabled
     try:
-        if SCRIPTS_DIR not in sys.path:
-            sys.path.insert(0, SCRIPTS_DIR)
-        from lib.config_loader import load_config as _load_config  # noqa: PLC0415
-        _artha_cfg = _load_config("artha_config", os.path.join(ARTHA_DIR, "config"))
-        _ea_block = (
-            _artha_cfg.get("harness", {})
-            .get("agentic", {})
-            .get("external_agents", {})
-        )
-        if not _ea_block.get("enabled", False):
+        _enabled, _ = _external_agent_settings(ARTHA_DIR)
+        if not _enabled:
             return CheckResult("ext agent health", "P1", True,
                                "External agents not enabled — skipped ✓")
-    except Exception as exc:
-        return CheckResult("ext agent health", "P1", True,
-                           f"Could not load artha_config ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent health", "P1", False,
+                           "External-agent configuration is unreadable or invalid")
 
     # Load registry
     try:
@@ -601,11 +618,11 @@ def check_ext_agent_health() -> CheckResult:
         if not os.path.exists(_registry_path):
             return CheckResult("ext agent health", "P1", True,
                                "No agent registry found — skipped ✓")
-        _reg = AgentRegistry.load(_Path(ARTHA_DIR) / "config")
+        _reg = AgentRegistry.load(_Path(ARTHA_DIR) / "config", strict=True)
         _all_agents = list(_reg.all_agents()) if hasattr(_reg, "all_agents") else []
-    except Exception as exc:
-        return CheckResult("ext agent health", "P1", True,
-                           f"Could not load agent registry ({exc}) — skipped ✓")
+    except Exception:
+        return CheckResult("ext agent health", "P1", False,
+                           "External-agent registry is unreadable or invalid")
 
     if not _all_agents:
         return CheckResult("ext agent health", "P1", True, "No registered agents ✓")
@@ -637,4 +654,3 @@ def check_ext_agent_health() -> CheckResult:
             "to review and reinstate suspended agents"
         ),
     )
-

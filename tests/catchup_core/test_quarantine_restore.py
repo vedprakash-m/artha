@@ -365,8 +365,7 @@ def test_invalid_factory_refuses_without_plaintext_fallback(tmp_path, returned):
     assert not (tmp_path / 'restored').exists()
 
 
-@pytest.mark.skipif(os.name != 'posix', reason='SIGKILL is a POSIX crash boundary')
-def test_actual_sigkill_after_first_encrypted_chunk_leaves_no_private_plaintext(tmp_path):
+def test_actual_process_death_after_first_encrypted_chunk_leaves_no_private_plaintext(tmp_path):
     marker = b'SIGKILL-PRIVATE-HISTORICAL-MARKER'
     path = chunked_container(tmp_path / 'input.ack', [('repo/private-name.md', marker * 100000, 'file', 0o600)])
     dest = tmp_path / 'killed'
@@ -374,6 +373,7 @@ def test_actual_sigkill_after_first_encrypted_chunk_leaves_no_private_plaintext(
     script = '''import os, signal, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
+kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
 from catchup_core import checkpoint as ck
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.recovery_quarantine import QuarantineStore
@@ -387,7 +387,7 @@ def factory(dest, manifest, digest):
     original = store.write
     def crash(chunk):
         original(chunk)
-        os.kill(os.getpid(), signal.SIGKILL)
+        os.kill(os.getpid(), kill_signal)
     store.write = crash
     return store
 ck.restore(Path(sys.argv[2]), Path(sys.argv[3]), cipher, [],
@@ -395,11 +395,12 @@ ck.restore(Path(sys.argv[2]), Path(sys.argv[3]), cipher, [],
 '''
     child = subprocess.run([sys.executable, '-c', script, str(Path(ck.__file__).parents[1]), str(path), str(dest)],
                            capture_output=True, timeout=15)
-    assert child.returncode == -signal.SIGKILL, child.stderr.decode()
+    expected_exit = signal.SIGTERM if os.name == 'nt' else -signal.SIGKILL
+    assert child.returncode == expected_exit, child.stderr.decode()
     assert marker not in child.stdout + child.stderr
     assert (dest / '.artha-restored.json').is_file()
     assert not (dest / 'repo').exists()
-    assert len(list((dest / '.artha-quarantine').iterdir())) == 1
+    assert len([path for path in (dest / '.artha-quarantine').iterdir() if path.name != '.lock']) == 1
     assert_ciphertext(dest, [marker, b'private-name'])
     assert path.read_bytes() == original
     from catchup_core.session_lock import require_active_installation
@@ -561,7 +562,6 @@ def test_supported_ledger_identity_allows_verified_privacy_mutation(tmp_path,nam
     assert report['verified_sqlite']==1 and report['quarantined_files']==1
 
 
-@pytest.mark.skipif(os.name!='posix',reason='POSIX process-death evidence')
 @pytest.mark.parametrize('phase',['sealed','privacy','post-replay'])
 def test_real_process_death_late_in_restore_retains_only_inactive_encrypted_historical_files(tmp_path,phase):
     marker=b'CRASH-PRIVATE-HISTORICAL-MARKER'
@@ -572,6 +572,7 @@ def test_real_process_death_late_in_restore_retains_only_inactive_encrypted_hist
 import os,signal,sys
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
+kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
 from catchup_core import checkpoint as ck
 from catchup_core.crypto import EnvelopeCipher,StaticKeyProvider
 from catchup_core.recovery_quarantine import QuarantineStore
@@ -580,7 +581,7 @@ phase=sys.argv[4]
 def authority():
     return {'actor':'owner','owner':'owner','profile':'personal','privacy':{
         'personal':{'checkpoint_id':9,'permission_generation':3,'tombstone_digest':'a'*64}}}
-def crash(): os.kill(os.getpid(),signal.SIGKILL)
+def crash(): os.kill(os.getpid(),kill_signal)
 def factory(dest,manifest,digest):
     store=QuarantineStore(dest/'.artha-quarantine',cipher,authority=authority)
     store.begin(dict(manifest,entries=[entry for entry in manifest['entries'] if not ck._privacy_ledger(entry)]),digest)
@@ -601,7 +602,8 @@ ck.restore(Path(sys.argv[2]),Path(sys.argv[3]),cipher,[],quarantine_factory=fact
 '''
     dead=subprocess.run([sys.executable,'-c',script,str(Path(ck.__file__).parents[1]),str(checkpoint),
                          str(destination),phase],capture_output=True,timeout=20)
-    assert dead.returncode==-signal.SIGKILL,dead.stderr.decode()
+    expected_exit=signal.SIGTERM if os.name=='nt' else -signal.SIGKILL
+    assert dead.returncode==expected_exit,dead.stderr.decode()
     assert marker not in dead.stdout+dead.stderr
     assert (destination/'.artha-restored.json').exists()
     assert not (destination/'repo/notes.md').exists()

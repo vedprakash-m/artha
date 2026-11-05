@@ -185,3 +185,41 @@ def test_live_mode_refuses_a_directory_that_is_not_a_checkout(tmp_path: Path) ->
     result = _run(str(SCRIPTS[0]), "--workspace", str(tmp_path))
     assert result.returncode != 0
     assert "not an Artha checkout" in result.stderr
+
+
+def test_live_scenarios_that_continue_in_the_shadow_store_pick_their_fact_there() -> None:
+    """RA-06 and RA-23 continue with `--shadow` commands, so a live run must choose the Fact from the shadow store."""
+    sys.path.insert(0, str(ROOT / "tools" / "uat"))
+    import _harness as h  # noqa: PLC0415
+
+    class Runner:
+        live = True
+
+        def __init__(self) -> None:
+            self.argv: list[list[str]] = []
+
+        def run(self, argv: list[str]) -> h.Outcome:
+            self.argv.append(argv)
+            return h.Outcome(0, {"beliefs": [{"fact_id": "f1"}]})
+
+    runner = Runner()
+    report = h.Report("RA-06", "t", "live")
+    h.first_fact(runner, report, shadow=True)
+    h.beliefs(runner, report, shadow=True)
+    h.beliefs(runner, report)
+    assert runner.argv == [["beliefs", "--shadow"], ["beliefs", "--shadow"], ["beliefs"]]
+
+
+def test_ra15_live_accepts_a_scoped_consent_refusal_for_items_and_goals() -> None:
+    """Live, the shadow store holds no household consent, so a named consent refusal is a valid answer; scratch stays strict."""
+    sys.path.insert(0, str(ROOT / "tools" / "uat"))
+    import _harness as h  # noqa: PLC0415
+    import ra_15_onboarding_feedback as ra15  # noqa: PLC0415
+
+    refusal = h.Outcome(20, None, "source requires person_x's scoped ingest consent")
+    other = h.Outcome(20, None, "unknown fact")
+    answer = h.Outcome(0, {"items": []})
+    live = ra15.list_check("items", live=True)
+    assert live(refusal) and live(answer) and not live(other)
+    scratch = ra15.list_check("items", live=False)
+    assert scratch(answer) and not scratch(refusal)

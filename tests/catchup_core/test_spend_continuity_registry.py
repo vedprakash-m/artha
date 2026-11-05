@@ -75,6 +75,7 @@ def test_capture_classifies_each_mode_instead_of_hiding_an_unregistered_seal(tmp
     local, metadata = tmp_path / 'local', tmp_path / 'registry'
     seal_dir = local / 'spend-seal'
     seal_dir.mkdir(parents=True)
+    (seal_dir / 'shadow.json').write_text('{}')
     (seal_dir / 'authoritative.json').write_text('{}')
     with registry.enroll_spend_seal(root=metadata, mode='shadow'):
         pass

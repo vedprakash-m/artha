@@ -371,6 +371,14 @@ def test_sharepoint_uses_only_work_record(providers):
     assert sharepoint_kb_sync._load_token() == 'synthetic-work'
 
 
+def test_sharepoint_does_not_accept_expired_work_record_or_use_personal_fallback(providers):
+    _, graph, _, _ = providers
+    import sharepoint_kb_sync
+    graph._save_token({'access_token': 'synthetic-personal'})
+    graph._save_token({'access_token': 'synthetic-expired-work', 'expires_in': -1}, work=True)
+    assert sharepoint_kb_sync._load_token() is None
+
+
 def test_client_revocation_does_not_report_success_when_os_delete_fails(providers, monkeypatch):
     google, _, _, backend = providers
     google._keychain_write(google._KC_CLIENT_SECRET, 'synthetic-client')

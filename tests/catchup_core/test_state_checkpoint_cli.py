@@ -1712,6 +1712,29 @@ def test_work_inventory_separates_all_known_artifacts_without_disclosing_names(h
     assert cache_lock not in inventories['personal'] | inventories['work']
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows named streams')
+def test_work_inventory_blocks_named_stream_without_disclosure_or_mutation(host):
+    from pathlib import Path
+    source = host.repo / 'state/work/SYNTHETIC-PRIVATE-NAME.md'
+    source.write_bytes(b'SYNTHETIC-WORK-PRIVATE-PAYLOAD')
+    stream = Path(str(source) + ':SYNTHETIC-PRIVATE-STREAM')
+    stream.write_bytes(b'SYNTHETIC-STREAM-PRIVATE-PAYLOAD')
+
+    code, output, error = host.run('inventory', '--profile', 'work')
+    result = json.loads(output)
+    assert code == 20 and result['blocking'] >= 1 and result['ready'] is False
+    for private in ('SYNTHETIC-PRIVATE-NAME', 'SYNTHETIC-PRIVATE-STREAM',
+                    'SYNTHETIC-WORK-PRIVATE-PAYLOAD', 'SYNTHETIC-STREAM-PRIVATE-PAYLOAD'):
+        assert private not in output + error
+    assert source.read_bytes() == b'SYNTHETIC-WORK-PRIVATE-PAYLOAD'
+    assert stream.read_bytes() == b'SYNTHETIC-STREAM-PRIVATE-PAYLOAD'
+
+    code, output, error = host.run('inventory', '--profile', 'personal')
+    assert code == 0, error
+    assert json.loads(output)['ready'] is True
+    assert stream.read_bytes() == b'SYNTHETIC-STREAM-PRIVATE-PAYLOAD'
+
+
 def test_personal_action_store_cannot_overlap_local_work_namespace(host, monkeypatch):
     monkeypatch.setenv('ARTHA_LOCAL_DB', str(host.local / 'work' / 'actions.db'))
     with pytest.raises(ck.CheckpointBlocked, match='Work'):
@@ -2050,6 +2073,109 @@ def test_checkpoint_cannot_ignore_unreadable_bundle_dependency_declarations(host
     code, _, error = host.run('create', '--dest', str(host.tmp / 'out'))
     assert code == 20 and 'bundle' in error
     assert not (host.tmp / 'out').exists()
+
+
+@pytest.mark.parametrize('content', ['not-json', '[]', '{}', '{"producer":"../bad"}', None])
+def test_unreadable_or_malformed_bundle_artifact_blocks_dependency_inventory(
+    host, monkeypatch, content
+):
+    artifact = host.repo / 'state' / 'bundle-synthetic-stream-00000001-p001.json'
+    artifact.write_text(content or '{}', encoding='utf-8')
+    if content is None:
+        original_read_text = type(artifact).read_text
+
+        def fail_artifact_read(path, *args, **kwargs):
+            if path == artifact:
+                raise PermissionError('synthetic inaccessible bundle')
+            return original_read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(type(artifact), 'read_text', fail_artifact_read)
+
+    with pytest.raises(ck.CheckpointBlocked, match='bundle dependency artifact'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+def test_non_regular_bundle_artifact_blocks_dependency_inventory(host):
+    artifact = host.repo / 'state' / 'bundle-synthetic-stream-00000001-p001.json'
+    artifact.mkdir()
+
+    with pytest.raises(ck.CheckpointBlocked, match='not a regular file'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+@pytest.mark.parametrize('directory_state', ['missing', 'file'])
+def test_unavailable_or_non_directory_bundle_scan_path_blocks_inventory(host, directory_state):
+    (host.repo / 'config').mkdir(exist_ok=True)
+    configured_dir = host.repo / 'state' / 'bundle-source'
+    if directory_state == 'file':
+        configured_dir.write_text('not a directory', encoding='utf-8')
+    (host.repo / 'config/catchup_core.yaml').write_text(
+        'bundles:\n  synthetic:\n    dir: state/bundle-source\n',
+        encoding='utf-8',
+    )
+
+    with pytest.raises(ck.CheckpointBlocked, match='bundle dependency'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+def test_unreadable_nested_bundle_scan_directory_blocks_inventory(host, monkeypatch):
+    from pathlib import Path
+
+    nested = host.repo / 'state' / 'nested'
+    nested.mkdir(parents=True)
+    original_scandir = cli.os.scandir
+
+    def unreadable(path):
+        if Path(path) == nested:
+            raise PermissionError('synthetic unreadable bundle directory')
+        return original_scandir(path)
+
+    monkeypatch.setattr(cli.os, 'scandir', unreadable)
+    with pytest.raises(ck.CheckpointBlocked, match='bundle dependency directory is unavailable'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+def test_bundle_artifact_listing_failure_after_walk_blocks_inventory(host, monkeypatch):
+    from pathlib import Path
+
+    nested = host.repo / 'state' / 'nested'
+    nested.mkdir(parents=True)
+    original_scandir = cli.os.scandir
+    reads = 0
+
+    def unreadable_second_scan(path):
+        nonlocal reads
+        if Path(path) == nested:
+            reads += 1
+            if reads == 2:
+                raise PermissionError('synthetic changed directory permissions')
+        return original_scandir(path)
+
+    monkeypatch.setattr(cli.os, 'scandir', unreadable_second_scan)
+    with pytest.raises(ck.CheckpointBlocked, match='bundle dependency directory is unavailable'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+@pytest.mark.parametrize('scan_root', ['repo', 'local'])
+def test_bundle_dependency_scan_root_metadata_denial_blocks_inventory(host, monkeypatch, scan_root):
+    root = getattr(host, scan_root)
+    original_lstat = type(root).lstat
+
+    def denied(path, *args, **kwargs):
+        if path == root:
+            raise PermissionError('synthetic scan-root metadata denial')
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(root), 'lstat', denied)
+    with pytest.raises(ck.CheckpointBlocked, match='bundle dependency directory is unavailable'):
+        cli._discover_bundle_producers(host.repo, host.local)
+
+
+def test_bundle_dependency_discovery_preserves_windows_case_insensitive_matching(host):
+    artifact = host.repo / 'state' / 'BUNDLE-synthetic-stream.JSON'
+    artifact.write_text(json.dumps({'producer': 'synthetic'}), encoding='utf-8')
+
+    assert 'synthetic' in cli._discover_bundle_producers(host.repo, host.local)
 
 
 def test_bundle_dependency_cannot_relabel_work_content_as_personal(host):
@@ -2430,6 +2556,22 @@ def test_spend_seal_is_classified_by_the_registry_and_kept_out_of_snapshots(host
     assert [e['state'] for e in document['entries'] if e['kind'] == 'spend_seal'] == ['active']
     assert cli._registered_entries(document, 'personal') == [
         e for e in document['entries'] if e['kind'] != 'spend_seal']
+
+
+def test_missing_active_spend_seal_blocks_personal_inventory(host):
+    from pathlib import Path
+
+    from catchup_core import recovery_registry as registry
+    seal = host.local / 'spend-seal' / 'authoritative.json'
+    seal.parent.mkdir(mode=0o700)
+    seal.write_text('{}')
+    home_registry = Path.home() / '.artha-local'
+    with registry.enroll_spend_seal('personal', root=home_registry):
+        pass
+    seal.unlink()
+
+    with pytest.raises(ck.CheckpointBlocked, match='registered spend seal is missing'):
+        cli.profile_layout('personal', host.local, registry_root=home_registry)
 
 
 def test_spend_seal_lock_files_do_not_block_capture_but_other_artifacts_do(host):

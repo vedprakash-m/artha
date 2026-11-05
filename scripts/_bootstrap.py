@@ -97,6 +97,7 @@ def _ensure_deps_installed() -> None:
 
     Called only in 'preflight' mode to avoid slowing down normal script startup.
     Uses only stdlib (importlib.util + subprocess) — safe to call pre-import.
+    Fails with a nonzero exit if requirements cannot be installed or remain unavailable.
     """
     import importlib.util
 
@@ -119,16 +120,26 @@ def _ensure_deps_installed() -> None:
         )
         if result.returncode != 0:
             print(
-                "[bootstrap] WARNING: pip install failed. Some scripts may not work.\n"
+                f"[bootstrap] ERROR: pip install failed with exit code {result.returncode}.\n"
                 f"[bootstrap] Fix: pip install -r {_REQUIREMENTS}",
                 file=sys.stderr,
             )
+            raise SystemExit(1)
     else:
         print(
-            f"[bootstrap] WARNING: requirements.txt not found at {_REQUIREMENTS}.\n"
+            f"[bootstrap] ERROR: requirements.txt not found at {_REQUIREMENTS}.\n"
             "[bootstrap] Cannot auto-repair venv. Install packages manually.",
             file=sys.stderr,
         )
+        raise SystemExit(1)
+
+    still_missing = [m for m in _CHECK_MODULES if importlib.util.find_spec(m) is None]
+    if still_missing:
+        print(
+            f"[bootstrap] ERROR: dependencies remain unavailable after install: {still_missing}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def reexec_in_venv(mode: str = "standard") -> None:

@@ -81,7 +81,7 @@ def check_msgraph_token() -> CheckResult:
     complete without it. A missing token surfaces a clear actionable warning.
     """
     try:
-        from setup_msgraph_oauth import _load_token
+        from setup_msgraph_oauth import _load_token, _token_lifetime
         token_data = _load_token()
     except (OSError, ValueError, RuntimeError):
         return CheckResult("Microsoft Graph token", "P1", False, "OS credential token unavailable or invalid",
@@ -112,49 +112,32 @@ def check_msgraph_token() -> CheckResult:
         except ValueError:
             pass
 
-    # Check expiry field
-    expiry_str = token_data.get("expiry", "")
-    secs_left   = float("inf")
-    if expiry_str:
-        try:
-            expiry_dt = _dt.fromisoformat(expiry_str.rstrip("Z"))
-            if expiry_dt.tzinfo is None:
-                expiry_dt = expiry_dt.replace(tzinfo=_tz.utc)
-            secs_left = (expiry_dt - _dt.now(_tz.utc)).total_seconds()
-        except ValueError:
-            secs_left = float("inf")
+    secs_left = _token_lifetime(token_data)
 
     # --- Layer 1: Proactive refresh if near / past expiry (including already expired) ---
     # Attempt refresh whenever within warn window OR already expired (secs_left < 0).
     # Previously this branch was skipped when secs_left < 0 causing expired tokens
     # to fall straight to the error path without attempting auto-recovery.
-    if secs_left < TOKEN_EXPIRY_WARN_SECONDS:
-        refresh_succeeded = False
+    if secs_left is None or secs_left < TOKEN_EXPIRY_WARN_SECONDS:
         try:
             scripts_dir = os.path.dirname(os.path.abspath(__file__))
             if scripts_dir not in sys.path:
                 sys.path.insert(0, scripts_dir)
             from setup_msgraph_oauth import ensure_valid_token
             refreshed = ensure_valid_token(warn_seconds=TOKEN_EXPIRY_WARN_SECONDS)
-            new_expiry_str = refreshed.get("expiry", "")
-            if new_expiry_str:
-                new_dt = _dt.fromisoformat(new_expiry_str.rstrip("Z"))
-                if new_dt.tzinfo is None:
-                    new_dt = new_dt.replace(tzinfo=_tz.utc)
-                new_secs = (new_dt - _dt.now(_tz.utc)).total_seconds()
-                if new_secs > 0:
-                    refresh_succeeded = True
-                    return CheckResult(
-                        "Microsoft Graph token", "P1", True,
-                        f"Valid for {int(new_secs/60)}m ✓ (just refreshed)",
-                    )
+            new_secs = _token_lifetime(refreshed)
+            if new_secs is not None and new_secs > 0:
+                return CheckResult(
+                    "Microsoft Graph token", "P1", True,
+                    f"Valid for {int(new_secs/60)}m ✓ (just refreshed)",
+                )
         except Exception:
             pass  # Fall through to expiry/network reporting
 
         # Refresh failed — report expiry AND possibly network block
-        checks_to_return: list[CheckResult] = []
-
-        if secs_left < 0:
+        if secs_left is None:
+            expired_msg = "Token or expiry invalid; freshness is unverified"
+        elif secs_left < 0:
             expired_msg = f"Token expired {int(-secs_left/60)}m ago"
         else:
             expired_msg = f"Token expires in {int(secs_left/60)}m"
@@ -185,12 +168,6 @@ def check_msgraph_token() -> CheckResult:
             fix_hint="Run: python scripts/setup_msgraph_oauth.py --reauth",
         )
 
-    if secs_left == float("inf"):
-        return CheckResult(
-            "Microsoft Graph token", "P1", False,
-            "Token expiry unknown; freshness is unverified",
-        )
-
     # 48h advance warning — prompts re-auth before the token expires mid-session
     TOKEN_ADVANCE_WARN_SECONDS = 172800  # 48 hours
     if 0 < secs_left < TOKEN_ADVANCE_WARN_SECONDS:
@@ -204,5 +181,4 @@ def check_msgraph_token() -> CheckResult:
         "Microsoft Graph token", "P1", True,
         f"Valid for {int(secs_left/60)}m ✓",
     )
-
 

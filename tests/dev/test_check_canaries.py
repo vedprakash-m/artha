@@ -85,6 +85,26 @@ def test_import_check_passes_on_clean_tree(tree):
     assert make(tree, "import-check").returncode == 0
 
 
+def test_import_check_runs_with_legacy_console_encoding(tmp_path):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "ok.py").write_text("VALUE = 1\n")
+    env = dict(os.environ)
+    env.pop("PYTHONUTF8", None)
+    env["PYTHONIOENCODING"] = "cp1252"
+
+    result = subprocess.run(
+        [sys.executable, str(REPO / "tools" / "import_check.py"), str(scripts)],
+        capture_output=True,
+        text=True,
+        encoding="cp1252",
+        timeout=30,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_import_check_fails_on_dual_import(tree):
     (tree / "scripts" / "dual.py").write_text("from scripts.ok import VALUE\n")
     result = make(tree, "import-check")

@@ -227,7 +227,6 @@ def load(path: Path = SIGNALS_FILE) -> SignalDocument:
     fm.setdefault("domain", "planning_signals")
     fm.setdefault("sensitivity", "medium")
     fm.setdefault("encrypted", False)
-    fm.setdefault("last_updated", _today())
     fm.setdefault("next_signal_id", _next_signal_id(fm.get("signals", [])))
     fm.setdefault("token_estimate", 0)
     fm.setdefault("signals", [])
@@ -235,8 +234,14 @@ def load(path: Path = SIGNALS_FILE) -> SignalDocument:
     return SignalDocument(fm, body or "# Planning Signals\n")
 
 
-def validate(doc: SignalDocument) -> list[str]:
+def validate(doc: SignalDocument, today: date | None = None) -> list[str]:
     errors: list[str] = []
+    last_updated = doc.frontmatter.get("last_updated")
+    updated = _parse_date(last_updated)
+    if updated is None or updated.isoformat() != str(last_updated):
+        errors.append("last_updated must be a valid YYYY-MM-DD date")
+    elif updated > (today or date.today()):
+        errors.append("last_updated cannot be in the future")
     signals = doc.signals
     active = [s for s in signals if not s.get("materialized")]
     if len(active) > 15:
@@ -301,6 +306,8 @@ def normalize_evidence(evidence: str, observed_on: str | None = None, source: st
 
 
 def save(doc: SignalDocument, path: Path = SIGNALS_FILE) -> None:
+    if "last_updated" not in doc.frontmatter:
+        doc.frontmatter["last_updated"] = _today()
     errors = validate(doc)
     if errors:
         raise PlanningSignalError("; ".join(errors))
@@ -450,6 +457,14 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def active_signals_are_stale(doc: SignalDocument, today: date | None = None) -> bool:
+    if not any(not signal.get("materialized") for signal in doc.signals):
+        return False
+    today = today or date.today()
+    updated = _parse_date(doc.frontmatter.get("last_updated"))
+    return updated is None or updated > today or (today - updated).days >= 2
 
 
 def _threshold_met(signal: dict[str, Any], today: date) -> bool:

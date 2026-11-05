@@ -110,6 +110,67 @@ class TestGetDelta:
         assert get_delta("uscis", current, {}, ["status"]) is True
 
 
+class TestPlatformRouting:
+    @pytest.mark.parametrize(
+        ("run_on", "host", "expected"),
+        [
+            ("darwin", "Windows", False),
+            ("windows", "Darwin", False),
+            ("darwin", "Linux", False),
+            ("darwin", "Darwin", True),
+            ("windows", "Windows", True),
+            ("all", "Windows", True),
+            (["darwin", "windows"], "Windows", True),
+            (["darwin", "windows"], "Linux", False),
+        ],
+    )
+    def test_platform_restriction_precedes_cadence(self, monkeypatch, run_on, host, expected):
+        import platform
+        import skill_runner
+
+        monkeypatch.setattr(platform, "system", lambda: host)
+        config = {"skills": {"native": {
+            "enabled": True, "priority": "P0", "run_on": run_on, "cadence": "every_run",
+        }}}
+
+        assert skill_runner.should_run("native", config, {}) is expected
+
+    def test_force_bypasses_cadence_without_bypassing_enabled_or_platform(self, monkeypatch):
+        import platform
+        import skill_runner
+
+        monkeypatch.setattr(platform, "system", lambda: "Windows")
+        recent = datetime.now(timezone.utc).isoformat()
+        cache = {"native": {"last_run": recent}}
+        settings = {"enabled": True, "run_on": "windows", "cadence": "weekly"}
+        config = {"skills": {"native": settings}}
+
+        assert skill_runner.should_run("native", config, cache) is False
+        assert skill_runner.should_run("native", config, cache, force=True) is True
+        settings["run_on"] = "darwin"
+        assert skill_runner.should_run("native", config, cache, force=True) is False
+        settings.update(run_on="windows", enabled=False)
+        assert skill_runner.should_run("native", config, cache, force=True) is False
+
+    def test_single_skill_force_never_dispatches_a_foreign_platform_skill(self, monkeypatch):
+        import platform
+        import skill_runner
+
+        monkeypatch.setattr(platform, "system", lambda: "Windows")
+        monkeypatch.setattr(sys, "argv", ["skill_runner.py", "--skill", "imessage_appointments", "--force"])
+        monkeypatch.setattr(skill_runner, "_TRACE_AVAILABLE", False)
+        monkeypatch.setattr(skill_runner, "load_config", lambda: {"skills": {
+            "imessage_appointments": {"enabled": True, "priority": "P0", "run_on": "darwin"},
+        }})
+        monkeypatch.setattr(skill_runner, "load_cache", lambda: {})
+        executor = MagicMock(side_effect=AssertionError("foreign-platform skill was dispatched"))
+        monkeypatch.setattr(skill_runner, "ThreadPoolExecutor", executor)
+
+        skill_runner.main()
+
+        executor.assert_not_called()
+
+
 # ── load_config / load_cache ────────────────────────────────────────────────
 
 class TestLoadFunctions:

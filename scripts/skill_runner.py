@@ -6,6 +6,7 @@ import time
 import logging
 import importlib
 import importlib.util
+import platform
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -222,8 +223,10 @@ def _cadence_elapsed(skill_name: str, cadence: str, cache: Dict[str, Any]) -> bo
     return True
 
 
-def should_run(skill_name: str, config: Dict[str, Any], cache: Dict[str, Any]) -> bool:
-    """Enforce cadence control with R7 health-aware cadence reduction.
+def should_run(
+    skill_name: str, config: Dict[str, Any], cache: Dict[str, Any], *, force: bool = False,
+) -> bool:
+    """Enforce enabled/platform restrictions before optional cadence control.
 
     R7 is checked AFTER the configured cadence passes — it can only reduce
     frequency, never increase it. A weekly skill stays weekly at minimum.
@@ -232,6 +235,18 @@ def should_run(skill_name: str, config: Dict[str, Any], cache: Dict[str, Any]) -
     skill_cfg = config.get("skills", {}).get(skill_name, {})
     if not skill_cfg.get("enabled"):
         return False
+
+    run_on = skill_cfg.get("run_on", "all")
+    if run_on != "all":
+        allowed = [run_on] if isinstance(run_on, str) else run_on
+        current_platform = platform.system().lower()
+        if current_platform not in allowed:
+            logging.info(
+                "Skipping %s (platform %s not in run_on: %s)", skill_name, current_platform, run_on,
+            )
+            return False
+    if force:
+        return True
 
     configured_cadence = skill_cfg.get("cadence", "every_run")
 
@@ -362,10 +377,13 @@ def main():
         if not skill_cfg.get("enabled"):
             logging.warning(f"Skill '{cli.skill}' is disabled in config/skills.yaml. Skipping.")
             return
-        if cli.force or should_run(cli.skill, config, cache):
+        if should_run(cli.skill, config, cache, force=cli.force):
             enabled_skills = [cli.skill]
         else:
-            logging.info(f"Skill '{cli.skill}' cadence not yet reached. Use --force to override.")
+            logging.info(
+                "Skill '%s' is not eligible; --force bypasses cadence, not platform restrictions.",
+                cli.skill,
+            )
             return
     else:
         enabled_skills = [

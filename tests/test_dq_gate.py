@@ -468,7 +468,6 @@ class TestQualityVerdictOrdering:
 # ---------------------------------------------------------------------------
 
 _work_helpers_available = importlib.util.find_spec("work") is not None
-_work_domain_writers_available = importlib.util.find_spec("work_domain_writers") is not None
 
 
 @pytest.mark.skipif(not _work_helpers_available, reason="work.helpers not available (gitignored)")
@@ -612,114 +611,6 @@ class TestPreAnswerQualityGate:
         assert len(lines) == 2
         sections_logged = {_json.loads(l)["section"] for l in lines}
         assert sections_logged == {"calendar", "comms"}
-
-
-# ---------------------------------------------------------------------------
-# Phase E (N5) — stamp_warmstart_providers()
-# ---------------------------------------------------------------------------
-
-@pytest.mark.skipif(not _work_domain_writers_available, reason="work_domain_writers not available (gitignored)")
-class TestStampWarmstartProviders:
-    """spec N5 — stamp_warmstart_providers() stamps human-authored files non-destructively."""
-
-    # sys.path includes scripts/ in conftest so we can import from work package
-    @pytest.fixture(autouse=True)
-    def _patch_sys_path(self, tmp_path):
-        """Ensure scripts/ is importable (mirrors conftest setup)."""
-        import sys
-        scripts_dir = Path(__file__).parent.parent / "scripts"
-        if str(scripts_dir) not in sys.path:
-            sys.path.insert(0, str(scripts_dir))
-
-    def _make_file(self, state_dir: Path, filename: str, frontmatter: dict) -> Path:
-        import yaml  # type: ignore[import]
-        p = state_dir / filename
-        p.write_text(
-            "---\n" + yaml.safe_dump(frontmatter) + "---\n\nContent here.\n",
-            encoding="utf-8",
-        )
-        return p
-
-    def test_stamps_file_without_providers_used(self, tmp_path):
-        """Files lacking providers_used get stamped with ['human_authored']."""
-        import yaml  # type: ignore[import]
-        from work_domain_writers import stamp_warmstart_providers
-
-        self._make_file(tmp_path, "work-people.md", {"last_updated": "2026-01-01"})
-        stamp_warmstart_providers(tmp_path)
-
-        text = (tmp_path / "work-people.md").read_text()
-        fm = yaml.safe_load(text.split("---")[1])
-        assert fm["providers_used"] == ["human_authored"]
-
-    def test_skips_file_already_stamped(self, tmp_path):
-        """Files that already have providers_used are not overwritten."""
-        import yaml  # type: ignore[import]
-        from work_domain_writers import stamp_warmstart_providers
-
-        original_providers = ["workiq", "ado"]
-        self._make_file(tmp_path, "work-decisions.md", {
-            "last_updated": "2026-01-01",
-            "providers_used": original_providers,
-        })
-        stamp_warmstart_providers(tmp_path)
-
-        text = (tmp_path / "work-decisions.md").read_text()
-        fm = yaml.safe_load(text.split("---")[1])
-        assert fm["providers_used"] == original_providers
-
-    def test_skips_missing_file_silently(self, tmp_path):
-        """Missing warm-start files are silently skipped — no exception raised."""
-        from work_domain_writers import stamp_warmstart_providers
-
-        # Empty state_dir — none of the 6 warm-start files exist
-        stamp_warmstart_providers(tmp_path)  # must not raise
-
-    def test_stamps_all_six_warmstart_files(self, tmp_path):
-        """All 6 warm-start files are stamped in a single call."""
-        import yaml  # type: ignore[import]
-        from work_domain_writers import stamp_warmstart_providers
-
-        warmstart_files = [
-            "work-people.md",
-            "work-accomplishments.md",
-            "work-decisions.md",
-            "work-scope.md",
-            "work-performance.md",
-            "golden-queries.md",
-        ]
-        for f in warmstart_files:
-            self._make_file(tmp_path, f, {"last_updated": "2026-01-01"})
-
-        stamp_warmstart_providers(tmp_path)
-
-        for f in warmstart_files:
-            text = (tmp_path / f).read_text()
-            fm = yaml.safe_load(text.split("---")[1])
-            assert fm.get("providers_used") == ["human_authored"], f"{f} was not stamped"
-
-    def test_idempotent_double_call(self, tmp_path):
-        """Calling stamp twice does not corrupt the file or duplicate the key."""
-        import yaml  # type: ignore[import]
-        from work_domain_writers import stamp_warmstart_providers
-
-        self._make_file(tmp_path, "work-scope.md", {"last_updated": "2026-01-01"})
-        stamp_warmstart_providers(tmp_path)
-        stamp_warmstart_providers(tmp_path)  # second call
-
-        text = (tmp_path / "work-scope.md").read_text()
-        fm = yaml.safe_load(text.split("---")[1])
-        assert fm["providers_used"] == ["human_authored"]
-
-    def test_file_without_frontmatter_skipped(self, tmp_path):
-        """Files without YAML frontmatter (no leading ---) are skipped cleanly."""
-        from work_domain_writers import stamp_warmstart_providers
-
-        p = tmp_path / "work-performance.md"
-        p.write_text("Just plain content, no frontmatter.\n", encoding="utf-8")
-        stamp_warmstart_providers(tmp_path)  # must not raise or corrupt
-
-        assert p.read_text() == "Just plain content, no frontmatter.\n"
 
 
 # ---------------------------------------------------------------------------

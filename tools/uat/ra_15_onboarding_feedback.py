@@ -44,14 +44,25 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else "missing"
 
 
+def list_check(key: str, *, live: bool):
+    """A list answer; live, a named scoped-consent refusal also counts (the shadow store holds no household consent)."""
+    def check(o: h.Outcome) -> bool:
+        if o.ok:
+            return isinstance(o.data[key], list)
+        return live and h.refused(o, "scoped ingest consent")
+    return check
+
+
 def scenario(runner, report: h.Report) -> None:
     config = runner.root / "config" / "catchup_core.yaml"
     h.run_step(runner, report, ["health", h.SHADOW], "integrity verified; capability states and freshness reported",
                lambda o: o.ok and o.data["integrity"] is True and isinstance(o.data["capabilities"], list)
                and "stale" in o.data["freshness"])
     for command, key in (("history", "briefings"), ("items", "items"), ("goals", "goals")):
-        h.run_step(runner, report, [command, h.SHADOW], f"{command} answers with a list, even on first use",
-                   lambda o, key=key: o.ok and isinstance(o.data[key], list))
+        h.run_step(runner, report, [command, h.SHADOW],
+                   f"{command} answers with a list, even on first use" + (
+                       " (live: or names the missing scoped consent)" if runner.live else ""),
+                   list_check(key, live=runner.live))
     before = _digest(config)
     shadow = h.run_step(runner, report, ["configure", "bootstrap_days", "45", h.SHADOW],
                         "preview shows before/after, a diff and an apply digest; applied is false",

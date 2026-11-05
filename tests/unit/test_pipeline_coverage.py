@@ -108,6 +108,79 @@ def test_without_collector_behaviour_is_unchanged():
     assert err is None and len(lines) == 1
 
 
+@pytest.mark.parametrize("records,scopes,expected_error", [
+    ([], [], None),
+    ([_cal(1)], [], None),
+    ([{"id": "bad", "source": "google_calendar"}], [], "rejected"),
+    ([_cal(1), {"id": "bad", "source": "google_calendar"}], [], "rejected"),
+    ([_cal(1)], [("calendar:secondary", "failed", {"reason": "unavailable"})], "failed"),
+    ([], [("calendar:secondary", "truncated", {"reason": "limit"})], "truncated"),
+])
+def test_fetch_single_discloses_degraded_coverage(monkeypatch, records, scopes, expected_error):
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: _Handler(records, scopes=scopes))
+    cfg = {"connectors": {"google_calendar": {
+        "fetch": {"handler": "connectors.google_calendar"}, "retry": {"max_attempts": 0},
+    }}}
+    lines, _elapsed, error = pipeline.fetch_single("google_calendar", cfg, auth_ctx={})
+    assert len(lines) == sum("start" in record for record in records)
+    if expected_error is None:
+        assert error is None
+    else:
+        assert error and expected_error in error
+
+
+@pytest.mark.parametrize("configured,override,expected", [
+    (None, None, "google_calendar"),
+    ("configured_calendar", None, "configured_calendar"),
+    ("configured_calendar", "caller_calendar", "caller_calendar"),
+])
+def test_fetch_single_forwards_one_source_tag_without_duplicate_keywords(
+    monkeypatch, configured, override, expected,
+):
+    captured = []
+
+    class Handler:
+        def fetch(self, *, source_tag, **kwargs):
+            captured.append(source_tag)
+            yield _cal(1, source=source_tag)
+
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: Handler())
+    fetch = {"handler": "connectors.google_calendar"}
+    if configured is not None:
+        fetch["source_tag"] = configured
+    cfg = {"connectors": {"google_calendar": {"fetch": fetch, "retry": {"max_attempts": 0}}}}
+    kwargs = {} if override is None else {"source_tag": override}
+    lines, _elapsed, error = pipeline.fetch_single("google_calendar", cfg, auth_ctx={}, **kwargs)
+    assert error is None
+    assert captured == [expected]
+    assert json.loads(lines[0])["source"] == expected
+
+
+def test_fetch_single_workiq_legacy_calendar_is_explicitly_rejected(monkeypatch):
+    from connectors import workiq_bridge
+
+    calls = []
+
+    def query(question):
+        calls.append(question)
+        return "2026-03-16 | 09:00 | 10:00 | Synthetic meeting | Example | Teams | yes"
+
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: workiq_bridge)
+    monkeypatch.setattr(workiq_bridge, "_load_cache", lambda: {})
+    monkeypatch.setattr(workiq_bridge, "_save_cache", lambda _: None)
+    monkeypatch.setattr(workiq_bridge, "_redact_keywords", lambda: [])
+    monkeypatch.setattr(workiq_bridge, "_ask_workiq", query)
+    cfg = {"connectors": {"workiq_bridge": {
+        "fetch": {"handler": "connectors.workiq_bridge"}, "retry": {"max_attempts": 0},
+    }}}
+    lines, _elapsed, error = pipeline.fetch_single(
+        "workiq_bridge", cfg, auth_ctx={}, source_tag="workiq",
+    )
+    assert len(calls) == 1
+    assert lines == []
+    assert error and "rejected" in error
+
+
 def test_record_runs_persists_history_and_returns_line(tmp_path):
     coll = cc.CoverageCollector()
     coll.add(cc.ConnectorRun("google_calendar", 0, 5, ["start missing"], None, [], 1.0))
@@ -116,6 +189,112 @@ def test_record_runs_persists_history_and_returns_line(tmp_path):
     line = pipeline._record_coverage(coll, store, at="2026-10-11T00:00:00Z")
     assert "google_calendar" in line and "no all-clear" in line
     assert store.load()["connectors"]["gmail"]["last_success_at"] == "2026-10-11T00:00:00Z"
+
+
+@pytest.mark.parametrize("records,error,scopes,expected", [
+    ([], None, [], ["google_calendar"]),
+    ([_cal(1)], None, [], ["google_calendar"]),
+    ([], RuntimeError("invalid_grant"), [], []),
+    ([_cal(1)], RuntimeError("invalid_grant"), [], []),
+    ([{"id": "invalid", "source": "google_calendar"}], None, [], []),
+    ([_cal(1)], None, [("calendar:family", "failed", {"reason": "403"})], []),
+])
+def test_pipeline_freshness_advances_only_complete_connectors(monkeypatch, records, error, scopes, expected):
+    from unittest.mock import Mock
+
+    handler = _Handler(records, raises=error, scopes=scopes)
+    freshness = Mock()
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: handler)
+    monkeypatch.setattr(pipeline, "load_auth_context", lambda _: {})
+    monkeypatch.setattr(pipeline, "_update_connector_freshness", freshness)
+    cfg = {"connectors": {"google_calendar": {
+        "enabled": True,
+        "fetch": {"handler": "connectors.google_calendar"},
+        "retry": {"max_attempts": 0},
+    }}}
+
+    pipeline.run_pipeline(cfg, since="2026-10-10T00:00:00Z")
+
+    freshness.assert_called_once()
+    assert freshness.call_args.kwargs["fetched_connectors"] == expected
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_personal_pipeline_does_not_create_or_modify_work_pulse(tmp_path, monkeypatch, existing):
+    from schemas.bridge_schemas import make_work_load_pulse
+
+    pulse = tmp_path / "state" / "bridge" / "work_load_pulse.json"
+    pulse.parent.mkdir(parents=True)
+    original = json.dumps(make_work_load_pulse("2026-03-16", 6.5, 2, 0.4, 0)).encode()
+    if existing:
+        pulse.write_bytes(original)
+    monkeypatch.setattr(pipeline, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: _Handler([_cal(1)]))
+    monkeypatch.setattr(pipeline, "load_auth_context", lambda _: {})
+    monkeypatch.setattr(pipeline, "_update_connector_freshness", lambda **kwargs: None)
+    cfg = {"connectors": {"google_calendar": {
+        "enabled": True, "fetch": {"handler": "connectors.google_calendar"},
+        "retry": {"max_attempts": 0},
+    }}}
+    assert pipeline.run_pipeline(cfg, since="2026-03-10T00:00:00Z") == 0
+    assert pulse.exists() is existing
+    if existing:
+        assert pulse.read_bytes() == original
+
+
+def test_missing_outlookctl_is_unavailable_and_does_not_advance_freshness(monkeypatch):
+    from unittest.mock import Mock
+
+    from connectors import outlookctl_bridge
+
+    monkeypatch.setattr("platform.system", lambda: "Windows")
+    monkeypatch.setattr(outlookctl_bridge, "_find_outlookctl", lambda: None)
+    (_name, lines, _elapsed, error), collector = _run(outlookctl_bridge, name="outlookctl_bridge")
+
+    assert lines == [] and error and "not found" in error
+    assert collector.runs[0].status() == "unavailable"
+    assert collector.runs[0].quiet_claim_allowed() is False
+
+    freshness = Mock()
+    monkeypatch.setattr(pipeline, "load_auth_context", lambda _: {})
+    monkeypatch.setattr(pipeline, "_update_connector_freshness", freshness)
+    cfg = {"connectors": {"outlookctl_bridge": {
+        "enabled": True,
+        "fetch": {"handler": "connectors.outlookctl_bridge"},
+        "retry": {"max_attempts": 0},
+    }}}
+
+    assert pipeline.run_pipeline(cfg, since="2026-10-10T00:00:00Z") != 0
+    freshness.assert_called_once()
+    assert freshness.call_args.kwargs["fetched_connectors"] == []
+
+
+@pytest.mark.parametrize("first,second,expected,failed", [
+    ([_cal(1)], [_cal(1), _cal(2)], [_cal(1), _cal(2)], False),
+    ([_cal(1)], [_cal(2)], [_cal(2)], False),
+    ([_cal(1)], [], [], False),
+    ([_cal(1)], [_cal(1), _cal(2)], [_cal(1), _cal(2)], True),
+])
+def test_retry_publishes_successful_snapshot_without_replaying_failed_prefix(first, second, expected, failed):
+    from unittest.mock import Mock
+
+    handler = Mock()
+    handler.fetch.side_effect = [
+        _Handler(first, raises=RuntimeError("503 temporary outage")).fetch(),
+        _Handler(second, raises=RuntimeError("503 temporary outage") if failed else None).fetch(),
+    ]
+    collector = cc.CoverageCollector()
+
+    _name, lines, _elapsed, error = pipeline._fetch_one(
+        "google_calendar", handler, {}, {},
+        {"max_attempts": 1, "base_delay_seconds": 0.0, "max_delay_seconds": 0.0},
+        since="2026-10-10T00:00:00Z", coverage=collector,
+    )
+
+    assert [json.loads(line)["id"] for line in lines] == [record["id"] for record in expected]
+    assert bool(error) is failed
+    assert handler.fetch.call_count == 2
+    assert collector.runs[0].records == len(expected)
 
 
 # ── --exclude-source (re-artha §6.14 prerequisite) ─────────────────────────

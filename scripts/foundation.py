@@ -17,7 +17,7 @@ Exports:
   _config, ARTHA_DIR, STATE_DIR, CONFIG_DIR, AUDIT_LOG, LOCK_FILE,
   SENSITIVE_FILES, KC_SERVICE, KC_ACCOUNT, STALE_THRESHOLD, LOCK_TTL,
   log, die, get_private_key, get_public_key,
-  check_age_installed, age_decrypt, age_encrypt
+  check_age_installed, get_age_vault, age_decrypt, age_encrypt
 
 Ref: TS §8.5, specs/bkp-rst.md §3.3
 """
@@ -37,13 +37,15 @@ reexec_in_venv()
 
 import os
 
-import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from catchup_core.vault import AgeVault
 
 try:
     import yaml as _yaml  # PyYAML — in requirements.txt
@@ -242,14 +244,31 @@ def get_public_key() -> str:
 # ---------------------------------------------------------------------------
 
 def _find_age_bin() -> str | None:
-    """Return path to age binary, checking PATH and common macOS/Linux locations."""
-    found = shutil.which("age")
-    if found:
-        return found
-    for candidate in ("/opt/homebrew/bin/age", "/usr/local/bin/age"):
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    """Use the shared cross-platform age executable discovery."""
+    from catchup_core.vault import find_age_bin
+
+    return find_age_bin()
+
+
+def get_age_vault(*, state_dir: Path | str | None = None) -> AgeVault:
+    """Construct an in-memory State File vault using the current configuration."""
+    from catchup_core.vault import AgeVault, VaultUnavailable
+
+    try:
+        recipient = get_public_key()
+    except SystemExit as exc:
+        raise VaultUnavailable("age recipient is unavailable") from exc
+
+    def identity() -> str:
+        try:
+            return get_private_key()
+        except SystemExit as exc:
+            raise VaultUnavailable("age private key is unavailable") from exc
+
+    return AgeVault(
+        _config["STATE_DIR"] if state_dir is None else state_dir,
+        identity=identity, recipient=recipient, age_bin=_find_age_bin(),
+    )
 
 
 def get_age_bin() -> str:
@@ -265,25 +284,16 @@ def check_age_installed() -> bool:
 def age_decrypt(privkey: str, input_path: Path, output_path: Path) -> bool:
     """Decrypt *input_path* with *privkey* and write plaintext to *output_path*.
 
-    Writes the private key to a temp file to avoid shell process substitution
-    (which is bash-only). Returns True on success.
+    Pass the private key on stdin, never through a file or command argument.
+    Returns True on success.
     """
-    tmpfd, tmppath = tempfile.mkstemp(prefix="artha_age_", suffix=".key")
-    try:
-        with os.fdopen(tmpfd, "w") as f:
-            f.write(privkey)
-        age_cmd = _find_age_bin() or "age"
-        result = subprocess.run(
-            [age_cmd, "--decrypt", "--identity", tmppath,
-             "--output", str(output_path), str(input_path)],
-            capture_output=True, text=True,
-        )
-        return result.returncode == 0
-    finally:
-        try:
-            os.unlink(tmppath)
-        except OSError:
-            pass
+    age_cmd = _find_age_bin() or "age"
+    result = subprocess.run(
+        [age_cmd, "--decrypt", "--identity", "-",
+         "--output", str(output_path), str(input_path)],
+        input=privkey.rstrip() + "\n", capture_output=True, text=True, timeout=60,
+    )
+    return result.returncode == 0
 
 
 def age_encrypt(pubkey: str, input_path: Path, output_path: Path) -> bool:
@@ -310,11 +320,10 @@ def age_encrypt_string(pubkey: str, plaintext: str) -> str:
         RuntimeError: if age is not installed or encryption fails.
     """
     import base64
-    import shutil
     import subprocess
-    age = shutil.which("age")
+    age = _find_age_bin()
     if not age:
-        raise RuntimeError("age CLI not found on PATH; cannot encrypt string")
+        raise RuntimeError("age CLI not found; cannot encrypt string")
     proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
         [age, "-r", pubkey], input=plaintext.encode("utf-8"), capture_output=True, timeout=60, check=False,
     )
@@ -327,18 +336,17 @@ def age_decrypt_string(privkey: str, ciphertext_b64: str) -> str:
     """Decrypt a base64 age ciphertext to a string without writing the key or plaintext to disk.
 
     POSIX: the private key reaches ``age`` through an inherited pipe (``-i /dev/fd/N``),
-    the ciphertext on stdin, the plaintext returns on stdout.  Windows has no ``/dev/fd``;
-    there the legacy temporary-file path is retained (documented limitation, WP-06).
+    the ciphertext on stdin, the plaintext returns on stdout. Windows uses a temporary
+    ciphertext file and the shared vault reader; its key and plaintext stay on pipes.
 
     Raises:
         RuntimeError: if age is not installed or decryption fails.
     """
     import base64
-    import shutil
     import subprocess
-    age = shutil.which("age")
+    age = _find_age_bin()
     if not age:
-        raise RuntimeError("age CLI not found on PATH; cannot decrypt string")
+        raise RuntimeError("age CLI not found; cannot decrypt string")
     raw = base64.b64decode(ciphertext_b64)
 
     if sys.platform != "win32":
@@ -359,21 +367,16 @@ def age_decrypt_string(privkey: str, ciphertext_b64: str) -> str:
             raise RuntimeError("age_decrypt_string: decryption failed")
         return proc.stdout.decode("utf-8")
 
-    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".age")  # pragma: no cover
-    out_path = Path(in_path_str).with_suffix(".txt")
+    from catchup_core.vault import AgeVault
+
+    in_fd, in_path_str = tempfile.mkstemp(prefix="artha_age_in_", suffix=".age")
     try:
         with os.fdopen(in_fd, "wb") as f:
             f.write(raw)
-        ok = age_decrypt(privkey, Path(in_path_str), out_path)
-        if not ok:
-            raise RuntimeError("age_decrypt_string: decryption failed")
-        return out_path.read_text(encoding="utf-8")
+        reader = AgeVault(Path(in_path_str).parent, identity=lambda: privkey, recipient="", age_bin=age)
+        return reader.read_artifact(Path(in_path_str))
     finally:
-        for leftover in (Path(in_path_str), out_path):
-            try:
-                leftover.unlink(missing_ok=True)
-            except OSError:
-                pass
+        Path(in_path_str).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------

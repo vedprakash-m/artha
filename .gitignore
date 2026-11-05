@@ -54,7 +54,8 @@ specs/*
 !specs/artha-tech-spec.md
 !specs/artha-ux-spec.md
 
-# --- State files (all user-generated, ALL subdirectories) ---
+# --- State files (user-generated, including all subdirectories) ---
+state/*
 state/*.md
 state/*.md.age
 state/*.yaml
@@ -89,15 +90,14 @@ state/travel/
 state/audit/
 !state/.gitkeep
 !state/templates/
+!state/learned_procedures/
 
 # --- GFS backup snapshots (ZIP-per-day, stored at project root) ---
 backups/
 
 # --- Briefing and summary archives ---
-# Daily briefing files are personal (never committed)
-briefings/*.md
-briefings/*.lock
-briefings/career/
+# Briefing files are personal (never committed)
+briefings/
 summaries/
 
 # --- Email archives and raw review files ---

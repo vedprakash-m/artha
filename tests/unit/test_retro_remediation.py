@@ -66,3 +66,18 @@ def test_domain_in_last_run_not_stale(retro):
     assert "health" not in stale, (
         f"'health' should not be stale (present in last run), got stale: {stale}"
     )
+
+
+@pytest.mark.parametrize("existing", ["alerts: [", "- not-a-mapping", "{}"])
+def test_stale_alert_writer_preserves_invalid_history(retro, tmp_path, capsys, existing):
+    alerts_path = tmp_path / "eval_alerts.yaml"
+    alerts_path.write_text(existing, encoding="utf-8")
+    original = alerts_path.read_bytes()
+
+    retro._write_stale_domain_p2_alerts(
+        [{"domain": "synthetic", "last_updated": "2026-01-01", "days_stale": 30}],
+        tmp_path,
+    )
+
+    assert alerts_path.read_bytes() == original
+    assert "evaluation alerts" in capsys.readouterr().err.lower()

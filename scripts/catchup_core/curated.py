@@ -139,7 +139,7 @@ def read_state(directory: Path, name: str) -> str:
     if not re.fullmatch(r"[a-z_]+", name):
         raise ValueError("invalid State File name")
     if (directory / f"{name}.md.age").exists():
-        vault = importlib.import_module("foundation").get_age_vault()
+        vault = importlib.import_module("foundation").get_age_vault(state_dir=directory)
         return str(vault.read(name))
     path = directory / f"{name}.md"
     return path.read_text(encoding="utf-8") if path.exists() else ""

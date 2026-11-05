@@ -147,6 +147,41 @@ def test_exempt_fixture_path_allowed_unlisted_fixture_blocked(sandbox):
     assert sandbox.commit("not listed", check=False).returncode != 0
 
 
+@pytest.mark.parametrize(("rel", "ignored"), [
+    ("state/new-domain/nested/state.md", True),
+    ("state/new-domain/private.txt", True),
+    ("state/data/nested/cache.sqlite", True),
+    ("state/private.dat", True),
+    ("briefings/nested/briefing.md", True),
+    ("briefings/nested/briefing.txt", True),
+    ("briefings/preview.json", True),
+    ("state/.gitkeep", False),
+    ("state/templates/new-template.yaml", False),
+    ("state/templates/nested/new-template.md", False),
+    ("state/learned_procedures/new-procedure.md", False),
+])
+def test_repository_gitignore_protects_state_and_briefings(sandbox, rel, ignored):
+    shutil.copy(REPO / ".gitignore", sandbox.root / ".gitignore")
+    result = sandbox.git("check-ignore", "--no-index", "--", rel, check=False)
+    assert result.returncode == int(not ignored), out(result)
+
+
+@pytest.mark.parametrize(("rel", "blocked"), [
+    ("state/new-domain/nested/state.md", True),
+    ("briefings/nested/briefing.txt", True),
+    ("state/templates/nested/example.md", False),
+    ("state/learned_procedures/example.md", False),
+])
+def test_forced_git_add_still_enforces_privacy_paths(sandbox, rel, blocked):
+    shutil.copy(REPO / ".gitignore", sandbox.root / ".gitignore")
+    sandbox.write(rel, "synthetic\n")
+    sandbox.git("add", "-f", rel)
+    result = sandbox.git("commit", "-m", "synthetic", check=False)
+    assert (result.returncode != 0) is blocked
+    if blocked:
+        assert "BLOCKED" in out(result)
+
+
 def test_secret_in_renamed_file_blocked_by_content(sandbox):
     sandbox.write("notes/innocent.cfg", f"key = {AWS_KEY}\n")
     result = sandbox.commit("secret", check=False)
@@ -280,6 +315,113 @@ def privacy_scanner(monkeypatch):
     monkeypatch.syspath_prepend(str(HOOKS))
     import privacy_scan
     return privacy_scan
+
+
+@pytest.mark.parametrize("mode", ["staged", "staged-repeat", "range"])
+def test_unreadable_git_blob_fails_closed(sandbox, monkeypatch, privacy_scanner, mode):
+    sandbox.write("docs/selected.md", "synthetic content\n")
+    if mode.startswith("staged"):
+        sandbox.git("add", "docs/selected.md")
+    else:
+        sandbox.commit("synthetic")
+
+    original = privacy_scanner.run_git
+    reads = 0
+
+    def unreadable_blob(args, cwd, *, text=True):
+        nonlocal reads
+        if args[0] == "show":
+            reads += 1
+            if mode != "staged-repeat" or reads > 1:
+                return subprocess.CompletedProcess(args, 128, "", "PRIVATE_PAYLOAD")
+        return original(args, cwd, text=text)
+
+    monkeypatch.setattr(privacy_scanner, "run_git", unreadable_blob)
+    monkeypatch.setattr(privacy_scanner, "denylist_for", lambda repo: privacy_scanner.Denylist())
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+    findings = (privacy_scanner.scan_staged(sandbox.root) if mode.startswith("staged")
+                else privacy_scanner.scan_range(sandbox.root, ["HEAD"]))
+
+    assert any("Git blob" in finding.reason and "fail closed" in finding.reason
+               for finding in findings)
+    assert all("PRIVATE_PAYLOAD" not in finding.render() for finding in findings)
+
+
+@pytest.mark.parametrize("mode", ["staged", "range"])
+def test_empty_git_blob_remains_scannable(sandbox, monkeypatch, privacy_scanner, mode):
+    sandbox.write("docs/empty.md", "")
+    if mode == "staged":
+        sandbox.git("add", "docs/empty.md")
+    else:
+        sandbox.commit("synthetic")
+    monkeypatch.setattr(privacy_scanner, "denylist_for", lambda repo: privacy_scanner.Denylist())
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+
+    findings = (privacy_scanner.scan_staged(sandbox.root) if mode == "staged"
+                else privacy_scanner.scan_range(sandbox.root, ["HEAD"]))
+
+    assert findings == []
+
+
+@pytest.mark.parametrize("mode", ["staged", "range", "tracked"])
+@pytest.mark.parametrize("target", ["profile", "denylist"])
+def test_unreadable_privacy_input_blocks_scan(sandbox, tmp_path, monkeypatch, privacy_scanner, mode, target):
+    sandbox.write("docs/clean.md", "synthetic\n")
+    if mode == "range":
+        sandbox.commit("synthetic")
+    elif mode == "staged":
+        sandbox.git("add", "docs/clean.md")
+    path = (sandbox.root / "config" / "user_profile.yaml" if target == "profile"
+            else tmp_path / "local" / "privacy_denylist.txt")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("synthetic\n", encoding="utf-8")
+    original = Path.read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("PRIVATE_PAYLOAD")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+    if mode == "staged":
+        findings = privacy_scanner.scan_staged(sandbox.root)
+    elif mode == "range":
+        findings = privacy_scanner.scan_range(sandbox.root, ["HEAD"])
+    else:
+        findings = privacy_scanner.scan_tracked(sandbox.root)
+
+    assert any("privacy" in finding.reason and "fail closed" in finding.reason for finding in findings)
+    assert all("PRIVATE_PAYLOAD" not in finding.render() for finding in findings)
+
+
+@pytest.mark.parametrize("target", ["profile", "denylist"])
+def test_invalid_utf8_privacy_input_blocks_scan(sandbox, tmp_path, monkeypatch, privacy_scanner, target):
+    sandbox.write("docs/clean.md", "synthetic\n")
+    sandbox.git("add", "docs/clean.md")
+    path = (sandbox.root / "config" / "user_profile.yaml" if target == "profile"
+            else tmp_path / "local" / "privacy_denylist.txt")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff")
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+
+    findings = privacy_scanner.scan_staged(sandbox.root)
+
+    assert any("privacy" in finding.reason and "fail closed" in finding.reason for finding in findings)
+
+
+def test_available_local_privacy_denylist_still_blocks(sandbox, tmp_path, monkeypatch, privacy_scanner):
+    denylist = tmp_path / "local" / "privacy_denylist.txt"
+    denylist.parent.mkdir(parents=True, exist_ok=True)
+    denylist.write_text("# synthetic\nSynthetic Canary\n", encoding="utf-8")
+    sandbox.write("docs/note.md", "Synthetic Canary\n")
+    sandbox.git("add", "docs/note.md")
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+
+    findings = privacy_scanner.scan_staged(sandbox.root)
+
+    assert any("personal identifier (listed)" in finding.reason for finding in findings)
+    assert all("Synthetic Canary" not in finding.render() for finding in findings)
 
 
 @pytest.mark.parametrize("content", [f"key = {AWS_KEY}\n", "contact = Synthetic Person\n"])

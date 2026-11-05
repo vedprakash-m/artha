@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,6 +35,8 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_SCRIPTS_DIR)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
+
+from lib.connector_coverage import report_scope
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -57,6 +60,7 @@ _WORK_ITEM_FIELDS = [
     "System.IterationPath",
     "System.AreaPath",
     "System.AssignedTo",
+    "One_custom.PM_Owner_Identity",
 ]
 
 # Human-readable output field names (maps API field → record key)
@@ -71,6 +75,7 @@ _FIELD_MAP = {
     "System.IterationPath":                   "iteration_path",
     "System.AreaPath":                        "area_path",
     "System.AssignedTo":                      "assigned_to",
+    "One_custom.PM_Owner_Identity":            "pm_owner",
 }
 
 
@@ -136,29 +141,56 @@ def _get_headers(auth_context: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _wiql_query(org_url: str, project: str, headers: dict, since: str = "") -> list[int]:
-    """Run a WIQL query and return a list of work item IDs assigned to @Me.
+    """Return active assigned/PM-owned items and, when requested, recent changes.
 
-    If *since* is a non-empty ISO-8601 date string (e.g. '2026-03-01'),
-    only items changed on or after that date are returned.
+    Convert ISO-8601 timestamps and relative offsets to WIQL's date-only syntax.
     """
     wiql_url = f"{org_url}/{project}/_apis/wit/wiql?api-version={ADO_API_VERSION}"
-    where_clauses = [
-        "[System.AssignedTo] = @Me",
-        "[System.State] NOT IN ('Closed', 'Resolved', 'Done', 'Removed')",
-    ]
+    active_filter = "[System.State] NOT IN ('Closed', 'Resolved', 'Done', 'Removed')"
+    recent_filter = ""
     if since:
-        where_clauses.append(f"[System.ChangedDate] >= '{since}'")
-    wiql = {
-        "query": (
-            "SELECT [System.Id] FROM WorkItems "
-            "WHERE " + " AND ".join(where_clauses) + " "
-            "ORDER BY [System.ChangedDate] DESC"
-        )
-    }
-    resp = requests.post(wiql_url, json=wiql, headers=headers, timeout=REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    data = resp.json()
-    return [item["id"] for item in data.get("workItems", [])]
+        relative = re.fullmatch(r"(\d+)([dh])", since)
+        if relative:
+            amount = int(relative[1])
+            delta = timedelta(days=amount) if relative[2] == "d" else timedelta(hours=amount)
+            since_date = (datetime.now(timezone.utc) - delta).date()
+        else:
+            try:
+                since_date = datetime.fromisoformat(since.replace("Z", "+00:00")).date()
+            except ValueError:
+                raise ValueError(
+                    "[ado_workitems] since must be an ISO-8601 date/timestamp or a relative offset (7d, 24h)"
+                ) from None
+        recent_filter = f"({active_filter} OR [System.ChangedDate] >= '{since_date.isoformat()}')"
+
+    owner_results: list[list[int]] = []
+    for owner_filter in (
+        "[System.AssignedTo] = @Me",
+        "[One_custom.PM_Owner_Identity] = @Me",
+    ):
+        where_clauses = [owner_filter, recent_filter or active_filter]
+        wiql = {
+            "query": (
+                "SELECT [System.Id] FROM WorkItems "
+                "WHERE " + " AND ".join(where_clauses) + " "
+                "ORDER BY [System.ChangedDate] DESC"
+            )
+        }
+        resp = requests.post(wiql_url, json=wiql, headers=headers, timeout=REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, dict) or not isinstance(data.get("workItems"), list):
+            raise ValueError("[ado_workitems] WIQL response missing a workItems list")
+        owner_results.append([item["id"] for item in data["workItems"]])
+
+    item_ids: list[int] = []
+    seen_ids: set[int] = set()
+    for index in range(max(map(len, owner_results), default=0)):
+        for owner_ids in owner_results:
+            if index < len(owner_ids) and owner_ids[index] not in seen_ids:
+                seen_ids.add(owner_ids[index])
+                item_ids.append(owner_ids[index])
+    return item_ids
 
 
 def _batch_fetch(
@@ -181,7 +213,13 @@ def _batch_fetch(
         )
         resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        all_items.extend(resp.json().get("value", []))
+        data = resp.json()
+        if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+            raise ValueError("[ado_workitems] batch response missing a value list")
+        items = data["value"]
+        if len(items) != len(chunk) or {item["id"] for item in items} != set(chunk):
+            raise RuntimeError("[ado_workitems] incomplete or unexpected batch response")
+        all_items.extend(items)
     return all_items
 
 
@@ -192,12 +230,15 @@ def _normalise_item(raw_item: dict) -> dict:
     for api_field, record_key in _FIELD_MAP.items():
         value = fields.get(api_field)
         # AssignedTo comes as a dict with a displayName
-        if record_key == "assigned_to" and isinstance(value, dict):
+        if record_key in ("assigned_to", "pm_owner") and isinstance(value, dict):
             value = value.get("displayName", "")
         # Dates: trim to YYYY-MM-DD
         if record_key in ("target_date", "changed_date") and isinstance(value, str):
             value = value[:10] if value else ""
         record[record_key] = value
+    if record["id"] is not None:
+        record["id"] = str(record["id"])
+    record["date_iso"] = fields.get("System.ChangedDate")
     record["source"] = "ado"
     record["_ado_url"] = raw_item.get("url", "")
     return record
@@ -215,67 +256,57 @@ def fetch(
     source_tag: str = "ado",
     **kwargs: Any,
 ) -> Iterator[dict]:
-    """Fetch ADO work items assigned to the current user.
+    """Fetch active assigned/PM-owned items and recent changes for the current user.
 
     Reads org_url and project from user_profile.yaml at runtime.
     """
-    org_url, project, configured_auth = _ado_config()
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results < 1:
+        raise ValueError("[ado_workitems] max_results must be a positive integer")
+    org_url, project, _ = _ado_config()
 
     if not org_url or not project:
-        print(
+        raise RuntimeError(
             "[ado_workitems] organization_url or project not configured. "
-            "Run: /bootstrap work",
-            file=sys.stderr,
+            "Run: work bootstrap"
         )
-        return
 
-    try:
-        headers = _get_headers(auth_context)
-    except RuntimeError as exc:
-        print(f"[ado_workitems] auth failed: {exc}", file=sys.stderr)
-        return
+    headers = _get_headers(auth_context)
 
     try:
         item_ids = _wiql_query(org_url, project, headers, since=since)
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "?"
         if status == 401:
-            print(
+            message = (
                 "[ado_workitems] ADO auth error (401). "
-                "Run: az login  to refresh Azure CLI session.",
-                file=sys.stderr,
+                "Run: az login to refresh Azure CLI session."
             )
         elif status == 403:
-            print(
+            message = (
                 "[ado_workitems] ADO permission denied (403). "
-                "Ensure the account has access to the ADO project.",
-                file=sys.stderr,
+                "Ensure the account has access to the ADO project."
             )
         else:
-            print(f"[ado_workitems] WIQL query failed (HTTP {status}): {exc}", file=sys.stderr)
-        return
+            message = f"[ado_workitems] WIQL query failed (HTTP {status}): {exc}"
+        raise RuntimeError(message) from exc
     except requests.RequestException as exc:
-        print(f"[ado_workitems] WIQL query error: {exc}", file=sys.stderr)
-        return
+        raise RuntimeError(f"[ado_workitems] WIQL query error: {exc}") from exc
 
     if not item_ids:
         return
 
     # Respect max_results cap
+    if len(item_ids) > max_results:
+        report_scope("workitems", "truncated", records=max_results, reason="max_results reached")
     item_ids = item_ids[:max_results]
 
     try:
         raw_items = _batch_fetch(org_url, item_ids, headers)
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "?"
-        print(
-            f"[ado_workitems] batch fetch failed (HTTP {status}): {exc}",
-            file=sys.stderr,
-        )
-        return
+        raise RuntimeError(f"[ado_workitems] batch fetch failed (HTTP {status}): {exc}") from exc
     except requests.RequestException as exc:
-        print(f"[ado_workitems] batch fetch error: {exc}", file=sys.stderr)
-        return
+        raise RuntimeError(f"[ado_workitems] batch fetch error: {exc}") from exc
 
     for raw_item in raw_items:
         record = _normalise_item(raw_item)

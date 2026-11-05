@@ -83,30 +83,35 @@ _DOMAIN_KEYWORDS: list[tuple[str, str]] = [
 # ---------------------------------------------------------------------------
 
 def _load_sp_config() -> dict | None:
-    """Load sharepoint_docs connector config.  Returns None if disabled/absent."""
+    """Load the Connector config; only a disabled/absent entry returns None."""
+    import yaml
+
     try:
-        import yaml
         with open(_CONFIG_FILE, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
+            raw = yaml.safe_load(fh)
+        if raw is None:
+            raw = {}
+        if not isinstance(raw, dict):
+            raise ValueError("Connector configuration must be a mapping")
         top = raw if "sharepoint_docs" in raw else raw.get("connectors", raw)
+        if not isinstance(top, dict):
+            raise ValueError("connectors must be a mapping")
         sp  = top.get("sharepoint_docs", {})
+        if not isinstance(sp, dict) or type(sp.get("enabled", False)) is not bool:
+            raise ValueError("SharePoint configuration requires a mapping and boolean enabled")
         if not sp.get("enabled", False):
             _log.info("sharepoint_docs connector disabled — nothing to do.")
             return None
         return sp
-    except FileNotFoundError:
-        _log.error("connectors.yaml not found at %s", _CONFIG_FILE)
-        return None
-    except Exception as exc:
-        _log.error("Failed to load connectors.yaml: %s", exc)
-        return None
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise RuntimeError("SharePoint Connector configuration unavailable or invalid") from exc
 
 
 def _load_token() -> str | None:
     """Read the separately authorized Work credential, never a personal or synced-file fallback."""
     try:
-        from setup_msgraph_oauth import _load_token as stored_token
-        data = stored_token(work=True)
+        from setup_msgraph_oauth import ensure_valid_token
+        data = ensure_valid_token(work=True)
         if not data or not data.get("access_token"):
             _log.error("Work credential missing; authenticate the authorized Work account")
             return None
@@ -179,12 +184,18 @@ def sync(
         "errors":          [],
     }
 
-    sp_cfg = _load_sp_config()
+    try:
+        sp_cfg = _load_sp_config()
+    except RuntimeError as exc:
+        _log.error("%s", exc)
+        stats["errors"].append(str(exc))
+        return stats
     if sp_cfg is None:
         return stats
 
     token = _load_token()
     if not token:
+        stats["errors"].append("Authorized Work credential unavailable or invalid")
         return stats
 
     fetch_cfg   = sp_cfg.get("fetch", {})
@@ -371,7 +382,8 @@ def main() -> None:
     stats = sync(dry_run=args.dry_run, verbose=args.verbose)
 
     prefix = "DRY-RUN " if args.dry_run else ""
-    print(f"\nSharePoint KB sync {prefix}complete:")
+    outcome = "failed" if stats["errors"] else "complete"
+    print(f"\nSharePoint KB sync {prefix}{outcome}:")
     for k, v in stats.items():
         if k == "errors":
             continue

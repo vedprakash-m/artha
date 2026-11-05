@@ -346,7 +346,7 @@ def _write_stale_domain_p2_alerts(stale_domains: list[dict], state_dir: Path) ->
 
     Uses atomic tempfile+os.replace write. Deduplicates by domain name within
     the last 14 days to avoid flooding the alert log.
-    Non-blocking — silently swallows all errors.
+    Non-blocking — errors are reported without replacing invalid history.
     """
     if not stale_domains or not _YAML_AVAILABLE:
         return
@@ -359,10 +359,17 @@ def _write_stale_domain_p2_alerts(stale_domains: list[dict], state_dir: Path) ->
     existing: list[dict] = []
     if alerts_path.exists():
         try:
-            raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8")) or {}
-            existing = raw.get("alerts", [])
-        except Exception:
-            existing = []
+            raw = yaml.safe_load(alerts_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            print(f"⚠️  Could not read evaluation alerts: {exc}", file=sys.stderr)
+            return
+        if (not isinstance(raw, dict) or "alerts" not in raw
+                or not isinstance(raw["alerts"], list)
+                or any(not isinstance(alert, dict) for alert in raw["alerts"])):
+            print("⚠️  Evaluation alerts have an invalid structure; existing history was not changed.",
+                  file=sys.stderr)
+            return
+        existing = raw["alerts"]
 
     # Build dedup set (domain names seen in last 14d for stale_domain type)
     recent_domain_keys: set[str] = set()
@@ -409,25 +416,25 @@ def _write_stale_domain_p2_alerts(stale_domains: list[dict], state_dir: Path) ->
     existing = existing[-20:]
 
     # Atomic write
+    tmp_path_str = None
     try:
         state_dir.mkdir(exist_ok=True)
         tmp_fd, tmp_path_str = tempfile.mkstemp(
             dir=state_dir, prefix=".eval_alerts-", suffix=".tmp"
         )
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
-                yaml.dump(
-                    {"alerts": existing}, fh,
-                    default_flow_style=False, allow_unicode=True, sort_keys=False,
-                )
-            os.replace(tmp_path_str, alerts_path)
-        except Exception:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            yaml.dump(
+                {"alerts": existing}, fh,
+                default_flow_style=False, allow_unicode=True, sort_keys=False,
+            )
+        os.replace(tmp_path_str, alerts_path)
+    except Exception as exc:  # noqa: BLE001
+        if tmp_path_str is not None:
             try:
                 os.unlink(tmp_path_str)
             except OSError:
                 pass
-    except Exception:
-        pass  # Non-blocking
+        print(f"⚠️  Could not publish evaluation alerts: {exc}", file=sys.stderr)
 
 
 # --- Main generator ---------------------------------------------------------

@@ -174,7 +174,6 @@ def test_real_checkpoint_verifier_refuses_selective_or_truncated_evidence(tmp_pa
     assert checkpoint.read_bytes() == payload
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='POSIX SIGKILL process-death proof')
 def test_real_process_retry_refuses_changed_checkpoint_without_rewriting_pending_intent(transfer):
     import signal
     import subprocess
@@ -182,7 +181,8 @@ def test_real_process_retry_refuses_changed_checkpoint_without_rewriting_pending
     original = checkpoint.read_bytes()
     dead = subprocess.run(_child_command(repo, ledger, checkpoint, 'queue_prepared'),
                           capture_output=True, timeout=20)
-    assert dead.returncode == -signal.SIGKILL, dead.stderr.decode()
+    expected_exit = signal.SIGTERM if os.name == 'nt' else -signal.SIGKILL
+    assert dead.returncode == expected_exit, dead.stderr.decode()
     before = ledger.authority_state(), queue.authority_state()
     checkpoint.write_bytes(b'changed synthetic checkpoint')
     refused = subprocess.run(_child_command(repo, ledger, checkpoint, 'unused'),
@@ -232,6 +232,7 @@ def test_conflicting_pending_target_or_checkpoint_refuses_without_rewrite(transf
 _CHILD = '''
 import os, signal, sys, time
 from pathlib import Path
+kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
 from catchup_core import authority_transfer as protocol
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.ids import HmacKey
@@ -242,7 +243,7 @@ def boundary(name):
     if name != str(phase):
         return
     if str(marker) == 'kill':
-        os.kill(os.getpid(),signal.SIGKILL)
+        os.kill(os.getpid(),kill_signal)
     marker.write_text(name)
     deadline = time.monotonic() + 15
     while not release.exists():
@@ -263,14 +264,14 @@ def _child_command(repo, ledger, checkpoint, phase, marker='kill', release='unus
     return [sys.executable, '-c', source, str(repo), str(ledger._path), str(checkpoint), phase, str(marker), str(release)]
 
 
-@pytest.mark.skipif(os.name == 'nt', reason='POSIX SIGKILL process-death proof')
 @pytest.mark.parametrize('phase', ['paused', 'queue_prepared', 'ledger_promoted', 'queue_finalized'])
 def test_real_process_death_at_every_committed_effect_step(transfer, phase):
     import signal
     import subprocess
     repo, ledger, queue, checkpoint, perform = transfer
     dead = subprocess.run(_child_command(repo, ledger, checkpoint, phase), capture_output=True, timeout=20)
-    assert dead.returncode == -signal.SIGKILL, dead.stderr.decode()
+    expected_exit = signal.SIGTERM if os.name == 'nt' else -signal.SIGKILL
+    assert dead.returncode == expected_exit, dead.stderr.decode()
     assert (repo / 'config/actions.paused').exists()
     if phase in ('paused', 'queue_prepared'):
         assert ledger.authority_state()['generation'] == 1

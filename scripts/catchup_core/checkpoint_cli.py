@@ -26,7 +26,7 @@ import sqlite3
 import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import ExitStack, closing, suppress
+from contextlib import ExitStack, closing
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -180,16 +180,51 @@ _SPEND_SEAL_FILES = frozenset({'shadow.json', 'authoritative.json'})
 _SPEND_SEAL_LOCKS = frozenset({f'{name}.lock' for name in _SPEND_SEAL_FILES})
 
 
+def _active_spend_seal_accounts(registry_root: Path | None) -> set[str]:
+    from catchup_core import recovery_registry as registry  # noqa: PLC0415
+
+    root = (registry_root or Path.home() / '.artha-local').expanduser().absolute()
+    registry_path = root / 'recovery-registry' / 'personal.json'
+    try:
+        registry_metadata = registry_path.lstat()
+    except FileNotFoundError:
+        return set()
+    except OSError:
+        raise ck.CheckpointBlocked('the recovery registry is unavailable') from None
+    if not stat.S_ISREG(registry_metadata.st_mode):
+        raise ck.CheckpointBlocked('the recovery registry is not a regular file')
+    try:
+        registry_doc = registry.snapshot('personal', root=root, require_review=False)
+    except registry.RegistryError:
+        raise ck.CheckpointBlocked('the recovery registry is unavailable') from None
+    seal_entries = [
+        entry for entry in registry_doc['entries']
+        if entry['service'] == registry.SPEND_SEAL[0] and entry['kind'] == 'spend_seal'
+    ]
+    if any(entry['state'] not in {'active', 'deleted'} for entry in seal_entries):
+        raise ck.CheckpointBlocked('the recovery registry does not classify pending spend seal custody')
+    return {entry['account'] for entry in seal_entries if entry['state'] == 'active'}
+
+
 def _classify_spend_seal(roots: dict[str, Path], excluded: dict[str, str], local: Path | None,
                          registry_root: Path | None) -> None:
     """A spend seal file must be named by the recovery registry; it is then kept out of every snapshot."""
     base = local or Path(os.environ.get('ARTHA_LOCAL_DIR') or Path.home() / '.artha-local').expanduser()
     seal_dir = base / 'spend-seal'
-    if not seal_dir.exists() and not seal_dir.is_symlink():
-        return
     from catchup_core import recovery_registry as registry  # noqa: PLC0415
-    if not stat.S_ISDIR(seal_dir.lstat().st_mode):
+    active_accounts = _active_spend_seal_accounts(registry_root)
+
+    try:
+        seal_metadata = seal_dir.lstat()
+    except FileNotFoundError:
+        if active_accounts:
+            raise ck.CheckpointBlocked('registered spend seal is missing') from None
+        return
+    except OSError:
+        raise ck.CheckpointBlocked('spend seal storage is unavailable') from None
+    if not stat.S_ISDIR(seal_metadata.st_mode):
         raise ck.CheckpointBlocked('spend seal storage needs an ordinary directory')
+    found_seals: set[str] = set()
     for child in seal_dir.iterdir():
         metadata = child.lstat()
         if (child.name not in _SPEND_SEAL_FILES | _SPEND_SEAL_LOCKS or not stat.S_ISREG(metadata.st_mode)
@@ -197,12 +232,17 @@ def _classify_spend_seal(roots: dict[str, Path], excluded: dict[str, str], local
             raise ck.CheckpointBlocked('spend seal storage contains an unclassified or unsafe artifact')
         if child.name in _SPEND_SEAL_LOCKS:
             continue                                  # empty lock file beside a seal; the directory is excluded below
+        found_seals.add(child.name)
         try:
             classified = registry.spend_seal_required('personal', root=registry_root, mode=child.stem)
         except registry.RegistryError:
             raise ck.CheckpointBlocked('the recovery registry does not classify current spend seal custody') from None
         if not classified:
             raise ck.CheckpointBlocked('a spend seal exists that the recovery registry does not classify')
+    if (('seal' in active_accounts and not found_seals)
+            or ('seal.shadow' in active_accounts and 'shadow.json' not in found_seals)
+            or ('seal.authoritative' in active_accounts and 'authoritative.json' not in found_seals)):
+        raise ck.CheckpointBlocked('registered spend seal is missing')
     for name, root in roots.items():
         if root.is_dir() and seal_dir.resolve().is_relative_to(root.resolve()):
             excluded[f"{name}/{seal_dir.resolve().relative_to(root.resolve()).as_posix()}"] = (
@@ -546,38 +586,80 @@ def _collect_credential_recovery_and_records(  # noqa: PLR0912, PLR0915
         items[f"{client}/artha"] = secret.encode("utf-8")
 
 
-def _discover_bundle_producers(repo: Path, local: Path) -> set[str]:
+def _discover_bundle_producers(repo: Path, local: Path) -> set[str]:  # noqa: PLR0912 - explicit fail-closed paths
     bundle_dirs, producers = _configured_bundle_dirs(repo)
     scan_dirs = [*bundle_dirs.values()]
-    for base in (repo, local):
-        if base.is_dir():
-            scan_dirs.extend(p for p in base.rglob("*") if p.is_dir() and "quarantine" not in p.parts)
-            scan_dirs.append(base)
+
+    def unavailable_directory(_error: OSError) -> None:
+        raise ck.CheckpointBlocked('bundle dependency directory is unavailable') from None
+
+    for base, required in ((repo, True), (local, False)):
+        try:
+            metadata = base.lstat()
+        except FileNotFoundError:
+            if not required:
+                continue
+            raise ck.CheckpointBlocked('bundle dependency directory is unavailable') from None
+        except OSError:
+            raise ck.CheckpointBlocked('bundle dependency directory is unavailable') from None
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ck.CheckpointBlocked('bundle dependency path is not a directory')
+        for current, directories, _ in os.walk(base, followlinks=False, onerror=unavailable_directory):
+            directory = Path(current)
+            if "quarantine" in directory.parts:
+                directories.clear()
+                continue
+            directories[:] = [name for name in directories if name != "quarantine"]
+            scan_dirs.append(directory)
     seen: set[Path] = set()
     for directory in scan_dirs:
-        try:
-            resolved = directory.resolve()
-        except OSError:
+        if "quarantine" in directory.parts:
             continue
-        if resolved in seen or not directory.is_dir() or "quarantine" in directory.parts:
+        try:
+            resolved = directory.resolve(strict=True)
+            metadata = directory.stat()
+        except OSError:
+            raise ck.CheckpointBlocked('bundle dependency directory is unavailable') from None
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ck.CheckpointBlocked('bundle dependency path is not a directory')
+        if resolved in seen:
             continue
         seen.add(resolved)
-        for pattern in ("bundle-*.json", "ack-*.json"):
-            for artifact in sorted(directory.glob(pattern)):
-                if "quarantine" in artifact.parts or not artifact.is_file():
-                    continue
-                doc: Any = None
-                with suppress(OSError, ValueError):
-                    doc = json.loads(artifact.read_text(encoding="utf-8"))
-                header = doc.get("header") if isinstance(doc, dict) else None
-                producer = (
-                    doc.get("producer")
-                    if isinstance(doc, dict) and isinstance(doc.get("producer"), str)
-                    else (header.get("producer") if isinstance(header, dict) else None)
+        try:
+            with os.scandir(directory) as contents:
+                artifacts = sorted(
+                    Path(entry.path)
+                    for entry in contents
+                    if (entry.name.casefold().startswith(("bundle-", "ack-"))
+                        and entry.name.casefold().endswith(".json"))
                 )
-                if isinstance(producer, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", producer):
-                    producers.add(producer)
+        except OSError:
+            raise ck.CheckpointBlocked('bundle dependency directory is unavailable') from None
+        for artifact in artifacts:
+            if "quarantine" not in artifact.parts:
+                producers.add(_read_bundle_artifact_producer(artifact))
     return producers
+
+
+def _read_bundle_artifact_producer(artifact: Path) -> str:
+    try:
+        artifact_stat = artifact.lstat()
+        if not stat.S_ISREG(artifact_stat.st_mode):
+            raise ck.CheckpointBlocked('bundle dependency artifact is not a regular file')
+        doc: Any = json.loads(artifact.read_text(encoding="utf-8"))
+    except ck.CheckpointBlocked:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise ck.CheckpointBlocked('bundle dependency artifact is unreadable or malformed') from None
+    header = doc.get("header") if isinstance(doc, dict) else None
+    producer = (
+        doc.get("producer")
+        if isinstance(doc, dict) and isinstance(doc.get("producer"), str)
+        else (header.get("producer") if isinstance(header, dict) else None)
+    )
+    if not isinstance(producer, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", producer):
+        raise ck.CheckpointBlocked('bundle dependency artifact has no valid producer')
+    return producer
 
 
 def _collect_bundle_and_privacy_records(  # noqa: PLR0912

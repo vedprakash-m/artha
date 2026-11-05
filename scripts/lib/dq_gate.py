@@ -173,7 +173,7 @@ def file_quality(path: Path, domain: str) -> float:
     # -- Freshness -----------------------------------------------------------
     last_updated = fm.get("last_updated")
     age = _age_days(str(last_updated) if last_updated is not None else None)
-    if age is None:
+    if age is None or age < 0:
         F = 0.0
     else:
         F = max(0.0, min(1.0, 1.0 - age / ttl))

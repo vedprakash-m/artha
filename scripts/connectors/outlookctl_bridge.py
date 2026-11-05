@@ -39,32 +39,30 @@ def _find_outlookctl() -> str | None:
     return shutil.which("outlookctl")
 
 
-def _run_outlookctl(*args: str) -> dict | list | None:
-    """Run an outlookctl command and return parsed JSON, or None on failure."""
+def _run_outlookctl(*args: str) -> dict | list:
+    """Run an outlookctl command; propagate failures to Connector coverage."""
     cmd = _find_outlookctl()
     if not cmd:
-        return None
+        raise RuntimeError("[outlookctl_bridge] outlookctl not found on PATH")
     try:
         result = subprocess.run(
             [cmd, *args, "--output", "json"],
             capture_output=True, text=True, timeout=OUTLOOK_TIMEOUT,
         )
         if result.returncode != 0:
-            print(
-                f"[outlookctl_bridge] outlookctl returned {result.returncode}: "
-                f"{result.stderr.strip()[:100]}",
-                file=sys.stderr,
+            raise RuntimeError(
+                f"[outlookctl_bridge] outlookctl returned {result.returncode}"
             )
-            return None
-        return json.loads(result.stdout)
-    except FileNotFoundError:
-        return None
-    except subprocess.TimeoutExpired:
-        print("[outlookctl_bridge] outlookctl timed out", file=sys.stderr)
-        return None
+        payload = json.loads(result.stdout)
+    except FileNotFoundError as exc:
+        raise RuntimeError("[outlookctl_bridge] outlookctl executable disappeared") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("[outlookctl_bridge] outlookctl timed out") from exc
     except json.JSONDecodeError as exc:
-        print(f"[outlookctl_bridge] JSON parse error: {exc}", file=sys.stderr)
-        return None
+        raise RuntimeError("[outlookctl_bridge] outlookctl returned invalid JSON") from exc
+    if not isinstance(payload, (dict, list)):
+        raise RuntimeError("[outlookctl_bridge] expected a JSON object or array")
+    return payload
 
 
 def _parse_event(raw: dict) -> dict:
@@ -112,10 +110,10 @@ def fetch(
 
     # outlookctl calendar list returns the next N days by default
     raw = _run_outlookctl("calendar", "list")
-    if raw is None:
-        return
 
-    events = raw if isinstance(raw, list) else raw.get("items", raw.get("events", []))
+    events = raw if isinstance(raw, list) else raw.get("items", raw.get("events"))
+    if not isinstance(events, list) or any(not isinstance(item, dict) for item in events):
+        raise RuntimeError("[outlookctl_bridge] calendar response must contain a list of event objects")
     count = 0
     for item in events:
         if count >= max_results:
@@ -128,7 +126,7 @@ def fetch(
 
 
 def health_check(auth_context: dict) -> bool:
-    """Verify outlookctl is available and Classic Outlook is accessible."""
+    """Verify outlookctl is available; this does not exercise Outlook COM."""
     import platform
     if platform.system() != "Windows":
         return True  # Non-Windows: graceful skip

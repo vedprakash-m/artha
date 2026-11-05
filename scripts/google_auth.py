@@ -55,10 +55,12 @@ GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
 ]
+GMAIL_READ_ONLY_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
+CALENDAR_READ_ONLY_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 DRIVE_SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
 ]
@@ -229,13 +231,14 @@ def _save_token(creds: Credentials, token_service: str, *, expected_revision: st
         if expiry_dt.tzinfo is None:
             expiry_dt = expiry_dt.replace(tzinfo=_tz.utc)
         expiry_str = expiry_dt.isoformat()
+    scopes = creds.granted_scopes if creds.granted_scopes is not None else creds.scopes
     token_data = {
         "token":         creds.token,
         "refresh_token": creds.refresh_token,
         "token_uri":     creds.token_uri or _TOKEN_URI,
         "client_id":     creds.client_id,
         "client_secret": creds.client_secret,
-        "scopes":        list(creds.scopes) if creds.scopes else [],
+        "scopes":        list(scopes) if scopes is not None else [],
         "expiry":        expiry_str,
     }
     _credential_store().write("google." + token_service, token_data, expected_revision=expected_revision)
@@ -308,10 +311,23 @@ def _refresh_existing(token_service: str, warn_seconds: int = 0) -> tuple[Creden
     raise RuntimeError('Google token freshness is unverified. Run: python scripts/setup_google_oauth.py')
 
 
+def _require_read_only_scopes(creds: Credentials | None, scopes: list[str]) -> None:
+    granted = creds.granted_scopes if creds is not None else None
+    if granted is None:
+        granted = creds.scopes if creds is not None else None
+    if granted is None or set(granted) != set(scopes):
+        raise RuntimeError(
+            "Google read-only credential scopes do not match. "
+            "Run: python scripts/setup_google_oauth.py --read-only"
+        )
+
+
 def _get_or_refresh_credentials(
     token_service: str,
     scopes: list[str],
     force_reauth: bool = False,
+    *,
+    read_only: bool = False,
 ) -> Credentials:
     """
     Return valid Credentials for the given scope set.
@@ -323,7 +339,12 @@ def _get_or_refresh_credentials(
       4. Persist updated token back to Keychain
     """
     if not force_reauth:
-        return _refresh_existing(token_service)[0]
+        if read_only:
+            _require_read_only_scopes(_load_token(token_service), scopes)
+        creds = _refresh_existing(token_service)[0]
+        if read_only:
+            _require_read_only_scopes(creds, scopes)
+        return creds
 
     # Need a fresh OAuth flow
     client_config = _get_client_config()
@@ -332,6 +353,8 @@ def _get_or_refresh_credentials(
     creds = flow.run_local_server(port=0, open_browser=True)
     if creds.expiry is None or not creds.valid:
         raise RuntimeError('Google setup did not return a verified fresh token')
+    if read_only:
+        _require_read_only_scopes(creds, scopes)
     _save_token(creds, token_service)
     return creds
 
@@ -340,14 +363,16 @@ def _get_or_refresh_credentials(
 # Public API
 # ---------------------------------------------------------------------------
 
-def get_gmail_credentials(force_reauth: bool = False) -> Credentials:
+def get_gmail_credentials(force_reauth: bool = False, *, read_only: bool = False) -> Credentials:
     """Return valid Gmail credentials (refreshes automatically if needed)."""
-    return _get_or_refresh_credentials(_KC_GMAIL_TOKEN, GMAIL_SCOPES, force_reauth)
+    scopes = GMAIL_READ_ONLY_SCOPES if read_only else GMAIL_SCOPES
+    return _get_or_refresh_credentials(_KC_GMAIL_TOKEN, scopes, force_reauth, read_only=read_only)
 
 
-def get_calendar_credentials(force_reauth: bool = False) -> Credentials:
+def get_calendar_credentials(force_reauth: bool = False, *, read_only: bool = False) -> Credentials:
     """Return valid Calendar credentials (refreshes automatically if needed)."""
-    return _get_or_refresh_credentials(_KC_GCAL_TOKEN, CALENDAR_SCOPES, force_reauth)
+    scopes = CALENDAR_READ_ONLY_SCOPES if read_only else CALENDAR_SCOPES
+    return _get_or_refresh_credentials(_KC_GCAL_TOKEN, scopes, force_reauth, read_only=read_only)
 
 
 def get_drive_credentials(force_reauth: bool = False) -> Credentials:
@@ -355,7 +380,7 @@ def get_drive_credentials(force_reauth: bool = False) -> Credentials:
     return _get_or_refresh_credentials(_KC_GDRIVE_TOKEN, DRIVE_SCOPES, force_reauth)
 
 
-def build_service(api: str, version: str, force_reauth: bool = False) -> Resource:
+def build_service(api: str, version: str, force_reauth: bool = False, *, read_only: bool = False) -> Resource:
     """
     Build and return an authenticated Google API service resource.
 
@@ -363,14 +388,17 @@ def build_service(api: str, version: str, force_reauth: bool = False) -> Resourc
         api:          "gmail" or "calendar" or "drive"
         version:      "v1" (gmail) or "v3" (calendar, drive)
         force_reauth: if True, discard cached token and re-run OAuth flow
+        read_only:    require exact read-only scopes; Gmail and Calendar only
 
     Returns:
         Authenticated googleapiclient Resource object
     """
+    if read_only and api not in {"gmail", "calendar"}:
+        raise ValueError("Google read-only access supports only 'gmail' and 'calendar'.")
     if api == "gmail":
-        creds = get_gmail_credentials(force_reauth)
+        creds = get_gmail_credentials(force_reauth, read_only=read_only)
     elif api == "calendar":
-        creds = get_calendar_credentials(force_reauth)
+        creds = get_calendar_credentials(force_reauth, read_only=read_only)
     elif api == "drive":
         creds = get_drive_credentials(force_reauth)
     else:

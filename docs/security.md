@@ -17,6 +17,19 @@ describes the threat model, defense layers, and operational security guidelines.
 
 ## §1 — Three-Layer PII Defense
 
+### Delivery privacy gate
+
+The delivery gate scans tracked and nonignored untracked files and separately scans unpushed
+commits. Pre-commit scans the index; pre-push scans the outgoing history. If a selected staged
+or historical Git blob cannot be read, the gate blocks instead of skipping its contents.
+A missing optional owner profile or local privacy denylist is permitted, but the
+gate blocks if either exists and cannot be read or decoded.
+A clean working-tree scan does not establish that the commit history is clean.
+The ignore rules cover nested State Files and Briefings, except the public State
+File templates, learned procedures, and `.gitkeep`. Git still tracks files
+already in its index and permits forced adds, so the delivery gate checks paths
+and contents independently.
+
 ### Layer 1 — Pre-write regex filter (`pii_guard.py`)
 
 All text destined for state files passes through `pii_guard.py` before writing.

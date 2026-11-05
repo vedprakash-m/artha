@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -198,6 +199,8 @@ def _check_prohibited_fields(obj: Any, path: str = "") -> None:
 
 def _validate_required_fields(obj: dict, schema: dict, path: str = "") -> None:
     """Validate required fields and types (lightweight — no jsonschema dependency)."""
+    if not isinstance(obj, dict):
+        raise BridgeValidationError(f"Bridge object '{path}' must be a mapping.")
     required = schema.get("required", [])
     for field in required:
         if field not in obj:
@@ -219,6 +222,10 @@ def _validate_required_fields(obj: dict, schema: dict, path: str = "") -> None:
             continue
         val = obj[field]
         expected_type = sub_schema.get("type")
+        if expected_type in ("number", "integer") and (
+            isinstance(val, bool) or isinstance(val, float) and not math.isfinite(val)
+        ):
+            raise BridgeValidationError(f"Field '{path}.{field}' must be a finite non-boolean number.")
         # type check
         type_map = {
             "string": str,

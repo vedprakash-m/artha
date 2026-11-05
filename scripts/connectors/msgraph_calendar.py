@@ -71,12 +71,10 @@ def _parse_event(event: dict, calendar_name: str = "Calendar") -> dict:
     else:
         start_dt = start_obj.get("dateTime", "")
         end_dt = end_obj.get("dateTime", "")
-        for val in (start_dt, end_dt):
-            pass
         # Normalise fractional seconds
-        if start_dt and not start_dt.endswith("Z") and "+" not in start_dt[-6:]:
+        if start_dt and not re.search(r"(Z|[+-]\d{2}:\d{2})$", start_dt):
             start_dt = re.sub(r"\.\d+$", "", start_dt) + "Z"
-        if end_dt and not end_dt.endswith("Z") and "+" not in end_dt[-6:]:
+        if end_dt and not re.search(r"(Z|[+-]\d{2}:\d{2})$", end_dt):
             end_dt = re.sub(r"\.\d+$", "", end_dt) + "Z"
     location_obj = event.get("location", {})
     location = location_obj.get("displayName", "") if isinstance(location_obj, dict) else ""

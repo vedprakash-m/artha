@@ -3,7 +3,7 @@
 Unit tests for scripts/sharepoint_kb_sync.py
 
 Tests cover:
-  - _load_sp_config(): returns None when disabled, None when file absent,
+  - _load_sp_config(): returns None when disabled, fails when missing/invalid,
     config dict when enabled
   - _infer_domain(): keyword routing for finance / engineering / health /
     operations / knowledge and the default fallback
@@ -74,10 +74,32 @@ class TestLoadSpConfig:
         result = sks._load_sp_config()
         assert result is None
 
-    def test_returns_none_when_file_absent(self, tmp_path, monkeypatch):
+    def test_raises_when_file_absent(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sks, "_CONFIG_FILE", tmp_path / "connectors.yaml")
-        result = sks._load_sp_config()
-        assert result is None
+        with pytest.raises(RuntimeError, match="configuration"):
+            sks._load_sp_config()
+
+    @pytest.mark.parametrize("text", [
+        "connectors: [",
+        "false\n",
+        "- item\n",
+        "connectors: []\n",
+        "connectors:\n  sharepoint_docs: []\n",
+        'sharepoint_docs:\n  enabled: "false"\n',
+    ])
+    def test_invalid_configuration_is_not_treated_as_disabled(self, tmp_path, monkeypatch, text):
+        cfg_file = tmp_path / "connectors.yaml"
+        cfg_file.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(sks, "_CONFIG_FILE", cfg_file)
+        with pytest.raises(RuntimeError, match="configuration"):
+            sks._load_sp_config()
+
+    @pytest.mark.parametrize("text", ["", "{}\n"])
+    def test_absent_connector_remains_disabled(self, tmp_path, monkeypatch, text):
+        cfg_file = tmp_path / "connectors.yaml"
+        cfg_file.write_text(text, encoding="utf-8")
+        monkeypatch.setattr(sks, "_CONFIG_FILE", cfg_file)
+        assert sks._load_sp_config() is None
 
     def test_returns_config_when_enabled(self, tmp_path, monkeypatch):
         cfg_file = tmp_path / "connectors.yaml"
@@ -314,9 +336,33 @@ class TestSync:
         stats = sks.sync(dry_run=False, verbose=False, artha_dir=tmp_path)
         assert stats.get("docs_ingested", 0) == 0
 
-    def test_returns_empty_stats_when_token_absent(self, tmp_path, monkeypatch):
+    def test_missing_work_credential_is_an_error_without_fetch_or_kb_access(self, tmp_path, monkeypatch):
         monkeypatch.setattr(sks, "_load_sp_config", self._sp_cfg)
         monkeypatch.setattr(sks, "_load_token", lambda *a: None)
 
-        stats = sks.sync(dry_run=False, verbose=False, artha_dir=tmp_path)
+        with (
+            patch("connectors.msgraph_sharepoint.fetch") as fetch,
+            patch.object(sks, "get_kb") as get_kb,
+        ):
+            stats = sks.sync(dry_run=False, verbose=False, artha_dir=tmp_path)
         assert stats.get("docs_ingested", 0) == 0
+        assert stats["errors"] and "Work credential" in stats["errors"][0]
+        fetch.assert_not_called()
+        get_kb.assert_not_called()
+
+    def test_missing_configuration_is_an_error_without_loading_credentials(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sks, "_CONFIG_FILE", tmp_path / "missing.yaml")
+        with patch.object(sks, "_load_token") as token:
+            stats = sks.sync(artha_dir=tmp_path)
+        assert stats["errors"] and "configuration" in stats["errors"][0]
+        token.assert_not_called()
+
+
+def test_cli_failed_sync_exits_nonzero_without_success_message(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["sharepoint_kb_sync.py"])
+    monkeypatch.setattr(sks, "sync", lambda **kwargs: {"errors": ["Work credential unavailable"]})
+    with pytest.raises(SystemExit) as error:
+        sks.main()
+    assert error.value.code == 1
+    output = capsys.readouterr().out
+    assert "failed" in output and "complete" not in output

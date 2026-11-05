@@ -9,6 +9,259 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Consolidated — scrubbed main delivery, 2026-11-04
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Integrated the latest branch and uncommitted checkout changes onto the public-release ancestry without restoring pre-scrub history. Preserved private Work code and local specifications outside Git; removed redundant local branches, worktrees, checkpoint refs, reflogs and obsolete objects. | `scripts/`, `tests/`, `tools/`, `config/`, `docs/`, canonical specs, dependency manifests and shared instructions | Full isolated suite: 10,505 passed, with 23 failures caused by missing GNU Make; all 36 canary-module tests passed after restoring portable Make. Integration and scratch UAT: 179 passed, 7 skipped. Private Work synthetic validation passed. |
+| Retained fail-closed privacy handling and removed exemptions needed only by discarded historical files. | `.githooks/privacy_scan.py`, `tests/dev/test_privacy_gate.py`, `docs/security.md` | Retained-history and staged privacy gates passed; both working-tree scanner crashes passed identical targeted retries. Core coverage: 94.21% line, 89.82% branch; changed-line coverage: 88%; hook/policy coverage: 87.99%. Syntax, Ruff, strict typing, schema, state-write ratchet and generated-register checks passed. |
+
+### Added — `goals_authority` runtime key, 2026-11-01
+
+`goals_authority: incumbent` in `config/catchup_core.yaml` keeps Goals with the incumbent. The Briefing then prints
+"Goals are kept by the incumbent; this Catch-up does not read them." and no longer reports "Goals unavailable" or "Goal
+plans unavailable" as coverage gaps, which had made every run exit 10. The default stays `core`; any other value is
+refused at configuration load. Changed: `scripts/catchup_core/runtime.py`, `tests/catchup_core/test_runtime.py`.
+
+### Fixed — Live UAT scenario scripts, 2026-11-03
+
+Live RA-06 and RA-23 picked a Fact from the live store and then ran `why`, `correct` and `export` with `--shadow`, which
+reads a different store, so they failed with "unknown fact". `_harness.beliefs` and `first_fact` take `shadow=True` and
+both scripts use it. Live RA-15 now accepts a refusal naming "scoped ingest consent" for `items --shadow` and
+`goals --shadow` (the shadow store holds no household consent); scratch mode stays strict. A failing test came first for
+each. Changed: `tools/uat/_harness.py`, `tools/uat/ra_06_corrections.py`, `tools/uat/ra_15_onboarding_feedback.py`,
+`tools/uat/ra_23_beliefs_forget.py`, `tests/uat/test_uat_scripts.py`.
+
+### Fixed — Fail-closed privacy blob reads, 2026-11-01
+
+The staged and commit-history privacy scans now block when Git cannot read a selected blob instead
+of silently skipping its content. Synthetic regressions cover unreadable staged and historical
+blobs, a failure on the repeated staged read, and valid empty blobs; scanner scope and exemptions
+are unchanged. Git's error output is not included in the finding. The isolated privacy and PII
+selection passed 98 tests; the changed executable lines and conditional outcomes were covered.
+The gate also blocks unreadable or malformed owner privacy inputs rather than silently dropping
+their identifiers; missing optional inputs remain supported.
+
+Changed: `.githooks/privacy_scan.py`, `tests/dev/test_privacy_gate.py` and `docs/security.md`.
+
+### Fixed — Recursive State File and Briefing ignores, 2026-11-01
+
+The ignore rules now cover nested State Files and Briefings, including unfamiliar file extensions.
+Public State File templates, learned procedures and `.gitkeep` remain available for tracking.
+The privacy gate still checks tracked and forcibly added files independently.
+
+Changed: `.gitignore`, `tests/dev/test_privacy_gate.py` and `docs/security.md`.
+
+### Verified — Windows Work inventory stream boundary, 2026-11-01
+
+On Windows, a synthetic Work file with a named stream blocks Work inventory without disclosing or
+modifying either stream; personal inventory remains ready and excludes it. The isolated Work
+inventory separation and named-stream tests both passed, as did the native stream-refusal test.
+An isolated Work/cache/checkpoint/UAT selection passed 552 tests with one skip; 33 Work cache tests
+passed separately on Windows with no skips. The broad selection preceded the final privacy-only edits.
+A separately rerun native owner-change test skipped because the host lacks the necessary privilege.
+This does not establish that organization-managed DLP streams can be preserved or that the live
+Work inventory is ready.
+
+Changed: `tests/catchup_core/test_state_checkpoint_cli.py`.
+### Updated — current specification fingerprint, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Refreshed the generated manifest's digest to match the current shared OneDrive `specs/re-artha.md`; the private spec remains excluded from the checkout. | `docs/spec-manifest.json`, `CHANGELOG.md` | SHA-256 matched the source file; `tools/gen_capability_register.py --check` passed |
+
+### Fixed — Windows IANA timezone database, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Declare `tzdata` as a core dependency so IANA zone resolution works on Windows hosts without an operating-system timezone database. | `pyproject.toml`, `scripts/requirements.txt`, `CHANGELOG.md` | Full isolated aggregate: 10,484 passed, 177 skipped, 20 xfailed, 8 warnings |
+
+### Verified — current Windows full isolated aggregate, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Verify the current 1,102-file public source workspace, including the GFS v3, ADO inventory, timezone dependency and Windows test portability changes. | Current public source tree; `docs/re-artha-implementation-status.md`, `CHANGELOG.md` | `tools/run_tests_isolated.py -q`: 10,484 passed, 177 skipped, 20 xfailed, 8 warnings; exit 0 in 5,691.40 seconds |
+
+### Fixed — Windows test portability and dev typing tool, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Verify a monkeypatch-restored bound method through its public binding instead of the instance dictionary, and include the strict-typing tool used by the dev test gate in the dev extra. | `tests/catchup_core/test_storage_adoption.py`, `pyproject.toml`, `CHANGELOG.md` | Isolated storage-adoption, dev-canary, typing-gate and Graph timeout cohort: 96 passed, 6 skipped; complete aggregate passed |
+
+### Fixed — ADO Work project inventory, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Query assigned and PM-owned work separately to avoid slow combined WIQL, merge duplicate results, and keep nonterminal items plus recently changed terminal items in date-bounded refreshes. Preserve the PM Owner identity in connector records. | `scripts/connectors/ado_workitems.py`, `tests/unit/test_work_connectors.py`, `CHANGELOG.md` | Isolated Work connector tests: 159 passed; Ruff passed |
+
+### Fixed — GFS version-3 ZIP recovery, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Capture complete version-3 ZIP inventories with independently age-encrypted file/stream payloads, read-only SQLite online snapshots, in-memory validation, version-2 read compatibility, safe full-archive restore prevalidation, native-stream refusal when unsupported, serialized archive/catalog publication that preserves the prior generation on failure, and close the KnowledgeGraph connection after its backup hook. | `scripts/backup.py`, `tests/unit/test_backup.py`, `tests/unit/test_vault.py`, `docs/re-artha-implementation-status.md`, `CHANGELOG.md` | Isolated backup/vault tests: 217 passed, 1 skipped; changed executable-line coverage 562/587 (95.7%, ≥95%); native-age/NTFS ADS synthetic round-trip matched file and stream bytes; generated-register check passed; changed-file privacy scan passed; full local working-tree privacy gate passed with checksum-verified Gitleaks 8.30.1 |
+
+### Fixed — Windows authority-retirement process-death coverage, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Exercise all four authority-retirement crash boundaries on Windows using `SIGTERM`/`TerminateProcess`, preserving the existing POSIX `SIGKILL` assertions and recovery/fence checks. | `tests/catchup_core/test_authority_retirement.py`, `docs/re-artha-implementation-status.md` | Windows authority-retirement module: 38 passed, including all four process-death cases |
+
+### Fixed — Windows authority-transfer process-death coverage, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Exercise the changed-checkpoint retry and all four committed-effect crash boundaries on Windows using `SIGTERM`/`TerminateProcess`, retaining POSIX `SIGKILL` assertions and transfer recovery checks. | `tests/catchup_core/test_authority_transfer_protocol.py`, `docs/re-artha-implementation-status.md` | Windows authority-transfer protocol module: 86 passed, including all five process-death cases |
+
+### Fixed — Windows quarantine restore process-death coverage, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Exercise abrupt termination after encrypted chunk publication and at all three late-restore boundaries on Windows, checking the restored-installation fence, encrypted historical data and unchanged source checkpoint. | `tests/catchup_core/test_quarantine_restore.py`, `docs/re-artha-implementation-status.md` | Windows quarantine restore module: 59 passed, including all four process-death cases |
+
+### Fixed — Windows checkpoint external-change race coverage, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Run the real separate-process checkpoint input-change regression on Windows; the test's POSIX-mode skip was obsolete because the synthetic fixture already handles Windows permissions separately. | `tests/catchup_core/test_state_checkpoint.py`, `docs/re-artha-implementation-status.md` | Windows checkpoint capture module: 69 passed, including the separate-process race |
+
+### Verified — Windows checkpoint restore integrity, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Verify the native restore-integrity suite, including Windows input-handle sharing denial, destination custody and privacy-preserving restore checks. | `tests/catchup_core/test_checkpoint_restore_integrity.py`, `docs/re-artha-implementation-status.md` | Windows checkpoint restore-integrity module: 48 passed, 2 platform-specific skips |
+
+### Verified — Windows quarantine review and recovery, 2026-11-04
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Verify native review/export and recovery-quarantine process, locking and filesystem paths without changing production state. | `tests/catchup_core/test_quarantine_review.py`, `tests/catchup_core/test_recovery_quarantine.py`, `docs/re-artha-implementation-status.md` | Windows quarantine review: 230 passed, 5 platform-specific skips; recovery quarantine: 128 passed |
+
+### Fixed — missing registered spend seal detection, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Block personal checkpoint inventory when the recovery registry marks a spend seal active but its corresponding seal file or storage directory is missing. | `scripts/catchup_core/checkpoint_cli.py`, `tests/catchup_core/test_state_checkpoint_cli.py`, `specs/artha-tech-spec.md`, `docs/re-artha-implementation-status.md`, `docs/spec-manifest.json` | Isolated checkpoint CLI suite: 284 passed, including missing active-seal and registry-unavailable cases |
+
+### Fixed — checkpoint bundle dependency inventory, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Block checkpoint capture when a required bundle/ack scan root, nested directory or matching artifact is inaccessible, non-regular, malformed, or lacks a valid producer identifier instead of silently omitting that dependency. An absent optional machine runtime root is allowed; metadata failures on existing roots still block. Use strict recursive traversal and directory enumeration because path helpers can suppress access failures; preserve Windows case-insensitive filename matching. | `scripts/catchup_core/checkpoint_cli.py`, `tests/catchup_core/test_state_checkpoint_cli.py`, `specs/artha-tech-spec.md`, `docs/re-artha-implementation-status.md`, `docs/spec-manifest.json` | Isolated checkpoint CLI suite: 284 passed, including root/nested/repeated read denials, malformed JSON, invalid producer, non-regular artifacts, invalid scan paths, uppercase filename matching, and canonical registry selection |
+
+### Fixed — preflight dependency bootstrap failures, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Fail preflight startup when dependency installation fails, the requirements file is absent, or required modules remain unavailable after a successful pip exit. | `scripts/_bootstrap.py`, `tests/unit/test_bootstrap.py`, `specs/artha-tech-spec.md` | Synthetic installer success/failure, missing requirements, post-install verification; 19 isolated tests passed |
+
+### Fixed — memory bootstrap failure reporting, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Return a failing status when any briefing extraction fails, clearly disclose that successful facts may still have been persisted, propagate procedure-seeding read/write failures, and reject unsafe seed path components. | `scripts/bootstrap_memory.py`, `tests/unit/test_memory_policy.py`, `specs/artha-tech-spec.md`, `docs/spec-manifest.json` | Synthetic extraction-failure, dry-run, seed-write-failure, path-component rejection, idempotency, and missing/empty-input cases; 25 tests passed with 98% bootstrap-module coverage |
+
+### Fixed — memory procedure path containment, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Reject procedure seed directories and destinations that resolve outside `state/learned_procedures/`, including directory and file symlinks. | `scripts/bootstrap_memory.py`, `tests/unit/test_memory_policy.py`, `specs/artha-tech-spec.md`, `docs/spec-manifest.json` | Isolated memory-policy selection: 27 passed; 99% bootstrap-module line/branch coverage |
+
+### Fixed — self-model rebuild failure reporting, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Return a failing CLI status when an explicit self-model rebuild raises, while preserving success for updated and unchanged results. | `scripts/post_catchup_memory.py`, `tests/unit/test_memory_policy.py`, `specs/artha-tech-spec.md`, `docs/spec-manifest.json` | Synthetic CLI tests cover writer failure, updated success and unchanged success |
+
+### Fixed — evaluation-alert history preservation, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Require valid evaluation-alert shape across both writers and preflight; preserve malformed history and fail preflight at P1 instead of treating it as healthy. | `scripts/post_catchup_memory.py`, `scripts/retrospective_view.py`, `scripts/preflight.py`, alert writer/preflight tests, `specs/artha-tech-spec.md`, `docs/spec-manifest.json` | Isolated memory/preflight/retrospective selection: 43 passed; synthetic malformed-YAML, missing-list, non-list and invalid-entry cases verify history preservation and failing preflight |
+
+### Fixed — Windows preflight help encoding, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Keep `preflight.py --help` usable under legacy Windows console encodings by avoiding unsupported Unicode glyphs in argparse help text. | `scripts/preflight.py`, `tests/unit/test_preflight_advisory.py` | Regression subprocess with `PYTHONIOENCODING=cp1252`; isolated `tests/unit/test_preflight_advisory.py` |
+| Keep the import-check success output usable under CP1252 by using ASCII, with a direct legacy-encoding subprocess regression. | `tools/import_check.py`, `tests/dev/test_check_canaries.py` | CP1252 and clean-tree regressions; full isolated `tests/dev` selection |
+| Refresh the generated implementation fingerprint after the source changes. | `docs/spec-manifest.json` | `tools/gen_capability_register.py --check` |
+
+### Fixed — Work Reflect protocol routing, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Describe the six Work Reflect queries using their actual providers instead of labeling ADO as WorkIQ; align the local-only protocol's successful Teams zero-result handling with correction memory (no retry for the known search-index gap); clarify that full closes must run in agent context. | `config/commands.md`, local-only `config/reflect-protocol.md` | Protocol/provider cross-check; zero-result and MCP-error distinctions |
+| Make the private standalone reflection command refuse full closes because it cannot ingest the six query results or enforce the Q1/Q2 close gate; keep the internal pipeline from persisting when passes 1–3 return no data. | local-only `scripts/work/reflect.py`, `tests/work/test_reflect.py` | Standalone-command refusal, empty and Kusto-only sweep regressions; 70 reflection/sweep tests passed, with 3 persistence tests excluded because they write to the live audit path |
+
+### Fixed — honest live preflight checks, 2026-11-03
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Recognize encrypted State Files without creating competing plaintext templates; expand registry globs and `.age` siblings while retaining real missing/stale results and registry-read failures. | `scripts/preflight.py`, `scripts/preflight/state_checks.py`, technical spec | `tests/unit/test_preflight_state.py`; both entry surfaces, encrypted-template noncreation, registry glob/mtime/I/O regressions |
+| Evaluate the SLO status mapping correctly; identify budgets by `slo_id` and report errors or missing samples as failed P2 advisories, not successful skips. | `scripts/preflight.py`, technical spec | burn-rate boundaries, evaluation failure, empty/no-sample regressions |
+| Limit missing-skill preflight advisories to the current host without altering the global static inventory or importing skill code. | `scripts/preflight.py`, technical spec | scalar/list/default `run_on` cases; preflight and skill compatibility selection |
+| Propagate missing/failing Outlook CLI and malformed calendar responses instead of recording an empty, fresh calendar; preserve valid empty listings and non-Windows skipping. | `scripts/connectors/outlookctl_bridge.py`, technical spec | `tests/unit/test_work_connectors.py`, `tests/unit/test_pipeline_coverage.py`; actual missing-handler coverage/freshness regression, process and response failures, valid-empty compatibility |
+| Make dedicated SharePoint sync fail visibly for missing/invalid configuration or unavailable Work credentials; use the existing Work-only freshness/refresh path instead of accepting an expired cached token. | `scripts/sharepoint_kb_sync.py`, generated manifest, technical spec | `tests/unit/test_sharepoint_kb_sync.py`, `tests/unit/test_credentials_providers.py`; missing/invalid configuration, no-fetch/no-KB credential failure, expired Work token without personal fallback, CLI failure label/exit |
+| Pass the legacy file-decryption private key through stdin instead of a temporary key file; retain caller-selected plaintext output and a bounded subprocess lifetime. | `scripts/foundation.py`, technical spec | `tests/unit/test_encryption_helpers_failclosed.py`; subprocess-time no-key-file assertions, success/failure, synthetic native binary round-trip |
+| Refresh backup validation health only after full, unfiltered success; partial failures exit nonzero and retain the prior success timestamp, and domain-only success cannot clear the global overdue gate. | `scripts/backup.py`, technical spec | `tests/unit/test_backup.py`, `tests/unit/test_vault.py`; partial/domain-only/full-success health and error-count compatibility |
+| Require nonempty, complete backup validation coverage and both integrity checksums; reject malformed inventories, count mismatches and unlisted/duplicate ZIP entries before decryption. Preserve unreadable/corrupt catalogs rather than resetting history, and propagate failed catalog publication. | `scripts/backup.py`, technical spec | `tests/unit/test_backup.py`; nine initial completeness failures, malformed/duplicate/type cases, seven catalog-failure reproducers, corrupt-catalog byte preservation and atomic-publication refusal |
+| Propagate WorkIQ structured-query failures instead of empty success; retain partial records with gaps and failed/truncated scope reports without caching them as complete. Reject unusable calendar retries and missing people-mode names. | `scripts/connectors/workiq_bridge.py`, generated manifest, technical spec | `tests/unit/test_work_connectors.py`; 27 initially failing query/coverage regressions, blank narrative and invalid-name cases, successful query routing/cache/retry compatibility |
+| Disclose schema rejections and failed/truncated scopes through standalone fetch errors without losing valid partial records; forward explicit `source_tag` once instead of failing before dispatch. Preserve handler allowlisting and authentication selection. | `scripts/pipeline.py`, technical spec | `tests/unit/test_pipeline_coverage.py`, `tests/unit/test_pipeline_fetch_single.py`; six initially failing regressions, tag precedence, complete-empty compatibility and real WorkIQ legacy-record rejection |
+| Stop marking successful side-effect Work fetches as degraded; classify terminal HTTP errors before retry, retain WorkIQ mode failures and prevent partial-failure breaker success. Keep handled Kusto exceptions explicitly degraded. | private `scripts/work_loop.py` (not included in the public commit), technical spec | source-pinned local synthetic producer selection; success/empty, retry and HTTP boundaries, actual ADO wrapper, WorkIQ partial/failed/skipped outcomes; not live provider or owner UAT |
+| Preserve summary provenance during Work reads and incomplete refreshes; compute age from recorded aware timestamps rather than copy/sync mtime, and clear returned staleness only after successful publication. | private `scripts/work_loop.py` (not included in the public commit), technical spec | source-pinned synthetic reads, failed/degraded/no-data refreshes, valid-empty success, publication refusal and invalid/future/offset timestamp cases |
+| Normalize the Work boundary score into bridge units, preserve zero values and source age, refuse missing/invalid/stale data, and read the validated flat pulse without healthy defaults. Stop Personal Pipeline mutation of the Work-owned pulse; reject boolean/nonfinite bridge metrics before writing. | `scripts/pipeline.py`, `scripts/schemas/bridge_schemas.py`, private Work loop/day reader, canonical technical/UX specs | `tests/unit/test_bridge_schemas.py`, `tests/unit/test_pipeline_coverage.py`, private source-pinned synthetic producer/day selection; scale/zero/provenance, invalid-write preservation, flat-schema reading and Personal nonmutation |
+| Keep direct ADO discovery independent of Agency; publish explicit empty calendar/ADO snapshots rather than retaining obsolete rows. Replace cached derived metrics with current validated values, clear recovered risk, disclose unavailable inputs and treat future domain timestamps as unknown freshness. | private `scripts/work_loop.py` (not included in the public commit), technical spec | source-pinned private selection: 26 predecessor failures, 117 repaired cases, 30/30 changed executable lines; real journaled synthetic empty-snapshot publication and installed-code exercise, not live provider UAT |
+| Stop recording received emails as replies and calendar invitations as presentations. Require explicit supported visibility-event fields instead of inventing dates or default reply evidence; retain existing journals and supported event publication. | private Work loop/domain writers (not included in the public commit), technical spec | final source-pinned private selection: 15 predecessor failures, 137 repaired cases, 21/21 changed executable lines; all five explicit event types publish in synthetic journaled storage and invalid events preserve prior bytes |
+| Preserve staged journey/visibility rows through transactional updates, avoid duplicate rows on retries and match exact section headings. Refuse missing journey fields and missing/naive ADO milestone dates instead of supplying current dates; surface publication failures. | private Work loop/domain writers (not included in the public commit), technical spec | source-pinned private selection, batch/retry/section regressions, legacy compatibility, source-month preservation and visible refusal; not production history or encrypted-state acceptance |
+| Require verified GQ-050 coverage before publishing an empty incident snapshot; preserve prior incidents for missing/failed/invalid queries. Label missing optional incident queries, reject unverified metric rows, preserve numeric/severity zero and expose empty/failed refresh outcomes. | private Work loop/domain writers (not included in the public commit), technical spec | 31 predecessor failures; 183 repaired synthetic cases, 29/29 changed executable lines; journaled state-preservation/valid-empty cases and installed-code publication-decision checks, not live Kusto UAT |
+| Keep Work Outlook fallback out of the full Personal Pipeline and its state/action finalizers; use the existing strict single-Connector adapter and disclose invalid output. Point Work Graph reauthorization to the Work credential scope. | private `scripts/work_loop.py` (not included in the public commit), technical spec | six original predecessor failures; 190 repaired private cases, 6/6 changed executable lines, actual strict-adapter legacy-record rejection and installed synthetic dispatch checks; no native Outlook or live-provider acceptance |
+| Preserve negative Graph calendar offsets and native mail read status, importance, folder and receipt time; classify missing Work mail read state as unknown instead of unread or an empty inbox. | Graph calendar/email Connectors, private Work domain writer, generated manifest, technical spec | four public reproducers; 183 public and 193 private synthetic passes; parser-to-journaled-Work chain, negative/positive/UTC offsets, read/unread/unknown and body exclusion; installed parser/render decisions verified |
+| Prevent Work health from using legacy Personal token files as Work Graph readiness; distinguish stored unexpired Work credentials, untested provider access and unperformed isolation/bridge checks. Missing breaker state is unobserved, not healthy. | private Work health module (outside public Git), technical spec | two predecessor failures; 195 repaired isolated synthetic cases, 7/7 changed executable lines; nineteen installed sources and every named stream verified; no live provider acceptance |
+| Route explicit meeting pre-read marks through the existing Work publication journal instead of direct notes writes; retain staged rows, reject stale sessions and constrain insertion to the exact section. Missing notes no longer return a success indicator. | private Work meetings module (outside public Git), technical spec | five expanded predecessor failures; 201 repaired private synthetic cases, 4/4 changed executable lines; batch, stale-session, no-op, section-boundary and unenrolled compatibility checks; twenty installed sources/streams verified |
+| Make Work read-age labels and XPF advisories use recorded timestamps rather than file-copy time; disclose unknown/naive/future ages and deny future-dated file-quality freshness credit. | `scripts/lib/dq_gate.py`, public recorded-freshness tests, private Work helpers (outside public Git), technical spec | one public and four private predecessor failures; 51 public and 209 private repaired cases; changed quality condition covered on both branches, 12/12 changed executable helper lines; twenty-two installed sources/streams verified |
+| Stop refresh from fabricating `human_authored` provenance for six historical/imported State Files based only on filename and absent provider metadata; preserve existing labels and generator evidence. | private Work loop/domain writers and actual refresh regression cases (outside public Git), retired public stamping tests, technical spec | two exact predecessor failures; 212 repaired private synthetic cases; 51 public quality cases with 12 private-dependent skips; removal-only implementation has no added executable lines; twenty-two installed sources/streams verified |
+| Require a usable Graph access token as well as an unexpired timestamp in preflight, including refreshed results; attempt existing refresh for unknown/invalid lifetime instead of accepting expiry-only evidence or skipping recovery. | `scripts/preflight/oauth_checks.py`, Graph readiness regression tests, technical spec | eleven failing reproducers; 91 repaired public readiness/lifecycle/credential cases, 9/9 changed executable lines; twenty-three installed sources/streams verified; actual Graph records remain absent |
+| Resolve Azure CLI before Work ADO availability/health subprocess launch so installed Windows `az.cmd` is not wrongly reported unavailable. | private Work loop/health and regression selection (outside public Git), technical spec | five predecessor failures; 216 repaired private synthetic cases; actual installed Work gate changes from false to true, authenticated ADO project metadata returns HTTP 200; no work items requested or State Files changed; twenty-three installed sources/streams verified |
+| Make Work availability/health resolve npx and check only an existing package offline without installation; distinguish CLI readiness from untested authentication and record compatibility. Retain the existing ten-second health limit in the availability check, avoiding a reproduced five-second startup false negative. | private Work loop/health and regression selection (outside public Git), technical spec | nine original CLI predecessor failures; 223 repaired private cases and 11/11 initially changed executable lines; two additional timeout predecessor failures, exact timeout assertions (argument continuation has no separate executable statement); installed CLI succeeds without a business query |
+| Share the exact WorkIQ release `0.4.1` across the Connector and both preflight surfaces instead of divergent `0.x`/`latest` selectors; restore the confirmed missing dependency and avoid npm's observed range-cache refusal under `--no-install`. | `scripts/connectors/workiq_bridge.py`, `scripts/preflight.py`, `scripts/preflight/_types.py`, public Connector tests, generated manifest, technical spec | four public reproducers; 212 repaired public cases, 3/3 changed executable lines; repaired private compatibility selection passes; actual installed offline/no-install version check succeeds; twenty-four installed sources and all named streams verified |
+| Read HA configuration from the checked installation on both preflight surfaces; report missing/unreadable/malformed configuration, unavailable credential storage and unverified connectivity as failed P1 advisories rather than successful skips. Retain valid disabled/absent-Connector skipping and avoid exposing parser/provider payloads. | `scripts/preflight.py`, `scripts/preflight/integration_checks.py`, HA readiness/request-authentication tests, generated manifest, technical spec | 27 initial failures; 147 repaired HA/Pipeline cases with 33/33 changed executable lines covered; all-preflight/WorkIQ selection passes 322 cases; actual installed surfaces report the missing HA credential without device queries; twenty-five installed sources/streams verified |
+| Correct the HA repair's architectural regression by routing both preflight surfaces through opt-in strict shared configuration loading; preserve existing best-effort callers, separate cache keys, invalidation and shallow-copy behavior without hiding unavailable configuration. No architecture exemption added. | `scripts/lib/config_loader.py`, both preflight surfaces, config-loader regression tests, generated manifest, technical spec | prior full aggregate at `32aa62d`: 10,292 passed with one introduced direct-YAML architecture failure (not full acceptance); nine strict-loader reproducers plus gate fail before correction; repaired 398-case loader/architecture/preflight/HA/WorkIQ cohort passes, 17/17 changed executable lines covered; twenty-six installed sources/streams verified |
+| Make external-agent discovery and health checks distinguish disabled features from unreadable/malformed configuration and registries; validate existing registries strictly while keeping best-effort registry callers unchanged. Both preflight surfaces report unknown readiness as failed P1 advisories. | `scripts/lib/agent_registry.py`, both preflight surfaces, readiness contract tests, technical spec | failing reproducers including a monolithic-path registry type mismatch; isolated external-agent/preflight/config-loader/architecture cohort: 692 passed, 4 skipped; both installed surfaces passed synthetic readiness cases; no live agent configuration or registry was read |
+| Require an actual valid, nonfuture `last_updated` for planning signals; loading does not synthesize freshness, while an explicit save can stamp a previously missing date. Share the 2+ day active-signal freshness check across both preflight surfaces. | `scripts/planning_signals.py`, both preflight surfaces, planning freshness regression tests, technical and UX specs | five initial failures across package/script checks; final planning-signal, preflight and architecture selection: 127 passed; all changed executable lines covered; Ruff and whitespace checks passed |
+
+The installed live preflight passes its strict P0 gate. Its remaining advisories are not
+silently cleared. A separate encrypted state/config snapshot, an audited agent reflection
+and a synthetic Chromium PDF probe are local operational evidence, not core cutover,
+GFS/off-host recovery, owner UAT or release acceptance.
+The same-host snapshot's 11 encrypted State Files were separately restored and decrypted
+in isolated session storage, with no production changes or plaintext/key files. This is
+an encrypted-state subset exercise, not full state/config or cold-start acceptance.
+
+### Fixed — operational fetch, encrypted access and packaging boundaries, 2026-11-02
+
+| Change | Modified files | Tests |
+|---|---|---|
+| Normalize WIQL date inputs; emit schema-valid string IDs and full `date_iso`; propagate configuration/authentication/provider failures instead of returning empty success. Reject incomplete batch responses and disclose result caps. Assigned-to scope and terminal-state filtering are unchanged. | `scripts/connectors/ado_workitems.py`, technical spec | `tests/unit/test_work_connectors.py`; Connector coverage and core adapter regressions |
+| Supply the missing shared in-memory vault factory, bind encrypted reads to the requested directory, discover the per-user Windows age installation, and reject Windows path/stream separators in vault names. | `scripts/foundation.py`, `scripts/catchup_core/{vault,curated}.py`, `docs/catchup-core.md` | foundation hardening, native age round-trip, selected-directory, invalid-name and Work cache regressions |
+| Repair public package declarations: omit unavailable private packages, include the existing agents/backfill/PR-stage packages, and ship the extraction prompts required at import time. | `pyproject.toml`, `README.md` | `tests/dev/test_package_distribution.py`; isolated public wheel build |
+| Advance Connector freshness only after complete coverage; preserve the prior timestamp after failed or degraded fetches. | `scripts/pipeline.py`, technical spec | `tests/unit/test_pipeline_coverage.py` |
+| Publish the completed retry's snapshot instead of replaying failed prefixes; retain distinct partials if retries are exhausted. | `scripts/pipeline.py`, technical spec | retry overlap, changed/empty result and exhausted-partial regressions |
+| Reuse shared age discovery for encrypted action fields; Windows string decryption now writes only temporary ciphertext, never a private-key or plaintext file. Stored ciphertext format and legacy bulk-decrypt workflows are unchanged. | `scripts/foundation.py`, technical spec, `docs/catchup-core.md` | `tests/unit/test_encryption_helpers_failclosed.py`; action queue, durability and hardening regressions |
+| Honor configured skill platforms before cadence or P0 execution; single-skill `--force` cannot dispatch a Mac-only skill on Windows. Defaults remain cross-platform and no missing implementation is fabricated. | `scripts/skill_runner.py`, technical spec | `tests/unit/test_skill_runner.py`; six initially failing platform/force regressions |
+| Stop suppressing the configured ADO authentication loader during Work refresh. | private `scripts/work_loop.py` (not included in the public commit) | source-pinned local synthetic producer verification; not shared CI or provider/UAT acceptance |
+
+These source repairs do not enable cutover, grant consent, advance a reflection close or authorize
+external actions. Release fingerprints and real operational acceptance require separate verification.
+
+### Added — read-only Google OAuth setup, 2026-11-02
+
+| Change | Modified files | Tests |
+|---|---|---|
+| `--read-only` setup requests only Gmail and Calendar read scopes, requires fresh consent, and fails if either provider check fails. Read-only service calls reject unexpected cached or returned scopes; token records retain effective grants. Existing setup defaults remain unchanged. | `scripts/google_auth.py`, `scripts/setup_google_oauth.py`, `docs/google-oauth-setup.md`, canonical specs | `tests/unit/test_google_readonly_oauth.py`; credential/provider, calendar coverage and writer-fence regressions |
+
+Live Google sign-in and full combined Catch-up acceptance remain pending.
+This option does not decrypt transferred State Files or change host authority.
+
 ### Added — `goals_authority`: keep Goals with the incumbent, 2026-11-01
 
 | Change | Modified files | Tests |

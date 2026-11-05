@@ -54,3 +54,22 @@ def test_unacked_p0_alert_blocks_catchup(preflight, tmp_path, monkeypatch):
     # CheckResult.ok must be False for unacked P0
     assert result.ok is False, f"Expected ok=False for unacked P0, got: {result}"
     assert result.severity == "P0"
+
+
+@pytest.mark.parametrize("data", [
+    {},
+    {"alerts": "not-a-list"},
+    {"alerts": [None]},
+    {"alerts": None},
+])
+def test_invalid_alert_shape_fails_preflight(preflight, tmp_path, monkeypatch, data):
+    import yaml  # type: ignore[import]
+
+    alerts_file = tmp_path / "eval_alerts.yaml"
+    alerts_file.write_text(yaml.safe_dump(data), encoding="utf-8")
+    monkeypatch.setattr(preflight, "ARTHA_DIR", str(tmp_path))
+
+    result = preflight.check_eval_alerts()
+    assert result.ok is False
+    assert result.severity == "P1"
+    assert "invalid" in result.message.lower()

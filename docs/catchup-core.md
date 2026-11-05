@@ -190,6 +190,18 @@ a Catch-up ID resumes at the first uncommitted stage.
 | `actions.py`, `action_mapping.py` | hardened action lifecycle contract; the action database keeps its stored status words and `action_mapping` is the one mapping to the lifecycle vocabulary (pinned by a test) |
 | `runtime.py`, `cli.py` | runtime wiring for shadow and release-gated authoritative runs, and the command entry point |
 
+Encrypted State File readers use `foundation.get_age_vault(state_dir=directory)`; omitting
+`state_dir` uses the current foundation configuration. The factory defers private-key retrieval
+until decryption, reports unavailable credentials as vault errors and never writes a key or plaintext
+file. Executable discovery prefers `PATH`, then the per-user Windows installation
+`~\.artha-tools\age\age.exe` or the supported macOS/Linux locations. Vault names must be single
+components: empty names, path separators, drive/stream separators and dot-prefixed names are rejected.
+
+The action queue's string encryption helpers use the same executable discovery. On Windows,
+string decryption uses the shared vault reader with a temporary ciphertext file: the private key
+is passed on stdin and plaintext returns on stdout. Neither is written to a file, and the ciphertext
+temporary is removed on success or failure. This does not change legacy bulk-decrypt workflows.
+
 ## Running a shadow Catch-up
 1. Create `config/catchup_core.yaml` (git-ignored) mapping pilot sources to configured connectors:
    ```yaml

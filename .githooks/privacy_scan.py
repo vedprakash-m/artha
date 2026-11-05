@@ -347,9 +347,11 @@ def load_denylist(repo: Path = ARTHA_DIR) -> Denylist:
     deny = Denylist()
     profile = repo / "config" / "user_profile.yaml"
     try:
-        text = profile.read_text(encoding="utf-8") if profile.is_file() else ""
-    except OSError:
+        text = profile.read_text(encoding="utf-8")
+    except FileNotFoundError:
         text = ""
+    except (OSError, UnicodeError):
+        raise ScannerError("cannot read owner privacy profile") from None
     section = ""
     subsection = ""
     for line in text.splitlines():
@@ -379,11 +381,15 @@ def load_denylist(repo: Path = ARTHA_DIR) -> Denylist:
     extra = Path(os.environ.get("ARTHA_LOCAL_DIR", str(Path.home() / ".artha-local"))).expanduser() \
         / "privacy_denylist.txt"
     try:
-        for line in extra.read_text(encoding="utf-8").splitlines():
+        extra_text = extra.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeError):
+        raise ScannerError("cannot read local privacy denylist") from None
+    else:
+        for line in extra_text.splitlines():
             if line.strip() and not line.startswith("#"):
                 deny.add("listed", line)
-    except OSError:
-        pass
     return deny
 
 
@@ -403,7 +409,9 @@ def staged_items(repo: Path) -> Iterator[tuple[str, str | None, str]]:
     names = _git_ok(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z"], repo)
     for rel in (n for n in names.split("\0") if n):
         blob = run_git(["show", f":{rel}"], repo)
-        yield rel, (blob.stdout if blob.returncode == 0 else None), ""
+        if blob.returncode != 0:
+            raise ScannerError(f"cannot read staged Git blob: {rel}")
+        yield rel, blob.stdout, ""
 
 
 def tracked_items(repo: Path) -> Iterator[tuple[str, bytes | None, str]]:
@@ -434,7 +442,9 @@ def commit_items(repo: Path, commit: str) -> Iterator[tuple[str, str | None, str
             continue
         seen.add(rel)
         blob = run_git(["show", f"{commit}:{rel}"], repo)
-        yield rel, (blob.stdout if blob.returncode == 0 else None), commit
+        if blob.returncode != 0:
+            raise ScannerError(f"cannot read Git blob at {commit}: {rel}")
+        yield rel, blob.stdout, commit
 
 
 def scan_items(items: Iterable[tuple[str, str | None, str]], guard: Path = PII_GUARD,

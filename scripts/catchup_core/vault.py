@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import defaultdict
 from collections.abc import Callable, Iterable
@@ -138,6 +139,10 @@ def find_age_bin(custom: str | None = None) -> str | None:
     found = shutil.which("age")
     if found:
         return found
+    if sys.platform == "win32":
+        portable = Path.home() / ".artha-tools" / "age" / "age.exe"
+        if portable.is_file():
+            return str(portable)
     for candidate in ("/opt/homebrew/bin/age", "/usr/local/bin/age"):
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
@@ -164,7 +169,7 @@ class AgeVault:
         return self._age
 
     def path_for(self, name: str) -> Path:
-        if "/" in name or name.startswith("."):
+        if not name or any(char in name for char in ("/", "\\", ":")) or name.startswith("."):
             raise VaultError(f"invalid vault name {name!r}")
         return self._dir / f"{name}.md.age"
 

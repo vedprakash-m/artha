@@ -53,6 +53,54 @@ def test_get_config_state_dir_matches_config_dict():
     import foundation
     assert foundation.get_config()["STATE_DIR"] == foundation._config["STATE_DIR"]
 
+def test_age_vault_factory_uses_current_config_and_defers_private_key(monkeypatch, tmp_path):
+    import foundation
+
+    calls = []
+    monkeypatch.setitem(foundation._config, "STATE_DIR", tmp_path / "configured")
+    monkeypatch.setattr(foundation, "get_public_key", lambda: "age1synthetic")
+    monkeypatch.setattr(foundation, "get_private_key", lambda: calls.append("private") or "synthetic")
+    vault = foundation.get_age_vault()
+    assert vault.path_for("finance") == tmp_path / "configured" / "finance.md.age"
+    assert calls == []
+    assert vault._identity() == "synthetic"
+    assert calls == ["private"]
+
+
+def test_age_vault_factory_honors_explicit_state_directory(monkeypatch, tmp_path):
+    import foundation
+
+    monkeypatch.setitem(foundation._config, "STATE_DIR", tmp_path / "configured")
+    monkeypatch.setattr(foundation, "get_public_key", lambda: "age1synthetic")
+    vault = foundation.get_age_vault(state_dir=tmp_path / "selected")
+    assert vault.path_for("finance") == tmp_path / "selected" / "finance.md.age"
+
+
+def test_age_vault_factory_missing_recipient_raises_vault_error(monkeypatch):
+    import foundation
+    from catchup_core.vault import VaultUnavailable
+
+    def unavailable():
+        raise SystemExit(1)
+
+    monkeypatch.setattr(foundation, "get_public_key", unavailable)
+    with pytest.raises(VaultUnavailable, match="recipient"):
+        foundation.get_age_vault()
+
+
+def test_age_vault_factory_missing_identity_raises_vault_error(monkeypatch, tmp_path):
+    import foundation
+    from catchup_core.vault import VaultUnavailable
+
+    def unavailable():
+        raise SystemExit(1)
+
+    monkeypatch.setattr(foundation, "get_public_key", lambda: "age1synthetic")
+    monkeypatch.setattr(foundation, "get_private_key", unavailable)
+    vault = foundation.get_age_vault(state_dir=tmp_path)
+    with pytest.raises(VaultUnavailable, match="private key"):
+        vault._identity()
+
 
 # ---------------------------------------------------------------------------
 # TD-10: health_check_updater — new module

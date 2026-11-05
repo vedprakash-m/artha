@@ -162,3 +162,53 @@ class TestConcurrentLoadIsSafe:
         assert errors == [], f"Thread errors: {errors}"
         assert len(results) == 10
         assert all(r == {"route": "safe"} for r in results)
+
+
+class TestRequiredConfig:
+    @pytest.mark.parametrize("content", ["", "[]", "false", "{{invalid: yaml: [}"])
+    def test_strict_read_does_not_reuse_best_effort_failure(self, tmp_path, content):
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(tmp_path, "connectors.yaml", content)
+        assert cl.load_config("connectors", str(cfg_dir)) == {}
+        with pytest.raises((ValueError, yaml.YAMLError)):
+            cl.load_config("connectors", str(cfg_dir), strict=True)
+
+    def test_missing_and_unknown_config_raise(self, tmp_path):
+        import lib.config_loader as cl
+        with pytest.raises(FileNotFoundError):
+            cl.load_config("connectors", str(tmp_path), strict=True)
+        with pytest.raises(ValueError):
+            cl.load_config("unknown", str(tmp_path), strict=True)
+
+    @pytest.mark.parametrize("failure", [PermissionError, UnicodeError])
+    def test_read_errors_propagate_without_logging_payload(self, tmp_path, monkeypatch, caplog, failure):
+        import builtins
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(tmp_path, "connectors.yaml", {})
+        original = builtins.open
+        def denied(path, *args, **kwargs):
+            if Path(path) == cfg_dir / "connectors.yaml":
+                raise failure("synthetic-private-marker")
+            return original(path, *args, **kwargs)
+        monkeypatch.setattr(builtins, "open", denied)
+        with caplog.at_level(logging.WARNING), pytest.raises(failure):
+            cl.load_config("connectors", str(cfg_dir), strict=True)
+        assert "synthetic-private-marker" not in caplog.text
+
+    def test_successful_strict_reads_keep_cache_copy_and_invalidation(self, tmp_path):
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(tmp_path, "connectors.yaml", {"version": 1})
+        first = cl.load_config("connectors", str(cfg_dir), strict=True)
+        first["version"] = 20
+        (cfg_dir / "connectors.yaml").write_text("version: 2\n", encoding="utf-8")
+        assert cl.load_config("connectors", str(cfg_dir), strict=True) == {"version": 1}
+        cl.invalidate()
+        assert cl.load_config("connectors", str(cfg_dir), strict=True) == {"version": 2}
+
+    def test_failed_strict_read_is_not_cached(self, tmp_path):
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(tmp_path, "connectors.yaml", "[")
+        with pytest.raises(yaml.YAMLError):
+            cl.load_config("connectors", str(cfg_dir), strict=True)
+        (cfg_dir / "connectors.yaml").write_text("{}\n", encoding="utf-8")
+        assert cl.load_config("connectors", str(cfg_dir), strict=True) == {}

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,6 +25,23 @@ for _p in [str(_ARTHA_ROOT), str(_SCRIPTS_DIR)]:
         sys.path.insert(0, _p)
 
 import preflight as pf
+
+
+def test_preflight_help_runs_with_legacy_windows_encoding(tmp_path):
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "cp1252"
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPTS_DIR / "preflight.py"), "--help"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="cp1252",
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--first-run" in result.stdout
 
 
 # ---------------------------------------------------------------------------

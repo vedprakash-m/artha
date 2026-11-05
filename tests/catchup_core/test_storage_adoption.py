@@ -409,7 +409,7 @@ def test_unrecognized_native_security_failure_is_not_legacy_eligibility(
         original = native.owner_private_check
         with monkeypatch.context() as prior:
             prior.setattr(native, 'owner_private_check', lambda *args, **kwargs: None)
-        assert native.__dict__['owner_private_check'].__self__ is native
+        assert native.owner_private_check.__self__ is native
         assert native.owner_private_check == original
     calls = []
     failure = fs.QuarantineFilesystemError('synthetic native security query failure')

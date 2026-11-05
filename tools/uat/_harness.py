@@ -334,19 +334,21 @@ def seed_school_fact(deps: Any, *, upstream: str = "m1", text: str = "Registrati
 
 
 def beliefs(runner: Any, report: Report, *extra: str, expected: str = "exit 0 and a list of Facts",
-            check: Callable[[list[dict[str, Any]]], bool] = lambda _b: True) -> list[dict[str, Any]]:
+            check: Callable[[list[dict[str, Any]]], bool] = lambda _b: True,
+            shadow: bool = False) -> list[dict[str, Any]]:
     # Live, `--shadow` reads a separate comparison store, so its Fact IDs are unknown to the live ledger and MCP.
-    argv = ["beliefs", *(() if getattr(runner, "live", False) else (SHADOW,)), *extra]
+    # A scenario that continues with `--shadow` commands asks for the shadow store explicitly (`shadow=True`).
+    argv = ["beliefs", *(() if getattr(runner, "live", False) and not shadow else (SHADOW,)), *extra]
     outcome = runner.run(argv)
     found = outcome.data.get("beliefs") if outcome.ok and isinstance(outcome.data, dict) else None
     report.check(" ".join(argv), expected, outcome.shown(), isinstance(found, list) and check(found))
     return found or []
 
 
-def first_fact(runner: Any, report: Report, *extra: str) -> dict[str, Any] | None:
+def first_fact(runner: Any, report: Report, *extra: str, shadow: bool = False) -> dict[str, Any] | None:
     """The Fact a scenario works on: the seeded one in scratch, the first visible one live."""
     found = beliefs(runner, report, *extra, expected="exit 0 and at least one visible Fact",
-                    check=lambda rows: bool(rows))
+                    check=lambda rows: bool(rows), shadow=shadow)
     return found[0] if found else None
 
 

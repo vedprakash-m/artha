@@ -45,6 +45,24 @@ def test_seed_is_idempotent_and_ready_offer_is_capped(tmp_path: Path, monkeypatc
     assert [offer["id"] for offer in offers] == ["SIG-001"]
 
 
+def test_save_adds_missing_update_date_only_on_an_explicit_write(tmp_path: Path) -> None:
+    signals = tmp_path / "planning_signals.md"
+    ps.seed(signals)
+    frontmatter = _frontmatter(signals)
+    frontmatter.pop("last_updated")
+    signals.write_text(
+        "---\n" + yaml.dump(frontmatter, sort_keys=False) + "---\n# Planning Signals\n",
+        encoding="utf-8",
+    )
+
+    doc = ps.load(signals)
+    assert "last_updated" not in doc.frontmatter
+
+    ps.save(doc, signals)
+
+    assert _frontmatter(signals)["last_updated"] == date.today().isoformat()
+
+
 def test_materialize_scenario_is_idempotent_and_cross_referenced(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(ps, "AUDIT_FILE", tmp_path / "audit.md")
     signals = tmp_path / "planning_signals.md"

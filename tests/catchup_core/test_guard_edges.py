@@ -35,7 +35,7 @@ def test_scorecard_explains_every_failure():
 def test_encrypted_state_is_read_in_memory_through_the_vault(tmp_path, monkeypatch):
     (tmp_path / "goals.md.age").write_bytes(b"cipher")
     seen = []
-    fake = types.SimpleNamespace(get_age_vault=lambda: types.SimpleNamespace(read=lambda n: seen.append(n) or "---\ngoals: []\n---\n"))
+    fake = types.SimpleNamespace(get_age_vault=lambda **kw: types.SimpleNamespace(read=lambda n: seen.append(n) or "---\ngoals: []\n---\n"))
     monkeypatch.setitem(sys.modules, "foundation", fake)
     assert curated.read_state(tmp_path, "goals").startswith("---") and seen == ["goals"]
     assert curated.records(curated.read_state(tmp_path, "goals"), "goals") == []
