@@ -8135,3 +8135,34 @@ already described above.
   (`report_full_listing`), unlisted occurrences in that window are withdrawn as calendar occurrences only, never
   Signals, Facts or obligations. Only 401/`invalid_grant` mean lost access; a cursor is never sent to another host.
   Built and tested against synthetic fixtures only; live parity is required before a source is switched on.
+
+### 2026-11-05 folded release and recovery specs
+
+The following implemented specs are also folded here and archived with a `-2026-11-05` suffix.
+
+- **Reduced-gate slice cutover (CUTOVER-LITE, owner decisions D-1..D-6).** A first slice may cut over with a reduced
+  gate set on one authority host while the incumbent keeps running. Kept and verified: a verified full checkpoint with
+  a restore rehearsal, an independent second copy and its recovery, a rollback rehearsal, single-writer and
+  authority-generation checks, the full gate rerun on committed source, and owner UAT with a signed, cohort-bound
+  release. Waived or deferred, and named as not run in the release record: held-out P1/P2 labeling, field-accuracy
+  floors, cross-Domain/Goal cases, workload scenarios, Windows Work recovery and other-platform observations. A
+  parallel incumbent comparison replaces the deferred accuracy gates; rollback tripwires are a P1 the incumbent found
+  and the core missed, unexplained record loss, two writers on one record type, a broken critical command, an
+  unexpected external effect, a failed integrity/single-writer check, or a Catch-up over 3 minutes p95 or failing.
+  Nothing waived is marked passed, and the slice does not weaken gates for later slices, Work or external effects.
+- **Slice release profile (SR-01..SR-10).** `release.profile: slice` replaces the full `artha.release.v4` scorecard
+  with an approved-bytes `artha.release.slice.v1` waiver; every kept gate is still verified unchanged. The waiver names
+  exactly the six waivable gates as not run, carries the owner's signature time, binds the current evaluation cohort
+  (code, policy, packs, pinned model) and commits to an observation window of at least 14 days; any omission,
+  addition, renaming, kept-gate waiver, missing signature, cohort mismatch or shorter window refuses release. Released
+  and requested Domains must be the same non-empty, distinct, ordered list, and the cohort binds all their packs. The
+  slice recovery receipt (`artha.recovery-rehearsal.slice.v1`) needs exactly the Mac personal and personal cloud-copy
+  observations. External effects stay held, Work is untouched, and shadow runs need no release. An owner decision may
+  end the observation window early (done 2026-11-05).
+- **Operational recovery, backup version 3 (approved 2026-11-04).** Incumbent GFS backups write version-3 ZIPs and
+  still read version 2. Local SQLite databases are captured through an online snapshot so committed, uncheckpointed
+  WAL rows are included; validation runs in memory (no temporary plaintext or key files); named NTFS streams are
+  captured and restored where the host supports them and refused before any write elsewhere; tampered, missing,
+  unlisted or duplicate payloads, wrong hashes/sizes/counts, unsafe paths and stream names, and unsupported versions
+  are rejected; interrupted snapshots or restores keep the prior recoverable generation. Covered by
+  `tests/unit/test_backup.py`. Open: the separately authorized real-host restore and off-host exercise (owner action).
