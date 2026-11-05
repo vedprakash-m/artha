@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — consolidation CI fixtures and manifest, 2026-11-04
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Regenerated the implementation fingerprint from repository-required LF bytes and added a synthetic LF-checkout regression. Kept the raw-byte hashing contract unchanged. | `docs/spec-manifest.json`, `tests/dev/test_capability_register.py` | Reproduced the stale fingerprint before regeneration; the isolated register and age-vault selection passed 26 tests afterward. |
+| Removed a blanket file-existence mock that hid the portable age executable on Python 3.14; retained regression coverage for both `Path.is_file` implementations. | `tests/catchup_core/test_age_vault.py` | Both fixture variants passed. Previously documented elevated Windows CI ownership failures remain unresolved; no ownership or privacy checks were relaxed. |
+
 ### Consolidated — scrubbed main delivery, 2026-11-04
 
 | Change | Modified files | Validation |

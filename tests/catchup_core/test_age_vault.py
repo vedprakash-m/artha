@@ -165,9 +165,11 @@ def test_vault_rejects_nonportable_state_names_before_io(tmp_path, name):
     assert not list(tmp_path.iterdir())
 
 
-def test_windows_portable_age_installation_is_discovered(monkeypatch, tmp_path):
+@pytest.mark.parametrize("path_uses_isfile", [False, True])
+def test_windows_portable_age_installation_is_discovered(monkeypatch, tmp_path, path_uses_isfile):
     monkeypatch.setattr(vt.shutil, "which", lambda _: None)
-    monkeypatch.setattr(vt.os.path, "isfile", lambda _: False)
+    if path_uses_isfile:
+        monkeypatch.setattr(vt.Path, "is_file", lambda path: vt.os.path.isfile(path))
     monkeypatch.setattr(vt, "sys", type("Platform", (), {"platform": "win32"}), raising=False)
     monkeypatch.setattr(vt.Path, "home", lambda: tmp_path)
     executable = tmp_path / ".artha-tools" / "age" / "age.exe"
