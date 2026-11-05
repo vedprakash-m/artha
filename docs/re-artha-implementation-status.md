@@ -1,5 +1,65 @@
 # re-artha implementation status — 2026-11-05
 
+## Full-profile work reopened — 2026-11-05 (Windows)
+
+The owner has reopened full completion and rejected an imposed 30-day rollout. The
+historical reduced-slice closure below is not full-v4 acceptance. Existing valid
+historical evidence and immediate authorized bounded checks may contribute; missing
+live outcomes, exact owner mappings, independent labels, Work-policy handling,
+custodian/recovery/transfer observations and provider history purge remain explicit
+gaps. No release threshold, consent or authority has been changed.
+
+A reproduced Goal defect allowed future-observed Facts to establish current quantity/
+habit progress or a weekly delta. Mixed-source coverage could also conceal a future
+completion behind an older source. These paths now remain unknown until their evidence
+time; invalid prior evidence leaves valid current progress visible. General unknown
+validity remains compatible with explicitly dated metric text. The command/Briefing
+case becomes verified after the observation instant without changing authored Goal bytes.
+The final isolated Goal/Open Item/plan cohort passed **280 tests**, with **96.75% combined
+line/branch coverage** over the two repaired modules. Ruff and strict core mypy passed.
+This is local engineering evidence, not live Goal acceptance or a full-completion claim.
+
+The final isolated integration/scratch-UAT/release/corpus/transfer/launcher/register
+cohort passed **959 tests, seven skipped**. Its earlier snapshot failed two stale
+Windows launcher API mocks; concurrent Mac changes corrected those mocks, and the final
+cohort includes that repair. The separate current host regression selection passed 46.
+Public Ruff, imports and the state-write ratchet passed. Prior full aggregates remain
+historical; they are not current-source aggregate results.
+
+The pre-existing frozen-source harness confirmation subsequently passed **1,708 tests,
+77 skipped**, at **87.99% combined coverage** in 4,733.94 seconds. It predates the new Goal
+repair and concurrent host changes; it does not explain the earlier native integrity
+refusals. Production guards remain unchanged.
+
+The whole working-tree privacy sweep failed closed on a Gitleaks native crash
+(`3221225477`) for unchanged `scripts/lib/sealed_state.py`. Three bounded repetitions
+using identical file bytes, scanner, configuration and policy passed; the crash
+remains unexplained and the original full sweep is not green. Its chained unpushed
+scan did not execute. Publication is blocked pending a successful final privacy gate
+and a stable reviewed cohort: independent Mac edits continue to arrive in shared
+hooks, manifests and validation files. The owner was unavailable to coordinate a
+pause. No changes were discarded, no protection was bypassed, and this repair has
+not been committed or pushed.
+
+A second full working-tree/unpushed gate completed successfully under the unchanged
+policy: **both whole working-tree and unpushed scans passed**. This supersedes the
+privacy publication blocker above, but does not diagnose the earlier scanner crash.
+The later isolated host/preflight/drift-advisory/privacy-hook
+cohort passed **138 tests, four skipped**. Current public Ruff, strict core typing,
+generated-register consistency and diff whitespace checks passed. Independent Mac
+changes and the ignored Work-brief draft remain preserved and unstaged.
+After the owner renewed autonomous execution, a fresh full isolated public suite
+with core branch coverage was started from a frozen source snapshot. It remains
+running; no aggregate pass is claimed yet. Only reviewed delivery changes are staged;
+independent Mac changes and the ignored Work draft remain outside this delivery.
+Full-profile live acceptance remains unresolved; no new commit or push was performed.
+
+Hosted CI at `109fa39` finished with failures: both Windows jobs used the stale
+launcher mocks corrected in the later local cohort; changed-line coverage referred
+to a pre-scrub base absent from the rewritten history. Neither the old failed run
+nor the passing local cohort establishes current hosted acceptance.
+
+
 ## Approved-slice completion continuation — 2026-11-05
 
 The owner retained the existing slice decisions and approved a test-launcher-only Windows CI

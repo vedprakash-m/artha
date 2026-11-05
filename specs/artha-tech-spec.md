@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.48.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.49.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.29.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.49.0 | 2026-11-05 | **Goal observation time** — Outcome/habit values and weekly comparisons cannot use Facts observed after evaluation. Every required covered source must have completed by evaluation, including mixed-source coverage; on-time observations reject future verification. Authored Goals, authority and release gates are unchanged. |
 | v3.48.0 | 2026-11-05 | **Windows CI producer ownership** — A mandatory test-only launcher duplicates the caller token, changes only that duplicate's default owner to its existing user SID, verifies file/directory/subprocess ownership and runs the existing isolated test runner. Production owner/DACL checks and elevation/privileges are unchanged; hosted elevated acceptance remains separately recorded. |
 | v3.47.0 | 2026-11-03 | **Planning Signal Save Freshness** — Loading preserves missing `last_updated`; an explicit save stamps the actual write date only when that key is absent. Invalid/future stored dates remain validation errors. |
 | v3.46.0 | 2026-11-03 | **Planning Signal Freshness** — Existing planning-signal files must preserve their recorded `last_updated`; missing, invalid or future dates fail preflight instead of being replaced or treated as fresh. Both preflight surfaces share the active-signal 2+ day staleness check. |
@@ -7714,6 +7715,16 @@ Fact versions and current permission checks remain unchanged. Local code `1cc580
 retain the metric's exact source dependencies. This is presentation/validation repair, not weekly Goal intelligence.
 
 ### Weekly Goal comparison and startup contention — 2026-10-22
+
+**Temporal evidence repair, 2026-11-05.** Dated quantity/habit text does not establish that its Fact has already
+been observed. Selected current and prior-window Facts must have `observed_at` no later than evaluation;
+future prior evidence removes only the verified weekly comparison, not valid current progress. Coverage must
+be complete and no later than evaluation for every scoped source before taking its oldest verification time;
+one older source cannot conceal another source's future completion. On-time observations also refuse future
+Fact observations and future `last_verified`. Instants use the ledger's strict timezone-aware parser.
+General `validity_unknown` remains supported for explicitly dated metric text; it is not permission to use a future
+observation. Command and Briefing checks demonstrate unknown before the observation instant and usable evidence
+after it, with authored Goal bytes unchanged. No schema, owner attribution, consent or live release is changed.
 
 Core contract 0.6.0 adds optional typed WeeklyMovement to GoalObservation, with exact current/prior intervals, prior value,
 signed delta, prior Fact IDs and an explicit reason. goals --weekly and the MCP goals tool's literal-boolean weekly flag

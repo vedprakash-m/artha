@@ -161,6 +161,37 @@ def test_unverified_deadline_cannot_establish_on_time_progress_or_fabricate_week
     assert any('weekly movement not verified for this metric' in line for line in lines)
 
 
+@pytest.mark.parametrize("timing", ["future_observation", "future_coverage", "mixed_coverage"])
+def test_temporally_unverified_deadline_cannot_establish_on_time_progress(world, timing):
+    led = world[0]
+    coverage(led, completed_at=(NOW + timedelta(seconds=1)).isoformat()
+             if timing == "future_coverage" else NOW.isoformat())
+    if timing == "mixed_coverage":
+        led.set_coverage("capture", "second", "complete", catchup_id="c",
+                         completed_at=(NOW + timedelta(seconds=1)).isoformat())
+    sid, _ = led.upsert_signal(SignalInput("capture", "owner", "deadline", "v1", NOW.isoformat(), "h", "synthetic"))
+    led.put_fact(FactInput("kids_school", "exam_registration_deadline", "2026-10-12", "owner",
+                          (NOW + timedelta(seconds=1)).isoformat() if timing == "future_observation"
+                          else NOW.isoformat(),
+                          evidence=((sid, 0, 10),)))
+    led.set_processing_state(sid, ProcessingState.RECONCILED)
+    row = metric("on_time_obligations", domain="kids_school", predicate="exam_registration_deadline", target=1)
+    if timing == "mixed_coverage":
+        row["metric"]["sources"] = ["capture:owner", "capture:second"]
+    _, observation, assessment, _ = goals._on_time_metric(led, row, "owner", NOW, ())
+    assert observation.value is None and assessment.status == "unknown"
+
+
+def test_future_prior_window_keeps_current_progress_but_not_weekly_delta(world):
+    led = world[0]
+    coverage(led)
+    evidence(led, "G1 2026-10-05 100.00 USD", observed_at=(NOW + timedelta(seconds=1)).isoformat())
+    evidence(led, "G1 2026-10-12 150.00 USD")
+    _, observation, assessment, _ = goal_metrics.observe_metric(led, metric(), "owner", NOW, (), weekly=True)
+    assert assessment.status == "on_track" and observation.value == Decimal("150")
+    assert observation.weekly.previous_value is None and observation.weekly.delta is None
+
+
 def test_weekly_command_and_mcp_share_the_read_only_goal_model(world, tmp_path):
     led = world[0]
     coverage(led)

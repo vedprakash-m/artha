@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Goal temporal evidence, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Keep outcome/habit progress and weekly movement unknown for future-observed Facts. Reject future source completion before aggregating mixed-source coverage and future verification for on-time metrics. Preserve valid current progress when only prior evidence is future-dated; do not alter authored Goals, owners or live authority. | `scripts/catchup_core/goal_metrics.py`, `scripts/catchup_core/goals.py`, `tests/catchup_core/test_goal_metrics.py`, `tests/catchup_core/test_weekly_goals.py`, `specs/artha-tech-spec.md`; generated manifest and completion status | Mixed-source counterexamples failed before repair. Goal/Open Item/plan/Briefing cohort: 280 passed, 96.75% combined coverage. Final integration/scratch-UAT/release/corpus/transfer/launcher/register cohort: 959 passed, seven skipped. Public Ruff/import/state-write and strict core typing passed. Full-profile live acceptance remains open. |
+
+
 ### Changed — Windows CI producer ownership, 2026-11-05
 
 | Change | Modified files | Validation |

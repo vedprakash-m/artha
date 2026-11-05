@@ -11,7 +11,7 @@ from decimal import Decimal, localcontext
 from typing import Any
 
 from catchup_core.goals import AuthoredGoal, GoalAssessment, GoalObservation, WeeklyMovement, _metric_sources
-from catchup_core.ledger import FactView, Ledger
+from catchup_core.ledger import FactView, Ledger, _instant
 
 _NUMBER = r"[+-]?\d{1,20}(?:\.\d{1,10})?"
 _UNIT = r"[A-Za-z%][A-Za-z0-9_%/-]{0,15}"
@@ -123,11 +123,12 @@ def _entries(
     return days, used, invalid
 
 
-def _value(entries: Sequence[tuple[Any, FactView]]) -> Any:
+def _value(entries: Sequence[tuple[Any, FactView]], now: datetime) -> Any:
     confirmed = [entry for entry in entries if entry[1].provenance_class == "user_confirmed"]
     selected = confirmed or entries
     values = {entry[0] for entry in selected}
     if len(values) != 1 or any(entry[1].status != 'current'
+            or _instant(entry[1].observed_at) > now
             or entry[1].provenance_class not in {'verified_source', 'user_confirmed'} for entry in selected):
         return None
     return next(iter(values))
@@ -140,7 +141,7 @@ def observe_metric(
     goal, baseline, max_age = _definition(row, viewer)
     metric = row["metric"]
     start, end = now.date() - timedelta(days=goal.period_days - 1), now.date()
-    facts, verified = _metric_sources(ledger, metric, viewer, required_sources)
+    facts, verified = _metric_sources(ledger, metric, viewer, required_sources, now)
     days, used, invalid = _entries(facts, goal, start, end)
     latest = max(days) if days else None
     age = (
@@ -156,13 +157,13 @@ def observe_metric(
     reason, status = "dated observation is missing, stale, conflicting or not verified", "unknown"
     if age is not None and 0 <= age <= max_age and not invalid:
         if metric["kind"] == "habit":
-            values = [_value(days.get(start + timedelta(days=i), ())) for i in range(goal.period_days)]
+            values = [_value(days.get(start + timedelta(days=i), ()), now) for i in range(goal.period_days)]
             if all(v in {"done", "skipped"} for v in values):
                 value = sum(v == "done" for v in values)
                 status = "on_track" if value >= goal.target else "at_risk"
                 reason = f"{value} of {goal.target} days confirmed; all {goal.period_days} days checked"
         elif latest is not None:
-            candidate = _value(days[latest])
+            candidate = _value(days[latest], now)
             if isinstance(candidate, Decimal):
                 value = candidate
                 met = value >= goal.target if metric["comparison"] == "at_least" else value <= goal.target
@@ -228,11 +229,12 @@ def _weekly_movement(goal: AuthoredGoal, kind: str, current: GoalObservation,
         days, used, invalid = _entries(facts, goal, prior_start, current.period_end, window_end=prior_end)
         if not invalid:
             if kind == 'outcome':
-                candidate = _value(days.get(prior_end, ()))
+                candidate = _value(days.get(prior_end, ()), current.observed_at)
                 if isinstance(candidate, Decimal):
                     previous = candidate
             else:
-                values = [_value(days.get(prior_start + timedelta(days=i), ())) for i in range(goal.period_days)]
+                values = [_value(days.get(prior_start + timedelta(days=i), ()), current.observed_at)
+                          for i in range(goal.period_days)]
                 if all(value in {'done', 'skipped'} for value in values):
                     previous = sum(value == 'done' for value in values)
         reason = 'weekly movement not verified: prior window is missing, conflicting or unverified'

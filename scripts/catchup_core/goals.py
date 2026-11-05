@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from catchup_core.ledger import FactView, Ledger
+from catchup_core.ledger import FactView, Ledger, _instant
 
 METRIC_KINDS = frozenset({"on_time_obligations", "milestones", "outcome", "habit"})
 
@@ -99,7 +99,7 @@ def observe_on_time(
         if start <= deadline <= end:
             relevant.append((fact, deadline))
     freshness = None if last_verified is None else max(0.0, (now - last_verified).total_seconds() / 3600)
-    if last_verified is None:
+    if last_verified is None or last_verified > now:
         return GoalObservation(goal.goal_id, None, start, end, (), now, None)
     met = [f for f, d in relevant if f.fact_id in resolved and resolved[f.fact_id] <= d]
     return GoalObservation(goal.goal_id, len(met), start, end, tuple(f.fact_id for f, _ in relevant), now, freshness)
@@ -237,8 +237,10 @@ def _on_time_metric(ledger: Ledger, row: dict[str, Any], viewer: str, now: datet
                        str(metric["predicate"]), target, period)
     if goal.target < 1 or not 1 <= goal.period_days <= 366:
         raise ValueError("Goal target and period must be positive and bounded")
-    facts, verified = _metric_sources(ledger, metric, viewer, required_sources)
-    if any(f.status != 'current' or f.provenance_class not in {'verified_source', 'user_confirmed'} for f in facts):
+    facts, verified = _metric_sources(ledger, metric, viewer, required_sources, now)
+    if ((verified is not None and verified > now)
+            or any(f.status != 'current' or _instant(f.observed_at) > now
+                   or f.provenance_class not in {'verified_source', 'user_confirmed'} for f in facts)):
         verified = None
     if verified and facts:
         verified = min(verified, *(datetime.fromisoformat(f.observed_at.replace("Z", "+00:00")) for f in facts))
@@ -270,7 +272,7 @@ def _on_time_metric(ledger: Ledger, row: dict[str, Any], viewer: str, now: datet
 
 
 def _metric_sources(ledger: Ledger, metric: Mapping[str, Any], viewer: str,
-                    required_sources: Sequence[str]) -> tuple[list[FactView], datetime | None]:
+                    required_sources: Sequence[str], now: datetime) -> tuple[list[FactView], datetime | None]:
     """One permission/scoping boundary for every source-backed Goal metric."""
     from catchup_core.contracts import FactStatus  # noqa: PLC0415
     sources = metric.get('sources', required_sources)
@@ -296,8 +298,9 @@ def _metric_sources(ledger: Ledger, metric: Mapping[str, Any], viewer: str,
     observed = {name for c in covered if c['status'] == 'complete'
                 for name in (c['connector'], f"{c['connector']}:{c['account_scope']}")}
     complete = required <= observed
-    verified = (min(datetime.fromisoformat(c["completed_at"].replace("Z", "+00:00")) for c in covered)
-                if covered and complete and all(c["status"] == "complete" and c["completed_at"] for c in covered)
+    verified = (min(_instant(c["completed_at"]) for c in covered)
+                if covered and complete and all(c["status"] == "complete" and c["completed_at"]
+                                               and _instant(c["completed_at"]) <= now for c in covered)
                 else None)
     pending = [sid for sid in ledger.unresolved_signals()
                if (source := ledger.signal_row(sid)) is not None and matches(source)]

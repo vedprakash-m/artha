@@ -156,9 +156,11 @@ def test_native_launch_uses_verified_duplicate_and_closes_process_handles(monkey
     create_event.restype = wintypes.HANDLE
     args = [sys.executable, "synthetic script with spaces.py", "argument with spaces"]
 
-    def create(token, logon, application, command, flags, environment, cwd, startup, process):
+    def create(token, application, command, process_attributes, thread_attributes, inherit, flags,
+               environment, cwd, startup, process):
         assert native.same_sid(native.information(token, 1), native.information(token, 4))
-        assert logon == flags == 0 and environment is None and cwd is None
+        assert process_attributes is None and thread_attributes is None and not inherit
+        assert flags == 0 and environment is None and cwd is None
         assert application == sys.executable
         assert command.value == subprocess.list2cmdline(args)
         assert startup._obj.cb == ctypes.sizeof(launcher._StartupInfo)
@@ -172,7 +174,7 @@ def test_native_launch_uses_verified_duplicate_and_closes_process_handles(monkey
         code._obj.value = 9
         return 1
 
-    monkeypatch.setattr(native.security, "CreateProcessWithTokenW", create)
+    monkeypatch.setattr(native.security, "CreateProcessAsUserW", create)
     monkeypatch.setattr(native.kernel, "GetExitCodeProcess", exit_code)
     if failure == "wait":
         monkeypatch.setattr(native.kernel, "WaitForSingleObject", lambda *args: 0xFFFFFFFF)
@@ -189,7 +191,7 @@ def test_native_launch_uses_verified_duplicate_and_closes_process_handles(monkey
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows token APIs")
-@pytest.mark.parametrize("operation", ["OpenProcessToken", "DuplicateTokenEx", "CreateProcessWithTokenW"])
+@pytest.mark.parametrize("operation", ["OpenProcessToken", "DuplicateTokenEx", "SetTokenInformation", "CreateProcessAsUserW"])
 def test_native_token_and_process_api_refusals_do_not_launch_tests(monkeypatch, operation):
     native = launcher._Native()
 

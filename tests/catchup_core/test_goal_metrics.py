@@ -38,7 +38,7 @@ def metric(kind="outcome", **changes):
 
 
 def evidence(ledger, text, *, predicate="goal_quantity", scope="owner", status=FactStatus.CURRENT, subject="owner",
-             provenance=Provenance.VERIFIED_SOURCE):
+             provenance=Provenance.VERIFIED_SOURCE, observed_at=None):
     sid, _ = ledger.upsert_signal(
         SignalInput(
             "capture",
@@ -52,7 +52,8 @@ def evidence(ledger, text, *, predicate="goal_quantity", scope="owner", status=F
     )
     fid = ledger.put_fact(
         FactInput(
-            "goals", predicate, text, subject, NOW.isoformat(), evidence=((sid, 0, len(text.encode())),), status=status,
+            "goals", predicate, text, subject, observed_at or NOW.isoformat(),
+            evidence=((sid, 0, len(text.encode())),), status=status,
             provenance=provenance
         )
     )
@@ -175,6 +176,75 @@ def test_outcome_progress_preserves_precision_unit_and_authored_baseline(world):
     assert stored["observation"]["unit"] == "USD" and stored["observation"]["baseline"] == "100.00"
     assert stored["fact_versions"] == {fid: ledger.get_fact(fid, "owner").recorded_at}
     assert row["metric"]["target"] == "150.00" and row["metric"]["baseline"] == "100.00"
+
+
+@pytest.mark.parametrize("kind", ["outcome", "habit"])
+def test_future_observation_cannot_establish_goal_progress(world, kind):
+    ledger = world[0]
+    coverage(ledger)
+    row = metric(kind, period_days=1, target="150" if kind == "outcome" else 1)
+    evidence(ledger, "G1 2026-10-12 " + ("200 USD" if kind == "outcome" else "done"),
+             predicate=row["metric"]["predicate"], observed_at=(NOW + timedelta(seconds=1)).isoformat())
+    lines = goals.observe_goals(ledger, [row], "owner", NOW, weekly=True)
+    assert "unknown" in lines[0]
+    stored = payload(ledger)
+    assert stored["observation"]["value"] is None
+    assert stored["observation"]["weekly"]["delta"] is None
+
+
+def test_future_observation_in_an_unrelated_goal_does_not_hide_verified_progress(world):
+    ledger = world[0]
+    coverage(ledger)
+    evidence(ledger, "G2 2026-10-12 200 USD", observed_at=(NOW + timedelta(seconds=1)).isoformat())
+    evidence(ledger, "G1 2026-10-12 150 USD")
+    assert "on track" in goals.observe_goals(ledger, [metric()], "owner", NOW)[0]
+
+
+@pytest.mark.parametrize("kind", ["outcome", "habit"])
+def test_future_coverage_cannot_hide_behind_an_older_complete_source(world, kind):
+    ledger = world[0]
+    coverage(ledger)
+    ledger.set_coverage("capture", "second", "complete", catchup_id="c",
+                        completed_at=(NOW + timedelta(seconds=1)).isoformat())
+    row = metric(kind, period_days=1, target="150" if kind == "outcome" else 1,
+                 sources=["capture:owner", "capture:second"])
+    evidence(ledger, "G1 2026-10-12 " + ("200 USD" if kind == "outcome" else "done"),
+             predicate=row["metric"]["predicate"])
+    assert "unknown" in goals.observe_goals(ledger, [row], "owner", NOW)[0]
+
+
+def test_future_observation_stays_unknown_through_commands_and_briefing_until_its_time(world, tmp_path):
+    from argparse import Namespace
+
+    import yaml
+
+    from catchup_core import commands, coordinator, runtime
+    from test_release_regressions import request
+
+    ledger, blobs, make, _ = world
+    coverage(ledger)
+    text = "G1 2026-10-12 200 USD"
+    fid = evidence(ledger, text, observed_at=(NOW + timedelta(seconds=1)).isoformat())
+    ref = blobs.put("future-goal-observation", text)
+    ledger.conn.execute("UPDATE signals SET evidence_blob_ref=? WHERE signal_id IN "
+                        "(SELECT signal_id FROM fact_evidence WHERE fact_id=?)", (ref, fid))
+    state = tmp_path / "state"
+    state.mkdir()
+    path = state / "goals.md"
+    path.write_text(yaml.safe_dump({"goals": [metric()]}))
+    before = path.read_bytes()
+    deps = make()
+    deps.goal_lines = lambda: runtime._goal_lines(state, ledger=ledger, viewer="owner",
+                                                  now=deps.now(), today=deps.now().date())
+    first = commands.execute(Namespace(command="goals", weekly=True), deps, tmp_path)
+    assert any("unknown" in line for line in first["observations"])
+    result = coordinator.run_catchup(request("future_goal"), deps)
+    assert result.briefing_id and "Practice or save: unknown" in result.briefing_text
+    assert "200 USD verified" not in result.briefing_text
+    deps.now = lambda: NOW + timedelta(seconds=2)
+    later = coordinator.run_catchup(request("observed_goal"), deps)
+    assert later.briefing_id and "200 USD verified" in later.briefing_text
+    assert path.read_bytes() == before
 
 
 def test_reduced_quantity_and_overdue_target_are_assessed_without_invented_pace(world):
