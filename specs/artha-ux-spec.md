@@ -1,9 +1,9 @@
 ﻿# Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.23.0 | **Status**: Active Development | **Date**: May 3, 2026
+> **Version**: 3.24.0 | **Status**: Active Development | **Date**: November 3, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.29.0, Tech Spec v3.44.0
+> **Implements**: PRD v7.29.0, Tech Spec v3.47.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.24.0 | 2026-11-03 | **Planning Signal Freshness** — The planning-buffer health indicator treats missing, invalid, future-dated, or stale freshness metadata as unavailable and directs the user to confirm Step 8t ran. An explicit successful save records its write date when the date was missing. Implements Tech Spec v3.46.0–v3.47.0. |
 | v3.23.0 | 2026-05-03 | **Work-Health Dashboard Intelligence UX (§35)** — Output format for `work work-health` 5-section on-call brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 Work-Health Context block injection format. Morning signal footer format. `[live: telemetry]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
 | v3.22.0 | 2026-04-29 | Action Quality Layer UX (§33) — Rejection category prompt (5 categories), suggestion tier display (§ SIGNAL SUGGESTIONS), --list confidence column, --apply-suggestions interactive flow, anomaly alerts. Implements PRD v7.27.0 + Tech Spec §40. |
 | v3.21.1 | 2026-04-29 | **Capability Inventory UX (§10, §24.5)** — `/status` now includes a compact "Connections & capabilities" block showing passive MCP config count/server count and configured/enabled skill count. `/health connections` includes the same passive inventory with P1 warnings for unreadable MCP config files or enabled skills with missing modules. No connector is started and no skill is imported for these displays. Implements PRD v7.26.1 + Tech Spec v3.41.1. |
@@ -2311,6 +2312,12 @@ One namespace replaces `/pr` and `/stage`. The key UX improvement is **fuzzy top
 
 `/health reconnect <service>` provides guided OAuth re-auth — the same flow triggered by NL ("reconnect Gmail"). It appears in the `/health:` colon menu.
 
+On a read-only Briefing host, the Google setup command is
+`setup_google_oauth.py --read-only`. Its banner states that Gmail/Calendar reads
+only are requested and fresh consent is required. Broader cached or returned
+grants are refused; failed provider checks report incomplete setup rather than
+success. Existing Google grants and encrypted State File access remain separate.
+
 ### 24.6 Error UX — Errors That Respect Humans
 
 **Error philosophy:**
@@ -2461,8 +2468,8 @@ Connectors: workiq_bridge ✓ · ado_workitems ✓ · msgraph_calendar ✓
 - Calendar section: show next 2 high-priority meetings explicitly, then `[+N more]`
 - Commitment section: 🔴 for overdue, 🟡 for due within 3 days, ⬜ for future
 - Projects section: top 3 by meeting frequency this week
-- Boundary score: sourced from `state/bridge/work_load_pulse.json`
-- Connector health line: always rendered — proves data is fresh
+- Boundary score: sourced from validated `state/bridge/work_load_pulse.json`; the day view reads its flat fields and shows invalid/missing data as unavailable, never as a perfect score. Preserve zero score/focus values and display the source-data age.
+- Connector health line: always rendered with availability/degradation; its presence alone does not establish freshness.
 
 ### 23.3 Meeting Prep Card Format
 
@@ -3901,7 +3908,7 @@ Shown in briefing footer when relevant:
 
 ```
 📊 Planning buffer: [N] active signals | [M] at threshold | tokens: ~[T]
-   [If stale:] ⚠ planning_signals.md not updated in 2+ days — confirm Step 8t ran.
+   [If stale, missing, invalid, or future-dated:] ⚠ planning_signals.md freshness is unavailable — confirm Step 8t ran.
 ```
 
 ### 34.5 Design Principles

@@ -2964,6 +2964,13 @@ separate. The personal macOS migration completed without provider requests. Full
 `8778994` in docs/re-artha-implementation-status.md; action-scoped credentials, other-platform observations and owner UAT
 remain explicit delivery requirements.
 
+Read-only Google setup supports a Briefing-only host without requesting email
+send, calendar-write or Drive access. The explicit `--read-only` option leaves
+existing setup defaults intact, requires fresh consent, validates exact granted
+scopes, and rejects incomplete connection verification. This is an
+authentication capability, not full Catch-up activation, State File write
+authority, remote grant revocation or access to encrypted handover data.
+
 
 ### Source-aware responsibility checks and instruction sheets — 2026-10-22
 

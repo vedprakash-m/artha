@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.44.0 | **Status**: Active Development | **Date**: May 3, 2026
+> **Version**: 3.47.0 | **Status**: Active Development | **Date**: November 3, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.29.0
 
@@ -11,6 +11,9 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.47.0 | 2026-11-03 | **Planning Signal Save Freshness** — Loading preserves missing `last_updated`; an explicit save stamps the actual write date only when that key is absent. Invalid/future stored dates remain validation errors. |
+| v3.46.0 | 2026-11-03 | **Planning Signal Freshness** — Existing planning-signal files must preserve their recorded `last_updated`; missing, invalid or future dates fail preflight instead of being replaced or treated as fresh. Both preflight surfaces share the active-signal 2+ day staleness check. |
+| v3.45.0 | 2026-11-03 | **Truthful External-Agent Readiness (§8.12.7)** — Both preflight entry surfaces use strict shared configuration loading and strict validation for an existing external-agent registry. Unreadable or malformed inputs become failed P1 advisories rather than successful skips/healthy-empty results; valid disabled features, absent optional registries and absent discovery folders retain explicit skip behavior. Best-effort registry callers are unchanged. |
 | v3.44.0 | 2026-05-03 | **Work-Health Dashboard Intelligence (§42, FR-42)**: `scripts/work/xhealth_signal.py` — 10 KQL query methods (`query_incident_summary`, `query_incident_full`, `query_incident_status`, `query_fleet_health`, `query_repair_sla`, `query_data_pipeline_queue`, `query_deployment_blockers`, `query_scenario_coverage`, `query_config_status`, `query_kpi_harvest`). Top-level helpers: `morning_signal()`, `format_morning_block()`, `check_incident_tracked_items()`, `oncall_handoff_brief()`. Pipeline integration: Step 2c morning signal (06:00–11:00), `work prep` keyword injection (🏥 Work-Health Context block), Q4-telemetry reflect block, Q4-incident-autoclose (circuit breaker: 10 max). Feature flag: `work_health_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_work_health_kusto_auth()` (P1 non-blocking). 12 unit tests. Implements PRD v7.29.0 FR-42. |
 | v3.42.0 | 2026-04-29 | **Action Layer Quality Conversion (§40, FR-40)** — Three-layer gate stack raising proposal acceptance rate target from 25% to 85%+. Layer 1 (signal precision): entity viability gate, temporal coherence check, autopay suppression, action type overrides. Layer 2 (proposal quality): 5-factor confidence scoring, suggestion tier, category-aware dedup (90/30/0 day windows), loop circuit breaker. Layer 3 (feedback): 5 rejection categories, domain confidence decay, 30-day sliding window acceptance rate (deferred=accepted), staged policy suggestions. New DB tables: signal_suppression, policy_suggestions, loop_quarantine. New columns in trust_metrics (signal_subtype, rejection_category, normalized_entity) and actions (confidence, normalized_entity, signal_subtype). Schema migration: scripts/migrate_actions_quality.py (idempotent). Config: config/user_context.yaml (gitignored). 41 unit tests in tests/unit/test_action_quality.py. Implements PRD v7.27.0 + UX Spec v3.22.0. |
 | v3.41.1 | 2026-04-29 | **Passive Capability Inventory (§3, §8.12, FR-15)** — Added `scripts/mcp_discovery.py` and `scripts/skill_index.py`. MCP discovery scans known VS Code/Warp/Claude/Cursor/Codex MCP config files, redacts env values and URL query/fragment data, writes `tmp/mcp_discovery.json`, and never starts servers. Skill index reads `config/skills.yaml` through `lib.config_loader`, scans builtin and plugin skill files, writes `tmp/skill_index.json`, and never imports skill modules. `scripts/preflight.py` gains P1 non-blocking checks `check_mcp_discovery()` and `check_skill_index()`. `scripts/channel/handlers.py::cmd_status()` surfaces compact Connections & capabilities counts. 8 focused tests. Implements PRD v7.26.1 + UX Spec v3.21.1. |
@@ -259,6 +262,14 @@ Non-goals: no MCP server startup, no auth probe, no network call, no subprocess 
 ```
 
 **OAuth token management:**
+- `setup_google_oauth.py --read-only` explicitly requests only `gmail.readonly`
+  and `calendar.readonly`, with fresh consent for both services. Default setup
+  retains its existing scopes. `build_service(..., read_only=True)` rejects
+  unexpected cached/returned grants before refresh/use or new-token persistence.
+  Token records preserve effective granted scopes in the platform-local
+  credential store. This option neither revokes remote grants nor grants State
+  File write authority. Read-only setup reports failure if either connection
+  verification fails.
 - Refresh token stored in macOS Keychain
 - If MCP handles token refresh automatically: no custom code needed
 - If MCP token refresh fails: create `~/OneDrive/Artha/scripts/refresh_gmail_token.sh` as fallback
@@ -305,7 +316,10 @@ Non-goals: no MCP server startup, no auth probe, no network call, no subprocess 
 
 **Purpose:** Fetch Microsoft corporate work calendar events. Available on Windows work laptop only (M365 Copilot enterprise license). Graceful degradation on Mac (silent skip).
 
-**Package:** `@microsoft/workiq` (Microsoft-published, `@microsoft` npm scope). Pinned version stored in `config/settings.md` under `workiq_version`.
+**Package:** `@microsoft/workiq` (Microsoft-published, `@microsoft` npm scope).
+The shared exact release pin is `WORKIQ_VERSION_PIN` in
+`scripts/connectors/workiq_bridge.py` (`0.4.1`); both preflight surfaces import it.
+Neither `latest` nor a version range is an exact release pin.
 
 **Provenance:**
 - **Publisher:** Microsoft
@@ -428,6 +442,19 @@ Artha uses targeted **"Skills"** (scripts) to complement MCP tools for high-fide
 | Setup wizard | `scripts/setup_ha_token.py` | 8-step interactive wizard: validate URL, store token in keyring, update `connectors.yaml`, create `tmp/.nosync`. |
 | Preflight | `scripts/preflight.py` → `check_ha_connectivity()` | P1 non-blocking check. Warns if HA unreachable but does not halt catch-up. |
 | State file | `state/home_iot.md` | Machine-owned companion to `state/home.md`. Refreshed each catch-up. Never edited manually. |
+
+Both preflight surfaces read `config/connectors.yaml` from the installation being
+checked through `lib.config_loader.load_config(..., strict=True)`, retaining shared
+caching and invalidation without converting read errors to an empty mapping.
+Strict reads have separate cache entries from default best-effort reads; only
+successful mappings are cached, and callers receive shallow copies. Read/parse
+errors propagate without loader logging of parser payloads. Existing callers
+retain their default best-effort behavior. Missing/unreadable files, invalid mappings or `enabled` types and enabled
+Connectors without usable fetch configuration remain failed P1 advisories. A valid
+configuration with HA absent or disabled is an explicit skip. Credential-store errors
+are distinguished from a missing token. Off-LAN or otherwise unverified connectivity
+does not pass; P1 remains non-blocking for Catch-up. Error labels exclude YAML/provider
+payloads, and these checks do not enroll credentials or authorize device control.
 
 **Security & privacy model:**
 - Token stored in macOS Keychain only (`artha-ha-token`). Never in YAML, logs, or JSONL.
@@ -1154,6 +1181,13 @@ multi_machine:
 
 `config/connectors.yaml` each connector entry has a `run_on:` field (`darwin` / `windows` / `all`, default `all`). `_enabled_connectors()` in `pipeline.py` gates on `platform.system().lower()` — non-matching connectors are silently skipped. `list_connectors()` displays a PLATFORM column.
 
+The skill runner applies the same platform labels to `config/skills.yaml` before
+cadence and P0 execution. An omitted `run_on` defaults to `all`; a list may name
+multiple platforms. Single-skill `--force` bypasses cadence only, never disabled
+configuration or platform restrictions. A platform skip is logged without
+attempting import or recording a failed skill result. This does not supply a
+missing implementation on its declared platform.
+
 Example override for a multi-machine setup:
 ```yaml
 connectors:
@@ -1520,7 +1554,37 @@ pipeline.py ─→ JSONL to stdout + tee to tmp/pipeline_output.jsonl
 python3 scripts/action_orchestrator.py --run --mcp
 ```
 
-**Tier 2 (pipeline data path):** `pipeline.py --output tmp/pipeline_output.jsonl` writes a fresh snapshot per run via atomic `Path.replace()` (no partial reads; no stale accumulation). The orchestrator loads this file for email signal extraction.
+**Tier 2 (pipeline data path):** `pipeline.py --output` writes a fresh snapshot per run to a validated machine-local path via atomic `Path.replace()` (no partial reads; no stale accumulation). The shared `pipeline_output_path()` supplies the orchestrator's input for email signal extraction. A workspace `tmp/pipeline_output.jsonl` is not an allowed plaintext output destination.
+
+Connector freshness advances only for a complete coverage outcome. Authentication/provider failures,
+schema rejections and incomplete scopes leave the previous successful-fetch timestamp unchanged.
+A valid empty listing remains a complete outcome.
+
+Standalone `pipeline.fetch_single()` collects coverage without publishing shared history
+and returns a nonempty error for schema rejections or failed/truncated scopes. Valid partial
+JSONL remains available to callers, which may choose fallback rather than display it.
+Handler errors are retained unchanged. A configured or caller-supplied `source_tag`
+is forwarded exactly once (caller override takes precedence, otherwise Connector name
+is the default); it does not change handler allowlisting or authentication selection.
+
+The Outlook CLI bridge raises on a missing executable, failed process, timeout,
+invalid JSON or a calendar payload without an event-object list. Valid empty arrays
+and empty `items`/`events` lists remain complete; non-Windows platform skipping is
+unchanged. Its health probe checks executable availability, not Outlook COM access.
+
+The WorkIQ bridge propagates failed structured queries and sanitizes subprocess-timeout
+errors instead of returning empty success. Failed rich narrative queries and failed or
+budget-truncated channel scopes are reported to an active coverage collector. Usable
+partial records retain `processing_gaps` but are not cached as complete; no usable
+records after such failures is an error. A nonempty calendar response still unusable
+after its structured retry is an error, not a cached empty result. People mode requires
+a nonempty person name before cache access. Existing successful record fields are
+unchanged: this does not create missing upstream IDs, normalize legacy Work timestamps
+or establish generic-Pipeline schema compatibility for every WorkIQ mode.
+
+A completed fetch attempt replaces any failed-attempt prefixes instead of replaying them.
+If all retries fail, distinct serialized partial records remain available with the error; repeated
+identical partials are not counted twice.
 
 #### 7.4.3 Signal Producers
 
@@ -2028,6 +2092,18 @@ rm ~/OneDrive/Artha/state/finance.md
 - Mac and Windows can both decrypt if the `age` identity is provisioned in both credential stores
 - iPhone cannot decrypt `.age` files — by design (high/critical data is terminal-only)
 
+The action queue's age string helpers use shared executable discovery, including the per-user Windows
+installation. Windows string decryption passes the private key on stdin and captures plaintext on
+stdout through the shared vault reader; only ciphertext may occupy its temporary file, removed on
+success or failure. The stored base64/`age1:` field format is unchanged. This does not change the
+legacy bulk-decrypt workflow.
+
+The legacy file-decryption helper also supplies the identity through stdin (`--identity -`),
+with a 60-second subprocess timeout and no temporary private-key file. Its file-output API is
+unchanged: callers choosing a plaintext destination still write plaintext, including the
+legacy backup validator's temporary staging. This repair does not make bulk decryption
+an in-memory-only workflow.
+
 This is a **progressive** addition — does not change the data model, catch-up workflow, or prompt structure. It adds a decrypt/encrypt step at the beginning and end of each catch-up.
 
 **Crash recovery:** If the catch-up session terminates unexpectedly (Mac sleep, network drop, session timeout), sensitive state files may remain as plaintext on disk and briefly sync to OneDrive. Mitigations:
@@ -2221,8 +2297,13 @@ Internal archive paths:
 **Trigger:** `vault.py encrypt` — GFS snapshot taken automatically after every successful encrypt cycle. The ZIP itself is written atomically via `.tmp` sibling + `os.replace()`.
 
 **Manifests (two tiers):**
-- **Outer catalog** (`backups/manifest.json`): ZIP key → `{created, date, tier, sha256, size, file_count}`. Written atomically after each snapshot. `last_validate` tracks the most recent restore validation timestamp.
+- **Outer catalog** (`backups/manifest.json`): ZIP key → `{created, date, tier, sha256, size, file_count}`. Written atomically after each snapshot. `last_validate` tracks the most recent successful, unfiltered restore validation timestamp.
 - **Internal manifest** (inside each ZIP as `manifest.json`): `{date, tier, files: {arc_path → {sha256, size, source_type, restore_path, name}}}`. Self-contained — validate and restore from a ZIP without the outer catalog.
+
+Only a missing outer catalog starts an empty history. An unreadable, malformed or
+structurally invalid catalog fails explicitly and is left unchanged; validation must
+not replace it with an empty catalog. Atomic catalog-publication failures propagate
+instead of allowing callers to report a successful catalog update.
 
 **Restore validation (monthly, mandatory):**
 
@@ -2238,6 +2319,17 @@ Decrypts the most recent backup per domain to a temp directory (live state untou
 5. Word count ≥ 30 (non-trivial content)
 
 Result logged to `audit.md`. `vault.py health` warns if validation is overdue (> 35 days).
+Only a nonempty, unfiltered run with no failed files advances `last_validate` and clears
+`last_validate_errors`. A failed run, including partial success, preserves the prior
+success timestamp, records the error count and exits nonzero. A successful domain-only
+check does not refresh the global success timestamp. Automatic validation retains its
+existing non-fatal `SystemExit` boundary; an unsuccessful check is not recovery acceptance.
+An absent backup catalog or empty/invalid internal file inventory cannot pass validation.
+Outer and inner SHA-256 values are required, not optional checks. Before decryption,
+the declared file set must match the ZIP's non-directory entries exactly, excluding
+`manifest.json`; duplicate entries and inconsistent catalog counts are rejected.
+Invalid archive inventories and catalog I/O failures remain explicit errors even when
+no payload has been decrypted.
 
 **Fresh-install restore (cold-start):**
 
@@ -2420,6 +2512,7 @@ Targeted Python scripts that pull high-fidelity data from institutional portals 
 
 **1. Skill Runner Orchestrator (`scripts/skill_runner.py`)**
 - **Venv Bootstrap:** Calls `reexec_in_venv()` from `_bootstrap.py` before third-party imports, ensuring correct venv when invoked directly from CLI agents (Gemini, Claude, shell scripts). *(v3.8 — F15.124)*
+- **Preflight dependency repair:** In `preflight` mode, `_bootstrap.py` stops with a nonzero result if `requirements.txt` is missing, pip installation fails, or any required module remains unavailable afterward.
 - **Entrypoint:** `if __name__ == "__main__": main()` — script is directly executable. *(v3.8 — F15.124)*
 - **Discovery:** Discover active skills from `config/skills.yaml`.
 - **Parallelism:** Execute each skill in parallel using `ThreadPoolExecutor`.
@@ -2742,7 +2835,7 @@ Artha maintains a persistent self-model capturing its operational identity:
 - adaptation_history: [...]
 ```
 
-`state/templates/self_model.md` provides the starter schema. `config/Artha.core.md` contains the **Self-Model Protocol** sub-section specifying when the model is read and updated (Steps 8-Or and 11c). The self-model is never sent to external APIs — it is a local introspection layer only.
+`state/templates/self_model.md` provides the starter schema. `config/Artha.core.md` contains the **Self-Model Protocol** sub-section specifying when the model is read and updated (Steps 8-Or and 11c). The explicit `post_catchup_memory.py --rebuild-self-model` operation reports writer failures and exits nonzero rather than presenting them as an unchanged model. The self-model is never sent to external APIs — it is a local introspection layer only.
 
 ---
 
@@ -2795,7 +2888,7 @@ def find_procedures(query: str, artha_dir: Path,
                     min_relevance: float = 0.1) -> list[ProcedureMatch]
 ```
 
-Procedure files live in `state/learned_procedures/*.md`. `scripts/backup.py` dynamically scans this directory to include all procedure files in GFS backup rotation (slug prefix: `proc__`). `state/learned_procedures/README.md` explains the directory purpose and format. Pre-commit hook updated to allow `state/learned_procedures/` alongside `state/templates/`.
+Procedure files live in `state/learned_procedures/*.md`. `scripts/bootstrap_memory.py` accepts only filename-safe domain names and kebab-case trigger slugs from `bootstrap_seeds.yaml`; it also rejects resolved procedure directories or destinations that escape the expected Artha paths through symlinks. `scripts/backup.py` dynamically scans this directory to include all procedure files in GFS backup rotation (slug prefix: `proc__`). `state/learned_procedures/README.md` explains the directory purpose and format. Pre-commit hook updated to allow `state/learned_procedures/` alongside `state/templates/`.
 
 ---
 
@@ -2943,6 +3036,16 @@ Three targeted improvements to `preflight.py`:
 | Expired token refresh | `check_msgraph_token()` now attempts `ensure_valid_token()` when `secs_left < 0` (already expired), not just within 300s window |
 | 48h advance advisory | When MS Graph token is valid but expires within 48h, emits a P1 advisory "run --reauth before next session" to prevent mid-session expiry |
 
+**Encrypted-state and freshness boundaries (2026-11-03 repair):** Both preflight entry
+surfaces recognize an existing `.md.age` sibling during template population and do not
+create a competing plaintext template. This is a presence check, not decryption or
+ciphertext-integrity verification. Registry freshness expands configured globs and
+checks logical paths and their `.age` siblings; unmatched paths and stale matches
+remain visible. An unreadable registry is a failed, nonblocking P1 check, not a
+successful skip. The ST-04 SLO check consumes the engine's status mapping, identifies
+burning SLOs by `slo_id`, and reports evaluation errors or missing samples as failed P2
+checks. These advisories do not change the existing P0-only strict exit gate.
+
 #### 8.12.6 Passive Capability Inventory Checks (`scripts/preflight.py`)
 
 Two P1 non-blocking checks keep Artha's capability surface visible without adding runtime complexity:
@@ -2950,9 +3053,26 @@ Two P1 non-blocking checks keep Artha's capability surface visible without addin
 | Check | Script | Output | Failure behavior |
 |-------|--------|--------|------------------|
 | `check_mcp_discovery()` | `scripts/mcp_discovery.py` | `tmp/mcp_discovery.json` | Read/parse problems are P1 warnings; no MCP server is started |
-| `check_skill_index()` | `scripts/skill_index.py` | `tmp/skill_index.json` | Enabled skills with no builtin/plugin file are P1 warnings; skill code is never imported |
+| `check_skill_index()` | `scripts/skill_index.py` | `tmp/skill_index.json` | Enabled skills applicable to the current host with no builtin/plugin file are P1 warnings; skill code is never imported |
+
+The static inventory remains global and retains every missing module. Preflight
+filters only its host-specific advisory using the existing `run_on` labels
+(`darwin`, `windows`, `linux`, `all`, or a list). An absent Mac-only implementation
+is not fabricated or removed from the inventory to make Windows health appear complete.
 
 `scripts/channel/handlers.py::cmd_status()` also calls both helpers and appends a compact "Connections & capabilities" block. This is intentionally a read-path affordance only: no connector activation, no auth probing, no automatic remediation.
+
+#### 8.12.7 External-Agent Readiness Checks
+
+The package and script preflight surfaces report external-agent discovery and health
+as P1 non-blocking checks. Both use the shared strict configuration loader. An
+unreadable or malformed feature configuration, or an unreadable/malformed existing
+registry, is a failed P1 advisory; it must not be reported as a disabled feature or a
+healthy empty registry. A valid disabled feature or discovery setting remains an
+explicit successful skip. A missing registry remains optional: health reports the
+absence as a skip, while discovery checks any present drop-folder agents against an
+empty registered-name set. Strict registry validation is opt-in so existing
+best-effort registry callers retain their compatibility behavior.
 
 ---
 
@@ -4129,6 +4249,49 @@ The Work OS operates as a fully isolated intelligence surface. The separation is
 
 **CLI:** `python scripts/work_loop.py --mode [read|refresh] [--quiet] [--state-dir <path>]`
 
+Summary freshness is the age of its recorded timezone-aware `last_updated`, not
+filesystem mtime (which can change during copying/sync). Missing, invalid, naive
+or future timestamps yield unknown freshness. A READ does not republish the summary
+or advance its timestamp. Incomplete/failed refreshes retain the prior summary
+generation; only a REFRESH with collected provider output and no reported errors
+or degradation publishes a fresh summary. Complete empty provider listings remain
+eligible. The returned freshness state changes only after successful publication.
+Per-domain timestamps still describe the age of each cached domain separately.
+Missing, invalid, naive or future per-domain timestamps likewise mean unknown age,
+not a negative age displayed as fresh.
+
+Preflight checks direct ADO availability independently of Agency availability.
+Agency discovery is not evidence that Agency can publish or that its refresh will
+succeed; the enrolled Work publication refusal must not suppress the direct ADO path.
+Collected `calendar` and `ado` keys distinguish successful empty snapshots from
+missing output. Explicit empty snapshots reach their existing calendar/boundary or
+project writers to remove obsolete snapshot rows. Missing keys retain cached domains.
+This does not clear historical journals or synthesize missing email/Teams results.
+
+Reasoned summary metrics replace values loaded from the prior summary. Delivery
+feasibility requires nonnegative integer project counts and finite nonnegative
+calendar hours; boundary risk requires a finite 0..100 score and nonnegative integer
+after-hours count. Missing or invalid inputs remove those derived summary fields
+and report an explicit error rather than manufacturing a perfect score or preserving
+an older score as newly computed. A recovered boundary explicitly clears the prior
+risk flag. Unexpected reasoning failures are surfaced in the result.
+
+Visibility events require explicit evidence of the recorded activity. An incoming
+high-importance email is not proof of a reply, and a large calendar invitation with
+presentation-related keywords is not proof that the user presented. Refresh does
+not append either inferred event. The explicit `append_visibility_event()` writer
+remains available for evidenced events; it requires nonblank date, stakeholder,
+event type, context and Work source domain, a YYYY-MM-DD date, and one of the
+existing five supported event types. Invalid input raises before publication;
+there is no current-date or `replied` fallback. Existing journals are not rewritten.
+Journey and visibility table appends are transactional read-modify-writes through
+the Work publication API, including staged batch rows. Identical rendered rows in
+the exact section are no-ops; project-name prefixes and another section's divider
+cannot redirect a row. A journey requires explicit project, date and milestone.
+The ADO milestone producer uses an aware source `changed_date`, never current time
+as a fallback, and reports append failure in the loop result. This does not change
+the existing ADO query's terminal-state exclusions or claim completed-item coverage.
+
 ### 19.3 Canonical Object Layer
 
 `scripts/schemas/work_objects.py` defines 6 canonical dataclasses consumed by all stages:
@@ -4159,6 +4322,74 @@ All objects default to `source_domains: list[str]` and `last_updated: str` (ISO-
 
 Covered connectors: `workiq_bridge`, `ado_workitems`, `msgraph_email`, `msgraph_calendar`, `outlookctl_bridge`, `kusto_metrics`, `*` (wildcard for ALL_DOWN).
 
+The Work Outlook fallback calls the allowlisted `pipeline.fetch_single()` adapter,
+not the full Personal Pipeline CLI. A source filter on that CLI does not suppress
+Personal finalizers, state merges or action processing and therefore is not Work
+isolation. Standalone fetch keeps authentication selection, strict generic record
+validation and complete-coverage error handling; invalid output is not silently
+discarded as empty success. Work Graph authentication remediation explicitly uses
+`setup_msgraph_oauth.py --work --reauth`, never the Personal credential enrollment.
+These controls do not establish native Outlook prerequisites or legacy record
+compatibility: missing provider IDs/dates remain rejected, not fabricated.
+Native Graph calendar parsing retains both positive and negative explicit timestamp
+offsets; it must not append `Z` to a timestamp already carrying `-HH:MM`. Native mail
+records expose provider `isRead`, importance, folder and received timestamp to Work
+consumers without inferring response intent. The Work comms snapshot counts only
+explicit boolean false as unread; missing/nonboolean read state is separately counted
+and labelled unknown. No empty result or missing read status claims the inbox is clear.
+Work health uses the existing Work-only `msgraph.work` platform credential validator,
+not legacy Personal token files or token-file mtime. A valid unexpired credential is
+reported as configured evidence, not proof of provider access. This diagnostic does
+not assert unperformed separation-enforcement or bridge-artifact checks; absent
+breaker state means not observed, not healthy.
+The explicit pre-read marker command uses the same transaction-aware Work table
+appender as journey/visibility evidence: exact section boundaries, staged-text reads,
+identical-row no-ops and stale-session refusal. Missing notes cannot return a success
+indicator. This records the user's explicit review assertion, not inferred review.
+Work read-path age labels and XPF advisories use recorded `last_updated`, never file
+mtime. Missing, malformed, naive or future timestamps have unknown age; an existing
+XPF file with unknown freshness gets a visible advisory. Work file-quality freshness
+credit is zero for a future recorded timestamp rather than being clamped to maximum.
+Known nonfuture timezone-aware timestamps retain their existing age/TTL calculation.
+Refresh does not infer `providers_used` or human authorship from a State File's name
+or missing metadata. Historical imports retain their recorded generator; unknown
+provenance remains unknown. The former filename-based warm-start stamping helper is
+removed. This does not migrate, remove or certify existing provenance labels.
+Graph token preflight reuses the OAuth layer's access-token/lifetime validator both
+before and after proactive refresh. A valid expiry alone cannot pass without a
+nonempty string access token. Unknown or invalid lifetime attempts the existing
+refresh path; if a usable unexpired token cannot be confirmed, P1 remains failed.
+Credential freshness is not proof of provider access or granted operation scopes.
+Work ADO availability and health resolve the Azure CLI through `shutil.which("az")`
+before subprocess launch, retaining the existing account checks. On Windows this
+selects `az.cmd`; a bare `az` argument can fail despite a valid installed CLI/session.
+CLI availability is distinct from authenticated API access and work-item coverage.
+WorkIQ availability and Work health reuse the Connector's npx resolver and shared
+exact release pin. Their version-only command uses `--offline --no-install`; these
+diagnostics cannot download/install packages or issue M365 queries. Both retain a
+bounded ten-second startup limit. A missing cached dependency remains unavailable
+until explicitly restored; a successful CLI version check is not authentication,
+provider access or native-record compatibility. General preflight's existing
+combined identity/authentication probe is a separate operation, not this CLI-only check.
+
+The ADO handler raises configuration, authentication and provider failures to its caller; an error is
+not a successful empty listing. WIQL filters use validated date-only values even when the Pipeline
+supplies an ISO-8601 timestamp. A capped result reports truncated coverage, and a batch that omits,
+duplicates or substitutes requested IDs is rejected.
+
+Direct Work providers publish into the loop's collected data and normally return
+`None`; this return alone is not a failure or evidence that data was unavailable.
+Providers that handle errors internally must record explicit degradation and errors.
+The wrapper retries transient failures once, but classifies HTTP responses below 500
+as terminal before the `OSError` retry branch. A successful retry does not retain
+an inferred failure from a normal side-effect return.
+
+WorkIQ mode errors are retained in the loop result. An open circuit-breaker skip
+is explicitly degraded without another probe, and any failed mode prevents the
+overall invocation from recording breaker success even if other modes return records.
+Existing empty/invalid-content breaker failures remain degraded. These status repairs
+do not establish the pending display-only WorkIQ contract or live-provider acceptance.
+
 ### 19.4a Kusto Integration Architecture
 
 `scripts/kusto_runner.py` provides the Kusto bridge for program metrics:
@@ -4175,6 +4406,17 @@ Covered connectors: `workiq_bridge`, `ado_workitems`, `msgraph_email`, `msgraph_
 
 **Golden query registry:** `state/work/golden-queries.md` — 73 queries across 12 Kusto clusters. 31/44 tested pass validation.
 
+Kusto publication distinguishes absent/failed query coverage from a verified empty
+listing. An incident snapshot requires successful GQ-050 output with a list of row
+objects; missing, failed or malformed output preserves the prior snapshot and reports
+a writer error. A verified empty GQ-050 can publish zero active incidents. Missing
+optional GQ-051 through GQ-054 results are labelled unavailable, not inferred zero.
+Present but failed/malformed optional results are rejected before publication.
+Metric extraction likewise requires valid successful query rows before applying an
+update, and numeric zero values, including severity zero, are retained. Empty refresh
+outcome maps and failed queries remain explicit loop errors/degradation. These local
+contracts do not establish live cluster access or query completeness.
+
 **Clusters verified on Devbox:** `[internal-cluster-1]`, `[internal-cluster-2]`, `[internal-cluster-3]`, `[internal-cluster-4]`, `[internal-cluster-5]`. DNS-blocked: `[internal-cluster-6]`, `[internal-cluster-7]` (non-regional URIs).
 
 **PF cross-cluster join pattern:** 12 Env_Machines golden queries (GQ-021, 024, 041, 060, 062–066, 068, 091, 121) use a cross-cluster PF join: `let PF_Clusters = cluster('[internal-cluster].kusto.windows.net').database('[internal-db]').[internal-table] | where [partition-column] == true and [cluster-column] != '' | distinct [cluster-column];` then filter with `| where [cluster-column] in (PF_Clusters)`. Also uses `[timestamp-column]` (not `TIMESTAMP`) for all Env_Machines queries. Validated live (GQ-060 confirmed working).
@@ -4186,6 +4428,22 @@ Covered connectors: `workiq_bridge`, `ado_workitems`, `msgraph_email`, `msgraph_
 **Artifact schemas:**
 - `work_load_pulse` (work→personal): `{$schema, generated_at, date, total_meeting_hours, after_hours_count, boundary_score, focus_availability_score}` — all numeric except 3 metadata strings. `additionalProperties: false`.
 - `personal_schedule_mask` (personal→work): `{$schema, generated_at, date, blocks: [{busy_start, busy_end, type}]}` — time blocks only, no event titles or names.
+
+The Work boundary producer uses a 0..100 score; bridge publication divides by
+100 into the existing 0..1 field and preserves valid zero scores/focus values.
+Missing, invalid or stale/future boundary provenance cannot publish a healthy
+default pulse. Republishing cached scores retains the boundary's `last_updated`
+as bridge `generated_at` and derives its date from that timestamp, rather than
+renewing the data age. Publication failures remain visible in the Work loop result.
+
+The day view validates and reads the existing flat artifact, not an invented
+`payload` envelope. Invalid/unreadable artifacts or invalid timestamp provenance
+are unavailable, not healthy defaults. Bridge numeric fields reject booleans and
+nonfinite floats; object schemas reject nonobjects before publication.
+The Personal Pipeline does not create or mutate the Work-owned pulse.
+Legacy `last_personal_pipeline_run`/`pipeline_status` fields were outside this
+schema and are no longer written or presented as Personal freshness. Existing
+invalid artifacts are not silently migrated by a reader or a Personal Catch-up.
 
 **Alert Isolation (§9.6):** `validate_alert_isolation(artifact, surface)` enforces that work→personal bridge carries only aggregate numeric metrics and personal→work carries only `{$schema, generated_at, date, blocks}`. Semantic check runs before schema validation. Raises `BridgeValidationError` with "isolation violation" on any string or collection in a non-metadata field.
 
@@ -4651,6 +4909,7 @@ scripts/correction_feeder.py  ← turns user corrections → memory.md entries
 - Accuracy scores feed into `state/health-check.md → Accuracy Pulse Data` section each run.
 - `correction_feeder.py` writes only to `state/memory.md` — never modifies domain state files directly.
 - `metric_store.py` prunes records older than 90 days automatically.
+- Evaluation-alert history is a mapping with an `alerts` list of mappings. The post-catch-up and retrospective writers preserve invalid existing history; preflight fails at P1 for invalid shape instead of reporting a healthy alert check.
 
 ### 21.5 Test Coverage
 
@@ -4843,6 +5102,14 @@ Entities with `confidence < 0.5` are excluded from `context_for()` output by def
 | `scripts/sharepoint_kb_sync.py` | SharePoint delta sync via Graph API. Requires `Sites.Read.All` scope. Delta links for incremental queries. |
 | `scripts/connectors/msgraph_sharepoint.py` | SharePoint connector handler (same contract as `msgraph_email.py`). |
 | `scripts/kg_visualize.py` | Generates standalone vis.js HTML at `visuals/knowledge_graph.html`. Domain colors, degree-based sizing, community grouping. |
+
+**SharePoint prerequisite failures (2026-11-03 repair):** The dedicated synchronizer
+returns an error and exits nonzero for missing/invalid Connector configuration or
+an unavailable Work credential. An absent/disabled entry remains a no-op; `enabled`
+must be a boolean. It uses `ensure_valid_token(work=True)` for existing Work-only
+refresh/freshness checks, never a personal or synced-file fallback. Failed syncs are
+labeled `failed`, not `complete`. This does not enroll credentials, grant scopes or
+adapt the dedicated document contract to generic Pipeline dispatch.
 
 ### 22.7 Full Python API (`KnowledgeGraph` class)
 
@@ -5765,6 +6032,9 @@ Configured overrides:
 ### 31.6 Connector Record Schema Validation
 
 `scripts/schemas/connector_record.py` defines `validate_record(record: dict)` — a lightweight (non-Pydantic) schema check applied to every record returned by connector `fetch()` calls. Required fields: `id`, `source`, `date_iso`. Malformed records are skipped with a WARNING; `tmp/pipeline_metrics.json` tracks `validation_errors` per run. The `--strict` pipeline flag exits with code 2 if any record fails validation.
+
+ADO records stringify the native work item ID and preserve `System.ChangedDate` as `date_iso`.
+The existing date-only `changed_date` and `target_date` presentation fields remain available.
 
 ### 31.7 Routing Ambiguity Flag
 
@@ -6774,7 +7044,7 @@ Materialization targets by candidate_type: `scenario` → `state/scenarios.md`, 
 - **Step 4b fetch tier**: `planning_signals.md` in `always` tier (`config/workflow/fetch.md`).
 - **Step 3 sprint check** (`config/Artha.core.md`): `sprint-triggers` subcommand detects G-004/G-005 goal_drift.
 - **Step 8e idempotency guard**: skip re-evaluation if `last_evaluated` < 7 days ago and signal `last_seen` not newer.
-- **Preflight**: `scripts/preflight/state_checks.py::check_planning_signals()` — P1 warning if file missing or invalid.
+- **Preflight**: `scripts/preflight/state_checks.py::check_planning_signals()` — P1 if file/schema/update date is missing or invalid; future dates are rejected, and active signals at least two days old are warned. Loading an existing file does not synthesize a current `last_updated`; an explicit save stamps the actual write date only when that key is absent, while invalid/future stored values remain rejected.
 - **Health check**: `--planning-signal-tokens N` flag records Step 8t token cost to `health-check.md`.
 
 ### 41.6 Observability (G-1–G-7)
@@ -7312,11 +7582,26 @@ steps. The capability register (`docs/capability-register.md`, generated by `too
 `capabilities.render_register`) has a Closure route column from `capabilities.CLOSURE_ROUTES`; it is a route, not an
 acceptance claim.
 
+`goals_authority` (`config/catchup_core.yaml`, values `core` default or `incumbent`, others refused in
+`runtime._validate_goals_authority`): `incumbent` swaps the Goals and Goal plans context lines for
+`_goals_held_by_incumbent` and `_no_goal_plans`, so the Briefing states that Goals are kept by the incumbent and the
+run is not degraded by a Goals coverage gap. Changing it changes the live configuration and therefore the release
+cohort (re-sign).
+
+Live UAT scenarios: a script that continues with `--shadow` commands must choose its Fact from the shadow store
+(`_harness.beliefs(..., shadow=True)`; RA-06 and RA-23 do), because live `beliefs` reads the live ledger whose Fact IDs the
+shadow ledger does not know. Live RA-15 accepts a refusal naming "scoped ingest consent" for `items --shadow` and
+`goals --shadow`. Open Item completion (`complete open_item:<id>`) requires the record's `owner` to equal the configured
+viewer; Open Items created by the pipeline carry no `owner`, so completion is refused for every item until a record
+declares one (recorded 2026-11-03 as a follow-up, not scheduled).
+
 Consent write path (2026-11-01): `consent grant` is a mutation in `cli._mutates` so inspection storage opens
 read-write and the signed-release preflight applies; `consent list` stays read-only. The checkpoint inventory's spend-seal
 classifier (`checkpoint_cli._classify_spend_seal`) accepts only `shadow.json` and `authoritative.json` (registry-classified)
 plus their empty `.lock` companions (regular, single-link); any other artifact blocks capture, and the seal directory is
-excluded from every snapshot. Range scans in `.githooks/privacy_scan.py` call `identity_findings`: every author and
+excluded from every snapshot. Inventory also blocks if an active registry entry's corresponding seal file, or the
+seal directory itself, is missing; pending or unavailable registry state is not treated as absence. Range scans in
+`.githooks/privacy_scan.py` call `identity_findings`: every author and
 committer email must match `@users.noreply.github.com` or end in `.invalid`, otherwise the push is refused.
 
 ### Encryption and authentication durability — 2026-10-22
@@ -7591,6 +7876,14 @@ configured roots cannot override the Work boundary. Capture deduplicates physica
 checks executing/unknown action state before key access, and repeats dependency discovery before publication.
 Only FileNotFound means an optional dependency is absent; denied metadata blocks with a bounded diagnostic.
 Full signing/OAuth/privacy-anchor escrow, Work cache isolation/writer fences and native recovery remain open.
+
+Bundle and acknowledgement dependency discovery is fail-closed: unavailable scan-root metadata, recursive
+traversal errors, unreadable or malformed matching JSON, a non-regular matching artifact, an unavailable or
+non-directory scan path, or a missing/invalid producer identifier blocks checkpoint capture. Traversal must
+report access failures rather than use APIs that silently skip inaccessible paths, including during root
+checks, recursive traversal and artifact enumeration. Artifact filename matching remains case-insensitive
+on Windows. A malformed dependency must not disappear from the inventory and be mistaken for a complete
+recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
