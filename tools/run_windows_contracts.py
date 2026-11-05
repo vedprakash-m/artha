@@ -67,16 +67,17 @@ class _Native:
             function.argtypes, function.restype = args, result
 
     @staticmethod
-    def check(result):
+    def check(result, call="Windows API call"):
         if not result:
-            raise ctypes.WinError(ctypes.get_last_error())
+            error = ctypes.WinError(ctypes.get_last_error())
+            raise OSError(error.errno, f"{call} refused: {error.strerror}", None, error.winerror)
 
     @contextmanager
     def process_token(self):
         token = w.HANDLE()
         # TOKEN_QUERY | TOKEN_DUPLICATE; the caller's token is never adjusted.
         self.check(self.security.OpenProcessToken(self.kernel.GetCurrentProcess(), 0xA,
-                                                 ctypes.byref(token)))
+                                                 ctypes.byref(token)), "OpenProcessToken")
         try:
             yield token
         finally:
@@ -105,12 +106,12 @@ class _Native:
         token = w.HANDLE()
         # TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT.
         self.check(self.security.DuplicateTokenEx(
-            original, 0x8B, None, 2, 1, ctypes.byref(token)))
+            original, 0x8B, None, 2, 1, ctypes.byref(token)), "DuplicateTokenEx")
         try:
             user = self.information(token, 1)
             owner = ctypes.c_void_p(self.sid(user))
             self.check(self.security.SetTokenInformation(
-                token, 4, ctypes.byref(owner), ctypes.sizeof(owner)))
+                token, 4, ctypes.byref(owner), ctypes.sizeof(owner)), "SetTokenInformation(TokenOwner)")
             if not self.same_sid(user, self.information(token, 4)):
                 raise OSError("duplicated token default owner is not its user")
             yield token
@@ -127,7 +128,7 @@ class _Native:
             # or fall back to another token when this call is refused.
             self.check(self.security.CreateProcessWithTokenW(
                 token, 0, sys.executable, command, 0, None, None,
-                ctypes.byref(startup), ctypes.byref(process)))
+                ctypes.byref(startup), ctypes.byref(process)), "CreateProcessWithTokenW")
         try:
             if self.kernel.WaitForSingleObject(process.process, 0xFFFFFFFF) != 0:
                 raise ctypes.WinError(ctypes.get_last_error())
