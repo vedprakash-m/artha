@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.47.0 | **Status**: Active Development | **Date**: November 3, 2026
+> **Version**: 3.48.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.29.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.48.0 | 2026-11-05 | **Windows CI producer ownership** — A mandatory test-only launcher duplicates the caller token, changes only that duplicate's default owner to its existing user SID, verifies file/directory/subprocess ownership and runs the existing isolated test runner. Production owner/DACL checks and elevation/privileges are unchanged; hosted elevated acceptance remains separately recorded. |
 | v3.47.0 | 2026-11-03 | **Planning Signal Save Freshness** — Loading preserves missing `last_updated`; an explicit save stamps the actual write date only when that key is absent. Invalid/future stored dates remain validation errors. |
 | v3.46.0 | 2026-11-03 | **Planning Signal Freshness** — Existing planning-signal files must preserve their recorded `last_updated`; missing, invalid or future dates fail preflight instead of being replaced or treated as fresh. Both preflight surfaces share the active-signal 2+ day staleness check. |
 | v3.45.0 | 2026-11-03 | **Truthful External-Agent Readiness (§8.12.7)** — Both preflight entry surfaces use strict shared configuration loading and strict validation for an existing external-agent registry. Unreadable or malformed inputs become failed P1 advisories rather than successful skips/healthy-empty results; valid disabled features, absent optional registries and absent discovery folders retain explicit skip behavior. Best-effort registry callers are unchanged. |
@@ -8032,3 +8033,20 @@ The initial enrolled Work scope explicitly holds the Agency subprocess and DC-3 
 entry points (owner approval 2026-10-27). Host/model file tools are not sandboxed by this protocol; direct
 prose-driven edits are detected as drift, not prevented. Private verification workspaces must be under a
 validated nonsynchronized external temporary parent, never merely a gitignored directory under OneDrive.
+
+### 2026-11-05 Windows isolated test producers
+
+The mandatory Windows contract job uses `tools/run_windows_contracts.py` before the existing
+`tools/run_tests_isolated.py`. Elevated hosted runners otherwise create Administrators-owned
+artifacts, which correctly fail the production current-user ownership check. The launcher queries
+and duplicates its caller's primary token, changes only the duplicate's default owner to that token's
+user SID, verifies the result, and launches the isolated child with `CreateProcessWithTokenW`.
+It does not adjust the caller token, enable privileges, expand allowed owners, rewrite existing
+ownership, remove stream checks, skip tests or make the job non-blocking.
+
+Before tests, the child verifies its token's default owner and freshly created directory, file and
+subprocess-produced file ownership. API/probe failures refuse the job without an ordinary-token
+fallback. Child test output stays in a disposable temporary log and its status is propagated.
+The existing isolated runner still excludes production data and credentials. This launcher retains
+the runner's existing groups/elevation/privileges: it is neither de-elevation nor a sandbox.
+Native local tests and synthetic API-failure tests do not establish an elevated hosted outcome.

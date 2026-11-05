@@ -295,7 +295,8 @@ def test_ci_native_encryption_jobs_install_age_before_tests(job):
     workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
     steps = workflow["jobs"][job]["steps"]
     test_step = next(index for index, step in enumerate(steps)
-                     if "tools/run_tests_isolated.py" in step.get("run", ""))
+                     if any(tool in step.get("run", "") for tool in
+                            ("tools/run_tests_isolated.py", "tools/run_windows_contracts.py")))
     installs = [step for step in steps[:test_step] if "install" in step.get("name", "").lower()
                 and "age" in step.get("run", "")]
     if job == "core-windows":

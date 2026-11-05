@@ -1,7 +1,8 @@
 # UAT scenario scripts (re-artha)
 
-These scripts produce recorded evidence for requirements that already have code and tests but no recorded live
-run. Each script runs the documented `catchup_core` CLI commands in order, checks each acceptance condition, and
+These scripts produce bounded engineering evidence for requirements with existing implementation and tests.
+Some have recorded live-safe observations; a passing report does not imply full live acceptance.
+Each script runs the documented `catchup_core` CLI commands in order, checks each acceptance condition, and
 prints a JSON report:
 
 ```json
@@ -58,6 +59,8 @@ python3 tools/uat/<script> --workspace ~/Artha --output ~/uat/<ra>.json [--allow
 Live `--allow-local-writes` writes only: one encrypted capture (RA-06), one synthetic encrypted document that then
 waits for review at the next Catch-up (RA-21), and encrypted snapshot/interchange files in a temporary directory
 that the script deletes (RA-20, RA-23). Without the flag these steps are recorded as skipped.
+Do not enable it merely to improve a completion percentage: it creates synthetic records in the live inbox.
+Live correction apply, forget, feedback and restore/replay remain excluded where the report says scratch-only.
 
 ## WP-19 Work cache checks
 

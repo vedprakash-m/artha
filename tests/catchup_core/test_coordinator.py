@@ -87,6 +87,42 @@ def test_default_coverage_header_states_when_no_required_scopes_are_configured(w
     assert 'Coverage: no required source scopes configured.' in result.briefing_text
 
 
+@pytest.mark.parametrize("fmt", list(BriefingFormat))
+@pytest.mark.parametrize("calendar_complete", [False, True])
+def test_format_does_not_change_fetched_coverage_or_hide_a_gap(world, fmt, calendar_complete):
+    _, _, make, _ = world
+    calendar = cal() if calendar_complete else cal(status=CoverageStatus.UNAVAILABLE)
+    deps = make({"school_email": email(), "calendar": calendar})
+    deps.coverage_line = lambda: ""
+    result = co.run_catchup(req(briefing_format=fmt), deps)
+    count = 2 if calendar_complete else 1
+    assert f"{count}/2 required source scopes complete this Catch-up" in result.briefing_text
+    assert len(result.coverage) == 2
+    assert sum(entry.status is CoverageStatus.COMPLETE for entry in result.coverage) == count
+    if not calendar_complete:
+        assert result.status is RunStatus.DEGRADED
+        assert "calendar" in result.briefing_text.lower()
+        assert "all clear" not in result.briefing_text.lower()
+
+
+def test_later_fetch_cannot_be_relabelled_as_a_paused_flash_runs_coverage(world):
+    from catchup_core import exchange
+    _, _, make, _ = world
+    fetchers = {"school_email": email(), "calendar": cal()}
+    flash = req("cu_paused_flash", briefing_format=BriefingFormat.FLASH)
+    with pytest.raises(exchange.AwaitingExtraction) as pending:
+        co.run_catchup(flash, make(fetchers, extractor=exchange.ExchangeExtractor()))
+    later = co.run_catchup(req("cu_later_standard"), make(fetchers))
+    assert later.status is RunStatus.COMPLETE
+    responses = {request.request_id: EXTRACT(request.prompt) for request in pending.value.requests}
+    deps = make(fetchers, extractor=exchange.ExchangeExtractor(responses))
+    deps.coverage_line = lambda: ""
+    resumed = co.run_catchup(flash, deps)
+    assert resumed.status is RunStatus.DEGRADED
+    assert "0/2 required source scopes complete this Catch-up" in resumed.briefing_text
+    assert "all clear" not in resumed.briefing_text.lower()
+
+
 def test_checkpoint_fence_blocks_catchup_before_fetch_or_journal_mutation(world, tmp_path):
     from catchup_core.session_lock import session_lock
     led, _, make, published = world

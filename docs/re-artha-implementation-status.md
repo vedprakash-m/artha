@@ -1,4 +1,65 @@
-# re-artha implementation status — 2026-11-04
+# re-artha implementation status — 2026-11-05
+
+## Approved-slice completion continuation — 2026-11-05
+
+The owner retained the existing slice decisions and approved a test-launcher-only Windows CI
+repair. The mandatory job now runs the existing isolated test runner under a duplicated primary
+token with that token's user SID as its default owner. The parent token, production owner/DACL
+checks, existing privileges and stream-refusal policy are unchanged. The child verifies new
+directory, file and subprocess-produced ownership before tests. Token/probe failures remain
+blocking, without a fallback to the original token.
+
+Local Windows launcher tests: **23 passed**, with **98.66% combined line/branch coverage**
+(122/123 statements, 25/26 branch destinations covered). Native tests verify duplicate-token
+ownership, unchanged parent-token ownership, fresh producers, foreign-SID refusal and API
+failure cleanup. Process-launch wiring also has synthetic handle/exit/wait failure checks;
+it is not evidence that an elevated hosted process was launched successfully.
+A real launcher attempt on this unelevated host refused with WinError 1314/exit 2 (required
+privilege not held), without privilege enabling or an ordinary-token fallback.
+
+The earlier focused completion selection passed **237 tests**, covering formats/extraction
+exchange, Open Item completion refusal/lifecycle, actions, bundles, responsibilities and all
+scratch UAT scripts. Later launcher-only tests extend that source selection. Format regressions
+confirm that equal fetch outcomes produce equal coverage in all four formats; an interleaved
+later Catch-up can invalidate a paused flash Catch-up's current coverage without permitting
+reassurance. This is a reproduced possible cause, not a diagnosis of the old live Mac output.
+
+No production writer contract, Open Item owner, live store, consent, release or provider effect
+was changed. Existing deferred rows remain deferred and corrected UAT instructions do not
+upgrade old observations/signatures. The elevated hosted jobs and remaining owner/host gates
+are not closed by this local evidence.
+
+The full isolated aggregate completed with **10,557 passed, one failed, 169 skipped, 20 xfailed**
+and nine warnings in 5,956.10 seconds (exit 1). The copied-context Work publication worker exited
+with `QuarantineFilesystemError('file changed during bounded read')`, not a live thread/deadlock.
+The unchanged publication module then passed 26 tests; the combined publication/Work privacy/
+Windows native guard selection passed **206, one skipped**. This did not reproduce or explain the
+aggregate refusal and does not turn the aggregate green. No guard was weakened, production retry
+added or publication test changed.
+
+Public source/core Ruff, imports, syntax, state-write ratchet, core/credential mypy, example schema,
+generated-register checks and diff whitespace passed. The full privacy sweep failed closed on two
+native Gitleaks crashes; same-policy retries of those unchanged files and all changed/new public
+files passed. This is not a provider historical-object purge confirmation. The batch remains
+uncommitted/unpublished; no full-completion or final archive claim is made.
+
+### Continued validation — 2026-11-05
+
+Twelve repeated unchanged publication cohorts passed **312 tests** under observational native
+snapshot diagnostics. The next full isolated aggregate with core coverage passed **10,558 tests**,
+with 169 skipped, 20 xfailed and nine warnings in 7,375.96 seconds (exit 0). Core coverage passed
+at **93.03% combined, 94.21% line and 89.82% branch**. The previously failing publication case
+passed in this aggregate; its earlier refusal's cause remains unknown.
+The separate harness selection finished **1,707 passed, one failed, 77 skipped**: combined coverage
+passed at **87.99%**, but the large-member streaming test refused a changed physical-ciphertext
+inventory during iteration after its initial verification succeeded. Three diagnostic repetitions
+of that test passed without reproducing the difference; neither failure is explained or cleared.
+No production integrity check, automatic retry or test exclusion was changed.
+An unchanged full harness/coverage confirmation is running separately; it is not yet a green gate.
+
+The private Work synthetic verifier initially failed, then passed with the complete verified
+tool PATH and identical source fingerprints. Its first failure's cause is unknown; private test
+output remains suppressed. These are engineering outcomes, not live Work acceptance.
 
 ## Full isolated aggregate — 2026-11-04
 

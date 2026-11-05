@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — Windows CI producer ownership, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Launch Windows contracts using a duplicated caller token with user-owned default file creation; verify directory/file/subprocess producers and fail closed. Keep the parent token, production ownership/DACL/stream policy and runner elevation/privileges unchanged. | `tools/run_windows_contracts.py`, `.github/workflows/ci.yml`, `tests/dev/test_windows_contract_launcher.py`, `tests/dev/test_check_canaries.py` | Launcher: 23 passed, 98.66% combined coverage. Earlier launcher/canary selection: 46 passed. Elevated hosted jobs remain unverified on this change. |
+| Pin format/coverage invariants and the safe degradation of a paused flash Catch-up after another Catch-up replaces current coverage. Clarify scratch/live UAT limits and record the current engineering/owner boundaries without upgrading acceptance. | `tests/catchup_core/test_coordinator.py`, `tools/uat/README.md`, `docs/re-artha-implementation-status.md`, `specs/artha-tech-spec.md`; local-only completion/UAT documents | Latest full aggregate: 10,558 passed, 169 skipped, 20 xfailed; core coverage 93.03% combined, 94.21% line, 89.82% branch. Earlier native integrity refusals remain unexplained; separate full harness confirmation running. No production data, consent, release or provider effect changed. |
+
 ### Fixed — consolidation CI fixtures and manifest, 2026-11-04
 
 | Change | Modified files | Validation |
