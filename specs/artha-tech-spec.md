@@ -8040,7 +8040,7 @@ The mandatory Windows contract job uses `tools/run_windows_contracts.py` before 
 `tools/run_tests_isolated.py`. Elevated hosted runners otherwise create Administrators-owned
 artifacts, which correctly fail the production current-user ownership check. The launcher queries
 and duplicates its caller's primary token, changes only the duplicate's default owner to that token's
-user SID, verifies the result, and launches the isolated child with `CreateProcessWithTokenW`.
+user SID, verifies the result, and launches the isolated child with `CreateProcessAsUserW` (the first hosted run showed `CreateProcessWithTokenW`, which needs the Secondary Logon service, refused with WinError 5).
 It does not adjust the caller token, enable privileges, expand allowed owners, rewrite existing
 ownership, remove stream checks, skip tests or make the job non-blocking.
 

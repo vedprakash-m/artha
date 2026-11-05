@@ -59,9 +59,10 @@ class _Native:
              [w.LPCWSTR, ctypes.c_int, w.DWORD, ctypes.POINTER(ctypes.c_void_p),
               ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
               ctypes.POINTER(ctypes.c_void_p)], w.DWORD),
-            (self.security.CreateProcessWithTokenW,
-             [w.HANDLE, w.DWORD, w.LPCWSTR, w.LPWSTR, w.DWORD, ctypes.c_void_p, w.LPCWSTR,
-              ctypes.POINTER(_StartupInfo), ctypes.POINTER(_ProcessInfo)], w.BOOL),
+            (self.security.CreateProcessAsUserW,
+             [w.HANDLE, w.LPCWSTR, w.LPWSTR, ctypes.c_void_p, ctypes.c_void_p, w.BOOL, w.DWORD,
+              ctypes.c_void_p, w.LPCWSTR, ctypes.POINTER(_StartupInfo), ctypes.POINTER(_ProcessInfo)],
+             w.BOOL),
         ]
         for function, args, result in signatures:
             function.argtypes, function.restype = args, result
@@ -124,11 +125,12 @@ class _Native:
         startup.cb = ctypes.sizeof(startup)
         command = ctypes.create_unicode_buffer(subprocess.list2cmdline(argv))
         with self.process_token() as original, self.duplicate_for_tests(original) as token:
-            # Requires the runner's existing impersonation privilege; never enable it
-            # or fall back to another token when this call is refused.
-            self.check(self.security.CreateProcessWithTokenW(
-                token, 0, sys.executable, command, 0, None, None,
-                ctypes.byref(startup), ctypes.byref(process)), "CreateProcessWithTokenW")
+            # A duplicate of the caller's own token needs no extra privilege and no Secondary
+            # Logon service (blocked on hosted runners). Never enable a privilege or fall back
+            # to another token when this call is refused.
+            self.check(self.security.CreateProcessAsUserW(
+                token, sys.executable, command, None, None, False, 0, None, None,
+                ctypes.byref(startup), ctypes.byref(process)), "CreateProcessAsUserW")
         try:
             if self.kernel.WaitForSingleObject(process.process, 0xFFFFFFFF) != 0:
                 raise ctypes.WinError(ctypes.get_last_error())
