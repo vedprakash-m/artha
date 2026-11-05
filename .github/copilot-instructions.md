@@ -4,7 +4,7 @@ Applies to every coding agent. Prefer caution over speed; use judgment for trivi
 
 ## Main-only checkout
 
-- All Artha work uses the canonical OneDrive checkout at `%USERPROFILE%\OneDrive\Artha` on `main`. Do not create worktrees or task branches.
+- All Artha work uses the canonical OneDrive checkout at `%USERPROFILE%\OneDrive\Artha` (Windows) or `~/Library/CloudStorage/OneDrive-Personal/Artha` (Mac) on `main`. Do not create worktrees or task branches.
 - Verify the checkout path and current branch before editing. If launched elsewhere, stop and continue in a session using the canonical checkout on `main`; do not edit another copy.
 - Preserve unique work and unrelated changes. Never discard work or force-switch a dirty checkout to satisfy this rule.
 
