@@ -1,9 +1,9 @@
 # Artha — Personal Intelligence OS
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.29.0
+## Product Requirements Document · v7.30.0
 
 **Author:** [Author]
-**Date:** May 3, 2026
+**Date:** November 5, 2026
 **Status:** Active Development
 **Classification:** Personal & Confidential
 
@@ -15,6 +15,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.30.0 | 2026-11-05 | **re-artha slice closure and quality hardening** — The approved reduced slice (six Domains, `reminder_create` only, Goals with the incumbent) is closed and live under owner re-sign 17; full-profile completion was reopened the same day on a proposed contract (not approved; full-v4 gates unchanged). Quality audit fixes: credentials only in the OS store, no plaintext copies of vaulted State in the synced workspace, honest per-machine freshness lines, held action types not reported as degraded, release-drift advisory, extractor-model enforcement at entry points. |
 | v7.29.0 | 2026-05-03 | **Work-Health Dashboard Intelligence (FR-42)** — Integrates operational Kusto dashboards as a live data source within Work OS. New `work work-health` command produces a 5-section on-call handoff brief: active incidents, repair pipeline, job queue, deployment blockers, and scope area status. Q4-telemetry block in `reflect-protocol.md` replaces partial incident path with live KQL queries; fallback path retained. Q4-incident-autoclose auto-closes mitigated tracked-items on every work refresh (circuit breaker: 10 max). Step 2c injects morning work-health signal (06:00–11:00 window). `work prep` auto-injects work-health context for meetings tagged with relevant keywords. Sub-commands: `work work-health scenarios`, `config-svc`, `fleet-mgr`, `data-pipeline`, `deploy`, `weekly`. Integration: `scripts/work/xhealth_signal.py` (10 query methods). Feature flag: `work_health_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_work_health_kusto_auth()` (P1 non-blocking). 12 unit tests. See Tech Spec v3.44.0 §42 + UX Spec §35. |
 | v7.28.0 | 2026-04-29 | **Ambient Intent Buffer (FR-41)** — Closes the 40-session dormancy gap where Life Scenarios, Decision Support, and Sprint Calibration existed in spec but never surfaced in practice. Step 8t appended to the catch-up pipeline after Step 8s: evaluates `state/planning_signals.md` each session, increments evidence counts, and surfaces a single materialization offer immediately after the ONE THING block when an archetype threshold is met. Five archetypes: deadline (threshold 1, requires extractable deadline_date ≤60 days), opportunity (2 detections, ≥2 sessions), pattern (3 detections), conflict (2 contradicting goals), goal_drift (active goal with no sprint ≥30 days). Idempotency: entity_key dedup prevents duplicate signals per domain; `_signal_exists_in_target()` prevents duplicate planning objects. Materialization: scenario → `state/scenarios.md`, decision → `state/decisions.md`, sprint → `goals_writer.py --add-sprint`. Safety: pre-write `backup.py file-snapshot`, post-write YAML validation, audit log to `state/audit.md`. Signal lifecycle: `skip_count ≥ 3` triggers 30-day snooze; materialized signals archive after 90 days. Token budget: ≤200 tokens added per session (G-6 guard). Scripts: `scripts/planning_signals.py` (validate/seed/offers/observe/materialize/skip/archive/sprint-triggers), `scripts/planning_metrics.py` (G-1–G-7 metrics). Preflight: `scripts/preflight/state_checks.py` gains `check_planning_signals()`. Extends Tech Spec §41 + UX Spec §34. | **Action Layer Quality Conversion (FR-40)** — Transforms action proposal acceptance from 25% to 85%+. Three-layer gate stack: (1) Signal Precision — entity viability gate (entity_confidence ≥ 0.3, non-domain, ≥3 chars), temporal coherence check (bill_due 3d grace, delivery_arriving 1d grace, security_alert skip), autopay suppression from user_context.yaml, signal_suppression DB table; (2) Proposal Quality — 5-factor confidence scoring (weights: entity 0.3, date 0.2, amount 0.1, sender_domain 0.2, semantic 0.2), suggestion tier for 0.5–0.65 confidence signals, category-aware dedup (already_handled 90d, not_relevant/duplicate 30d, bad_timing 0d), loop circuit breaker (4 consecutive non-accepted → 14-day quarantine), optional semantic LLM-as-judge (feature-flagged); (3) Feedback & Learning — 5 rejection categories (already_handled/wrong_action_type/not_relevant/bad_timing/duplicate), domain confidence decay via trust_metrics, 30-day sliding window acceptance rate (deferred counts as accepted), staged policy suggestions applied via `--apply-suggestions`. L2 promotion gate: ≥85% in 30-day window with ≥10 decisions. New files: config/user_context.yaml (gitignored — PII), config/user_context.yaml.example, scripts/migrate_actions_quality.py. Extends Tech Spec §40 + UX Spec §33. |
 | v7.26.1 | 2026-04-29 | **System Capability Inventory (FR-15 amendment)** — Passive MCP discovery and static skill inventory added to Artha OS Core. `scripts/mcp_discovery.py` inventories MCP client config files without starting servers or exposing secrets, writing `tmp/mcp_discovery.json`. `scripts/skill_index.py` inventories `config/skills.yaml`, builtin skill files, and plugin skill files without importing skills, writing `tmp/skill_index.json`. `/status` surfaces compact "Connections & capabilities" counts; preflight reports both as P1 non-blocking checks. See Tech Spec v3.41.1 + UX Spec v3.21.1. |
@@ -3167,3 +3168,16 @@ keys, ownership and inventory, refuse changed identity/metadata or active cooper
 partial interruption without success or weaker-permission rollback. No automatic/recursive repair,
 enrollment or release authority is granted. Stopped-writer attestation is not arbitrary-host confinement.
 Live adoption remains separately authorized; the workflow does not satisfy historical inventory or recovery.
+
+### 2026-11-05 slice closure, reopening and quality hardening
+
+The approved reduced slice is complete: six Domains run authoritatively under owner re-sign 17, all twelve
+WP-10..WP-21 UAT sections are signed with their recorded exceptions, and the observation window was ended by owner
+decision. This is not full-v4 acceptance. The owner then reopened full-profile completion (proposed contract
+`specs/re-artha-full-completion.md`, not yet approved); live acceptance, owner mappings, independent labels, Work
+policy handling, recovery/transfer observations and the provider history purge remain explicit gaps.
+
+Quality requirements added after the audit: credentials exist only in the OS credential store; the synced workspace
+holds no plaintext copy of vaulted State; session-start freshness lines never report sources fetched on another
+machine as unfetched; held action types are not reported as degraded; a change that would invalidate the signed
+release is named before commit; and extraction answers come only from the pinned extractor model.

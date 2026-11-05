@@ -59,6 +59,40 @@ launcher mocks corrected in the later local cohort; changed-line coverage referr
 to a pre-scrub base absent from the rewritten history. Neither the old failed run
 nor the passing local cohort establishes current hosted acceptance.
 
+## Mac reconciliation — 2026-11-05 afternoon
+
+The Mac session reconciled the Windows reopening above. The Windows Goal evidence-time repair was reviewed (fail-closed;
+Goal cohort 113 passed, strict mypy clean on the Mac) and is committed together with the Mac audit fixes after the
+full isolated suite, then bound by owner-approved re-sign 18. The baseline is not archived while full-profile work is
+open. Audit fixes: plaintext-copy vault warning, per-machine freshness banner, held action types in preflight,
+release-drift advisory, CI concurrency and force-push-safe changed-line base, a non-gating Windows metadata
+diagnostic, and corrected launcher mocks. Machine-local hygiene: legacy plaintext credential files and plaintext
+State backups moved or encrypted out of the synced checkout. OneDrive also evicted `.git/index` after a Windows write
+(recovered by re-reading it); a shared `.git` in the sync folder remains an open owner decision.
+
+## Slice closed — 2026-11-05 (Mac)
+
+The approved reduced slice is complete and its baseline is archived locally. This is slice completion,
+not full-v4 acceptance; waivers, incumbent retention, deferrals and signed exceptions stand as recorded.
+
+- **Release.** The Nov 1 signed cohort no longer matched the code (implementation fingerprint only).
+  The owner approved re-sign 17; the release check and runtime release guard pass. First authoritative run
+  `cu_a731941b2a37` (extraction by the pinned model): exit 10, 6/6 required scopes complete, no MISS, no tripwire.
+  Observation window ended by owner decision; the daily check task is disabled.
+- **UAT.** All twelve WP-10..WP-21 sections signed. WP-12 rows were observed on the Mac (r1 deep format; r2, r4,
+  r5 isolated synthetic); WP-19 signed as deferred, preserve-all.
+- **Owner dispositions.** Consent: no applicable grant; outlook/calendar `permission` failures are attribution
+  refusals (multi-person or unnamed messages), accepted as exit 10. Open Item owner IDs: deferred. Work retention
+  review: deferred.
+- **Validation.** Mac: full isolated suite 10,402 passed / 0 failed; harness gate 1,566 passed, 86.29%. Windows
+  (from the Windows session): second full aggregate 10,558 passed, exit 0, core coverage 93.03%. Windows hosted
+  contracts: hosted runners now launch the isolated child and verify ownership (run 42112549590: 4,791 passed, 2 failed — both were launcher tests still mocking the old API, fixed in the next entry).
+- **Unexplained, unchanged.** Two Windows-only guard refusals (publication bounded read; ciphertext inventory
+  during iteration) did not recur in later runs. In both, no test code touched the file between snapshots, which
+  points to an external metadata change right after close. `tools/diagnose_windows_metadata.py` measures this on
+  the Windows host; no guard was weakened.
+- **Outside the slice.** GitHub purge of replaced history (two rewrites, eight SHAs; tracked locally).
+
 
 ## Approved-slice completion continuation — 2026-11-05
 

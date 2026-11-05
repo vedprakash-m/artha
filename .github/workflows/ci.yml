@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: ["main", "develop"]
 
+# A newer push to the same ref supersedes an in-flight run; results are only meaningful for the tip.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ── Lint + Syntax ────────────────────────────────────────────────────────
   lint:
@@ -139,7 +144,9 @@ jobs:
           DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: |
           DIFF_RANGE_NOTATION=...
-          if [[ "$DIFF_BASE" =~ ^0+$ ]]
+          # A new branch has no base, and a force-push leaves the old tip unreachable: measure every core
+          # line against the empty tree instead (never weaker than a real base).
+          if [[ "$DIFF_BASE" =~ ^0+$ ]] || ! git cat-file -e "${DIFF_BASE}^{commit}" 2>/dev/null
           then
             DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
             DIFF_RANGE_NOTATION=..
@@ -178,6 +185,9 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $bin
           $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
+      - name: Observe external metadata changes on fresh files (diagnostic only)
+        continue-on-error: true  # evidence for the unexplained guard refusals; never gates the contracts
+        run: python tools/diagnose_windows_metadata.py --dir "$env:RUNNER_TEMP" --files 50 --seconds 3
       - name: Isolated core and native credential/action contracts
         run: >-
           python tools/run_windows_contracts.py tests/catchup_core

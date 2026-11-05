@@ -139,6 +139,35 @@ def hook_session_start() -> None:
     if stray:
         print(f"[VAULT-WARN] Plaintext sensitive state without a lock file: {', '.join(stray)}. "
               "Re-encrypt: python3 scripts/vault.py encrypt")
+    copies = _plaintext_copies()
+    if copies:
+        print(f"[VAULT-WARN] Plaintext copies of vaulted state (backups or conflict copies): "
+              f"{', '.join(copies)}. Encrypt or remove them; `vault.py encrypt` does not cover them.")
+
+
+def _plaintext_copies() -> list[str]:
+    """Files named after a vaulted domain (``finance.md.pre-write.bak``, ``kids.md-Laptop.bak``) that are
+    not age ciphertext.  The canonical ``<domain>.md`` is reported separately above."""
+    try:
+        names = sorted(os.listdir(STATE_DIR))
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        domain = next((d for d in SENSITIVE_DOMAINS if name.startswith(f"{d}.md")), None)
+        if domain is None or name == f"{domain}.md" or name.endswith(".lock"):
+            continue
+        path = os.path.join(STATE_DIR, name)
+        try:
+            if not os.path.isfile(path):
+                continue
+            with open(path, "rb") as handle:
+                if handle.read(21) == b"age-encryption.org/v1":
+                    continue
+        except OSError:
+            continue
+        found.append(name)
+    return found
 
 
 def hook_contacts_integrity() -> None:

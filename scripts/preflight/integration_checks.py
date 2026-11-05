@@ -400,6 +400,18 @@ def check_dep_freshness() -> CheckResult:
     return CheckResult("venv dependencies", "P1", True, f"All {len(_REQUIRED_DEPS)} core deps found ✓")
 
 
+def _held_action_types() -> frozenset[str]:
+    """Action types the live policy holds (config/actions.yaml live_trial.held); they never dispatch."""
+    try:
+        from lib.config_loader import load_config  # noqa: PLC0415
+        held = (load_config("actions", os.path.join(ARTHA_DIR, "config")).get("live_trial") or {}).get("held") or []
+    except (ImportError, AttributeError):
+        return frozenset()
+    if not isinstance(held, list):
+        return frozenset()
+    return frozenset(str(name) for name in held if isinstance(name, str))
+
+
 def check_action_handlers() -> CheckResult:
     """P1 (Step 0c): Run action handler health checks and expire stale queue entries.
 
@@ -438,8 +450,11 @@ def check_action_handlers() -> CheckResult:
         # Run handler health checks
         health: dict[str, bool] = executor.run_health_checks()
 
-        failed = [k for k, v in health.items() if not v]
+        held = _held_action_types()
+        held_degraded = sorted(k for k, v in health.items() if not v and k in held)
+        failed = [k for k, v in health.items() if not v and k not in held]
         passed = [k for k, v in health.items() if v]
+        held_note = (f" | held, not checked: {', '.join(held_degraded)}" if held_degraded else "")
 
         if not health:
             return CheckResult(
@@ -453,6 +468,7 @@ def check_action_handlers() -> CheckResult:
                 (
                     f"Action handlers: {len(passed)} ok, {len(failed)} degraded "
                     f"({', '.join(failed)}) — those action types disabled this session"
+                    + held_note
                     + (f" | {expired_count} stale actions expired" if expired_count else "")
                 ),
                 fix_hint="Check connector credentials for degraded handlers",
@@ -462,6 +478,7 @@ def check_action_handlers() -> CheckResult:
             "action handlers", "P1", True,
             (
                 f"All {len(passed)} action handlers healthy ✓"
+                + held_note
                 + (f" | {expired_count} stale actions expired" if expired_count else "")
             ),
         )

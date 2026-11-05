@@ -1,9 +1,9 @@
 ﻿# Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.24.0 | **Status**: Active Development | **Date**: November 3, 2026
+> **Version**: 3.25.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.29.0, Tech Spec v3.47.0
+> **Implements**: PRD v7.30.0, Tech Spec v3.50.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.25.0 | 2026-11-05 | **Honest session-start lines** — The stale-source banner says when per-source freshness was recorded on another machine instead of listing sources as unfetched; the vault warning names plaintext backup/conflict copies; preflight marks held action types "held, not checked". |
 | v3.24.0 | 2026-11-03 | **Planning Signal Freshness** — The planning-buffer health indicator treats missing, invalid, future-dated, or stale freshness metadata as unavailable and directs the user to confirm Step 8t ran. An explicit successful save records its write date when the date was missing. Implements Tech Spec v3.46.0–v3.47.0. |
 | v3.23.0 | 2026-05-03 | **Work-Health Dashboard Intelligence UX (§35)** — Output format for `work work-health` 5-section on-call brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 Work-Health Context block injection format. Morning signal footer format. `[live: telemetry]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
 | v3.22.0 | 2026-04-29 | Action Quality Layer UX (§33) — Rejection category prompt (5 categories), suggestion tier display (§ SIGNAL SUGGESTIONS), --list confidence column, --apply-suggestions interactive flow, anomaly alerts. Implements PRD v7.27.0 + Tech Spec §40. |
@@ -4357,3 +4358,12 @@ Show changed versus already-private state, no inventory enrollment, and the coop
 Stale previews, unsafe identities, contention and incomplete application refuse visibly; a partial change
 requires fresh preview/review rather than a success-shaped response. Engineering approval is not live
 adoption approval, and adoption does not establish historical recovery, owner UAT or cutover readiness.
+
+### 2026-11-05 session-start honesty
+
+The session-start banner must not alarm about sources that were fetched elsewhere. When the latest Catch-up is newer
+than anything this machine recorded, it reads: "Last Catch-up: <age>. Per-source freshness was last recorded on this
+machine <age>; the latest Catch-up ran on another machine." Per-source "not fetched" lines appear only when this
+machine's coverage is current. The vault line additionally names plaintext copies of vaulted State ("Plaintext copies
+of vaulted state (backups or conflict copies): … Encrypt or remove them"). Preflight shows degraded handlers of held
+action types as "held, not checked" rather than a warning, because they cannot run.

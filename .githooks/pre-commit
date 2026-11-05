@@ -17,5 +17,19 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import privacy_scan  # noqa: E402
 
+def _release_drift_advisory() -> None:
+    """Name staged files the signed slice release fingerprints (advisory, never blocks)."""
+    import subprocess  # noqa: PLC0415
+    tool = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "check_release_drift.py")
+    if os.path.isfile(tool):
+        subprocess.run([sys.executable, tool, "--staged"], check=False, timeout=60)
+
+
 if __name__ == "__main__":
-    sys.exit(privacy_scan.report(privacy_scan.scan_staged(), "Pre-commit"))
+    status = privacy_scan.report(privacy_scan.scan_staged(), "Pre-commit")
+    if status == 0:
+        try:
+            _release_drift_advisory()
+        except Exception:  # noqa: BLE001 - advisory only
+            pass
+    sys.exit(status)

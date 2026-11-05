@@ -90,6 +90,20 @@ def take_stop_failures(local: Path) -> list[str]:
     return lines[-3:]
 
 
+def _latest_recorded_run(entries: dict[str, Any] | None) -> datetime | None:
+    """Newest connector run recorded in this machine's coverage file (any outcome)."""
+    newest = None
+    for entry in (entries or {}).values():
+        stamp = ((entry or {}).get("last_run") or {}).get("at")
+        try:
+            moment = _parse(stamp) if stamp else None
+        except ValueError:
+            moment = None
+        if moment is not None and (newest is None or moment > newest):
+            newest = moment
+    return newest
+
+
 def build_banner(
     *, now: str | None, last_catch_up: str | None, entries: dict[str, Any],
     threshold_hours: float = THRESHOLD_HOURS,
@@ -110,6 +124,20 @@ def build_banner(
                          "Say `brief` to refresh.")
         else:
             lines.append(f"Last Catch-up: {_age(hours)}.")
+
+    recorded = _latest_recorded_run(entries)
+    if recorded is not None and last_catch_up:
+        try:
+            behind_h = (_parse(last_catch_up) - recorded).total_seconds() / 3600
+        except ValueError:
+            behind_h = 0.0
+        if behind_h > threshold_hours:
+            # connector_coverage.json is per machine while health-check.md is shared: the latest
+            # Catch-up ran elsewhere, so this machine's per-source timestamps are not its freshness.
+            age = _age(max(0.0, (current - recorded).total_seconds() / 3600))
+            lines[-1] = (lines[-1].rstrip(".") + f". Per-source freshness was last recorded on this machine {age}; "
+                         "the latest Catch-up ran on another machine.")
+            return "\n".join(lines)
 
     stale: list[str] = []
     for name, entry in sorted((entries or {}).items()):

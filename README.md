@@ -9,7 +9,7 @@
 
 Artha gives your AI assistant (Claude, Gemini, or GitHub Copilot) deep, persistent context about your life — health, finance, family, goals, home, immigration — so every conversation starts where the last one left off.
 
-> No server. No database. No Docker. Just your files + your AI assistant.
+> No server. No Docker. Just your files, an encrypted local ledger, and your AI assistant.
 > 🔒 Your data stays on your machine. No telemetry. No cloud sync.
 
 ---
@@ -74,6 +74,10 @@ python scripts/setup_todo_lists.py      # Microsoft To Do (optional)
 python scripts/setup_ha_token.py        # Home Assistant IoT (optional, LAN only)
 ```
 
+Tokens are stored in the OS credential store (Keychain, Credential Manager or Secret Service), never as files in
+the checkout. Older `.tokens/*.json` files are migration input only: `python scripts/migrate_credentials.py` previews,
+`--apply <review_hash>` seals them, after which the files can be removed.
+
 See [docs/google-oauth-setup.md](docs/google-oauth-setup.md) for a walkthrough.
 
 ### Preflight Check
@@ -96,6 +100,11 @@ python scripts/migrate.py             # write config/user_profile.yaml
 
 ## What You Get
 
+- **Evidence-led Catch-up core** (`scripts/catchup_core/`) — an encrypted local ledger of Signals, Facts and Open Items with
+  per-source coverage, citations, consent and household attribution, and a staged action queue. Briefings never claim
+  "nothing urgent" when a source was not covered. Authoritative runs are gated by an owner-signed release whose
+  evaluation cohort pins code, policy, Domain packs and the extractor model; shadow runs (`--shadow`) are always
+  available. See [docs/catchup-core.md](docs/catchup-core.md).
 - **Daily briefings** across 24 life domains (health, finance, goals, immigration, family, home, and more) — with action items, goal progress, and proactive nudges
 - **Goal Intelligence Engine** — conversational goal management with metric progress bars, sprint planning, and cross-domain pattern alerts
 - **Ambient Intent Buffer** — per-session signal accumulation that surfaces scenario, decision, and sprint materialization offers at the optimal briefing moment; five archetypes (deadline, opportunity, pattern, conflict, goal_drift) each with configurable thresholds; idempotent writes with pre-write snapshot and audit trail
@@ -123,6 +132,7 @@ python scripts/migrate.py             # write config/user_profile.yaml
 pip install -e ".[dev]"
 make test      # run test suite
 make check     # lint + tests + PII scan + schema validation
+python tools/run_tests_isolated.py -q          # full suite in an isolated copy (never touches live state)
 make start     # re-run setup.sh from scratch
 ```
 
@@ -134,6 +144,10 @@ installing the package does not provision runtime configuration or credentials.
 ```bash
 python artha.py --doctor   # 11-point health check for your installation
 ```
+
+Install the hooks once with `git config core.hooksPath .githooks`: the pre-commit and pre-push privacy scans block
+personal data and secrets, and the pre-commit step also warns when a change touches files the signed release
+fingerprints (`tools/check_release_drift.py`), so authoritative Catch-ups would refuse until a re-sign.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 

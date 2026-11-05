@@ -17,7 +17,7 @@ Do NOT require a `/` prefix — bare words are the primary invocation form.
 
 | User says (examples) | Route to | Action |
 |---------------------|----------|--------|
-| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python scripts/pipeline.py`, read state files, produce briefing; then run the core in shadow: `python3 scripts/catchup_core/cli.py catchup --shadow --json` (authoritative only after a signed cutover, re-artha §12.6; authoritative runs must use `cd scripts && PYTHONPATH=. python3 -m catchup_core.cli catchup --host <authority_host> ...` because the script form crashes at finalize) |
+| `brief`, `catch me up`, `morning briefing`, `SITREP` | **brief** | Run `python scripts/pipeline.py`, read state files, produce briefing; then run the core in shadow: `python3 scripts/catchup_core/cli.py catchup --shadow --json` (authoritative only after a signed cutover, re-artha §12.6; authoritative runs use `cd scripts && PYTHONPATH=. python3 -m catchup_core.cli catchup --host <authority_host> ...` (the script form is also safe since the 2026-10-31 CLI-SHADOW fix); extraction requests (exit 40) must be answered by claude-sonnet-5-5, the pinned extractor — any other model hands them to a Sonnet subagent and never answers itself) |
 | `work`, `what's happening at work`, `work briefing` | **work** | Read all files in `state/work/`, produce work briefing |
 | `items`, `what's open`, `what's overdue`, `action items` | **items** | Read `state/open_items.md`, display action items |
 | `goals`, `how are my goals`, `goal progress`, `sprint` | **goals** | Read `state/goals.md`, display goal progress |

@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.49.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.50.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.29.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.50.0 | 2026-11-05 | **Slice closure and audit hardening** — Approved re-artha slice closed under re-sign 17 (full-profile work since reopened on a proposed contract). Hosted Windows contracts launch via `CreateProcessAsUserW`. Session-start vault warning covers plaintext copies of vaulted domains; stale-source banner distinguishes per-machine coverage from a Catch-up on another machine; preflight treats held action types as informational; advisory release-drift pre-commit check; CI concurrency, force-push-safe changed-line base, non-gating Windows metadata diagnostic. See §"2026-11-05 audit hardening". |
 | v3.49.0 | 2026-11-05 | **Goal observation time** — Outcome/habit values and weekly comparisons cannot use Facts observed after evaluation. Every required covered source must have completed by evaluation, including mixed-source coverage; on-time observations reject future verification. Authored Goals, authority and release gates are unchanged. |
 | v3.48.0 | 2026-11-05 | **Windows CI producer ownership** — A mandatory test-only launcher duplicates the caller token, changes only that duplicate's default owner to its existing user SID, verifies file/directory/subprocess ownership and runs the existing isolated test runner. Production owner/DACL checks and elevation/privileges are unchanged; hosted elevated acceptance remains separately recorded. |
 | v3.47.0 | 2026-11-03 | **Planning Signal Save Freshness** — Loading preserves missing `last_updated`; an explicit save stamps the actual write date only when that key is absent. Invalid/future stored dates remain validation errors. |
@@ -8061,3 +8062,76 @@ fallback. Child test output stays in a disposable temporary log and its status i
 The existing isolated runner still excludes production data and credentials. This launcher retains
 the runner's existing groups/elevation/privileges: it is neither de-elevation nor a sandbox.
 Native local tests and synthetic API-failure tests do not establish an elevated hosted outcome.
+
+**Hosted outcome, 2026-11-05.** The first hosted run refused `CreateProcessWithTokenW` with WinError 5: it needs
+the Secondary Logon service, which hosted runners do not provide. The launcher now uses `CreateProcessAsUserW`
+with the same duplicated, user-owned token; a duplicate of the caller's own primary token needs no additional
+privilege. Run 42112549590 verified directory, file and subprocess ownership and passed 4,791 contracts; its two
+failures were launcher tests still mocking the old API, corrected afterwards. Refusals still name the denied call
+and never fall back.
+
+### 2026-11-05 audit hardening
+
+An adversarial quality audit (Critical/High findings) produced these behavior changes. None alters a production
+integrity guard, consent rule, release threshold or the signed cohort's evaluation inputs other than through the
+reviewed re-sign.
+
+- **Plaintext copies of vaulted state.** `vault_hook.py session-start` also lists files named after a vaulted domain
+  (`<domain>.md.*`, `<domain>.md-<host>.bak`) whose first bytes are not age ciphertext; `vault.py encrypt` does not
+  cover them. Encrypted `.age`, `.age.vN` and `.age.pre-shrink` copies and lock files are ignored.
+- **Per-machine coverage honesty.** `connector_coverage.json` is machine-local while `health-check.md` is shared. When
+  the newest locally recorded connector run is older than the latest Catch-up by more than the staleness threshold,
+  the banner states that per-source freshness was last recorded on this machine and that the Catch-up ran elsewhere,
+  instead of listing old local timestamps as unfetched sources (RA-17).
+- **Held action types.** Preflight's action-handler check reads `config/actions.yaml` `live_trial.held`; a degraded
+  handler for a held type is reported as "held, not checked" and does not fail the check. Both preflight entry points
+  (`scripts/preflight.py` and the `scripts/preflight/` package, which shadows it on import) carry the same rule.
+- **Release drift advisory.** `tools/check_release_drift.py --staged` mirrors `_implementation_fingerprint` path
+  selection (capability modules plus `scripts/catchup_core/*.py` and migrations) and names staged files that would
+  invalidate the signed release. The pre-commit hook runs it after a clean privacy scan; it never blocks.
+- **Extractor identity.** The runtime cannot verify which model answered extraction requests, so the entry points
+  enforce it: the brief route and the scheduled check require the pinned extractor and hand extraction to a Sonnet
+  subagent otherwise, without leaving a paused run.
+- **CI.** Superseded runs on a ref are cancelled. Changed-line coverage uses the empty tree as its base when the push
+  base is not a reachable commit (new branch or force-push), which measures every core line. The Windows job runs
+  `tools/diagnose_windows_metadata.py` first as non-gating evidence for the unexplained bounded-read and ciphertext-
+  inventory refusals; it samples ID, size, LastWriteTime and ChangeTime of freshly closed files.
+- **Local hygiene (not in git).** Legacy plaintext credential files were moved out of the synced checkout (all live
+  credentials are in the OS store); plaintext State backups and the obsolete synced `state/actions.db` were encrypted
+  to machine-local quarantine with byte-for-byte verification. The plaintext operational `state/audit.md`, appended
+  by many writers between sessions, remains an open design item.
+
+
+### 2026-11-05 folded feature specs
+
+These local feature specs were implemented and tested; their normative content now lives here and the files are
+archived under `.archive/specs/` with a `-2026-11-05` suffix. Read-only Google OAuth and privacy-anchor capacity are
+already described above.
+
+- **Calendar attribution (CA-01..CA-07).** A multi-subject calendar event that names no candidate subject, or names
+  several, is never extracted or disclosed and records a PERMISSION extract failure, so the run stays degraded. For
+  access bookkeeping only it records all of the source's candidate subjects (`access_subjects_for`), so the source is
+  not hidden merely because one event lacks a single subject; a candidate without required consent still hides it,
+  and a withheld name gets no fallback. The Briefing states "N calendar events not attributed to a person" beside
+  Calendar coverage. Single-candidate sources are unchanged. Holiday calendars may be dropped from the source list.
+- **Script launch shadowing (CS-01).** When `catchup_core/cli.py` runs as a script it removes its own directory from
+  `sys.path`, so `catchup_core/actions.py` cannot shadow the top-level `actions` package; `-m` launch is unchanged.
+  Covered by `tests/catchup_core/test_cli_script_shadowing.py`.
+- **Core Open Items (CI-01..CI-07).** For released Domains the core writes `state/core_open_items.md` at finalization
+  of an authoritative run (never in shadow): one row per open obligation with Domain, subject label, predicate, due
+  date, days until, severity or `unscored`, state and the stable obligation key. Writes are atomic, mode 0600,
+  idempotent (unchanged bytes are not rewritten), and state "none" when empty. The incumbent does not add or update
+  Open Items for those Domains. Rollback: `cutover: false` and delete the file.
+- **Reminders and paid bills.** Each authoritative Catch-up proposes one held-for-approval `reminder_create` per
+  future-dated, undisputed obligation (never overdue; at most 50 per run; duplicates and PII refusals skipped; shadow
+  never proposes; action-layer failure never fails the Catch-up). A pack predicate may declare `resolves: <predicate>`:
+  a current Fact of that predicate with the same subject and obligation key, whose evidence is not older, settles
+  the target. Unknown evidence times never hide a bill. Tests: `test_reminders.py` (RM-01..RM-11),
+  `test_paid_resolution.py` (PR-01..PR-09).
+- **Provider observation cursors.** Opt-in per source (`sync_changes: true`); the default stays the windowed listing.
+  A cursor only selects what to read and is stored in `connector_coverage.cursor_generation`, written only after a
+  complete scoped fetch with every evidence commit succeeding; failures keep, resets clear it. Mail has no omission
+  rule (deleted, moved or trashed mail never implies completion). After a complete full calendar listing
+  (`report_full_listing`), unlisted occurrences in that window are withdrawn as calendar occurrences only, never
+  Signals, Facts or obligations. Only 401/`invalid_grant` mean lost access; a cursor is never sent to another host.
+  Built and tested against synthetic fixtures only; live parity is required before a source is switched on.

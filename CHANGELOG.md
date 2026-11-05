@@ -9,12 +9,39 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Goal observation time, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Goal outcome/habit values, weekly comparisons and on-time observations no longer use Facts observed, or coverage completed, after the evaluation instant (tech spec v3.49.0). Fails toward `unknown`; no schema, owner attribution, consent or release change. Goals remain with the incumbent in the live slice. | `scripts/catchup_core/goals.py`, `scripts/catchup_core/goal_metrics.py`, `tests/catchup_core/test_goal_metrics.py`, `tests/catchup_core/test_weekly_goals.py`, `specs/artha-tech-spec.md` | Goal cohort 113 passed; strict mypy clean |
+
+### Fixed — quality audit Critical/High findings, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| C1/C2/C4 (local, not in git): moved 8 plaintext credential files out of the synced `.tokens/` (all live credentials are in the OS keychain), encrypted 13 plaintext `state/` backups and the stale synced `state/actions.db` into `~/.artha-local` with byte-for-byte verification, and removed group/world access from 181 `state/` files. | local only | Gmail/Calendar/Graph authenticate from the keychain; `vault.py health` OK |
+| Session-start vault warning also reports plaintext backups and conflict copies of vaulted domains (`*.md.pre-write.bak`, `*.md-<host>.bak`). | `scripts/vault_hook.py` | 2 new tests |
+| Stale-source banner no longer reports this machine's old per-source timestamps as "not fetched" after a Catch-up ran on another machine. | `scripts/stale_banner.py` | 2 new tests |
+| Preflight treats degraded handlers of held action types as informational, in both preflight implementations. | `scripts/preflight.py`, `scripts/preflight/integration_checks.py` | 2 new tests |
+| Advisory pre-commit warning names staged files that invalidate the signed slice release. | `tools/check_release_drift.py`, `.githooks/pre-commit` | 4 new tests |
+| Extraction must run on the pinned model: brief route and the scheduled check say so; the task refuses to start a run on another model. | `CLAUDE.md`, `GEMINI.md` (task file local) | — |
+| CI: cancel superseded runs; changed-line coverage falls back to the strict empty-tree base when a force-push erased the old base; non-gating Windows metadata diagnostic before the contracts; launcher tests updated for `CreateProcessAsUserW`. | `.github/workflows/ci.yml`, `tests/dev/test_windows_contract_launcher.py` | YAML valid; Windows tests run only on hosted runners |
+| Agent permissions (local): removed `Bash(curl *)`, `Bash(bash *)`, `Bash(python:*)`; added deny rules for credential and release paths. `Bash(python3:*)` remains, so arbitrary commands are still possible through Python. | `.claude/settings.local.json` (gitignored) | — |
+
 ### Fixed — Goal temporal evidence, 2026-11-05
 
 | Change | Modified files | Validation |
 |---|---|---|
 | Keep outcome/habit progress and weekly movement unknown for future-observed Facts. Reject future source completion before aggregating mixed-source coverage and future verification for on-time metrics. Preserve valid current progress when only prior evidence is future-dated; do not alter authored Goals, owners or live authority. | `scripts/catchup_core/goal_metrics.py`, `scripts/catchup_core/goals.py`, `tests/catchup_core/test_goal_metrics.py`, `tests/catchup_core/test_weekly_goals.py`, `specs/artha-tech-spec.md`; generated manifest and completion status | Mixed-source counterexamples failed before repair. Goal/Open Item/plan/Briefing cohort: 280 passed, 96.75% combined coverage. Final integration/scratch-UAT/release/corpus/transfer/launcher/register cohort: 959 passed, seven skipped. Public Ruff/import/state-write and strict core typing passed. Full-profile live acceptance remains open. |
 
+### Closed — re-artha approved slice, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Closed the approved re-artha slice: six Domains authoritative under re-sign 17 (cohort drift from the Nov 1 sign-off found and re-signed with owner approval); observation window ended by owner decision; all twelve WP-10..WP-21 UAT sections signed with recorded exceptions; consent, Open Item owner attribution and WP-19 dispositioned by the owner. Closed slice feature specs are archived locally; the baseline stays active because full-profile work was reopened the same day. | local specs and release artifacts (gitignored) | Authoritative `cu_a731941b2a37`: exit 10 (accepted), 6/6 required scopes complete, no MISS. Mac full isolated suite 10,402 passed, 0 failed; harness gate 1,566 passed, 86.29%. Windows second full aggregate 10,558 passed (exit 0). |
+| Windows contract launcher: hosted runners refused `CreateProcessWithTokenW` (Secondary Logon) with WinError 5; launch with `CreateProcessAsUserW` and name the refused API call. | `tools/run_windows_contracts.py`, `specs/artha-tech-spec.md` | Launcher tests 11 passed / 12 skipped on Mac; hosted result: hosted runners now launch the isolated child and verify ownership (run 42112549590: 4,791 passed, 2 failed — both were launcher tests still mocking the old API, fixed in the next entry) |
+| Removed a personal Windows path from `.github/copilot-instructions.md` and, with owner approval, from public history (`git filter-repo --replace-text`, force-push with lease; tip tree unchanged). GitHub object purge requested separately. | `.github/copilot-instructions.md` | `git log -S` finds no occurrence on `main`; privacy scan clean |
+| Added a Windows diagnostic for the two unexplained guard refusals (bounded read; ciphertext inventory): it watches freshly closed files for external metadata changes. Guards unchanged. | `tools/diagnose_windows_metadata.py` | Ruff clean; mypy clean for win32; refuses off Windows |
 
 ### Changed — Windows CI producer ownership, 2026-11-05
 

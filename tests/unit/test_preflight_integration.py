@@ -89,3 +89,47 @@ class TestRunPreflightIntegration:
         results = pf.run_preflight()
         output, all_passed = pf.format_results(results, advisory=False)
         assert isinstance(output, str)
+
+
+class TestHeldHandlersAreNotWarnings:
+    """A held action type cannot run, so its handler health is not a warning (audit H2, 2026-11-05)."""
+
+    def _workspace(self, tmp_path, monkeypatch, health):
+        import types
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "artha_config.yaml").write_text("harness:\n  actions:\n    enabled: true\n")
+        (tmp_path / "config" / "actions.yaml").write_text("live_trial:\n  trial: [reminder_create]\n  held: [slack_send]\n")
+        import lib.config_loader as config_loader
+        import preflight.integration_checks as checks
+        monkeypatch.setattr(checks, "ARTHA_DIR", str(tmp_path))
+        real_load = config_loader.load_config
+
+        def load(name, *args, **kwargs):
+            if name == "artha_config":
+                return {"harness": {"actions": {"enabled": True}}}
+            return real_load(name, *args, **kwargs)
+
+        monkeypatch.setattr(config_loader, "load_config", load)
+
+        class Executor:
+            def __init__(self, root):
+                pass
+
+            def expire_stale(self):
+                return 0
+
+            def run_health_checks(self):
+                return dict(health)
+
+        monkeypatch.setitem(sys.modules, "action_executor", types.SimpleNamespace(ActionExecutor=Executor))
+
+    def test_degraded_held_handler_passes(self, tmp_path, monkeypatch):
+        self._workspace(tmp_path, monkeypatch, {"reminder_create": True, "slack_send": False})
+        result = pf.check_action_handlers()
+        assert result.passed and "slack_send" in result.message and "held" in result.message
+
+    def test_degraded_unheld_handler_still_warns(self, tmp_path, monkeypatch):
+        self._workspace(tmp_path, monkeypatch, {"slack_send": False, "apple_reminders_sync": False})
+        result = pf.check_action_handlers()
+        assert not result.passed and "apple_reminders_sync" in result.message
+        assert "1 degraded" in result.message

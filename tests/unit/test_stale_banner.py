@@ -126,3 +126,23 @@ def test_age_wording_and_unreadable_timestamps():
     assert sb._age(0.2) == "under 1h ago" and sb._age(5) == "5h ago" and sb._age(100) == "4 days ago"
     text = sb.build_banner(now="2026-10-20T12:00:00Z", last_catch_up="garbage", entries={"x": {"last_success_at": "bad"}})
     assert "unreadable timestamp" in text
+
+
+def test_sources_recorded_before_a_catch_up_elsewhere_are_not_reported_as_unfetched():
+    """The coverage file is per machine; health-check.md is shared.  A Catch-up on another machine must not make this
+    machine's old per-source timestamps read as 'not fetched for days'."""
+    entries = {"gmail": {"last_success_at": "2026-09-20T00:00:00Z", "last_run": {"at": "2026-09-20T00:00:00Z"}},
+               "google_calendar": {"failing_since": "2026-09-20T00:00:00Z",
+                                   "last_run": {"at": "2026-09-20T00:00:00Z"}}}
+    out = sb.build_banner(now=NOW, last_catch_up="2026-10-11T15:50:00Z", entries=entries)
+    assert "never fetched" not in out and "gmail 21 days" not in out
+    assert "another machine" in out and "21 days ago" in out
+
+
+def test_sources_recorded_with_the_latest_catch_up_are_still_listed():
+    entries = {"gmail": {"last_success_at": "2026-10-09T00:00:00Z", "last_run": {"at": "2026-10-11T15:50:00Z"}},
+               "google_calendar": {"failing_since": "2026-10-10T00:00:00Z",
+                                   "last_run": {"at": "2026-10-11T15:50:00Z"}}}
+    out = sb.build_banner(now=NOW, last_catch_up="2026-10-11T15:50:00Z", entries=entries)
+    assert "gmail 2 days" in out and "google_calendar never fetched successfully" in out
+    assert "another machine" not in out
