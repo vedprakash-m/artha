@@ -130,6 +130,8 @@ Commit `262fe5d` changed the fingerprinted `scripts/lib/local_paths.py` (side-ef
 the hosted Windows contracts), so re-sign 18 no longer matched. Re-sign 19 bound implementation `595b0a15…`; the
 release check admits it and shadow Catch-up `cu_462d59ad3a1c` fetched under the same cohort, pausing for extraction.
 CI on `262fe5d` was green on every platform (one Ubuntu job re-run after a PowerShell start-up timeout).
+**Authoritative run under re-sign 19 (owner chose to run as is):** `cu_86cd115a5a98` / `brf_cu_86cd115a5a98`, extraction by the pinned model (14 requests, no candidates), exit 10 (degraded, expected), about 16 s, 6/6 required scopes complete, no hard tripwire. The only incumbent difference is OI-134 (P2 vehicle note dated today, whose text says it was resolved), treated as not a MISS as in the 11-02 and 11-03 rulings.
+
 **Caveat:** the fingerprint covers the working tree, and at signing time it also contained uncommitted Windows-session
 edits to `coordinator.py`, `corpus.py` and `runtime.py` (made 21:23–21:24 PT, with tests; not yet reviewed, committed or
 run in CI). Re-sign 19 therefore binds those edits too. Re-sign again after that work is committed and CI is green.
