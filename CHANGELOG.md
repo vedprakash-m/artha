@@ -9,6 +9,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Release — re-sign 18, 2026-11-05
+
+Owner-approved re-sign of the first-slice release for implementation cohort `0a7f8889…` (commits 9b223ab, f7b549b,
+04b2817). Release check admitted; runtime release guard passed; shadow Catch-up confirmed the cohort.
+
 ### Fixed — second quality audit, 2026-11-05
 
 | Change | Modified files | Validation |

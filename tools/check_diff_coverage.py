@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from diff_cover.diff_cover_tool import generate_coverage_report
 from diff_cover.diff_reporter import GitDiffReporter
@@ -25,14 +27,32 @@ def main(argv: list[str]) -> int:
     )
     if not count:
         reporter = GitDiffReporter(args.compare_branch, diff, include=args.include)
-        if any(path.endswith(".py") and reporter.lines_changed(path)
-               for path in reporter.src_paths_changed()):
-            print("ERROR: changed Python lines have no matching coverage in the report.", file=sys.stderr)
+        measured = _report_files(args.report)
+        unmatched = [path for path in reporter.src_paths_changed()
+                     if path.endswith(".py") and reporter.lines_changed(path)
+                     and (Path.cwd() / path).resolve() not in measured]
+        if unmatched:
+            # A changed file the report does not contain means the report and the diff disagree on paths.
+            print("ERROR: changed Python lines have no matching coverage in the report: "
+                  + ", ".join(sorted(unmatched)), file=sys.stderr)
             return 1
+        # Every changed file is in the report; its changed lines are simply not executable (docstrings, comments).
     if percent < args.fail_under:
         print(f"Failure. Coverage is below {args.fail_under:g}%.", file=sys.stderr)
         return 1
     return 0
+
+
+def _report_files(report: str) -> set[Path]:
+    """Absolute paths of every file a Cobertura coverage report measures."""
+    root = ET.parse(report).getroot()
+    sources = [Path(node.text) for node in root.iter("source") if node.text]
+    files = set()
+    for node in root.iter("class"):
+        name = node.get("filename")
+        if name:
+            files.update((source / name).resolve() for source in sources or [Path.cwd()])
+    return files
 
 
 if __name__ == "__main__":

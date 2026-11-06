@@ -17,7 +17,7 @@ def test_installed_workspace_logs_outside_the_synced_state_folder(tmp_path, monk
         path = local_paths.audit_log_path(argument)
         assert path == tmp_path / "local" / "audit.md"
         assert not path.is_relative_to(local_paths._REPOSITORY)
-    assert (tmp_path / "local").is_dir()
+    assert not (tmp_path / "local").exists()  # computing the path never creates the directory
 
 
 def test_other_workspaces_keep_their_own_state_audit(tmp_path):

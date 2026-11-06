@@ -345,6 +345,29 @@ def test_diff_gate_rejects_empty_matches_but_allows_docs_only(tree, python_chang
         assert "no matching coverage" in (result.stdout + result.stderr).lower()
 
 
+def test_diff_gate_allows_non_executable_changes_in_a_measured_file(tree):
+    """A docstring/comment edit in a file the report measures has no coverable lines; that is not a path mismatch."""
+    pytest.importorskip("diff_cover")
+    core = tree / "scripts/catchup_core"
+    core.mkdir()
+    (core / "changed.py").write_text('"""Old docstring."""\nVALUE = 1\n')
+    env = _env()
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    for args in (["init", "-q", "-b", "main"], ["add", "."],
+                 ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false",
+                  "commit", "-qm", "base"], ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", *args], cwd=tree, check=True, capture_output=True, env=env)
+    (core / "changed.py").write_text('"""New docstring."""\nVALUE = 1\n')
+    (tree / "coverage.xml").write_text(
+        f'<coverage><sources><source>{core.resolve().as_posix()}</source></sources>'
+        '<packages><package name="core"><classes><class filename="changed.py" name="changed">'
+        '<lines><line number="2" hits="1"/></lines></class></classes></package></packages></coverage>')
+    result = make(tree, "diff-coverage", skip_coverage=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def _coverage_tree(tmp_path: Path, *, tested: bool) -> Path:
     pkg = tmp_path / "pkg"
     pkg.mkdir()

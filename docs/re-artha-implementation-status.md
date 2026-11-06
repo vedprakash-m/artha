@@ -124,6 +124,14 @@ launcher mocks corrected in the later local cohort; changed-line coverage referr
 to a pre-scrub base absent from the rewritten history. Neither the old failed run
 nor the passing local cohort establishes current hosted acceptance.
 
+## Re-sign 18 — 2026-11-05 20:01 PT (Mac, owner-approved)
+
+The Goal evidence-time fix and both audit batches changed fingerprinted code, so authoritative runs were refused
+until a re-sign. Re-sign 18 bound the current cohort (implementation `0a7f8889…`) into the slice waiver and recovery
+rehearsal, with backups of the re-sign 17 artifacts. The release check admitted an authoritative request and the
+runtime release guard passed; shadow Catch-up `cu_3a32ba2086e8` fetched all sources under the same cohort and paused
+for extraction (pinned extractor only). No authoritative run was made in this step.
+
 ## Mac reconciliation — 2026-11-05 afternoon
 
 The Mac session reconciled the Windows reopening above. The Windows Goal evidence-time repair was reviewed (fail-closed;

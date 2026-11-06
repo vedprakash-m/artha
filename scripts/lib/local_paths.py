@@ -84,9 +84,7 @@ def audit_log_path(artha_dir: str | os.PathLike[str] | None = None) -> Path:
     """
     if artha_dir is not None and Path(artha_dir).expanduser().resolve() != _REPOSITORY:
         return Path(artha_dir) / "state" / "audit.md"
+    # Pure path: no directory is created here. Many modules compute this at import, and the machine-local
+    # directory must only be created by local_dir()'s owner-private creation (Windows DACLs included).
     root = Path(os.environ.get("ARTHA_LOCAL_DIR") or Path.home() / ".artha-local").expanduser()
-    try:
-        root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    except OSError:
-        pass  # writers report their own failure when the path cannot be opened
     return root / "audit.md"
