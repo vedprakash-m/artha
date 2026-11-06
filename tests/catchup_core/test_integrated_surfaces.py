@@ -110,7 +110,8 @@ def release_scorecard(config=None):
          "expected": ["corrected"], "surfaced": ["corrected"]},
     ]
     for case in cases:
-        case.update(domain="kids_school", consented_live=True, reviewed=True, cohort=cohort,
+        case.update(domain="kids_school", signal_id=f"sig_{case['case_id']}",
+                    consented_live=True, reviewed=True, cohort=cohort,
                     catchup_id='cu_synthetic', split='held_out',
                     obligation_ids=list(case['expected']), thread_ids=[case['case_id']],
                     as_of='2026-10-12T00:00:00Z', latest_evidence_at='2026-10-11T00:00:00Z',

@@ -87,6 +87,26 @@ def test_default_coverage_header_states_when_no_required_scopes_are_configured(w
     assert 'Coverage: no required source scopes configured.' in result.briefing_text
 
 
+def test_frozen_outcome_records_only_provider_fetch_provenance(world):
+    from catchup_core import corpus
+
+    led, _, make, _ = world
+    generation = led._permission_generation()
+    trusted = replace(email()(), provider_permission_generation=generation)
+    result = co.run_catchup(req("cu_provider"), make({"school_email": lambda: trusted, "calendar": cal()}))
+    outcome = corpus.latest_outcome(led, result.catchup_id)
+    signal_id = led.conn.execute(
+        "SELECT signal_id FROM signals WHERE connector='school_email'").fetchone()[0]
+    assert outcome["provider_signal_generations"] == {signal_id: generation}
+    assert outcome["consented_live_signal_ids"] == [signal_id]
+
+    local_result = co.run_catchup(
+        req("cu_local"), make({"school_email": email(), "calendar": cal()}))
+    local_outcome = corpus.latest_outcome(led, local_result.catchup_id)
+    assert local_outcome["provider_signal_generations"] == {}
+    assert local_outcome["consented_live_signal_ids"] == []
+
+
 @pytest.mark.parametrize("fmt", list(BriefingFormat))
 @pytest.mark.parametrize("calendar_complete", [False, True])
 def test_format_does_not_change_fetched_coverage_or_hide_a_gap(world, fmt, calendar_complete):

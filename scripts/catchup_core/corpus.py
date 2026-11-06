@@ -233,11 +233,24 @@ def latest_outcome(ledger: Any, catchup_id: str | None = None) -> dict[str, Any]
     if row is None:
         return None
     outcome = dict(ledger._cipher.decrypt_json(row["payload"], aad=f"evaluation:{row['catchup_id']}".encode()))
+    provider_generations = outcome.get("provider_signal_generations", {})
+    outcome_generation = outcome.get("permission_generation")
+    if (not isinstance(provider_generations, Mapping)
+            or (outcome_generation is not None
+                and (type(outcome_generation) is not int or outcome_generation < 0))
+            or any(not isinstance(sid, str) or type(generation) is not int or generation < 0
+                   for sid, generation in provider_generations.items())
+            or not set(provider_generations) <= set(outcome.get("signals", ()))):
+        raise CorpusError("invalid provider provenance in retained outcome")
     for signal_id in outcome["signals"]:
         ledger.require_signal_operation(signal_id, ledger._owner)
     for alert in outcome["alerts"]:
         for signal_id in alert["signals"]:
             ledger.require_signal_operation(signal_id, ledger._owner)
+    current_generation = ledger._permission_generation()
+    outcome["consented_live_signal_ids"] = sorted(
+        signal_id for signal_id, generation in provider_generations.items()
+        if generation == outcome_generation == current_generation)
     return outcome
 
 
@@ -251,6 +264,7 @@ def evaluations(labels: Sequence[Mapping[str, Any]], outcome: Mapping[str, Any] 
             continue
         surfaced = sorted(a["obligation_key"] for a in outcome["alerts"] if label["signal_id"] in a["signals"])
         output.append({**label, "surfaced": surfaced, "catchup_id": outcome["catchup_id"],
+                       "consented_live": label["signal_id"] in outcome.get("consented_live_signal_ids", ()),
                        "cohort": outcome.get('cohort'),
                        "versions": outcome["versions"], "coverage_complete": outcome["coverage_complete"],
                        "quiet_claim": outcome["quiet_claim"], "citations_resolve": outcome["citations_resolve"]})

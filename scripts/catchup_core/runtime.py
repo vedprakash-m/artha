@@ -237,6 +237,8 @@ def build_fetchers(
                     raise PermissionError("Work sources cannot enter personal context")
                 if ledger is None and config.consent_required:
                     raise PermissionDenied("fetch requires the current consent ledger")
+                permission_generation = (ledger._permission_generation()
+                                         if ledger is not None and config.consent_required else None)
                 if ledger is not None:
                     authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
                                      f"{pack_name}:{spec['account_scope']}", config.viewer)
@@ -269,12 +271,29 @@ def build_fetchers(
                         return ConnectorFetch(pack_name, str(spec['account_scope']), (), CoverageStatus.DEGRADED,
                             FailureClass.PROVIDER, ('collection cursor requires explicit reset',),
                             required.get(pack_name, True))
-            return fetch_via_handler(
+            fetched = fetch_via_handler(
                 pack_name, str(spec["account_scope"]), handler.fetch, since=start, auth_context=auth,
                 fetch_kwargs=fetch_kwargs, required=required.get(pack_name, True),
                 calendar_kinds=spec.get("calendar_kinds"))
+            return _bind_provider_generation(fetched, ledger, config, pack_name, spec, permission_generation)
         fetchers[pack_name] = run
     return fetchers
+
+
+def _bind_provider_generation(fetched: ConnectorFetch, ledger: Ledger | None, config: RuntimeConfig,
+                              pack_name: str, spec: Mapping[str, Any],
+                              permission_generation: int | None) -> ConnectorFetch:
+    """Mark the fetch as provider-backed only if consent still holds at the generation it started under."""
+    if permission_generation is None or ledger is None:
+        return fetched
+    try:
+        authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
+                         f"{pack_name}:{spec['account_scope']}", config.viewer)
+    except PermissionDenied:
+        return fetched
+    if ledger._permission_generation() != permission_generation:
+        return fetched
+    return replace(fetched, provider_permission_generation=permission_generation)
 
 
 def _default_loaders() -> tuple[Callable[[str], Any], Callable[[str], Mapping[str, Any]]]:

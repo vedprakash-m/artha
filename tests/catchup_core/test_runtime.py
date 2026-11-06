@@ -175,6 +175,58 @@ def test_fetchers_use_handler_and_kwargs():
     assert seen["query"] == "label:school" and seen["auth_context"] == {"token": "t"}
 
 
+def test_consent_authorized_provider_fetch_carries_permission_generation(tmp_path):
+    from test_coordinator import CIPHER, KEY
+    from catchup_core.ledger import Ledger
+
+    with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER, owner_id="owner",
+                consent_subjects=frozenset({"adult"}),
+                known_subjects=frozenset({"owner", "adult"})).open() as led:
+        led.migrate()
+        led.grant_consent("adult", "adult", "school_email:acct",
+                          ["ingest", "disclose", "view"], "owner")
+        generation = led._permission_generation()
+
+        class Handler:
+            @staticmethod
+            def fetch(**_kwargs):
+                return iter([{"id": "m1", "source": "school_email", "date_iso": "2026-10-11",
+                              "subject": "s", "body": "b"}])
+
+        config = rt.RuntimeConfig(
+            {"school_email": {"connector": "gmail", "account_scope": "acct", "subjects": ["adult"]}},
+            ["adult"], "owner", frozenset({"adult"}))
+        fetched = rt.build_fetchers(config, "2026-10-01T00:00:00Z", lambda _: Handler, lambda _: {},
+                                    {"school_email": True}, led)["school_email"]()
+        assert fetched.provider_permission_generation == generation
+
+
+def test_provider_fetch_does_not_attest_a_consent_generation_revoked_during_fetch(tmp_path):
+    from test_coordinator import CIPHER, KEY
+    from catchup_core.ledger import Ledger
+
+    with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER, owner_id="owner",
+                consent_subjects=frozenset({"adult"}),
+                known_subjects=frozenset({"owner", "adult"})).open() as led:
+        led.migrate()
+        grant = led.grant_consent("adult", "adult", "school_email:acct",
+                                  ["ingest", "disclose", "view"], "owner")
+
+        class Handler:
+            @staticmethod
+            def fetch(**_kwargs):
+                led.revoke_consent(grant)
+                return iter([{"id": "m1", "source": "school_email", "date_iso": "2026-10-11",
+                              "subject": "s", "body": "b"}])
+
+        config = rt.RuntimeConfig(
+            {"school_email": {"connector": "gmail", "account_scope": "acct", "subjects": ["adult"]}},
+            ["adult"], "owner", frozenset({"adult"}))
+        fetched = rt.build_fetchers(config, "2026-10-01T00:00:00Z", lambda _: Handler, lambda _: {},
+                                    {"school_email": True}, led)["school_email"]()
+        assert fetched.provider_permission_generation is None
+
+
 def test_verified_scope_fetch_uses_overlap_and_work_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'private-coverage'))
     from test_user_surfaces import CIPHER, KEY

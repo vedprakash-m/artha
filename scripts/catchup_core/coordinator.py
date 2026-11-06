@@ -94,6 +94,8 @@ class ConnectorFetch:
     deleted_collections: tuple[str, ...] = ()
     # (collection, window start, window end): that collection's listing was complete; None bounds = unbounded.
     full_listings: tuple[tuple[str, str | None, str | None], ...] = ()
+    # Set only by runtime after an authorized provider fetch under this consent generation.
+    provider_permission_generation: int | None = None
 
 
 class StageFault(RuntimeError):
@@ -187,6 +189,7 @@ class _Run:
         self.metric_sequence = metric_sequence
         self.now = deps.now()
         self.failures: list[FailureClass] = []
+        self.provider_signal_generations: dict[str, int] = {}
         self._pending: list[PendingRequest] = []
         self._incumbent: IncumbentOutput | None = None
         self.done = set(self.led.committed_stages(request.catchup_id))
@@ -307,7 +310,24 @@ class _Run:
                               catchup_id=self.request.catchup_id,
                               cursor_generation=cursor_to_commit,
                               reset_cursor=reset_cursor)
+        self._record_provider_generations(got.provider_permission_generation, observed)
         return created
+
+    def _record_provider_generations(self, generation: int | None, observed: list[str]) -> None:
+        if (type(generation) is int and generation >= 0
+                and generation == self.led._permission_generation()):
+            for sid in observed:
+                if self._provider_signal_current(sid, self.deps.viewer):
+                    self.provider_signal_generations[sid] = generation
+
+    def _provider_signal_current(self, sid: str, viewer: str) -> bool:
+        if self.led.source_is_obsolete(sid):
+            return False
+        try:
+            self.led.require_signal_operation(sid, viewer)
+        except PermissionDenied:
+            return False
+        return True
 
     def _source_hmac(self, got: ConnectorFetch, rec: ConnectorRecord) -> str | None:
         chmac = ids.content_hmac(self.deps.id_key, rec.text)
@@ -853,10 +873,15 @@ class _Run:
         observed_cohort = dict(self.deps.evaluation_cohort)
         if observed_cohort and not self.deps.extractor_identity_matched:
             observed_cohort['model'] = 'unverified'
+        permission_generation = led._permission_generation()
+        provider_signal_generations = {
+            sid: generation for sid, generation in self.provider_signal_generations.items()
+            if generation == permission_generation and self._provider_signal_current(sid, self.deps.viewer)}
         record_outcome(led, req.catchup_id, {
             "catchup_id": req.catchup_id, "versions": {**self.versions, "provider": self.deps.provider_label},
             "cohort": observed_cohort,
-            "permission_generation": led._permission_generation(),
+            "permission_generation": permission_generation,
+            "provider_signal_generations": provider_signal_generations,
             "signals": [r[0] for r in led.conn.execute("SELECT signal_id FROM signals")],
             "alerts": [{"obligation_key": a.obligation_key,
                         "signals": [sid for sid, _start, _end in led.get_fact(a.fact_id, self.deps.viewer).evidence]}
