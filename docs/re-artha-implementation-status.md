@@ -1,5 +1,46 @@
 # re-artha implementation status — 2026-11-05
 
+## Current continuation — primary-user accountability (Windows)
+
+The owner approved the full-completion contract, then explicitly accepted accountability for
+every personal Open Item. Per-item owner assignments are no longer a completion prerequisite.
+The primary user can preview, confirm and reopen a permitted item without changing authored
+bytes. Other actors remain refused. Authored privacy owners/subjects, visibility and consent
+remain independent: a distinct authored privacy owner is retained in completion co-subjects,
+so revocation also withholds the confirmation. Linked primary-owned Goals, plans and Briefing
+projections share that same evidence. Work ownership and other commitment kinds are unchanged.
+
+Seven owner-workflow counterexamples failed before implementation; a further privacy
+counterexample caught the need to retain the authored owner's scope. Final isolated
+owner/permission/Goal/plan cohort: **279 passed**, shared curated module **100% combined
+line/branch coverage**. Earlier broader selections passed their tests but failed the 95%
+curated coverage threshold; the final selection closes that threshold without exclusions.
+This is engineering evidence, not a live completion or full-profile acceptance. The E2E/
+release/corpus/transfer cohort passed **828 tests, eight skipped**; working-byte and unpushed
+privacy gates passed. The earlier full frozen-source suite finished with **10,578 passed,
+one failed, 169 skipped, 20 xfailed**, core combined coverage **92.57%**. Its sole failure
+was an old direct `actions.yaml` read in preflight; that snapshot predates the already
+published config-loader repair. Current architecture/preflight regression cohort: **16 passed**.
+The old aggregate remains failed; it is not relabeled as a current-source full pass.
+
+Goal temporal repair `9b223ab` and audit follow-up `f7b549b` were published by the Mac
+session. Hosted CI `42128122428` passed all fourteen jobs; hosted PII `42128122529` passed.
+Documentation tip `830e9e2` is on origin/main; its hosted PII `42131911930` also passed.
+Its platform CI `42131912071` passed all fourteen jobs. Accountability implementation
+is committed locally as `f0f78cc` after the exact staged LF candidate passed **290 tests**
+with **100% curated coverage**, generated-register checks and staged privacy. Publication
+is the next delivery step; the full-v4 evidence and live release gates remain open.
+The active hook names the changed release-fingerprinted files: authoritative use requires
+a separately reviewed owner re-sign. No signed cohort was altered by this implementation.
+
+The separately approved read-only Windows personal evidence audit found no authoritative
+Catch-up recorded on this host. Shadow corpus status has **zero reviewed date, amount
+and name fields**, no held-out declaration and no reviewed P1/P2, source-negative,
+cross-Domain or Goal-correction outcomes. It requires at least **100 fields of each kind**
+under the existing gate; meeting those counts alone is not quality acceptance. No
+sources were fetched, labels created, credentials installed, records completed or authority
+changed. The Mac's live store was not accessed or substituted.
+
 ## Full-profile work reopened — 2026-11-05 (Windows)
 
 The owner has reopened full completion and rejected an imposed 30-day rollout. The

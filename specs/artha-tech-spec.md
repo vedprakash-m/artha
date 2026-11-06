@@ -1,9 +1,9 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.50.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.51.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.29.0
+> **Implements**: PRD v7.31.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.51.0 | 2026-11-05 | **Primary-user Open Item accountability** — Personal Open Item confirmations use the trusted ledger primary user, not per-item owner assignments. Preserve authored permission scope and content keys; include a distinct authored privacy owner in completion co-subjects. Linked primary-owned milestones reuse the exact completion. Preview/items responses name the accountable identity. No State File migration, new setting or live completion. |
 | v3.50.0 | 2026-11-05 | **Slice closure and audit hardening** — Approved re-artha slice closed under re-sign 17 (full-profile work since reopened on a proposed contract). Hosted Windows contracts launch via `CreateProcessAsUserW`. Session-start vault warning covers plaintext copies of vaulted domains; stale-source banner distinguishes per-machine coverage from a Catch-up on another machine; preflight treats held action types as informational; advisory release-drift pre-commit check; CI concurrency, force-push-safe changed-line base, non-gating Windows metadata diagnostic. See §"2026-11-05 audit hardening". |
 | v3.49.0 | 2026-11-05 | **Goal observation time** — Outcome/habit values and weekly comparisons cannot use Facts observed after evaluation. Every required covered source must have completed by evaluation, including mixed-source coverage; on-time observations reject future verification. Authored Goals, authority and release gates are unchanged. |
 | v3.48.0 | 2026-11-05 | **Windows CI producer ownership** — A mandatory test-only launcher duplicates the caller token, changes only that duplicate's default owner to its existing user SID, verifies file/directory/subprocess ownership and runs the existing isolated test runner. Production owner/DACL checks and elevation/privileges are unchanged; hosted elevated acceptance remains separately recorded. |
@@ -7594,9 +7595,9 @@ cohort (re-sign).
 Live UAT scenarios: a script that continues with `--shadow` commands must choose its Fact from the shadow store
 (`_harness.beliefs(..., shadow=True)`; RA-06 and RA-23 do), because live `beliefs` reads the live ledger whose Fact IDs the
 shadow ledger does not know. Live RA-15 accepts a refusal naming "scoped ingest consent" for `items --shadow` and
-`goals --shadow`. Open Item completion (`complete open_item:<id>`) requires the record's `owner` to equal the configured
-viewer; Open Items created by the pipeline carry no `owner`, so completion is refused for every item until a record
-declares one (recorded 2026-11-03 as a follow-up, not scheduled).
+`goals --shadow`. The former Open Item completion refusal for missing per-item owners is superseded by the
+2026-11-05 owner decision: personal Open Items are accountable to the trusted ledger primary user. Current
+record-scoped retrieval and subject consent still apply before any completion preview.
 
 Consent write path (2026-11-01): `consent grant` is a mutation in `cli._mutates` so inspection storage opens
 read-write and the signed-release preflight applies; `consent list` stays read-only. The checkpoint inventory's spend-seal
@@ -7869,7 +7870,7 @@ file is unchanged; a permitted current confirmation closes only the exact curren
 Withdrawal or changed content removes that closure. Confirmation checks the reviewed permission generation
 inside its ledger transaction, and version compare-and-swap remains required.
 
-An explicit milestone `open_item_ref` reuses a current canonical item completion only for equal owner, Domain
+An explicit milestone `open_item_ref` reuses a current canonical item completion only for equal accountable owner, Domain
 and full subject scope. Plans and milestone metrics use that Fact version and preserve its dependency; unresolved,
 inaccessible, ambiguous or mismatched references remain unknown/unverified. One Goal cannot double-count a
 duplicate item link. Read-only Goal queries pin/recheck linked item projections and used Fact versions. Existing
@@ -7879,6 +7880,15 @@ Completion scopes include both the parent Goal and milestone subjects/co-subject
 are preserved and conflicting primary identities refused. A parent `subject_id` now participates in its milestone
 record key; an earlier confirmation without that binding requires review again. This is a narrow identity repair,
 not a rewrite of historical Fact/version identities or other authored records.
+
+**Owner-approved simplification, 2026-11-05.** The trusted ledger primary user confirms all personal Open Items;
+missing or different authored `owner` fields do not require individual accountability assignments. Other actors
+remain refused, and other commitment kinds retain their authored owner. The original Open Item fields and content
+key are unchanged. `open_item_subjects` preserves explicit subjects/co-subjects and the authored owner as a privacy
+identity: it remains the primary subject when no subject was authored, or a co-subject when distinct from both the
+primary user and explicit subject. This prevents a primary-user confirmation from escaping later consent revocation.
+Linked Goal comparisons use this same full privacy scope and primary-user accountability. `items` and completion
+previews expose `accountable_owner`; this is not a new State File field or a consent grant.
 
 ### External checkpoint dependencies — 2026-10-24
 

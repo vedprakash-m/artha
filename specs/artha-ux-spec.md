@@ -1,9 +1,9 @@
 ﻿# Artha — UX Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.25.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.26.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.30.0, Tech Spec v3.50.0
+> **Implements**: PRD v7.31.0, Tech Spec v3.51.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -12,6 +12,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.26.0 | 2026-11-05 | **Simplified Open Item accountability** — The primary user owns all personal Open Items without per-item assignment prompts. Item and completion-preview responses name the accountable identity while retaining the unchanged source record and current privacy/consent checks. |
 | v3.25.0 | 2026-11-05 | **Honest session-start lines** — The stale-source banner says when per-source freshness was recorded on another machine instead of listing sources as unfetched; the vault warning names plaintext backup/conflict copies; preflight marks held action types "held, not checked". |
 | v3.24.0 | 2026-11-03 | **Planning Signal Freshness** — The planning-buffer health indicator treats missing, invalid, future-dated, or stale freshness metadata as unavailable and directs the user to confirm Step 8t ran. An explicit successful save records its write date when the date was missing. Implements Tech Spec v3.46.0–v3.47.0. |
 | v3.23.0 | 2026-05-03 | **Work-Health Dashboard Intelligence UX (§35)** — Output format for `work work-health` 5-section on-call brief (incidents, repair pipeline, job queue, deployment blockers, scope status). `work prep` 🏥 Work-Health Context block injection format. Morning signal footer format. `[live: telemetry]` citation label in reflect/accomplishment output. Implements PRD v7.29.0 FR-42 + Tech Spec v3.44.0 §42. |
@@ -4301,12 +4302,15 @@ shared vault identity. Invalid/copy/sync destinations are refused before creatin
 reports integrity, profile and counts without installing keys; normal restoration explains the missing current
 privacy proof. Supported usage includes `checkpoint_cli verify PATH --profile work` and `recovery PATH --inspection-only`.
 
-`complete open_item:<id>` previews the exact accountable owner's item; `--apply TOKEN` records its confirmation
+`complete open_item:<id>` previews the exact item and names the primary user as its accountable owner, including
+items without an authored owner. No assignment ceremony is required. `--apply TOKEN` records its confirmation
 and `--reopen` previews withdrawal. A confirmed current item disappears from open views, and reappears if its
 confirmation is withdrawn or commitment changes. Authored files stay unchanged. A milestone's explicit
 `open_item_ref` connects its progress to that item, so one reviewed completion serves both views. Missing,
-inaccessible, duplicate or mismatched links say review needed; another owner's completion cannot be impersonated.
+inaccessible, duplicate or mismatched links say review needed; a non-primary actor cannot confirm these Open Items.
 Parent and child subject scopes both apply. A changed permission generation or linked record requires a fresh review.
+Authored owners remain privacy identities, not a way to bypass consent. Work records and other commitment kinds
+retain their separate ownership rules.
 
 ### WorkIQ cache recovery messages — 2026-10-24
 

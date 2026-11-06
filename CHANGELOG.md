@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — primary-user Open Item accountability, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| The primary user confirms all personal Open Items, including records without per-item owners. Item queries and completion previews name the accountable identity. Preserve original record keys, authored files, explicit privacy owners/subjects, current consent and exact preview/apply/reopen rules. Linked primary-owned Goals and plans reuse the same permitted completion; Work records and other commitment kinds are unchanged. | `scripts/catchup_core/commands.py`, `scripts/catchup_core/curated.py`, `scripts/catchup_core/capabilities.py`, `tests/catchup_core/test_open_item_completion.py`, `tests/catchup_core/test_curated_permissions.py`; generated registers and canonical PRD v7.31.0, tech v3.51.0, UX v3.26.0 | Seven owner-workflow counterexamples failed before implementation. An additional counterexample required preserving a distinct authored privacy owner in completion co-subjects. Final isolated owner/permission/Goal/plan cohort: 279 passed; shared curated module: 100% combined line/branch coverage. E2E/release/corpus/transfer cohort: 828 passed, eight skipped. Working-byte and unpushed privacy gates passed. No live completion, consent grant, State File migration or release promotion. |
+
 ### Fixed — Goal observation time, 2026-11-05
 
 | Change | Modified files | Validation |
