@@ -42,12 +42,15 @@ def completion_subjects(record: Mapping[str, Any], owner: str) -> tuple[str, tup
     return subject, tuple(sorted(set(others + inherited + ([parent] if parent else [])) - {subject}))
 
 
-def open_item_subjects(record: Mapping[str, Any], primary_owner: str) -> tuple[str, tuple[str, ...]]:
-    """Primary accountability does not remove an authored owner's privacy scope."""
+def open_item_subjects(record: Mapping[str, Any], primary_owner: str,
+                       legacy_subjects: Sequence[str] = ()) -> tuple[str, tuple[str, ...]]:
+    """Primary accountability retains authored or conservative legacy privacy scope."""
     scope_owner = record.get('owner') or primary_owner
     subject, others = completion_subjects(record, scope_owner)
     if isinstance(scope_owner, str) and scope_owner not in {primary_owner, subject}:
         others = tuple(sorted({*others, scope_owner}))
+    if not record.get('owner') and 'subject' not in record and 'subject_id' not in record:
+        others = tuple(sorted({*others, *legacy_subjects} - {subject}))
     return subject, others
 
 
@@ -131,7 +134,8 @@ def open_item_links(ledger: Ledger, viewer: str, goals: Sequence[Mapping[str, An
                     or domain != (item.get('domain') or item.get('source_domain'))):
                 continue
             try:
-                if completion_subjects(record, owner) != open_item_subjects(item, ledger._owner):
+                legacy_subjects = tuple((ledger._known_subjects or frozenset()) | ledger._consent_subjects)
+                if completion_subjects(record, owner) != open_item_subjects(item, ledger._owner, legacy_subjects):
                     continue
             except ValueError:
                 continue

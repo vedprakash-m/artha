@@ -65,6 +65,7 @@ These cases do not establish live acceptance or completion of the parent require
 | RA-03.AC1.canonical-completion | tests/catchup_core/test_open_item_completion.py::test_open_item_completion_is_shared_by_items_and_briefing_without_authored_writes |
 | RA-03.AC1.primary-accountability | tests/catchup_core/test_open_item_completion.py::test_primary_user_owns_open_items_without_per_item_accountability_metadata |
 | RA-12.AC1.authored-owner-privacy | tests/catchup_core/test_open_item_completion.py::test_authored_owner_privacy_is_not_lost_when_a_different_subject_is_explicit |
+| RA-12.AC1.legacy-completion-privacy | tests/catchup_core/test_open_item_completion.py::test_unscoped_item_completion_retains_legacy_whole_file_privacy |
 | RA-11.AC1.primary-accountability-link | tests/catchup_core/test_open_item_completion.py::test_linked_goal_uses_primary_accountability_without_rewriting_item_ownership |
 | RA-11.AC1.open-item-link | tests/catchup_core/test_open_item_completion.py::test_linked_goal_and_plan_share_the_current_open_item_completion_version |
 | RA-11.AC1.link-ambiguity | tests/catchup_core/test_open_item_completion.py::test_unverified_or_mismatched_open_item_links_cannot_establish_goal_progress |

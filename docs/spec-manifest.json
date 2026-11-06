@@ -709,6 +709,10 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_release_boundaries.py::test_publication_rechecks_permissions_after_the_last_stage_boundary"
     },
+    "RA-12.AC1.legacy-completion-privacy": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_open_item_completion.py::test_unscoped_item_completion_retains_legacy_whole_file_privacy"
+    },
     "RA-14.AC1.component-calendars": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_triage.py::test_composite_deadlines_use_their_own_domain_calendar_and_local_day"
@@ -947,7 +951,7 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "6fae8d44ca44b6d080390e8714399d6ef2ca4d474524db6e58c41f5300c7126e",
+  "implementation_sha256": "aa29dcb48a0248c10be01d7a6793b721696a0a47b2e5d3b8c77567ea82452a82",
   "spec": "specs/re-artha.md",
   "spec_sha256": "c76f4ff893fbbbcf798726aea5b19dab5b305f111c23ebecde31f53c2f950530",
   "spec_version": "0.8.0"

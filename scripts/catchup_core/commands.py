@@ -388,7 +388,8 @@ def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[st
     owner = led._owner if kind == 'open_item' else record_owner
     if owner != viewer:
         raise PermissionDenied('only the accountable owner may confirm completion')
-    subject, co_subjects = (open_item_subjects(record, led._owner) if kind == 'open_item'
+    subject, co_subjects = (open_item_subjects(record, led._owner, tuple(set(deps.subjects) | led._consent_subjects))
+                           if kind == 'open_item'
                            else completion_subjects(record, owner))
     if led._known_subjects is not None and not {subject, *co_subjects} <= led._known_subjects:
         raise PermissionDenied('completion subject is unresolved')
@@ -411,7 +412,7 @@ def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[st
     now = int(deps.now().timestamp())
     generation = led._permission_generation()
     def signature(stamp: int) -> str:
-        payload = json.dumps([key, viewer, subject, domain, generation, stamp, reopening,
+        payload = json.dumps([key, viewer, subject, co_subjects, domain, generation, stamp, reopening,
                               prior.recorded_at if prior else None])
         return ids.evidence_id(deps.id_key, payload)
     if args.apply is None:
@@ -421,7 +422,9 @@ def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[st
     receipt = ids.evidence_id(deps.id_key, args.apply)
     state = FactStatus.RETRACTED if reopening else FactStatus.CURRENT
     replay = bool(prior and isinstance(prior.value, dict) and prior.status == state.value
-        and prior.value.get('review_receipt') == receipt and prior.value.get('permission_generation') == generation)
+        and prior.value.get('review_receipt') == receipt and prior.value.get('permission_generation') == generation
+        and prior.primary_subject_id == subject and set(co_subjects) == {row[0] for row in led.conn.execute(
+            "SELECT subject_id FROM fact_subjects WHERE fact_id=?", (prior.fact_id,))})
     try:
         stamp_raw, mac = args.apply.split(':', 1)
         stamp = int(stamp_raw)

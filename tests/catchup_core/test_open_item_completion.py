@@ -161,6 +161,36 @@ def test_authored_owner_privacy_is_not_lost_when_a_different_subject_is_explicit
     assert not verify_completion(deps.ledger, 'owner', result['completion_reference'], fact.value['record_key'])
 
 
+def test_unscoped_item_completion_retains_legacy_whole_file_privacy(app):
+    root, deps, _, _ = app
+    deps.ledger._known_subjects = frozenset({'owner', 'kid1', 'adult'})
+    deps.ledger._consent_subjects = frozenset({'adult'})
+    path = authored(root, owner='')
+    path.write_text(path.read_text().replace('  subject: kid1\n', ''))
+    grant = deps.ledger.grant_consent('adult', 'adult', '*',
+                                    ['ingest', 'disclose', 'view', 'correct'], 'owner')
+    result = commands.execute(review(deps, root), deps, root)
+    fid = result['completion_reference'][5:].split('@')[0]
+    fact = deps.ledger.get_fact(fid, 'owner')
+    assert fact.primary_subject_id == 'owner'
+    deps.ledger.revoke_consent(grant)
+    with pytest.raises(PermissionDenied):
+        deps.ledger.get_fact(fid, 'owner')
+
+
+@pytest.mark.parametrize('already_applied', [False, True])
+def test_legacy_scope_change_invalidates_an_unscoped_completion_preview(app, already_applied):
+    root, deps, _, _ = app
+    path = authored(root, owner='')
+    path.write_text(path.read_text().replace('  subject: kid1\n', ''))
+    args = review(deps, root)
+    if already_applied:
+        commands.execute(args, deps, root)
+    deps.subjects.append('kid2')
+    with pytest.raises(ValueError, match='changed'):
+        commands.execute(args, deps, root)
+
+
 def test_duplicate_open_item_id_cannot_choose_a_commitment_to_complete(app):
     root, deps, _, _ = app
     path = authored(root)
@@ -242,6 +272,18 @@ def test_linked_goal_cannot_drop_a_distinct_authored_privacy_owner(app):
     commands.execute(review(deps, root), deps, root)
     assert any(': unknown' in line for line in goal_lines(deps, root))
     goal.write_text(goal.read_text().replace('  subject: kid1\n', '  subject: kid1\n  co_subjects: [adult]\n'))
+    assert any('1 of 1' in line for line in goal_lines(deps, root))
+
+
+def test_linked_goal_retains_the_whole_file_scope_of_an_unscoped_item(app):
+    root, deps, _, _ = app
+    deps.ledger._known_subjects = frozenset({'owner', 'kid1'})
+    path = authored(root, owner='')
+    path.write_text(path.read_text().replace('  subject: kid1\n', ''))
+    goal = linked_goal(root, subject='owner')
+    commands.execute(review(deps, root), deps, root)
+    assert any(': unknown' in line for line in goal_lines(deps, root))
+    goal.write_text(goal.read_text().replace('  subject: owner\n', '  subject: owner\n  co_subjects: [kid1]\n'))
     assert any('1 of 1' in line for line in goal_lines(deps, root))
 
 
