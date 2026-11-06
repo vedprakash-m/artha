@@ -47,6 +47,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from lib.local_paths import audit_log_path
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -507,7 +508,7 @@ def disable_skill(skill_name: str) -> bool:
     if ok:
         # Append to audit log
         try:
-            audit_path = STATE_DIR / "audit.md"
+            audit_path = audit_log_path(STATE_DIR.parent)
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             audit_line = f"\n{ts} | skill_disabled | skill: {skill_name} | reason: R7 (user approved)\n"
             with audit_path.open("a", encoding="utf-8") as fh:

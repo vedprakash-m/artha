@@ -100,7 +100,7 @@ If a connector returns an error (not zero results — actual error):
 2. Transient → ONE automatic retry (pipeline's `lib/retry.py` handles this). If retry fails: log + continue.
 3. Configuration → report the specific issue (e.g., "Gmail token expired"). Do NOT retry.
 4. Environmental → note in footer (see VM/network above). Do NOT retry.
-5. Log root-cause diagnosis to `state/audit.md`: `connector | error | diagnosis | action`.
+5. Log root-cause diagnosis to `~/.artha-local/audit.md`: `connector | error | diagnosis | action`.
 6. Never blind-retry the same failing call more than once without changing the approach.
 
 ### Step 4b — Tiered Context Loading

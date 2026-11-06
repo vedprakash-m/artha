@@ -1,4 +1,4 @@
-"""Core-owned Open Items file for released Domains (specs/features/core-open-items.md)."""
+"""Core-owned Open Items file for released Domains (.archive/specs/core-open-items-2026-11-05.md)."""
 from __future__ import annotations
 
 import sys

@@ -363,7 +363,7 @@ OS-anchored predecessor may be pruned; unknown/orphan ciphertext remains for exp
 
 This is a whole checkpoint, O(history), with 32 MiB plaintext / 64 MiB ciphertext bounds. It is not an incremental
 journal, emergency/custodian recovery or portable permission grant. Native Windows/Linux credentials, ACLs and restore
-acceptance remain open. The active ignored spec is specs/features/privacy-anchor-capacity.md; do not archive before
+acceptance remain open. The active ignored spec is .archive/specs/privacy-anchor-capacity-2026-11-05.md; do not archive before
 its acceptance. No production privacy migration or live key-store operation was performed to validate it.
 
 Full gate: `/tmp/artha-wp17-privacy-anchor-check.log` (same source/test bytes as code commit):

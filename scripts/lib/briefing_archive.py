@@ -33,6 +33,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from lib.local_paths import audit_log_path
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -42,7 +43,7 @@ _ARTHA_DIR = Path(__file__).resolve().parents[2]
 _BRIEFINGS_DIR = _ARTHA_DIR / "briefings"
 _STATE_DIR = _ARTHA_DIR / "state"
 _TMP_DIR = _ARTHA_DIR / "tmp"
-_AUDIT_LOG = _STATE_DIR / "audit.md"
+_AUDIT_LOG = audit_log_path(_STATE_DIR.parent)
 _HEALTH_CHECK = _STATE_DIR / "health-check.md"
 _DRAFT_PATH = _TMP_DIR / "briefing_draft.md"
 

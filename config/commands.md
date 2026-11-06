@@ -8,7 +8,7 @@
 ---
 
 ### `/brief` (primary) — Briefing Command
- 
+
 Full catch-up pipeline. Format determined by Step 2b logic (default: `headline` for 4–48h gaps).
 Equivalent natural language: "catch me up", "morning briefing", "SITREP", "what did I miss".
 
@@ -356,7 +356,7 @@ change", "revert the last write to immigration".
 "undo the finance update"
 └── Find latest snapshot: tmp/state_snapshots/finance_<YYYYMMDDTHHmmss>.snap
 └── Restore snapshot content → state/finance.md (atomic write)
-└── Append to state/audit.md: "UNDO: finance restored to <timestamp>"
+└── Append to ~/.artha-local/audit.md: "UNDO: finance restored to <timestamp>"
 └── Confirm: "✅ Restored finance state to <timestamp> (N chars)"
 ```
 
@@ -650,7 +650,7 @@ If topic not recognized: "I don't have specific state data for '[topic]' but her
 3. For each item: "Done / Defer / Escalate / Skip?"
 4. Executes approved actions (email draft, calendar event) with minimal friction
 5. At completion: "Power Hour complete — [N] items resolved, [N] deferred"
-Log session to `state/audit.md` as `POWER_HOUR | [timestamp] | items_handled: [N]`
+Log session to `~/.artha-local/audit.md` as `POWER_HOUR | [timestamp] | items_handled: [N]`
 
 ---
 

@@ -106,7 +106,7 @@ python3 scripts/vault_hook.py session-start   # prints a warning only if decrypt
 | Insurance | `state/insurance.md` | high | yes | ⏳ Template — needs real data |
 | Estate | `state/estate.md` | high | yes | ⏳ Template — needs real data |
 | Vehicle | `state/vehicle.md` | high | yes | ⏳ Template — needs real data |
-| Audit | `state/audit.md` | high | yes | ⏳ Template — append-only log |
+| Audit | `~/.artha-local/audit.md` | high | yes | ⏳ Template — append-only log |
 | Kids | `state/kids.md` | medium | no | ⏳ Template — needs real data |
 | Calendar | `state/calendar.md` | medium | no | ⏳ Populated each catch-up via MCP |
 | Home | `state/home.md` | medium | no | ⏳ Template — needs real data |

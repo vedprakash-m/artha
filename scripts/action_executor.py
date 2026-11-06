@@ -66,6 +66,7 @@ except Exception:  # pragma: no cover
 from typing import Final
 
 from actions import _HANDLER_MAP as _REGISTERED_ACTION_HANDLERS
+from lib.local_paths import audit_log_path
 
 _FALLBACK_ACTION_MAP: Final[dict[str, str]] = dict(_REGISTERED_ACTION_HANDLERS)
 
@@ -328,7 +329,7 @@ def _extract_explicit_text_date(text: str) -> date | None:
 def _audit_log(artha_dir: Path, entry: str) -> None:
     """Append an entry to state/audit.md (best-effort; does not raise)."""
     try:
-        audit_path = artha_dir / "state" / "audit.md"
+        audit_path = audit_log_path(artha_dir)
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         line = f"[{ts}] {entry}\n"
         with open(audit_path, "a", encoding="utf-8") as f:

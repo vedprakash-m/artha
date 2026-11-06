@@ -8181,3 +8181,19 @@ The following implemented specs are also folded here and archived with a `-2026-
   unlisted or duplicate payloads, wrong hashes/sizes/counts, unsafe paths and stream names, and unsupported versions
   are rejected; interrupted snapshots or restores keep the prior recoverable generation. Covered by
   `tests/unit/test_backup.py`. Open: the separately authorized real-host restore and off-host exercise (owner action).
+
+### 2026-11-05 second audit fixes
+
+- **Audit log location.** `lib.local_paths.audit_log_path(artha_dir=None)` returns `$ARTHA_LOCAL_DIR/audit.md`
+  (default `~/.artha-local/audit.md`, created 0700) for the installed workspace and `<artha_dir>/state/audit.md`
+  for any other workspace. Every writer uses it, so no plaintext audit lines reach the synced `state/` folder; the
+  encrypted `state/audit.md.age` is history only. `pii_guard` computes the same machine-local path itself when the
+  privacy hooks load it without `scripts/lib`.
+- **Read-only preflight.** `--read-only` skips action-queue expiry and the post-run stale-checkpoint cleanup,
+  health-check compaction and device-context write; reporting is unchanged.
+- **Work host scoping.** Off Windows, `work-*` state templates and `state/work/` registry staleness are skipped,
+  matching the existing Windows-only WorkIQ checks.
+- **Isolated core coverage.** `make coverage` runs through `tools/run_tests_isolated.py` with an absolute XML report
+  path, like the harness gate.
+- **Ratchets.** Lint-suppression and broad-except counts in tracked `scripts/` may only fall; the known divergence
+  between the two preflight implementations is frozen until they are consolidated.

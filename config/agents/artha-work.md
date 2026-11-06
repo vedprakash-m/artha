@@ -78,7 +78,7 @@ Read them in this order on session start:
 - NEVER read health, finance, family, or wellness state.
 - ONLY cross-surface communication is via `state/bridge/` artifacts.
 - Bridge artifacts are schema-validated; prohibited fields cause hard rejection.
-- Write work audit entries to `state/work/work-audit.md`, never `state/audit.md`.
+- Write work audit entries to `state/work/work-audit.md`, never `~/.artha-local/audit.md`.
 
 ## Fallback behaviour
 

@@ -361,7 +361,7 @@ Replace all values with the actuals from this session:
 **R7 user-response forwarding:** If during the briefing the user responded to a R7 disable prompt:
 - User says "yes" (disable skill): append `--disable-skill <skill_name>` to the `health_check_writer.py` call
 - User says "keep" (suppress future prompts): append `--suppress-skill-prompt <skill_name>` to the call
-- Both are logged to `state/audit.md` automatically by the script
+- Both are logged to `~/.artha-local/audit.md` automatically by the script
 
 **Skill Health display:** After Connector Health section in the briefing, if `state/skills_cache.json` exists and any skill has `classification: broken` or `classification: degraded`, run:
 ```bash
@@ -384,7 +384,7 @@ In read-only mode: embed session metadata in briefing footer instead:
 
 **SKIP in read-only mode** → log `⏭️ Step 17 skipped — read-only mode`
 
-Append PII filter stats to `state/audit.md`:
+Append PII filter stats to `~/.artha-local/audit.md`:
 ```
 {date} | emails_scanned: N | redactions_applied: N | patterns_detected: N
 ```
@@ -440,7 +440,7 @@ Note uncertainty if extraction differs significantly.
 
 **SKIP if** `harness.actions.enabled: false` → log `⏭️ Step 19.5 skipped — actions disabled`
 
-Append a one-line action layer summary to `state/audit.md`:
+Append a one-line action layer summary to `~/.artha-local/audit.md`:
 
 ```
 {date} | actions | queued: N | approved: N | executed: N | rejected: N | expired: N | pii_blocked: N

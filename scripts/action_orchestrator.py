@@ -52,6 +52,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
 # ---------------------------------------------------------------------------
 # Bootstrap: ensure scripts/ is on sys.path (mirrors pipeline.py pattern)
@@ -1309,7 +1310,7 @@ def _resolve_defer_preset(preset: str) -> str:
 def _audit_log(artha_dir: Path, message: str) -> None:
     """Append a timestamped line to state/audit.md."""
     try:
-        audit_path = artha_dir / "state" / "audit.md"
+        audit_path = audit_log_path(artha_dir)
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         line = f"[{ts}] {message}\n"
         audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1403,7 +1404,7 @@ def compose_draft(domain: str, payload: dict, *, session_id: str = "") -> str:
         description = str(payload.get("description", payload.get("intent", "")))
         # Truncate payload_summary to ≤1 sentence, ≤80 chars; no PII
         payload_summary = description[:80].split(".")[0]
-        audit_path = _ARTHA_DIR / "state" / "audit.md"
+        audit_path = audit_log_path(_ARTHA_DIR)
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         audit_row = (
             f"| {ts} | {session_id or '-'} | {domain} "

@@ -83,11 +83,13 @@ state_files:
     max_staleness_hours: 26
     sensitivity: "low"
 
-  - path: "state/audit.md"
+  # The live audit log is machine-local (~/.artha-local/audit.md, lib.local_paths.audit_log_path) since
+  # 2026-11-05; state/audit.md.age keeps the encrypted history and is no longer appended.
+  - path: "state/audit.md.age"
     owner_agent: "pipeline"
-    write_frequency: "every guardrail event"
+    write_frequency: "history only"
     backup_tier: "gfs-standard"
-    max_staleness_hours: 720
+    max_staleness_hours: 87600
     sensitivity: "medium"
 
   - path: "state/pr_manager.md"

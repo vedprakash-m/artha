@@ -45,7 +45,13 @@ from pathlib import Path
 VERSION = "1.0.0"
 
 _ARTHA_DIR = Path(__file__).resolve().parent.parent
-_AUDIT_LOG = _ARTHA_DIR / "state" / "audit.md"
+try:
+    from lib.local_paths import audit_log_path as _audit_log_path
+except ImportError:  # the privacy hooks load this module standalone, without scripts/lib
+    _audit_log_path = None
+# Machine-local audit log (never the synced state/ folder) whether or not scripts/lib is importable.
+_AUDIT_LOG = (_audit_log_path(_ARTHA_DIR) if _audit_log_path is not None else
+              Path(os.environ.get("ARTHA_LOCAL_DIR") or Path.home() / ".artha-local").expanduser() / "audit.md")
 _EMAIL_ID = os.environ.get("ARTHA_EMAIL_ID", "unknown")
 
 # ─────────────────────────────────────────────────────────────────────────────

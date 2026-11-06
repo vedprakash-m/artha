@@ -69,3 +69,24 @@ def resolve_local_output(raw: str | os.PathLike[str]) -> Path:
             "plaintext pipeline output must not live in the synced workspace."
         )
     return target
+
+
+_REPOSITORY = Path(__file__).resolve().parents[2]
+
+
+def audit_log_path(artha_dir: str | os.PathLike[str] | None = None) -> Path:
+    """Where Artha appends its operational audit log.
+
+    For the installed workspace the log is machine-local (``$ARTHA_LOCAL_DIR/audit.md``, default
+    ``~/.artha-local/audit.md``) so plaintext audit lines never land in the cloud-synced ``state/``
+    folder; the encrypted ``state/audit.md.age`` keeps the history from before 2026-11-05. An explicit
+    ``artha_dir`` other than this installation (a test or scratch workspace) keeps ``<artha_dir>/state/audit.md``.
+    """
+    if artha_dir is not None and Path(artha_dir).expanduser().resolve() != _REPOSITORY:
+        return Path(artha_dir) / "state" / "audit.md"
+    root = Path(os.environ.get("ARTHA_LOCAL_DIR") or Path.home() / ".artha-local").expanduser()
+    try:
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    except OSError:
+        pass  # writers report their own failure when the path cannot be opened
+    return root / "audit.md"

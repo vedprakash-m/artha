@@ -53,7 +53,7 @@ your immigration attorney, medical insurance providers, government agencies.
 ```bash
 python scripts/pii_guard.py scan
 ```
-If PII detected: redact per §4 rules, log to `state/audit.md`. **Never persist raw PII.**
+If PII detected: redact per §4 rules, log to `~/.artha-local/audit.md`. **Never persist raw PII.**
 
 **Skip Step 5b in read-only mode if pipeline.py could not run.**
 Note in footer: "PII scan: limited (MCP-direct data, no pipeline filtering)."

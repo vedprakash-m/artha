@@ -24,7 +24,7 @@ Do NOT require a `/` prefix — bare words are the primary invocation form.
 | `domain <X>`, `tell me about <X>`, `<X> status` | **domain** | Read `prompts/<X>.md` + `state/<X>.md`, produce deep dive |
 | `content`, `what should I post`, `draft a post` | **content** | Read `state/pr_manager.md` + `state/gallery.yaml`, show content calendar |
 | `guide`, `what can you do`, `show commands` | **guide** | Show the seven commands above with brief descriptions |
-| `health`, `system status`, `is everything OK` | **health** | Run `python scripts/preflight.py`, display system status |
+| `health`, `system status`, `is everything OK` | **health** | Run `python3 scripts/preflight.py --read-only`, display system status (read-only: no queue expiry or state writes) |
 
 For full command reference with sub-commands, read `config/commands.md`.
 
@@ -66,6 +66,8 @@ services, then synthesize it into actionable intelligence.
 
 These are NOT built-in CLI commands — they are Artha workflow triggers
 defined in `config/Artha.md`. Execute them exactly as documented in that file.
+
+**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted changes; commit and push your own work promptly; never run Catch-ups or vault encrypt/decrypt on both machines at once (see `config/workflow/development.md`).
 
 **Work OS note:** `work` commands are a separate surface from personal
 commands. They read only from `state/work/` and never access personal state.

@@ -22,10 +22,11 @@ import re
 import sys
 from datetime import date
 from pathlib import Path
+from lib.local_paths import audit_log_path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _OPEN_ITEMS = _ROOT / "state" / "open_items.md"
-_AUDIT_FILE = _ROOT / "state" / "audit.md"
+_AUDIT_FILE = audit_log_path(_ROOT)
 
 # Citation token patterns — only these three forms are valid
 _RX_SRC_OI = re.compile(r'\[src:\s*OI-(\d+)\]')

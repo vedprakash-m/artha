@@ -360,16 +360,26 @@ def _coverage_tree(tmp_path: Path, *, tested: bool) -> Path:
     return tmp_path
 
 
+def _isolated_coverage_tree(tmp_path: Path, *, tested: bool) -> Path:
+    """`make coverage` runs through tools/run_tests_isolated.py, which copies the tracked tree."""
+    tree = _coverage_tree(tmp_path, tested=tested)
+    (tree / "tools").mkdir()
+    shutil.copy(REPO / "tools" / "run_tests_isolated.py", tree / "tools" / "run_tests_isolated.py")
+    for args in (["git", "init", "-q"], ["git", "add", "."]):
+        subprocess.run(args, cwd=tree, check=True, capture_output=True, env=_env())
+    return tree
+
+
 def test_coverage_gate_fails_below_floor(tmp_path):
     pytest.importorskip("pytest_cov")
-    tree = _coverage_tree(tmp_path, tested=False)
+    tree = _isolated_coverage_tree(tmp_path, tested=False)
     result = make(tree, "coverage", CORE_PKG="pkg", CORE_TESTS="pkgtests", COV_MIN="90")
     assert result.returncode != 0
 
 
 def test_coverage_gate_passes_at_full_coverage(tmp_path):
     pytest.importorskip("pytest_cov")
-    tree = _coverage_tree(tmp_path, tested=True)
+    tree = _isolated_coverage_tree(tmp_path, tested=True)
     result = make(tree, "coverage", CORE_PKG="pkg", CORE_TESTS="pkgtests", COV_MIN="90")
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -381,11 +391,11 @@ def test_coverage_canary_does_not_overwrite_parent_coverage_data(tmp_path, monke
     monkeypatch.setenv("COVERAGE_FILE", str(parent_data))
     directory = tmp_path / "canary"
     directory.mkdir()
-    tree = _coverage_tree(directory, tested=True)
+    tree = _isolated_coverage_tree(directory, tested=True)
     result = make(tree, "coverage", CORE_PKG="pkg", CORE_TESTS="pkgtests", COV_MIN="90")
     assert parent_data.read_bytes() == b"synthetic parent coverage bytes must remain unchanged"
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (tree / ".coverage").is_file()
+    assert (tree / "coverage.xml").is_file()  # report returned from the isolated workspace
 
 
 @pytest.mark.parametrize("name", ["checkout", "checkout with spaces"])

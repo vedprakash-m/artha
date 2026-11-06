@@ -1,4 +1,4 @@
-"""SLICE-RELEASE (specs/features/slice-release.md): the slice profile of the authoritative-run gate."""
+"""SLICE-RELEASE (.archive/specs/slice-release-2026-11-05.md): the slice profile of the authoritative-run gate."""
 from __future__ import annotations
 
 import hashlib

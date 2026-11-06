@@ -18,13 +18,14 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from lib.local_paths import audit_log_path
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_AUDIT_MD = _REPO_ROOT / "state" / "audit.md"
+_AUDIT_MD = audit_log_path()
 
 # audit.md row format (pipe-delimited Markdown table):
 #   | timestamp | session_id | domain | action_type | status | payload_summary |

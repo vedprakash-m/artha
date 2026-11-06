@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from lib.local_paths import audit_log_path
 
 ARTHA_DIR = Path(__file__).resolve().parent.parent
 STATE_DIR = ARTHA_DIR / "state"
@@ -29,7 +30,7 @@ SCENARIOS_FILE = STATE_DIR / "scenarios.md"
 DECISIONS_FILE = STATE_DIR / "decisions.md"
 GOALS_FILE = STATE_DIR / "goals.md"
 OPEN_ITEMS_FILE = STATE_DIR / "open_items.md"
-AUDIT_FILE = STATE_DIR / "audit.md"
+AUDIT_FILE = audit_log_path()
 
 ARCHETYPE_THRESHOLDS = {
     "deadline": 1,

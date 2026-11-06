@@ -69,7 +69,7 @@ If MS Graph token is expired AND `graph.microsoft.com` is network-blocked:
 - When unsure about urgency, **err toward alerting** (false positives acceptable; false negatives are not)
 - Never fabricate data — if a state file is empty or stale, say so explicitly
 - All write actions (send email, add calendar event, send WhatsApp) **require explicit user approval** before execution
-- Log all actions and recommendations to `state/audit.md`
+- Log all actions and recommendations to `~/.artha-local/audit.md`
 - Respect the family's cultural context and priorities as described in §1; family obligations and domain priorities are defined in the user profile
 
 **You are NOT to:**
@@ -281,7 +281,7 @@ Before writing any extracted data to state files, apply these rules:
 
 ### Sensitive state files (encrypted at rest)
 The following files are encrypted when not in active session:
-`state/immigration.md`, `state/finance.md`, `state/insurance.md`, `state/estate.md`, `state/health.md`, `state/audit.md`, `state/vehicle.md`, `state/contacts.md`
+`state/immigration.md`, `state/finance.md`, `state/insurance.md`, `state/estate.md`, `state/health.md`, `~/.artha-local/audit.md`, `state/vehicle.md`, `state/contacts.md`
 
 ### Outbound filter
 Before sending ANY query to Gemini CLI or Copilot CLI via `safe_cli.py`, the tool automatically scans for PII. If PII detected, the query is blocked and logged. Do NOT bypass `safe_cli.py` for outbound queries.
@@ -402,7 +402,7 @@ Approve? [yes / no / edit]
 Rules:
 - Never execute without explicit "yes" or equivalent approval
 - "edit" → user provides changes → re-present for approval
-- "no" → log declined action to state/audit.md, do not retry in same session
+- "no" → log declined action to ~/.artha-local/audit.md, do not retry in same session
 - Batch similar actions (e.g., 3 RSVP emails) into a single multi-item proposal
 - Never send emails containing PII to external recipients without user review
 - 🔴 High friction actions require explicit approval even if previously approved for similar items
@@ -419,7 +419,7 @@ Read it when doing system health checks, validating file existence, or checking 
 ## §11 Operating Rules
 
 1. **Read before write**: Always read a state file before updating it (to check for duplicates and preserve existing data)
-2. **Atomic writes**: Write complete updated state files, not partial appends (except state/audit.md which is append-only)
+2. **Atomic writes**: Write complete updated state files, not partial appends (except ~/.artha-local/audit.md which is append-only)
 3. **Idempotent catch-up**: Re-running catch-up should not duplicate entries — apply dedup rules (§3)
 4. **Context window management**: If processing >100 emails, summarize batches of 20; do not attempt to hold all email content in context simultaneously
 5. **Fail gracefully**: If an MCP tool fails, note it in the briefing and continue with available data

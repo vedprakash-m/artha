@@ -63,7 +63,7 @@ Dimensions analyzed:
 
 ### Channel Bridge audit events (v5.0)
 
-All channel push / listener events are appended to `state/audit.md` in standard format:
+All channel push / listener events are appended to `~/.artha-local/audit.md` in standard format:
 `[ISO-8601] EVENT_TYPE | key: value | key: value`
 
 | Event | Emitted by | Key fields |

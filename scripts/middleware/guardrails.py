@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ def _guardrail_write_audit(event: str, data: dict) -> None:
     try:
         from datetime import datetime, timezone  # noqa: PLC0415
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        _audit = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+        _audit = audit_log_path()
         fields = " | ".join(f"{k}:{v}" for k, v in data.items())
         line = f"| {now} | {event} | {fields} |\n"
         with _audit.open("a", encoding="utf-8") as fh:

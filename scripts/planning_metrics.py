@@ -11,10 +11,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from lib.local_paths import audit_log_path
 
 _ROOT = Path(__file__).parent.parent
 _SIGNALS_FILE = _ROOT / "state" / "planning_signals.md"
-_AUDIT_FILE = _ROOT / "state" / "audit.md"
+_AUDIT_FILE = audit_log_path(_ROOT)
 _SCENARIOS_FILE = _ROOT / "state" / "scenarios.md"
 _DECISIONS_FILE = _ROOT / "state" / "decisions.md"
 _GOALS_FILE = _ROOT / "state" / "goals.md"

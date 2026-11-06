@@ -36,6 +36,7 @@ from pr_stage.domain import (
 from pr_stage.personalizer import DraftPersonalizer
 from pr_stage.repository import GalleryMemory, GalleryRepository
 from pr_stage.telemetry import StageLogger
+from lib.local_paths import audit_log_path
 
 # Auto-draft trigger window (§5.3): if days_until ≤ this, try auto-draft
 AUTO_DRAFT_WINDOW_DAYS = 7
@@ -117,7 +118,7 @@ class ContentStage:
 
         # Telemetry
         journal = journal_path or self._state_dir.parent / "tmp" / "stage_events.jsonl"
-        audit   = audit_path   or self._state_dir / "audit.md"
+        audit   = audit_path   or audit_log_path(self._state_dir.parent)
         self._logger = StageLogger(journal, audit)
 
         # Repository and archive

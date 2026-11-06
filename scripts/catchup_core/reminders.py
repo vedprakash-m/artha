@@ -1,4 +1,4 @@
-"""Reminder proposals for future-dated obligations (specs/features/reminders.md; owner decisions 2 and 4).
+"""Reminder proposals for future-dated obligations (.archive/specs/reminders-2026-11-05.md; owner decisions 2 and 4).
 
 Pure planning plus an injected proposer: the core never executes an effect, it queues a proposal the owner approves.
 """

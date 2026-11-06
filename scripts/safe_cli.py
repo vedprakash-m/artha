@@ -34,7 +34,8 @@ from pathlib import Path
 # Resolve project root so this runs from any cwd
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ARTHA_DIR = _SCRIPT_DIR.parent
-_AUDIT_LOG = _ARTHA_DIR / "state" / "audit.md"
+from lib.local_paths import audit_log_path
+_AUDIT_LOG = audit_log_path(_ARTHA_DIR)
 
 # Import pii_guard from the same scripts/ directory
 sys.path.insert(0, str(_SCRIPT_DIR))

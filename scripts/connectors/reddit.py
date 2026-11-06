@@ -56,6 +56,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator
+from lib.local_paths import audit_log_path
 
 # ── Path setup ───────────────────────────────────────────────────────────────
 _CONNECTOR_DIR = Path(__file__).resolve().parent
@@ -92,7 +93,7 @@ def _write_audit(event_type: str, **kwargs: str | int | bool | None) -> None:
         for k, v in kwargs.items():
             parts.append(f"{k}: {v}")
         entry = " | ".join(parts)
-        audit_path = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+        audit_path = audit_log_path()
         audit_path.parent.mkdir(parents=True, exist_ok=True)
         with open(audit_path, "a", encoding="utf-8") as f:
             f.write(entry + "\n")

@@ -165,7 +165,7 @@ def _load_cursor(raw: str, now: datetime) -> tuple[str | None, str | None]:
 
 def _sync_calendar(access_token: str, cal: dict, *, start_utc: str, end_utc: str, token: Optional[str],
                    max_results: int, source_tag: str) -> Iterator[Dict[str, Any]]:
-    """One calendar through ``calendarView/delta`` (specs/features/provider-observation-cursors.md)."""
+    """One calendar through ``calendarView/delta`` (.archive/specs/provider-observation-cursors-2026-11-05.md)."""
     from lib.connector_coverage import (  # type: ignore[import]  # noqa: PLC0415
         report_cursor,
         report_cursor_reset,

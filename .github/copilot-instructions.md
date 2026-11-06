@@ -70,3 +70,5 @@ Retained rules below apply to components defining these TypeScript paths/tools. 
 - Use literal, plain language over metaphors/flourishes (“a setting worth changing,” not “a dial worth turning”) in comments, skills, specs, commits and replies. Avoid performative prose and unintended connotations.
 
 Success: fewer unnecessary diffs/rewrites and clarifications before implementation rather than after mistakes.
+
+**Two machines, one checkout:** check `git status` before editing; never touch the other machine's uncommitted changes; commit and push your own work promptly; never run Catch-ups or vault encrypt/decrypt on both machines at once (see `config/workflow/development.md`).

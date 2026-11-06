@@ -43,6 +43,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
 log = logging.getLogger("action_bridge")
 
@@ -807,7 +808,7 @@ def _safe_delete(path: Path) -> None:
 def _audit_event(artha_dir: Path, event_type: str, **kwargs: Any) -> None:
     """Append a bridge audit event to state/audit.md (best-effort)."""
     try:
-        audit_path = artha_dir / "state" / "audit.md"
+        audit_path = audit_log_path(artha_dir)
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         parts = [f"[{ts}] {event_type}"]
         for k, v in kwargs.items():

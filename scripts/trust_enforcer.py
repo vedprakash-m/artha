@@ -31,6 +31,7 @@ if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
 from state_writer import write as _state_write  # noqa: PLC0415
 from action_queue import ActionQueue
+from lib.local_paths import audit_log_path
 
 
 # "auto:" prefix in approved_by = autonomous approval (not human)
@@ -166,7 +167,7 @@ def _append_audit_override(justification: str) -> None:
         session_id = "unknown"
 
     ts = datetime.now(timezone.utc).isoformat()
-    audit_path = _ARTHA_CONFIG_PATH.parent.parent / "state" / "audit.md"
+    audit_path = audit_log_path(_ARTHA_CONFIG_PATH.parent.parent)
     row = (
         f"| {ts} | {session_id} | system | wave0_override "
         f"| override | justification: {justification[:120]} |\n"

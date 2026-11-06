@@ -12,6 +12,7 @@ from pathlib import Path
 from preflight._types import (
     ARTHA_DIR, SCRIPTS_DIR, STATE_DIR, _SUBPROCESS_ENV, _rel, CheckResult,
 )
+from lib.local_paths import audit_log_path
 
 def check_state_directory() -> CheckResult:
     """Verify state/ directory exists and is writable."""
@@ -64,7 +65,10 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     templates = [f for f in os.listdir(templates_dir) if f.endswith(".md") and f != "README.md"]
     missing = []
     stubs = []
+    import platform
     for tpl in templates:
+        if tpl.startswith("work-") and platform.system() != "Windows":
+            continue  # Work state belongs to the Windows Work host
         target = os.path.join(STATE_DIR, tpl)
         if os.path.isfile(target + ".age"):
             continue
@@ -304,7 +308,7 @@ def check_briefings_archive_coverage() -> CheckResult:
 def _write_audit_event_sc(event: str, fields: dict) -> None:
     """Best-effort audit.md append (avoids importing briefing_archive from state_checks)."""
     try:
-        audit_log = Path(ARTHA_DIR) / "state" / "audit.md"
+        audit_log = audit_log_path(ARTHA_DIR)
         from datetime import timezone
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         field_str = " | ".join(f"{k}:{v}" for k, v in fields.items())

@@ -9,3 +9,11 @@
 5. Run the applicable quality gates, generated-register checks and privacy scan. Record actual results and remaining gaps.
 6. Keep cutover and unreviewed action types disabled until their release evidence exists. Do not replace missing outcomes
    with test counts or inferred capability success. Follow the standing Git delivery instructions once checks pass.
+
+## Two machines, one synced checkout
+
+The Mac and the Windows laptop share this working tree through OneDrive. Before editing, run `git status` and
+look at recently modified files; never edit, stage or reformat another machine's uncommitted changes, and do not
+start a commit or re-sign while the other machine has an active session in the same files. Commit and push your
+own finished work promptly so the other machine sees a clean tree. Never run two Catch-ups (or `vault.py` encrypt/
+decrypt) on both machines at once: state files and the vault are shared.

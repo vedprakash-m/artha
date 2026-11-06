@@ -1,4 +1,4 @@
-"""CORE-ITEMS (specs/features/core-open-items.md): the core writes its own Open Items file for released Domains."""
+"""CORE-ITEMS (.archive/specs/core-open-items-2026-11-05.md): the core writes its own Open Items file for released Domains."""
 from __future__ import annotations
 
 import sys

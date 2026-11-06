@@ -1,4 +1,4 @@
-"""Graph calendar delta, CalDAV sync-collection and mail cursor chains (specs/features/provider-observation-cursors.md).
+"""Graph calendar delta, CalDAV sync-collection and mail cursor chains (.archive/specs/provider-observation-cursors-2026-11-05.md).
 
 Provider-shaped synthetic fakes -> real handler -> validator -> adapter -> Coordinator -> Ledger.  Nothing here
 talks to a provider; every provider claim is an unverified expectation until live consented parity.

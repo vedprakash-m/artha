@@ -98,6 +98,7 @@ from lib.connector_coverage import (  # noqa: E402
     CoverageStore as _CoverageStore,
     coverage_line as _coverage_line,
 )
+from lib.local_paths import audit_log_path
 
 _log = get_logger("pipeline")
 
@@ -1172,7 +1173,7 @@ def run_pipeline(
         try:
             from datetime import datetime as _dt, timezone as _tz  # noqa: PLC0415
             _now = _dt.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            _audit = _REPO_ROOT / "state" / "audit.md"
+            _audit = audit_log_path(_REPO_ROOT)
             with _audit.open("a", encoding="utf-8") as _fh:
                 _fh.write(
                     f"| {_now} | HERMES_CONTEXT_EXPORT_FAIL"
@@ -1402,7 +1403,7 @@ def _write_bridge_health_section(artha_dir: Path) -> None:
     hmac_version = "—"
 
     # ── Parse audit.md for bridge events ─────────────────────────────────────
-    audit_path = artha_dir / "state" / "audit.md"
+    audit_path = audit_log_path(artha_dir)
     last_push_ts = "—"
     last_received_ts = "—"
     clock_drift_ms: str = "—"
@@ -2340,7 +2341,7 @@ _DIGEST_STALE_SECS = 7200  # 2 hours
 def _digest_append_audit(line: str) -> None:
     """Best-effort append to state/audit.md; never raises."""
     try:
-        audit = _REPO_ROOT / "state" / "audit.md"
+        audit = audit_log_path(_REPO_ROOT)
         with audit.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except Exception:  # noqa: BLE001

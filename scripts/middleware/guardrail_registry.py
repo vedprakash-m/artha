@@ -40,6 +40,7 @@ from middleware.guardrails import (
     GuardrailViolation,
     TripwireResult,
 )
+from lib.local_paths import audit_log_path
 
 # Default config location — relative to Artha root
 _DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config" / "guardrails.yaml"
@@ -176,7 +177,7 @@ class GuardrailRegistry:
         try:
             from datetime import datetime, timezone  # noqa: PLC0415
             artha_dir = Path(__file__).resolve().parents[2]
-            audit_log = artha_dir / "state" / "audit.md"
+            audit_log = audit_log_path(artha_dir)
             if audit_log.exists():
                 ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 entry = (

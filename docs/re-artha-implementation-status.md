@@ -547,7 +547,7 @@ the additional validator defects were found. It is recorded as cancelled, not pa
 No passing result is attributed to that cancelled attempt.
 
 The remaining archive-format repair is specified in the local draft
-`specs/operational-recovery.md`. It proposes version-3 ZIP payload/stream descriptors,
+`.archive/specs/operational-recovery-2026-11-05.md`. It proposes version-3 ZIP payload/stream descriptors,
 version-2 read compatibility, consistent SQLite images and in-memory typed validation.
 The proposal remains unapproved and unimplemented; no GFS format, schedule, off-host
 destination or production restore was changed.

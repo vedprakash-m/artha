@@ -10,7 +10,7 @@
 
 wave0_gate: hard  # DEBT-GUARD-001: Now enforced. Raises RuntimeError in all guarded paths
                   # when harness.wave0.complete=false (hard) or bypasses with WARNING (soft).
-                  # Override: set env ARTHA_WAVE0_OVERRIDE=<reason> — writes to state/audit.md.
+                  # Override: set env ARTHA_WAVE0_OVERRIDE=<reason> — writes to ~/.artha-local/audit.md.
                   # Tests: set ARTHA_WAVE0_OVERRIDE=pytest in conftest.py fixture.
 
 # ── Idempotency Windows (specs/harden.md §2.3.2) ──────────────────────────────

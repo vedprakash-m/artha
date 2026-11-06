@@ -22,8 +22,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
-_DEFAULT_AUDIT = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+_DEFAULT_AUDIT = audit_log_path()
 _MEMORY_CONFIG = Path(__file__).resolve().parents[2] / "config" / "memory.yaml"
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
 _MIN_SIZE_BYTES = 100
 
@@ -91,7 +92,7 @@ class WriteVerifyMiddleware:
     def __init__(self, artha_dir: Path | None = None) -> None:
         from lib.common import ARTHA_DIR  # noqa: PLC0415
 
-        self._audit_log = (artha_dir or ARTHA_DIR) / "state" / "audit.md"
+        self._audit_log = audit_log_path(artha_dir or ARTHA_DIR)
 
     def before_write(
         self,

@@ -40,6 +40,7 @@ import requests
 import yaml
 
 from lib.config_loader import load_config
+from lib.local_paths import audit_log_path
 
 log = logging.getLogger("export_hermes_context")
 
@@ -358,7 +359,7 @@ def _append_audit(artha_dir: Path, message: str, *, standalone: bool = False) ->
         return
     try:
         now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        audit_path = artha_dir / "state" / "audit.md"
+        audit_path = audit_log_path(artha_dir)
         with audit_path.open("a", encoding="utf-8") as fh:
             fh.write(f"| {now_iso} | {message} |\n")
     except Exception:  # noqa: BLE001

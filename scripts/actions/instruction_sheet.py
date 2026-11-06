@@ -26,6 +26,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from actions.base import ActionProposal, ActionResult
+from lib.local_paths import audit_log_path
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ _AUTONOMY_LEVELS: dict[str, int] = {
     "whatsapp_send": 3,
 }
 
-_AUDIT_PATH = Path(__file__).resolve().parents[2] / "state" / "audit.md"
+_AUDIT_PATH = audit_log_path()
 
 
 def _write_audit(event: str, **kwargs: Any) -> None:

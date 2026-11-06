@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Optional
 
 from connectors.workiq_bridge import WORKIQ_VERSION_PIN
+from lib.local_paths import audit_log_path
 
 
 # ---------------------------------------------------------------------------
@@ -513,7 +514,7 @@ def _audit_guardrail_force_override(cfg_path: str) -> None:
     """Write FORCE_NO_GUARDRAILS entry to state/audit.md (best-effort)."""
     try:
         from datetime import datetime, timezone  # noqa: PLC0415
-        audit_log = os.path.join(ARTHA_DIR, "state", "audit.md")
+        audit_log = str(audit_log_path(ARTHA_DIR))
         if os.path.isfile(audit_log):
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             entry = f"[{ts}] FORCE_NO_GUARDRAILS | config: {cfg_path}\n"
@@ -623,7 +624,10 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
     templates = [f for f in os.listdir(templates_dir) if f.endswith(".md") and f != "README.md"]
     missing = []
     stubs = []
+    import platform
     for tpl in templates:
+        if tpl.startswith("work-") and platform.system() != "Windows":
+            continue  # Work state belongs to the Windows Work host
         target = os.path.join(STATE_DIR, tpl)
         if os.path.isfile(target + ".age"):
             continue
@@ -1632,6 +1636,7 @@ def check_state_registry_staleness() -> CheckResult:
         )
 
     now_ts = _dt.now(_tz.utc).timestamp()
+    import platform
     stale: list[str] = []
     missing: list[str] = []
 
@@ -1640,6 +1645,8 @@ def check_state_registry_staleness() -> CheckResult:
         max_hours = entry.get("max_staleness_hours")
         if not path_str or not max_hours:
             continue
+        if path_str.startswith("state/work/") and platform.system() != "Windows":
+            continue  # Work state belongs to the Windows Work host
 
         resolved = Path(path_str).expanduser()
         if not resolved.is_absolute():
@@ -1841,6 +1848,9 @@ def check_profile_completeness() -> CheckResult:
     )
 
 
+_READ_ONLY = False  # `--read-only`: report only; skip queue expiry and post-run writes
+
+
 def _held_action_types() -> frozenset[str]:
     """Action types the live policy holds (config/actions.yaml live_trial.held); they never dispatch."""
     try:
@@ -1886,7 +1896,7 @@ def check_action_handlers() -> CheckResult:
         executor = ActionExecutor(Path(ARTHA_DIR))
 
         # Sweep expired stale actions
-        expired_count = executor.expire_stale()
+        expired_count = 0 if _READ_ONLY else executor.expire_stale()
 
         # Run handler health checks
         health: dict[str, bool] = executor.run_health_checks()
@@ -2950,6 +2960,11 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Report health without mutating state: no action-queue expiry and no post-run writes.",
+    )
+    parser.add_argument(
         "--force-no-guardrails",
         action="store_true",
         help=(
@@ -2960,6 +2975,8 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    global _READ_ONLY
+    _READ_ONLY = bool(getattr(args, "read_only", False))
 
     # Cold-start detection: exit 3 if user_profile.yaml is missing (first run)
     profile_path = pathlib.Path(ARTHA_DIR) / "config" / "user_profile.yaml"
@@ -3005,9 +3022,10 @@ def main() -> None:
         if args.first_run:
             all_ok = first_run_ok
 
-    _clear_stale_pipeline_checkpoint()
-    _compact_health_check()
-    _write_device_context()
+    if not _READ_ONLY:
+        _clear_stale_pipeline_checkpoint()
+        _compact_health_check()
+        _write_device_context()
     sys.exit(0 if all_ok else 1)
 
 

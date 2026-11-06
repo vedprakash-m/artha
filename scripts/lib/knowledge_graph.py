@@ -34,6 +34,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from lib.local_paths import audit_log_path
 
 _log = logging.getLogger(__name__)
 
@@ -2705,7 +2706,7 @@ def _write_audit_log(artha_dir: Path | None, message: str) -> None:
     """Safe audit log write — never raises."""
     try:
         base = artha_dir or Path(__file__).resolve().parent.parent.parent
-        audit = base / "state" / "audit.md"
+        audit = audit_log_path(base)
         ts = _now_utc()
         with open(audit, "a", encoding="utf-8") as fh:
             fh.write(f"[{ts}] KB | {message}\n")

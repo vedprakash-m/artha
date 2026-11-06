@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — second quality audit, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| The operational audit log is machine-local (`$ARTHA_LOCAL_DIR/audit.md`, default `~/.artha-local/audit.md`) through `lib.local_paths.audit_log_path()`; 31 writer sites, instruction docs and the state registry updated. Other workspaces (tests, scratch) keep `<dir>/state/audit.md`. `pii_guard` falls back to the same machine-local path when loaded standalone by the privacy hooks. The encrypted `state/audit.md.age` keeps the earlier history. | `scripts/lib/local_paths.py`, `scripts/foundation.py`, writer modules, `config/*` docs, `config/state_registry.yaml` | 787 audit-touching tests passed; new `test_audit_log_path.py` |
+| Restored the encrypted audit history after a concurrent Catch-up on the other machine re-encrypted only recent lines (593 KB → 11 KB); history and recent lines concatenated (non-overlapping, verified) with both prior files kept (local, not in git). | local state | Decrypted bytes verified equal to the concatenation |
+| `preflight.py --read-only` reports without expiring queued actions or writing health-check/device context; the `health` route uses it. Work templates and Work staleness are skipped off the Windows Work host. A ratchet freezes the 16 functions that already differ between `scripts/preflight.py` and the `scripts/preflight/` package. | `scripts/preflight.py`, `scripts/preflight/state_checks.py`, `CLAUDE.md`, `GEMINI.md` | `test_preflight_read_only.py`, `test_preflight_work_host.py`, `test_preflight_duplicate_drift.py` |
+| `make coverage` runs in the isolated test workspace (report copied back), so live activity can no longer trip its hermeticity guard; canaries updated. | `Makefile`, `tests/dev/test_check_canaries.py` | Core coverage 89.00% |
+| Lint-debt ratchet: `noqa` 1,032, `type: ignore` 336, broad `except` 1,022 may only go down. | `tests/dev/test_lint_debt_ratchet.py` | — |
+| Working copies normalized to LF (182 files; two files stored with CRLF re-stored as LF); stale references to archived feature specs updated; two-machine working rule added to the agent instructions. | `config/commands.md`, `config/observability.md`, docs, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `config/workflow/development.md` | `git diff --check` clean |
+
 ### Fixed — legacy Open Item completion privacy, 2026-11-05
 
 | Change | Modified files | Validation |

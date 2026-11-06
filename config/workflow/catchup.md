@@ -21,7 +21,7 @@ stay unchanged. A Goal milestone's explicit `open_item_ref` can use the same cur
 when owner, Domain and full subject scope match. Missing/ambiguous links need review, and no completion grants
 an external-action approval. Legacy authored terminal statuses are not automatic Goal completion evidence.
 
-Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `state/audit.md` and continue — partial catch-up is better than no catch-up.
+Execute the following 21-step sequence exactly. Do not skip steps. If a step fails, log the failure to `~/.artha-local/audit.md` and continue — partial catch-up is better than no catch-up.
 
 ### Step 0 — Pre-flight Go/No-Go Gate
 **This step runs BEFORE any data is touched. A failed P0 gate = no catch-up.**
@@ -503,7 +503,7 @@ Before writing ANY state file during domain processing (Step 7), apply this guar
        Options: [show full diff] | [write anyway] | [skip domain this session]"
    c. Wait for user input:
       - "show full diff" → display before/after comparison
-      - "write anyway" → proceed with write, log override to state/audit.md
+      - "write anyway" → proceed with write, log override to ~/.artha-local/audit.md
       - "skip domain" → preserve existing file, continue catch-up
    d. Log event: INTEGRITY_NET_NEGATIVE | file: [domain].md | loss_pct: [N] | action: [blocked|override|skip]
 5. IF loss_pct ≤ 20%: proceed with write normally
@@ -779,7 +779,7 @@ For each signal in `state/planning_signals.md` where `materialized: false`:
       - Run `python3 scripts/planning_signals.py materialize SIG-NNN`.
       - The helper performs `python3 scripts/backup.py file-snapshot <target_file>`,
         post-write YAML validation, idempotency checks, and signal cross-reference updates.
-      - Log to `state/audit.md`: `[date] | Step 8t | materialized | [signal_id] | ok`.
+      - Log to `~/.artha-local/audit.md`: `[date] | Step 8t | materialized | [signal_id] | ok`.
    d. On skip (any variant of "skip", "not now", "no", "later"):
       - Run `python3 scripts/planning_signals.py skip SIG-NNN`.
       - The helper increments `skip_count`. If `skip_count >= 3`, it sets `snoozed_until` = today + 30 days.
@@ -862,7 +862,7 @@ After synthesizing the briefing Markdown (Step 11), extract structured data and 
 from schemas.briefing import BriefingOutput, AlertItem, DomainSummary
 # Populate from the briefing just generated...
 # On validation success: write to tmp/briefing_structured.json
-# On validation failure: log to state/audit.md, continue (never block output)
+# On validation failure: log to ~/.artha-local/audit.md, continue (never block output)
 ```
 
 **Validation checks:**
@@ -874,7 +874,7 @@ from schemas.briefing import BriefingOutput, AlertItem, DomainSummary
 **Output:** Write validated structured data to `tmp/briefing_structured.json`.
 Downstream consumers: `channel_push.py`, `/diff` command, dashboard rebuild (Step 8h).
 
-**Graceful degradation:** Validation failure logs to `state/audit.md` and is counted in
+**Graceful degradation:** Validation failure logs to `~/.artha-local/audit.md` and is counted in
 `harness_metrics.structured_output.validation_errors` (see Step 16) but **never blocks
 output**.  The briefing is always presented to the user.
 
@@ -1052,7 +1052,7 @@ If MS Graph OAuth is configured (`.tokens/msgraph-token.json` exists):
 python3 scripts/todo_sync.py
 ```
 This pushes open items with `todo_id: ""` to the appropriate domain-tagged To Do list and writes the returned `todo_id` back to `open_items.md`.
-Failure is **non-blocking** — catch-up continues if To Do sync fails. Log failure to `state/audit.md`.
+Failure is **non-blocking** — catch-up continues if To Do sync fails. Log failure to `~/.artha-local/audit.md`.
 
 ### Step 16 — Update health-check
 Append/update the structured YAML block in `state/health-check.md`:
@@ -1195,7 +1195,7 @@ signal_ratio = actionable_items / total_items_extracted × 100
 Track 30-day rolling average. If signal ratio drops below 30%, generate prompt tuning alert in weekly summary.
 
 ### Step 17 — Log PII stats
-Append to state/audit.md: total emails scanned, PII detections, PII filtered. One line summary:
+Append to ~/.artha-local/audit.md: total emails scanned, PII detections, PII filtered. One line summary:
 `[timestamp] CATCH_UP | emails=[N] | pii_detected=[N] | pii_filtered=[N] | open_items_added=[N]`
 
 ### Step 18 — Ephemeral cleanup + Re-encrypt
@@ -1305,7 +1305,7 @@ python3 scripts/kb_lint.py --brief-mode
   Example: `Data Health: 87% (15 files, 2E 3W, 142ms)`
 - If `.brief-mode` is already captured from `state/lint_summary.yaml` (from a recent non-brief run): use its `health_pct` directly without re-running the script.
 - If the command fails, times out, or `kb_lint.py` is not present: skip silently.
-- Log to `state/audit.md` only if the command fails on 3 or more consecutive catch-ups.
+- Log to `~/.artha-local/audit.md` only if the command fails on 3 or more consecutive catch-ups.
 
 **Never block:** wrap in `try/except`; `--brief-mode` always exits 0, so any non-zero exit code is a hard error.
 

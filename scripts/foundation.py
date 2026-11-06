@@ -68,6 +68,12 @@ import keyring
 _config: dict[str, Any] = {}
 
 
+def _machine_local_audit_log() -> Path:
+    """The installed workspace's audit log lives outside the synced state/ folder (audit C2, 2026-11-05)."""
+    from lib.local_paths import audit_log_path
+    return audit_log_path()
+
+
 def _init_config() -> None:
     """Populate _config with default values derived from this file's location."""
     artha_dir = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -75,7 +81,7 @@ def _init_config() -> None:
         "ARTHA_DIR":    artha_dir,
         "STATE_DIR":    artha_dir / "state",
         "CONFIG_DIR":   artha_dir / "config",
-        "AUDIT_LOG":    artha_dir / "state" / "audit.md",
+        "AUDIT_LOG":    _machine_local_audit_log(),
         "LOCK_FILE":    artha_dir / ".artha-decrypted",
         # 12 entries — (domain, extension) tuples.
         # Legacy plain strings are auto-coerced to (domain, ".md") by

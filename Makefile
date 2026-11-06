@@ -84,9 +84,9 @@ COV_BRANCH_MIN ?= 85
 DIFF_BASE ?= origin/main
 DIFF_RANGE_NOTATION ?= ...
 
-coverage: ## Line+branch coverage floor on the new core package (fails below COV_MIN)
-	@$(PYTEST) $(CORE_TESTS) -q -p no:cacheprovider --cov=$(CORE_PKG) --cov-branch \
-		--cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under=$(COV_MIN)
+coverage: ## Line+branch coverage floor on the new core package (fails below COV_MIN); isolated workspace
+	@$(PYTHON) tools/run_tests_isolated.py $(CORE_TESTS) -q -p no:cacheprovider --cov=$(CORE_PKG) --cov-branch \
+		--cov-report=term-missing --cov-report=xml:"$(abspath coverage.xml)" --cov-fail-under=$(COV_MIN)
 	@$(PYTHON) $(MAKE_DIR)tools/check_core_coverage.py coverage.xml --minimum=$(COV_MIN) --branch-minimum=$(COV_BRANCH_MIN)
 
 HARNESS_MODULES = tool_guard session_stop stale_banner lib.action_policy lib.credentials lib.credential_migration lib.action_credentials lib.action_process lib.action_evidence catchup_core.recovery_registry catchup_core.recovery_quarantine catchup_core.quarantine_review catchup_core.recovery_access catchup_core.quarantine_fs_windows catchup_core.session_lock catchup_core.privacy_history catchup_core.work_privacy lib.work_publication catchup_core.storage_adoption

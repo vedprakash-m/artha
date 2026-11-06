@@ -48,11 +48,12 @@ from lib.retry import with_retry
 # ---------------------------------------------------------------------------
 
 from lib.common import ARTHA_DIR as _ARTHA_DIR_PATH
+from lib.local_paths import audit_log_path
 
 ARTHA_DIR       = str(_ARTHA_DIR_PATH)
 OPEN_ITEMS_FILE = os.path.join(ARTHA_DIR, "state", "open_items.md")
 CONFIG_FILE    = os.path.join(ARTHA_DIR, "config", "artha_config.yaml")
-AUDIT_FILE     = os.path.join(ARTHA_DIR, "state", "audit.md")
+AUDIT_FILE     = str(audit_log_path(ARTHA_DIR))
 
 GRAPH_TODO_BASE = "https://graph.microsoft.com/v1.0/me/todo/lists"
 

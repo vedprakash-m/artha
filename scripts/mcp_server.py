@@ -59,7 +59,8 @@ mcp = FastMCP("artha")
 # Constants
 # ---------------------------------------------------------------------------
 _STATE_DIR = _REPO_ROOT / "state"
-_AUDIT_LOG = _STATE_DIR / "audit.md"
+from lib.local_paths import audit_log_path
+_AUDIT_LOG = audit_log_path(_STATE_DIR.parent)
 
 # Domains stored as encrypted .age files (contain sensitive PII)
 _ENCRYPTED_DOMAINS: frozenset[str] = frozenset({
