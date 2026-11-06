@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — release-evidence provenance and consent-generation fetch, 2026-11-06
+
+| Change | Modified files | Validation |
+|---|---|---|
+| `tools/release_evidence.py assemble-release` now loads the encrypted, permission-rechecked retained outcome (`corpus.latest_outcome()`) and recomputes live status from its provenance; caller-supplied evaluations can no longer claim live status, and the CLI refuses (exit 2) without a retained outcome. | `tools/release_evidence.py`, `tests/catchup_core/test_release_evidence_tools.py`, `tests/catchup_core/test_integrated_surfaces.py`, `specs/re-artha-fc-assemblers.md` | Provenance, forgery and CLI-refusal tests fail before the change and pass after |
+| Owner-approved consent-generation provider-fetch amendment; complexity helpers extracted with no behavior change. | `scripts/catchup_core/runtime.py`, `scripts/catchup_core/coordinator.py`, `scripts/catchup_core/corpus.py`, `tests/catchup_core/test_coordinator.py`, `tests/catchup_core/test_corpus_provenance.py`, `tests/catchup_core/test_runtime.py`, `specs/re-artha.md` | Full suite 4,621 passed, 94 skipped; Ruff, strict mypy, state-write ratchet (144 ≤ 147), `validate` pass. These core edits change the implementation fingerprint: authoritative Catch-ups refuse until the owner re-signs after commit and green CI. Live full-profile acceptance remains open. |
+
 ### Release — re-sign 19, 2026-11-05
 
 Owner-approved re-sign for implementation cohort `595b0a15…` after commit 262fe5d. Release check admitted; shadow
