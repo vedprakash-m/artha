@@ -124,6 +124,16 @@ launcher mocks corrected in the later local cohort; changed-line coverage referr
 to a pre-scrub base absent from the rewritten history. Neither the old failed run
 nor the passing local cohort establishes current hosted acceptance.
 
+## Re-sign 19 — 2026-11-05 21:32 PT (Mac, owner-approved, owner-run)
+
+Commit `262fe5d` changed the fingerprinted `scripts/lib/local_paths.py` (side-effect-free audit path, which fixed
+the hosted Windows contracts), so re-sign 18 no longer matched. Re-sign 19 bound implementation `595b0a15…`; the
+release check admits it and shadow Catch-up `cu_462d59ad3a1c` fetched under the same cohort, pausing for extraction.
+CI on `262fe5d` was green on every platform (one Ubuntu job re-run after a PowerShell start-up timeout).
+**Caveat:** the fingerprint covers the working tree, and at signing time it also contained uncommitted Windows-session
+edits to `coordinator.py`, `corpus.py` and `runtime.py` (made 21:23–21:24 PT, with tests; not yet reviewed, committed or
+run in CI). Re-sign 19 therefore binds those edits too. Re-sign again after that work is committed and CI is green.
+
 ## Re-sign 18 — 2026-11-05 20:01 PT (Mac, owner-approved)
 
 The Goal evidence-time fix and both audit batches changed fingerprinted code, so authoritative runs were refused

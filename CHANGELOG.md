@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Release — re-sign 19, 2026-11-05
+
+Owner-approved re-sign for implementation cohort `595b0a15…` after commit 262fe5d. Release check admitted; shadow
+Catch-up confirmed the cohort. The cohort also includes uncommitted Windows-session core edits present at signing
+time (coordinator, corpus, runtime); a re-sign is due once they are committed and CI is green.
+
 ### Release — re-sign 18, 2026-11-05
 
 Owner-approved re-sign of the first-slice release for implementation cohort `0a7f8889…` (commits 9b223ab, f7b549b,
