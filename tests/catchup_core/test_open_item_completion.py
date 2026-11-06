@@ -1,5 +1,6 @@
 """RA-03/11: one owner-reviewed completion follows the canonical item through every projection."""
 from argparse import Namespace
+from dataclasses import replace
 from pathlib import Path
 import os
 import subprocess
@@ -9,7 +10,7 @@ import pytest
 
 from catchup_core import commands
 from catchup_core import runtime
-from catchup_core.curated import read_authorized_state
+from catchup_core.curated import read_authorized_state, verify_completion
 from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.ledger import PermissionDenied
 import test_integrated_surfaces
@@ -38,11 +39,13 @@ def items(deps, root):
     return commands.execute(Namespace(command='items'), deps, root)['items']
 
 
-def test_open_item_completion_is_shared_by_items_and_briefing_without_authored_writes(app):
+@pytest.mark.parametrize('owner', ['owner', 'kid1', ''])
+def test_open_item_completion_is_shared_by_items_and_briefing_without_authored_writes(app, owner):
     root, deps, _, _ = app
-    path = authored(root)
+    path = authored(root, owner=owner)
     before = path.read_bytes()
     args = review(deps, root)
+    assert commands.execute(Namespace(command='items'), deps, root)['accountable_owner'] == 'owner'
     assert len(items(deps, root)) == 1
     receipt = commands.execute(args, deps, root)
     assert receipt['completed'] == 'open_item:OI-1' and items(deps, root) == []
@@ -76,12 +79,86 @@ def test_changed_open_item_content_invalidates_preview_and_past_completion(app):
     assert len(items(deps, root)) == 1
 
 
-@pytest.mark.parametrize('owner', ['another_owner', ''])
-def test_only_explicit_accountable_owner_can_complete_an_open_item(app, owner):
+def test_changed_authored_owner_still_invalidates_a_completion_preview(app):
     root, deps, _, _ = app
-    authored(root, owner=owner)
+    path = authored(root)
+    args = review(deps, root)
+    path.write_text(path.read_text().replace('  owner: owner\n', '  owner: kid1\n'))
+    with pytest.raises(ValueError, match='changed'):
+        commands.execute(args, deps, root)
+
+
+@pytest.mark.parametrize('owner', ['kid1', ''])
+def test_primary_user_owns_open_items_without_per_item_accountability_metadata(app, owner):
+    root, deps, _, _ = app
+    path = authored(root, owner=owner)
+    before = path.read_bytes()
+    preview = commands.execute(Namespace(command='complete', record='open_item:OI-1',
+                                         apply=None, reopen=False), deps, root)
+    assert preview['accountable_owner'] == deps.ledger._owner
+    result = commands.execute(review(deps, root), deps, root)
+    assert items(deps, root) == []
+    fid = result['completion_reference'][5:].split('@')[0]
+    assert deps.ledger.get_fact(fid, 'owner').value['actor'] == 'owner'
+    commands.execute(review(deps, root, reopen=True), deps, root)
+    assert len(items(deps, root)) == 1
+    assert path.read_bytes() == before
+
+
+def test_primary_accountability_does_not_resolve_an_unknown_privacy_owner(app):
+    root, deps, _, _ = app
+    deps.ledger._known_subjects = frozenset({'owner', 'kid1'})
+    authored(root, owner='another_owner')
     with pytest.raises(PermissionDenied):
         review(deps, root)
+
+
+def test_a_non_primary_actor_cannot_complete_even_an_explicitly_owned_open_item(app):
+    root, deps, _, _ = app
+    authored(root, owner='kid1')
+    with pytest.raises(PermissionDenied):
+        review(replace(deps, viewer='kid1'), root)
+
+
+def test_missing_accountability_does_not_bypass_explicit_subject_consent(app):
+    root, deps, _, _ = app
+    deps.ledger._consent_subjects = frozenset({'kid1'})
+    authored(root, owner='')
+    with pytest.raises((PermissionDenied, ValueError)):
+        review(deps, root)
+    grant = deps.ledger.grant_consent('kid1', 'kid1', '*',
+                                    ['ingest', 'disclose', 'view', 'correct'], 'owner')
+    args = review(deps, root)
+    deps.ledger.revoke_consent(grant)
+    with pytest.raises((PermissionDenied, ValueError)):
+        commands.execute(args, deps, root)
+
+
+def test_authored_privacy_owner_is_preserved_when_no_subject_is_present(app):
+    root, deps, _, _ = app
+    path = authored(root, owner='kid1')
+    path.write_text(path.read_text().replace('  subject: kid1\n', ''))
+    result = commands.execute(review(deps, root), deps, root)
+    fid = result['completion_reference'][5:].split('@')[0]
+    fact = deps.ledger.get_fact(fid, 'owner')
+    assert fact.primary_subject_id == 'kid1'
+    assert fact.value['actor'] == 'owner'
+
+
+def test_authored_owner_privacy_is_not_lost_when_a_different_subject_is_explicit(app):
+    root, deps, _, _ = app
+    deps.ledger._consent_subjects = frozenset({'adult'})
+    authored(root, owner='adult')
+    grant = deps.ledger.grant_consent('adult', 'adult', '*',
+                                    ['ingest', 'disclose', 'view', 'correct'], 'owner')
+    result = commands.execute(review(deps, root), deps, root)
+    fid = result['completion_reference'][5:].split('@')[0]
+    fact = deps.ledger.get_fact(fid, 'owner')
+    assert fact.primary_subject_id == 'kid1'
+    deps.ledger.revoke_consent(grant)
+    with pytest.raises(PermissionDenied):
+        deps.ledger.get_fact(fid, 'owner')
+    assert not verify_completion(deps.ledger, 'owner', result['completion_reference'], fact.value['record_key'])
 
 
 def test_duplicate_open_item_id_cannot_choose_a_commitment_to_complete(app):
@@ -136,6 +213,36 @@ def test_linked_goal_and_plan_share_the_current_open_item_completion_version(app
     commands.execute(review(deps, root, reopen=True), deps, root)
     assert any('0 of 1' in line for line in goal_lines(deps, root))
     assert goal.read_bytes() == before
+
+
+@pytest.mark.parametrize('owner', ['', 'kid1'])
+def test_linked_goal_uses_primary_accountability_without_rewriting_item_ownership(app, owner):
+    root, deps, _, _ = app
+    path = authored(root, owner=owner)
+    linked_goal(root)
+    before = path.read_bytes()
+    assert any('0 of 1' in line for line in goal_lines(deps, root))
+    result = commands.execute(review(deps, root), deps, root)
+    fid, version = result['completion_reference'][5:].split('@', 1)
+    assert any('1 of 1' in line for line in goal_lines(deps, root))
+    context = runtime._plan_lines(root / 'state', today=deps.now().date(), ledger=deps.ledger, viewer='owner')
+    assert context.lines == [] and context.fact_versions == {fid: version}
+    commands.execute(review(deps, root, reopen=True), deps, root)
+    assert any('0 of 1' in line for line in goal_lines(deps, root))
+    assert path.read_bytes() == before
+
+
+def test_linked_goal_cannot_drop_a_distinct_authored_privacy_owner(app):
+    root, deps, _, _ = app
+    deps.ledger._consent_subjects = frozenset({'adult'})
+    authored(root, owner='adult')
+    goal = linked_goal(root)
+    deps.ledger.grant_consent('adult', 'adult', '*',
+                             ['ingest', 'disclose', 'view', 'correct'], 'owner')
+    commands.execute(review(deps, root), deps, root)
+    assert any(': unknown' in line for line in goal_lines(deps, root))
+    goal.write_text(goal.read_text().replace('  subject: kid1\n', '  subject: kid1\n  co_subjects: [adult]\n'))
+    assert any('1 of 1' in line for line in goal_lines(deps, root))
 
 
 @pytest.mark.parametrize('mismatch', ['missing-item', 'owner', 'domain', 'subject', 'duplicate', 'authored-done'])

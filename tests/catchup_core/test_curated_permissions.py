@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -36,6 +37,57 @@ def read(repo, deps, kind='goals'):
 
 def grant(deps, subject='adult1', kind='goals', operations=('ingest', 'disclose', 'view')):
     return deps.ledger.grant_consent(subject, subject, f'curated:{kind}', operations, deps.viewer)
+
+
+def test_encrypted_open_items_remain_in_memory_during_authorized_retrieval(scoped, monkeypatch):
+    import foundation
+
+    repo, deps = scoped
+    directory = repo / 'state'
+    (directory / 'open_items.md.age').write_bytes(b'synthetic encrypted fixture')
+    text = '- id: OI-1\n  subject: ved\n  visible_to: [ved]\n  status: open\n'
+    monkeypatch.setattr(foundation, 'get_age_vault',
+                        lambda **_: SimpleNamespace(read=lambda name: text if name == 'open_items' else ''))
+    assert curated.records(read(repo, deps, 'open_items'), 'open_items')[0]['id'] == 'OI-1'
+    assert not (directory / 'open_items.md').exists()
+    with pytest.raises(ValueError, match='invalid State File'):
+        curated.read_state(directory, '../open_items')
+
+
+@pytest.mark.parametrize('text', ['- id: 1\n', '- id: ""\n', '- id: null\n'])
+def test_missing_open_item_identity_remains_a_review_error(text):
+    with pytest.raises(ValueError, match='identity needs review'):
+        curated.records(text, 'open_items')
+
+
+@pytest.mark.parametrize('record', [
+    {'co_subjects': 'kid1'}, {'co_subjects': [None]}, {'goal_co_subjects': 'kid1'},
+    {'goal_subject': 1}, {'subject': 1}])
+def test_primary_accountability_cannot_repair_malformed_completion_subjects(record):
+    with pytest.raises(ValueError, match='resolved identities'):
+        curated.open_item_subjects(record, 'owner')
+
+
+def test_shared_record_reader_retains_legacy_shapes_and_bounds():
+    assert curated.records('---\ngoals: {G-1: {owner: owner}}\n---\n', 'goals') == [
+        {'id': 'G-1', 'owner': 'owner'}]
+    assert curated.records(' \n', 'goals') == []
+    for text in ['goals: [invalid]\n', '- not_a_record\n']:
+        with pytest.raises(ValueError, match='State File'):
+            curated.records(text, 'goals')
+    with pytest.raises(ValueError, match='review limit'):
+        curated.records('x' * (2 * 1024 * 1024 + 1), 'open_items')
+
+
+def test_other_state_kinds_retain_whole_file_consent(scoped):
+    repo, deps = scoped
+    text = '# Synthetic decisions\n'
+    (repo / 'state' / 'decisions.md').write_text(text)
+    with pytest.raises(PermissionDenied):
+        read(repo, deps, 'decisions')
+    grant(deps, 'adult1', 'decisions')
+    grant(deps, 'adult2', 'decisions')
+    assert read(repo, deps, 'decisions') == text
 
 
 def test_runtime_and_command_keep_allowed_goals_without_unrelated_adult_consent(scoped):

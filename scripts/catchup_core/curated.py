@@ -42,6 +42,15 @@ def completion_subjects(record: Mapping[str, Any], owner: str) -> tuple[str, tup
     return subject, tuple(sorted(set(others + inherited + ([parent] if parent else [])) - {subject}))
 
 
+def open_item_subjects(record: Mapping[str, Any], primary_owner: str) -> tuple[str, tuple[str, ...]]:
+    """Primary accountability does not remove an authored owner's privacy scope."""
+    scope_owner = record.get('owner') or primary_owner
+    subject, others = completion_subjects(record, scope_owner)
+    if isinstance(scope_owner, str) and scope_owner not in {primary_owner, subject}:
+        others = tuple(sorted({*others, scope_owner}))
+    return subject, others
+
+
 def completion_key(kind: str, record: Mapping[str, Any]) -> str:
     """Bind confirmation to the actual commitment, excluding its changing lifecycle fields."""
     content = {k: v for k, v in record.items() if k not in {'status', 'evidence', 'completion_evidence'}}
@@ -117,12 +126,12 @@ def open_item_links(ledger: Ledger, viewer: str, goals: Sequence[Mapping[str, An
             item = matches[0]
             owner = child.get('owner', goal.get('owner'))
             domain = child.get('domain') or goal.get('domain')
-            if (not isinstance(owner, str) or not owner.strip() or owner != item.get('owner')
+            if (not isinstance(owner, str) or not owner.strip() or owner != ledger._owner
                     or not isinstance(domain, str) or not domain.strip()
                     or domain != (item.get('domain') or item.get('source_domain'))):
                 continue
             try:
-                if completion_subjects(record, owner) != completion_subjects(item, owner):
+                if completion_subjects(record, owner) != open_item_subjects(item, ledger._owner):
                     continue
             except ValueError:
                 continue

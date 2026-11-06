@@ -285,7 +285,7 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             if getattr(args, 'detail', False):
                 result['evidence_versions'] = dict(lines.fact_versions)
         else:
-            result = {args.command: authored}
+            result = {args.command: authored, 'accountable_owner': led._owner}
         deps.validate_inputs()
         current = read_authorized_state(workspace / 'state', name, led, viewer, deps.subjects)
         if current != text or generation != led._permission_generation():
@@ -379,15 +379,17 @@ def _completion_record(args: Namespace, deps: Deps, workspace: Path) -> tuple[st
 def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:
     """Preview and confirm or withdraw exact, version-bound owner evidence; authored fields stay unchanged."""
     from catchup_core.contracts import FactStatus, Provenance  # noqa: PLC0415
-    from catchup_core.curated import completion_key, completion_subjects  # noqa: PLC0415
+    from catchup_core.curated import completion_key, completion_subjects, open_item_subjects  # noqa: PLC0415
     from catchup_core.ledger import FactInput, PermissionDenied  # noqa: PLC0415
     from catchup_core.policy import authorize_source  # noqa: PLC0415
     led, viewer = deps.ledger, deps.viewer
     kind, record, parent = _completion_record(args, deps, workspace)
-    owner = record.get('owner', parent.get('owner'))
+    record_owner = record.get('owner', parent.get('owner'))
+    owner = led._owner if kind == 'open_item' else record_owner
     if owner != viewer:
         raise PermissionDenied('only the accountable owner may confirm completion')
-    subject, co_subjects = completion_subjects(record, owner)
+    subject, co_subjects = (open_item_subjects(record, led._owner) if kind == 'open_item'
+                           else completion_subjects(record, owner))
     if led._known_subjects is not None and not {subject, *co_subjects} <= led._known_subjects:
         raise PermissionDenied('completion subject is unresolved')
     domain = str(record.get('domain') or parent.get('domain') or deps.pack.domain)
@@ -413,7 +415,7 @@ def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[st
                               prior.recorded_at if prior else None])
         return ids.evidence_id(deps.id_key, payload)
     if args.apply is None:
-        return {'record': record, 'before': prior.status if prior else 'unverified',
+        return {'record': record, 'accountable_owner': owner, 'before': prior.status if prior else 'unverified',
                 'after': 'completion withdrawn' if reopening else 'completed by explicit owner confirmation',
                 'apply_token': f'{now}:{signature(now)}', 'expires_in_seconds': 1800}
     receipt = ids.evidence_id(deps.id_key, args.apply)
