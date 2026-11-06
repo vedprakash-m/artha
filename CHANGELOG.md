@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — legacy Open Item completion privacy, 2026-11-05
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Preserve conservative whole-file subject scope in confirmations for entirely unscoped legacy Open Items. Bind preview tokens and applied-receipt replay to the resolved scope; linked Goals cannot drop those co-subjects. Keep primary-user accountability, authored bytes, commitment keys and consent boundaries unchanged. | `scripts/catchup_core/commands.py`, `scripts/catchup_core/curated.py`, `scripts/catchup_core/capabilities.py`, `tests/catchup_core/test_open_item_completion.py`; generated manifest/traceability, tech spec v3.52.0 and implementation status | Revocation and changed-scope preview counterexamples failed before repair; an additional applied-receipt regression also failed before repair. Final isolated owner/permission/Goal/plan/scratch-UAT selection: 299 passed, curated module 100% combined coverage. Exact staged LF candidate: 435 passed, one skipped, curated 100%, generated registers current. Final isolated E2E/release/corpus/transfer selection: 828 passed, eight skipped. Public Ruff, strict core mypy, imports and state-write ratchet passed. Live full-profile acceptance and owner-reviewed release re-sign remain open. |
+
 ### Changed — primary-user Open Item accountability, 2026-11-05
 
 | Change | Modified files | Validation |

@@ -1,7 +1,7 @@
 # Artha — Technical Specification
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.51.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.52.0 | **Status**: Active Development | **Date**: November 5, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
 > **Implements**: PRD v7.31.0
 
@@ -11,6 +11,7 @@
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.52.0 | 2026-11-05 | **Legacy completion privacy** — Entirely unscoped personal Open Items retain conservative whole-file subjects in completion Facts and linked Goal comparisons. Preview tokens bind co-subjects; receipt replay refuses changed subject scope. No authored State File rewrite, consent grant or authority change. |
 | v3.51.0 | 2026-11-05 | **Primary-user Open Item accountability** — Personal Open Item confirmations use the trusted ledger primary user, not per-item owner assignments. Preserve authored permission scope and content keys; include a distinct authored privacy owner in completion co-subjects. Linked primary-owned milestones reuse the exact completion. Preview/items responses name the accountable identity. No State File migration, new setting or live completion. |
 | v3.50.0 | 2026-11-05 | **Slice closure and audit hardening** — Approved re-artha slice closed under re-sign 17 (full-profile work since reopened on a proposed contract). Hosted Windows contracts launch via `CreateProcessAsUserW`. Session-start vault warning covers plaintext copies of vaulted domains; stale-source banner distinguishes per-machine coverage from a Catch-up on another machine; preflight treats held action types as informational; advisory release-drift pre-commit check; CI concurrency, force-push-safe changed-line base, non-gating Windows metadata diagnostic. See §"2026-11-05 audit hardening". |
 | v3.49.0 | 2026-11-05 | **Goal observation time** — Outcome/habit values and weekly comparisons cannot use Facts observed after evaluation. Every required covered source must have completed by evaluation, including mixed-source coverage; on-time observations reject future verification. Authored Goals, authority and release gates are unchanged. |
@@ -7889,6 +7890,10 @@ identity: it remains the primary subject when no subject was authored, or a co-s
 primary user and explicit subject. This prevents a primary-user confirmation from escaping later consent revocation.
 Linked Goal comparisons use this same full privacy scope and primary-user accountability. `items` and completion
 previews expose `accountable_owner`; this is not a new State File field or a consent grant.
+Entirely unscoped legacy Open Items retain the trusted whole-file subjects and consent-required
+subjects in their completion co-subjects. Linked Goal comparisons preserve that conservative scope.
+Completion previews bind the resolved co-subjects, and applied-receipt replay requires the same
+stored subject scope; changing the fallback scope requires a fresh review.
 
 ### External checkpoint dependencies — 2026-10-24
 

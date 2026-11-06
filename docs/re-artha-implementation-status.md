@@ -1,5 +1,29 @@
 # re-artha implementation status — 2026-11-05
 
+## Final accountability privacy repair (Windows)
+
+The first accountability delivery is published as `f0f78cc` and `4fd0679`.
+Further counterexamples exposed lost whole-file privacy on entirely unscoped legacy
+Open Items and reusable completion reviews after the fallback scope changed. Both
+pre-apply and already-applied receipt paths now require the resolved subject scope.
+Completion Facts preserve the trusted legacy co-subjects, including consent-required
+participants; consent revocation withholds the confirmation. Linked Goal completion
+requires the same conservative scope. Authored bytes and commitment keys are unchanged.
+
+The final isolated owner/permission/Goal/plan/scratch-UAT selection passed **299 tests**
+with **100% combined line/branch coverage** over the shared curated module. Regression
+cases include revocation, changed-scope preview and receipt replay, and matching versus
+narrower linked Goal scopes. Public Ruff, strict core mypy, import checks and the
+state-write ratchet passed. The final isolated E2E/release/corpus/transfer selection
+passed **828 tests, eight skipped**. The exact staged LF candidate passed **435 tests,
+one skipped**, with **100% curated combined coverage** and generated-register checks.
+Staged, whole working-tree and full retained-history privacy/PII/secrets scans passed.
+The repair is committed as `d76ed06`; pre-commit protections also passed without bypass.
+The architecture/release-advisory/privacy-hook selection passed **90 tests, four skipped**.
+Publication and new-tip hosted results remain separately recorded; no current-source
+full local aggregate is claimed.
+This repair does not close the live full-profile acceptance gaps.
+
 ## Current continuation — primary-user accountability (Windows)
 
 The owner approved the full-completion contract, then explicitly accepted accountability for
@@ -27,9 +51,9 @@ Goal temporal repair `9b223ab` and audit follow-up `f7b549b` were published by t
 session. Hosted CI `42128122428` passed all fourteen jobs; hosted PII `42128122529` passed.
 Documentation tip `830e9e2` is on origin/main; its hosted PII `42131911930` also passed.
 Its platform CI `42131912071` passed all fourteen jobs. Accountability implementation
-is committed locally as `f0f78cc` after the exact staged LF candidate passed **290 tests**
+was published as `f0f78cc` after the exact staged LF candidate passed **290 tests**
 with **100% curated coverage**, generated-register checks and staged privacy. Publication
-is the next delivery step; the full-v4 evidence and live release gates remain open.
+completed with documentation commit `4fd0679`; the full-v4 evidence and live release gates remain open.
 The active hook names the changed release-fingerprinted files: authoritative use requires
 a separately reviewed owner re-sign. No signed cohort was altered by this implementation.
 
