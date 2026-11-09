@@ -42,12 +42,13 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
+from catchup_core import quarantine_fs_windows, quarantine_review, recovery_quarantine, work_privacy
 from catchup_core.backup import atomic_bytes
 from catchup_core.crypto import DecryptionError, EnvelopeCipher
 from catchup_core.session_lock import session_lock, session_lock_reader
 
 if TYPE_CHECKING:
-    from catchup_core.quarantine_fs_windows import WindowsQuarantineDirectory
+    from catchup_core.quarantine_fs_windows import FileSnapshot, WindowsQuarantineDirectory
 
 __all__ = [
     "CheckpointBlocked",
@@ -62,6 +63,7 @@ __all__ = [
 ]
 
 _MAGIC = b"ACK2"
+_WORK_STREAM_MAGIC = b"ACK3"
 _ESCROW_MAGIC = b"ES1"
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _CONFLICT = re.compile(r"conflicted copy", re.I)
@@ -74,6 +76,10 @@ _MAX_FRAME = _CHUNK + 4096
 _MAX_ESCROW = 4 << 20
 _MAX_MANIFEST_BYTES = 64 << 20
 _MAX_SQLITE_BYTES = 256 << 20
+_MAX_WORK_STREAMS = 10000
+_MAX_WORK_STREAM_BYTES = 8 << 20
+_MAX_WORK_STREAM_TOTAL_BYTES = 32 << 20
+_MAX_WORK_STREAMS_PER_OWNER = 1024
 
 
 class CheckpointError(RuntimeError):
@@ -110,30 +116,39 @@ def _is_sqlite(path: Path) -> bool:
 def _source_stream_problems(path: Path, key: str, *, directory: bool) -> list[str]:
     if sys.platform != 'win32':
         return []
-    from catchup_core.quarantine_fs_windows import (  # noqa: PLC0415
-        QuarantineFilesystemError,
-        require_ordinary_stream,
-    )
 
     try:
-        require_ordinary_stream(path, directory=directory)
-    except QuarantineFilesystemError:
+        quarantine_fs_windows.require_ordinary_stream(path, directory=directory)
+    except quarantine_fs_windows.QuarantineFilesystemError:
         return [f'{key}: source stream inventory could not be verified']
     return []
 
 
-def _walk(  # noqa: PLR0912 - explicit inventory refusal cases
-    roots: Mapping[str, Path], exclude: Mapping[str, str],
+def _walk(  # noqa: PLR0912, PLR0915 - explicit inventory refusal cases
+    roots: Mapping[str, Path], exclude: Mapping[str, str], *,
+    stream_directories: dict[str, Path] | None = None,
 ) -> tuple[dict[str, Path], list[str], dict[str, str]]:
     """Every regular file under each root, the problems that block, and the excluded paths with reasons."""
     found: dict[str, Path] = {}
     problems: list[str] = []
     excluded: dict[str, str] = {}
     for name, root in roots.items():
+        if stream_directories is not None:
+            try:
+                root_info = root.lstat()
+            except OSError as exc:
+                problems.append(f'{name}: root inaccessible ({type(exc).__name__})')
+                continue
+            if getattr(root_info, 'st_file_attributes', 0) & 0x400:
+                problems.append(f'{name}: root is a reparse point')
+                continue
         if root.is_symlink() or not (root.is_file() or root.is_dir()):
             problems.append(f"{name}: root is missing or a link")
             continue
-        problems.extend(_source_stream_problems(root, name, directory=root.is_dir()))
+        if stream_directories is None:
+            problems.extend(_source_stream_problems(root, name, directory=root.is_dir()))
+        elif root.is_dir():
+            stream_directories[name] = root
         if root.is_file():
             found[f'{name}/{root.name}'] = root
             continue
@@ -153,17 +168,25 @@ def _walk(  # noqa: PLR0912 - explicit inventory refusal cases
                     continue
                 path = base / entry
                 try:
-                    mode = path.lstat().st_mode
+                    info = path.lstat()
                 except OSError as exc:
                     problems.append(f'{name}: entry inaccessible ({type(exc).__name__})')
                     continue
-                if stat.S_ISREG(mode) or stat.S_ISDIR(mode):
+                mode = info.st_mode
+                if stream_directories is not None and getattr(info, 'st_file_attributes', 0) & 0x400:
+                    problems.append(f'{key}: reparse point')
+                    if entry in dirs:
+                        dirs.remove(entry)
+                    continue
+                if stream_directories is None and (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
                     problems.extend(_source_stream_problems(path, key, directory=stat.S_ISDIR(mode)))
                 if stat.S_ISLNK(mode):
                     problems.append(f"{key}: symbolic link")
                     if entry in dirs:
                         dirs.remove(entry)
                 elif stat.S_ISDIR(mode):
+                    if stream_directories is not None:
+                        stream_directories[key] = path
                     continue
                 elif not stat.S_ISREG(mode):
                     problems.append(f"{key}: not a regular file")
@@ -201,7 +224,7 @@ def _seal_escrow(items: Mapping[str, bytes], passphrase: str) -> bytes:
 
 
 def _read_head(handle: BinaryIO) -> tuple[str, bytes]:
-    if handle.read(4) != _MAGIC:
+    if handle.read(4) not in {_MAGIC, _WORK_STREAM_MAGIC}:
         raise CheckpointError("not a checkpoint file")
     sizes = handle.read(2)
     if len(sizes) != 2:
@@ -211,7 +234,7 @@ def _read_head(handle: BinaryIO) -> tuple[str, bytes]:
         raise CheckpointError('checkpoint generation is malformed')
     generation = handle.read(generation_size)
     raw = handle.read(4)
-    if len(generation) < 4 or len(raw) != 4:
+    if len(generation) != generation_size or len(raw) != 4:
         raise CheckpointError("checkpoint is truncated")
     escrow_size = struct.unpack('>I', raw)[0]
     if escrow_size > _MAX_ESCROW:
@@ -285,35 +308,71 @@ def _frames(handle: BinaryIO, cipher: EnvelopeCipher, generation: str,
             return
 
 
-def _object(data: bytes) -> dict[str, Any]:
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('duplicate checkpoint metadata field')
+        result[key] = value
+    return result
+
+
+def _invalid_constant(_value: str) -> None:
+    raise ValueError('non-finite checkpoint metadata value')
+
+
+def _object(data: bytes, *, strict: bool = False) -> dict[str, Any]:
     try:
-        value = json.loads(data)
-    except (ValueError, UnicodeError):
+        value = (json.loads(data, object_pairs_hook=_unique_pairs, parse_constant=_invalid_constant)
+                 if strict else json.loads(data))
+    except (ValueError, UnicodeError, RecursionError):
         raise CheckpointError('checkpoint frame metadata is malformed') from None
     if not isinstance(value, dict):
         raise CheckpointError('checkpoint frame metadata must be an object')
     return value
 
 
-def _parse_manifest(raw: bytes, generation: str, escrow: bytes) -> dict[str, Any]:
-    manifest = _object(raw)
-    if (not isinstance(manifest, dict) or manifest.get('schema') != 'artha.checkpoint.v2'
+def _parse_manifest(raw: bytes, generation: str, escrow: bytes, magic: bytes) -> dict[str, Any]:
+    manifest = _object(raw, strict=magic == _WORK_STREAM_MAGIC)
+    schema = 'artha.checkpoint.v3' if magic == _WORK_STREAM_MAGIC else 'artha.checkpoint.v2'
+    if (manifest.get('schema') != schema
             or manifest.get('generation') != generation
             or not isinstance(manifest.get('profile'), str)
-            or not re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', manifest['profile'])):
+            or not re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', manifest['profile'])
+            or (magic == _WORK_STREAM_MAGIC and manifest['profile'] != 'work')):
         raise CheckpointError('checkpoint manifest generation or schema is invalid')
     if manifest.get('escrow_sha256') != hashlib.sha256(escrow).hexdigest():
         raise CheckpointError('checkpoint recovery escrow does not match its authenticated manifest')
     return manifest
 
 
-def _members(path: Path | BinaryIO, cipher: EnvelopeCipher,
-             audit: Callable[[bytes], None] | None = None) -> Iterator[tuple[str, dict[str, Any], Iterator[bytes]]]:
+class _HeaderReader:
+    def __init__(self, source: BinaryIO):
+        self.source = source
+        self.magic: bytes | None = None
+
+    def read(self, size: int = -1) -> bytes:
+        raw = self.source.read(size)
+        if self.magic is None:
+            self.magic = raw
+        return raw
+
+
+def _members(path: Path | BinaryIO, cipher: EnvelopeCipher,  # noqa: PLR0912 - frame dispatch and metadata guards
+             audit: Callable[[bytes], None] | None = None,
+             observed_format: Callable[[bytes], None] | None = None
+             ) -> Iterator[tuple[str, dict[str, Any], Iterator[bytes]]]:
     """Stream (kind, header, chunks); 'end' carries the member's recorded size/hash, 'manifest' the manifest."""
     with path.open("rb") if isinstance(path, Path) else nullcontext(path) as handle:
-        generation, escrow = _read_head(handle)
+        reader = _HeaderReader(handle)
+        generation, escrow = _read_head(cast(BinaryIO, reader))
+        magic = reader.magic
+        if magic is None:
+            raise CheckpointError('checkpoint header is malformed')
+        if observed_format:
+            observed_format(magic)
         if audit:
-            audit(hashlib.sha256(_MAGIC + struct.pack('>H', len(generation)) + generation.encode()
+            audit(hashlib.sha256(magic + struct.pack('>H', len(generation)) + generation.encode()
                                  + struct.pack('>I', len(escrow)) + escrow).digest())
         current: dict[str, Any] | None = None
         manifest_parts: list[bytes] = []
@@ -326,18 +385,32 @@ def _members(path: Path | BinaryIO, cipher: EnvelopeCipher,
                 manifest_parts.append(data)
                 continue
             if manifest_parts:
-                yield "manifest", _parse_manifest(b"".join(manifest_parts), generation, escrow), iter(())
+                yield "manifest", _parse_manifest(b"".join(manifest_parts), generation, escrow, magic), iter(())
                 manifest_parts = []
             if kind == "h":
-                current = _object(data)
+                current = _object(data, strict=magic == _WORK_STREAM_MAGIC)
+                if (magic == _WORK_STREAM_MAGIC and current.get('kind') in ('file', 'sqlite')
+                        and set(current) != {'path', 'kind', 'mode'}):
+                    raise CheckpointError('checkpoint member header is malformed')
+                if magic == _WORK_STREAM_MAGIC and current.get('kind') in ('file', 'sqlite'):
+                    path_value = current['path']
+                    if not isinstance(path_value, str):
+                        raise CheckpointError('checkpoint member path is invalid')
+                    try:
+                        path_value.encode('utf-8')
+                    except UnicodeError:
+                        raise CheckpointError('checkpoint member path is invalid') from None
                 yield "member", current, iter(())
             elif kind == "d":
                 yield "data", current or {}, iter((data,))
             elif kind == "e":
-                yield "end", {**(current or {}), **_object(data)}, iter(())
+                ending = _object(data, strict=magic == _WORK_STREAM_MAGIC)
+                if magic == _WORK_STREAM_MAGIC and set(ending) != {'size', 'sha256'}:
+                    raise CheckpointError('checkpoint member ending is malformed')
+                yield "end", {**(current or {}), **ending}, iter(())
                 current = None
             else:
-                yield "terminator", _object(data), iter(())
+                yield "terminator", _object(data, strict=magic == _WORK_STREAM_MAGIC), iter(())
 
 
 def _safe(key: str) -> str:
@@ -375,6 +448,87 @@ class _PathNames:
             self._directories[normalized] = parent
         self._names.add(identity)
 
+    def add_directory(self, path: str) -> None:
+        _safe(path if '/' in path else path + '/_')
+        parts = path.split('/')
+        for index in range(1, len(parts) + 1):
+            parent = '/'.join(parts[:index])
+            normalized = unicodedata.normalize('NFC', parent).casefold()
+            if normalized in self._names or self._directories.get(normalized, parent) != parent:
+                raise CheckpointError('ambiguous directory path in checkpoint')
+            self._directories[normalized] = parent
+
+
+def _work_stream_header(header: Mapping[str, Any]) -> dict[str, Any]:
+    fields = {'kind', 'owner', 'owner_kind', 'name', 'stream_type'}
+    owner = header.get('owner')
+    name = header.get('name')
+    if (set(header) != fields or header.get('kind') != 'stream' or not isinstance(owner, str)
+            or not isinstance(name, str)
+            or not owner or len(owner) > 1024 or header.get('owner_kind') not in ('file', 'directory')
+            or header.get('stream_type') != '$DATA'):
+        raise CheckpointError('checkpoint stream identity is invalid')
+    try:
+        owner.encode('utf-8')
+        _safe(owner if '/' in owner else owner + '/_')
+        quarantine_fs_windows.validate_named_stream_name(name)
+    except (UnicodeError, CheckpointError, quarantine_fs_windows.QuarantineFilesystemError):
+        raise CheckpointError('checkpoint stream identity is invalid') from None
+    return dict(header)
+
+
+def _work_stream_manifest(
+    manifest: Mapping[str, Any], entries: list[dict[str, Any]],
+    streams: list[dict[str, Any]], names: _PathNames,
+) -> None:
+    roots = manifest.get('roots')
+    if (not isinstance(roots, list) or not roots
+            or any(not isinstance(root, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', root)
+                   for root in roots)
+            or len(set(roots)) != len(roots)):
+        raise CheckpointError('checkpoint Work roots are invalid')
+    context = manifest.get('context')
+    binding = context.get('work_binding') if isinstance(context, dict) else None
+    fields = {'schema', 'profile', 'identity', 'generation', 'head_sha256', 'members',
+              'plaintext_allowed', 'streams', 'mac'}
+    if (not isinstance(binding, dict) or set(binding) != fields
+            or binding.get('schema') != 'artha.work-checkpoint-binding.v2' or binding.get('profile') != 'work'
+            or binding.get('plaintext_allowed') is not False
+            or type(binding.get('generation')) is not int or binding['generation'] < 1
+            or any(not isinstance(binding.get(key), str) or not re.fullmatch(r'[0-9a-f]{64}', binding[key])
+                   for key in ('identity', 'head_sha256', 'mac'))
+            or not isinstance(binding.get('members'), dict) or not isinstance(binding.get('streams'), dict)):
+        raise CheckpointError('checkpoint Work stream binding is invalid')
+    file_entries = {entry['path']: entry for entry in entries}
+    if any(path.split('/', 1)[0] not in roots for path in file_entries):
+        raise CheckpointError('checkpoint member is outside its included roots')
+    if any(_privacy_ledger(entry) for entry in entries):
+        raise CheckpointBlocked('Work checkpoint cannot use the plaintext privacy ledger exception')
+    expected_members = {path: {'size': entry['size'], 'sha256': entry['source_sha256']}
+                        for path, entry in file_entries.items()
+                        if path.split('/', 1)[0] in {'work_state', 'work_local'}}
+    if (binding['members'] != expected_members
+            or any(type(member['size']) is not int for member in binding['members'].values())
+            or any(entry['kind'] != 'file' for path, entry in file_entries.items()
+                   if path.split('/', 1)[0] in {'work_state', 'work_local'})):
+        raise CheckpointError('checkpoint Work members differ from their binding')
+    expected_streams: dict[str, dict[str, Any]] = {}
+    for stream in streams:
+        owner = stream['owner']
+        if owner.split('/', 1)[0] not in roots:
+            raise CheckpointError('checkpoint stream is outside its included roots')
+        if stream['owner_kind'] == 'file':
+            if owner not in file_entries:
+                raise CheckpointError('checkpoint stream owner is not an included file')
+        else:
+            names.add_directory(owner)
+        if owner.split('/', 1)[0] in {'work_state', 'work_local'}:
+            key = work_privacy._stream_key(owner, stream['owner_kind'], stream['name'], stream['stream_type'])
+            expected_streams[key] = {'sha256': stream['sha256'], 'size': stream['size']}
+    if (binding['streams'] != expected_streams
+            or any(type(stream['size']) is not int for stream in binding['streams'].values())):
+        raise CheckpointError('checkpoint Work streams differ from their binding')
+
 
 def _portability_problems(found: Mapping[str, Path]) -> list[str]:
     """Live paths a restore on another platform would rename, merge or refuse; capture must block on them."""
@@ -388,30 +542,175 @@ def _portability_problems(found: Mapping[str, Path]) -> list[str]:
     return problems
 
 
+@dataclass(frozen=True)
+class _CapturedWorkStreams:
+    files: dict[str, Path]
+    directories: dict[str, Path]
+    excluded: dict[str, str]
+    owner_snapshots: dict[str, FileSnapshot]
+    streams: tuple[tuple[dict[str, Any], bytes], ...]
+
+
+def _capture_work_streams(roots: Mapping[str, Path], exclude: Mapping[str, str]) -> _CapturedWorkStreams:
+    """Capture included Work streams in memory; no recovery authority is implied."""
+    if (sys.platform != 'win32' or not roots
+            or any(not isinstance(alias, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', alias)
+                   for alias in roots)):
+        raise CheckpointBlocked('Work stream capture is unavailable or has invalid roots')
+    directories: dict[str, Path] = {}
+    found, problems, excluded = _walk(roots, exclude, stream_directories=directories)
+    if problems:
+        raise CheckpointBlocked('Work stream owner inventory is unavailable or incomplete')
+    names = _PathNames()
+    try:
+        for key in sorted(found):
+            key.encode('utf-8')
+            names.add(key)
+        for key in sorted(directories):
+            key.encode('utf-8')
+            names.add_directory(key)
+    except (CheckpointError, UnicodeError):
+        raise CheckpointBlocked('Work stream owner inventory has unsafe or ambiguous paths') from None
+    snapshots: dict[str, FileSnapshot] = {}
+    captured: list[tuple[dict[str, Any], bytes]] = []
+    total = 0
+    owners = [(key, path, 'file') for key, path in found.items()]
+    owners.extend((key, path, 'directory') for key, path in directories.items())
+    try:
+        for key, path, kind in sorted(owners):
+            snapshot, streams = quarantine_fs_windows.read_named_streams_with_snapshot(
+                path, directory=kind == 'directory',
+                max_total_bytes=_MAX_WORK_STREAM_TOTAL_BYTES - total,
+                max_streams=min(_MAX_WORK_STREAMS_PER_OWNER, _MAX_WORK_STREAMS - len(captured)),
+            )
+            snapshots[key] = snapshot
+            for stream in streams:
+                header = _work_stream_header({'kind': 'stream', 'owner': key, 'owner_kind': kind,
+                                              'name': stream.name, 'stream_type': stream.stream_type})
+                captured.append((header, stream.data))
+                total += len(stream.data)
+    except (OSError, quarantine_fs_windows.QuarantineFilesystemError, CheckpointError):
+        raise CheckpointBlocked(
+            'Work stream inventory is unavailable, incomplete, changed, or exceeds its bound',
+        ) from None
+    return _CapturedWorkStreams(found, directories, excluded, snapshots, tuple(captured))
+
+
+def _recheck_work_streams(
+    captured: _CapturedWorkStreams, roots: Mapping[str, Path], exclude: Mapping[str, str],
+) -> None:
+    if _capture_work_streams(roots, exclude) != captured:
+        raise CheckpointBlocked('Work stream owners or content changed during capture')
+
+
+def _work_quarantine_capacity(
+    manifest: Mapping[str, Any], chunk_lengths: Mapping[tuple[str, ...], list[int]], overflow: bool,
+) -> None:
+    quarantine = recovery_quarantine
+
+    try:
+        quarantine._json(dict(manifest), quarantine.MAX_CATALOG_BYTES)
+        entries = [*manifest['entries'], *manifest['streams']]
+        if (overflow or len(entries) > quarantine.MAX_ENTRIES
+                or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', manifest['generation'])):
+            raise quarantine.QuarantineError('quarantine capacity exceeded')
+        for entry in entries:
+            quarantine._entry(entry)
+        quarantine._stream_inventory(entries)
+        if sum(entry['size'] for entry in entries) > quarantine.MAX_TOTAL_BYTES:
+            raise quarantine.QuarantineError('quarantine capacity exceeded')
+        catalog_entries = []
+        for entry in entries:
+            lengths = chunk_lengths[quarantine._member_identity(entry)]
+            chunks = [{'name': f"{'0' * 32}-{position:05d}.ae1", 'sha256': '0' * 64,
+                       'length': length, 'ciphertext_length': length + quarantine._OVERHEAD}
+                      for position, length in enumerate(lengths)]
+            catalog_entries.append(dict(entry, member_id='0' * 32, chunks=chunks,
+                                        state='blocked', reason=quarantine.WORK_DENIAL_REASON))
+        catalog = {
+            'schema': 'artha.recovery-quarantine.v2',
+            'checkpoint_id': manifest['generation'],
+            'checkpoint_sha256': '0' * 64,
+            'profile': 'work',
+            'owner': '0' * quarantine.MAX_AUTHORITY_BYTES,
+            'entries': catalog_entries,
+            'recovery_affinity': {'schema': 'artha.recovery-affinity.v1',
+                                  'work_binding': manifest['context']['work_binding']},
+        }
+        quarantine._json(catalog, quarantine.MAX_CATALOG_BYTES)
+    except (quarantine.QuarantineError, KeyError, TypeError, ValueError):
+        raise CheckpointBlocked('Work checkpoint exceeds encrypted quarantine capacity') from None
+
+
 def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
           path: Path | BinaryIO, cipher: EnvelopeCipher, sink: Callable[[dict[str, Any], bytes], None] | None = None,
           opened: Callable[[dict[str, Any]], None] | None = None, *,
           audit: Callable[[bytes], None] | None = None,
-          ended: Callable[[], None] | None = None, verify_ledgers: bool = False) -> dict[str, Any]:
+          ended: Callable[[], None] | None = None, verify_ledgers: bool = False,
+          format_guard: Callable[[bytes], None] | None = None) -> dict[str, Any]:
     """Authenticate and re-hash the whole stream; returns the manifest. Raises on any inconsistency."""
     hashes: dict[str, Any] = {}
     open_member = False
     manifest: dict[str, Any] | None = None
     members = 0
     captured: list[dict[str, Any]] = []
+    captured_streams: list[dict[str, Any]] = []
+    stream_identities: set[tuple[str, str]] = set()
+    stream_owners: dict[str, tuple[str, str]] = {}
+    stream_counts: dict[str, int] = {}
+    stream_total = 0
     names = _PathNames()
     member: dict[str, Any] = {}
     ledger_image: bytearray | None = None
-    stream = _members(path, cipher, audit) if audit else _members(path, cipher)
+    quarantine = recovery_quarantine
+
+    quarantine_chunks: dict[tuple[str, ...], list[int]] = {}
+    member_chunks: list[int] | None = None
+    quarantine_chunk_count = 0
+    quarantine_overflow = False
+    work_format = False
+
+    def observe_format(magic: bytes) -> None:
+        nonlocal work_format
+        work_format = magic == _WORK_STREAM_MAGIC
+        if format_guard is not None:
+            format_guard(magic)
+
+    stream = _members(path, cipher, audit, observe_format)
     for kind, header, chunks in stream:
         if kind == "member":
             if open_member or manifest is not None:
                 raise CheckpointError('checkpoint member is out of order')
-            if (not isinstance(header.get('path'), str) or header.get('kind') not in {'file', 'sqlite'}
-                    or type(header.get('mode')) is not int or not 0 <= header['mode'] <= 0o7777):
-                raise CheckpointError('checkpoint member header is malformed')
-            names.add(header['path'])
-            member = {key: header[key] for key in ('path', 'kind', 'mode')}
+            if header.get('kind') == 'stream':
+                member = _work_stream_header(header)
+                owner = member['owner']
+                folded_owner = unicodedata.normalize('NFC', owner).casefold()
+                folded_name = unicodedata.normalize('NFC', member['name']).casefold()
+                identity = (folded_owner, folded_name)
+                if (identity in stream_identities
+                        or stream_owners.get(folded_owner, (owner, member['owner_kind']))
+                        != (owner, member['owner_kind'])
+                        or len(captured_streams) >= _MAX_WORK_STREAMS):
+                    raise CheckpointError('checkpoint stream identities are ambiguous or oversized')
+                stream_identities.add(identity)
+                stream_owners[folded_owner] = (owner, member['owner_kind'])
+                stream_counts[folded_owner] = stream_counts.get(folded_owner, 0) + 1
+                if stream_counts[folded_owner] > _MAX_WORK_STREAMS_PER_OWNER:
+                    raise CheckpointError('checkpoint stream owner exceeds its count bound')
+            else:
+                if (not isinstance(header.get('path'), str) or header.get('kind') not in ('file', 'sqlite')
+                        or type(header.get('mode')) is not int or not 0 <= header['mode'] <= 0o7777):
+                    raise CheckpointError('checkpoint member header is malformed')
+                names.add(header['path'])
+                member = {key: header[key] for key in ('path', 'kind', 'mode')}
+            if work_format and not quarantine_overflow:
+                if len(quarantine_chunks) >= quarantine.MAX_ENTRIES:
+                    quarantine_overflow = True
+                    quarantine_chunks.clear()
+                    member_chunks = None
+                else:
+                    member_chunks = []
+                    quarantine_chunks[quarantine._member_identity(member)] = member_chunks
             hashes = {"digest": hashlib.sha256(), "size": 0}
             open_member = True
             ledger_image = bytearray() if verify_ledgers and _privacy_ledger(member) else None
@@ -423,6 +722,23 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
             (chunk,) = chunks
             hashes["digest"].update(chunk)
             hashes["size"] += len(chunk)
+            if work_format and not quarantine_overflow and member_chunks is not None:
+                full, remainder = divmod(len(chunk), quarantine.CHUNK_BYTES)
+                count = full + bool(remainder)
+                if quarantine_chunk_count + count > quarantine.MAX_CHUNKS:
+                    quarantine_overflow = True
+                    quarantine_chunks.clear()
+                    member_chunks = None
+                else:
+                    quarantine_chunk_count += count
+                    member_chunks.extend([quarantine.CHUNK_BYTES] * full)
+                    if remainder:
+                        member_chunks.append(remainder)
+            if member['kind'] == 'stream' and (
+                hashes['size'] > _MAX_WORK_STREAM_BYTES
+                or stream_total + hashes['size'] > _MAX_WORK_STREAM_TOTAL_BYTES
+            ):
+                raise CheckpointError('checkpoint stream exceeds its byte bound')
             if ledger_image is not None:
                 if hashes["size"] > _MAX_SQLITE_BYTES:
                     raise CheckpointBlocked("restored privacy ledger exceeds its bounded preflight")
@@ -435,12 +751,18 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
                 raise CheckpointError('member content does not match the manifest')
             if any(header.get(key) != value for key, value in member.items()):
                 raise CheckpointError('checkpoint member identity changed')
-            captured.append({**member, 'size': hashes['size'], 'sha256': header['sha256'],
-                             'source_sha256': header['sha256']})
+            if member['kind'] == 'stream':
+                stream_total += hashes['size']
+                if stream_total > _MAX_WORK_STREAM_TOTAL_BYTES:
+                    raise CheckpointError('checkpoint streams exceed their total byte bound')
+                captured_streams.append({**member, 'size': hashes['size'], 'sha256': header['sha256']})
+            else:
+                captured.append({**member, 'size': hashes['size'], 'sha256': header['sha256'],
+                                 'source_sha256': header['sha256']})
+                members += 1
             if ledger_image is not None:
                 _verify_ledger_image(ledger_image)
                 ledger_image = None
-            members += 1
             open_member = False
             if ended:
                 ended()
@@ -450,8 +772,22 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
                     or any(type(entry[key]) is not type(value) for entry, actual in zip(entries, captured, strict=True)
                            for key, value in actual.items())):
                 raise CheckpointError('checkpoint members do not match its manifest')
+            if header['schema'] == 'artha.checkpoint.v3':
+                if (header.get('streams') != captured_streams
+                        or any(type(entry[key]) is not type(value)
+                               for entry, actual in zip(header['streams'], captured_streams, strict=True)
+                               for key, value in actual.items())):
+                    raise CheckpointError('checkpoint streams do not match its manifest')
+                _work_stream_manifest(header, captured, captured_streams, names)
+                _work_quarantine_capacity(header, quarantine_chunks, quarantine_overflow)
+            elif captured_streams:
+                raise CheckpointError('legacy checkpoint cannot contain stream frames')
             manifest = header
-        elif open_member or manifest is None or type(header.get('members')) is not int or header['members'] != members:
+        elif (open_member or manifest is None or type(header.get('members')) is not int
+              or header['members'] != members
+              or (manifest['schema'] == 'artha.checkpoint.v3'
+                  and (set(header) != {'members', 'streams'} or type(header.get('streams')) is not int
+                       or header['streams'] != len(captured_streams)))):
             raise CheckpointError("checkpoint members do not match its manifest")
     if manifest is None:
         raise CheckpointError("checkpoint has no manifest")
@@ -592,6 +928,85 @@ def _stream_member(writer: _Writer, key: str, path: Path, source: str, mode: int
     return Entry(key, size, source, mode, "sqlite" if sqlite else "file", source)
 
 
+def _stream_work_member(
+    writer: _Writer, key: str, path: Path, pinned: FileSnapshot, source: str, mode: int,
+) -> Entry:
+    """Capture a pinned Work file through bounded native handles, or refuse its partial frames."""
+    try:
+        if (sys.platform != 'win32' or not isinstance(key, str) or len(key.encode('utf-8')) > 4096
+                or not isinstance(source, str) or not re.fullmatch(r'[0-9a-f]{64}', source)
+                or type(mode) is not int or not 0 <= mode <= 0o7777
+                or type(pinned.size) is not int or not 0 <= pinned.size <= recovery_quarantine.MAX_MEMBER_BYTES):
+            raise CheckpointBlocked('Work member capture is unavailable or exceeds its bound')
+        _safe(key)
+        with quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent, \
+                parent.open_file(path.name, private=False) as handle:
+            before = handle.snapshot()
+            if before != pinned or handle.check_path(expected_identity=pinned.identity) != pinned.identity:
+                raise CheckpointBlocked('Work member changed before capture')
+            handle.seek(0)
+            pending = bytearray()
+            while len(pending) < min(len(_SQLITE_HEADER), before.size):
+                piece = handle.read_chunk(min(65536, before.size - len(pending)))
+                if not piece:
+                    raise CheckpointBlocked('Work member ended during capture')
+                pending.extend(piece)
+            if pending.startswith(_SQLITE_HEADER):
+                raise CheckpointBlocked('journaled Work SQLite members are not supported')
+            writer.frame('h', json.dumps({'path': key, 'kind': 'file', 'mode': mode}).encode())
+            digest = hashlib.sha256(pending)
+            size = len(pending)
+            while size < before.size:
+                piece = handle.read_chunk(min(65536, before.size - size))
+                if not piece:
+                    raise CheckpointBlocked('Work member ended during capture')
+                size += len(piece)
+                digest.update(piece)
+                pending.extend(piece)
+                while len(pending) >= _CHUNK:
+                    writer.frame('d', bytes(pending[:_CHUNK]))
+                    del pending[:_CHUNK]
+            if pending:
+                writer.frame('d', bytes(pending))
+            if (size != before.size or digest.hexdigest() != source or handle.snapshot() != before
+                    or handle.check_path(expected_identity=pinned.identity) != pinned.identity):
+                raise CheckpointBlocked('Work member changed during capture')
+            writer.frame('e', json.dumps({'size': size, 'sha256': source}).encode())
+            return Entry(key, size, source, mode, 'file', source)
+    except (quarantine_fs_windows.QuarantineFilesystemError, OSError, UnicodeError, CheckpointError):
+        raise CheckpointBlocked('Work member capture could not be verified') from None
+
+
+def _work_member_entry(key: str, path: Path, pinned: FileSnapshot) -> Entry:
+    """Inventory ordinary Work bytes through the same pinned native boundary as capture."""
+    if not 0 <= pinned.size <= recovery_quarantine.MAX_MEMBER_BYTES:
+        raise CheckpointBlocked('Work member exceeds its capture bound')
+    try:
+        with quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent, \
+                parent.open_file(path.name, private=False) as handle:
+            if handle.snapshot() != pinned:
+                raise CheckpointBlocked('Work member changed before inventory')
+            handle.seek(0)
+            digest, prefix, remaining = hashlib.sha256(), bytearray(), pinned.size
+            while remaining:
+                piece = handle.read_chunk(min(65536, remaining))
+                if not piece:
+                    raise CheckpointBlocked('Work member ended during inventory')
+                digest.update(piece)
+                prefix.extend(piece[:max(0, len(_SQLITE_HEADER) - len(prefix))])
+                remaining -= len(piece)
+            mode = stat.S_IMODE(path.lstat().st_mode)
+            if (handle.snapshot() != pinned
+                    or handle.check_path(expected_identity=pinned.identity) != pinned.identity):
+                raise CheckpointBlocked('Work member changed during inventory')
+            if prefix == _SQLITE_HEADER:
+                raise CheckpointBlocked('Work generation capture does not support SQLite member images')
+            sha256 = digest.hexdigest()
+            return Entry(key, pinned.size, sha256, mode, 'file', sha256)
+    except (OSError, quarantine_fs_windows.QuarantineFilesystemError):
+        raise CheckpointBlocked('Work member input could not be verified') from None
+
+
 def _first_pass(found: Mapping[str, Path]) -> tuple[dict[str, str], dict[str, tuple[int, int]], list[str]]:
     source: dict[str, str] = {}
     stats: dict[str, tuple[int, int]] = {}
@@ -628,6 +1043,100 @@ def _sync_directory(path: Path) -> None:
             os.close(fd)
 
 
+def _create_work_streams(  # noqa: PLR0912, PLR0915 - one fail-closed ACK3 capture transaction
+        roots: Mapping[str, Path], dest_dir: Path, cipher: EnvelopeCipher, escrow: Mapping[str, bytes],
+        passphrase: str, *, now: datetime, lock_path: Path, exclude: Mapping[str, str], context: dict[str, Any],
+        quiesce: Callable[[], Sequence[str]], before_publish: Callable[[], None]) -> Path:
+    """Archive the authenticated Work generation; later source edits are separate state."""
+    if not _outside(dest_dir, list(roots.values())):
+        raise CheckpointBlocked("destination is inside the checkpointed tree")
+    with session_lock(lock_path):
+        if dest_dir.exists() and any(dest_dir.glob('.*.ack.part')):
+            raise CheckpointBlocked('interrupted checkpoint needs recovery review; partial ciphertext was preserved')
+        busy = list(quiesce())
+        if busy:
+            raise CheckpointBlocked("not quiesced: " + "; ".join(busy))
+        captured = _capture_work_streams(roots, exclude)
+        planned = [asdict(_work_member_entry(key, path, captured.owner_snapshots[key]))
+                   for key, path in sorted(captured.files.items())]
+        source = {entry['path']: entry['sha256'] for entry in planned}
+        modes = {entry['path']: entry['mode'] for entry in planned}
+        streams = [{**header, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+                   for header, data in captured.streams]
+        generation = f"ck_{now.strftime('%Y%m%dT%H%M%SZ')}_{secrets.token_hex(4)}"
+        manifest: dict[str, Any] = {
+            'schema': 'artha.checkpoint.v3', 'generation': generation, 'profile': 'work',
+            'created_at': now.isoformat(), 'entries': planned, 'streams': streams, 'roots': sorted(roots),
+            'excluded': captured.excluded,
+            'context': dict(context, capture_semantics='authenticated_work_generation'),
+            'escrow_items': sorted(escrow)}
+        try:
+            _work_stream_manifest(manifest, planned, streams, _PathNames())
+        except CheckpointError:
+            raise CheckpointBlocked('Work capture differs from its current binding') from None
+        target = dest_dir / f"artha-work-{generation}.ack"
+        if target.exists():
+            raise CheckpointBlocked("checkpoint generations are write-once")
+        dest_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        part = dest_dir / f".{target.name}.part"
+        sealed = _seal_escrow(escrow, passphrase)
+        manifest['escrow_sha256'] = hashlib.sha256(sealed).hexdigest()
+        published = False
+        owned_part = False
+        try:
+            fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            owned_part = True
+            with os.fdopen(fd, "wb") as handle:
+                gen = generation.encode()
+                handle.write(_WORK_STREAM_MAGIC + struct.pack(">H", len(gen)) + gen
+                             + struct.pack(">I", len(sealed)) + sealed)
+                writer = _Writer(handle, cipher, generation)
+                entries = [asdict(_stream_work_member(writer, key, captured.files[key],
+                                                      captured.owner_snapshots[key], source[key], modes[key]))
+                           for key in sorted(captured.files)]
+                if entries != planned:
+                    raise CheckpointBlocked('Work member changed during capture')
+                for header, data in captured.streams:
+                    writer.frame('h', json.dumps(header).encode())
+                    for offset in range(0, len(data), _CHUNK):
+                        writer.frame('d', data[offset:offset + _CHUNK])
+                    writer.frame('e', json.dumps({'size': len(data),
+                                                  'sha256': hashlib.sha256(data).hexdigest()}).encode())
+                manifest_raw = json.dumps(manifest, sort_keys=True).encode()
+                if len(manifest_raw) > _MAX_MANIFEST_BYTES:
+                    raise CheckpointBlocked("checkpoint manifest exceeds its size limit")
+                for piece in _chunks(manifest_raw):
+                    writer.frame("m", piece)
+                writer.frame("z", json.dumps({"members": len(entries), "streams": len(streams)}).encode())
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                verify(part, cipher)
+            except CheckpointError as exc:
+                if isinstance(exc, CheckpointBlocked):
+                    raise
+                raise CheckpointBlocked('Work checkpoint failed its pre-publication verification') from None
+            before_publish()
+            _recheck_work_streams(captured, roots, exclude)
+            if [asdict(_work_member_entry(key, path, captured.owner_snapshots[key]))
+                    for key, path in sorted(captured.files.items())] != planned:
+                raise CheckpointBlocked('Work member changed during capture') from None
+            try:
+                os.link(part, target)
+            except FileExistsError:
+                raise CheckpointBlocked('checkpoint generations are write-once') from None
+            published = True
+            part.unlink()
+            _sync_directory(dest_dir)
+        except BaseException:
+            if owned_part:
+                part.unlink(missing_ok=True)
+            if published:
+                target.unlink(missing_ok=True)
+            raise
+        return target
+
+
 def create(  # noqa: PLR0912, PLR0915 - one fail-closed capture transaction
            profile: str, roots: Mapping[str, Path], dest_dir: Path, cipher: EnvelopeCipher,
            escrow: Mapping[str, bytes], passphrase: str, *, now: datetime, lock_path: Path,
@@ -637,6 +1146,17 @@ def create(  # noqa: PLR0912, PLR0915 - one fail-closed capture transaction
     """Capture one coherent generation, or raise :class:`CheckpointBlocked` and publish nothing."""
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", profile):
         raise CheckpointError("invalid profile name")
+    if profile == 'work' and context is not None and 'work_binding' in context:
+        binding = context['work_binding']
+        schema = binding.get('schema') if isinstance(binding, Mapping) else None
+        if schema == 'artha.work-checkpoint-binding.v2':
+            _check_passphrase(passphrase)
+            return _create_work_streams(
+                roots, dest_dir, cipher, escrow, passphrase, now=now, lock_path=lock_path,
+                exclude=dict(exclude or {}), context=dict(context), quiesce=quiesce,
+                before_publish=before_publish)
+        elif schema != 'artha.work-checkpoint-binding.v1':
+            raise CheckpointBlocked('Work checkpoint binding schema is not supported')
     _check_passphrase(passphrase)
     if not _outside(dest_dir, list(roots.values())):
         raise CheckpointBlocked("destination is inside the checkpointed tree")
@@ -784,7 +1304,6 @@ def _restore_tree(dest: Path, live_roots: Sequence[Path], marker: dict[str, Any]
 
 @contextmanager
 def _native_restore_tree(dest: Path, marker: dict[str, Any]) -> Iterator[None]:
-    from catchup_core.quarantine_fs_windows import WindowsQuarantineDirectory  # noqa: PLC0415
     try:
         (dest / '.artha-restored.json').lstat()
     except FileNotFoundError:
@@ -792,8 +1311,8 @@ def _native_restore_tree(dest: Path, marker: dict[str, Any]) -> Iterator[None]:
     else:
         raise CheckpointBlocked('another restore owns the destination')
     dest.parent.mkdir(parents=True, exist_ok=True)
-    directory = (WindowsQuarantineDirectory.open(dest) if dest.exists() else
-                 WindowsQuarantineDirectory.create(dest, lock_file=False))
+    directory = (quarantine_fs_windows.WindowsQuarantineDirectory.open(dest) if dest.exists() else
+                 quarantine_fs_windows.WindowsQuarantineDirectory.create(dest, lock_file=False))
     owned = False
     try:
         with directory:
@@ -809,14 +1328,13 @@ def _native_restore_tree(dest: Path, marker: dict[str, Any]) -> Iterator[None]:
 
 
 def _native_restore_parent(dest: Path, parent: Path) -> WindowsQuarantineDirectory:
-    from catchup_core.quarantine_fs_windows import WindowsQuarantineDirectory  # noqa: PLC0415
     current = dest
     for part in parent.relative_to(dest).parts:
         current = current / part
         if not current.exists():
-            with WindowsQuarantineDirectory.create(current, lock_file=False):
+            with quarantine_fs_windows.WindowsQuarantineDirectory.create(current, lock_file=False):
                 pass
-    return WindowsQuarantineDirectory.open(parent)
+    return quarantine_fs_windows.WindowsQuarantineDirectory.open(parent)
 
 
 @contextmanager
@@ -838,13 +1356,56 @@ def _restore_file(dest: Path, target: Path) -> Iterator[Callable[[bytes], object
                 os.fsync(handle.fileno())
 
 
-def _extract(source: BinaryIO, cipher: EnvelopeCipher, dest: Path,
+@contextmanager
+def _preflight_work_extraction(
+    source: BinaryIO, cipher: EnvelopeCipher, manifest: Mapping[str, Any], audit: Callable[[bytes], None],
+    format_guard: Callable[[bytes], None],
+) -> Iterator[tuple[dict[str, Any], Callable[[bytes], None]]]:
+    try:
+        expected_manifest = recovery_quarantine._json(dict(manifest))
+        position = source.tell()
+    except recovery_quarantine.QuarantineError:
+        raise CheckpointBlocked('Work extraction requires the authenticated manifest') from None
+    except (OSError, ValueError):
+        raise CheckpointBlocked('Work extraction requires a seekable checkpoint') from None
+    with tempfile.TemporaryFile(mode='w+b') as fingerprints:
+        def record(digest: bytes) -> None:
+            fingerprints.write(digest)
+        verified = _scan(source, cipher, audit=record, format_guard=format_guard)
+        if recovery_quarantine._json(verified) != expected_manifest:
+            raise CheckpointBlocked('Work extraction manifest differs from authenticated preflight')
+        try:
+            source.seek(position)
+            fingerprints.seek(0)
+        except (OSError, ValueError):
+            raise CheckpointBlocked('Work extraction requires a seekable checkpoint') from None
+
+        def unchanged(digest: bytes) -> None:
+            if fingerprints.read(32) != digest:
+                raise CheckpointError('checkpoint changed after authenticated preflight')
+            audit(digest)
+
+        yield verified, unchanged
+        if fingerprints.read(1):
+            raise CheckpointError('checkpoint changed after authenticated preflight')
+
+
+def _extract(  # noqa: PLR0915 - ordered authenticated extraction
+             source: BinaryIO, cipher: EnvelopeCipher, dest: Path,
              audit: Callable[[bytes], None], *, quarantine: Any = None,
              manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    work_manifest = manifest is not None and manifest.get('schema') == 'artha.checkpoint.v3'
+    if work_manifest and quarantine is None:
+        raise CheckpointBlocked('Work extraction requires authenticated quarantine')
     current: Callable[[bytes], object] | None = None
     output = ExitStack()
     encrypted = False
-    entries = {entry['path']: entry for entry in manifest['entries']} if manifest is not None else {}
+    entries = {entry['path']: entry for entry in manifest['entries']} if manifest and not work_manifest else {}
+    streams: dict[tuple[str, ...], dict[str, Any]] = {}
+
+    def guard_format(magic: bytes) -> None:
+        if (magic == _WORK_STREAM_MAGIC) != work_manifest:
+            raise CheckpointBlocked('Work extraction requires its authenticated manifest and quarantine')
 
     def finish() -> None:
         nonlocal current
@@ -855,6 +1416,13 @@ def _extract(source: BinaryIO, cipher: EnvelopeCipher, dest: Path,
     def opened(header: dict[str, Any]) -> None:
         nonlocal current, encrypted
         finish()
+        if header.get('kind') == 'stream':
+            entry = streams.get(recovery_quarantine._member_identity(header))
+            if entry is None or quarantine is None:
+                raise CheckpointBlocked('Work stream extraction requires authenticated quarantine')
+            encrypted = True
+            quarantine.start(entry)
+            return
         encrypted = quarantine is not None and not _privacy_ledger(header)
         if encrypted:
             quarantine.start(entries[header['path']])
@@ -864,9 +1432,8 @@ def _extract(source: BinaryIO, cipher: EnvelopeCipher, dest: Path,
 
     def sink(_header: dict[str, Any], chunk: bytes) -> None:
         if encrypted:
-            from catchup_core.recovery_quarantine import CHUNK_BYTES  # noqa: PLC0415
-            for offset in range(0, len(chunk), CHUNK_BYTES):
-                quarantine.write(chunk[offset:offset + CHUNK_BYTES])
+            for offset in range(0, len(chunk), recovery_quarantine.CHUNK_BYTES):
+                quarantine.write(chunk[offset:offset + recovery_quarantine.CHUNK_BYTES])
             return
         if current is None:
             raise CheckpointError('checkpoint member data lacks an open target file')
@@ -881,10 +1448,17 @@ def _extract(source: BinaryIO, cipher: EnvelopeCipher, dest: Path,
             finish()
 
     try:
-        if quarantine is None:
-            return _scan(source, cipher, sink, opened, audit=audit)
-        restored = _scan(source, cipher, sink, opened, audit=audit, ended=ended)
-        quarantine.seal()
+        if work_manifest and manifest is not None:
+            with _preflight_work_extraction(source, cipher, manifest, audit, guard_format) as (verified, unchanged):
+                entries = {entry['path']: entry for entry in verified['entries']}
+                streams = {recovery_quarantine._member_identity(entry): entry for entry in verified['streams']}
+                restored = _scan(source, cipher, sink, opened, audit=unchanged, ended=ended,
+                                 format_guard=guard_format)
+        else:
+            restored = _scan(source, cipher, sink, opened, audit=audit,
+                             ended=ended if quarantine is not None else None, format_guard=guard_format)
+        if quarantine is not None:
+            quarantine.seal()
         return restored
     finally:
         finish()
@@ -980,19 +1554,36 @@ def _restored_inventory(dest: Path, expected: Mapping[str, Any], quarantine: Any
         raise CheckpointError('restored inventory differs from its authenticated manifest')
 
 
+def _verify_work_fence(dest: Path, generation: str) -> None:
+    try:
+        marker = quarantine_review._read(dest / '.artha-restored.json', 65536)
+        if _object(marker, strict=True) != _restore_marker(generation):
+            raise CheckpointBlocked('restored Work installation fence changed')
+    except (OSError, quarantine_review.ReviewBlocked, CheckpointError):
+        raise CheckpointBlocked('restored Work installation fence is unavailable or changed') from None
+
+
 def _verify_quarantine(quarantine: Any, manifest: Mapping[str, Any], *, replayed: bool = False) -> None:
-    marker = Path(quarantine.root).parent / '.artha-restored.json'
-    if _object(marker.read_bytes()) != _restore_marker(manifest['generation']):
+    dest = Path(quarantine.root).parent
+    if manifest.get('profile') == 'work':
+        _verify_work_fence(dest, manifest['generation'])
+    elif _object((dest / '.artha-restored.json').read_bytes()) != _restore_marker(manifest['generation']):
         raise CheckpointError('restored installation marker changed')
     quarantine.verify()
     inventory = quarantine.inventory()
-    expected = {entry['path']: entry for entry in manifest['entries'] if not _privacy_ledger(entry)}
-    captured = {entry['path']: {key: value for key, value in entry.items()
-                              if key not in {'member_id', 'state', 'chunks', 'reason'}} for entry in inventory}
+    expected_entries = [entry for entry in manifest['entries'] if not _privacy_ledger(entry)]
+    expected_entries.extend(manifest.get('streams', []))
+    expected = {recovery_quarantine._member_identity(entry): entry for entry in expected_entries}
+    captured = {recovery_quarantine._member_identity(entry): {key: value for key, value in entry.items()
+                                                               if key not in {'member_id', 'state', 'chunks', 'reason'}}
+                for entry in inventory}
     states = {'quarantined', 'blocked'} if replayed else {'quarantined'}
-    if (len(inventory) != len(expected) or captured != expected
+    if (len(expected) != len(expected_entries) or len(inventory) != len(captured)
+            or len(inventory) != len(expected) or captured != expected
             or any(entry.get('state') not in states for entry in inventory)):
         raise CheckpointError('restored quarantine catalog differs from its authenticated manifest')
+    if manifest.get('profile') == 'work':
+        _verify_work_fence(dest, manifest['generation'])
 
 
 def _verify_restored(dest: Path, manifest: dict[str, Any], *, quarantine: Any = None) -> tuple[int, int]:
@@ -1018,7 +1609,9 @@ def _verify_restored(dest: Path, manifest: dict[str, Any], *, quarantine: Any = 
             except sqlite3.Error:
                 raise CheckpointError('restored database integrity cannot be verified') from None
             databases += 1
-    return sum(entry['size'] for entry in manifest['entries']), databases
+    verified_bytes = sum(entry['size'] for entry in manifest['entries'])
+    verified_bytes += sum(entry['size'] for entry in manifest.get('streams', []))
+    return verified_bytes, databases
 
 
 class _DigestReader:
@@ -1042,13 +1635,12 @@ def restore(path: Path, dest: Path, cipher: EnvelopeCipher, live_roots: Sequence
     primitive cannot prove external-copy lineage; the CLI supplies a fail-closed policy. A hook refusal
     removes the staged tree and leaves the original ciphertext unchanged for owner-reviewed handling.
     """
-    from catchup_core.quarantine_fs_windows import QuarantineFilesystemError  # noqa: PLC0415
     try:
         return _restore(path, dest, cipher, live_roots, replay_privacy, expected_profile,
                 quarantine_factory=quarantine_factory)
     except OSError as exc:
         raise CheckpointError(f'restore input or output is unavailable ({type(exc).__name__})') from None
-    except QuarantineFilesystemError:
+    except quarantine_fs_windows.QuarantineFilesystemError:
         raise CheckpointBlocked('native restore filesystem is unavailable or unsafe') from None
 
 
@@ -1076,8 +1668,10 @@ def _restore(  # noqa: PLR0912, PLR0915 - ordered authenticated restore and priv
         if expected_profile == 'work':
             context = manifest.get('context')
             binding = context.get('work_binding') if isinstance(context, dict) else None
+            binding_schema = ('artha.work-checkpoint-binding.v2' if manifest['schema'] == 'artha.checkpoint.v3'
+                              else 'artha.work-checkpoint-binding.v1')
             if (not isinstance(binding, dict)
-                    or binding.get('schema') != 'artha.work-checkpoint-binding.v1'
+                    or binding.get('schema') != binding_schema
                     or binding.get('profile') != 'work' or binding.get('plaintext_allowed') is not False):
                 raise CheckpointBlocked('unbound Work checkpoints are inspection-only')
         checkpoint_sha256 = reader.digest.hexdigest() if reader is not None else ''
@@ -1087,8 +1681,9 @@ def _restore(  # noqa: PLR0912, PLR0915 - ordered authenticated restore and priv
         def unchanged(digest: bytes) -> None:
             if fingerprints.read(32) != digest:
                 raise CheckpointError('checkpoint changed after authenticated preflight')
+        blocked_streams = 0
         with _restore_tree(dest, live_roots, marker):
-            quarantine = None
+            quarantine: Any = None
             if quarantine_factory is not None:
                 quarantine = quarantine_factory(dest, manifest, checkpoint_sha256)
                 if quarantine is None or Path(quarantine.root) != Path(os.path.abspath(dest / '.artha-quarantine')):
@@ -1118,11 +1713,19 @@ def _restore(  # noqa: PLR0912, PLR0915 - ordered authenticated restore and priv
                                            if _privacy_ledger(entry)}, quarantine)
                 _verify_quarantine(quarantine, manifest, replayed=True)
                 _verify_replayed_ledgers(dest, manifest)
+                if manifest['schema'] == 'artha.checkpoint.v3':
+                    blocked_streams = sum(entry['kind'] == 'stream' and entry['state'] == 'blocked'
+                                          for entry in quarantine.inventory())
     result = {'generation': manifest['generation'], 'files': len(manifest['entries']),
             'verified_bytes': verified_bytes, 'verified_sqlite': verified_sqlite,
             'excluded': manifest['excluded'], 'transformed': transformed, 'marker': marker}
     if quarantine_factory is not None:
         result.update(quarantined_files=len(quarantined), quarantined_bytes=quarantined_bytes)
+    if manifest['schema'] == 'artha.checkpoint.v3':
+        streams = manifest['streams']
+        result.update(streams=len(streams), quarantined_streams=len(streams),
+                      quarantined_stream_bytes=sum(entry['size'] for entry in streams),
+                      blocked_streams=blocked_streams)
     return result
 
 
@@ -1191,49 +1794,99 @@ def _sqlite_table_diff(saved_image: bytes, live_path: Path) -> dict[str, dict[st
         return summary
 
 
-def diff(path: Path, cipher: EnvelopeCipher, roots: Mapping[str, Path],
-         exclude: Mapping[str, str] | None = None, *,
-         include_tables: bool = False) -> dict[str, Any]:
-    """Paths added, removed or changed in the live tree since the checkpoint (read-only)."""
-    manifest = verify(path, cipher)
-    found, problems, _ = _walk(roots, exclude or {})
-    saved = {e["path"]: e for e in manifest["entries"]}
-
-    def current(file: Path) -> str:
-        return _sqlite_sha(file) if _is_sqlite(file) else _file_sha(file)
-    changed = sorted(k for k, p in found.items() if k in saved and saved[k]["source_sha256"] != current(p))
-    out: dict[str, Any] = {
-        "added": sorted(set(found) - set(saved)),
-        "removed": sorted(set(saved) - set(found)),
-        "changed": changed,
-        "unreadable": sorted(problems),
+def _work_stream_diff(manifest: Mapping[str, Any], roots: Mapping[str, Path],
+                      exclude: Mapping[str, str], *, include_tables: bool) -> dict[str, Any]:
+    captured = _capture_work_streams(roots, exclude)
+    current = {name: _work_member_entry(name, path, captured.owner_snapshots[name]).sha256
+               for name, path in captured.files.items()}
+    _recheck_work_streams(captured, roots, exclude)
+    saved = {entry['path']: entry['source_sha256'] for entry in manifest['entries']}
+    saved_streams = {recovery_quarantine._member_identity(entry): entry['sha256']
+                     for entry in manifest['streams']}
+    current_streams = {recovery_quarantine._member_identity(header): hashlib.sha256(raw).hexdigest()
+                       for header, raw in captured.streams}
+    result: dict[str, Any] = {
+        'added': sorted(set(current) - set(saved)),
+        'removed': sorted(set(saved) - set(current)),
+        'changed': sorted(name for name in current.keys() & saved.keys() if current[name] != saved[name]),
+        'unreadable': [],
+        'streams_added': len(current_streams.keys() - saved_streams.keys()),
+        'streams_removed': len(saved_streams.keys() - current_streams.keys()),
+        'streams_changed': sum(current_streams[key] != saved_streams[key]
+                               for key in current_streams.keys() & saved_streams.keys()),
     }
     if include_tables:
-        sqlite_changed = {k for k in changed if saved[k].get("kind") == "sqlite" and _is_sqlite(found[k])}
-        # Table comparison needs both whole images in memory; larger databases are reported, never called clean.
-        oversized = {k for k in sqlite_changed
-                     if saved[k]['size'] > _MAX_SQLITE_BYTES or found[k].stat().st_size > _MAX_SQLITE_BYTES}
-        sqlite_changed -= oversized
-        blobs: dict[str, list[bytes]] = {k: [] for k in sqlite_changed}
-        active_key: str | None = None
+        result.update(tables={}, tables_unreadable=[])
+    return result
 
-        def opened(header: dict[str, Any]) -> None:
-            nonlocal active_key
-            key = str(header["path"])
-            active_key = key if key in blobs else None
 
-        def sink(_header: dict[str, Any], chunk: bytes) -> None:
-            if active_key is not None:
-                blobs[active_key].append(chunk)
+def diff(path: Path, cipher: EnvelopeCipher, roots: Mapping[str, Path],
+         exclude: Mapping[str, str] | None = None, *,
+         include_tables: bool = False, expected_profile: str | None = None) -> dict[str, Any]:
+    """Paths added, removed or changed in the live tree since the checkpoint (read-only)."""
+    with ExitStack() as resources:
+        source = resources.enter_context(path.open('rb'))
+        fingerprints = resources.enter_context(tempfile.TemporaryFile(mode='w+b')) if include_tables else None
 
-        if sqlite_changed:
-            _scan(path, cipher, sink, opened)
-        out["tables"] = {
-            key: _sqlite_table_diff(b"".join(blobs[key]), found[key])
-            for key in sorted(sqlite_changed)
+        def record(digest: bytes) -> None:
+            if fingerprints is not None:
+                fingerprints.write(digest)
+
+        manifest = _scan(source, cipher, audit=record if fingerprints is not None else None)
+        if expected_profile is not None and manifest['profile'] != expected_profile:
+            raise CheckpointBlocked('checkpoint does not match the requested comparison profile')
+        if manifest['schema'] == 'artha.checkpoint.v3':
+            return _work_stream_diff(manifest, roots, exclude or {}, include_tables=include_tables)
+        found, problems, _ = _walk(roots, exclude or {})
+        saved = {e["path"]: e for e in manifest["entries"]}
+
+        def current(file: Path) -> str:
+            return _sqlite_sha(file) if _is_sqlite(file) else _file_sha(file)
+        changed = sorted(k for k, p in found.items() if k in saved and saved[k]["source_sha256"] != current(p))
+        out: dict[str, Any] = {
+            "added": sorted(set(found) - set(saved)),
+            "removed": sorted(set(saved) - set(found)),
+            "changed": changed,
+            "unreadable": sorted(problems),
         }
-        out["tables_unavailable"] = sorted(oversized)
-    return out
+        if fingerprints is not None:
+            sqlite_changed = {k for k in changed if saved[k].get("kind") == "sqlite" and _is_sqlite(found[k])}
+            # Table comparison needs both whole images in memory; larger databases are reported, never called clean.
+            oversized = {k for k in sqlite_changed
+                         if saved[k]['size'] > _MAX_SQLITE_BYTES or found[k].stat().st_size > _MAX_SQLITE_BYTES}
+            sqlite_changed -= oversized
+            blobs: dict[str, list[bytes]] = {k: [] for k in sqlite_changed}
+            active_key: str | None = None
+
+            def opened(header: dict[str, Any]) -> None:
+                nonlocal active_key
+                key = str(header["path"])
+                active_key = key if key in blobs else None
+
+            def sink(_header: dict[str, Any], chunk: bytes) -> None:
+                if active_key is not None:
+                    blobs[active_key].append(chunk)
+
+            def unchanged(digest: bytes) -> None:
+                if fingerprints is None or fingerprints.read(32) != digest:
+                    raise CheckpointError('checkpoint changed after authenticated preflight')
+
+            def reject_work(magic: bytes) -> None:
+                if magic == _WORK_STREAM_MAGIC:
+                    raise CheckpointBlocked('Work stream-aware comparison is not yet supported')
+
+            if sqlite_changed:
+                fingerprints.seek(0)
+                source.seek(0)
+                repeated = _scan(source, cipher, sink, opened, audit=unchanged, format_guard=reject_work)
+                if fingerprints.read(1) or repeated != manifest:
+                    raise CheckpointError('checkpoint changed after authenticated preflight')
+            out["tables"] = {
+                key: _sqlite_table_diff(b"".join(blobs[key]), found[key])
+                for key in sorted(sqlite_changed)
+            }
+            out["tables_unavailable"] = sorted(oversized)
+        return out
 
 
 def reconcile(path: Path, cipher: EnvelopeCipher, roots: Mapping[str, Path],

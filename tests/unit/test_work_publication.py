@@ -8,6 +8,7 @@ from contextlib import nullcontext
 
 import pytest
 
+from _work_synthetic import install_synthetic_work_creation
 from catchup_core import work_privacy
 from catchup_core.session_lock import SessionBusy
 from catchup_core.work_privacy import for_installation
@@ -29,6 +30,7 @@ class Backend:
 
 @pytest.fixture
 def work(tmp_path, monkeypatch):
+    install_synthetic_work_creation(monkeypatch)
     local = tmp_path / 'local'
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(local))
     repo = tmp_path / 'repo'
@@ -82,21 +84,37 @@ def test_unenrolled_runs_legacy_without_native_reads(work):
     assert not (work['state'] / 'a.md').exists()
 
 
-def test_enrolled_write_append_update_delete_are_journaled(work):
+def test_enrolled_new_member_and_update_noop_are_journaled(work):
     enroll(work)
     state = work['state']
     wp.publish_text(state / 'new.md', 'one\n', legacy=never)
-    wp.append_text(state / 'work-notes.md', 'two\n', legacy=never)
-    wp.update_text(state / 'new.md', lambda text: text + 'three\n', legacy=never)
     wp.update_text(state / 'new.md', lambda _: None, legacy=never)
-    assert wp.decode((state / 'new.md').read_bytes()) == 'one\nthree\n'
-    assert wp.decode((state / 'work-notes.md').read_bytes()) == 'synthetic notes\ntwo\n'
-    wp.publish({state / 'new.md': None}, legacy=never)
+    assert wp.decode((state / 'new.md').read_bytes()) == 'one\n'
+    assert wp.decode((state / 'work-notes.md').read_bytes()) == 'synthetic notes\n'
     current = work['make']().current()
-    assert current['generation'] == 5
-    assert 'work_state/new.md' not in current['members']
-    assert current['invalidated']['work_state/new.md'] == 5
-    assert current['invalidated']['work_state/work-notes.md'] == 3
+    assert current['generation'] == 2
+    assert 'work_state/new.md' in current['members']
+    assert current['invalidated']['work_state/new.md'] == 2
+    assert 'work_state/work-notes.md' not in current['invalidated']
+
+
+@pytest.mark.parametrize('operation', ['write', 'append', 'update', 'delete'])
+def test_enrolled_existing_member_mutations_surface_the_temporary_hold(work, operation):
+    enroll(work)
+    notes = work['state'] / 'work-notes.md'
+    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused') as blocked:
+        if operation == 'write':
+            wp.publish_text(notes, 'replacement', legacy=never)
+        elif operation == 'append':
+            wp.append_text(notes, 'addition', legacy=never)
+        elif operation == 'update':
+            wp.update_text(notes, lambda text: text + 'changed', legacy=never)
+        else:
+            wp.publish({notes: None}, legacy=never)
+    assert isinstance(blocked.value.__cause__, work_privacy.WorkPrivacyBlocked)
+    assert notes.read_bytes() == b'synthetic notes\n'
+    assert work['make']().current()['generation'] == 1
+    assert not (work['make']().authority_dir / 'pending').exists()
 
 
 def test_enrolled_path_outside_bound_roots_is_refused(work, tmp_path):
@@ -152,8 +170,11 @@ def test_manual_drift_blocks_until_reviewed_reconciliation(work):
         wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
     assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit'
     work['make']().reconcile(reviewed=True)
-    wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
-    assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit' + wp.encode('more')
+    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused'):
+        wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
+    assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit'
+    wp.publish_text(work['state'] / 'new.md', 'allowed', legacy=never)
+    assert (work['state'] / 'new.md').read_bytes() == wp.encode('allowed')
 
 
 def test_contending_writer_is_refused_not_lost(work):
@@ -216,10 +237,11 @@ def test_batch_publishes_one_generation_with_staged_reads(work):
         wp.publish_text(state / 'a.md', 'one\n', legacy=never)
         wp.append_text(state / 'a.md', 'two\n', legacy=never)
         with wp.batch():
-            wp.append_text(state / 'work-notes.md', 'more\n', legacy=never)
+            wp.publish_text(state / 'b.md', 'nested\n', legacy=never)
         assert not (state / 'a.md').exists()
     assert wp.decode((state / 'a.md').read_bytes()) == 'one\ntwo\n'
-    assert wp.decode((state / 'work-notes.md').read_bytes()) == 'synthetic notes\nmore\n'
+    assert wp.decode((state / 'b.md').read_bytes()) == 'nested\n'
+    assert wp.decode((state / 'work-notes.md').read_bytes()) == 'synthetic notes\n'
     assert work['make']().current()['generation'] == 2
 
 
@@ -247,14 +269,16 @@ def test_post_work_refresh_log_unenrolled_appends_directly(work):
     assert log.read_text(encoding='utf-8') == '{"run_id": "a"}\n'
 
 
-def test_post_work_refresh_log_enrolled_is_journaled(work):
+def test_post_work_refresh_log_enrolled_refuses_second_append(work):
     import post_work_refresh
     enroll(work)
     post_work_refresh._append_run_log({'run_id': 'a'}, work['repo'])
-    post_work_refresh._append_run_log({'run_id': 'b'}, work['repo'])
+    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused'):
+        post_work_refresh._append_run_log({'run_id': 'b'}, work['repo'])
     log = work['state'] / 'eval/work-refresh-log.jsonl'
-    assert wp.decode(log.read_bytes()) == '{"run_id": "a"}\n{"run_id": "b"}\n'
+    assert wp.decode(log.read_bytes()) == '{"run_id": "a"}\n'
     assert 'work_state/eval/work-refresh-log.jsonl' in work['make']().current()['members']
+    assert work['make']().current()['generation'] == 2
 
 
 def test_post_work_refresh_main_refuses_unreconciled_drift(work, monkeypatch, capsys):
@@ -297,25 +321,30 @@ def _thread(target):
     return thread, errors
 
 
-def test_concurrent_thread_session_serializes_instead_of_losing_update(work):
+def test_concurrent_thread_session_serializes_and_refuses_existing_member_update(work):
     enroll(work)
-    notes = work['state'] / 'work-notes.md'
+    notes = work['state'] / 'new.md'
     a_inside, b_entered = threading.Event(), threading.Event()
 
     def other():
-        a_inside.wait(5)
+        assert a_inside.wait(5), 'owner did not begin its session'
         with wp.session():
             b_entered.set()
             wp.append_text(notes, 'B\n', legacy=never)
     thread, errors = _thread(other)
-    with wp.session():
-        prepared = wp.decode(notes.read_bytes()) + 'A\n'
+    try:
+        with wp.session():
+            a_inside.set()
+            assert not b_entered.wait(0.5), 'second thread joined an active session'
+            wp.publish_text(notes, 'A\n', legacy=never)
+    finally:
         a_inside.set()
-        assert not b_entered.wait(0.5), 'second thread joined an active session'
-        wp.publish_text(notes, prepared, legacy=never)
-    thread.join(10)
-    assert not thread.is_alive() and errors == []
-    assert wp.decode(notes.read_bytes()) == 'synthetic notes\nA\nB\n'
+        thread.join(10)
+    assert not thread.is_alive()
+    assert len(errors) == 1 and isinstance(errors[0], wp.WorkPublicationBlocked)
+    assert 'temporarily paused' in str(errors[0])
+    assert wp.decode(notes.read_bytes()) == 'A\n'
+    assert work['make']().current()['generation'] == 2
 
 
 def test_failed_batch_cannot_swallow_another_threads_write(work):
@@ -323,19 +352,22 @@ def test_failed_batch_cannot_swallow_another_threads_write(work):
     a_inside, b_started = threading.Event(), threading.Event()
 
     def other():
-        a_inside.wait(5)
+        assert a_inside.wait(5), 'owner did not begin its batch'
         b_started.set()
         wp.publish_text(work['state'] / 'theirs.md', 'kept', legacy=never)
     thread, errors = _thread(other)
-    with pytest.raises(RuntimeError, match='synthetic'):
-        with wp.batch():
-            wp.publish_text(work['state'] / 'mine.md', 'dropped', legacy=never)
-            a_inside.set()
-            b_started.wait(5)
-            thread.join(0.5)
-            assert thread.is_alive(), 'bare write did not wait for the active batch'
-            raise RuntimeError('synthetic failure')
-    thread.join(10)
+    try:
+        with pytest.raises(RuntimeError, match='synthetic'):
+            with wp.batch():
+                wp.publish_text(work['state'] / 'mine.md', 'dropped', legacy=never)
+                a_inside.set()
+                assert b_started.wait(5), 'other writer did not start'
+                thread.join(0.5)
+                assert thread.is_alive(), 'bare write did not wait for the active batch'
+                raise RuntimeError('synthetic failure')
+    finally:
+        a_inside.set()
+        thread.join(10)
     assert not thread.is_alive() and errors == []
     assert not (work['state'] / 'mine.md').exists()
     assert (work['state'] / 'theirs.md').read_bytes() == wp.encode('kept')
@@ -347,17 +379,19 @@ def test_worker_with_copied_context_joins_session_without_deadlock(work):
     with wp.session():
         context = contextvars.copy_context()  # copied by the owner, as work_loop does at submit
         thread, errors = _thread(lambda: context.run(
-            wp.append_text, work['state'] / 'work-notes.md', 'worker\n', legacy=never))
+            wp.publish_text, work['state'] / 'worker.md', 'worker\n', legacy=never))
         thread.join(10)
         assert not thread.is_alive() and errors == []
-        wp.append_text(work['state'] / 'work-notes.md', 'owner\n', legacy=never)
-    assert wp.decode((work['state'] / 'work-notes.md').read_bytes()) == 'synthetic notes\nworker\nowner\n'
+        wp.publish_text(work['state'] / 'owner.md', 'owner\n', legacy=never)
+    assert wp.decode((work['state'] / 'worker.md').read_bytes()) == 'worker\n'
+    assert wp.decode((work['state'] / 'owner.md').read_bytes()) == 'owner\n'
+    assert work['make']().current()['generation'] == 3
 
 
 @pytest.mark.parametrize('failed', [False, True])
 def test_batch_exit_serializes_with_copied_context_worker(work, monkeypatch, failed):
     enroll(work)
-    notes = work['state'] / 'work-notes.md'
+    notes = work['state'] / 'new.md'
     owner = threading.get_ident()
     computing, exiting = threading.Event(), threading.Event()
     lock = wp._guard
@@ -378,16 +412,23 @@ def test_batch_exit_serializes_with_copied_context_worker(work, monkeypatch, fai
         assert exiting.wait(5), 'owner did not attempt batch publication'
         return current + 'worker\n'
 
-    with pytest.raises(RuntimeError, match='synthetic failure') if failed else nullcontext():
-        with wp.batch():
-            wp.append_text(notes, 'owner\n', legacy=never)
-            context = contextvars.copy_context()
-            thread, errors = _thread(lambda: context.run(wp.update_text, notes, append, legacy=never))
-            assert computing.wait(5), 'worker did not begin its staged update'
-            if failed:
-                raise RuntimeError('synthetic failure')
-    thread.join(10)
+    thread = None
+    try:
+        with pytest.raises(RuntimeError, match='synthetic failure') if failed else nullcontext():
+            with wp.batch():
+                wp.append_text(notes, 'owner\n', legacy=never)
+                context = contextvars.copy_context()
+                thread, errors = _thread(lambda: context.run(wp.update_text, notes, append, legacy=never))
+                assert computing.wait(5), 'worker did not begin its staged update'
+                if failed:
+                    raise RuntimeError('synthetic failure')
+    finally:
+        exiting.set()
+        if thread is not None:
+            thread.join(10)
     assert not thread.is_alive() and errors == []
-    expected = 'synthetic notes\n' if failed else 'synthetic notes\nowner\nworker\n'
-    assert wp.decode(notes.read_bytes()) == expected
+    if failed:
+        assert not notes.exists()
+    else:
+        assert wp.decode(notes.read_bytes()) == 'owner\nworker\n'
     assert work['make']().current()['generation'] == (1 if failed else 2)

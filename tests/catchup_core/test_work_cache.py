@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from _work_synthetic import install_synthetic_work_creation
 from catchup_core import work_cache as wc
 from catchup_core.vault import AgeVault
 
@@ -497,6 +498,7 @@ class _Backend:
 def journaled(tmp_path, monkeypatch):
     from catchup_core.work_privacy import for_installation
     from lib import work_publication as wp
+    install_synthetic_work_creation(monkeypatch)
     local, repo = tmp_path / 'local', tmp_path / 'repo'
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(local))
     (repo / 'state' / 'work').mkdir(parents=True)
@@ -511,15 +513,20 @@ def journaled(tmp_path, monkeypatch):
     wp.set_protocol_factory(previous)
 
 
-def test_enrolled_update_publishes_through_work_journal(journaled):
+def test_enrolled_update_preserves_cache_when_replacement_is_paused(journaled):
     cache, make = journaled['cache'], journaled['make']
     cache.update({'first': {'data': [1]}})
-    cache.update({'second': {'data': [2]}})
-    assert set(cache.load()) == {'first', 'second'}
-    current = make().current()
-    assert current['generation'] == 3
-    assert 'work_local/cache/workiq.json.age' in current['members']
-    assert 'work_local/cache/cache.lock' not in current['members']
+    first_bytes = cache.path.read_bytes()
+    before = make().current()
+    with pytest.raises(wc.WorkCacheBlocked, match='publication refused by the Work journal'):
+        cache.update({'second': {'data': [2]}})
+    assert cache.path.read_bytes() == first_bytes
+    assert cache.load() == {'first': {'data': [1]}}
+    assert make().current() == before
+    assert before['generation'] == 2
+    assert 'work_local/cache/workiq.json.age' in before['members']
+    assert 'work_local/cache/cache.lock' not in before['members']
+    assert not (make().authority_dir / 'pending').exists()
     assert sorted(p.name for p in cache.root.iterdir()) == ['cache.lock', 'workiq.json.age']
     staging = journaled['local'] / 'work-staging'
     assert not staging.exists() or not any(staging.iterdir())

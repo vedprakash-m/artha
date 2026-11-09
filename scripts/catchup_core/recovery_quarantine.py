@@ -8,17 +8,23 @@ import re
 import secrets
 import stat
 import sys
+import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from . import checkpoint as ck
+from . import work_privacy
 from .crypto import EnvelopeCipher
 from .quarantine_fs_windows import (
     FileIdentity,
     QuarantineFilesystemError,
     WindowsQuarantineDirectory,
 )
+
+if TYPE_CHECKING:
+    from .checkpoint import _PathNames
 
 if sys.platform != 'win32':
     import fcntl
@@ -33,7 +39,9 @@ MAX_ENTRIES = 16384
 MAX_CHUNKS = 65536
 MAX_MEMBER_BYTES = 16 * 1024**3
 MAX_TOTAL_BYTES = 64 * 1024**3
+WORK_DENIAL_REASON = 'current Work invalidation or unjournaled dependency'
 _SCHEMA = 'artha.recovery-quarantine.v1'
+_STREAM_SCHEMA = 'artha.recovery-quarantine.v2'
 _CATALOG = 'catalog.ae1'
 _OVERHEAD = 35
 _HEX = re.compile(r'[0-9a-f]{64}')
@@ -102,16 +110,68 @@ def _text(value: Any, maximum: int) -> bool:
 def _entry(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise QuarantineError('quarantine member metadata is invalid')
+    if value.get('kind') == 'stream':
+        identity = {'kind', 'owner', 'owner_kind', 'name', 'stream_type'}
+        fields = identity | {'size', 'sha256'}
+        if (not fields <= set(value) or set(value) - fields - {'member_id', 'state', 'chunks', 'reason'}
+                or not _integer(value.get('size'), ck._MAX_WORK_STREAM_BYTES)
+                or not _digest(value.get('sha256'))):
+            raise QuarantineError('quarantine stream metadata is invalid')
+        try:
+            ck._work_stream_header({key: value[key] for key in identity})
+        except ck.CheckpointError:
+            raise QuarantineError('quarantine stream metadata is invalid') from None
+        return value
     path = value.get('path')
     if (not isinstance(path, str) or not _text(path, 4096)
             or path.startswith('/') or '\\' in path or ':' in path
             or any(part in {'', '.', '..'} for part in path.split('/'))
             or any(ord(char) < 32 or ord(char) == 127 for char in path)
             or not _integer(value.get('size'), MAX_MEMBER_BYTES)
-            or not _digest(value.get('sha256')) or value.get('kind') not in {'file', 'sqlite'}
+            or not _digest(value.get('sha256')) or value.get('kind') not in ('file', 'sqlite')
             or not _integer(value.get('mode'), 0o7777)):
         raise QuarantineError('quarantine member metadata is invalid')
     return value
+
+
+def _member_identity(value: Mapping[str, Any]) -> tuple[str, ...]:
+    if value['kind'] == 'stream':
+        return ('stream', value['owner'], value['owner_kind'], value['name'], value['stream_type'])
+    return ('member', value['path'])
+
+
+def _stream_inventory(entries: Sequence[dict[str, Any]]) -> _PathNames:
+    names = ck._PathNames()
+    files = {entry['path'] for entry in entries if entry['kind'] != 'stream'}
+    identities: set[tuple[str, str, str]] = set()
+    owners: dict[str, tuple[str, str]] = {}
+    counts: dict[str, int] = {}
+    stream_count = total = 0
+    try:
+        for path in files:
+            names.add(path)
+        for entry in entries:
+            if entry['kind'] != 'stream':
+                continue
+            owner, kind, name = entry['owner'], entry['owner_kind'], entry['name']
+            folded_owner = unicodedata.normalize('NFC', owner).casefold()
+            identity = (folded_owner, kind, unicodedata.normalize('NFC', name).casefold())
+            if (identity in identities or owners.get(folded_owner, (owner, kind)) != (owner, kind)
+                    or (kind == 'file' and owner not in files)):
+                raise QuarantineError('quarantine stream inventory is ambiguous')
+            if kind == 'directory':
+                names.add_directory(owner)
+            identities.add(identity)
+            owners[folded_owner] = (owner, kind)
+            counts[folded_owner] = counts.get(folded_owner, 0) + 1
+            stream_count += 1
+            total += entry['size']
+            if (counts[folded_owner] > ck._MAX_WORK_STREAMS_PER_OWNER
+                    or stream_count > ck._MAX_WORK_STREAMS or total > ck._MAX_WORK_STREAM_TOTAL_BYTES):
+                raise QuarantineError('quarantine stream inventory exceeds its bounds')
+    except ck.CheckpointError:
+        raise QuarantineError('quarantine stream inventory is invalid') from None
+    return names
 
 
 class QuarantineStore:
@@ -130,7 +190,8 @@ class QuarantineStore:
         self._identity: tuple[int, int] | None = None
         self._capture: dict[str, Any] | None = None
         self._catalog: dict[str, Any] | None = None
-        self._expected: dict[str, dict[str, Any]] = {}
+        self._expected: dict[tuple[str, ...], dict[str, Any]] = {}
+        self._captured: set[tuple[str, ...]] = set()
         self._active: dict[str, Any] | None = None
         self._hasher: Any = None
         self._failed = False
@@ -268,6 +329,7 @@ class QuarantineStore:
             raise QuarantineError('quarantine filesystem operation was refused') from None
 
     def _catalog_aad(self, descriptor: _Directory, context: dict[str, Any]) -> bytes:
+        # The authenticated catalog carries its schema; the envelope AAD stays stable for old catalogs.
         if isinstance(descriptor, WindowsQuarantineDirectory):
             device, inode = _native_identity(descriptor.identity)
         else:
@@ -277,6 +339,10 @@ class QuarantineStore:
 
     @staticmethod
     def _chunk_aad(catalog: dict[str, Any], member: dict[str, Any], position: int) -> bytes:
+        if member['kind'] == 'stream':
+            return _json([_STREAM_SCHEMA, catalog['profile'], catalog['checkpoint_id'],
+                          catalog['checkpoint_sha256'], member['member_id'],
+                          [member['owner'], member['owner_kind'], member['name'], member['stream_type']], position])
         return _json([_SCHEMA, catalog['profile'], catalog['checkpoint_id'],
                       catalog['checkpoint_sha256'], member['member_id'], member['path'], position])
 
@@ -404,26 +470,39 @@ class QuarantineStore:
             raise QuarantineError('quarantine catalog changed during publication')
         self._check(context)
 
-    def begin(self, manifest: Mapping[str, Any], checkpoint_sha256: str) -> None:
+    def begin(self, manifest: Mapping[str, Any], checkpoint_sha256: str) -> None:  # noqa: PLR0912
         context = self._context()
         if not isinstance(manifest, Mapping):
             raise QuarantineError('quarantine checkpoint metadata is invalid')
         value = _decode(_json(dict(manifest)))
         entries = value.get('entries')
         generation = value.get('generation')
+        stream_schema = value.get('schema') == 'artha.checkpoint.v3'
+        streams = value.get('streams') if stream_schema else []
         if (self._capture is not None or value.get('profile') != context['profile']
                 or not isinstance(generation, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', generation)
                 or not _digest(checkpoint_sha256) or not isinstance(entries, list)
-                or len(entries) > MAX_ENTRIES
-                or ('privacy' in value and value['privacy'] != context['privacy'])):
+                or not isinstance(streams, list) or len(entries) + len(streams) > MAX_ENTRIES
+                or (stream_schema and context['profile'] != 'work')
+                or (not stream_schema and 'streams' in value)
+                or ('privacy' in value and value['privacy'] != context.get('privacy'))):
             raise QuarantineError('quarantine checkpoint identity is invalid')
-        expected: dict[str, dict[str, Any]] = {}
-        for entry in entries:
-            checked = _entry(entry)
-            if checked['path'] in expected or set(checked) & {'member_id', 'state', 'chunks', 'reason'}:
-                raise QuarantineError('duplicate or reserved quarantine member metadata')
-            expected[checked['path']] = checked
-        if sum(entry['size'] for entry in entries) > MAX_TOTAL_BYTES:
+        expected: dict[tuple[str, ...], dict[str, Any]] = {}
+        for group, is_stream in ((entries, False), (streams, True)):
+            for entry in group:
+                checked = _entry(entry)
+                identity = _member_identity(checked)
+                if (identity in expected or set(checked) & {'member_id', 'state', 'chunks', 'reason'}
+                        or (checked['kind'] == 'stream') != is_stream):
+                    raise QuarantineError('duplicate or reserved quarantine member metadata')
+                expected[identity] = checked
+        if stream_schema:
+            names = _stream_inventory([*entries, *streams])
+            try:
+                ck._work_stream_manifest(value, entries, streams, names)
+            except (ck.CheckpointError, KeyError, TypeError):
+                raise QuarantineError('quarantine Work stream binding is invalid') from None
+        if sum(entry['size'] for entry in expected.values()) > MAX_TOTAL_BYTES:
             raise QuarantineError('quarantine total exceeds its bound')
         parent = -1
         try:
@@ -441,7 +520,7 @@ class QuarantineStore:
         with self._opened(context):
             self._expected = expected
             self._capture = context
-            self._catalog = {'schema': _SCHEMA, 'checkpoint_id': generation,
+            self._catalog = {'schema': _STREAM_SCHEMA if stream_schema else _SCHEMA, 'checkpoint_id': generation,
                              'checkpoint_sha256': checkpoint_sha256, 'profile': context['profile'],
                              'owner': context['owner'], 'entries': []}
 
@@ -456,11 +535,12 @@ class QuarantineStore:
         return self._capture, self._catalog
 
     def start(self, entry: Mapping[str, Any]) -> None:
-        context, catalog = self._capturing()
+        context, _ = self._capturing()
         with self._opened(context):
             checked = _entry(_decode(_json(dict(entry))))
-            if (self._active is not None or self._expected.get(checked['path']) != checked
-                    or any(member['path'] == checked['path'] for member in catalog['entries'])):
+            identity = _member_identity(checked)
+            if (self._active is not None or self._expected.get(identity) != checked
+                    or identity in self._captured):
                 raise QuarantineError('quarantine member is unexpected or already captured')
             self._active = dict(checked, member_id=secrets.token_hex(16), chunks=[], state='quarantined')
             self._hasher = hashlib.sha256()
@@ -502,6 +582,7 @@ class QuarantineStore:
                 self._failed = True
                 raise QuarantineError('quarantine member does not match the checkpoint')
             catalog['entries'].append(member)
+            self._captured.add(_member_identity(member))
             self._active = None
             self._hasher = None
 
@@ -527,8 +608,8 @@ class QuarantineStore:
             if self._active is not None:
                 raise QuarantineError('quarantine member is incomplete')
             self._validate(catalog, context)
-            captured = {member['path']: {key: value for key, value in member.items()
-                                        if key not in {'member_id', 'state', 'chunks'}}
+            captured = {_member_identity(member): {key: value for key, value in member.items()
+                                                   if key not in {'member_id', 'state', 'chunks'}}
                         for member in catalog['entries']}
             if captured != self._expected:
                 raise QuarantineError('quarantine capture does not match the expected members')
@@ -544,7 +625,9 @@ class QuarantineStore:
     def _validate(catalog: dict[str, Any], context: dict[str, Any]) -> None:
         required = {'schema', 'checkpoint_id', 'checkpoint_sha256', 'profile', 'owner', 'entries'}
         if (not required <= set(catalog) or set(catalog) - required - {'recovery_affinity'}
-                or catalog.get('schema') != _SCHEMA or catalog.get('profile') != context['profile']
+                or catalog.get('schema') not in {_SCHEMA, _STREAM_SCHEMA}
+                or (catalog.get('schema') == _STREAM_SCHEMA and context['profile'] != 'work')
+                or catalog.get('profile') != context['profile']
                 or catalog.get('owner') != context['owner'] or not _digest(catalog.get('checkpoint_sha256'))
                 or not isinstance(catalog.get('checkpoint_id'), str)
                 or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', catalog['checkpoint_id'])
@@ -555,18 +638,20 @@ class QuarantineStore:
             if not isinstance(affinity, dict) or affinity.get('schema') != 'artha.recovery-affinity.v1':
                 raise QuarantineError('original recovery affinity metadata is invalid')
             _json(affinity)
-        paths: set[str] = set()
+        identities: set[tuple[str, ...]] = set()
         identifiers: set[str] = set()
         total = count = 0
         for member in catalog['entries']:
             _entry(member)
             identifier = member.get('member_id')
+            identity = _member_identity(member)
             if (not isinstance(identifier, str) or not _ID.fullmatch(identifier)
-                    or member['path'] in paths or identifier in identifiers
+                    or identity in identities or identifier in identifiers
+                    or (member['kind'] == 'stream' and catalog['schema'] != _STREAM_SCHEMA)
                     or member.get('state') not in {'quarantined', 'blocked'}
                     or not isinstance(member.get('chunks'), list)):
                 raise QuarantineError('quarantine catalog member is invalid')
-            paths.add(member['path'])
+            identities.add(identity)
             identifiers.add(identifier)
             size = 0
             for position, chunk in enumerate(member['chunks']):
@@ -584,6 +669,8 @@ class QuarantineStore:
             total += size
         if count > MAX_CHUNKS or total > MAX_TOTAL_BYTES:
             raise QuarantineError('quarantine catalog exceeds its bounds')
+        if catalog['schema'] == _STREAM_SCHEMA:
+            _stream_inventory(catalog['entries'])
 
     def _load(self, descriptor: _Directory, context: dict[str, Any]) -> tuple[dict[str, Any], bytes]:
         raw = self._read(descriptor, _CATALOG, MAX_CATALOG_BYTES + _OVERHEAD, context)
@@ -718,11 +805,32 @@ class QuarantineStore:
         with self._opened(context) as descriptor:
             catalog, pinned = self._load(descriptor, context)
             self._physical(descriptor, catalog)
-            known = {entry['path'] for entry in catalog['entries']}
+            known = {entry['path'] for entry in catalog['entries'] if entry['kind'] != 'stream'}
             if not set(paths) <= known:
                 raise QuarantineError('quarantine denial contains unknown members')
             for member in catalog['entries']:
-                if member['path'] in paths:
+                if member['kind'] != 'stream' and member['path'] in paths:
                     member['state'] = 'blocked'
                     member['reason'] = reason
+            self._publish(descriptor, catalog, context, previous=pinned)
+
+    def block_streams(self, streams: Sequence[str], reason: str) -> None:
+        context = self._context()
+        if (isinstance(streams, (str, bytes)) or not isinstance(streams, Sequence)
+                or len(streams) > MAX_ENTRIES or not all(isinstance(stream, str) for stream in streams)
+                or not _text(reason, 1024)):
+            raise QuarantineError('quarantine denial metadata is invalid')
+        with self._opened(context) as descriptor:
+            catalog, pinned = self._load(descriptor, context)
+            self._physical(descriptor, catalog)
+            if catalog['schema'] != _STREAM_SCHEMA:
+                raise QuarantineError('quarantine has no typed Work streams')
+            known = {work_privacy._stream_key(entry['owner'], entry['owner_kind'], entry['name'],
+                                              entry['stream_type']): entry
+                     for entry in catalog['entries'] if entry['kind'] == 'stream'}
+            if not set(streams) <= set(known):
+                raise QuarantineError('quarantine denial contains unknown streams')
+            for identity in streams:
+                known[identity]['state'] = 'blocked'
+                known[identity]['reason'] = reason
             self._publish(descriptor, catalog, context, previous=pinned)

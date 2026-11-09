@@ -189,6 +189,7 @@ def _process(script, *arguments):
 def _stop(process):
     if process.poll() is None:
         process.kill()
+    process.wait(timeout=20)
     _, errors = process.communicate(timeout=20)
     return errors
 
@@ -222,12 +223,13 @@ def test_real_process_death_exposes_partial_state_and_requires_fresh_review(lega
     child = _process("""
 from catchup_core import storage_adoption as adoption
 from catchup_core import quarantine_fs_windows as fs
+import threading
 phase, digest = sys.argv[1:]
 original_effect = fs._Native.set_private_dacl
 effects = 0
 def pause():
     print('paused', flush=True)
-    sys.stdin.readline()
+    threading.Event().wait()
 def effect(self, handle):
     global effects
     if phase == 'before' and effects == 0:

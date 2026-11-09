@@ -333,7 +333,9 @@ def _binding(store: ReviewStore, member_id: str, output_name: str, *,
     fence = _fence(root)
     catalog_bytes = _read(root / 'catalog.ae1', 8 * 1024 * 1024)
     catalog = store.load_catalog()
-    if (not isinstance(catalog, dict) or catalog.get('schema') != 'artha.recovery-quarantine.v1'
+    if (not isinstance(catalog, dict)
+            or catalog.get('schema') not in {'artha.recovery-quarantine.v1', 'artha.recovery-quarantine.v2'}
+            or (catalog.get('schema') == 'artha.recovery-quarantine.v2' and catalog.get('profile') != 'work')
             or catalog.get('profile') not in {'personal', 'work'}
             or not isinstance(catalog.get('checkpoint_id'), str) or not catalog['checkpoint_id']
             or not isinstance(catalog.get('checkpoint_sha256'), str)

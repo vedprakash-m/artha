@@ -16,6 +16,7 @@ outside staging or lose an update while the owner closes the batch.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 from collections.abc import Callable, Iterator, Mapping
@@ -196,10 +197,16 @@ def _member(active: Any, path: Path) -> tuple[str, Path]:
 def _read(active: _Session, path: Path) -> bytes | None:
     if active.batch is not None and Path(path).absolute() in active.batch:
         return active.batch[Path(path).absolute()]
+    from catchup_core.work_privacy import _MAX_MEMBER_BYTES, _read as read_member  # noqa: PLC0415
+    from catchup_core.quarantine_fs_windows import QuarantineFilesystemError  # noqa: PLC0415
     try:
-        return path.read_bytes()
-    except FileNotFoundError:
-        return None
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return None
+        return read_member(path, _MAX_MEMBER_BYTES)
+    except (OSError, QuarantineFilesystemError) as exc:
+        raise WorkPublicationBlocked('Work producer input could not be read safely') from exc
 
 
 def encode(text: str) -> bytes:
@@ -217,8 +224,14 @@ def _commit(active: _Session, build: Callable[[Callable[[Path], bytes | None]], 
             raise WorkPublicationBlocked('Work state changed under this producer; stale input refused')
         changes = {}
         def bound_read(path: Path) -> bytes | None:
-            _member(active.protocol, path)
-            return _read(active, path)
+            name, target = _member(active.protocol, path)
+            raw = _read(active, target)
+            if active.batch is None or target not in active.batch:
+                expected = tx.pinned['members'].get(name)
+                actual = None if raw is None else {'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+                if actual != expected:
+                    raise WorkPublicationBlocked('Work member changed under this producer; stale input refused')
+            return raw
 
         for path, raw in build(bound_read).items():
             name, target = _member(active.protocol, path)

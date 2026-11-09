@@ -3,7 +3,7 @@
 Commands: ``inventory``, ``create``, ``verify``, ``recovery``, ``diff``, ``restore``,
 metadata-only ``registry-preview``, ``registry-declare``, ``registry-review`` and the
 Work-only ``work-privacy-status``, ``work-privacy-enroll``, ``work-privacy-reconcile``,
-``work-privacy-recover-pending`` and ``work-privacy-revoke`` lifecycle commands.
+``work-privacy-recover-pending``, ``work-privacy-revoke`` and reviewed stream-history commands.
 These Work commands report metadata only; enrollment, reconciliation and revocation require
 ``--reviewed``, and status never repairs pending authority.
 ``storage-preview`` and ``storage-adopt --sha256 HASH --reviewed --writers-stopped`` inspect/adopt
@@ -30,7 +30,7 @@ from contextlib import ExitStack, closing
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 from catchup_core import checkpoint as ck
 from catchup_core.contracts import ExitCode
@@ -43,6 +43,10 @@ from catchup_core.crypto import (
     system_keyring,
 )
 from catchup_core.session_lock import SessionBusy, default_installation_dir, installation_fence, session_lock
+from catchup_core.work_privacy import _stream_key
+
+if TYPE_CHECKING:
+    from catchup_core.work_privacy import WorkPrivacy
 
 _REPO = Path(__file__).resolve().parents[2]
 _KEY_SERVICES = ("artha-ledger", "artha-ledger-ids")
@@ -938,13 +942,17 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912 - explic
             for field in ('sha256', 'reviewer', 'reviewed-at'):
                 command.add_argument('--' + field, required=True)
     for name in ('work-privacy-status', 'work-privacy-enroll', 'work-privacy-reconcile',
-                 'work-privacy-recover-pending', 'work-privacy-revoke'):
+                 'work-privacy-recover-pending', 'work-privacy-revoke',
+                 'work-privacy-stream-preview', 'work-privacy-stream-upgrade'):
         command = sub.add_parser(name)
-        if name in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke'}:
+        if name in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke',
+                    'work-privacy-stream-upgrade'}:
             command.add_argument('--reviewed', action='store_true',
                                  help='confirm the required explicit Work review')
         if name == 'work-privacy-revoke':
             command.add_argument('--member', required=True, help='bound Work member alias/path')
+        if name == 'work-privacy-stream-upgrade':
+            command.add_argument('--sha256', required=True, help='exact reviewed stream-inventory digest')
     for name in ("inventory", "create", "diff"):
         command = sub.add_parser(name)
         command.add_argument("--profile", choices=("personal", "work"), default="personal")
@@ -1214,6 +1222,8 @@ def _inspect_recovery(path: Path, secret: str) -> dict[str, Any]:
         context = manifest.get('context')
         binding = context.get('work_binding') if isinstance(context, dict) else None
         out['work_binding'] = 'present_unverified' if isinstance(binding, dict) else 'unbound_inspection_only'
+        if manifest['schema'] == 'artha.checkpoint.v3':
+            out['streams'] = len(manifest['streams'])
     return out
 
 
@@ -1272,7 +1282,7 @@ def _privacy_hook(backend: Any, sealed_for: Callable[[str], Any] | None = None) 
     return hook
 
 
-def _work_privacy(repo: Path, local: Path, backend: Any) -> Any:
+def _work_privacy(repo: Path, local: Path, backend: Any) -> WorkPrivacy:
     from catchup_core.work_privacy import for_installation  # noqa: PLC0415
 
     return for_installation(repo, local, backend=backend)
@@ -1297,7 +1307,7 @@ def _work_privacy_summary(current: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,
+def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,  # noqa: PLR0911, PLR0912
                           backend: Any) -> Mapping[str, Any]:
     protocol = _work_privacy(repo, local, backend)
     if args.command == 'work-privacy-status':
@@ -1322,6 +1332,21 @@ def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,
             return _work_privacy_summary(protocol.recover_pending())
         except _work_privacy_errors() as exc:
             raise ck.CheckpointBlocked('pending Work recovery could not be completed') from exc
+    if args.command == 'work-privacy-stream-preview':
+        try:
+            return {**protocol.preview_stream_history(), 'checkpoint_creation_after_upgrade': 'available_on_windows',
+                    'capture_semantics': 'authenticated_work_generation',
+                    'stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False}
+        except _work_privacy_errors() as exc:
+            raise ck.CheckpointBlocked('Work stream inventory preview is unavailable') from exc
+    if args.command == 'work-privacy-stream-upgrade':
+        try:
+            current = protocol.upgrade_stream_history(reviewed=args.reviewed, expected_digest=args.sha256)
+            return {**_work_privacy_summary(current), 'checkpoint_creation': 'available_on_windows',
+                    'capture_semantics': 'authenticated_work_generation',
+                    'stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False}
+        except _work_privacy_errors() as exc:
+            raise ck.CheckpointBlocked('reviewed Work stream history upgrade could not be completed') from exc
     if args.command == 'work-privacy-revoke':
         try:
             with protocol.transaction() as transaction:
@@ -1333,10 +1358,40 @@ def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,
     raise ck.CheckpointBlocked('unknown Work privacy operation')
 
 
+def _work_recovery_status(manifest: Mapping[str, Any], protocol: Any, backend: Any) -> dict[str, Any]:
+    if manifest.get('schema') == 'artha.checkpoint.v3':
+        from catchup_core.recovery_access import WorkRecoveryAccess  # noqa: PLC0415
+        access = WorkRecoveryAccess(_REPO, protocol, _cipher(backend, profile='work'))
+        access.authorize_checkpoint(manifest)
+        return {'work_authority_verified': True, 'work_members_blocked': len(access.denied),
+                'work_streams_blocked': len(access.stream_denied),
+                'work_stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False}
+    context = manifest.get('context')
+    binding = context.get('work_binding') if isinstance(context, dict) else None
+    if not isinstance(binding, dict):
+        raise ck.CheckpointBlocked('unbound Work checkpoints are inspection-only')
+    try:
+        checked = protocol.check_checkpoint(binding)
+        denied = protocol.denied_members(binding, list(binding['members']))
+        confirmed = protocol.current()
+    except _work_privacy_errors() as exc:
+        raise ck.CheckpointBlocked('same-host current Work identity and member history are required') from exc
+    if checked.get('head') != confirmed.get('head'):
+        raise ck.CheckpointBlocked('current Work privacy head changed during recovery inspection')
+    return {'work_authority_verified': True, 'work_members_blocked': len(denied)}
+
+
 def _work_binding_matches(binding: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
     head = hashlib.sha256(json.dumps(current['head'], sort_keys=True, separators=(',', ':'),
                                      allow_nan=False).encode()).hexdigest()
-    return (binding.get('identity') == current.get('identity')
+    schemas_match = (
+        (current.get('schema') == 'artha.work-member-history.v1'
+         and binding.get('schema') == 'artha.work-checkpoint-binding.v1')
+        or (current.get('schema') == 'artha.work-member-history.v2'
+            and binding.get('schema') == 'artha.work-checkpoint-binding.v2'
+            and binding.get('streams') == current.get('streams'))
+    )
+    return (schemas_match and binding.get('identity') == current.get('identity')
             and binding.get('generation') == current.get('generation')
             and binding.get('head_sha256') == head
             and binding.get('members') == current.get('members'))
@@ -1347,15 +1402,31 @@ def _verify_work_checkpoint_inventory(binding: Mapping[str, Any], roots: Mapping
     members = binding.get('members')
     if not isinstance(members, Mapping):
         raise ck.CheckpointBlocked('Work checkpoint member binding is invalid')
-    found, problems, _ = ck._walk(roots, exclude)
-    if problems:
-        raise ck.CheckpointBlocked('Work checkpoint inventory is incomplete')
+    if binding.get('schema') == 'artha.work-checkpoint-binding.v2':
+        captured = ck._capture_work_streams(roots, exclude)
+        found = captured.files
+        streams = {
+            _stream_key(header['owner'], header['owner_kind'], header['name'], header['stream_type']):
+                {'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+            for header, data in captured.streams
+            if header['owner'].split('/', 1)[0] in {'work_state', 'work_local'}}
+        if streams != binding.get('streams'):
+            raise ck.CheckpointBlocked('Work checkpoint streams differ from their journaled inventory')
+    else:
+        found, problems, _ = ck._walk(roots, exclude)
+        if problems:
+            raise ck.CheckpointBlocked('Work checkpoint inventory is incomplete')
     actual = {name: path for name, path in found.items()
               if name.startswith(('work_state/', 'work_local/'))}
     if set(actual) != set(members):
         raise ck.CheckpointBlocked('Work checkpoint differs from its journaled member inventory')
     for name, member in members.items():
         path = actual[name]
+        if binding.get('schema') == 'artha.work-checkpoint-binding.v2':
+            entry = ck._work_member_entry(name, path, captured.owner_snapshots[name])
+            if not isinstance(member, Mapping) or {'size': entry.size, 'sha256': entry.sha256} != member:
+                raise ck.CheckpointBlocked('Work checkpoint member differs from its journaled bytes')
+            continue
         if ck._is_sqlite(path):
             raise ck.CheckpointBlocked('Work recovery does not yet support SQLite member images')
         if (not isinstance(member, Mapping) or path.stat().st_size != member.get('size')
@@ -1378,6 +1449,9 @@ def _create_checkpoint(args: argparse.Namespace, backend: Any, local: Path | Non
         if not work_protocol.is_enrolled():
             raise ck.CheckpointBlocked('explicit reviewed Work enrollment is required before recovery capture')
         work_binding = work_protocol.bind_checkpoint()
+        if work_binding.get('schema') not in {'artha.work-checkpoint-binding.v1',
+                                              'artha.work-checkpoint-binding.v2'}:
+            raise ck.CheckpointBlocked('Work checkpoint binding schema is not supported')
     secret = passphrase(True)
     ck._check_passphrase(secret)
     from catchup_core.runtime import action_database_path  # noqa: PLC0415
@@ -1490,10 +1564,11 @@ def _quarantine_command(args: argparse.Namespace, backend: Any, local: Path,
         store = personal_access.open_store(Path(args.path).expanduser().absolute(), export=export)
     instant = (now or (lambda: datetime.now(UTC)))()
     if args.command == 'quarantine-list':
-        fields = ('member_id', 'size', 'kind', 'state', 'path') if args.details else (
-            'member_id', 'size', 'kind', 'state')
-        out = {'profile': args.profile, 'members': [{field: entry[field] for field in fields}
-               for entry in store.inventory()], 'activation_allowed': False}
+        fields = ('member_id', 'size', 'kind', 'state')
+        members = [{**{field: entry[field] for field in fields},
+                    **({'path': entry['path']} if args.details and entry['kind'] != 'stream' else {})}
+                   for entry in store.inventory()]
+        out = {'profile': args.profile, 'members': members, 'activation_allowed': False}
     elif args.command == 'quarantine-review':
         out = quarantine_review.preview(store, args.member_id, args.output_name, now=instant)
     elif args.command == 'quarantine-export-view':
@@ -1551,7 +1626,8 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
                   file=stdout)
             return int(ExitCode.COMPLETE)
         if args.command.startswith('work-privacy-'):
-            if (args.command in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke'}
+            if (args.command in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke',
+                                 'work-privacy-stream-upgrade'}
                     and not args.reviewed):
                 raise ck.CheckpointBlocked('explicit --reviewed confirmation is required')
             out = _work_privacy_command(args, _REPO, state_local, backend)
@@ -1573,6 +1649,8 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
                 raise ck.CheckpointBlocked('checkpoint does not match the requested profile')
             out = {"generation": manifest["generation"], "profile": manifest["profile"],
                    "files": len(manifest["entries"]), "verified": True}
+            if manifest['schema'] == 'artha.checkpoint.v3':
+                out['streams'] = len(manifest['streams'])
         elif args.command == "recovery":
             if args.inspection_only:
                 print(json.dumps(_inspect_recovery(Path(args.path), passphrase(False))), file=stdout)
@@ -1589,22 +1667,8 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
             profile = manifest['profile']
             work_status: dict[str, Any] = {}
             if profile == 'work':
-                context = manifest.get('context')
-                binding = context.get('work_binding') if isinstance(context, dict) else None
-                if not isinstance(binding, dict):
-                    raise ck.CheckpointBlocked('unbound Work checkpoints are inspection-only')
                 protocol = _work_privacy(_REPO, state_local, backend)
-                try:
-                    checked = protocol.check_checkpoint(binding)
-                    denied = protocol.denied_members(binding, list(binding['members']))
-                    confirmed = protocol.current()
-                except _work_privacy_errors() as exc:
-                    raise ck.CheckpointBlocked(
-                        'same-host current Work identity and member history are required'
-                    ) from exc
-                if checked.get('head') != confirmed.get('head'):
-                    raise ck.CheckpointBlocked('current Work privacy head changed during recovery inspection')
-                work_status = {'work_authority_verified': True, 'work_members_blocked': len(denied)}
+                work_status = _work_recovery_status(manifest, protocol, backend)
             live = collect_escrow(backend, profile=profile, repo=_REPO, local=state_local, registry_root=registry_root)
             out = {"escrow_items": len(items), "recoverable": sorted(items) == sorted(live)
                    and all(items[k] == live[k] for k in live), **work_status}
@@ -1615,6 +1679,7 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
                 roots,
                 exclude,
                 include_tables=getattr(args, "tables", False),
+                expected_profile=args.profile,
             )
             out = {k: len(v) if isinstance(v, list) else v for k, v in changed.items()}
         elif args.profile == 'work':

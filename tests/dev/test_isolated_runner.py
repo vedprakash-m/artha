@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import stat
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -65,15 +66,154 @@ def checkout(tmp_path):
 
 def test_workspace_has_working_tree_content_but_no_ignored_files(checkout, tmp_path):
     dest = tmp_path / "ws"
+    procedure = checkout / "state" / "learned_procedures" / "synthetic.md"
+    procedure.parent.mkdir(parents=True)
+    procedure.write_text("synthetic procedure\n")
     runner.build_workspace(checkout, dest, env=_git_env())
     assert (dest / "scripts" / "tracked.py").read_text() == "X = 99\n"
     assert (dest / "scripts" / "new_untracked.py").exists()
     assert (dest / "state" / "templates" / "t.md").exists()
+    assert (dest / "state" / "learned_procedures" / "synthetic.md").exists()
     assert not (dest / "state" / "finance.md").exists()
     assert not (dest / "config" / "user_profile.yaml").exists()
     assert (dest / runner.MARKER).exists()
     for name in ("state", "briefings", "tmp", "backups"):
         assert (dest / name).is_dir()
+
+
+def test_synthetic_only_workspace_excludes_every_state_file(checkout, tmp_path):
+    procedure = checkout / "state" / "learned_procedures" / "synthetic.md"
+    procedure.parent.mkdir(parents=True)
+    procedure.write_text("SYNTHETIC_PROCEDURE_CANARY\n")
+    nested = checkout / "state" / "nested" / "synthetic.txt"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("SYNTHETIC_STATE_CANARY\n")
+    dest = tmp_path / "ws"
+
+    runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert (dest / "state").is_dir()
+    assert not [path for path in (dest / "state").rglob("*") if path.is_file()]
+    assert (dest / "scripts" / "tracked.py").read_text() == "X = 99\n"
+
+
+def test_synthetic_only_excludes_normalized_case_insensitive_state_paths(checkout, tmp_path, monkeypatch):
+    state = checkout / "state"
+    state.mkdir(exist_ok=True)
+    (state / "finance.md").write_text("SYNTHETIC_STATE_CANARY\n")
+    (state / "nested.txt").write_text("SYNTHETIC_STATE_ALIAS_CANARY\n")
+    aliases = [
+        "STATE/finance.md",
+        "./State/finance.md",
+        "nested/../state/nested.txt",
+        r".\STATE\nested.txt",
+    ]
+    monkeypatch.setattr(runner, "_git_files", lambda *_args: [*aliases, "scripts/tracked.py"])
+    checked_sources = []
+    original_lstat = Path.lstat
+
+    def track_source_check(path):
+        if checkout in path.parents and path not in (checkout, checkout / "scripts"):
+            checked_sources.append(path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", track_source_check)
+    dest = tmp_path / "ws"
+
+    runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert checked_sources == [checkout / "scripts" / "tracked.py"]
+    assert not [path for path in (dest / "state").rglob("*") if path.is_file()]
+    assert (dest / "scripts" / "tracked.py").read_text() == "X = 99\n"
+
+
+@pytest.mark.parametrize(("path", "expected"), [
+    (r"C:\state\finance.md", None),
+    ("/state/finance.md", None),
+    ("../state/finance.md", None),
+    ("folder/...", ("folder",)),
+    ("folder/..  ", ()),
+    ("folder/.. /..  ", None),
+    ("folder/.. ./state/finance.md", ("state", "finance.md")),
+    (".. ./state/finance.md", None),
+])
+def test_synthetic_path_parts_normalize_roots_and_traversal(path, expected):
+    assert runner._synthetic_path_parts(path) == expected
+
+
+def test_synthetic_only_rejects_windows_dot_space_alias_of_state(checkout, monkeypatch):
+    monkeypatch.setattr(runner, "_git_files", lambda *_args: ["scripts/.. ./state/finance.md"])
+
+    assert not runner._wanted("scripts/.. ./state/finance.md", synthetic_only=True)
+
+
+def test_synthetic_only_skips_missing_source_leaf(checkout, tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "_git_files", lambda *_args: ["scripts/missing.py"])
+    dest = tmp_path / "ws"
+
+    copied = runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert copied == 0
+    assert not (dest / "scripts" / "missing.py").exists()
+
+
+def test_synthetic_only_rejects_source_symlink_before_copy(checkout, tmp_path, monkeypatch):
+    source = checkout / "scripts" / "linked.py"
+    source.write_text("SYNTHETIC_LINK_TARGET\n")
+    monkeypatch.setattr(runner, "_git_files", lambda *_args: ["scripts/linked.py"])
+    original_lstat = Path.lstat
+
+    def linked_source_lstat(path):
+        if path == source:
+            return SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", linked_source_lstat)
+    dest = tmp_path / "ws"
+
+    with pytest.raises(ValueError, match="linked path refused"):
+        runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert not (dest / "scripts" / "linked.py").exists()
+
+
+def test_synthetic_only_rejects_real_file_symlink_to_state(checkout, tmp_path):
+    source = checkout / "scripts" / "linked.py"
+    target = checkout / "state" / "finance.md"
+    try:
+        source.symlink_to(target)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"OS file symlinks unavailable: {type(exc).__name__}")
+    assert "scripts/linked.py" in runner._git_files(checkout, _git_env())
+    dest = tmp_path / "ws"
+
+    with pytest.raises(ValueError, match="linked path refused"):
+        runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert not (dest / "scripts" / "linked.py").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junctions are platform-specific")
+def test_synthetic_only_rejects_real_junction_to_state(checkout, tmp_path, monkeypatch):
+    junction = checkout / "scripts" / "linked_state"
+    env = _git_env()
+    env.update(ARTHA_TEST_JUNCTION=str(junction), ARTHA_TEST_JUNCTION_TARGET=str(checkout / "state"))
+    try:
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+             "New-Item -ItemType Junction -Path $env:ARTHA_TEST_JUNCTION "
+             "-Target $env:ARTHA_TEST_JUNCTION_TARGET | Out-Null"],
+            env=env, capture_output=True, check=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"OS junctions unavailable: {type(exc).__name__}")
+    monkeypatch.setattr(runner, "_git_files", lambda *_args: ["scripts/linked_state/finance.md"])
+    dest = tmp_path / "ws"
+
+    with pytest.raises(ValueError, match="linked path refused"):
+        runner.build_workspace(checkout, dest, env=env, synthetic_only=True)
+
+    assert not (dest / "scripts" / "linked_state" / "finance.md").exists()
 
 
 def test_workspace_never_contains_git_dir(checkout, tmp_path):
@@ -191,9 +331,11 @@ def test_main_keeps_machine_local_test_data_outside_the_copied_code_root(tmp_pat
     workspace = tmp_path / "isolated"
     workspace.mkdir()
     monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(workspace))
+    build_options = {}
 
-    def build(root, dest):
+    def build(root, dest, *, synthetic_only=False):
         dest.mkdir(parents=True, exist_ok=True)
+        build_options["synthetic_only"] = synthetic_only
         return 0
 
     def execute(argv, *, cwd, env):
@@ -206,8 +348,24 @@ def test_main_keeps_machine_local_test_data_outside_the_copied_code_root(tmp_pat
 
     monkeypatch.setattr(runner, "build_workspace", build)
     monkeypatch.setattr(runner.subprocess, "run", execute)
-    assert runner.main(["tests"]) == 0
+    assert runner.main(["--synthetic-only", "tests"]) == 0
+    assert build_options["synthetic_only"] is True
     assert not workspace.exists()
+
+
+def test_synthetic_only_rejects_private_work_mode(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        runner, "verify_private_work",
+        lambda *args: pytest.fail("private-work verification must not run"),
+    )
+
+    assert runner.main(["--private-work", "--synthetic-only"]) == 2
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_synthetic_only_rejects_duplicate_mode(capsys):
+    assert runner.main(["--synthetic-only", "--synthetic-only"]) == 2
+    assert "usage: [--synthetic-only]" in capsys.readouterr().err
 
 
 def test_inplace_refused_when_live_data_present(tmp_path):

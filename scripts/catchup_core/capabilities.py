@@ -330,7 +330,8 @@ def manifest(root: Path, previous: Mapping[str, object] | None = None) -> dict[s
                    | {fixture.split("::")[0] for _, fixture in BOUNDARY_CASES if "::" in fixture}
                    | {p.relative_to(root).as_posix() for p in (root / _C).glob("migrations/*.sql")}
                    | {p.relative_to(root).as_posix() for p in (root / _C).glob("prompts/*.md")})
-    implementation = "\n".join(path + ":" + hashlib.sha256((root / path).read_bytes()).hexdigest()
+    # The generated register follows the repository's canonical LF checkout representation.
+    implementation = "\n".join(path + ":" + hashlib.sha256((root / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
                                 for path in paths if (root / path).is_file())
     return {
         "spec": "specs/re-artha.md", "spec_version": "0.8.0", "spec_sha256": digest,

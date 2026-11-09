@@ -62,6 +62,26 @@ def test_opt_in_copies_only_reviewed_private_files_and_binds_public_bytes(source
     assert manifest["public.py"] == hashlib.sha256((dest / "public.py").read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize('relative', ['state/templates/example.md', 'state/learned_procedures/example.md',
+                                     'state/.gitkeep'])
+def test_private_work_never_reads_or_copies_state_files(source, tmp_path, monkeypatch, relative):
+    path = source / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('synthetic state sentinel')
+    source_hash = runner._source_hash
+
+    def checked(root, rel):
+        assert not rel.casefold().startswith('state/'), 'State File fingerprinted by private Work runner'
+        return source_hash(root, rel)
+
+    monkeypatch.setattr(runner, '_source_hash', checked)
+    manifest = runner._private_manifest(source)
+    destination = tmp_path / 'isolated'
+    runner._build_private_workspace(source, destination, manifest)
+    assert not list((destination / 'state').rglob('*'))
+    assert relative not in manifest
+
+
 @pytest.mark.parametrize("kind", ["missing", "private-change", "public-change", "symlink"])
 def test_source_missing_changed_or_linked_refused(source, tmp_path, kind):
     manifest = runner._private_manifest(source)
@@ -387,9 +407,9 @@ def test_new_source_during_copy_is_not_unfingerprinted(source, tmp_path, monkeyp
     manifest = runner._private_manifest(source)
     original = runner.build_workspace
 
-    def build(root, dest):
+    def build(root, dest, *, synthetic_only=False):
         (root / "late.py").write_text("LATE = 1\n")
-        return original(root, dest)
+        return original(root, dest, synthetic_only=synthetic_only)
 
     monkeypatch.setattr(runner, "build_workspace", build)
     with pytest.raises(ValueError):

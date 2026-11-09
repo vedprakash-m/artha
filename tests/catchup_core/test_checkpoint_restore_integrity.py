@@ -480,6 +480,78 @@ def test_sqlite_streaming_refuses_oversized_database_and_reconciles_tables(tmp_p
     assert ck.reconcile(ack, CIPHER, {'local': root})['tables_unavailable'] == ['local/ledger.db']
 
 
+@pytest.mark.parametrize('replacement_kind', ['personal', 'work'])
+@pytest.mark.parametrize('writer', ['in_process', 'subprocess'])
+def test_table_comparison_refuses_checkpoint_replacement_after_verification(
+    tmp_path, monkeypatch, replacement_kind, writer,
+):
+    root = tmp_path / 'src'
+    root.mkdir()
+    database = root / 'ledger.db'
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute('CREATE TABLE items(value TEXT)')
+        db.execute("INSERT INTO items VALUES('original')")
+    key = 'work_artifact_1/ledger.db'
+    original_image = database.read_bytes()
+    ack = container(tmp_path / 'baseline.ack', entries=[(key, original_image, 'sqlite', 0o600)])
+    with closing(sqlite3.connect(database)) as db, db:
+        db.execute("UPDATE items SET value='changed'")
+
+    replacement = tmp_path / 'replacement.ack'
+    if replacement_kind == 'personal':
+        container(replacement, entries=[(key, database.read_bytes(), 'sqlite', 0o600)])
+    else:
+        import test_work_stream_checkpoint as streams
+
+        def bind_external_root(manifest):
+            manifest['roots'] = ['work_artifact_1']
+            manifest['context']['work_binding']['members'] = {}
+
+        monkeypatch.setattr(streams, 'CIPHER', CIPHER)
+        streams._checkpoint(replacement, streams=[], member_path=key, edit_manifest=bind_external_root)
+        assert ck.verify(replacement, CIPHER)['schema'] == 'artha.checkpoint.v3'
+
+    original_sha = ck._sqlite_sha
+    table_reads = []
+    outcomes = []
+
+    def replace_after_hash(path):
+        digest = original_sha(path)
+        if writer == 'in_process':
+            ack.write_bytes(replacement.read_bytes())
+            outcomes.append('written')
+        else:
+            program = (
+                'from pathlib import Path\n'
+                'import sys\n'
+                'try:\n'
+                '    Path(sys.argv[1]).write_bytes(Path(sys.argv[2]).read_bytes())\n'
+                'except OSError as exc:\n'
+                "    if getattr(exc, 'winerror', None) not in (32, 33):\n"
+                '        raise\n'
+                '    sys.exit(70)\n'
+            )
+            result = subprocess.run([sys.executable, '-c', program, str(ack), str(replacement)],
+                                    capture_output=True, timeout=10, check=False)
+            assert result.returncode in (0, 70), result.stderr.decode(errors='replace')
+            outcomes.append('blocked' if result.returncode == 70 else 'written')
+        return digest
+
+    monkeypatch.setattr(ck, '_sqlite_sha', replace_after_hash)
+    monkeypatch.setattr(ck, '_sqlite_table_diff', lambda body, _path: table_reads.append(body) or {})
+    try:
+        ck.diff(ack, CIPHER, {'work_artifact_1': root}, include_tables=True)
+    except ck.CheckpointError as exc:
+        expected = ('Work stream-aware comparison is not yet supported' if replacement_kind == 'work'
+                    else 'checkpoint changed after authenticated preflight')
+        assert str(exc) == expected
+        assert outcomes == ['written']
+        assert table_reads == []
+    else:
+        assert outcomes == ['blocked']
+        assert table_reads == [original_image]
+
+
 
 def test_committed_wal_growth_is_bounded_before_backup_serialization(tmp_path, monkeypatch):
     path = tmp_path / 'wal.db'

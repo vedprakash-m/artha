@@ -9,11 +9,14 @@ CI would see — tracked files plus untracked-but-not-ignored files, with their
 current working-tree content — into a temporary workspace with empty data
 directories, and runs pytest there.
 
-Usage: python tools/run_tests_isolated.py [pytest args...]
+Usage: python tools/run_tests_isolated.py [--synthetic-only] [pytest args...]
+
+The synthetic-only mode copies no files under ``state/``.
 
 Local-only private Work evidence (not shared CI or release authority):
     python tools/run_tests_isolated.py --private-work --evidence ABSOLUTE_NEW_JSON
 Only the reviewed synthetic producer selection is permitted; its output is suppressed.
+Private verification also excludes every State File before fingerprinting or copying.
 This is a cooperative isolated test workspace, not an OS or host sandbox.
 """
 from __future__ import annotations
@@ -81,7 +84,7 @@ def _source_hash(root: Path, rel: str) -> str:
 
 
 def _private_manifest(root: Path) -> dict[str, str]:
-    public = [rel for rel in _git_files(root, _git_env()) if _wanted(rel)]
+    public = [rel for rel in _git_files(root, _git_env()) if _wanted(rel, synthetic_only=True)]
     return {rel: _source_hash(root, rel) for rel in sorted(set(public) | set(PRIVATE_WORK_FILES))}
 
 
@@ -93,7 +96,7 @@ def _check_sources(root: Path, manifest: dict[str, str]) -> None:
 
 def _build_private_workspace(root: Path, dest: Path, manifest: dict[str, str]) -> None:
     _check_sources(root, manifest)
-    build_workspace(root, dest)
+    build_workspace(root, dest, synthetic_only=True)
     for rel in PRIVATE_WORK_FILES:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -231,7 +234,37 @@ def _git_files(root: Path, env: dict[str, str]) -> list[str]:
     return [p for p in result.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
 
 
-def _wanted(rel: str) -> bool:
+def _synthetic_path_parts(rel: str) -> tuple[str, ...] | None:
+    if PureWindowsPath(rel).drive or PureWindowsPath(rel).root:
+        return None
+    parts = []
+    for component in rel.replace("\\", "/").split("/"):
+        component = component.casefold()
+        component = component.rstrip(" ")
+        if component in ("", "."):
+            continue
+        if component == "..":
+            if not parts:
+                return None
+            parts.pop()
+            continue
+        component = component.rstrip(".").rstrip(" ")
+        if component in ("", "."):
+            continue
+        if component == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(component)
+    return tuple(parts)
+
+
+def _wanted(rel: str, *, synthetic_only: bool = False) -> bool:
+    if synthetic_only:
+        parts = _synthetic_path_parts(rel)
+        if parts is None or (parts and parts[0] == "state"):
+            return False
     if rel.startswith(_DATA_PREFIXES):
         return rel.endswith(".gitkeep")
     if rel.startswith("state/"):
@@ -239,15 +272,21 @@ def _wanted(rel: str) -> bool:
     return not rel.startswith((".git/", ".venv/", ".archive/"))
 
 
-def build_workspace(root: Path, dest: Path, env: dict[str, str] | None = None) -> int:
+def build_workspace(
+    root: Path, dest: Path, env: dict[str, str] | None = None, *, synthetic_only: bool = False,
+) -> int:
     env = env or _git_env()
     dest.mkdir(parents=True, exist_ok=True)
     copied = 0
     for rel in _git_files(root, env):
-        if not _wanted(rel):
+        if not _wanted(rel, synthetic_only=synthetic_only):
             continue
         src = root / rel
-        if not src.is_file():
+        if synthetic_only:
+            info = _no_links(src, allow_missing_leaf=True)
+            if info is None or not stat.S_ISREG(info.st_mode):
+                continue
+        elif not src.is_file():
             continue
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -324,18 +363,27 @@ def _xml_reports(args: list[str], checkout: Path) -> list[Path]:
 
 def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
+    if "--private-work" in argv and "--synthetic-only" in argv:
+        print("--private-work and --synthetic-only cannot be combined", file=sys.stderr)
+        return 2
     if "--private-work" in argv:
         if len(argv) < 3 or argv[:2] != ["--private-work", "--evidence"]:
             print("usage: --private-work --evidence ABSOLUTE_NEW_JSON [reviewed pytest args]",
                   file=sys.stderr)
             return 2
         return verify_private_work(root, Path(argv[2]), argv[3:])
+    if argv.count("--synthetic-only") > 1:
+        print("usage: [--synthetic-only] [pytest args...]", file=sys.stderr)
+        return 2
+    synthetic_only = "--synthetic-only" in argv
+    args = [arg for arg in argv if arg != "--synthetic-only"]
     workspace = Path(tempfile.mkdtemp(prefix="artha-ws-"))
     dest = workspace / "checkout"
     try:
-        copied = build_workspace(root, dest)
-        print(f"isolated workspace: {dest} ({copied} files)", file=sys.stderr)
-        args = argv or ["tests", "-q", "--tb=short"]
+        copied = build_workspace(root, dest, synthetic_only=synthetic_only)
+        mode = " synthetic-only" if synthetic_only else ""
+        print(f"isolated{mode} workspace: {dest} ({copied} files)", file=sys.stderr)
+        args = args or ["tests", "-q", "--tb=short"]
         env = _test_env(workspace)
         reports = _xml_reports(args, dest)
         before = {path: path.stat() if path.exists() else None for path in reports}

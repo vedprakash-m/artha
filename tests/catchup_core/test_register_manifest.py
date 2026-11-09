@@ -117,6 +117,17 @@ def test_manifest_uses_portable_paths_for_migrations_and_prompts(tmp_path):
     assert manifest(tmp_path)['implementation_sha256'] == hashlib.sha256(expected.encode()).hexdigest()
 
 
+def test_manifest_normalizes_checkout_line_endings_but_preserves_content_changes(tmp_path):
+    path = tmp_path / 'scripts/catchup_core/migrations/0001.sql'
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b'SELECT 1;\r\n')
+    windows = manifest(tmp_path)['implementation_sha256']
+    path.write_bytes(b'SELECT 1;\n')
+    assert manifest(tmp_path)['implementation_sha256'] == windows
+    path.write_bytes(b'SELECT 2;\n')
+    assert manifest(tmp_path)['implementation_sha256'] != windows
+
+
 def test_runtime_resume_fingerprint_uses_one_portable_label_per_source(tmp_path):
     from catchup_core.runtime import _implementation_fingerprint
     files = {'scripts/catchup_core/runtime.py': b'synthetic runtime',

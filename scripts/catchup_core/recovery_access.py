@@ -14,6 +14,7 @@ import sqlite3
 import stat
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -31,9 +32,9 @@ from .quarantine_fs_windows import (
     QuarantineFilesystemError,
     WindowsQuarantineDirectory,
 )
-from .recovery_quarantine import QuarantineError, QuarantineStore
+from .recovery_quarantine import WORK_DENIAL_REASON, QuarantineError, QuarantineStore, _entry, _stream_inventory
 from .session_lock import SessionBusy, default_installation_dir
-from .work_privacy import WorkPrivacyBlocked
+from .work_privacy import WorkPrivacyBlocked, _stream_key
 
 
 class _MetadataStore(QuarantineStore):
@@ -546,7 +547,10 @@ class RecoveryAccess:
 class _WorkCaptureStore(QuarantineStore):
     def __init__(self, *args: Any, binding: Mapping[str, Any], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._binding = dict(binding)
+        self._binding = deepcopy(binding)
+
+    def iter_member(self, member_id: str) -> Iterator[bytes]:
+        raise QuarantineError('capture does not authorize Work content access')
 
     def seal(self) -> dict[str, Any]:
         self.set_recovery_affinity({
@@ -559,7 +563,7 @@ class _WorkCaptureStore(QuarantineStore):
 class _WorkContentStore(QuarantineStore):
     def __init__(self, *args: Any, binding: Mapping[str, Any], denied: set[str], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._binding = dict(binding)
+        self._binding = deepcopy(binding)
         self._denied = frozenset(denied)
 
     def iter_member(self, member_id: str) -> Iterator[bytes]:
@@ -568,7 +572,7 @@ class _WorkContentStore(QuarantineStore):
                 'schema': 'artha.recovery-affinity.v1', 'work_binding': self._binding}:
             raise QuarantineError('original Work checkpoint provenance changed')
         member = next((entry for entry in catalog['entries'] if entry['member_id'] == member_id), None)
-        if member is None or member['path'] in self._denied:
+        if member is None or member.get('kind') == 'stream' or member['path'] in self._denied:
             raise QuarantineError('current Work history forbids this historical member')
         yield from super().iter_member(member_id)
 
@@ -585,9 +589,11 @@ class WorkRecoveryAccess:
         self.binding: dict[str, Any] | None = None
         self.pinned: dict[str, Any] | None = None
         self.denied: set[str] = set()
+        self.stream_denied: set[str] = set()
         self.checkpoint_id: str | None = None
         self.checkpoint_sha256: str | None = None
         self.entries: dict[str, dict[str, Any]] | None = None
+        self.streams: dict[str, dict[str, Any]] | None = None
         self.capture_store: QuarantineStore | None = None
 
     @staticmethod
@@ -657,7 +663,52 @@ class WorkRecoveryAccess:
 
     @staticmethod
     def _member_entries(entries: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
-        return {str(entry['path']): dict(entry) for entry in entries}
+        if not isinstance(entries, list):
+            raise ck.CheckpointBlocked('Work checkpoint member inventory is invalid')
+        result: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get('path'), str) or entry['path'] in result:
+                raise ck.CheckpointBlocked('Work checkpoint member inventory is invalid')
+            result[entry['path']] = dict(entry)
+        return result
+
+    @staticmethod
+    def _stream_entries(entries: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            try:
+                checked = _entry(dict(entry))
+                if checked['kind'] != 'stream':
+                    raise QuarantineError('typed Work stream required')
+                identity = _stream_key(checked['owner'], checked['owner_kind'],
+                                       checked['name'], checked['stream_type'])
+            except (QuarantineError, KeyError, TypeError, ValueError):
+                raise ck.CheckpointBlocked('Work checkpoint stream inventory is invalid') from None
+            if identity in result:
+                raise ck.CheckpointBlocked('Work checkpoint stream inventory is invalid')
+            result[identity] = checked
+        return result
+
+    def _manifest_streams(self, manifest: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+        if manifest.get('schema') != 'artha.checkpoint.v3':
+            if 'streams' in manifest:
+                raise ck.CheckpointBlocked('legacy Work checkpoints cannot contain streams')
+            return {}
+        entries, streams = manifest.get('entries'), manifest.get('streams')
+        if not isinstance(entries, list) or not isinstance(streams, list):
+            raise ck.CheckpointBlocked('Work checkpoint stream inventory is invalid')
+        try:
+            checked_entries = [_entry(dict(entry)) for entry in entries]
+            checked_streams = [_entry(dict(entry)) for entry in streams]
+            if any(entry['kind'] == 'stream' for entry in checked_entries):
+                raise QuarantineError('ordinary Work members required')
+            if any(entry['kind'] != 'stream' for entry in checked_streams):
+                raise QuarantineError('typed Work streams required')
+            names = _stream_inventory([*checked_entries, *checked_streams])
+            ck._work_stream_manifest(manifest, checked_entries, checked_streams, names)
+        except (QuarantineError, ck.CheckpointError, KeyError, TypeError, ValueError):
+            raise ck.CheckpointBlocked('Work checkpoint stream binding is invalid') from None
+        return self._stream_entries(checked_streams)
 
     @staticmethod
     def _work_paths(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
@@ -682,15 +733,43 @@ class WorkRecoveryAccess:
         external.update(name for name in checkpoint_members if name.startswith('work_local/cache/'))
         return external
 
+    @staticmethod
+    def _validate_stream_binding(binding: Mapping[str, Any],
+                                 streams: Mapping[str, Mapping[str, Any]]) -> set[str]:
+        if binding.get('schema') == 'artha.work-checkpoint-binding.v1':
+            if streams:
+                raise ck.CheckpointBlocked('legacy Work binding cannot authorize streams')
+            return set()
+        bound = binding.get('streams')
+        if binding.get('schema') != 'artha.work-checkpoint-binding.v2' or not isinstance(bound, dict):
+            raise ck.CheckpointBlocked('Work checkpoint stream binding is invalid')
+        journaled = {key: {'size': entry['size'], 'sha256': entry['sha256']}
+                     for key, entry in streams.items()
+                     if entry['owner'].split('/', 1)[0] in {'work_state', 'work_local'}}
+        if journaled != bound:
+            raise ck.CheckpointBlocked('Work checkpoint differs from its journaled stream inventory')
+        external = set(streams) - set(journaled)
+        external.update(key for key, entry in streams.items()
+                        if entry['owner'] == 'work_local/cache'
+                        or entry['owner'].startswith('work_local/cache/'))
+        return external
+
     def authorize_checkpoint(self, manifest: Mapping[str, Any]) -> None:
         if manifest.get('profile') != 'work':
             raise ck.CheckpointBlocked('Work recovery requires a Work-profile checkpoint')
         binding = self._manifest_binding(manifest)
         entries = self._member_entries(manifest.get('entries', []))
+        streams = self._manifest_streams(manifest)
+        if (manifest.get('schema') == 'artha.checkpoint.v3') != (
+                binding.get('schema') == 'artha.work-checkpoint-binding.v2'):
+            raise ck.CheckpointBlocked('Work checkpoint and binding versions do not match')
         external = self._validate_member_binding(binding, entries)
+        external_streams = self._validate_stream_binding(binding, streams)
         try:
             current = self.protocol.check_checkpoint(binding)
             denied = self.protocol.denied_members(binding, list(binding['members']))
+            stream_denied = (self.protocol.denied_streams(binding, list(binding['streams']))
+                             if binding.get('schema') == 'artha.work-checkpoint-binding.v2' else set())
             confirmed = self.protocol.current()
         except (WorkPrivacyBlocked, QuarantineFilesystemError, KeyUnavailableError,
                 SessionBusy, KeyringError, OSError) as exc:
@@ -699,21 +778,27 @@ class WorkRecoveryAccess:
             raise ck.CheckpointBlocked('current Work privacy head changed during recovery authorization')
         self._pin(confirmed)
         self.actor = self._resolve_actor()
-        self.binding = binding
+        self.binding = deepcopy(binding)
         self.denied = set(denied) | external
+        self.stream_denied = set(stream_denied) | external_streams
         self.checkpoint_id = str(manifest.get('generation', ''))
         self.entries = entries
+        self.streams = streams
 
     def factory(self, dest: Path, manifest: Mapping[str, Any], checkpoint_sha256: str) -> QuarantineStore:
         self._destination(dest)
         binding = self._manifest_binding(manifest)
         if (self.binding != binding or self.checkpoint_id != manifest.get('generation')
+                or (manifest.get('schema') == 'artha.checkpoint.v3') != (
+                    binding.get('schema') == 'artha.work-checkpoint-binding.v2')
                 or self.pinned is None or self.actor is None):
             raise ck.CheckpointBlocked('Work checkpoint authority was not verified before extraction')
         entries = self._member_entries(manifest.get('entries', []))
-        if self.entries != entries:
+        streams = self._manifest_streams(manifest)
+        if self.entries != entries or self.streams != streams:
             raise ck.CheckpointBlocked('Work checkpoint changed after authority verification')
         self._validate_member_binding(binding, entries)
+        self._validate_stream_binding(binding, streams)
         self._authority()
         store = _WorkCaptureStore(
             dest / '.artha-quarantine', self.cipher, authority=self._authority, binding=binding,
@@ -737,13 +822,21 @@ class WorkRecoveryAccess:
             binding[key] = value
         return binding
 
-    def _validate_catalog(self, catalog: Mapping[str, Any], binding: Mapping[str, Any]) -> set[str]:
+    def _validate_catalog(self, catalog: Mapping[str, Any], binding: Mapping[str, Any]) -> tuple[set[str], set[str]]:
         if (catalog.get('profile') != 'work' or catalog.get('checkpoint_id') != self.checkpoint_id
                 or (self.checkpoint_sha256 is not None
                     and catalog.get('checkpoint_sha256') != self.checkpoint_sha256)):
             raise ck.CheckpointBlocked('Work quarantine checkpoint identity changed')
-        entries = {entry['path']: entry for entry in catalog.get('entries', [])}
+        if self._catalog_binding(catalog) != binding:
+            raise ck.CheckpointBlocked('Work quarantine checkpoint binding changed')
+        catalog_entries = catalog.get('entries', [])
+        entries = self._member_entries([entry for entry in catalog_entries if entry['kind'] != 'stream'])
+        streams = self._stream_entries([entry for entry in catalog_entries if entry['kind'] == 'stream'])
+        if (catalog.get('schema') == 'artha.recovery-quarantine.v2') != (
+                binding.get('schema') == 'artha.work-checkpoint-binding.v2'):
+            raise ck.CheckpointBlocked('Work quarantine and binding versions do not match')
         external = self._validate_member_binding(binding, entries)
+        external_streams = self._validate_stream_binding(binding, streams)
         if self.entries is not None:
             expected = {name: {key: value for key, value in entry.items()
                                if key not in {'member_id', 'state', 'chunks', 'reason'}}
@@ -753,17 +846,24 @@ class WorkRecoveryAccess:
                       for name, entry in entries.items()}
             if actual != expected:
                 raise ck.CheckpointBlocked('Work quarantine inventory differs from the verified checkpoint')
-        return external
+        if self.streams is not None:
+            actual_streams = {name: {key: value for key, value in entry.items()
+                                     if key not in {'member_id', 'state', 'chunks', 'reason'}}
+                              for name, entry in streams.items()}
+            if actual_streams != self.streams:
+                raise ck.CheckpointBlocked('Work quarantine streams differ from the verified checkpoint')
+        return external, external_streams
 
     def replay(self, dest: Path) -> None:
         if self.capture_store is None or self.binding is None:
             raise ck.CheckpointBlocked('Work quarantine capture is unavailable')
         self._authority()
         catalog = self.capture_store.load_catalog()
-        external = self._validate_catalog(catalog, self.binding)
+        external, external_streams = self._validate_catalog(catalog, self.binding)
         denied = self.denied | external
         if denied:
             self._block_denied(self.capture_store, catalog, denied)
+        self._block_denied_streams(self.capture_store, catalog, self.stream_denied | external_streams, denied)
         self._authority()
         self._check_fence(dest, self.capture_store, catalog)
 
@@ -772,20 +872,36 @@ class WorkRecoveryAccess:
         needs_blocking = {entry['path'] for entry in catalog.get('entries', [])
                           if entry.get('path') in denied and entry.get('state') != 'blocked'}
         if needs_blocking:
-            store.block_paths(sorted(needs_blocking),
-                              'current Work invalidation or unjournaled dependency')
+            store.block_paths(sorted(needs_blocking), WORK_DENIAL_REASON)
+
+    @staticmethod
+    def _block_denied_streams(store: QuarantineStore, catalog: Mapping[str, Any],
+                              denied: set[str], denied_members: set[str]) -> None:
+        blocked_owners = denied_members | {entry['path'] for entry in catalog.get('entries', [])
+                                           if entry.get('kind') != 'stream' and entry.get('state') == 'blocked'}
+        needs_blocking = {
+            _stream_key(entry['owner'], entry['owner_kind'], entry['name'], entry['stream_type'])
+            for entry in catalog.get('entries', [])
+            if entry.get('kind') == 'stream' and entry.get('state') != 'blocked'
+            and (entry['owner'] in blocked_owners
+                 or _stream_key(entry['owner'], entry['owner_kind'], entry['name'], entry['stream_type']) in denied)
+        }
+        if needs_blocking:
+            store.block_streams(sorted(needs_blocking), WORK_DENIAL_REASON)
 
     def _check_fence(self, dest: Path, store: QuarantineStore, catalog: Mapping[str, Any]) -> None:  # noqa: PLR0912
         self._destination(dest)
-        marker = dest / '.artha-restored.json'
         try:
             root_info = dest.lstat()
             if (not stat.S_ISDIR(root_info.st_mode) or stat.S_ISLNK(root_info.st_mode)
                     or getattr(root_info, 'st_file_attributes', 0) & 0x400):
                 raise ck.CheckpointBlocked('restored Work destination is unsafe')
-            if ck._object(marker.read_bytes()) != ck._restore_marker(str(catalog['checkpoint_id'])):
-                raise ck.CheckpointBlocked('restored Work installation fence changed')
-            for current, directories, files in os.walk(dest, followlinks=False):
+            ck._verify_work_fence(dest, str(catalog['checkpoint_id']))
+
+            def unavailable(error: OSError) -> None:
+                raise error
+
+            for current, directories, files in os.walk(dest, followlinks=False, onerror=unavailable):
                 for name in [*directories, *files]:
                     path = Path(current) / name
                     info = path.lstat()
@@ -816,12 +932,13 @@ class WorkRecoveryAccess:
                         else:
                             if info.st_size > 32 * 1024 * 1024:
                                 raise ck.CheckpointBlocked('reviewed Work export is not encrypted')
-                            with path.open('rb') as handle:
-                                if handle.read(3) != b'AE1':
+                            with path.open('rb') as export_file:
+                                if export_file.read(3) != b'AE1':
                                     raise ck.CheckpointBlocked('reviewed Work export is not encrypted')
                     else:
                         raise ck.CheckpointBlocked('restored Work destination contains plaintext members')
             store.verify()
+            ck._verify_work_fence(dest, str(catalog['checkpoint_id']))
         except QuarantineFilesystemError:
             raise ck.CheckpointBlocked('restored Work quarantine contains an unsafe reviewed export') from None
         except OSError:
@@ -844,23 +961,33 @@ class WorkRecoveryAccess:
         self.checkpoint_id = str(catalog.get('checkpoint_id', ''))
         self.checkpoint_sha256 = str(catalog.get('checkpoint_sha256', ''))
         binding = self._catalog_binding(catalog)
-        external = self._validate_catalog(catalog, binding)
+        external, external_streams = self._validate_catalog(catalog, binding)
         try:
             checked = self.protocol.check_checkpoint(binding)
             denied = self.protocol.denied_members(binding, list(binding['members']))
+            stream_denied = (self.protocol.denied_streams(binding, list(binding['streams']))
+                             if binding.get('schema') == 'artha.work-checkpoint-binding.v2' else set())
             confirmed = self.protocol.current()
         except (WorkPrivacyBlocked, QuarantineFilesystemError, KeyUnavailableError,
                 SessionBusy, KeyringError, OSError) as exc:
             raise ck.CheckpointBlocked('original Work identity and current member history are required') from exc
         if checked.get('head') != confirmed.get('head') or not self._same_head(confirmed):
             raise ck.CheckpointBlocked('current Work privacy head changed during quarantine access')
-        self.binding = binding
+        self.binding = deepcopy(binding)
         self.denied = set(denied) | external
+        self.stream_denied = set(stream_denied) | external_streams
         self.entries = {entry['path']: {key: value for key, value in entry.items()
                                         if key not in {'member_id', 'state', 'chunks', 'reason'}}
-                        for entry in catalog['entries']}
+                        for entry in catalog['entries'] if entry['kind'] != 'stream'}
+        self.streams = {
+            key: {name: value for name, value in entry.items()
+                  if name not in {'member_id', 'state', 'chunks', 'reason'}}
+            for key, entry in self._stream_entries(
+                [item for item in catalog['entries'] if item['kind'] == 'stream']).items()
+        }
         if self.denied:
             self._block_denied(store, catalog, self.denied)
+        self._block_denied_streams(store, catalog, self.stream_denied, self.denied)
         self._check_fence(dest, store, store.load_catalog())
         if export:
             result: QuarantineStore = _WorkContentStore(

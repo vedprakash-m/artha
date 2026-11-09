@@ -20,21 +20,27 @@ import re
 import secrets
 import stat
 import sys
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
+from . import quarantine_fs_windows
 from .backup import atomic_bytes
 from .crypto import DecryptionError, EnvelopeCipher, StaticKeyProvider, system_keyring
+from .quarantine_fs_windows import QuarantineFilesystemError, read_named_streams, validate_named_stream_name
 from .session_lock import default_installation_dir, installation_fence, require_active_installation, session_lock
 
 _MAX_MEMBERS = 10000
 _MAX_MEMBER_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_BYTES = 32 * 1024 * 1024
+_MAX_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
 _MAX_BYTES = 64 * 1024 * 1024
 _MAX_GENERATIONS = 10000
+_MAX_STREAM_OWNERS = 2 * _MAX_MEMBERS
+_MAX_STREAMS_PER_OWNER = 1024
 _HEX = re.compile(r'[0-9a-f]{64}')
 _ALIAS = re.compile(r'[a-z][a-z0-9_]{0,63}')
 _DEVICE = re.compile(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', re.IGNORECASE)
@@ -50,6 +56,10 @@ def _encoded(value: Any) -> bytes:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(_encoded(value)).hexdigest()
+
+
+def _stream_key(owner: str, kind: str, name: str, stream_type: str) -> str:
+    return json.dumps([owner, kind, name, stream_type], separators=(',', ':'), ensure_ascii=True)
 
 
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -93,9 +103,7 @@ def _read(path: Path, bound: int = _MAX_BYTES) -> bytes:
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > bound:
         raise WorkPrivacyBlocked('unsafe or oversized Work protocol member')
     if os.name == 'nt':
-        from .quarantine_fs_windows import WindowsQuarantineDirectory  # noqa: PLC0415
-
-        with (WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent,
+        with (quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent,
               parent.open_file(path.name, private=False) as handle):
             raw = handle.read(bound + 1)
             handle.check_path()
@@ -118,13 +126,11 @@ def _read(path: Path, bound: int = _MAX_BYTES) -> bytes:
 def _mkdir(path: Path, *, private: bool = True) -> None:
     _chain(path)
     if os.name == 'nt':
-        from .quarantine_fs_windows import WindowsQuarantineDirectory, ensure_private_directory  # noqa: PLC0415
-
         if path.exists() and not private:
-            with WindowsQuarantineDirectory.open(path, owner_private=False):
+            with quarantine_fs_windows.WindowsQuarantineDirectory.open(path, owner_private=False):
                 pass
         else:
-            ensure_private_directory(path)
+            quarantine_fs_windows.ensure_private_directory(path)
     else:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -137,9 +143,8 @@ def _atomic(path: Path, raw: bytes) -> None:
     if os.name != 'nt':
         atomic_bytes(path, raw)
         return
-    from .quarantine_fs_windows import WindowsQuarantineDirectory  # noqa: PLC0415
 
-    class _PublicationDirectory(WindowsQuarantineDirectory):
+    class _PublicationDirectory(quarantine_fs_windows.WindowsQuarantineDirectory):
         def open_file(self, name: str, *, writable: bool = False, rename: bool = False,
                       private: bool = True) -> Any:
             # Existing Work files predate private native publication. Pin their
@@ -161,12 +166,54 @@ def _atomic(path: Path, raw: bytes) -> None:
             parent.publish_write_once(temporary, path.name, expected_identity=identity)
 
 
+def _native_creation_available() -> bool:
+    return os.name == 'nt'
+
+
+def _require_native_creation() -> None:
+    if not _native_creation_available():
+        raise WorkPrivacyBlocked('native write-once creation is unavailable on this platform')
+
+
+def _create_member(path: Path, raw: bytes) -> None:
+    """Publish a new member without replacing any concurrent destination."""
+    _require_native_creation()
+    _chain(path)
+    _mkdir(path.parent, private=False)
+    try:
+        with quarantine_fs_windows.WindowsQuarantineDirectory.open(
+            path.parent, owner_private=False, writable=True,
+        ) as parent:
+            temporary = '.work-' + uuid.uuid4().hex
+            identity = None
+            published = False
+            try:
+                with parent.create_file(temporary) as staged:
+                    identity = staged.identity
+                    staged.write_all(raw)
+                    staged.flush()
+                parent.publish_write_once(temporary, path.name, expected_identity=identity)
+                published = True
+            finally:
+                if identity is not None and not published:
+                    try:
+                        parent.delete_file(temporary, expected_identity=identity)
+                    except QuarantineFilesystemError as exc:
+                        raise WorkPrivacyBlocked(
+                            'Work staging cleanup could not be verified; pending publication requires review',
+                        ) from exc
+    except QuarantineFilesystemError as exc:
+        raise WorkPrivacyBlocked(
+            'write-once Work creation was refused; pending publication and any staging require review',
+        ) from exc
+
+
 def _delete(path: Path) -> None:
     _chain(path)
     if os.name == 'nt':
-        from .quarantine_fs_windows import WindowsQuarantineDirectory  # noqa: PLC0415
-
-        with WindowsQuarantineDirectory.open(path.parent, owner_private=False, writable=True) as parent:
+        with quarantine_fs_windows.WindowsQuarantineDirectory.open(
+            path.parent, owner_private=False, writable=True,
+        ) as parent:
             with parent.open_file(path.name, private=False) as handle:
                 identity = handle.identity
             parent.delete_file(path.name, expected_identity=identity)
@@ -366,6 +413,107 @@ class WorkPrivacy:
                     members[member] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
         return members
 
+    def _stream_parts(self, key: str) -> tuple[str, str, str, str]:
+        try:
+            parts = json.loads(key)
+            if (not isinstance(parts, list) or len(parts) != 4
+                    or any(not isinstance(part, str) for part in parts)):
+                raise ValueError
+            owner, kind, name, stream_type = parts
+            if (_stream_key(owner, kind, name, stream_type) != key
+                    or kind not in {'file', 'directory'} or stream_type != '$DATA'):
+                raise ValueError
+            if owner in self.roots:
+                if kind != 'directory':
+                    raise ValueError
+            else:
+                self._member(owner)
+                if owner == self.EPHEMERAL_MEMBER:
+                    raise ValueError
+            validate_named_stream_name(name)
+            return owner, kind, name, stream_type
+        except (ValueError, TypeError, RecursionError, UnicodeError, QuarantineFilesystemError):
+            raise WorkPrivacyBlocked('invalid Work stream identity') from None
+
+    def _validate_stream_inventory(self, streams: Any, members: Mapping[str, Any]) -> None:
+        if not isinstance(streams, dict) or len(streams) > _MAX_MEMBERS:
+            raise WorkPrivacyBlocked('invalid Work stream inventory')
+        seen: set[tuple[str, str, str]] = set()
+        owners: dict[str, tuple[str, str]] = {}
+        counts: dict[str, int] = {}
+        total = 0
+        for key, value in streams.items():
+            owner, kind, name, _ = self._stream_parts(key)
+            folded_owner = unicodedata.normalize('NFC', owner).casefold()
+            folded_name = unicodedata.normalize('NFC', name).casefold()
+            identity = (folded_owner, kind, folded_name)
+            if (identity in seen or owners.get(folded_owner, (owner, kind)) != (owner, kind)
+                    or (kind == 'file' and owner not in members)
+                    or not isinstance(value, dict) or set(value) != {'sha256', 'size'}
+                    or not isinstance(value['sha256'], str) or not _HEX.fullmatch(value['sha256'])
+                    or type(value['size']) is not int or not 0 <= value['size'] <= _MAX_MEMBER_BYTES):
+                raise WorkPrivacyBlocked('invalid or ambiguous Work stream inventory')
+            seen.add(identity)
+            owners[folded_owner] = (owner, kind)
+            counts[folded_owner] = counts.get(folded_owner, 0) + 1
+            if counts[folded_owner] > _MAX_STREAMS_PER_OWNER:
+                raise WorkPrivacyBlocked('Work stream owner exceeds its stream count bound')
+            total += value['size']
+            if total > _MAX_STREAM_TOTAL_BYTES:
+                raise WorkPrivacyBlocked('Work stream inventory exceeds its byte bound')
+
+    def _inventory_streams(self) -> dict[str, Any]:
+        streams: dict[str, Any] = {}
+        owners: set[str] = set()
+        total = 0
+
+        def capture(owner: str, path: Path, kind: str) -> None:
+            nonlocal total
+            identity = unicodedata.normalize('NFC', owner).casefold()
+            if identity in owners or len(owners) >= _MAX_STREAM_OWNERS:
+                raise WorkPrivacyBlocked('ambiguous or oversized Work stream owners')
+            owners.add(identity)
+            for stream in read_named_streams(
+                path, directory=kind == 'directory', max_total_bytes=_MAX_STREAM_TOTAL_BYTES - total,
+                max_streams=min(_MAX_STREAMS_PER_OWNER, _MAX_MEMBERS - len(streams)),
+            ):
+                key = _stream_key(owner, kind, stream.name, stream.stream_type)
+                if key in streams or len(streams) >= _MAX_MEMBERS:
+                    raise WorkPrivacyBlocked('ambiguous or oversized Work stream inventory')
+                total += len(stream.data)
+                if total > _MAX_STREAM_TOTAL_BYTES:
+                    raise WorkPrivacyBlocked('Work stream inventory exceeds its byte bound')
+                streams[key] = {'sha256': hashlib.sha256(stream.data).hexdigest(), 'size': len(stream.data)}
+
+        try:
+            for alias, root in sorted(self.roots.items()):
+                _chain(root)
+                if not root.is_dir():
+                    raise WorkPrivacyBlocked('Work member root is missing')
+
+                def unavailable(error: OSError) -> None:
+                    raise error
+
+                for directory, directories, files in os.walk(root, followlinks=False, onerror=unavailable):
+                    folder = Path(directory)
+                    relative = folder.relative_to(root)
+                    owner = alias if folder == root else alias + '/' + relative.as_posix()
+                    if folder != root:
+                        self._member(owner)
+                    capture(owner, folder, 'directory')
+                    for name in sorted(directories):
+                        _chain(folder / name)
+                    for name in sorted(files):
+                        path = folder / name
+                        member = alias + '/' + path.relative_to(root).as_posix()
+                        self._member(member)
+                        if member != self.EPHEMERAL_MEMBER:
+                            capture(member, path, 'file')
+        except (OSError, QuarantineFilesystemError) as exc:
+            raise WorkPrivacyBlocked('Work stream inventory is unavailable, incomplete or changed') from exc
+        self._validate_stream_inventory(streams, self._inventory())
+        return streams
+
     def _history(self, head: Mapping[str, Any]) -> dict[str, Any]:
         body = self._verify(head, 'head')
         if (set(body) != {'schema', 'identity', 'generation', 'capsule_sha256', 'previous'}
@@ -382,10 +530,14 @@ class WorkPrivacy:
             raise WorkPrivacyBlocked('Work history differs from current trusted head')
         return history
 
-    def _validate_history(self, history: dict[str, Any]) -> None:
-        if (set(history) != {'schema', 'profile', 'identity', 'generation', 'members', 'invalidated',
-                             'revoked', 'events'}
-                or history['schema'] != 'artha.work-member-history.v1' or history['profile'] != 'work'
+    def _validate_history(self, history: dict[str, Any]) -> None:  # noqa: PLR0912 - explicit history validation
+        schema = history.get('schema')
+        fields = {'schema', 'profile', 'identity', 'generation', 'members', 'invalidated', 'revoked', 'events'}
+        if schema == 'artha.work-member-history.v2':
+            fields |= {'streams', 'stream_invalidated', 'stream_since'}
+        if (set(history) != fields
+                or schema not in {'artha.work-member-history.v1', 'artha.work-member-history.v2'}
+                or history['profile'] != 'work'
                 or type(history['generation']) is not int or not 1 <= history['generation'] <= _MAX_GENERATIONS
                 or not isinstance(history['members'], dict) or len(history['members']) > _MAX_MEMBERS
                 or not isinstance(history['invalidated'], dict) or len(history['invalidated']) > _MAX_MEMBERS
@@ -405,17 +557,36 @@ class WorkPrivacy:
                 raise WorkPrivacyBlocked('invalid Work invalidation')
         for name in history['revoked']:
             self._member(name)
+        if schema == 'artha.work-member-history.v2':
+            self._validate_stream_inventory(history['streams'], history['members'])
+            if (type(history['stream_since']) is not int
+                    or not 2 <= history['stream_since'] <= history['generation']
+                    or not isinstance(history['stream_invalidated'], dict)
+                    or len(history['stream_invalidated']) > _MAX_MEMBERS):
+                raise WorkPrivacyBlocked('invalid Work stream history')
+            for key, generation in history['stream_invalidated'].items():
+                self._stream_parts(key)
+                if type(generation) is not int or not history['stream_since'] <= generation <= history['generation']:
+                    raise WorkPrivacyBlocked('invalid Work stream invalidation')
         for generation, event in enumerate(history['events'], 1):
-            if (not isinstance(event, dict) or set(event) != {
-                    'generation', 'members_sha256', 'previous_head_sha256'}
+            event_fields = {'generation', 'members_sha256', 'previous_head_sha256'}
+            stream_event = schema == 'artha.work-member-history.v2' and generation >= history['stream_since']
+            if stream_event:
+                event_fields.add('streams_sha256')
+            if (not isinstance(event, dict) or set(event) != event_fields
                     or event['generation'] != generation
                     or not isinstance(event['members_sha256'], str) or not _HEX.fullmatch(event['members_sha256'])
                     or (generation == 1 and event['previous_head_sha256'] is not None)
                     or (generation > 1 and (not isinstance(event['previous_head_sha256'], str)
-                                           or not _HEX.fullmatch(event['previous_head_sha256'])))):
+                                           or not _HEX.fullmatch(event['previous_head_sha256'])))
+                    or (stream_event and (not isinstance(event['streams_sha256'], str)
+                                          or not _HEX.fullmatch(event['streams_sha256'])))):
                 raise WorkPrivacyBlocked('invalid Work history continuity')
         if history['events'][-1]['members_sha256'] != _digest(history['members']):
             raise WorkPrivacyBlocked('Work member inventory differs from history')
+        if (schema == 'artha.work-member-history.v2'
+                and history['events'][-1]['streams_sha256'] != _digest(history['streams'])):
+            raise WorkPrivacyBlocked('Work stream inventory differs from history')
 
     def _native_head(self) -> dict[str, Any]:
         raw = self.backend.get_password(self.HEAD_SERVICE, 'head')
@@ -439,6 +610,9 @@ class WorkPrivacy:
             raise WorkPrivacyBlocked('Work head differs from acknowledged history; rollback or interrupted publication')
         if drift and self._inventory() != history['members']:
             raise WorkPrivacyBlocked('unjournaled Work member drift requires reviewed reconciliation')
+        if (drift and history['schema'] == 'artha.work-member-history.v2'
+                and (self._inventory_streams() != history['streams'] or self._inventory() != history['members'])):
+            raise WorkPrivacyBlocked('unjournaled Work stream drift requires reviewed reconciliation')
         self._expect_head(head)
         return {**history, 'head': head}
 
@@ -514,19 +688,52 @@ class WorkPrivacy:
                 or not set(before['revoked']) <= set(after['revoked'])
                 or any(after['invalidated'].get(name, 0) < version for name, version in before['invalidated'].items())):
             raise WorkPrivacyBlocked('Work history cannot roll back invalidations or identity')
+        if before['schema'] == 'artha.work-member-history.v2':
+            if (after['schema'] != before['schema'] or after['stream_since'] != before['stream_since']):
+                raise WorkPrivacyBlocked('Work stream history cannot be downgraded')
+            changed = {key for key in set(before['streams']) | set(after['streams'])
+                       if before['streams'].get(key) != after['streams'].get(key)}
+            expected = dict(before['stream_invalidated'])
+            expected.update(dict.fromkeys(changed, after['generation']))
+            if after['stream_invalidated'] != expected:
+                raise WorkPrivacyBlocked('Work stream history cannot roll back invalidations')
+        elif after['schema'] == 'artha.work-member-history.v2':
+            if (after['stream_since'] != after['generation']
+                    or after['stream_invalidated'] != dict.fromkeys(after['streams'], after['generation'])):
+                raise WorkPrivacyBlocked('invalid initial Work stream history')
+        elif after['schema'] != before['schema']:
+            raise WorkPrivacyBlocked('invalid Work history transition')
 
     def _prepare(self, before: dict[str, Any], members: dict[str, Any], changes: Mapping[str, bytes | None],
-                 revoke: Sequence[str]) -> dict[str, Any]:
+                 revoke: Sequence[str], *, streams: dict[str, Any] | None = None,
+                 upgrade_streams: bool = False) -> dict[str, Any]:
         generation = before['generation'] + 1
         invalidated = dict(before['invalidated'])
         changed = {name for name in set(before['members']) | set(members)
                    if before['members'].get(name) != members.get(name)}
         invalidated.update(dict.fromkeys(changed, generation))
         after = {key: value for key, value in before.items() if key != 'head'}
+        event = {'generation': generation, 'members_sha256': _digest(members),
+                 'previous_head_sha256': _digest(before['head'])}
+        if upgrade_streams:
+            if before['schema'] != 'artha.work-member-history.v1' or streams is None:
+                raise WorkPrivacyBlocked('explicit Work stream migration is unavailable')
+            after.update(schema='artha.work-member-history.v2', streams=streams,
+                         stream_since=generation, stream_invalidated=dict.fromkeys(streams, generation))
+        elif before['schema'] == 'artha.work-member-history.v2':
+            next_streams = before['streams'] if streams is None else streams
+            stream_invalidated = dict(before['stream_invalidated'])
+            stream_changed = {key for key in set(before['streams']) | set(next_streams)
+                              if before['streams'].get(key) != next_streams.get(key)}
+            stream_invalidated.update(dict.fromkeys(stream_changed, generation))
+            after.update(streams=next_streams, stream_invalidated=stream_invalidated)
+        elif streams is not None:
+            raise WorkPrivacyBlocked('Work stream history requires an explicit migration')
+        if after['schema'] == 'artha.work-member-history.v2':
+            event['streams_sha256'] = _digest(after['streams'])
         after.update(generation=generation, members=members, invalidated=invalidated,
                      revoked=sorted(set(before['revoked']) | set(revoke)),
-                     events=[*before['events'], {'generation': generation, 'members_sha256': _digest(members),
-                                                 'previous_head_sha256': _digest(before['head'])}])
+                     events=[*before['events'], event])
         self._validate_history(after)
         self._continuity(before, after)
         head, capsule = self._capsule(after, before['head'])
@@ -534,6 +741,41 @@ class WorkPrivacy:
                 'capsule': base64.b64encode(capsule).decode(),
                 'changes': {name: None if value is None else base64.b64encode(value).decode()
                             for name, value in changes.items()}}
+
+    @staticmethod
+    def _hold_member_mutations(before: Mapping[str, Any], changes: Mapping[str, Any]) -> None:
+        existing = {name.casefold() for name in before['members']}
+        if any(value is None or name.casefold() in existing for name, value in changes.items()):
+            raise WorkPrivacyBlocked('Work member replacement and deletion are temporarily paused')
+
+    def _pending_creations(self, before: Mapping[str, Any], after: Mapping[str, Any],
+                           changes: Any) -> list[tuple[Path, bytes]]:
+        if not isinstance(changes, dict) or any(not isinstance(name, str) for name in changes):
+            raise WorkPrivacyBlocked('invalid pending Work member changes')
+        self._hold_member_mutations(before, changes)
+        if changes:
+            _require_native_creation()
+        creations: list[tuple[Path, bytes]] = []
+        for name, value in changes.items():
+            path = self._member(name)
+            if not isinstance(value, str):
+                raise WorkPrivacyBlocked('invalid pending Work member bytes')
+            try:
+                raw = base64.b64decode(value, validate=True)
+            except ValueError:
+                raise WorkPrivacyBlocked('invalid pending Work member bytes') from None
+            if {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != after['members'].get(name):
+                raise WorkPrivacyBlocked('staged Work bytes differ from intent')
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise WorkPrivacyBlocked('pending Work destination cannot be checked; review required') from exc
+            else:
+                raise WorkPrivacyBlocked('pending Work destination already exists; review required')
+            creations.append((path, raw))
+        return creations
 
     def _publish(self, before: dict[str, Any], changes: Mapping[str, bytes | None],
                  revoke: Sequence[str]) -> dict[str, Any]:
@@ -563,16 +805,20 @@ class WorkPrivacy:
             if current != before:
                 raise WorkPrivacyBlocked('Work transaction changed before no-op acknowledgement')
             return current
+        self._hold_member_mutations(before, changes)
+        if changes:
+            _require_native_creation()
         pending = self._prepare(before, members, changes, revoke)
         _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
         self.observe('intent')
         return self._finish(pending)
 
-    def _finish(self, pending: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912 - ordered crash-safe publication
+    def _finish(self, pending: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912 - ordered publication checks
         before, after, head = pending['before'], pending['after'], pending['head']
         self._continuity(before, after)
         self._validate_history(after)
-        self._history(before['head'])
+        if self._history(before['head']) != {key: value for key, value in before.items() if key != 'head'}:
+            raise WorkPrivacyBlocked('pending Work predecessor differs from authenticated history')
         capsule = base64.b64decode(pending['capsule'], validate=True)
         if (head != self._sign(self._verify(head, 'head'), 'head')
                 or hashlib.sha256(capsule).hexdigest() != head.get('capsule_sha256')
@@ -586,27 +832,25 @@ class WorkPrivacy:
         complete = self._decrypt(_read(self.authority_dir / 'complete'), 'complete')
         if complete not in ({'head': before['head']}, {'head': head}):
             raise WorkPrivacyBlocked('pending Work completion identity changed')
+        creations = self._pending_creations(before, after, pending.get('changes'))
         current = self._inventory()
         for name in set(current) | set(before['members']) | set(after['members']):
             if current.get(name) not in (before['members'].get(name), after['members'].get(name)):
                 raise WorkPrivacyBlocked('unjournaled Work drift during pending publication')
+        if (after['schema'] == 'artha.work-member-history.v2'
+                and self._inventory_streams() != after['streams']):
+            raise WorkPrivacyBlocked('unjournaled Work stream drift during pending publication')
         _atomic(self.authority_dir / (head['capsule_sha256'] + '.ae1'), capsule)
         self.observe('capsule')
-        for name, value in pending['changes'].items():
-            path = self._member(name)
+        for path, raw in creations:
             self._expect_head(native)
-            if value is None:
-                if path.exists():
-                    _read(path, _MAX_MEMBER_BYTES)
-                    _delete(path)
-            else:
-                raw = base64.b64decode(value, validate=True)
-                if {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != after['members'].get(name):
-                    raise WorkPrivacyBlocked('staged Work bytes differ from intent')
-                _atomic(path, raw)
+            _create_member(path, raw)
             self.observe('member')
         if self._inventory() != after['members']:
             raise WorkPrivacyBlocked('Work inventory drift at publication')
+        if (after['schema'] == 'artha.work-member-history.v2'
+                and self._inventory_streams() != after['streams']):
+            raise WorkPrivacyBlocked('Work stream drift at publication')
         self._expect_head(native)
         if native == before['head']:
             self.backend.set_password(self.HEAD_SERVICE, 'head', _encoded(head).decode())
@@ -619,6 +863,9 @@ class WorkPrivacy:
         self._expect_head(head)
         if self._inventory() != after['members']:
             raise WorkPrivacyBlocked('Work inventory drift after publication')
+        if (after['schema'] == 'artha.work-member-history.v2'
+                and self._inventory_streams() != after['streams']):
+            raise WorkPrivacyBlocked('Work stream drift after publication')
         _delete(self.authority_dir / 'pending')
         return self._load_current()
 
@@ -637,7 +884,49 @@ class WorkPrivacy:
         with self._locked():
             before = self._load_current(drift=False)
             members = self._inventory()
-            pending = self._prepare(before, members, {}, ())
+            streams = self._inventory_streams() if before['schema'] == 'artha.work-member-history.v2' else None
+            pending = self._prepare(before, members, {}, (), streams=streams)
+            _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
+            self.observe('intent')
+            return self._finish(pending)
+
+    @staticmethod
+    def _stream_review(before: Mapping[str, Any], streams: Mapping[str, Any]) -> dict[str, Any]:
+        inventory = {'schema': 'artha.work-stream-review.v1', 'identity': before['identity'],
+                     'generation': before['generation'], 'head_sha256': _digest(before['head']),
+                     'members': before['members'], 'streams': streams}
+        return {'inventory_sha256': _digest(inventory), 'stream_count': len(streams),
+                'stream_bytes': sum(value['size'] for value in streams.values())}
+
+    def preview_stream_history(self) -> dict[str, Any]:
+        """Review aggregate stream inventory without publishing a migration."""
+        with self._locked():
+            before = self._load_current()
+            if before['schema'] != 'artha.work-member-history.v1':
+                raise WorkPrivacyBlocked('Work stream history is already enrolled')
+            streams = self._inventory_streams()
+            self._validate_stream_inventory(streams, before['members'])
+            if self._inventory() != before['members'] or self._inventory_streams() != streams:
+                raise WorkPrivacyBlocked('Work stream inventory changed during review')
+            self._expect_head(before['head'])
+            return self._stream_review(before, streams)
+
+    def upgrade_stream_history(self, *, reviewed: bool, expected_digest: str) -> dict[str, Any]:
+        """Explicitly migrate the exact reviewed inventory; never run implicitly."""
+        if reviewed is not True:
+            raise WorkPrivacyBlocked('explicit Work stream inventory review is required')
+        if not isinstance(expected_digest, str) or not _HEX.fullmatch(expected_digest):
+            raise WorkPrivacyBlocked('the reviewed Work stream inventory digest is required')
+        with self._locked():
+            before = self._load_current()
+            if before['schema'] != 'artha.work-member-history.v1':
+                raise WorkPrivacyBlocked('Work stream history is already enrolled')
+            streams = self._inventory_streams()
+            self._validate_stream_inventory(streams, before['members'])
+            review = self._stream_review(before, streams)
+            if not hmac.compare_digest(expected_digest, review['inventory_sha256']):
+                raise WorkPrivacyBlocked('reviewed Work stream inventory no longer matches')
+            pending = self._prepare(before, before['members'], {}, (), streams=streams, upgrade_streams=True)
             _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
             self.observe('intent')
             return self._finish(pending)
@@ -646,25 +935,41 @@ class WorkPrivacy:
         """Authenticated provenance only. Every surviving member still needs human review."""
         with self._locked():
             current = self._load_current()
-            return self._sign({'schema': 'artha.work-checkpoint-binding.v1', 'profile': 'work',
-                               'identity': current['identity'], 'generation': current['generation'],
-                               'head_sha256': _digest(current['head']), 'members': current['members'],
-                               'plaintext_allowed': False}, 'checkpoint')
+            body = {'schema': 'artha.work-checkpoint-binding.v1', 'profile': 'work',
+                    'identity': current['identity'], 'generation': current['generation'],
+                    'head_sha256': _digest(current['head']), 'members': current['members'],
+                    'plaintext_allowed': False}
+            if current['schema'] == 'artha.work-member-history.v2':
+                body.update(schema='artha.work-checkpoint-binding.v2', streams=current['streams'])
+            return self._sign(body, 'checkpoint')
 
     def _check_checkpoint(self, binding: Mapping[str, Any], current: dict[str, Any]) -> None:
         body = self._verify(binding, 'checkpoint')
-        if (set(body) != {'schema', 'profile', 'identity', 'generation', 'head_sha256', 'members',
-                          'plaintext_allowed'}
-                or body['schema'] != 'artha.work-checkpoint-binding.v1' or body['profile'] != 'work'
+        fields = {'schema', 'profile', 'identity', 'generation', 'head_sha256', 'members', 'plaintext_allowed'}
+        if body.get('schema') == 'artha.work-checkpoint-binding.v2':
+            fields.add('streams')
+        if (set(body) != fields
+                or body['schema'] not in {'artha.work-checkpoint-binding.v1', 'artha.work-checkpoint-binding.v2'}
+                or body['profile'] != 'work'
                 or body['identity'] != current['identity'] or body['plaintext_allowed'] is not False
                 or type(body['generation']) is not int or not 1 <= body['generation'] <= current['generation']):
             raise WorkPrivacyBlocked('checkpoint lacks original Work installation binding')
         generation = body['generation']
+        if (body['schema'] == 'artha.work-checkpoint-binding.v1'
+                and current['schema'] == 'artha.work-member-history.v2'
+                and generation >= current['stream_since']):
+            raise WorkPrivacyBlocked('checkpoint binding omits required stream history')
         event = current['events'][generation - 1]
         head = (_digest(current['head']) if generation == current['generation']
                 else current['events'][generation]['previous_head_sha256'])
         if event['members_sha256'] != _digest(body['members']) or body['head_sha256'] != head:
             raise WorkPrivacyBlocked('checkpoint history is not retained in current Work authority')
+        if body['schema'] == 'artha.work-checkpoint-binding.v2':
+            if (current['schema'] != 'artha.work-member-history.v2'
+                    or generation < current['stream_since']
+                    or event.get('streams_sha256') != _digest(body['streams'])):
+                raise WorkPrivacyBlocked('checkpoint stream history is not retained in current Work authority')
+            self._validate_stream_inventory(body['streams'], body['members'])
 
     def check_checkpoint(self, binding: Mapping[str, Any]) -> dict[str, Any]:
         with self._locked():
@@ -681,6 +986,20 @@ class WorkPrivacy:
             return {name for name in members if name not in binding['members']
                     or name in current['revoked']
                     or current['invalidated'].get(name, 0) > binding['generation']}
+
+    def denied_streams(self, binding: Mapping[str, Any], streams: Sequence[str]) -> set[str]:
+        with self._locked():
+            current = self._load_current()
+            self._check_checkpoint(binding, current)
+            identities = {key: self._stream_parts(key) for key in streams}
+            if binding['schema'] != 'artha.work-checkpoint-binding.v2':
+                return set(identities)
+            return {key for key, (owner, kind, _, _) in identities.items()
+                    if kind != 'file' or key not in binding['streams']
+                    or owner not in binding['members'] or owner in current['revoked']
+                    or current['invalidated'].get(owner, 0) > binding['generation']
+                    or current['stream_invalidated'].get(key, 0) > binding['generation']
+                    or current['streams'].get(key) != binding['streams'].get(key)}
 
 
 class _DeferredNativeBackend:

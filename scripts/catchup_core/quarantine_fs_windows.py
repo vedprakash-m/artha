@@ -8,8 +8,9 @@ import os
 import re
 import struct
 import sys
+import unicodedata
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,88 @@ class FileSnapshot:
     size: int
     last_write_100ns: int
     change_100ns: int
+
+
+@dataclass(frozen=True)
+class NamedStreamInfo:
+    name: str
+    stream_type: str
+    size: int
+
+
+@dataclass(frozen=True)
+class NamedStreamData:
+    name: str
+    stream_type: str
+    data: bytes
+
+
+_MAX_NAMED_STREAMS = 1024
+_MAX_NAMED_STREAM_BYTES = 8 * 1024 * 1024
+_MAX_NAMED_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
+_MAX_STREAM_INFORMATION_BYTES = 65536
+
+
+def validate_named_stream_name(component: str) -> str:
+    try:
+        if (not isinstance(component, str) or not component or component in {'.', '..'}
+                or component.endswith(('.', ' '))
+                or any(char in component for char in '\\/:<>"|?*')
+                or any(ord(char) < 32 or ord(char) == 127 for char in component)
+                or len(component.encode('utf-16-le')) > 510):
+            raise ValueError
+    except (UnicodeError, ValueError):
+        raise QuarantineFilesystemError('source stream name is unsafe') from None
+    return component
+
+
+def _parse_stream_information(raw: bytes, *, directory: bool) -> tuple[NamedStreamInfo, ...]:  # noqa: PLR0912
+    if (not isinstance(raw, bytes) or type(directory) is not bool
+            or not 24 <= len(raw) <= _MAX_STREAM_INFORMATION_BYTES):
+        raise QuarantineFilesystemError('source stream inventory is malformed or unbounded')
+    offset = 0
+    names: set[str] = set()
+    streams: list[NamedStreamInfo] = []
+    ordinary = False
+    total = 0
+    while True:
+        if offset + 24 > len(raw):
+            raise QuarantineFilesystemError('source stream inventory is malformed')
+        next_offset, name_size, size, allocation = struct.unpack_from('<IIqq', raw, offset)
+        if (next_offset and (next_offset < 24 or next_offset % 8
+                             or offset + next_offset > len(raw))):
+            raise QuarantineFilesystemError('source stream inventory is malformed')
+        end = offset + next_offset if next_offset else len(raw)
+        if (not name_size or name_size % 2 or offset + 24 + name_size > end
+                or size < 0 or allocation < 0):
+            raise QuarantineFilesystemError('source stream inventory is malformed')
+        try:
+            name = raw[offset + 24:offset + 24 + name_size].decode('utf-16-le')
+        except UnicodeDecodeError:
+            raise QuarantineFilesystemError('source stream inventory is malformed') from None
+        if name == '::$DATA':
+            if ordinary:
+                raise QuarantineFilesystemError('source stream inventory contains aliases')
+            ordinary = True
+        else:
+            if not name.startswith(':') or not name.endswith(':$DATA'):
+                raise QuarantineFilesystemError('source stream type is unsupported')
+            component = validate_named_stream_name(name[1:-6])
+            normalized = unicodedata.normalize('NFC', component).casefold()
+            if normalized in names:
+                raise QuarantineFilesystemError('source stream inventory contains aliases')
+            names.add(normalized)
+            total += size
+            if (len(names) > _MAX_NAMED_STREAMS or size > _MAX_NAMED_STREAM_BYTES
+                    or total > _MAX_NAMED_STREAM_TOTAL_BYTES):
+                raise QuarantineFilesystemError('source stream inventory exceeds its bound')
+            streams.append(NamedStreamInfo(component, '$DATA', size))
+        if not next_offset:
+            break
+        offset += next_offset
+    if not directory and not ordinary:
+        raise QuarantineFilesystemError('ordinary source stream is missing from inventory')
+    return tuple(streams)
 
 
 class _UnicodeString(ctypes.Structure):
@@ -385,6 +468,21 @@ class _Native:
         next_offset, name_size = struct.unpack_from('<II', buffer)
         if next_offset or name_size != 14 or buffer.raw[24:38] != '::$DATA'.encode('utf-16-le'):
             raise QuarantineFilesystemError('named source streams cannot be preserved')
+
+    def named_streams(self, handle: int, *, directory: bool) -> tuple[NamedStreamInfo, ...]:
+        """Enumerate bounded named data streams on a previously verified, pinned handle."""
+        before = self.snapshot(handle)
+        buffer = ctypes.create_string_buffer(_MAX_STREAM_INFORMATION_BYTES)
+        if not self.kernel32.GetFileInformationByHandleEx(handle, 7, buffer, len(buffer)):
+            if directory and _last_error() == 38:
+                streams: tuple[NamedStreamInfo, ...] = ()
+            else:
+                raise QuarantineFilesystemError('source stream inventory is unavailable')
+        else:
+            streams = _parse_stream_information(buffer.raw, directory=directory)
+        if self.snapshot(handle) != before:
+            raise QuarantineFilesystemError('source stream inventory changed during inspection')
+        return streams
 
     def current_user_sid(self) -> tuple[str, bytes]:
         token = wintypes.HANDLE()
@@ -1172,6 +1270,69 @@ def require_ordinary_stream(path: Path, *, directory: bool) -> None:
             member._native.require_ordinary_stream(member.handle, directory=False)
             if member.snapshot() != before:
                 raise QuarantineFilesystemError('source changed during stream inventory')
+
+
+def read_named_streams(
+    path: Path, *, directory: bool, max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
+    max_streams: int = _MAX_NAMED_STREAMS,
+) -> tuple[NamedStreamData, ...]:
+    """Read verified named streams in memory; callers must recheck before publication."""
+    _, streams = read_named_streams_with_snapshot(
+        path, directory=directory, max_total_bytes=max_total_bytes, max_streams=max_streams,
+    )
+    return streams
+
+
+def read_named_streams_with_snapshot(
+    path: Path, *, directory: bool, max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
+    max_streams: int = _MAX_NAMED_STREAMS,
+) -> tuple[FileSnapshot, tuple[NamedStreamData, ...]]:
+    """Return the pinned owner's verified snapshot together with its named streams."""
+    if (type(directory) is not bool or path.parent == path
+            or type(max_total_bytes) is not int or max_total_bytes < 0
+            or type(max_streams) is not int or max_streams < 0):
+        raise QuarantineFilesystemError('source stream owner is unsupported')
+    with ExitStack() as stack:
+        parent = stack.enter_context(WindowsQuarantineDirectory.open(path.parent, owner_private=False))
+        owner: WindowsQuarantineDirectory | WindowsQuarantineFile
+        if directory:
+            owner = stack.enter_context(WindowsQuarantineDirectory.open(path, owner_private=False))
+            if len(owner._identities) < 2 or owner._identities[-2] != parent.identity:
+                raise QuarantineFilesystemError('source stream owner identity changed')
+        else:
+            owner = stack.enter_context(parent.open_file(path.name, private=False))
+        native = parent._native
+        before = owner.snapshot()
+        inventory = native.named_streams(owner.handle, directory=directory)
+        if len(inventory) > max_streams or sum(info.size for info in inventory) > max_total_bytes:
+            raise QuarantineFilesystemError('source stream inventory exceeds its remaining bound')
+        captured: list[NamedStreamData] = []
+        for info in inventory:
+            name = f'{path.name}:{info.name}:{info.stream_type}'
+            handle = native.create_or_open(
+                parent.handle, name, directory=False, create=False, access=native.GENERIC_READ,
+            )
+            try:
+                stream = WindowsQuarantineFile(native, parent, name, handle, private=False)
+            except BaseException:
+                native.close(handle)
+                raise
+            with stream:
+                if stream.identity != before.identity or stream.snapshot().size != info.size:
+                    raise QuarantineFilesystemError('source stream identity or size changed')
+                data = stream.read(_MAX_NAMED_STREAM_BYTES)
+                if len(data) != info.size:
+                    raise QuarantineFilesystemError('source stream size changed')
+                captured.append(NamedStreamData(info.name, info.stream_type, data))
+        after = native.named_streams(owner.handle, directory=directory)
+        if set(inventory) != set(after) or owner.snapshot() != before:
+            raise QuarantineFilesystemError('source streams changed during capture')
+        parent._revalidate()
+        if isinstance(owner, WindowsQuarantineDirectory):
+            owner._revalidate()
+        else:
+            owner.check_path(expected_identity=before.identity)
+        return before, tuple(sorted(captured, key=lambda item: (item.name, item.stream_type)))
 
 
 def ensure_private_directory(path: Path) -> None:

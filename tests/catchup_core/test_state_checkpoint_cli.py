@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from _work_synthetic import install_synthetic_work_creation
 from catchup_core import checkpoint as ck
 from catchup_core import checkpoint_cli as cli
 from catchup_core.crypto import KeyringKeyProvider
@@ -986,6 +987,61 @@ def test_work_profile_stays_on_host_and_refuses_a_copy(host, monkeypatch):
     assert not (host.tmp / 'w2').exists(), 'invalid Work copying must be refused before publishing a checkpoint'
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows stream inventory')
+def test_v2_work_drift_refuses_before_prompt_or_key_creation(host, monkeypatch):
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    review = protocol.preview_stream_history()
+    protocol.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
+    monkeypatch.setattr(cli, '_work_privacy', lambda *_: protocol)
+    destination = host.tmp / 'stream-checkpoint-held'
+    keys_before = dict(host.backend.store)
+    (host.repo / 'state/work/secret.md').write_bytes(b'Unreviewed source change')
+
+    code, output, error = host.run(
+        'create', '--profile', 'work', '--dest', str(destination),
+        passphrase=lambda _confirm: pytest.fail('drifted creation requested a passphrase'))
+    assert code == 20 and not output
+    assert host.backend.store == keys_before
+    assert not destination.exists()
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows stream inventory')
+@pytest.mark.parametrize('surface', ['cli', 'core'])
+def test_v2_work_binding_creates_even_an_empty_stream_inventory(host, monkeypatch, surface):
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    review = protocol.preview_stream_history()
+    current = protocol.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert current['streams'] == {}
+    binding = protocol.bind_checkpoint()
+    destination = host.tmp / 'stream-checkpoint'
+
+    if surface == 'cli':
+        monkeypatch.setattr(cli, '_work_privacy', lambda *_: protocol)
+        code, output, error = host.run('create', '--profile', 'work', '--dest', str(destination))
+        assert code == 0, error
+        archive = __import__('pathlib').Path(json.loads(output)['checkpoint'])
+    else:
+        roots, exclude = cli.profile_layout('work', host.local)
+        archive = ck.create('work', roots, destination,
+                            cli._cipher(host.backend, profile='work'), {'synthetic': b'key'}, PASS,
+                            now=datetime.now(UTC), lock_path=host.tmp / 'checkpoint.lock', exclude=exclude,
+                            context={'work_binding': binding})
+    manifest = ck.verify(archive, cli._cipher(host.backend, profile='work'))
+    assert manifest['schema'] == 'artha.checkpoint.v3' and manifest['streams'] == []
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows stream inventory')
+def test_work_binding_matching_includes_schema_and_stream_inventory(host, monkeypatch):
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    review = protocol.preview_stream_history()
+    current = protocol.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
+    binding = protocol.bind_checkpoint()
+
+    assert cli._work_binding_matches(binding, current)
+    assert not cli._work_binding_matches(dict(binding, schema='artha.work-checkpoint-binding.v1'), current)
+    assert not cli._work_binding_matches(dict(binding, streams={'unexpected': {}}), current)
+
+
 def test_work_checkpoint_has_separate_envelope_and_shared_vault_recovery_only(host, monkeypatch):
     from pathlib import Path
     _enroll_synthetic_work(host, monkeypatch)
@@ -1309,13 +1365,22 @@ def test_work_cache_members_stay_review_denied_but_work_state_notes_remain_revie
 
 @pytest.mark.parametrize('change', ['correction', 'revoke'])
 def test_work_history_invalidation_blocks_historical_member_before_review(host, monkeypatch, change):
+    from catchup_core.work_privacy import WorkPrivacyBlocked
+
     (host.repo / 'state/work/briefing.md').write_text('Synthetic historical Work note.')
     protocol = _enroll_synthetic_work(host, monkeypatch)
     code, output, error = host.run('create', '--profile', 'work', '--dest', str(host.tmp / 'work'))
     assert code == 0, error
     checkpoint = json.loads(output)['checkpoint']
     if change == 'correction':
-        protocol.publish({'work_state/briefing.md': b'corrected Work note'})
+        before = protocol.current()
+        with pytest.raises(WorkPrivacyBlocked, match='temporarily paused'):
+            protocol.publish({'work_state/briefing.md': b'corrected Work note'})
+        assert protocol.current() == before
+        assert not (protocol.authority_dir / 'pending').exists()
+        (host.repo / 'state/work/briefing.md').write_bytes(b'corrected Work note')
+        current = protocol.reconcile(reviewed=True)
+        assert current['invalidated']['work_state/briefing.md'] > before['generation']
     else:
         protocol.publish({}, revoke=['work_state/briefing.md'])
     destination = host.tmp / 'restored-work'
@@ -2616,6 +2681,7 @@ def test_key_update_lock_and_fence_use_the_environment_local_directory(tmp_path,
 
 def _enroll_synthetic_work(host, monkeypatch, *, user="S-1-5-21-1001"):
     from catchup_core import work_privacy
+    install_synthetic_work_creation(monkeypatch)
     identity = {"platform": "win32", "machine": "00000000-0000-0000-0000-000000000001", "user": user}
     monkeypatch.setattr(work_privacy, "native_windows_identity", lambda: dict(identity))
     cache = host.local / "work" / "cache"
@@ -2771,6 +2837,7 @@ def test_personal_capture_excludes_work_authority_staging_and_services(host, mon
     ("work-privacy-enroll",),
     ("work-privacy-reconcile",),
     ("work-privacy-revoke", "--member", "work_state/secret.md"),
+    ("work-privacy-stream-upgrade", "--sha256", "0" * 64),
 ])
 def test_work_privacy_mutations_require_review_before_authority_access(host, monkeypatch, argv):
     before = dict(host.backend.store)
@@ -2783,6 +2850,116 @@ def test_work_privacy_mutations_require_review_before_authority_access(host, mon
     assert not output
     assert host.backend.store == before
     assert not (host.local / "work-privacy").exists()
+
+
+def test_work_stream_history_cli_upgrades_only_the_reviewed_inventory(host, monkeypatch):
+    from catchup_core import work_privacy
+
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    monkeypatch.setattr(cli, "_work_privacy", lambda *_: protocol)
+    stream = SimpleNamespace(name="synthetic-private-stream", stream_type="$DATA", data=b"synthetic-content")
+    owner = host.repo / "state" / "work" / "secret.md"
+    monkeypatch.setattr(work_privacy, "read_named_streams",
+                        lambda path, **_kwargs: (stream,) if path == owner else ())
+
+    code, output, error = host.run("work-privacy-stream-preview")
+    assert code == 0, error
+    preview = json.loads(output)
+    assert preview["stream_count"] == 1 and preview["stream_bytes"] == len(stream.data)
+    assert len(preview["inventory_sha256"]) == 64
+    assert preview["checkpoint_creation_after_upgrade"] == "available_on_windows"
+    assert preview["stream_recovery"] == "encrypted_quarantine_only"
+    assert preview["stream_plaintext_available"] is False
+    assert all(value not in output + error for value in ("secret.md", stream.name, "synthetic-content"))
+    assert protocol.current()["schema"] == "artha.work-member-history.v1"
+    assert not (protocol.authority_dir / "pending").exists()
+
+    code, output, error = host.run("work-privacy-stream-upgrade", "--reviewed", "--sha256", "0" * 64)
+    assert code == 20 and not output
+    assert "secret.md" not in error and stream.name not in error
+    assert protocol.current()["schema"] == "artha.work-member-history.v1"
+    assert not (protocol.authority_dir / "pending").exists()
+
+    original = stream.data
+    stream.data = b"changed after preview"
+    code, output, error = host.run(
+        "work-privacy-stream-upgrade", "--reviewed", "--sha256", preview["inventory_sha256"],
+    )
+    assert code == 20 and not output
+    assert protocol.current()["schema"] == "artha.work-member-history.v1"
+    assert not (protocol.authority_dir / "pending").exists()
+    stream.data = original
+
+    code, output, error = host.run(
+        "work-privacy-stream-upgrade", "--reviewed", "--sha256", preview["inventory_sha256"],
+    )
+    assert code == 0, error
+    result = json.loads(output)
+    assert result["generation"] == 2
+    assert result["checkpoint_creation"] == "available_on_windows"
+    assert result["stream_recovery"] == "encrypted_quarantine_only"
+    assert result["stream_plaintext_available"] is False
+    assert protocol.current()["schema"] == "artha.work-member-history.v2"
+    assert all(value not in output + error for value in ("secret.md", stream.name, "synthetic-content"))
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Work named streams exist only on Windows")
+def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_drift(host, monkeypatch):
+    from pathlib import Path
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    monkeypatch.setattr(cli, "_work_privacy", lambda *_: protocol)
+    owner = next(path for path in (host.repo / "state" / "work").rglob("*") if path.is_file())
+    Path(str(owner) + ":synthetic-cli-stream").write_bytes(b"SYNTHETIC-CLI-STREAM")
+    folder = host.repo / 'state/work/folder'
+    folder.mkdir()
+    Path(str(folder) + ':synthetic-directory-stream').write_bytes(b'SYNTHETIC-DIRECTORY')
+    Path(str(owner.parent) + ':synthetic-root-stream').write_bytes(b'SYNTHETIC-ROOT')
+
+    code, output, error = host.run("work-privacy-stream-preview")
+    assert code == 0, error
+    preview = json.loads(output)
+    assert preview["checkpoint_creation_after_upgrade"] == "available_on_windows"
+    code, output, error = host.run(
+        "work-privacy-stream-upgrade", "--reviewed", "--sha256", preview["inventory_sha256"])
+    assert code == 0, error
+    binding = protocol.bind_checkpoint()
+    assert binding["schema"] == "artha.work-checkpoint-binding.v2"
+    assert len(binding["streams"]) == 3
+
+    destination = host.tmp / "stream-work"
+    code, output, error = host.run("create", "--profile", "work", "--dest", str(destination))
+    assert code == 0, error
+    assert all(value not in output + error for value in ("synthetic-cli-stream", "SYNTHETIC-CLI-STREAM"))
+    archive = Path(json.loads(output)['checkpoint'])
+    cipher = cli._cipher(host.backend, profile='work')
+    manifest = ck.verify(archive, cipher)
+    assert manifest['schema'] == 'artha.checkpoint.v3'
+    assert manifest['context']['capture_semantics'] == 'authenticated_work_generation'
+    assert len(manifest['streams']) == 3
+    code, output, error = host.run('verify', str(archive), '--profile', 'work')
+    assert code == 0 and json.loads(output)['streams'] == 3, error
+    code, output, error = host.run('recovery', str(archive))
+    assert code == 0 and json.loads(output)['work_authority_verified'] is True, error
+    code, output, error = host.run('diff', str(archive), '--profile', 'work')
+    assert code == 0 and json.loads(output)['streams_changed'] == 0, error
+    restored = host.tmp / 'restored-stream-generation'
+    code, output, error = host.run('restore', str(archive), '--profile', 'work', '--to', str(restored))
+    assert code == 0, error
+    assert json.loads(output)['quarantined_streams'] == 3
+    assert json.loads(output)['blocked_streams'] == 2
+    assert not (restored / 'work_state').exists()
+    assert 'synthetic-cli-stream' not in output + error and 'SYNTHETIC-ROOT' not in output + error
+    code, output, error = host.run('work-privacy-revoke', '--member', 'work_state/secret.md', '--reviewed')
+    assert code == 0, error
+    code, output, error = host.run('recovery', str(archive))
+    assert code == 0 and json.loads(output)['work_streams_blocked'] == 3, error
+
+    Path(str(owner) + ":synthetic-cli-stream").write_bytes(b"CHANGED-AFTER-UPGRADE")
+    code, output, error = host.run("create", "--profile", "work", "--dest", str(host.tmp / "drifted"))
+    assert code == 20 and not output
+    assert "CHANGED-AFTER-UPGRADE" not in error and not (host.tmp / "drifted").exists()
+    code, output, error = host.run('recovery', str(archive))
+    assert code == 20 and not output and 'CHANGED-AFTER-UPGRADE' not in error
 
 
 def test_work_privacy_cli_is_metadata_only_and_revoke_requires_current_member(host, monkeypatch):
