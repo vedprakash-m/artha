@@ -848,8 +848,16 @@ Explicit lifecycle commands use the same checkpoint CLI:
 - `work-privacy-reconcile --reviewed`: adopts reviewed current bytes while invalidating older versions.
 - `work-privacy-recover-pending`: rolls authenticated interrupted intent forward only.
 - `work-privacy-revoke --member work_state/notes.md --reviewed`: permanently restricts recovery of that member.
+- `work-privacy-stream-preview`: reports aggregate stream counts, bytes and a digest without publishing a migration.
+- `work-privacy-stream-upgrade --sha256 DIGEST --reviewed`: upgrades only the exact previewed stream inventory.
 
 Do not invoke these live operations merely to validate code. Missing review refuses before effects.
+The stream-history commands require a separately reviewed live migration. After a reviewed upgrade,
+Windows Work `create` writes ACK3 for the exact authenticated Work generation, preserving native file,
+directory and root streams in encrypted form. `verify` authenticates the archive and `diff` reports
+stream counts without names. Recovery uses current Work authority and encrypted quarantine, replays
+revocations and refuses unreviewed drift. Plaintext stream export/reattachment, directory/root plaintext
+recovery and enrolled-member replacement/deletion remain unsupported.
 Enrollment binds Windows machine/user, random installation and canonical `state/work`/`local/work` roots;
 the dedicated identity key/current history are never captured or restored. Pending, drifted, mismatched
 or missing authority blocks capture/recovery. Old unbound checkpoints stay inspection-only.

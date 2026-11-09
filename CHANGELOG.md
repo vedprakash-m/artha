@@ -9,6 +9,54 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Implemented — Windows Work generation checkpoints, 2026-11-08
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Enable public ACK3 creation for the exact authenticated Work history generation; remove the VSS/live-filesystem-freeze requirement under the owner's delegated simplification. Keep native bounded reads, complete stream binding, observed-drift refusal, encrypted output and write-once publication. | `scripts/catchup_core/checkpoint.py`, `scripts/catchup_core/checkpoint_cli.py`, native stream/history/quarantine modules and their tests; `specs/artha-tech-spec.md`, `docs/catchup-core.md` | Native file/directory/root streams exercised through public core and CLI; real child processes cover late source changes, interruption and competing publication. Final local validation is recorded below. |
+| Reuse one native member inventory for capture, verification and comparison; include root streams in CLI history binding. | `scripts/catchup_core/checkpoint.py`, `scripts/catchup_core/checkpoint_cli.py`, `tests/catchup_core/test_work_stream_checkpoint.py`, `tests/catchup_core/test_state_checkpoint_cli.py` | Public CLI exercised review/upgrade, create, verify, recovery status, diff, encrypted restore and subsequent revocation. Real child-process source changes after capture left the archived generation unchanged. |
+| Make stream fault injections target the cached native API instance; keep the lint-debt ceiling unchanged; prevent stdin EOF from releasing a paused crash-test child and wait for child exit before closing pipes. | `tests/catchup_core/test_work_stream_inventory.py`, `tests/catchup_core/test_storage_adoption.py`, `scripts/catchup_core/checkpoint_cli.py` | Ordered native/inventory/lint selection: 56 passed. Native storage suite after the test-only synchronization repair: 62 passed; all four real crash phases passed in five runs (20 cases). |
+
+Local validation, 2026-11-09: the final full public run had **10,974 passed, 170 skipped,
+20 expected failures and one storage crash-test failure**. That test-only synchronization
+failure was repaired and verified by the 62-test suite and 20 repeated crash cases above;
+the complete public suite was not rerun after that test-only repair. Production code
+did not change after the full run. The Windows harness passed **1,774 tests** with
+**87.28%** combined coverage. Core coverage was **94.09% lines / 89.61% branches**,
+and changed core lines measured **91%**. The producer/read selection passed **36 tests**,
+with **95%** combined module coverage and **18/18 changed lines** covered. Strict typing
+of 70 core files, both Ruff passes, imports, the state-write ratchet, generated registers
+and privacy checks passed. These are local engineering results, not hosted CI or live
+acceptance.
+
+The owner-delegated completion slice retains encrypted stream preservation and reviewed
+ordinary-document recovery. Arbitrary stream plaintext export/reattachment and enrolled
+replacements/deletions remain explicitly unsupported. Live Work retention/migration/
+recovery and release activation are separately authorized operations, not synthetic
+test outcomes. No VSS subsystem or privileged volume operation was added.
+
+### Fixed — Windows Work comparison, recovery and producer reads, 2026-11-08
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Bound producer reads to the existing native bounded reader and pinned Work journal before callbacks see persisted content. Preserve staged reads and approved mutation holds. | `scripts/lib/work_publication.py`, `tests/unit/test_work_publication_reads.py` | Five failures reproduced first; publication/read selection: 36 passed. |
+| Compare ACK3 primary bytes and native file/directory/root streams; report only stream counts and reject a requested-profile mismatch before source comparison. | `scripts/catchup_core/checkpoint.py`, `scripts/catchup_core/checkpoint_cli.py`, `tests/catchup_core/test_work_stream_diff.py`, `tests/catchup_core/test_work_stream_checkpoint.py` | Nine initial missing-comparison cases and the later profile case failed first; final verifier/isolation/diff selection: 106 passed. |
+| Restore ACK3 through the matching current Work binding, encrypted quarantine and revocation replay; include stream byte/block counts and report accurate aggregate recovery capability. Keep final accounting inside the restore cleanup boundary. | `scripts/catchup_core/checkpoint.py`, `scripts/catchup_core/checkpoint_cli.py`, `tests/catchup_core/test_work_stream_recovery.py`, `tests/catchup_core/test_state_checkpoint_cli.py`, `tests/catchup_core/test_work_recovery_status.py` | Four initial public restore failures and a later final-accounting cleanup failure reproduced first. Final restore/status selection: seven passed; comparison/legacy-status/stream-history CLI selection: 21 passed. |
+| Exclude all State Files from the private Work verifier's manifest and copy. | `tools/run_tests_isolated.py`, `tests/dev/test_private_work_verification.py` | Three admission failures reproduced first; final verifier/isolation/diff selection: 106 passed. |
+| Normalize CRLF to canonical LF in the generated audit-manifest implementation checksum so Windows working bytes and an LF checkout agree. Runtime release/recovery fingerprint rules are unchanged. | `scripts/catchup_core/capabilities.py`, `tests/catchup_core/test_register_manifest.py`, `docs/spec-manifest.json` | The existing LF-copy register regression failed on the Windows candidate before repair; a synthetic test also verifies that real content changes still change the checksum. |
+
+The private producer check passed after seven stale expectations were aligned with the
+approved enrolled-member hold; unenrolled updates, staged new members and enrolled
+no-ops retain positive controls. These private synthetic test edits remain gitignored.
+The existing WP-19 scratch migration/health-receipt UAT passed, including cleanup.
+
+The generation-checkpoint entry above supersedes the earlier public-creation hold.
+Directory/root plaintext recovery remains unsupported under the scoped amendment;
+live retention/recovery acceptance remains separate. No live snapshot, source
+modification, migration, provider operation, release or push is implied. Strict typing
+of all 70 candidate core files and public Ruff passed. Earlier helper coverage and
+focused test counts describe their recorded snapshots, not full-profile acceptance.
+
 ### Fixed — release-evidence provenance and consent-generation fetch, 2026-11-06
 
 | Change | Modified files | Validation |

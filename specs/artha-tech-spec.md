@@ -8197,3 +8197,43 @@ The following implemented specs are also folded here and archived with a `-2026-
   path, like the harness gate.
 - **Ratchets.** Lint-suppression and broad-except counts in tracked `scripts/` may only fall; the known divergence
   between the two preflight implementations is frozen until they are consolidated.
+
+### 2026-11-08 Windows Work checkpoint and producer boundaries
+
+- Enrolled Work producers use the existing bounded, identity-checked Work reader.
+  Before a producer callback receives persisted bytes, their size and digest must
+  match the transaction's pinned journal entry; additions, deletion or replacement
+  after the journal check refuse before computation. Staged batch bytes retain their
+  existing read-your-writes semantics. Existing-member mutation holds are unchanged.
+- ACK3 Work diff reads native primary and stream content, checks pinned identities
+  and repeats the included inventory. Stream additions/removals/changes are returned
+  as counts without stream identities. The CLI binds comparison to the requested
+  profile. Unsupported Work SQLite images refuse explicitly.
+- ACK3 Work restore accepts a matching version-2 Work binding only through current
+  Work authority, encrypted quarantine and privacy replay. Verified-byte totals include
+  streams; results distinguish quarantined and blocked streams. Directory/root and
+  unjournaled stream authority remains held, and no plaintext stream export is enabled.
+  Final stream accounting stays inside the restore cleanup boundary, so authority loss
+  there removes the staged tree before an error is returned.
+  Recovery status reports encrypted-quarantine-only support and blocked stream counts;
+  format verification alone does not establish current recovery authority.
+- Private Work verification excludes every State File before fingerprinting or copying,
+  using the existing synthetic-only filter. Its reviewed private source allowlist,
+  suppressed payload output and source-change/cleanup refusal rules are unchanged.
+- Windows Work stream checkpoint creation archives an exact authenticated Work history
+  generation using native bounded reads, owner/path identity checks, complete stream
+  inventory and final observed-drift checks. The encrypted manifest identifies these
+  semantics. Later source edits are separate state; they cannot change archived bytes
+  and current unreviewed drift still refuses recovery. Ciphertext publication remains
+  atomic and write-once. No filesystem freeze, VSS or extra privilege is required.
+  Personal ACK2 behavior is unchanged. Synthetic engineering does not establish live
+  recovery, retention disposition, owner UAT or release acceptance.
+- Arbitrary plaintext stream export/reattachment and enrolled-member replacements or
+  deletions are outside the owner-delegated completion slice. Captured streams remain
+  encrypted and counted; supported documents retain their reviewed export path. These
+  explicit limitations are never described as successful native stream restoration.
+- The generated audit manifest hashes source text with canonical LF line endings,
+  matching `.gitattributes` on Windows and other checkouts. Real content changes still
+  change its implementation checksum. Runtime release, resume and recovery authority
+  fingerprints keep their existing byte-exact rules; this audit checksum does not
+  authorize a release or reinterpret a stored receipt.
