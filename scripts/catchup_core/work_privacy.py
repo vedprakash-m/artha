@@ -23,7 +23,7 @@ import sys
 import unicodedata
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -146,11 +146,11 @@ def _atomic(path: Path, raw: bytes) -> None:
 
     class _PublicationDirectory(quarantine_fs_windows.WindowsQuarantineDirectory):
         def open_file(self, name: str, *, writable: bool = False, rename: bool = False,
-                      private: bool = True) -> Any:
+                      private: bool = True, deny_write: bool = False) -> Any:
             # Existing Work files predate private native publication. Pin their
             # identity without treating their inherited ACL as recovery authority.
             return super().open_file(name, writable=writable, rename=rename,
-                                     private=private and name != path.name)
+                                     private=private and name != path.name, deny_write=deny_write)
 
     with _PublicationDirectory.open(path.parent, owner_private=False, writable=True) as parent:
         temporary = '.work-' + uuid.uuid4().hex
@@ -206,6 +206,47 @@ def _create_member(path: Path, raw: bytes) -> None:
         raise WorkPrivacyBlocked(
             'write-once Work creation was refused; pending publication and any staging require review',
         ) from exc
+
+
+def _mutate_member(path: Path, raw: bytes | None, before: Mapping[str, Any] | None,
+                   after: Mapping[str, Any] | None) -> None:
+    """Change primary bytes on the pinned object; deletion removes the whole object."""
+    if os.name != 'nt':
+        raise WorkPrivacyBlocked('native Work member mutation is unavailable')
+    _chain(path)
+    try:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            if raw is None:
+                return
+            raise WorkPrivacyBlocked('pending Work member is missing; review required') from None
+        with quarantine_fs_windows.WindowsQuarantineDirectory.open(
+                path.parent, owner_private=False, writable=True) as parent:
+            with (
+                parent.open_file(path.name, writable=raw is not None, rename=raw is None,
+                                 private=False, deny_write=True) as opened,
+                opened.lock() if raw is not None else nullcontext(),
+            ):
+                existing = opened.read(_MAX_MEMBER_BYTES)
+                actual = {'size': len(existing), 'sha256': hashlib.sha256(existing).hexdigest()}
+                if raw is not None and actual == after:
+                    return
+                if actual != before:
+                    raise WorkPrivacyBlocked('pending Work member drift requires review')
+                if raw is None:
+                    opened.delete()
+                    parent._flush_directory()
+                else:
+                    opened.seek(0)
+                    opened.write_all(raw)
+                    opened.truncate(len(raw))
+                    opened.flush()
+                    if opened.read(_MAX_MEMBER_BYTES) != raw:
+                        raise WorkPrivacyBlocked('Work member update readback differs from intent')
+            parent._revalidate()
+    except (OSError, QuarantineFilesystemError) as exc:
+        raise WorkPrivacyBlocked('native Work member mutation refused; pending intent requires review') from exc
 
 
 def _delete(path: Path) -> None:
@@ -722,6 +763,10 @@ class WorkPrivacy:
                          stream_since=generation, stream_invalidated=dict.fromkeys(streams, generation))
         elif before['schema'] == 'artha.work-member-history.v2':
             next_streams = before['streams'] if streams is None else streams
+            if streams is None:
+                removed = {(name, 'file') for name, value in changes.items() if value is None}
+                next_streams = {key: value for key, value in next_streams.items()
+                                if self._stream_parts(key)[:2] not in removed}
             stream_invalidated = dict(before['stream_invalidated'])
             stream_changed = {key for key in set(before['streams']) | set(next_streams)
                               if before['streams'].get(key) != next_streams.get(key)}
@@ -746,26 +791,40 @@ class WorkPrivacy:
     def _hold_member_mutations(before: Mapping[str, Any], changes: Mapping[str, Any]) -> None:
         existing = {name.casefold() for name in before['members']}
         if any(value is None or name.casefold() in existing for name, value in changes.items()):
+            if before['schema'] == 'artha.work-member-history.v2' and os.name == 'nt':
+                return
             raise WorkPrivacyBlocked('Work member replacement and deletion are temporarily paused')
 
-    def _pending_creations(self, before: Mapping[str, Any], after: Mapping[str, Any],
-                           changes: Any) -> list[tuple[Path, bytes]]:
+    @staticmethod
+    def _pending_value(value: Any, expected: Mapping[str, Any] | None) -> bytes | None:
+        if value is None:
+            if expected is not None:
+                raise WorkPrivacyBlocked('deleted Work member remains in intent')
+            return None
+        if not isinstance(value, str):
+            raise WorkPrivacyBlocked('invalid pending Work member bytes')
+        try:
+            raw = base64.b64decode(value, validate=True)
+        except ValueError:
+            raise WorkPrivacyBlocked('invalid pending Work member bytes') from None
+        if {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != expected:
+            raise WorkPrivacyBlocked('staged Work bytes differ from intent')
+        return raw
+
+    def _pending_members(self, before: Mapping[str, Any], after: Mapping[str, Any],
+                         changes: Any) -> list[tuple[str, Path, bytes | None]]:
         if not isinstance(changes, dict) or any(not isinstance(name, str) for name in changes):
             raise WorkPrivacyBlocked('invalid pending Work member changes')
         self._hold_member_mutations(before, changes)
         if changes:
             _require_native_creation()
-        creations: list[tuple[Path, bytes]] = []
+        members: list[tuple[str, Path, bytes | None]] = []
         for name, value in changes.items():
             path = self._member(name)
-            if not isinstance(value, str):
-                raise WorkPrivacyBlocked('invalid pending Work member bytes')
-            try:
-                raw = base64.b64decode(value, validate=True)
-            except ValueError:
-                raise WorkPrivacyBlocked('invalid pending Work member bytes') from None
-            if {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != after['members'].get(name):
-                raise WorkPrivacyBlocked('staged Work bytes differ from intent')
+            raw = self._pending_value(value, after['members'].get(name))
+            if name in before['members'] or raw is None:
+                members.append((name, path, raw))
+                continue
             try:
                 path.lstat()
             except FileNotFoundError:
@@ -774,8 +833,8 @@ class WorkPrivacy:
                 raise WorkPrivacyBlocked('pending Work destination cannot be checked; review required') from exc
             else:
                 raise WorkPrivacyBlocked('pending Work destination already exists; review required')
-            creations.append((path, raw))
-        return creations
+            members.append((name, path, raw))
+        return members
 
     def _publish(self, before: dict[str, Any], changes: Mapping[str, bytes | None],
                  revoke: Sequence[str]) -> dict[str, Any]:
@@ -832,19 +891,25 @@ class WorkPrivacy:
         complete = self._decrypt(_read(self.authority_dir / 'complete'), 'complete')
         if complete not in ({'head': before['head']}, {'head': head}):
             raise WorkPrivacyBlocked('pending Work completion identity changed')
-        creations = self._pending_creations(before, after, pending.get('changes'))
+        members = self._pending_members(before, after, pending.get('changes'))
         current = self._inventory()
         for name in set(current) | set(before['members']) | set(after['members']):
             if current.get(name) not in (before['members'].get(name), after['members'].get(name)):
                 raise WorkPrivacyBlocked('unjournaled Work drift during pending publication')
-        if (after['schema'] == 'artha.work-member-history.v2'
-                and self._inventory_streams() != after['streams']):
-            raise WorkPrivacyBlocked('unjournaled Work stream drift during pending publication')
+        if after['schema'] == 'artha.work-member-history.v2':
+            streams = self._inventory_streams()
+            previous = before.get('streams', after['streams'])
+            if any(streams.get(key) not in (previous.get(key), after['streams'].get(key))
+                   for key in set(streams) | set(previous) | set(after['streams'])):
+                raise WorkPrivacyBlocked('unjournaled Work stream drift during pending publication')
         _atomic(self.authority_dir / (head['capsule_sha256'] + '.ae1'), capsule)
         self.observe('capsule')
-        for path, raw in creations:
+        for name, path, raw in members:
             self._expect_head(native)
-            _create_member(path, raw)
+            if name in before['members'] or raw is None:
+                _mutate_member(path, raw, before['members'].get(name), after['members'].get(name))
+            else:
+                _create_member(path, raw)
             self.observe('member')
         if self._inventory() != after['members']:
             raise WorkPrivacyBlocked('Work inventory drift at publication')

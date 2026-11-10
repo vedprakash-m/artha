@@ -393,7 +393,7 @@ class _Native:
 
     def create_or_open(self, parent: int | None, name: str, *, directory: bool, create: bool,
                        access: int, security_descriptor: int | None = None,
-                       exclusive: bool = False) -> int:
+                       exclusive: bool = False, deny_write: bool = False) -> int:
         unicode_name, keepalive = self._unicode(name)
         attributes = _ObjectAttributes(
             ctypes.sizeof(_ObjectAttributes), parent, ctypes.pointer(unicode_name),
@@ -406,7 +406,7 @@ class _Native:
         status = self.ntdll.NtCreateFile(
             ctypes.byref(output), access | self.READ_CONTROL | self.FILE_READ_ATTRIBUTES | self.SYNCHRONIZE,
             ctypes.byref(attributes), ctypes.byref(io_status), None, 0,
-            0 if exclusive else self.FILE_SHARE_READ | self.FILE_SHARE_WRITE,
+            0 if exclusive else self.FILE_SHARE_READ | (0 if deny_write else self.FILE_SHARE_WRITE),
             self.FILE_CREATE if create else self.FILE_OPEN, options, None, 0,
         )
         _ = keepalive
@@ -851,6 +851,15 @@ class WindowsQuarantineFile:
         self._native.check_bool(self._native.kernel32.FlushFileBuffers(self.handle), 'file flush')
         self._recheck(self.identity)
 
+    def delete(self) -> None:
+        """Mark this pinned current-owner file, including its streams, for deletion."""
+        self._recheck(self.identity)
+        disposition = _FileDispositionInfo(1)
+        self._native.check_bool(self._native.kernel32.SetFileInformationByHandle(
+            self.handle, self._native.FILE_DISPOSITION_INFO,
+            ctypes.byref(disposition), ctypes.sizeof(disposition),
+        ), 'handle-relative file cleanup')
+
     def _recheck(self, expected_identity: FileIdentity) -> FileIdentity:
         # Handles are opened without FILE_SHARE_DELETE, so while this file and its parent chain
         # stay open their names cannot be renamed or deleted; recheck mutable security state only.
@@ -993,7 +1002,7 @@ class WindowsQuarantineDirectory:
             raise
 
     def open_file(self, name: str, *, writable: bool = False, rename: bool = False,
-                  private: bool = True) -> WindowsQuarantineFile:
+                  private: bool = True, deny_write: bool = False) -> WindowsQuarantineFile:
         self._ensure_open()
         name = _native_component(name)
         if rename:
@@ -1005,6 +1014,7 @@ class WindowsQuarantineDirectory:
             access |= self._native.DELETE
         handle = self._native.create_or_open(
             self.handle, name, directory=False, create=False, access=access,
+            deny_write=deny_write,
         )
         try:
             opened = WindowsQuarantineFile(self._native, self, name, handle, private=private)
@@ -1167,11 +1177,7 @@ class WindowsQuarantineDirectory:
         with self.open_file(name, rename=True, private=False) as opened:
             if opened.identity != expected_identity:
                 raise QuarantineFilesystemError('refusing to delete a substituted file')
-            disposition = _FileDispositionInfo(1)
-            self._native.check_bool(self._native.kernel32.SetFileInformationByHandle(
-                opened.handle, self._native.FILE_DISPOSITION_INFO,
-                ctypes.byref(disposition), ctypes.sizeof(disposition),
-            ), 'handle-relative file cleanup')
+            opened.delete()
             self._flush_directory()
         self._revalidate()
 
