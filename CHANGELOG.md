@@ -9,6 +9,37 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Implemented — enrolled Windows Work publication, 2026-11-09
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Permit updates and whole-file deletions after reviewed version-2 stream-history upgrade. Use the existing pending journal and pinned native handles; preserve file identity, permissions and alternate streams on update, invalidate owned streams on deletion. Version-1 histories retain the hold. | `scripts/catchup_core/work_privacy.py`, `scripts/catchup_core/quarantine_fs_windows.py`, `tests/catchup_core/test_work_member_mutations.py`, generated manifest; technical spec and Work guide | Initial six native failures reproduced the hold; all six passed after implementation. Expanded interruption, compatibility and producer validation is recorded below. |
+| Replay interrupted updates/deletions only from exact authenticated before/after states; preserve unexpected partial or unjournaled bytes and pending intent for review. Keep new-member publication write-once and ambiguous creation recovery refused. | Same production files and native process tests; private synthetic producer tests remain gitignored | Real processes exercise intent, member, head and completion interruptions plus a partial-primary write. No live Work edit, migration, deletion or release activation was performed. |
+
+This continuation supersedes the enrolled-member mutation limitation recorded in the
+earlier checkpoint entry for reviewed version-2 Windows histories. Plaintext stream
+export/reattachment and directory/root plaintext recovery retain their documented limits.
+
+Focused native validation passed **18 tests**, with one inapplicable case skipped.
+The compatibility selection passed **337 tests**, with two skipped and **90%** combined
+coverage across native filesystem, Work history and publication modules. Changed
+production lines passed the existing 85% floor (**75 lines, 11 missed**). Both Ruff
+passes, strict typing of 70 core files, imports and the state-write ratchet passed.
+Private synthetic producer verification passed with **1,114 fingerprinted sources,
+zero State Files copied**, unchanged private sources and verified cleanup.
+
+The full public synthetic-mode run completed **10,992 passed, 171 skipped, 20 expected
+failures and one missing-template failure** in 9,263.49 seconds. Synthetic-only mode
+intentionally excludes all State Files, including the tracked health-check template.
+The standard public isolated runner then passed **94 tests**, including both template/
+compaction tests and the runner/private-verification safety suites. No product or test
+code changed: this closes a selection error, not a product defect. The failed aggregate
+is retained; no second whole-suite run or whole-suite green result is claimed.
+Core coverage passed at **93.67% lines / 89.10% branches**; changed production lines
+measured **64/75 (85.33%)**. The full working-tree privacy scan passed. Results describe
+the public Work candidate; unrelated Personal edits were excluded and preserved.
+These local checks do not establish hosted CI, live Work operations or release acceptance.
+
 ### Implemented — Windows Work generation checkpoints, 2026-11-08
 
 | Change | Modified files | Validation |

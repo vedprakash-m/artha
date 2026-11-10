@@ -8228,8 +8228,17 @@ The following implemented specs are also folded here and archived with a `-2026-
   atomic and write-once. No filesystem freeze, VSS or extra privilege is required.
   Personal ACK2 behavior is unchanged. Synthetic engineering does not establish live
   recovery, retention disposition, owner UAT or release acceptance.
-- Arbitrary plaintext stream export/reattachment and enrolled-member replacements or
-  deletions are outside the owner-delegated completion slice. Captured streams remain
+- Reviewed version-2 Windows Work histories permit existing-member primary-content
+  updates in place through a pinned native handle that excludes competing primary
+  writers. Preserve file identity, permissions and all alternate streams; do not replace
+  the object or copy its streams. Explicit deletion removes the whole file and records
+  member/stream invalidations. Keep the encrypted pending journal and cooperative read
+  barrier. Interrupted publication can replay exact before/after states; unknown partial
+  writes or unjournaled bytes remain paused for review. New members remain write-once;
+  ambiguous creation recovery still refuses. Version-1 histories retain the mutation
+  hold until a reviewed stream-history upgrade. Non-Windows mutation remains unavailable.
+- Arbitrary plaintext stream export/reattachment is outside the owner-delegated
+  completion slice. Captured streams remain
   encrypted and counted; supported documents retain their reviewed export path. These
   explicit limitations are never described as successful native stream restoration.
 - The generated audit manifest hashes source text with canonical LF line endings,
