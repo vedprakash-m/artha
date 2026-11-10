@@ -9,6 +9,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Implemented — version-1 Windows Work writer availability, 2026-11-10
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Remove the stream-history migration prerequisite for ordinary enrolled Windows updates/deletions and exact pending replay. Reuse the existing native writer; preserve identity, permissions and alternate streams. No new command, format, storage or automatic migration. | One condition in `scripts/catchup_core/work_privacy.py`; native/history/cache/publication/CLI tests and generated manifest | Four native v1 cases failed before the change and passed afterward. Affected selection: 378 passed, 15 skipped, 90% combined coverage. Real process interruption covers both history versions. |
+| Preserve the stream checkpoint boundary: v1 remains primary-content history and cannot grant stream recovery authority. Reviewed v2 upgrade remains necessary for stream-aware capture. Non-Windows mutation remains held. | Same production gate; `tests/catchup_core/test_state_checkpoint_cli.py`, technical spec and operator guide | Five existing Work CLI cases passed; the added native v1 case passed after test-only import/error-expectation corrections. It proves successful ordinary capture followed by refusal after adding a stream, without stripping source streams. |
+
+The official private producer verification passed with **1,114 fingerprinted sources,
+zero State Files**, unchanged canonical private sources and verified child cleanup.
+Its initial failure was an overly strict new test counter: the ADO workflow can publish
+multiple files. The final test checks journaled invalidation, v1 schema and absence of
+workflow errors. Diagnostic output contained only test names, exception types and line
+numbers; private test payload output remained suppressed. Private test edits stay ignored.
+Both Ruff passes, strict typing of 70 core files, imports and the state-write ratchet passed.
+Changed production-line coverage is **1/1 (100%)**, above the existing 85% floor.
+This narrow availability change retains the earlier whole-suite evidence; no new whole-suite
+green result, hosted CI, live operation or release activation is claimed.
+
 ### Implemented — enrolled Windows Work publication, 2026-11-09
 
 | Change | Modified files | Validation |

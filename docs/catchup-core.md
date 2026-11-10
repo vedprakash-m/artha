@@ -857,11 +857,13 @@ Windows Work `create` writes ACK3 for the exact authenticated Work generation, p
 directory and root streams in encrypted form. `verify` authenticates the archive and `diff` reports
 stream counts without names. Recovery uses current Work authority and encrypted quarantine, replays
 revocations and refuses unreviewed drift. Plaintext stream export/reattachment and directory/root plaintext
-recovery remain unsupported. Reviewed version-2 Windows histories permit enrolled primary-content updates
+recovery remain unsupported. Enrolled Windows histories permit primary-content updates
 through a pinned native handle, preserving file identity, permissions and alternate streams. Deletion removes
-the whole file and invalidates its stream history. Publication remains pending until verified; explicit pending
-recovery accepts only exact before/after bytes. Unknown partial writes or unjournaled changes require review.
-Version-1 histories retain the mutation hold until a separately reviewed stream-history upgrade.
+the whole file and invalidates historical member recovery and any journaled stream history. Publication remains
+pending until verified; explicit pending recovery accepts only exact before/after bytes. Unknown partial writes
+or unjournaled primary changes require review; version-2 history also checks stream drift.
+Version-1 histories track primary content only and grant no stream recovery authority. A separately reviewed
+stream-history upgrade is required for stream-aware checkpoints, not ordinary native publication.
 Enrollment binds Windows machine/user, random installation and canonical `state/work`/`local/work` roots;
 the dedicated identity key/current history are never captured or restored. Pending, drifted, mismatched
 or missing authority blocks capture/recovery. Old unbound checkpoints stay inspection-only.
