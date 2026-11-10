@@ -791,7 +791,7 @@ class WorkPrivacy:
     def _hold_member_mutations(before: Mapping[str, Any], changes: Mapping[str, Any]) -> None:
         existing = {name.casefold() for name in before['members']}
         if any(value is None or name.casefold() in existing for name, value in changes.items()):
-            if before['schema'] == 'artha.work-member-history.v2' and os.name == 'nt':
+            if os.name == 'nt':
                 return
             raise WorkPrivacyBlocked('Work member replacement and deletion are temporarily paused')
 

@@ -1374,12 +1374,15 @@ def test_work_history_invalidation_blocks_historical_member_before_review(host, 
     checkpoint = json.loads(output)['checkpoint']
     if change == 'correction':
         before = protocol.current()
-        with pytest.raises(WorkPrivacyBlocked, match='temporarily paused'):
-            protocol.publish({'work_state/briefing.md': b'corrected Work note'})
-        assert protocol.current() == before
-        assert not (protocol.authority_dir / 'pending').exists()
-        (host.repo / 'state/work/briefing.md').write_bytes(b'corrected Work note')
-        current = protocol.reconcile(reviewed=True)
+        if sys.platform == 'win32':
+            current = protocol.publish({'work_state/briefing.md': b'corrected Work note'})
+        else:
+            with pytest.raises(WorkPrivacyBlocked, match='temporarily paused'):
+                protocol.publish({'work_state/briefing.md': b'corrected Work note'})
+            assert protocol.current() == before
+            assert not (protocol.authority_dir / 'pending').exists()
+            (host.repo / 'state/work/briefing.md').write_bytes(b'corrected Work note')
+            current = protocol.reconcile(reviewed=True)
         assert current['invalidated']['work_state/briefing.md'] > before['generation']
     else:
         protocol.publish({}, revoke=['work_state/briefing.md'])
@@ -1775,6 +1778,26 @@ def test_work_inventory_separates_all_known_artifacts_without_disclosing_names(h
     assert work_files.isdisjoint(inventories['personal'])
     assert work_files <= inventories['work']
     assert cache_lock not in inventories['personal'] | inventories['work']
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows named streams')
+def test_v1_native_publication_does_not_authorize_stream_checkpoint(host, monkeypatch):
+    from pathlib import Path
+
+    source = host.repo / 'state/work/notes.md'
+    source.write_bytes(b'original synthetic primary')
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    protocol.publish({'work_state/notes.md': b'first updated synthetic primary'})
+    code, _, error = host.run('create', '--profile', 'work', '--dest', str(host.tmp / 'ordinary'))
+    assert code == 0, error
+    stream = Path(str(source) + ':synthetic')
+    stream.write_bytes(b'preserved synthetic stream')
+    current = protocol.publish({'work_state/notes.md': b'updated synthetic primary'})
+    assert current['schema'] == 'artha.work-member-history.v1' and 'streams' not in current
+    assert source.read_bytes() == b'updated synthetic primary'
+    code, output, error = host.run('create', '--profile', 'work', '--dest', str(host.tmp / 'work'))
+    assert code == 20 and 'inventory is incomplete' in error
+    assert stream.read_bytes() == b'preserved synthetic stream'
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows named streams')

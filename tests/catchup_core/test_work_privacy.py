@@ -137,7 +137,8 @@ def test_original_machine_and_profile_are_required(protocol, change):
     {'work_state/notes.md': b'old synthetic notes', 'work_state/new.md': b'new'},
     {'work_state/absent.md': None, 'work_state/new.md': b'new'},
 ])
-def test_temporary_hold_refuses_existing_member_changes_before_intent(protocol, changes):
+@pytest.mark.skipif(os.name == 'nt', reason='native Windows member mutation is supported')
+def test_non_windows_hold_refuses_existing_member_changes_before_intent(protocol, changes):
     enroll(protocol)
     before = protocol.current()
     authority = {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()}
@@ -155,7 +156,8 @@ def test_temporary_hold_refuses_existing_member_changes_before_intent(protocol, 
 
 @pytest.mark.parametrize('operation', ['replace', 'delete', 'absent-delete'])
 @pytest.mark.parametrize('already_applied', [False, True])
-def test_temporary_hold_refuses_legacy_pending_member_mutations(protocol, operation, already_applied):
+@pytest.mark.skipif(os.name == 'nt', reason='native Windows pending member mutation is supported')
+def test_non_windows_hold_refuses_legacy_pending_member_mutations(protocol, operation, already_applied):
     if operation == 'absent-delete' and already_applied:
         pytest.skip('an absent deletion has no member effect to apply')
     enroll(protocol)

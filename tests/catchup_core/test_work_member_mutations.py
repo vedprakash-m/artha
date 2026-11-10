@@ -7,11 +7,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_work_privacy import IDENTITY, KEY
 
 from catchup_core import quarantine_fs_windows as fs
+from catchup_core import work_privacy as privacy
 from catchup_core.session_lock import SessionBusy
 from catchup_core.work_privacy import WorkPrivacy, WorkPrivacyBlocked
 from lib import work_publication as wp
@@ -37,7 +39,7 @@ class FileBackend:
 
 
 @pytest.fixture
-def enrolled(tmp_path, monkeypatch):
+def legacy_enrolled(tmp_path, monkeypatch):
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'local'))
     repo = tmp_path / 'repo'
     root = repo / 'state/work'
@@ -50,6 +52,12 @@ def enrolled(tmp_path, monkeypatch):
     Path(str(member) + ':synthetic').write_bytes(b'keep these stream bytes')
     Path(str(member) + ':empty').write_bytes(b'')
     Path(str(root) + ':root-stream').write_bytes(b'root bytes')
+    return p, member
+
+
+@pytest.fixture
+def enrolled(legacy_enrolled):
+    p, member = legacy_enrolled
     review = p.preview_stream_history()
     p.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
     return p, member
@@ -59,6 +67,39 @@ def native_metadata(member):
     with fs.WindowsQuarantineDirectory.open(member.parent, owner_private=False) as parent:
         with parent.open_file(member.name, private=False) as opened:
             return opened.identity, opened._native.security_bytes(opened.handle)
+
+
+@pytest.mark.parametrize('raw', [b'new', b'longer synthetic notes' * 12, b''])
+def test_v1_update_preserves_streams_without_migration_or_stream_authority(legacy_enrolled, monkeypatch, raw):
+    p, member = legacy_enrolled
+    binding = p.bind_checkpoint()
+    metadata = native_metadata(member)
+    monkeypatch.setattr(p, '_inventory_streams', lambda: pytest.fail('v1 writer invented stream history'))
+    result = p.publish({'work_state/notes.md': raw})
+    assert result['schema'] == 'artha.work-member-history.v1' and 'streams' not in result
+    assert member.read_bytes() == raw and native_metadata(member) == metadata
+    assert Path(str(member) + ':synthetic').read_bytes() == b'keep these stream bytes'
+    assert Path(str(member) + ':empty').read_bytes() == b''
+    assert Path(str(member.parent) + ':root-stream').read_bytes() == b'root bytes'
+    assert p.denied_members(binding, ['work_state/notes.md']) == {'work_state/notes.md'}
+
+
+def test_v1_delete_invalidates_member_without_inventing_stream_history(legacy_enrolled):
+    p, member = legacy_enrolled
+    binding = p.bind_checkpoint()
+    result = p.publish({'work_state/notes.md': None})
+    assert not member.exists() and 'work_state/notes.md' not in result['members']
+    assert result['schema'] == 'artha.work-member-history.v1' and 'streams' not in result
+    assert p.denied_members(binding, ['work_state/notes.md']) == {'work_state/notes.md'}
+    assert Path(str(member.parent) + ':root-stream').read_bytes() == b'root bytes'
+
+
+@pytest.mark.parametrize('schema', ['artha.work-member-history.v1', 'artha.work-member-history.v2'])
+def test_non_windows_member_mutation_gate_remains_held(monkeypatch, schema):
+    monkeypatch.setattr(privacy, 'os', SimpleNamespace(name='posix'))
+    with pytest.raises(WorkPrivacyBlocked, match='temporarily paused'):
+        WorkPrivacy._hold_member_mutations({'schema': schema, 'members': {'work_state/notes.md': {}}},
+                                           {'work_state/notes.md': b'update'})
 
 
 @pytest.mark.parametrize('raw', [b'new', b'longer synthetic notes' * 12, b''])
@@ -188,10 +229,11 @@ p.publish({'work_state/notes.md':None if sys.argv[3]=='delete' else b'replacemen
 
 @pytest.mark.parametrize('phase', ['intent', 'partial', 'member', 'head', 'complete'])
 @pytest.mark.parametrize('operation', ['update', 'delete'])
-def test_real_interruption_replays_only_exact_member_states(enrolled, phase, operation):
+@pytest.mark.parametrize('history_fixture', ['legacy_enrolled', 'enrolled'])
+def test_real_interruption_replays_only_exact_member_states(request, history_fixture, phase, operation):
     if operation == 'delete' and phase == 'partial':
         pytest.skip('native deletion has no partial-primary write step')
-    p, member = enrolled
+    p, member = request.getfixturevalue(history_fixture)
     base = p.repo.parent
     marker = base / 'ready'
     project = Path(__file__).resolve().parents[2]

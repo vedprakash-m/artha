@@ -99,10 +99,11 @@ def test_enrolled_new_member_and_update_noop_are_journaled(work):
 
 
 @pytest.mark.parametrize('operation', ['write', 'append', 'update', 'delete'])
-def test_enrolled_existing_member_mutations_surface_the_temporary_hold(work, operation):
+def test_enrolled_existing_member_mutations_follow_native_support(work, operation):
     enroll(work)
     notes = work['state'] / 'work-notes.md'
-    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused') as blocked:
+    with (nullcontext() if os.name == 'nt' else
+          pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused')) as blocked:
         if operation == 'write':
             wp.publish_text(notes, 'replacement', legacy=never)
         elif operation == 'append':
@@ -111,9 +112,15 @@ def test_enrolled_existing_member_mutations_surface_the_temporary_hold(work, ope
             wp.update_text(notes, lambda text: text + 'changed', legacy=never)
         else:
             wp.publish({notes: None}, legacy=never)
-    assert isinstance(blocked.value.__cause__, work_privacy.WorkPrivacyBlocked)
-    assert notes.read_bytes() == b'synthetic notes\n'
-    assert work['make']().current()['generation'] == 1
+    if os.name == 'nt':
+        expected = {'write': 'replacement', 'append': 'synthetic notes\naddition',
+                    'update': 'synthetic notes\nchanged', 'delete': None}[operation]
+        assert (wp.decode(notes.read_bytes()) if notes.exists() else None) == expected
+        assert work['make']().current()['generation'] == 2
+    else:
+        assert isinstance(blocked.value.__cause__, work_privacy.WorkPrivacyBlocked)
+        assert notes.read_bytes() == b'synthetic notes\n'
+        assert work['make']().current()['generation'] == 1
     assert not (work['make']().authority_dir / 'pending').exists()
 
 
@@ -170,9 +177,11 @@ def test_manual_drift_blocks_until_reviewed_reconciliation(work):
         wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
     assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit'
     work['make']().reconcile(reviewed=True)
-    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused'):
+    with (nullcontext() if os.name == 'nt' else
+          pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused')):
         wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
-    assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit'
+    assert wp.decode((work['state'] / 'work-notes.md').read_bytes()) == (
+        'manual editmore' if os.name == 'nt' else 'manual edit')
     wp.publish_text(work['state'] / 'new.md', 'allowed', legacy=never)
     assert (work['state'] / 'new.md').read_bytes() == wp.encode('allowed')
 
@@ -269,16 +278,18 @@ def test_post_work_refresh_log_unenrolled_appends_directly(work):
     assert log.read_text(encoding='utf-8') == '{"run_id": "a"}\n'
 
 
-def test_post_work_refresh_log_enrolled_refuses_second_append(work):
+def test_post_work_refresh_log_enrolled_follows_native_support(work):
     import post_work_refresh
     enroll(work)
     post_work_refresh._append_run_log({'run_id': 'a'}, work['repo'])
-    with pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused'):
+    with (nullcontext() if os.name == 'nt' else
+          pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused')):
         post_work_refresh._append_run_log({'run_id': 'b'}, work['repo'])
     log = work['state'] / 'eval/work-refresh-log.jsonl'
-    assert wp.decode(log.read_bytes()) == '{"run_id": "a"}\n'
+    assert wp.decode(log.read_bytes()) == ('{"run_id": "a"}\n{"run_id": "b"}\n' if os.name == 'nt'
+                                          else '{"run_id": "a"}\n')
     assert 'work_state/eval/work-refresh-log.jsonl' in work['make']().current()['members']
-    assert work['make']().current()['generation'] == 2
+    assert work['make']().current()['generation'] == (3 if os.name == 'nt' else 2)
 
 
 def test_post_work_refresh_main_refuses_unreconciled_drift(work, monkeypatch, capsys):
@@ -321,7 +332,7 @@ def _thread(target):
     return thread, errors
 
 
-def test_concurrent_thread_session_serializes_and_refuses_existing_member_update(work):
+def test_concurrent_thread_session_serializes_existing_member_updates(work):
     enroll(work)
     notes = work['state'] / 'new.md'
     a_inside, b_entered = threading.Event(), threading.Event()
@@ -341,10 +352,15 @@ def test_concurrent_thread_session_serializes_and_refuses_existing_member_update
         a_inside.set()
         thread.join(10)
     assert not thread.is_alive()
-    assert len(errors) == 1 and isinstance(errors[0], wp.WorkPublicationBlocked)
-    assert 'temporarily paused' in str(errors[0])
-    assert wp.decode(notes.read_bytes()) == 'A\n'
-    assert work['make']().current()['generation'] == 2
+    if os.name == 'nt':
+        assert errors == []
+        assert wp.decode(notes.read_bytes()) == 'A\nB\n'
+        assert work['make']().current()['generation'] == 3
+    else:
+        assert len(errors) == 1 and isinstance(errors[0], wp.WorkPublicationBlocked)
+        assert 'temporarily paused' in str(errors[0])
+        assert wp.decode(notes.read_bytes()) == 'A\n'
+        assert work['make']().current()['generation'] == 2
 
 
 def test_failed_batch_cannot_swallow_another_threads_write(work):

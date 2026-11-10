@@ -513,16 +513,23 @@ def journaled(tmp_path, monkeypatch):
     wp.set_protocol_factory(previous)
 
 
-def test_enrolled_update_preserves_cache_when_replacement_is_paused(journaled):
+def test_enrolled_update_follows_native_support_without_history_migration(journaled):
     cache, make = journaled['cache'], journaled['make']
     cache.update({'first': {'data': [1]}})
     first_bytes = cache.path.read_bytes()
     before = make().current()
-    with pytest.raises(wc.WorkCacheBlocked, match='publication refused by the Work journal'):
+    if os.name == 'nt':
         cache.update({'second': {'data': [2]}})
-    assert cache.path.read_bytes() == first_bytes
-    assert cache.load() == {'first': {'data': [1]}}
-    assert make().current() == before
+        assert cache.path.read_bytes() != first_bytes
+        assert cache.load() == {'first': {'data': [1]}, 'second': {'data': [2]}}
+        assert make().current()['generation'] == before['generation'] + 1
+        assert make().current()['schema'] == 'artha.work-member-history.v1'
+    else:
+        with pytest.raises(wc.WorkCacheBlocked, match='publication refused by the Work journal'):
+            cache.update({'second': {'data': [2]}})
+        assert cache.path.read_bytes() == first_bytes
+        assert cache.load() == {'first': {'data': [1]}}
+        assert make().current() == before
     assert before['generation'] == 2
     assert 'work_local/cache/workiq.json.age' in before['members']
     assert 'work_local/cache/cache.lock' not in before['members']
