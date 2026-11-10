@@ -36,6 +36,9 @@ from .session_lock import default_installation_dir, installation_fence, require_
 _MAX_MEMBERS = 10000
 _MAX_MEMBER_BYTES = 8 * 1024 * 1024
 _MAX_TOTAL_BYTES = 32 * 1024 * 1024
+# Existing assets use the encrypted quarantine bounds; staged edits stay small.
+_MAX_INVENTORY_MEMBER_BYTES = 16 * 1024 ** 3
+_MAX_INVENTORY_TOTAL_BYTES = 64 * 1024 ** 3
 _MAX_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
 _MAX_BYTES = 64 * 1024 * 1024
 _MAX_GENERATIONS = 10000
@@ -121,6 +124,61 @@ def _read(path: Path, bound: int = _MAX_BYTES) -> bytes:
     if len(raw) != info.st_size or len(raw) > bound:
         raise WorkPrivacyBlocked('Work protocol member changed during read')
     return raw
+
+
+def _hash_chunks(read: Callable[[int], bytes], size: int) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    remaining = size
+    while remaining:
+        raw = read(min(remaining, 65536))
+        if not raw or len(raw) > min(remaining, 65536):
+            raise WorkPrivacyBlocked('Work member changed during inventory read')
+        digest.update(raw)
+        remaining -= len(raw)
+    return {'size': size, 'sha256': digest.hexdigest()}
+
+
+def _native_member_digest(opened: Any, bound: int) -> dict[str, Any]:
+    before = opened.snapshot()
+    if before.size > bound:
+        raise WorkPrivacyBlocked('Work inventory exceeds its byte bound')
+    opened.seek(0)
+    result = _hash_chunks(opened.read_chunk, before.size)
+    if opened.snapshot() != before:
+        raise WorkPrivacyBlocked('Work member changed during inventory read')
+    return result
+
+
+def _member_digest(path: Path, bound: int) -> dict[str, Any]:
+    _chain(path)
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > bound:
+            raise WorkPrivacyBlocked('unsafe or oversized Work inventory member')
+        if os.name == 'nt':
+            with (quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent,
+                  parent.open_file(path.name, private=False) as opened):
+                result = _native_member_digest(opened, bound)
+                opened.check_path()
+        else:
+            descriptor = os.open(path, os.O_RDONLY | _posix_flag('O_NOFOLLOW') | _posix_flag('O_NONBLOCK'))
+            with os.fdopen(descriptor, 'rb') as handle:
+                before = os.fstat(handle.fileno())
+                if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > bound:
+                    raise WorkPrivacyBlocked('unsafe or oversized Work inventory member')
+                result = _hash_chunks(handle.read, before.st_size)
+                after = os.fstat(handle.fileno())
+                current = path.lstat()
+                if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                        != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+                        or after.st_nlink != 1
+                        or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino)):
+                    raise WorkPrivacyBlocked('Work member changed during inventory read')
+        if result['size'] != info.st_size:
+            raise WorkPrivacyBlocked('Work member changed during inventory read')
+        return result
+    except (OSError, QuarantineFilesystemError) as exc:
+        raise WorkPrivacyBlocked('Work inventory member is unavailable, unsafe or changed') from exc
 
 
 def _mkdir(path: Path, *, private: bool = True) -> None:
@@ -228,8 +286,7 @@ def _mutate_member(path: Path, raw: bytes | None, before: Mapping[str, Any] | No
                                  private=False, deny_write=True) as opened,
                 opened.lock() if raw is not None else nullcontext(),
             ):
-                existing = opened.read(_MAX_MEMBER_BYTES)
-                actual = {'size': len(existing), 'sha256': hashlib.sha256(existing).hexdigest()}
+                actual = _native_member_digest(opened, _MAX_INVENTORY_MEMBER_BYTES)
                 if raw is not None and actual == after:
                     return
                 if actual != before:
@@ -446,12 +503,10 @@ class WorkPrivacy:
                         continue
                     if member.casefold() in folded or len(members) >= _MAX_MEMBERS:
                         raise WorkPrivacyBlocked('ambiguous or oversized Work inventory')
-                    raw = _read(path, _MAX_MEMBER_BYTES)
-                    total += len(raw)
-                    if total > _MAX_TOTAL_BYTES:
-                        raise WorkPrivacyBlocked('Work inventory exceeds its byte bound')
+                    value = _member_digest(path, min(_MAX_INVENTORY_MEMBER_BYTES, _MAX_INVENTORY_TOTAL_BYTES - total))
+                    total += value['size']
                     folded.add(member.casefold())
-                    members[member] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
+                    members[member] = value
         return members
 
     def _stream_parts(self, key: str) -> tuple[str, str, str, str]:
@@ -586,12 +641,16 @@ class WorkPrivacy:
                 or len(set(history['revoked'])) != len(history['revoked'])
                 or not isinstance(history['events'], list) or len(history['events']) != history['generation']):
             raise WorkPrivacyBlocked('invalid Work member history')
+        total = 0
         for name, value in history['members'].items():
             self._member(name)
             if (not isinstance(value, dict) or set(value) != {'sha256', 'size'}
                     or not isinstance(value['sha256'], str) or not _HEX.fullmatch(value['sha256'])
-                    or type(value['size']) is not int or not 0 <= value['size'] <= _MAX_MEMBER_BYTES):
+                    or type(value['size']) is not int or not 0 <= value['size'] <= _MAX_INVENTORY_MEMBER_BYTES):
                 raise WorkPrivacyBlocked('invalid Work member digest')
+            total += value['size']
+            if total > _MAX_INVENTORY_TOTAL_BYTES:
+                raise WorkPrivacyBlocked('Work inventory exceeds its byte bound')
         for name, generation in history['invalidated'].items():
             self._member(name)
             if type(generation) is not int or not 1 <= generation <= history['generation']:
@@ -803,11 +862,14 @@ class WorkPrivacy:
             return None
         if not isinstance(value, str):
             raise WorkPrivacyBlocked('invalid pending Work member bytes')
+        if len(value) > 4 * ((_MAX_MEMBER_BYTES + 2) // 3):
+            raise WorkPrivacyBlocked('oversized staged Work member in pending intent')
         try:
             raw = base64.b64decode(value, validate=True)
         except ValueError:
             raise WorkPrivacyBlocked('invalid pending Work member bytes') from None
-        if {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != expected:
+        if (len(raw) > _MAX_MEMBER_BYTES
+                or {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)} != expected):
             raise WorkPrivacyBlocked('staged Work bytes differ from intent')
         return raw
 
@@ -819,9 +881,13 @@ class WorkPrivacy:
         if changes:
             _require_native_creation()
         members: list[tuple[str, Path, bytes | None]] = []
+        staged_bytes = 0
         for name, value in changes.items():
             path = self._member(name)
             raw = self._pending_value(value, after['members'].get(name))
+            staged_bytes += len(raw) if raw is not None else 0
+            if staged_bytes > _MAX_TOTAL_BYTES:
+                raise WorkPrivacyBlocked('staged Work pending intent exceeds its byte bound')
             if name in before['members'] or raw is None:
                 members.append((name, path, raw))
                 continue
@@ -842,6 +908,7 @@ class WorkPrivacy:
             raise WorkPrivacyBlocked('Work transaction changed before publication')
         members = dict(before['members'])
         folded = {name.casefold(): name for name in members}
+        staged_bytes = 0
         for name, raw in changes.items():
             self._member(name)
             if name == self.EPHEMERAL_MEMBER:
@@ -852,13 +919,15 @@ class WorkPrivacy:
             if raw is None:
                 members.pop(name, None)
             elif isinstance(raw, bytes) and len(raw) <= _MAX_MEMBER_BYTES:
+                staged_bytes += len(raw)
                 members[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
             else:
                 raise WorkPrivacyBlocked('invalid or oversized staged Work member')
         for name in revoke:
             self._member(name)
-        if len(members) > _MAX_MEMBERS or sum(value['size'] for value in members.values()) > _MAX_TOTAL_BYTES:
-            raise WorkPrivacyBlocked('Work inventory exceeds its supported bound')
+        if (staged_bytes > _MAX_TOTAL_BYTES or len(members) > _MAX_MEMBERS
+                or sum(value['size'] for value in members.values()) > _MAX_INVENTORY_TOTAL_BYTES):
+            raise WorkPrivacyBlocked('Work inventory or staged publication exceeds its supported bound')
         if members == before['members'] and set(revoke) <= set(before['revoked']):
             current = self._load_current()
             if current != before:
