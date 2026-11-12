@@ -9,6 +9,16 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Started — interactive Windows Work recovery run, 2026-11-12
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Record the owner-authorized same-host recovery launch; move inventory confirmation into its local terminal instead of requiring another chat checkbox or prefilled attestation. | Implementation status and technical spec; ignored task-local launcher/helper | Local terminal started; exact generation-11 preflight passed. Technical progress reached the inventory-confirmation prompt. No registry/key/checkpoint/restore outcome is claimed. |
+
+Only technical progress is monitored. The owner enters inventory confirmation and
+the new passphrase directly in the local terminal. Native/source rechecks and the
+cooperating-writer fence precede effects. Release and plaintext export remain held.
+
 ### Observed — bounded native Work custody and current generation, 2026-11-12
 
 | Change | Modified files | Validation |

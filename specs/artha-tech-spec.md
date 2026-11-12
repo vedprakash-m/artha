@@ -7915,6 +7915,16 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Interactive Work recovery continuation, 2026-11-12: the owner authorized proceeding
+after the concrete proposal. The prepared local terminal started and passed exact
+generation-11 preflight, then reached local historical-inventory confirmation. An
+explicit terminal entry supplies that confirmation; it is not inferred from general
+continuation or prefilled as a command-line attestation. getpass reads the new
+passphrase locally twice. Agent monitoring reads process/time/phase metadata only.
+After local input, an exclusive existing installation fence plus fresh native/source
+checks precede registry or key effects. At the recorded prompt, no registry, recovery
+key, checkpoint or quarantine restore exists yet; no recovery/release pass is claimed.
+
 Native Work custody observation, 2026-11-12: the owner-approved bounded inspection
 completed fourteen native record resolutions, repeated later with identical metadata.
 Inspected Work checkpoint/recovery key heads and first-key slots, both Work Graph heads/

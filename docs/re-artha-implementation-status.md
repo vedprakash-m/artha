@@ -1,5 +1,28 @@
 # re-artha implementation status — 2026-11-05
 
+## Reviewed Work recovery run started — 2026-11-12
+
+The owner continued after the concrete recovery proposal and directed best judgment
+to remove delaying constraints. The prepared same-host run is now authorized and was
+started in a visible local terminal at 20:29:56 UTC. Implementation, exact Work
+generation-11 inventory/head, destination and free-space preflight passed. Technical
+progress records `waiting_for_local_inventory_confirmation` at 20:30:28 UTC.
+
+Drop the extra requirement for another chat checkbox or a prefilled completeness
+flag. Obtain the historical inventory confirmation directly in the terminal by an
+explicit `REVIEWED` entry, followed by the new passphrase twice through getpass.
+Do not infer that confirmation from the owner's general continuation. Agent monitoring
+reads only technical progress, never console input or the passphrase. The existing
+exclusive installation fence and fresh source/head/native-inventory checks run after
+local input and before registry/key effects; unmediated source guards remain.
+
+At this recorded phase, no registry, recovery key, checkpoint or restored quarantine
+has been created. The live recovery outcome is pending local input, not passed or
+complete. Plaintext export, provider calls, source replacement/deletion, historical
+native-key installation, release signing/cutover and push remain held. Earlier
+preparation-only observations below retain their scope. Progress receipt schema:
+`artha.work-reviewed-recovery-progress.v1`; fields contain process/time/phase only.
+
 ## Native Work dependency custody observed — 2026-11-12
 
 The owner explicitly approved the prepared read-only native dependency inspection.
