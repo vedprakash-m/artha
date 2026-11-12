@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Windows Work cache aliases and read races, 2026-11-11
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Refuse hardlinked cache/legacy artifacts and open-time aliases before keys or migration effects. Check descriptor/path identity and read-time metadata; compare each Windows stat API's change time with itself. | `scripts/catchup_core/work_cache.py`, `tests/catchup_core/test_work_cache.py`, technical spec, implementation status and generated manifest | Native hardlink counterexamples failed before repair. Ten focused cases pass; the final affected Windows Python 3.12 selection passes 77 tests with 91.64% combined cache coverage. |
+
+The owner-approved disposable native custody probe verified machine-local persistence,
+2,560-byte credential round-trip, oversized refusal without loss of the prior value,
+current-user DPAPI and canary cleanup. Existing Artha credentials were untouched.
+Work status remains unenrolled. Historical dependency/privacy review, the earlier
+source-metadata refusal, live recovery and release acceptance remain open; these
+results do not establish 100% original Windows/Work acceptance.
+
 ### Implemented — version-1 Windows Work writer availability, 2026-11-10
 
 | Change | Modified files | Validation |

@@ -7915,6 +7915,13 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Windows/Work audit, 2026-11-11: bounded cache and legacy-source reads reject hard links
+before opening and recheck the opened descriptor before reading. File identity, mode,
+link count, size and modification time must remain stable through the read and final
+path check. Change time is compared separately within stat and fstat observations:
+Windows Python versions can expose different meanings through these two APIs.
+Refusal occurs before cache decryption or migration effects; no live migration is implied.
+
 `catchup_core.work_cache` stores schema `artha.work-cache.v1` as age ciphertext under machine-local Work cache
 storage. It reuses AgeVault's in-memory artifact encryption/decryption, the shared OS age identity and configured
 recipient, verifies decryption before atomic publication, and merges entries under the process-lifetime cache

@@ -1,5 +1,43 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows/Work audit continuation — 2026-11-11
+
+**Original Windows/Work acceptance remains incomplete.** The current metadata-only
+status returns `enrolled: false, current: false`. Synthetic engineering cannot supply
+current live Work history, a real recovery rehearsal or owner release acceptance.
+
+One additional engineering defect was reproduced and repaired: bounded Work cache
+reads accepted hardlinks, including an alias introduced between metadata inspection
+and open. Cache load, migration preview and migration now refuse those aliases before
+keys or effects. Descriptor/path identity and metadata checks also detect substitution,
+same-size rewrite, truncation and links added during read. Windows Python 3.12 exposes
+different ctime meanings through stat and fstat; each API is compared with itself.
+Ten focused synthetic cases pass. The final affected native Python 3.12 selection
+passed **77 tests**, with **91.64% combined cache line/branch coverage**.
+
+A separate native Work history/mutation/stream/publication selection passed **305
+tests, 14 skipped**, with **87.55% combined coverage**, before the cache-reader repair;
+its cache results do not replace the final selection above. The old Python 3.11
+security aggregate finished **1 failed, 1,889 passed, 91 skipped**, at **87.84% combined
+coverage**. Its large-quarantine metadata refusal remains unexplained and is not
+relabelled green because an isolated rerun passed.
+
+The owner separately approved the disposable native credential/DPAPI probe. The final
+receipt `artha-native-win3-canary-7e9415ea46824d4ea5aa51050cf5c43b.json` records native
+machine-local persistence, 2,560-byte round-trip, oversized refusal with the valid
+value preserved, current-user DPAPI and verified canary cleanup. No existing Artha
+credential was read or written. This closes the disposable observation part of WIN-3,
+not historical credential custody or current privacy continuity.
+
+Remaining original acceptance: review native dependencies and actual Work inventory;
+resolve/review the previously observed source ChangeTime instability; explicitly
+enroll the reviewed inventory and establish current Work privacy; separately approve
+and observe same-host recovery using an owner-entered passphrase; bind actual recovery,
+evaluation and release evidence to the final cohort and obtain owner acceptance.
+Work provider-account and synced-history retention reviews remain separate. Lost-host
+activation, arbitrary stream export and directory/root plaintext recovery retain their
+approved holds. No live enrollment, migration, restore, provider call or release occurred.
+
 ## Final accountability privacy repair (Windows)
 
 The first accountability delivery is published as `f0f78cc` and `4fd0679`.
