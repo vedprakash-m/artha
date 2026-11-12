@@ -21,6 +21,52 @@ IDENTITY = {'platform': 'win32', 'machine': 'synthetic-machine', 'user': 'S-1-5-
 KEY = b'x' * 32
 
 
+@pytest.mark.parametrize('backend_module', ['keyring.backends.Windows', 'keyring.backends.macOS'])
+def test_deferred_work_backend_pins_windows_writes_to_this_machine(monkeypatch, backend_module):
+    class Native:
+        persist = 3
+
+        def __init__(self):
+            self.records = {}
+            self.writes = []
+
+        def get_password(self, service, account):
+            return self.records.get((service, account))
+
+        def set_password(self, service, account, value):
+            self.writes.append((self.persist, service, account))
+            self.records[service, account] = value
+
+    Native.__module__ = backend_module
+    selected = Native()
+    selected.records['synthetic-work', 'key'] = 'existing synthetic value'
+    monkeypatch.setattr(module, 'system_keyring', lambda: selected)
+    deferred = module._DeferredNativeBackend()
+    assert deferred.get_password('synthetic-work', 'key') == 'existing synthetic value'
+    deferred.set_password('synthetic-work', 'head', 'synthetic head')
+    expected = 2 if backend_module.endswith('Windows') else 3
+    assert selected.writes == [(expected, 'synthetic-work', 'head')]
+    assert selected.persist == 3
+    assert deferred.get_password('synthetic-work', 'head') == 'synthetic head'
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='installed Windows keyring configuration')
+def test_installed_windows_backend_is_copied_without_native_credential_calls(monkeypatch):
+    from keyring.backends.Windows import WinVaultKeyring
+
+    selected = WinVaultKeyring()
+    selected.persist = 3
+    writes = []
+    monkeypatch.setattr(WinVaultKeyring, 'get_password', lambda *_: 'synthetic existing value')
+    monkeypatch.setattr(WinVaultKeyring, 'set_password', lambda backend, *_: writes.append(backend.persist))
+    monkeypatch.setattr(module, 'system_keyring', lambda: selected)
+    deferred = module._DeferredNativeBackend()
+    assert deferred.get_password('synthetic-work', 'key') == 'synthetic existing value'
+    deferred.set_password('synthetic-work', 'head', 'synthetic head')
+    assert writes == [2] and selected.persist == 3
+    assert deferred._native() is not selected and type(deferred._native()) is WinVaultKeyring
+
+
 class Backend:
     def __init__(self):
         self.values = {}

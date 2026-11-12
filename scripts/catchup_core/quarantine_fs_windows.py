@@ -393,7 +393,16 @@ class _Native:
 
     def create_or_open(self, parent: int | None, name: str, *, directory: bool, create: bool,
                        access: int, security_descriptor: int | None = None,
-                       exclusive: bool = False, deny_write: bool = False) -> int:
+                       exclusive: bool = False, deny_write: bool = False,
+                       source_stream: bool = False) -> int:
+        if source_stream:
+            if directory or create or access != self.GENERIC_READ or security_descriptor is not None:
+                raise QuarantineFilesystemError('source stream opens are read-only')
+            parts = name.split(':')
+            if len(parts) != 3 or parts[2] != '$DATA':
+                raise QuarantineFilesystemError('source stream name is invalid')
+            _native_component(parts[0])
+            validate_named_stream_name(parts[1])
         unicode_name, keepalive = self._unicode(name)
         attributes = _ObjectAttributes(
             ctypes.sizeof(_ObjectAttributes), parent, ctypes.pointer(unicode_name),
@@ -415,18 +424,23 @@ class _Native:
             raise QuarantineFilesystemError('handle-relative open returned no handle')
         handle = int(output.value)
         try:
-            self.verify_type(handle, directory=directory)
+            if source_stream:
+                self.verify_type(handle, directory=directory, source_stream=True)
+            else:
+                self.verify_type(handle, directory=directory)
             return handle
         except BaseException:
             self.close(handle)
             raise
 
-    def verify_type(self, handle: int, *, directory: bool) -> None:
+    def verify_type(self, handle: int, *, directory: bool, source_stream: bool = False) -> None:
         info = _FileAttributeTagInfo()
         self.check_bool(self.kernel32.GetFileInformationByHandleEx(
             handle, self.FILE_ATTRIBUTE_TAG_INFO, ctypes.byref(info), ctypes.sizeof(info),
         ), 'file attribute inspection')
-        if info.FileAttributes & self.FILE_ATTRIBUTE_REPARSE_POINT:
+        cloud_stream = (source_stream and not directory
+                        and info.ReparseTag & 0xFFFF0FFF == 0x9000001A)
+        if info.FileAttributes & self.FILE_ATTRIBUTE_REPARSE_POINT and not cloud_stream:
             raise QuarantineFilesystemError('reparse points are not permitted')
         if bool(info.FileAttributes & self.FILE_ATTRIBUTE_DIRECTORY) != directory:
             raise QuarantineFilesystemError('unexpected filesystem object type')
@@ -534,9 +548,12 @@ class _Native:
         finally:
             self.kernel32.LocalFree(security_descriptor)
 
-    def owner_check(self, handle: int, *, directory: bool) -> FileIdentity:
+    def owner_check(self, handle: int, *, directory: bool, source_stream: bool = False) -> FileIdentity:
         """Require the current-user owner and an unlinked object, without requiring a private DACL."""
-        self.verify_type(handle, directory=directory)
+        if source_stream:
+            self.verify_type(handle, directory=directory, source_stream=True)
+        else:
+            self.verify_type(handle, directory=directory)
         security_descriptor, owner, _ = self._security_descriptor(handle)
         try:
             owner_string, _ = self.current_user_sid()
@@ -737,18 +754,23 @@ def _open_directory_chain(path: Path | str, *, require_private_leaf: bool = True
 
 class WindowsQuarantineFile:
     def __init__(self, native: _Native, parent: WindowsQuarantineDirectory, name: str, handle: int, *,
-                 private: bool = True):
+                 private: bool = True, source_stream: bool = False):
+        if private and source_stream:
+            raise QuarantineFilesystemError('private objects cannot use source stream mode')
         self._native = native
         self._parent = parent
         self.name = name
         self.handle = handle
         self._private = private
+        self._source_stream = source_stream
         self.identity = self._validate()
         self._closed = False
 
     def _validate(self) -> FileIdentity:
         if self._private:
             return self._native.owner_private_check(self.handle, directory=False)
+        if self._source_stream:
+            return self._native.owner_check(self.handle, directory=False, source_stream=True)
         return self._native.owner_check(self.handle, directory=False)
 
     def __enter__(self) -> WindowsQuarantineFile:
@@ -820,6 +842,8 @@ class WindowsQuarantineFile:
 
     def write_all(self, data: bytes) -> None:
         self._ensure_open()
+        if self._source_stream:
+            raise QuarantineFilesystemError('source streams are read-only')
         if not isinstance(data, bytes):
             raise QuarantineFilesystemError('native write requires immutable bytes')
         self._validate()
@@ -838,6 +862,8 @@ class WindowsQuarantineFile:
 
     def truncate(self, size: int) -> None:
         self._ensure_open()
+        if self._source_stream:
+            raise QuarantineFilesystemError('source streams are read-only')
         if type(size) is not int or size < 0:
             raise QuarantineFilesystemError('invalid file length')
         eof = ctypes.c_longlong(size)
@@ -853,6 +879,8 @@ class WindowsQuarantineFile:
 
     def delete(self) -> None:
         """Mark this pinned current-owner file, including its streams, for deletion."""
+        if self._source_stream:
+            raise QuarantineFilesystemError('source streams are read-only')
         self._recheck(self.identity)
         disposition = _FileDispositionInfo(1)
         self._native.check_bool(self._native.kernel32.SetFileInformationByHandle(
@@ -1317,9 +1345,10 @@ def read_named_streams_with_snapshot(
             name = f'{path.name}:{info.name}:{info.stream_type}'
             handle = native.create_or_open(
                 parent.handle, name, directory=False, create=False, access=native.GENERIC_READ,
+                source_stream=True,
             )
             try:
-                stream = WindowsQuarantineFile(native, parent, name, handle, private=False)
+                stream = WindowsQuarantineFile(native, parent, name, handle, private=False, source_stream=True)
             except BaseException:
                 native.close(handle)
                 raise

@@ -155,6 +155,7 @@
         "tests/unit/test_credentials_providers.py",
         "tests/catchup_core/test_work_cache.py",
         "tests/catchup_core/test_work_privacy.py",
+        "tests/catchup_core/test_work_inventory_retry.py",
         "tests/unit/test_work_publication.py",
         "tests/unit/test_work_cache_integration.py"
       ]
@@ -361,6 +362,7 @@
         "tests/catchup_core/test_quarantine_restore.py",
         "tests/catchup_core/test_recovery_quarantine_cli.py",
         "tests/catchup_core/test_quarantine_fs_windows.py",
+        "tests/catchup_core/test_cloud_source_streams.py",
         "tests/catchup_core/test_session_lock.py",
         "tests/catchup_core/test_storage_adoption.py",
         "tests/catchup_core/test_preservation_bounded.py",
@@ -951,8 +953,8 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "75b7128f234ebf2227b42a6b3106468f60945b14f59cbbc62716d94b52edcb92",
+  "implementation_sha256": "a40fdbc2f4e8a37b3ecdc3c5df08295279d74b0c295e0aaef2335a1d9d499962",
   "spec": "specs/re-artha.md",
-  "spec_sha256": "aced7350a32b8523887e8efe4f2527ccdb8a36c18eebc6a5d529a83f69dbce1b",
+  "spec_sha256": "02a2c978ab871b58cc94d91adcc6d86ea99e5b01853ef4c097a7ddfebafbd3d6",
   "spec_version": "0.8.0"
 }

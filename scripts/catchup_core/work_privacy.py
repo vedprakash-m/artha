@@ -24,6 +24,7 @@ import unicodedata
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager, nullcontext
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -144,9 +145,23 @@ def _native_member_digest(opened: Any, bound: int) -> dict[str, Any]:
         raise WorkPrivacyBlocked('Work inventory exceeds its byte bound')
     opened.seek(0)
     result = _hash_chunks(opened.read_chunk, before.size)
-    if opened.snapshot() != before:
+    after = opened.snapshot()
+    if after == before:
+        return result
+    if (after.identity != before.identity or after.size != before.size
+            or after.last_write_100ns != before.last_write_100ns):
         raise WorkPrivacyBlocked('Work member changed during inventory read')
-    return result
+    # Discard a ChangeTime-only unstable read; one fresh read must independently
+    # stabilize on the same pinned object and reproduce its complete content hash.
+    retry_before = opened.snapshot()
+    if (retry_before.identity != before.identity or retry_before.size != before.size
+            or retry_before.last_write_100ns != before.last_write_100ns):
+        raise WorkPrivacyBlocked('Work member changed during inventory read')
+    opened.seek(0)
+    repeated = _hash_chunks(opened.read_chunk, retry_before.size)
+    if opened.snapshot() != retry_before or repeated != result:
+        raise WorkPrivacyBlocked('Work member changed during inventory read')
+    return repeated
 
 
 def _member_digest(path: Path, bound: int) -> dict[str, Any]:
@@ -1142,7 +1157,11 @@ class _DeferredNativeBackend:
 
     def _native(self) -> Any:
         if self._backend is None:
-            self._backend = system_keyring()
+            backend = system_keyring()
+            if type(backend).__module__.lower() == 'keyring.backends.windows':
+                backend = copy(backend)
+                backend.persist = 2  # CRED_PERSIST_LOCAL_MACHINE; Work authority must not roam.
+            self._backend = backend
         return self._backend
 
     def get_password(self, service: str, account: str) -> str | None:
