@@ -7915,6 +7915,21 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Windows Work enrollment observation, 2026-11-11: the owner continued after the
+exact native enrollment/stream-upgrade proposal. Fresh reviewed inventory matched
+208 files / 829,218,838 bytes and 76 streams / 1,065,544 bytes. Native Work authority
+is now v2 generation 2, with both dedicated credential records verified at persistence
+2. Binding/current-head checks and independent CLI status passed. Encrypted history
+stays machine-local outside the captured roots and remains excluded from escrow.
+Journal enforcement is now active. The task-wrapper's stopped-writer attestation was
+dropped without claiming writer quiescence; fresh inventory checks and existing
+cooperating locks remained. No source bytes or provider credentials were changed.
+Receipt: artha-work-reviewed-enrollment-6257bd7575424ac2a6a37cc5751c4328.json.
+The Work recovery registry is absent; historical dependency review and actual
+same-host recovery/release acceptance remain open. No checkpoint, restore, plaintext
+export, release signature or activation was performed. Earlier observations below
+retain their original scope and are superseded where they report unenrolled state.
+
 Windows Work inventory continuation, 2026-11-11: a ChangeTime-only transition may
 discard the first primary-file read and perform exactly one fresh read through the
 same pinned handle. The second complete hash must match and its full native snapshot

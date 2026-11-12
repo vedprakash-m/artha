@@ -1,5 +1,37 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows Work authority enrolled and current — 2026-11-11
+
+This supersedes the earlier unenrolled status below. After the exact enrollment and
+stream-upgrade proposal, the owner instructed continuation with best judgment. The
+operation rechecked the reviewed combined inventory, enrolled a new machine-local
+Work identity/head and encrypted history, and upgraded stream history to v2. Current
+authority is **generation 2, 208 files and 76 streams**. The reviewed inventory totals
+829,218,838 primary bytes and 1,065,544 stream bytes, with combined digest
+`1c72d6f1d10e2459036fec6e58bf3f9725101dc2a8adaa2a4999708675d63279`.
+
+Native readback verified persistence 2 on both dedicated Work credential records.
+The binding/current-head check passed, followed by an independent CLI status check:
+`enrolled: true, current: true, generation: 2, member_count: 208`.
+Machine-local receipt: `artha-work-reviewed-enrollment-6257bd7575424ac2a6a37cc5751c4328.json`.
+Observed implementation SHA-256:
+`066f08b05ad3df742bb215c06a5aea9e5a2cd1f5ffe9abdb6fbe582435766a22`,
+at local commit `807fffa5fb8813fb49189ec5f6668ad0fbfc86ca`.
+
+The extra task-wrapper stopped-writer attestation was dropped under the owner's
+delegation; no such attestation was recorded. Fresh inventory comparisons and the
+existing cooperating-writer locks remained. This is authenticated Work generation
+evidence, not a filesystem snapshot or proof that all unmediated writers stopped.
+No Work source bytes or provider credentials were written. Enrollment now enforces
+journaled Work writes; unsupported unmediated writers refuse.
+
+WIN-3 historical dependency custody and WIN-4/6 actual recovery/release acceptance
+remain open. The Work recovery registry is absent. A separate bounded read-only
+native dependency inspection is prepared for owner authorization; no historical
+completeness attestation was invented. No checkpoint, restore, plaintext export,
+release signature, activation or push occurred. The earlier failed test/scanner
+snapshots remain failed snapshots; no new full-suite or coverage result is asserted.
+
 ## Windows Work inventory available — 2026-11-11 continuation
 
 This supersedes the earlier inventory blocker below. The owner's renewed best-judgment

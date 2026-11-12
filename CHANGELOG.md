@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Observed — reviewed Windows Work authority enrollment, 2026-11-11
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Record the owner-authorized native Work enrollment and reviewed v2 stream-history upgrade using existing interfaces. Journal enforcement is now active. | Implementation status and technical spec; task-local machine-private receipt | Fresh reviewed inventory matched 208 files / 76 streams; generation 2 and binding verified. Both dedicated native records have persistence 2. Independent CLI status reports enrolled and current. |
+
+No Work source bytes or provider credentials were changed. The task-wrapper's extra
+stopped-writer attestation was removed without claiming writers stopped; fresh digest
+checks and existing cooperating locks remained. Historical dependency review, actual
+checkpoint/recovery and release acceptance remain open. This supersedes the earlier
+unenrolled observation below; no release or push occurred.
+
 ### Implemented — stable Windows Work inventory and Cloud Files streams, 2026-11-11
 
 | Change | Modified files | Validation |
