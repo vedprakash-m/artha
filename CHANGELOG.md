@@ -9,6 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Implemented — stable Windows Work inventory and Cloud Files streams, 2026-11-11
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Replace first-ChangeTime refusal with one fresh read through the same pinned handle, requiring matching content and a fully stable final snapshot. Other drift still refuses. | `scripts/catchup_core/work_privacy.py`, new inventory retry tests | Four initial cases failed; thirteen pass. The history/mutation/cache/publication selection passed 328 tests, 14 skipped, with 87.71% combined coverage. |
+| Read Cloud Files-tagged named streams without admitting reparse pathname components, private objects or writes. Preserve native owner/identity, complete inventory, bounds and snapshot checks. | `scripts/catchup_core/quarantine_fs_windows.py`, new Cloud source stream tests, capability registers | Thirty-six initial cases failed. Native quarantine/stream/checkpoint/recovery selection: 383 passed, one skipped, 94.17% combined native filesystem coverage. Minimum Python 3.11 selection: 216 passed, 12 skipped. |
+| Finalize the previously approved machine-local native Work key/head persistence fix; leave the global backend configuration unchanged. | Work privacy module and its existing pending Windows tests | Fake-backend and installed-backend spy tests pass without native credential access. |
+
+The bounded live preview now completes: **208 files / 829,218,838 bytes**, plus
+**76 named streams / 1,065,544 bytes**, with repeated inventories equal. No source
+or credential writes occurred. Work remains unenrolled; historical dependency review,
+live enrollment/recovery and release acceptance remain separate exact operations.
+
 ### Fixed — Windows Work cache aliases and read races, 2026-11-11
 
 | Change | Modified files | Validation |

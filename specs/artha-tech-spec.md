@@ -7915,6 +7915,21 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Windows Work inventory continuation, 2026-11-11: a ChangeTime-only transition may
+discard the first primary-file read and perform exactly one fresh read through the
+same pinned handle. The second complete hash must match and its full native snapshot
+must remain stable. Identity, size, last-write, partial-read and continued-drift
+refusals remain. Native Work key/head writes use local-machine credential persistence
+on a copied Windows backend; injected and non-Windows backends are unchanged.
+
+Named source streams may carry the exact Microsoft Cloud Files tag family
+(`tag & 0xFFFF0FFF == 0x9000001A`). Only the existing source-stream capture path may
+accept these tags, using read-only no-follow native opens, a previously verified
+ordinary owner and matching native identity. Generic pathname and private quarantine
+opens retain blanket reparse refusal. Source-stream objects cannot create, write,
+truncate or delete; all existing ownership, type/link, bounds, enumeration and stable
+snapshot checks remain. This adds no plaintext export or live enrollment authority.
+
 Windows/Work audit, 2026-11-11: bounded cache and legacy-source reads reject hard links
 before opening and recheck the opened descriptor before reading. File identity, mode,
 link count, size and modification time must remain stable through the read and final

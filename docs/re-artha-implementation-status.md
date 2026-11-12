@@ -1,5 +1,48 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows Work inventory available — 2026-11-11 continuation
+
+This supersedes the earlier inventory blocker below. The owner's renewed best-judgment
+delegation removes abort-on-first-ChangeTime behavior without ignoring timestamps.
+Exactly one fresh primary-file read must reproduce the complete hash and have a fully
+stable native snapshot. Identity, size, last-write, partial-read and continuing drift
+refusals remain. The first-read diagnosis showed only ChangeTime changing; three fresh
+reads were stable with identical hashes. Its underlying cause remains unproven.
+
+The stream preview then identified a named-stream handle tagged `0x9000601A`
+(`IO_REPARSE_TAG_CLOUD_6`). The source reader now admits exactly the Microsoft Cloud
+Files tag family on read-only named streams whose ordinary owner has already been
+verified. Generic pathname and private quarantine operations still refuse all reparse
+points; source-stream mode cannot create, write, truncate or delete. Owner/identity,
+link, bounds, complete enumeration and snapshot checks remain.
+
+The real bounded combined preview passed: **208 members / 829,218,838 bytes**, **76
+streams / 1,065,544 bytes**, with repeated inventories matching. Combined digest:
+`1c72d6f1d10e2459036fec6e58bf3f9725101dc2a8adaa2a4999708675d63279`.
+Receipt: `artha-work-complete-preview-471f2fec5eb842faab4faf3f206b3bdb.json`.
+No names/content were output, and no source/credential writes or enrollment occurred.
+
+Native synthetic evidence: thirteen retry cases pass after four initial failures;
+the history/mutation/cache/publication selection passed **328 tests, 14 skipped**,
+with **87.71% combined coverage**. The native quarantine/stream/checkpoint/recovery
+selection passed **383 tests, one skipped**, with **94.17% combined native filesystem
+coverage**. Minimum Python 3.11 selection passed **216 tests, 12 skipped**. These are
+targeted selections, not a new whole-repository aggregate or live recovery acceptance.
+
+The pending, already approved native Work key/head persistence fix is also included
+in this delivery: local-machine persistence on a copy of the Windows backend, with
+the global selected backend unchanged. Existing injected/non-Windows backends retain
+their behavior. The earlier disposable native canary observation remains separate
+from actual installed-record custody.
+
+Current Work recovery dependency metadata is unavailable or unreviewed; no registry
+declaration or attestation was invented. Work remains unenrolled. The next exact
+operation is reviewed same-host enrollment and stream-history upgrade against a fresh
+matching inventory. This begins journal enforcement; unsupported unmediated writers
+will refuse. Actual credential custody, recovery/passphrase and owner release review
+remain held until separately authorized and observed. Earlier scanner failures and
+failed test aggregates below remain historical failures.
+
 ## Windows/Work audit continuation — 2026-11-11
 
 **Original Windows/Work acceptance remains incomplete.** The current metadata-only
