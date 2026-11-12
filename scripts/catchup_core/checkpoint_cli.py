@@ -42,6 +42,7 @@ from catchup_core.crypto import (
     StaticKeyProvider,
     system_keyring,
 )
+from catchup_core.recovery_registry import SHARED_VAULT_IDENTITIES
 from catchup_core.session_lock import SessionBusy, default_installation_dir, installation_fence, session_lock
 from catchup_core.work_privacy import _stream_key
 
@@ -395,18 +396,19 @@ def _registered_entries(doc: Mapping[str, Any], profile: str) -> list[dict[str, 
             raise ck.CheckpointBlocked('recovery registry service is invalid') from None
         if kind == 'credential' and account in _KNOWN_CREDENTIALS['work']:
             owner = 'work'
-        if owner != profile and (service, account) != ('age-key', 'artha'):
+        if (owner != profile and (service, account) not in SHARED_VAULT_IDENTITIES
+                and kind not in {'credential', 'client'}):
             raise ck.CheckpointBlocked('recovery registry contains cross-profile dependencies')
         valid = {
             'key': bool(re.fullmatch(r'key\.[1-9][0-9]{0,9}', account)),
             'key_head': account == 'current_version',
-            'credential': service in {'artha.credentials.v1', _CRED_SERVICE[profile]}
+            'credential': service in set(_CRED_SERVICE.values())
                           and bool(re.fullmatch(r'[a-z][a-z0-9_.-]{0,63}', account))
                           and not account.endswith('.pending') and '.chunk.' not in account,
             'client': account == 'artha',
             'bundle': service.startswith('artha-bundle-') and account == 'secret',
             'privacy': service.startswith('artha-privacy-') and account == 'checkpoint',
-            'vault': (service, account) == ('age-key', 'artha'),
+            'vault': (service, account) in SHARED_VAULT_IDENTITIES,
             'spend_seal': service == 'artha-spend-seal' and account in {
                 'seal', 'seal.shadow', 'seal.authoritative'} and profile == 'personal',
         }[kind]
@@ -441,6 +443,11 @@ def _parse_cred_head(raw: str) -> dict[str, Any]:
     if len({ref['generation'] for ref in refs}) != len(refs):
         raise ck.CheckpointBlocked('credential head is malformed: duplicate generation refs')
     return head
+
+
+def _credential_services(profile: str, entries: Sequence[Mapping[str, Any]]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(('artha.credentials.v1', _CRED_SERVICE[profile],
+                                *(entry['service'] for entry in entries if entry['kind'] == 'credential'))))
 
 
 def _collect_credential_recovery_and_records(  # noqa: PLR0912, PLR0915
@@ -530,7 +537,9 @@ def _collect_credential_recovery_and_records(  # noqa: PLR0912, PLR0915
 
     other_profile = "personal" if profile == "work" else "work"
     forbidden_records = set(_KNOWN_CREDENTIALS[other_profile])
-    cred_services = ("artha.credentials.v1", _CRED_SERVICE[profile])
+    cred_services = _credential_services(profile, entries)
+    declared_credentials = {(entry['service'], entry['account']) for entry in entries
+                            if entry['kind'] == 'credential'}
     store = CredentialStore(backend=backend, local=local)
     for cred_service in dict.fromkeys(cred_services):
         candidate_names = {
@@ -541,7 +550,7 @@ def _collect_credential_recovery_and_records(  # noqa: PLR0912, PLR0915
                                if entry['kind'] == 'credential' and entry['service'] == cred_service)
 
         for name in sorted(candidate_names):
-            if name in forbidden_records:
+            if name in forbidden_records and (cred_service, name) not in declared_credentials:
                 continue
             if _safe_get(backend, cred_service, f"{name}.pending") is not None:
                 raise ck.CheckpointBlocked("credential rotation or migration is incomplete")
@@ -778,6 +787,12 @@ def collect_escrow(backend: Any = None, *, profile: str = 'personal', create: bo
                 doc = _registry_snapshot(profile, registry_root)
                 entries = _registered_entries(doc, profile)
     items: dict[str, bytes] = {'age-key/artha': vault_key.encode()}
+    for entry in entries:
+        if entry['kind'] == 'vault' and entry['state'] != 'deleted':
+            vault_identity = _safe_get(backend, entry['service'], entry['account'])
+            if not isinstance(vault_identity, str) or not vault_identity.startswith('AGE-SECRET-KEY-'):
+                raise ck.CheckpointBlocked('registered vault identity is unavailable or malformed')
+            items[f"{entry['service']}/{entry['account']}"] = vault_identity.encode('utf-8')
     services = _WORK_KEY_SERVICES if profile == 'work' else _KEY_SERVICES
     primary_provider: KeyringKeyProvider | None = None
     for service in services:
@@ -1036,11 +1051,14 @@ def _validate_escrow_records(items: Mapping[str, bytes], profile: str, *,  # noq
     forbidden_prefixes = (
         *(_KEY_SERVICES if profile == "work" else _WORK_KEY_SERVICES),
         _RECOVERY_KEY_SERVICE[other_profile],
-        *((_CRED_SERVICE[other_profile],) if _CRED_SERVICE[other_profile] != "artha.credentials.v1" else ()),
-        *_KNOWN_CLIENTS[other_profile],
     )
     if any(name == p or name.startswith(p + "/") for name in items for p in forbidden_prefixes):
         raise ck.CheckpointBlocked("checkpoint escrow contains cross-profile keys or credentials")
+    declared_clients = {f"{entry['service']}/{entry['account']}" for entry in entries
+                        if entry['kind'] == 'client' and entry['state'] != 'deleted'}
+    if any((name == service or name.startswith(service + '/')) and name not in declared_clients
+           for name in items for service in _KNOWN_CLIENTS[other_profile]):
+        raise ck.CheckpointBlocked('checkpoint escrow contains unregistered cross-profile client credentials')
     if profile == "work" and any(
         name.startswith(("artha-bundle-", "artha-privacy-")) for name in items
     ):
@@ -1049,14 +1067,24 @@ def _validate_escrow_records(items: Mapping[str, bytes], profile: str, *,  # noq
     _validate_versioned_service_keys(items, _RECOVERY_KEY_SERVICE[profile], required=False)
 
     forbidden_records = set(_KNOWN_CREDENTIALS[other_profile])
-    allowed_cred_services = tuple(dict.fromkeys(("artha.credentials.v1", _CRED_SERVICE[profile])))
+    allowed_cred_services = _credential_services(profile, entries)
+    foreign_service = _CRED_SERVICE[other_profile]
+    if (foreign_service != 'artha.credentials.v1' and foreign_service not in allowed_cred_services
+            and any(name.startswith(foreign_service + '/') for name in items)):
+        raise ck.CheckpointBlocked('checkpoint escrow contains unregistered cross-profile credentials')
+    declared_credentials = {(entry['service'], entry['account']) for entry in entries
+                            if entry['kind'] == 'credential'}
     for cred_service in allowed_cred_services:
         cred_prefix = cred_service + "/"
         cred_items = {name[len(cred_prefix):]: val for name, val in items.items() if name.startswith(cred_prefix)}
         heads = {k: v for k, v in cred_items.items() if ".chunk." not in k}
         seen_chunks: set[str] = set()
         for record_name, raw_head in sorted(heads.items()):
-            if record_name in forbidden_records or (profile == "personal" and record_name.startswith("work.")):
+            foreign_record = (cred_service == _CRED_SERVICE[other_profile]
+                              and cred_service != 'artha.credentials.v1')
+            if ((foreign_record or record_name in forbidden_records
+                 or (profile == "personal" and record_name.startswith("work.")))
+                    and (cred_service, record_name) not in declared_credentials):
                 raise ck.CheckpointBlocked("checkpoint escrow contains cross-profile credentials")
             if record_name.endswith(".pending"):
                 raise ck.CheckpointBlocked("escrow cannot contain uncommitted pending credentials")
@@ -1103,6 +1131,8 @@ def _validate_escrow_records(items: Mapping[str, bytes], profile: str, *,  # noq
 
     allowed_names = (
         "age-key/artha",
+        *(f"{entry['service']}/{entry['account']}" for entry in entries if entry['kind'] == 'vault'
+          and (entry['service'], entry['account']) in SHARED_VAULT_IDENTITIES),
         *(f"{c}/artha" for c in clients),
         *(f"{service}/current_version" for service in key_services),
         f"{_RECOVERY_KEY_SERVICE[profile]}/current_version",
@@ -1149,6 +1179,9 @@ def _validate_escrow_records(items: Mapping[str, bytes], profile: str, *,  # noq
             keys = _validate_versioned_service_keys(items, entry['service'], required=True)
             if registered_value != str(max(keys)).encode('ascii') or registered_value != generation.encode('utf-8'):
                 raise ck.CheckpointBlocked('registered key head generation differs from escrow')
+        elif entry['kind'] == 'vault':
+            if not registered_value.startswith(b'AGE-SECRET-KEY-'):
+                raise ck.CheckpointBlocked('registered vault identity is malformed')
         elif entry['kind'] == 'credential':
             head = _parse_cred_head(registered_value.decode('utf-8'))
             if head.get('deleted') is True or head.get('generation') != generation:

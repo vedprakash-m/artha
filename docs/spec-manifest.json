@@ -883,6 +883,10 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_checkpoint_restore_integrity.py::test_authenticated_sqlite_still_needs_physical_integrity_checks"
     },
+    "RA-20.AC1.shared-credentials": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_explicit_shared_credentials_survive_capture_and_passphrase_recovery"
+    },
     "RA-20.AC1.storage-adoption-descendants": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_storage_adoption.py::test_native_stored_acl_projection_effective_access_and_inheritance_preservation"
@@ -953,8 +957,8 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "a40fdbc2f4e8a37b3ecdc3c5df08295279d74b0c295e0aaef2335a1d9d499962",
+  "implementation_sha256": "8f6040efff0c6a3cae8db6ce7815e70be0af9f312041e4b3863012b4c5530824",
   "spec": "specs/re-artha.md",
-  "spec_sha256": "02a2c978ab871b58cc94d91adcc6d86ea99e5b01853ef4c097a7ddfebafbd3d6",
+  "spec_sha256": "c2a4abb26c612e1fb89e5c643685300163d7b80046eee30d6a8223083b415115",
   "spec_version": "0.8.0"
 }

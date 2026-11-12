@@ -22,6 +22,140 @@ from catchup_core.session_lock import session_lock
 PASS = "correct horse battery staple"
 
 
+def _declare_shared_record(profile, kind, service, account, generation):
+    from catchup_core import recovery_registry as registry
+    document = registry.declare(profile, kind, service, account, generation)
+    registry.attest_legacy(profile, registry.registry_digest(document),
+                           'synthetic sharing reviewer', datetime.now(UTC).isoformat())
+
+
+@pytest.mark.parametrize('profile,name', [('work', 'msgraph.personal'), ('personal', 'msgraph.work')])
+def test_explicit_shared_credentials_survive_capture_and_passphrase_recovery(host, profile, name, monkeypatch):
+    from pathlib import Path
+    from lib.credentials import CredentialStore
+    store = CredentialStore(backend=host.backend, local=host.local)
+    store.write(name, {'token': 'SYNTHETIC-SHARED-' * 150})
+    store.write(name, {'token': 'SYNTHETIC-CURRENT-' * 120})
+    host.review()
+    service = store._service(name)
+    head = json.loads(host.backend.store[service, name])
+    _declare_shared_record(profile, 'credential', service, name, head['generation'])
+    if profile == 'work':
+        _enroll_synthetic_work(host, monkeypatch)
+    before = dict(host.backend.store)
+    items = cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+    expected = {f'{owner}/{account}': value.encode() for (owner, account), value in before.items()
+                if owner == service and (account == name or account.startswith(name + '.chunk.'))}
+    assert expected and {key: items[key] for key in expected} == expected
+    code, output, error = host.run('create', '--profile', profile, '--dest', str(host.tmp / 'shared-out'))
+    assert code == 0, error
+    recovered, _ = cli._authenticated_recovery(Path(json.loads(output)['checkpoint']), PASS)
+    assert {key: recovered[key] for key in expected} == expected
+    assert host.backend.store == before
+
+
+@pytest.mark.parametrize('profile,service', [('work', 'msgraph-client-id'), ('personal', 'msgraph-work-client-id')])
+def test_explicit_shared_client_is_collected_and_validated(host, profile, service):
+    host.backend.set_password(service, 'artha', 'SYNTHETIC-SHARED-CLIENT')
+    host.review()
+    _declare_shared_record(profile, 'client', service, 'artha', 'legacy')
+    before = dict(host.backend.store)
+    items = cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+    assert items[service + '/artha'] == b'SYNTHETIC-SHARED-CLIENT'
+    assert host.backend.store == before
+
+
+@pytest.mark.parametrize('damage', ['pending', 'missing-chunk', 'digest', 'stale-generation'])
+@pytest.mark.parametrize('profile,name', [('work', 'msgraph.personal'), ('personal', 'msgraph.work')])
+def test_explicit_shared_credential_keeps_generation_and_integrity_guards(host, profile, name, damage):
+    from lib.credentials import CredentialStore
+    store = CredentialStore(backend=host.backend, local=host.local)
+    store.write(name, {'token': 'SYNTHETIC-SHARED'})
+    host.review()
+    service = store._service(name)
+    head = json.loads(host.backend.store[service, name])
+    _declare_shared_record(profile, 'credential', service, name, head['generation'])
+    if damage == 'pending':
+        host.backend.store[service, name + '.pending'] = 'SYNTHETIC-PENDING'
+    elif damage == 'missing-chunk':
+        host.backend.store.pop((service, f"{name}.chunk.{head['generation']}.0"))
+    elif damage == 'digest':
+        head['digest'] = '0' * 64
+        host.backend.store[service, name] = json.dumps(head)
+    else:
+        store.write(name, {'token': 'SYNTHETIC-ROTATED'})
+    before = dict(host.backend.store)
+    with pytest.raises(ck.CheckpointBlocked):
+        cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+    assert host.backend.store == before
+    if damage == 'stale-generation':
+        current = json.loads(host.backend.store[service, name])
+        _declare_shared_record(profile, 'credential', service, name, current['generation'])
+        items = cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+        assert json.loads(items[f'{service}/{name}'])['generation'] == current['generation']
+
+
+@pytest.mark.parametrize('profile', ['personal', 'work'])
+@pytest.mark.parametrize('service', ['artha-work-local-identity', 'artha-work-local-privacy'])
+def test_shared_client_cannot_capture_dedicated_work_privacy_authority(host, profile, service):
+    document = {'profile': profile, 'entries': [{'kind': 'client', 'service': service, 'account': 'artha',
+                 'generation': 'legacy', 'state': 'declared'}]}
+    with pytest.raises(ck.CheckpointBlocked, match='dedicated Work privacy authority'):
+        cli._registered_entries(document, profile)
+
+
+@pytest.mark.parametrize('profile', ['personal', 'work'])
+def test_explicit_shared_legacy_vault_identity_is_preserved_alongside_current_key(host, profile, monkeypatch):
+    from pathlib import Path
+    host.backend.set_password('artha', 'age-key', 'AGE-SECRET-KEY-SYNTHETIC-LEGACY')
+    _declare_shared_record(profile, 'vault', 'artha', 'age-key', 'legacy')
+    if profile == 'work':
+        _enroll_synthetic_work(host, monkeypatch)
+    before = dict(host.backend.store)
+    code, output, error = host.run('create', '--profile', profile, '--dest', str(host.tmp / 'shared-vault-out'))
+    assert code == 0, error
+    items, _ = cli._authenticated_recovery(Path(json.loads(output)['checkpoint']), PASS)
+    assert items['age-key/artha'] == b'AGE-SECRET-KEY-SYNTHETIC'
+    assert items['artha/age-key'] == b'AGE-SECRET-KEY-SYNTHETIC-LEGACY'
+    assert host.backend.store == before
+
+
+@pytest.mark.parametrize('profile', ['personal', 'work'])
+def test_unlisted_legacy_vault_identity_is_not_implicitly_shared(host, profile):
+    host.backend.set_password('artha', 'age-key', 'AGE-SECRET-KEY-SYNTHETIC-LEGACY')
+    items = cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+    assert 'artha/age-key' not in items
+
+
+@pytest.mark.parametrize('profile', ['personal', 'work'])
+def test_registered_legacy_vault_identity_requires_age_key_material(host, profile):
+    host.backend.set_password('artha', 'age-key', 'SYNTHETIC-NOT-A-VAULT-IDENTITY')
+    _declare_shared_record(profile, 'vault', 'artha', 'age-key', 'legacy')
+    with pytest.raises(ck.CheckpointBlocked):
+        cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+
+
+@pytest.mark.parametrize('profile,record', [
+    ('personal', 'msgraph-work-client-id/artha'),
+    ('work', 'gmail-client-secret/artha'),
+    ('personal', 'artha.credentials.work.v1/msgraph.work'),
+])
+def test_explicit_shared_permission_does_not_accept_unregistered_escrow(profile, record):
+    with pytest.raises(ck.CheckpointBlocked, match='unregistered cross-profile'):
+        cli._validate_escrow_records({record: b'SYNTHETIC-UNREGISTERED'}, profile)
+
+
+@pytest.mark.parametrize('profile', ['personal', 'work'])
+def test_explicit_shared_legacy_vault_escrow_requires_valid_material(host, profile):
+    host.backend.set_password('artha', 'age-key', 'AGE-SECRET-KEY-SYNTHETIC-LEGACY')
+    _declare_shared_record(profile, 'vault', 'artha', 'age-key', 'legacy')
+    items = cli.collect_escrow(host.backend, profile=profile, repo=host.repo, local=host.local)
+    items['artha/age-key'] = b'SYNTHETIC-MALFORMED'
+    entries = cli._registered_entries(cli._registry_snapshot(profile), profile)
+    with pytest.raises(ck.CheckpointBlocked, match='registered vault identity is malformed'):
+        cli._validate_escrow_records(items, profile, entries=entries)
+
+
 def test_registry_is_required_before_any_secret_read(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     monkeypatch.setenv('USERPROFILE', str(tmp_path))
@@ -675,7 +809,7 @@ def test_registry_record_bindings_fail_closed_before_native_access(host, monkeyp
     elif defect in {'kind', 'service', 'account'}:
         entry[defect] = 'invalid/value'
     elif defect == 'cross-profile':
-        entry.update(kind='client', service='msgraph-work-client-id')
+        entry.update(kind='key', service='artha-work-checkpoint', account='key.1', generation='1')
     elif defect == 'binding':
         entry['account'] = 'wrong'
     else:

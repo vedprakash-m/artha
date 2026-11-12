@@ -73,6 +73,7 @@ These cases do not establish live acceptance or completion of the parent require
 | RA-11.AC1.link-query-generation | tests/catchup_core/test_open_item_completion.py::test_changed_linked_item_during_query_blocks_a_stale_goal_answer |
 | RA-12.AC1.completion-transaction | tests/catchup_core/test_open_item_completion.py::test_completion_checks_reviewed_permissions_inside_its_write_transaction |
 | RA-20.AC1.work-key-isolation | tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_has_separate_envelope_and_shared_vault_recovery_only |
+| RA-20.AC1.shared-credentials | tests/catchup_core/test_state_checkpoint_cli.py::test_explicit_shared_credentials_survive_capture_and_passphrase_recovery |
 | RA-20.AC1.work-destination | tests/catchup_core/test_state_checkpoint_cli.py::test_work_primary_destination_cannot_be_synced_or_inside_the_repository |
 | RA-20.AC1.work-privacy-gate | tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_cannot_bypass_privacy_gate_by_omitting_profile |
 | RA-20.AC1.key-generation | tests/catchup_core/test_state_checkpoint_cli.py::test_key_rotation_during_checkpoint_requires_a_new_capture |

@@ -300,13 +300,47 @@ def test_work_registry_refuses_personal_dependencies(service, account, tmp_path)
     assert not root.exists()
 
 
-def test_work_registry_rejects_personal_metadata_on_load(tmp_path):
-    document = registry.declare("work", "credential", "artha", "msgraph.work", "1", root=tmp_path)
-    document["entries"][0]["account"] = "msgraph.personal"
+def test_work_registry_rejects_personal_key_metadata_on_load(tmp_path):
+    document = registry.declare("work", "key", "artha-work-checkpoint", "key.1", "1", root=tmp_path)
+    document["entries"][0]["service"] = "artha-ledger"
     path = tmp_path / "recovery-registry" / "work.json"
     path.write_text(json.dumps(document))
     with pytest.raises(registry.RegistryError):
         registry.snapshot("work", root=tmp_path, require_review=False)
+
+
+@pytest.mark.parametrize('profile,kind,service,account', [
+    ('work', 'credential', 'artha.credentials.v1', 'msgraph.personal'),
+    ('personal', 'credential', 'artha.credentials.work.v1', 'msgraph.work'),
+    ('work', 'client', 'msgraph-client-id', 'artha'),
+    ('personal', 'client', 'msgraph-work-client-id', 'artha'),
+])
+def test_explicit_shared_credentials_and_clients_can_be_declared_and_reviewed(tmp_path, profile, kind, service, account):
+    document = registry.declare(profile, kind, service, account, 'legacy', root=tmp_path)
+    assert document['entries'][0]['service'] == service
+    reviewed = registry.attest_legacy(profile, registry.registry_digest(document),
+                                     'synthetic sharing review', reviewed_at(), root=tmp_path)
+    assert registry.snapshot(profile, root=tmp_path) == reviewed
+
+
+@pytest.mark.parametrize('profile,service,account', [
+    ('work', 'artha.credentials.v1', 'msgraph.personal'),
+    ('personal', 'artha.credentials.work.v1', 'msgraph.work'),
+])
+def test_explicit_shared_reference_refresh_requires_fresh_review(tmp_path, profile, service, account):
+    document = registry.declare(profile, 'credential', service, account, 'old', root=tmp_path)
+    reviewed = registry.attest_legacy(profile, registry.registry_digest(document),
+                                     'synthetic sharing review', reviewed_at(), root=tmp_path)
+    refreshed = registry.declare(profile, 'credential', service, account, 'new', root=tmp_path)
+    assert refreshed['legacy_review'] is None and refreshed['entries'][0]['generation'] == 'new'
+    with pytest.raises(registry.RegistryError):
+        registry.snapshot(profile, root=tmp_path)
+    with pytest.raises(registry.RegistryError):
+        registry.attest_legacy(profile, registry.registry_digest(reviewed),
+                               'stale sharing review', reviewed_at(), root=tmp_path)
+    registry.attest_legacy(profile, registry.registry_digest(refreshed),
+                           'fresh sharing review', reviewed_at(), root=tmp_path)
+    assert registry.snapshot(profile, root=tmp_path)['entries'][0]['generation'] == 'new'
 
 
 @pytest.mark.parametrize("field", ["service", "account"])

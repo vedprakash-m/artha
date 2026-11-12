@@ -26,6 +26,7 @@ class RegistryError(RuntimeError):
 
 _SCHEMA = "artha.recovery-registry.v1"
 _KINDS = frozenset({"key", "key_head", "credential", "client", "bundle", "privacy", "vault", "spend_seal"})
+SHARED_VAULT_IDENTITIES = frozenset({('age-key', 'artha'), ('artha', 'age-key')})
 # The resource spend seal is a private file kept outside every snapshot. The registry only names it, so
 # capture can tell a known seal from an unknown file; it holds no value and is never restored.
 SPEND_SEAL = ("artha-spend-seal", "seal")
@@ -64,10 +65,11 @@ def _identity(profile: str, kind: str, service: str, account: str, generation: s
     if not isinstance(kind, str) or kind not in _KINDS or not _text(generation):
         raise RegistryError("invalid dependency kind or generation")
     dependency_profile = profile_for(service, account)
-    if dependency_profile == "work" and profile != "work":
+    shared_credential = kind in {'credential', 'client'}
+    if dependency_profile == "work" and profile != "work" and not shared_credential:
         raise RegistryError("Work dependencies require the Work profile")
     if (profile == "work" and dependency_profile != "work"
-            and (service, account) != ("age-key", "artha")):
+            and (service, account) not in SHARED_VAULT_IDENTITIES and not shared_credential):
         raise RegistryError("personal dependencies are not permitted in the Work profile")
     if kind == 'spend_seal' and (profile != 'personal' or service != SPEND_SEAL[0]
                                   or account not in SPEND_SEAL_ACCOUNTS):
@@ -451,9 +453,14 @@ def declare(profile: str, kind: str, service: str, account: str, generation: str
             document = _load(path, profile, initialize=True)
             entry = _entry(document, service, account)
             if entry is not None:
-                if (entry["kind"] != kind or entry["generation"] != generation
-                        or entry["state"] != "declared"):
+                if entry['kind'] != kind or entry['state'] != 'declared':
                     raise RegistryError("declaration cannot replace an existing dependency")
+                if entry['generation'] != generation:
+                    if kind not in {'credential', 'client'} or profile_for(service, account) == profile:
+                        raise RegistryError("declaration cannot replace an existing dependency")
+                    entry['generation'] = generation
+                    document['legacy_review'] = None
+                    _save(local, path, lock, document)
                 return document
             document["entries"].append({"kind": kind, "service": service, "account": account,
                                         "generation": generation, "state": "declared",
