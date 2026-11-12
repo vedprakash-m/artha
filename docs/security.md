@@ -1,5 +1,26 @@
 # Artha Security Model
 
+## Work/Personal credential sharing — owner decision, 2026-11-12
+
+Owner decision, 2026-11-12: Work and Personal may share credentials. Distinct
+provider credentials, client secrets or recovery passphrases are not required solely
+because the consuming Domain differs. Existing protected native records may be reused
+through explicit reviewed references; no secret copying, rotation or automatic account/
+tenant/scope fallback follows from this decision. Sharing permission does not itself
+grant access to Domain content or certify inventory/recovery completeness. Dedicated
+privacy/encryption authority and source/destination/release contracts keep their own
+requirements. This supersedes earlier requirements for domain-exclusive credentials
+or a different Work recovery passphrase. Secret values stay out of Git, logs and chat.
+
+Shared recovery references name the exact native service/account and generation in
+the existing reviewed registries. Pending or changed generations and missing/corrupt
+chunks block capture. Only registered shared records are included; permission to share
+does not cause whole-store escrow or a provider login under a different account.
+The current and legacy vault identities may be preserved together through typed vault
+references. Private local passphrase entry and protected native storage still apply.
+Current credentials remain in the protected native OS store. Token-file examples
+below describe legacy records requiring reviewed migration, not a new secret-file fallback.
+
 Artha is designed as a **privacy-first, local-first** system. This document
 describes the threat model, defense layers, and operational security guidelines.
 

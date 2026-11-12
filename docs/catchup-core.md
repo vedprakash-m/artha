@@ -1,5 +1,31 @@
 # The Catch-up core (`scripts/catchup_core/`)
 
+## Shared Work/Personal credentials — owner decision, 2026-11-12
+
+Owner decision, 2026-11-12: Work and Personal may share credentials. Distinct
+provider credentials, client secrets or recovery passphrases are not required solely
+because the consuming Domain differs. Existing protected native records may be reused
+through explicit reviewed references; no secret copying, rotation or automatic account/
+tenant/scope fallback follows from this decision. Sharing permission does not itself
+grant access to Domain content or certify inventory/recovery completeness. Dedicated
+privacy/encryption authority and source/destination/release contracts keep their own
+requirements. This supersedes earlier requirements for domain-exclusive credentials
+or a different Work recovery passphrase. Secret values stay out of Git, logs and chat.
+
+The existing registry-declare / registry-preview / registry-review flow can explicitly
+list the same credential or client record in either profile. A declared shared
+credential pins its observed native generation. After rotation, refresh that declared
+reference using registry-declare and review the fresh digest; capture refuses the old
+generation until then. Unlisted other-profile credentials are not automatically read
+or included. Capture/recovery validates complete retained heads/chunks and digests.
+This changes recovery references; provider credential selection stays account/scope-bound.
+
+Both current age-key/artha and legacy artha/age-key vault identities can be listed as
+vault dependencies. They may contain different keys; preserve both instead of replacing
+either. Current canonical identity remains required. The owner may enter an existing
+shared recovery passphrase or a new one directly in the terminal; distinctness from
+the Personal passphrase is not required. Plaintext export and release remain separate.
+
 Release validation continuation, 2026-10-27: v4 total/live case counters require literal matching integers,
 the outer precision floor must be a finite probability, and release Domains are a distinct explicit list.
 Stage 1 clearance must be a reviewed passing JSON object; owner-review fields require nonempty text.

@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Implemented — owner-approved Work/Personal credential sharing, 2026-11-12
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Permit explicitly reviewed shared credential/client references in either recovery profile; validate retained chunks/digests and exact generations. Refresh of a declared shared generation invalidates its previous review. | Recovery registry, checkpoint CLI, their tests and traceability | Sixteen new counterexamples failed first; focused final sharing/vault cases passed 28 tests. Minimum Windows Python 3.11 selection passed 37. |
+| Preserve explicit current and legacy vault identities together; native observation found different valid keys. Leave native values unchanged. | Same modules/tests, canonical specs, security and recovery guidance | Legacy selection initially had three failures/three passes; both-profile synthetic passphrase recovery now preserves both distinct identities. |
+
+Distinct credentials or recovery passphrases are no longer required merely because a
+Domain differs. Provider account/scope checks, dedicated recovery authority and Work
+content/release boundaries remain. No live migration/recovery, secret copying or push.
+
 ### Started — interactive Windows Work recovery run, 2026-11-12
 
 | Change | Modified files | Validation |

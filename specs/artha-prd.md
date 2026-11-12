@@ -2960,6 +2960,16 @@ Native household APIs are denied by test bootstrap unless explicitly faked. Actu
 
 ### Platform credential storage and recovery — 2026-10-21
 
+Owner decision, 2026-11-12: Work and Personal may share credentials. Distinct
+provider credentials, client secrets or recovery passphrases are not required solely
+because the consuming Domain differs. Existing protected native records may be reused
+through explicit reviewed references; no secret copying, rotation or automatic account/
+tenant/scope fallback follows from this decision. Sharing permission does not itself
+grant access to Domain content or certify inventory/recovery completeness. Dedicated
+privacy/encryption authority and source/destination/release contracts keep their own
+requirements. This supersedes earlier requirements for domain-exclusive credentials
+or a different Work recovery passphrase. Secret values stay out of Git, logs and chat.
+
 Personal OAuth credentials are now stored in verified platform-local records. Review-bound migration preserves encrypted
 recovery before sealing legacy copies; restoring credentials writes only to the OS store. Work credential scope remains
 separate. The personal macOS migration completed without provider requests. Full local verification is recorded under

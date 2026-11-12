@@ -1,5 +1,61 @@
 # re-artha implementation status — 2026-11-05
 
+## Work/Personal credential sharing approved and implemented — 2026-11-12
+
+The owner decided: "It’s ok to share credentials between Work and Personal domains.
+Please note this decision wherever needed and move forward." This supersedes earlier
+requirements for distinct provider credentials/client secrets and different recovery
+passphrases. Runtime account, tenant and scope checks remain; records are not merged
+or migrated just to enable sharing. Recovery accepts explicit shared credential/client
+references in either existing reviewed registry. The complete retained head/chunk set,
+digests and native generation are verified. Refreshing a stale declared shared reference
+requires a new registry review. Unlisted other-profile records remain omitted.
+
+A read-only native metadata catalog examined 54 target metadata records and retained
+19 Artha-owned records, including Personal provider records, both dedicated Work
+authority records and a legacy vault alias. It never dereferenced secret blobs.
+Receipt: artha-shared-credential-native-metadata-059dac48f88d46e391a24c890694f9fa.json.
+A separate in-memory comparison found current age-key/artha and legacy artha/age-key
+both structurally valid with different values. No values were printed, hashed or saved.
+Receipt: artha-shared-vault-alias-0e69d8f46832496abeb0e633c4f40163.json.
+Explicit reviewed vault references now preserve either known identity alongside the
+required current identity. Native credentials stay unchanged. Dedicated Work privacy
+authority, cross-profile encryption authority and source/content/release fences remain.
+
+Sixteen shared-reference cases failed before the repair. The distinct legacy-vault
+counterexample selection initially had three failures and three passes. The focused
+sharing/vault cohort then passed 28 tests; final minimum Windows Python 3.11 sharing,
+vault and pre-native-access selection passed 37 tests. Broad final verification and
+delivery evidence are recorded separately; earlier interrupted/failed selections are
+not relabeled green. No live migration, registry review, checkpoint/recovery, provider
+call, plaintext export, release activation or push occurred in this implementation.
+
+Final registry/checkpoint selection passed 403 tests, 68 platform-specific skips;
+the two-module combined coverage was 88%. Five added refusal cases passed separately.
+Their coverage was combined only for byte-identical production files: all 36 changed
+executable lines are covered (100%), passing the 95% changed-line gate. Branch evidence
+remains the conservative broad-run measurement; no new single aggregate or whole-core
+95% claim is made. The exact final public candidate passed 46 focused/register cases
+after adding those five refusal cases. Both Ruff
+passes, strict typing of 70 core files, import checks and the state-write ratchet pass.
+
+Actual Work recovery is now blocked by a fresh stream-currentness refusal. Read-only
+comparison found all 212 primary files unchanged at 829,314,152 bytes, but initially
+98 added and 39 changed streams versus authenticated generation 11. Later stream-only
+observations counted 176 streams, all with label-related names; hashes and byte totals
+changed again without reading primary content. The producer/cause is unproven.
+Receipts: artha-work-drift-preview-e43235d23bf74f618101730b394bcbd7.json and
+artha-work-stream-stability-a399973edefd4ac7ae1ac2c13358895a.json.
+No reconciliation, metadata removal or source/authority write was performed. Credential
+sharing permission does not resolve this independent stream-preservation requirement.
+The next owner decision concerns strict preservation versus a narrowly reviewed
+volatile-metadata exception. Passphrase entry follows once currentness can be established.
+
+The old idle recovery prompt was closed before inventory confirmation or passphrase
+entry. Its earlier source fingerprint and one-vault proposal must not be resumed.
+Refresh the current-generation proposal for both distinct vault identities after
+engineering delivery. A shared or new recovery passphrase is permitted; its private entry remains a later input.
+
 ## Reviewed Work recovery run started — 2026-11-12
 
 The owner continued after the concrete recovery proposal and directed best judgment

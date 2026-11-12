@@ -7915,6 +7915,25 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Shared Work/Personal credentials, owner decision 2026-11-12: reusable provider
+credentials, client secrets and recovery passphrases may be shared. The reviewed
+recovery registry can reference the same native service/account from either profile;
+neither native record migration nor secret duplication is required. Capture and
+authenticated recovery validate the complete current/retired heads, chunk set,
+digests and exact registered generation. Unlisted opposite-profile records remain
+omitted. Refreshing a declared shared generation clears its old inventory review;
+stale review, pending publication and malformed material still refuse. Provider account,
+tenant and scope binding are unchanged; this is not an automatic credential fallback.
+
+Explicit reviewed vault references support current age-key/artha and legacy
+artha/age-key. Native observation found both structurally valid with different values;
+neither value was printed, hashed or saved. Preserve both when listed, require the
+current canonical identity and reject malformed/unlisted aliases. Dedicated Work
+privacy authority remains excluded from escrow, and cross-profile ledger/envelope/
+privacy authority remains held. No live credential or registry mutation was performed.
+The obsolete idle recovery console was closed before local input/effects, so it
+cannot continue against the earlier policy or implementation fingerprint.
+
 Interactive Work recovery continuation, 2026-11-12: the owner authorized proceeding
 after the concrete proposal. The prepared local terminal started and passed exact
 generation-11 preflight, then reached local historical-inventory confirmation. An
