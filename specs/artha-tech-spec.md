@@ -7915,6 +7915,21 @@ recoverable checkpoint.
 
 ### WorkIQ source cache and technical receipt separation — 2026-10-24
 
+Native Work custody observation, 2026-11-12: the owner-approved bounded inspection
+completed fourteen native record resolutions, repeated later with identical metadata.
+Inspected Work checkpoint/recovery key heads and first-key slots, both Work Graph heads/
+pending slots in current and legacy services, and the Work client ID are absent. The
+shared vault identity is structurally valid at native persistence 3 and stays unchanged.
+Dedicated Work authority is separate; fresh native readback verifies persistence 2 on
+both its records. Journaled Work is now current at generation 11 with 212 files and
+76 streams; repeated binding/current checks passed without source or authority writes.
+The prepared same-host encrypted recovery run still requires owner confirmation of
+historical native inventory completeness and a passphrase entered directly in a local
+terminal. It must preserve exact source/history binding, native guards, bounded capture
+and encrypted quarantine. Two small technical Work artifacts may vary within a reviewed
+1 MiB bound; capture still checks their native snapshots and stable bytes. No registry
+review, envelope-key creation, checkpoint, restore, export or release has occurred.
+
 Windows Work enrollment observation, 2026-11-11: the owner continued after the
 exact native enrollment/stream-upgrade proposal. Fresh reviewed inventory matched
 208 files / 829,218,838 bytes and 76 streams / 1,065,544 bytes. Native Work authority

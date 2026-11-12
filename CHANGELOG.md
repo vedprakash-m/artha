@@ -9,6 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Observed — bounded native Work custody and current generation, 2026-11-12
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Record the owner-approved native dependency inspection and fresh current Work generation; prepare one bounded encrypted recovery run. | Implementation status, technical spec; ignored task-local proposal and machine-local receipts | Fourteen native record resolutions completed, with identical refreshed metadata. Shared vault identity validated; inspected Work key/Graph/client slots absent. Dedicated authority remains machine-local; current/binding checks passed at generation 11 with 212 files and 76 streams. |
+
+The observed shared vault record retains persistence 3; no existing credential was
+changed. The recovery proposal requires owner historical-inventory confirmation and
+local passphrase entry. Preparation checks passed; no live checkpoint/recovery or
+release outcome is claimed. No provider call, activation or push occurred.
+
 ### Observed — reviewed Windows Work authority enrollment, 2026-11-11
 
 | Change | Modified files | Validation |

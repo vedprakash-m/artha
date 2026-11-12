@@ -1,5 +1,47 @@
 # re-artha implementation status — 2026-11-05
 
+## Native Work dependency custody observed — 2026-11-12
+
+The owner explicitly approved the prepared read-only native dependency inspection.
+It completed fourteen bounded record resolutions. Both inspected Work checkpoint/
+credential-recovery key heads and first-key slots are absent. The two Work Graph
+heads and pending slots in both current/legacy services, and the Work client ID,
+are absent. The shared vault identity is present and structurally valid, with native
+persistence 3; it was not changed. A fresh inspection after the overnight gap found
+identical metadata. This is the inspected historical dependency set, not enumeration
+of every native record or an invented completeness attestation. Dedicated Work
+privacy authority is separate and remains excluded from checkpoint escrow.
+
+Machine-local receipts: `artha-work-native-custody-preview-56a24725232448dcb9418821e42ec177.json`
+and refreshed `artha-work-native-custody-preview-ac847e04520b4d4aa2ab4cc724e2c38e.json`.
+No native credentials or registry records were written, and no secret values were
+printed or saved. Fresh metadata verification also found both dedicated Work authority
+records present at persistence 2.
+
+Journaled Work writers advanced normally after enrollment: current authority is now
+**generation 11, 212 files / 829,314,152 bytes and 76 streams / 1,065,544 bytes**.
+Repeated current/binding verification passed. Combined inventory SHA-256:
+`44db71ae7835ff4f41c993297746cd5b6fc159d4fc51d40202333f9f5a13000d`.
+Receipt: `artha-work-current-recovery-preview-925a9313b7594768a541431390b1e521.json`.
+The implementation fingerprint remains
+`066f08b05ad3df742bb215c06a5aea9e5a2cd1f5ffe9abdb6fbe582435766a22`.
+These observations supersede the earlier generation-2 counts without replacing history.
+
+One bounded same-host recovery run is prepared: recheck this exact generation and
+native inventory; obtain owner confirmation of historical completeness; declare/review
+the Work registry; create the first machine-local Work envelope key; capture an encrypted
+checkpoint; authenticate passphrase recovery and current authority; restore into inactive
+encrypted quarantine and verify bytes. It also preserves the two existing small Work
+artifacts (currently 274 bytes, bounded to 1 MiB) and the new registry. Existing source,
+authority, unsafe-path and stream guards remain; no writer-quiescence attestation is
+invented. Capture remains bounded to 1 GiB primary content and 32 MiB streams.
+
+Only preparation syntax, proposal hashes and refusal of noninteractive passphrase input
+have been verified. Actual registry review, new envelope-key creation, checkpoint and
+recovery remain unperformed pending the owner's inventory confirmation and private
+terminal passphrase entry. No plaintext export, provider request, release signature,
+activation or push occurred. Original WIN-3/4/6 acceptance is still incomplete.
+
 ## Windows Work authority enrolled and current — 2026-11-11
 
 This supersedes the earlier unenrolled status below. After the exact enrollment and
