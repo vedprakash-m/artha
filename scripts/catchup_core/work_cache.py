@@ -65,6 +65,8 @@ def _bounded(path: Path, *, allow_cloud_tag: bool = False) -> bytes | None:
         return None
     if not stat.S_ISREG(metadata.st_mode):
         raise WorkCacheBlocked('Work cache artifact must be a regular file')
+    if metadata.st_nlink != 1:
+        raise WorkCacheBlocked('Work cache artifact cannot have hard links')
     if (getattr(metadata, 'st_file_attributes', 0) & _REPARSE_POINT) and not (
         allow_cloud_tag and _is_cloud_reparse(metadata)
     ):
@@ -72,9 +74,27 @@ def _bounded(path: Path, *, allow_cloud_tag: bool = False) -> bytes | None:
     if metadata.st_size > MAX_CACHE_BYTES:
         raise WorkCacheBlocked('Work cache exceeds its byte bound')
     with path.open('rb') as handle:
+        before = os.fstat(handle.fileno())
+        if before.st_nlink != 1:
+            raise WorkCacheBlocked('Work cache artifact cannot have hard links')
+        if before.st_size > MAX_CACHE_BYTES:
+            raise WorkCacheBlocked('Work cache exceeds its byte bound')
+        if (before.st_dev, before.st_ino, before.st_mode) != (
+            metadata.st_dev, metadata.st_ino, metadata.st_mode
+        ):
+            raise WorkCacheBlocked('Work cache artifact changed during open')
         data = handle.read(MAX_CACHE_BYTES + 1)
+        after = os.fstat(handle.fileno())
     if len(data) > MAX_CACHE_BYTES:
         raise WorkCacheBlocked('Work cache exceeds its byte bound')
+    current = path.lstat()
+    snapshots = {(info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size, info.st_mtime_ns)
+                 for info in (metadata, before, after, current)}
+    # Windows Python versions can expose different ctime meanings through stat
+    # and fstat. Retain change detection by comparing each API with itself.
+    if (len(snapshots) != 1 or len(data) != before.st_size
+            or metadata.st_ctime_ns != current.st_ctime_ns or before.st_ctime_ns != after.st_ctime_ns):
+        raise WorkCacheBlocked('Work cache artifact changed during read')
     return data
 
 

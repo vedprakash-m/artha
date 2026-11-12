@@ -7,13 +7,114 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from _work_synthetic import install_synthetic_work_creation
 from catchup_core import work_cache as wc
 from catchup_core.vault import AgeVault
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_bounded_cache_read_refuses_hardlinked_artifacts(tmp_path, legacy):
+    original = tmp_path / 'outside-source'
+    original.write_bytes(b'synthetic private source')
+    artifact = tmp_path / 'cache-artifact'
+    os.link(original, artifact)
+    with pytest.raises(wc.WorkCacheBlocked, match='link'):
+        wc._bounded(artifact, allow_cloud_tag=legacy)
+    assert original.read_bytes() == b'synthetic private source'
+    assert original.stat().st_nlink == 2
+
+
+def test_bounded_cache_read_refuses_a_hardlink_added_during_open(tmp_path, monkeypatch):
+    artifact = tmp_path / 'cache-artifact'
+    artifact.write_bytes(b'synthetic private source')
+    alias = tmp_path / 'outside-alias'
+    real_open = Path.open
+
+    def link_before_open(path, *args, **kwargs):
+        if path == artifact and not alias.exists():
+            os.link(artifact, alias)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', link_before_open)
+    with pytest.raises(wc.WorkCacheBlocked, match='link'):
+        wc._bounded(artifact)
+    assert alias.read_bytes() == b'synthetic private source'
+
+
+def test_bounded_cache_read_refuses_a_replaced_file_before_reading(tmp_path, monkeypatch):
+    artifact = tmp_path / 'cache-artifact'
+    artifact.write_bytes(b'synthetic source')
+    replacement = tmp_path / 'replacement'
+    replacement.write_bytes(b'synthetic source')
+    real_open = Path.open
+
+    def swap_before_open(path, *args, **kwargs):
+        if path == artifact:
+            os.replace(replacement, artifact)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', swap_before_open)
+    with pytest.raises(wc.WorkCacheBlocked, match='changed during open'):
+        wc._bounded(artifact)
+
+
+@pytest.mark.parametrize('change', ['rewrite', 'truncate', 'hardlink'])
+def test_bounded_cache_read_refuses_changes_during_read(tmp_path, monkeypatch, change):
+    artifact = tmp_path / 'cache-artifact'
+    artifact.write_bytes(b'synthetic source')
+    real_open = Path.open
+    before = artifact.stat()
+
+    @contextmanager
+    def changed_open(path, *args, **kwargs):
+        with real_open(path, *args, **kwargs) as handle:
+            def read(bound):
+                raw = handle.read(bound)
+                if change == 'hardlink':
+                    os.link(artifact, tmp_path / 'outside-alias')
+                else:
+                    with real_open(artifact, 'r+b') as writer:
+                        if change == 'rewrite':
+                            writer.write(b'changed contents')
+                        else:
+                            writer.truncate(0)
+                    os.utime(artifact, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+                return raw
+            yield SimpleNamespace(fileno=handle.fileno, read=read)
+
+    monkeypatch.setattr(Path, 'open', changed_open)
+    with pytest.raises(wc.WorkCacheBlocked, match='changed during read'):
+        wc._bounded(artifact)
+
+
+@pytest.mark.parametrize('operation', ['load', 'plan', 'migrate'])
+def test_hardlinked_cache_refuses_before_keys_or_migration_effects(tmp_path, operation):
+    original = tmp_path / 'outside-source'
+    original.write_bytes(b'synthetic private source')
+    store = wc.WorkCache(tmp_path / 'local/work/cache', legacy=tmp_path / 'repo/tmp/legacy', vault=object())
+    artifact = store.path if operation == 'load' else store.legacy
+    artifact.parent.mkdir(parents=True)
+    os.link(original, artifact)
+    before = original.stat()
+    with pytest.raises(wc.WorkCacheBlocked, match='link'):
+        if operation == 'load':
+            store.load()
+        elif operation == 'plan':
+            store.migration_plan()
+        else:
+            store.migrate(hashlib.sha256(original.read_bytes()).hexdigest(), writers_stopped=True)
+    assert original.read_bytes() == b'synthetic private source'
+    assert original.stat().st_mode == before.st_mode
+    assert original.stat().st_nlink == 2
+    assert artifact.samefile(original)
+    if operation != 'load':
+        assert not list(store.root.glob('*.age'))
 
 
 @pytest.fixture
@@ -332,7 +433,8 @@ def test_growth_after_metadata_check_still_respects_read_bound(store, monkeypatc
     from types import SimpleNamespace
     monkeypatch.setattr(wc, 'MAX_CACHE_BYTES', 128)
     monkeypatch.setattr(Path, 'lstat', lambda path, *a, **kw:
-                        SimpleNamespace(st_size=0, st_mode=0o100600) if path == store.path else original(path, *a, **kw))
+                        SimpleNamespace(st_size=0, st_mode=0o100600, st_nlink=1)
+                        if path == store.path else original(path, *a, **kw))
     with pytest.raises(wc.WorkCacheBlocked, match='bound'):
         wc._bounded(store.path)
 
@@ -444,10 +546,14 @@ def test_windows_cloud_filter_reparse_on_legacy_checkout_succeeds_while_root_rep
 
     class CloudStat:
         def __init__(self, st):
+            self._stat = st
             self.st_mode = st.st_mode
             self.st_size = st.st_size
             self.st_file_attributes = 0x400
             self.st_reparse_tag = 0x9000001A  # IO_REPARSE_TAG_CLOUD
+
+        def __getattr__(self, name):
+            return getattr(self._stat, name)
 
     def cloud_lstat(path, *args, **kwargs):
         st = original(path, *args, **kwargs)
