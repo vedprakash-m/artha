@@ -1,5 +1,20 @@
 # re-artha implementation status — 2026-11-05
 
+## Native Windows Work recovery deferred by owner — 2026-11-12
+
+The owner explicitly selected option 3, "Defer native recovery". The waiting
+PowerShell/Python process chain was verified and closed at 2026-11-13 05:43:34 UTC,
+before any reported policy adoption, registry review, checkpoint or restore effect.
+No passphrase was accessed by the agent and no generated-secret record was authorized
+or created. Receipt: tmp/windows-work-native-recovery-deferred-20261112.json.
+Both current task execution entry points now refuse the deferred operation before
+opening a terminal or importing native operation modules; negative checks passed.
+Resume only on an explicit owner request, not a routine engineering continuation.
+
+Independent engineering validation below is complete. Actual native policy activation,
+registry review, encrypted backup/recovery acceptance and release remain unperformed.
+This is an explicit deferral, not passed recovery or 100% Windows/Work acceptance.
+
 ## Windows Work ciphertext capture cost repair — 2026-11-12
 
 Native synthetic measurement reproduced full-source scan multiplication: 296 primary
@@ -18,7 +33,12 @@ pass; direct changed executable-line coverage is 16/16 (100%). Ruff, strict typi
 on native Python 3.11. The exact public candidate passes 42 cases, including generated
 register verification, with its owned source hashes unchanged. Both existing strict
 and omission-policy CLI create/verify/recovery/diff/restore cases pass. Broader
-module-by-module native verification remains in progress. Full current privacy policy
+module-by-module native verification completed: 844 passed, 13 skipped across all
+12 groups, with no failures or errors. All 20 pinned source/test/runner paths were
+unchanged throughout their recorded groups and at final verification. This is not
+a whole-repository suite or a whole-core 95% coverage claim. Evidence summary:
+tmp/windows-work-capture-cost-final-regression-summary-20261112.json. The earlier
+incomplete runs remain incomplete historical snapshots. Full current privacy policy
 passes on 1,128 tracked inputs, with 13 freshly scanned Gitleaks inputs and verified
 identical-byte evidence for the unchanged inputs.
 
@@ -38,6 +58,18 @@ review/head/primary digests. No source or authority writes occurred. Receipt:
 artha-work-stream-policy-preview-8e9a93d4423f433c9e06f9e07320a00f.json. The prepared
 rehearsal now pins the repaired implementation, retaining its previously approved
 effects and current-dependency scope; its refreshed proposal alone performs no effects.
+
+Local delivery: code/test/generated commit `0e4a9f9`; owned document regions commit
+`019a61f`. Privacy hooks and the new committed-range scan passed; an earlier range
+invocation failed closed because Gitleaks was missing from its PATH, and the corrected
+invocation used the already verified installed binary. Unrelated index entries were
+verified preserved. No push. The refreshed approved native terminal launched at
+2026-11-13 04:59:16 UTC; preflight passed and it reached private passphrase input at
+04:59:52 UTC. It was subsequently closed under the explicit deferral above, before
+any reported native effect. Historical progress receipt:
+artha-work-reviewed-recovery-progress-fa03572b7ef0486992307f59ba8888b6.json.
+Neither this launch nor the unapproved generated-secret alternative is an active
+operation. No additional native secret record was created.
 
 ## Approved Windows Work metadata exception — 2026-11-12
 

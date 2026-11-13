@@ -9,11 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Deferred — actual Windows Work recovery, owner decision 2026-11-12
+
+The owner selected option 3. Closed the waiting native rehearsal before reported
+policy/registry/checkpoint/restore effects; no generated recovery-secret credential
+was approved or created. Prepared task entry points now refuse execution until an
+explicit owner request to resume. Actual recovery acceptance remains incomplete.
+
 ### Windows Work ciphertext capture cost — 2026-11-12
 
 | Change | Modified files | Validation |
 |---|---|---|
-| Prevent archive fragmentation from multiplying full source hashes during plaintext-denying Work capture; retain native history checks and full source verification at completion boundaries. | `work_privacy.py`, `recovery_access.py`, capability mapping, their tests and recovery/security specifications | Fail-first scan-cost and missing-guard reproductions; 11 native cases pass on Python 3.12 and 3.11, 42 exact public candidate cases and both strict/omission CLI lifecycle cases pass; 16/16 changed executable lines covered. Broader regression remains in progress. |
+| Prevent archive fragmentation from multiplying full source hashes during plaintext-denying Work capture; retain native history checks and full source verification at completion boundaries. | `work_privacy.py`, `recovery_access.py`, capability mapping, their tests and recovery/security specifications | Fail-first reproductions; 11 cases pass on native Python 3.12 and 3.11, 42 public candidate cases and both strict/omission CLI lifecycles pass; 16/16 changed executable lines covered. All 12 broader native groups completed: 844 passed, 13 skipped, no failures/errors, pinned sources unchanged. Actual recovery is deferred. |
 
 ### Windows Work metadata exception — owner approved, 2026-11-12
 
