@@ -115,6 +115,94 @@ def test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen(scenario):
         access._validate_catalog(legacy, legacy['recovery_affinity']['work_binding'])
 
 
+def test_ciphertext_capture_fragmentation_does_not_multiply_source_scans(scenario, monkeypatch):
+    from test_work_stream_checkpoint import _rewrite_frames
+
+    original = scenario.protocol._inventory
+    scans = []
+
+    def count():
+        value = original()
+        scans.append(value)
+        return value
+
+    monkeypatch.setattr(scenario.protocol, '_inventory', count)
+    _extract(scenario)
+    ordinary_scans = len(scans)
+    assert ordinary_scans > 0
+
+    def split(frames):
+        frames[:] = [(kind, piece) for kind, body in frames
+                     for piece in ([bytes([value]) for value in body] if kind == 'd' else [body])]
+
+    _rewrite_frames(scenario.source, split)
+    scenario.dest = scenario.dest.with_name('fragmented-restore')
+    scans.clear()
+    _extract(scenario)
+    assert len(scans) == ordinary_scans
+
+
+@pytest.mark.parametrize('policy', [False, True])
+def test_ciphertext_capture_refuses_same_size_primary_drift_at_completion(scenario, monkeypatch, policy):
+    if policy:
+        preview = scenario.protocol.preview_stream_policy()
+        scenario.protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    original = CIPHER.encrypt
+    changed = []
+
+    def mutate(body, *, aad):
+        result = original(body, aad=aad)
+        if body == ORDINARY and not changed:
+            (scenario.repo / 'state/work/note.txt').write_bytes(b'x' * len(ORDINARY))
+            changed.append(True)
+        return result
+
+    monkeypatch.setattr(CIPHER, 'encrypt', mutate)
+    with pytest.raises((ck.CheckpointBlocked, QuarantineError)):
+        _extract(scenario)
+    assert changed
+
+
+def test_ciphertext_capture_refuses_native_head_change_between_chunks(scenario, monkeypatch):
+    original = CIPHER.encrypt
+    changed = []
+
+    def revoke(body, *, aad):
+        result = original(body, aad=aad)
+        if body == ORDINARY and not changed:
+            scenario.protocol.publish({}, revoke=['work_state/note.txt'])
+            changed.append(True)
+        return result
+
+    monkeypatch.setattr(CIPHER, 'encrypt', revoke)
+    with pytest.raises((ck.CheckpointBlocked, QuarantineError)):
+        _extract(scenario)
+    assert changed
+
+
+@pytest.mark.parametrize('kind', ['primary', 'stream'])
+def test_ciphertext_verification_refuses_source_drift_before_success(scenario, monkeypatch, kind):
+    access = _extract(scenario)
+    store = access.capture_store
+    original = store._verify_member
+    changed = []
+
+    def mutate(*args):
+        original(*args)
+        if not changed:
+            if kind == 'primary':
+                (scenario.repo / 'state/work/note.txt').write_bytes(b'x' * len(ORDINARY))
+            else:
+                identity, body = scenario.bodies[0]
+                scenario.inventory[_key(identity)] = {'size': len(body), 'sha256': 'f' * 64}
+            changed.append(True)
+
+    monkeypatch.setattr(store, '_verify_member', mutate)
+    with pytest.raises((ck.CheckpointBlocked, QuarantineError)):
+        store.verify()
+    assert changed
+
+
 def test_streams_are_quarantined_with_current_authority_and_only_documents_are_reviewable(scenario):
     access = _extract(scenario)
     metadata = access.open_store(scenario.dest)

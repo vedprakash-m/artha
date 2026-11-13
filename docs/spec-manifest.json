@@ -903,6 +903,14 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_recovery_registry.py::test_windows_registry_process_death_preserves_pending_intent_and_excludes_capture"
     },
+    "RA-20.AC1.work-capture-cost": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_work_stream_recovery.py::test_ciphertext_capture_fragmentation_does_not_multiply_source_scans"
+    },
+    "RA-20.AC1.work-capture-source-drift": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_work_stream_recovery.py::test_ciphertext_capture_refuses_same_size_primary_drift_at_completion"
+    },
     "RA-20.AC1.work-destination": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_primary_destination_cannot_be_synced_or_inside_the_repository"
@@ -961,7 +969,7 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "a4c1af32f629fb0dc815478506e706acf108b4148e6fdd735b20b21dabee086d",
+  "implementation_sha256": "9f1e5391b71e0d4e642cf783a034a754ab429e094a220d27e0f1d2888794ae37",
   "spec": "specs/re-artha.md",
   "spec_sha256": "ba1585b33dbc598c2d591528aa1c5cb7525ccf08e421b2225468403e574a3b71",
   "spec_version": "0.8.0"

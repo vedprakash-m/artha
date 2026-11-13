@@ -545,19 +545,30 @@ class RecoveryAccess:
 
 
 class _WorkCaptureStore(QuarantineStore):
-    def __init__(self, *args: Any, binding: Mapping[str, Any], **kwargs: Any) -> None:
+    def __init__(self, *args: Any, binding: Mapping[str, Any],
+                 verify_source: Callable[[], dict[str, Any]], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._binding = deepcopy(binding)
+        self._verify_source = verify_source
 
     def iter_member(self, member_id: str) -> Iterator[bytes]:
         raise QuarantineError('capture does not authorize Work content access')
 
     def seal(self) -> dict[str, Any]:
+        self._verify_source()
         self.set_recovery_affinity({
             'schema': 'artha.recovery-affinity.v1',
             'work_binding': self._binding,
         })
-        return super().seal()
+        catalog = super().seal()
+        self._verify_source()
+        return catalog
+
+    def verify(self) -> dict[str, Any]:
+        self._verify_source()
+        result = super().verify()
+        self._verify_source()
+        return result
 
 
 class _WorkContentStore(QuarantineStore):
@@ -633,11 +644,11 @@ class WorkRecoveryAccess:
             raise ck.CheckpointBlocked('current Work privacy head changed during recovery')
         self.pinned = current
 
-    def _authority(self) -> dict[str, Any]:
+    def _authority(self, *, capture: bool = False) -> dict[str, Any]:
         if self.pinned is None or self.actor is None:
             raise ck.CheckpointBlocked('same-host Work recovery authority is required')
         try:
-            current = self.protocol.current()
+            current = self.protocol.current_head() if capture else self.protocol.current()
         except (WorkPrivacyBlocked, QuarantineFilesystemError, KeyUnavailableError,
                 SessionBusy, KeyringError, OSError) as exc:
             raise ck.CheckpointBlocked('current Work privacy history is unavailable') from exc
@@ -806,7 +817,8 @@ class WorkRecoveryAccess:
         self._validate_stream_binding(binding, streams)
         self._authority()
         store = _WorkCaptureStore(
-            dest / '.artha-quarantine', self.cipher, authority=self._authority, binding=binding,
+            dest / '.artha-quarantine', self.cipher,
+            authority=lambda: self._authority(capture=True), binding=binding, verify_source=self._authority,
         )
         store.begin(dict(manifest), checkpoint_sha256)
         self.capture_store = store

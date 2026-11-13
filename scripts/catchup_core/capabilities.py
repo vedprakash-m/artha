@@ -177,6 +177,8 @@ BOUNDARY_CASES: tuple[tuple[str, str], ...] = (
     ("RA-10.AC1.observed-model", "tests/catchup_core/test_exchange.py::test_returned_shadow_output_records_whether_model_identity_was_reported"),
     ("RA-20.AC1.escrow-integrity", "tests/catchup_core/test_state_checkpoint.py::test_checkpoint_authentication_also_covers_recovery_escrow"),
     ("RA-20.AC1.work-metadata-omission", "tests/catchup_core/test_work_stream_recovery.py::test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen"),
+    ("RA-20.AC1.work-capture-cost", "tests/catchup_core/test_work_stream_recovery.py::test_ciphertext_capture_fragmentation_does_not_multiply_source_scans"),
+    ("RA-20.AC1.work-capture-source-drift", "tests/catchup_core/test_work_stream_recovery.py::test_ciphertext_capture_refuses_same_size_primary_drift_at_completion"),
     ("RA-20.AC1.passphrase-inspection", "tests/catchup_core/test_state_checkpoint_cli.py::test_passphrase_only_inspection_needs_no_host_keys_and_cannot_activate"),
     ("RA-20.AC1.unreadable-subtree", "tests/catchup_core/test_state_checkpoint.py::test_unreadable_directory_cannot_disappear_from_inventory"),
     ("RA-20.AC1.capture-database-generation", "tests/catchup_core/test_state_checkpoint.py::test_database_change_after_member_capture_blocks_publication"),

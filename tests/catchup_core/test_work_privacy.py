@@ -102,6 +102,30 @@ def test_no_implicit_enrollment_or_native_reads(protocol):
     assert not protocol.authority_dir.exists()
 
 
+def test_ciphertext_head_guard_does_not_claim_source_inventory_verification(protocol, monkeypatch):
+    enrolled = enroll(protocol)
+    (protocol.roots['work_state'] / 'notes.md').write_bytes(b'changed synthetic notes')
+    with pytest.raises(WorkPrivacyBlocked, match='drift'):
+        protocol.current()
+    monkeypatch.setattr(protocol, '_inventory', lambda: pytest.fail('head guard scanned source bytes'))
+    assert protocol.current_head()['head'] == enrolled['head']
+
+
+@pytest.mark.parametrize('damage', ['pending', 'complete', 'head', 'identity'])
+def test_ciphertext_head_guard_requires_acknowledged_native_history(protocol, damage):
+    enroll(protocol)
+    if damage == 'pending':
+        (protocol.authority_dir / 'pending').write_bytes(b'synthetic pending intent')
+    elif damage == 'complete':
+        (protocol.authority_dir / 'complete').write_bytes(b'synthetic damaged acknowledgement')
+    elif damage == 'head':
+        protocol.backend.values[protocol.HEAD_SERVICE, 'head'] = 'synthetic invalid head'
+    else:
+        protocol.native_identity = lambda: dict(IDENTITY, machine='different-synthetic-machine')
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.current_head()
+
+
 def test_stream_history_inventory_passes_remaining_budgets_to_native_reader(protocol, monkeypatch):
     observed = []
     monkeypatch.setattr(module, '_MAX_STREAM_TOTAL_BYTES', 5)

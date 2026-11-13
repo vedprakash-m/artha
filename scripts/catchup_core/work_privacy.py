@@ -760,6 +760,14 @@ class WorkPrivacy:
         with self._locked():
             return self._load_current()
 
+    def current_head(self) -> dict[str, Any]:
+        """Authenticate acknowledged history for ciphertext-only guards, without source verification.
+
+        Capture callers must also use current() at their successful completion boundaries.
+        """
+        with self._locked():
+            return self._load_current(drift=False)
+
     def enroll(self, identity_key: bytes, *, reviewed: bool, installation_id: str | None = None) -> dict[str, Any]:
         if reviewed is not True:
             raise WorkPrivacyBlocked('explicit inventory review required before Work enrollment')
