@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Activated — Windows Work metadata policy only, 2026-11-12
+
+| Change | Affected state / files | Validation |
+|---|---|---|
+| Explicitly approved generation 11→12 metadata-policy publication; existing native privacy head retained with machine-local persistence. Recovery remains deferred. | Existing machine-local Work authority/head; technical receipts and implementation-status documentation. No production code changed. | Native activation completed; fresh-process currentness verification passed for unchanged 212 primary files / 829,314,152 bytes. Prior history/revocations retained; no source rewrite, new secret/key/registry, backup/restore, provider call or release. |
+
 ### Deferred — actual Windows Work recovery, owner decision 2026-11-12
 
 The owner selected option 3. Closed the waiting native rehearsal before reported
@@ -26,7 +32,7 @@ explicit owner request to resume. Actual recovery acceptance remains incomplete.
 
 | Change | Modified files | Validation |
 |---|---|---|
-| Explicit exact-name omission policy, monotonic history transition, primary-byte checks and authenticated recovery limitation | `work_privacy.py`, `quarantine_fs_windows.py`, `checkpoint.py`, `checkpoint_cli.py`, `recovery_access.py`, `recovery_quarantine.py`, capability mapping and affected tests | 52 final native cases, 41 minimum-Python cases, 57 exact public candidate tests; 199/204 changed executable lines covered (95% gate passed). Live activation and recovery remain pending. |
+| Explicit exact-name omission policy, monotonic history transition, primary-byte checks and authenticated recovery limitation | `work_privacy.py`, `quarantine_fs_windows.py`, `checkpoint.py`, `checkpoint_cli.py`, `recovery_access.py`, `recovery_quarantine.py`, capability mapping and affected tests | 52 final native cases, 41 minimum-Python cases, 57 exact public candidate tests; 199/204 changed executable lines covered (95% gate passed). Policy-only activation completed separately at generation 12; actual recovery remains deferred. |
 
 
 ### Implemented — owner-approved Work/Personal credential sharing, 2026-11-12

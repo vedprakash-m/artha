@@ -1,5 +1,32 @@
 # re-artha implementation status — 2026-11-05
 
+## Native Windows Work metadata policy active — 2026-11-12
+
+The owner explicitly selected policy-only activation while keeping recovery deferred.
+The prepared operation completed at 2026-11-13 06:43:36 UTC (November 12 local),
+advancing authenticated Work history from generation 11 to 12. Currentness verification
+passed for all 212 primary files / 829,314,152 bytes with unchanged primary hashes and
+zero mandatory streams after the exact approved metadata exception. Earlier events,
+revocations, invalidations and native predecessor continuity were retained. The native
+privacy head was read back with machine-local persistence 2. Receipt:
+artha-work-policy-only-48a4f375983f4c37ad987cd710bbb8e8.json.
+
+A fresh read-only process independently verified the same generation, head, policy
+and primary inventory at 06:46:15 UTC, after the activation process exited. Receipt:
+artha-work-current-after-policy-44a93b9f66a2468288393255dc90a4d0.json. It performed no
+source or authority writes. The activation used main commit `1456297` and the exact
+reviewed implementation/operation/proposal fingerprints. No production source or test
+changed. Existing 844-pass native-group and other scoped engineering evidence remains
+the recorded validation; no new full-suite or whole-core coverage result is inferred.
+
+Original files and streams were not rewritten or stripped. Only the existing local
+Work authority and native privacy head were published. No recovery registry, checkpoint
+key, recovery secret, backup/restore, provider call, plaintext export, live Catch-up,
+release or push was performed. Backup/recovery remains explicitly deferred and its task
+entry points remain disabled. Later recovery needs a fresh generation-12 proposal;
+the old combined 11-to-12 operation must not be resumed. Full recovery/release acceptance
+remains incomplete. The completed policy-only contract is archived locally.
+
 ## Native Windows Work recovery deferred by owner — 2026-11-12
 
 The owner explicitly selected option 3, "Defer native recovery". The waiting
@@ -11,9 +38,18 @@ Both current task execution entry points now refuse the deferred operation befor
 opening a terminal or importing native operation modules; negative checks passed.
 Resume only on an explicit owner request, not a routine engineering continuation.
 
-Independent engineering validation below is complete. Actual native policy activation,
-registry review, encrypted backup/recovery acceptance and release remain unperformed.
+Independent engineering validation below is complete. Registry review, encrypted
+backup/recovery acceptance and release remain unperformed. The separately approved
+policy-only activation above supersedes only the earlier activation hold.
 This is an explicit deferral, not passed recovery or 100% Windows/Work acceptance.
+
+Before that activation, a fresh authorized read-only preview at
+2026-11-13 06:29:06 UTC reconfirmed generation 11, unchanged 212 primary files /
+829,314,152 bytes and the same reviewed digests. Receipt:
+artha-work-stream-policy-preview-02bc38962b204a5887037fb7390b4e26.json. It performed
+no source/authority writes. Default proposal and no-approval refusal checks passed
+before the owner approved the separately prepared policy-only operation. Native
+recovery remained deferred throughout that completed activation.
 
 ## Windows Work ciphertext capture cost repair — 2026-11-12
 
@@ -82,8 +118,8 @@ Receipt: artha-work-stream-policy-preview-25218acd0f6c44548010cfc13b7be738.json
 authority writes and did not activate the policy. Engineering implements an
 explicit monotonic transition and authenticated omission reports through
 encrypted quarantine. Verified engineering outcomes follow.
-Live policy activation, registry review and actual checkpoint/recovery remain
-unperformed; no release or 100% completion is claimed.
+Live policy activation is recorded above. Registry review and actual checkpoint/recovery
+remain unperformed; no release or 100% completion is claimed.
 
 The final source cohort passed 52 native synthetic cases, including the full CLI
 capture/verify/passphrase-inspect/recovery/diff/restore lifecycle and local
