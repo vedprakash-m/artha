@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Windows Work ciphertext capture cost — 2026-11-12
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Prevent archive fragmentation from multiplying full source hashes during plaintext-denying Work capture; retain native history checks and full source verification at completion boundaries. | `work_privacy.py`, `recovery_access.py`, capability mapping, their tests and recovery/security specifications | Fail-first scan-cost and missing-guard reproductions; 11 native cases pass on Python 3.12 and 3.11, 42 exact public candidate cases and both strict/omission CLI lifecycle cases pass; 16/16 changed executable lines covered. Broader regression remains in progress. |
+
 ### Windows Work metadata exception — owner approved, 2026-11-12
 
 | Change | Modified files | Validation |

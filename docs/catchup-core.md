@@ -1,5 +1,14 @@
 # The Catch-up core (`scripts/catchup_core/`)
 
+## Windows Work ciphertext capture cost — 2026-11-12
+
+Encrypted Work capture checks the acknowledged native privacy head during internal
+operations and fully verifies source bytes at authorization, seal, verification and
+replay boundaries. Additional frame fragmentation must not multiply full source
+inventory scans. Capture stores always refuse plaintext member reads; subsequent
+content access retains its existing full current-source checks. A source change
+during capture refuses successful completion at the next full verification boundary.
+
 ## Approved Windows Work metadata exception — 2026-11-12
 
 The owner approved option 1: a narrow Windows Work recovery exception for the

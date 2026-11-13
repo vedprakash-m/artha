@@ -1,5 +1,14 @@
 # Artha — Personal Intelligence OS
 
+## Windows Work encrypted recovery cost — 2026-11-12
+
+Encrypted capture must verify primary and mandatory-stream source bytes without
+repeating whole-source hashing for every archive fragment. Only the capture store
+that refuses plaintext access may use acknowledged-head checks between full source
+verification boundaries. Source drift must prevent successful completion; ordinary
+content-access checks remain strict. This is a scoped optimization under the owner's
+instruction to remove unnecessary completion constraints, not a live recovery result.
+
 ## Approved Windows Work metadata exception — 2026-11-12
 
 The owner approved option 1: a narrow Windows Work recovery exception for the

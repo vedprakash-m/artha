@@ -7915,6 +7915,17 @@ subjects in their completion co-subjects. Linked Goal comparisons preserve that 
 Completion previews bind the resolved co-subjects, and applied-receipt replay requires the same
 stored subject scope; changing the fallback scope requires a fresh review.
 
+### Windows Work ciphertext verification cost — 2026-11-12
+
+`WorkPrivacy.current_head()` authenticates acknowledged native history without a source
+inventory claim. Only the plaintext-denying Work capture store uses it for internal
+quarantine authority checks. Full `current()` checks remain at authorization, before
+and after capture-store sealing/verification and at replay boundaries. Frame count
+must not multiply full source scans. Same-size primary or mandatory-stream drift
+during capture refuses successful completion at the next full boundary; changed heads,
+pending publications and invalid native acknowledgement refuse internal checks.
+Content-access and ordinary metadata-store authority checks are unchanged.
+
 ### External checkpoint dependencies — 2026-10-24
 
 The checkpoint CLI uses the executor's action-path resolver. Explicit external database-file roots include

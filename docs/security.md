@@ -1,5 +1,16 @@
 # Artha Security Model
 
+## Windows Work ciphertext capture checks — 2026-11-12
+
+The Work capture store refuses plaintext member reads. During its internal encrypted
+operations, authority checks authenticate native identity, the current head, history
+and complete acknowledgement without rehashing every source file for every chunk.
+Full primary and mandatory-stream inventories remain checked at authorization,
+before and after sealing and verification, and at replay boundaries. Unjournaled
+source drift during capture can be detected at the next full boundary; it must prevent
+successful completion. Head changes and pending publications still refuse internal
+checks. Content-access and ordinary metadata stores retain full current-source checks.
+
 ## Approved Windows Work metadata exception — 2026-11-12
 
 The owner approved option 1: a narrow Windows Work recovery exception for the

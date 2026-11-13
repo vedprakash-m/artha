@@ -1,5 +1,44 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows Work ciphertext capture cost repair — 2026-11-12
+
+Native synthetic measurement reproduced full-source scan multiplication: 296 primary
+inventory passes for a tiny checkpoint, increasing to 2,694 for the identical bytes
+split into smaller frames. The fail-first regression observed exactly 2,694 versus
+296 (one failure, three existing refusal checks passed). Five additional fail-first
+cases reproduced the missing acknowledged-head guard. This is a measured synthetic
+defect, not a measured duration for the live Work inventory.
+
+The repair limits full scans to authorization, capture-store seal/verify and replay
+boundaries. Internal ciphertext-only operations still authenticate native acknowledged
+history; source drift must prevent successful completion. Capture stores continue to
+deny plaintext reads and content-access guards are unchanged. Eleven new native cases
+pass; direct changed executable-line coverage is 16/16 (100%). Ruff, strict typing of
+70 core files, imports and the state-write ratchet pass. The same 11 new cases pass
+on native Python 3.11. The exact public candidate passes 42 cases, including generated
+register verification, with its owned source hashes unchanged. Both existing strict
+and omission-policy CLI create/verify/recovery/diff/restore cases pass. Broader
+module-by-module native verification remains in progress. Full current privacy policy
+passes on 1,128 tracked inputs, with 13 freshly scanned Gitleaks inputs and verified
+identical-byte evidence for the unchanged inputs.
+
+The idle recovery prompt was cancelled at 2026-11-13 04:33:51 UTC before any reported
+policy adoption, registry review, checkpoint or restore effect. No passphrase was read
+by the agent. Receipt: tmp/windows-work-recovery-idle-cancelled-20261112.json. Its old
+progress receipt is historical; it is no longer an active prompt. Refresh the source
+pin after validation before relaunching within the already approved effect scope.
+The first eight regression groups on the superseded cohort completed successfully;
+the active ninth group was stopped and is incomplete, not an aggregate pass. The new
+cohort uses separate receipts under tmp/windows-work-independent-regression-*.
+Actual recovery, owner acceptance, release and hosted CI remain unperformed.
+
+A fresh approved read-only preview at 2026-11-13 04:50:05 UTC reconfirmed generation
+11, all 212 primary files / 829,314,152 bytes, zero mandatory streams and the same
+review/head/primary digests. No source or authority writes occurred. Receipt:
+artha-work-stream-policy-preview-8e9a93d4423f433c9e06f9e07320a00f.json. The prepared
+rehearsal now pins the repaired implementation, retaining its previously approved
+effects and current-dependency scope; its refreshed proposal alone performs no effects.
+
 ## Approved Windows Work metadata exception — 2026-11-12
 
 The owner approved the narrow exception design. Read-only native enumeration
@@ -26,10 +65,21 @@ ratchet passed. Full current privacy policy passed on 1,128 tracked inputs,
 with 22 fresh Gitleaks inputs and verified identical-byte scanner evidence for
 unchanged inputs. Earlier sandbox-native failures and incomplete snapshots are
 retained; the committed predecessor separately reproduced the missing policy.
-The broader native regression is still running an unchanged high-cardinality
-Personal capacity case; no aggregate result or whole-core 95% claim is made.
-Delivery stays local; hosted CI, live policy activation, native dependency
-confirmation and the actual recovery rehearsal remain pending.
+The broader native regression ended without a final XML/receipt; its retained
+log stops after 86% progress. No matching process or session remains. This run is
+incomplete, not an aggregate pass or evidence of whole-core 95% coverage.
+Delivery stays local; hosted CI and actual recovery acceptance remain pending.
+
+The owner explicitly approved the full native recovery rehearsal after its exact
+effects were presented. The earlier automatic approval rejection remains recorded;
+the subsequent authorized launch succeeded at 2026-11-13 02:18:26 UTC. Preflight
+passed and the technical progress receipt reached `waiting_for_local_passphrase`
+at 02:19:11 UTC. That observation records no policy adoption, registry review,
+checkpoint creation or restore yet. The rehearsal uses audited current dependencies
+and does not assert unknown historical credential completeness. Receipt:
+artha-work-reviewed-recovery-progress-b93e60e3fd8a4bac9f5d2c1e2d6ef6f8.json.
+This status update stays uncommitted while the terminal is waiting, because the
+prepared operation pins HEAD and will refuse a changed commit before native effects.
 
 
 ## Work/Personal credential sharing approved and implemented — 2026-11-12
