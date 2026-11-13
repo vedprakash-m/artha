@@ -19,6 +19,19 @@ def _authority():
             'work': {'identity': 'a' * 64, 'generation': 1, 'head_sha256': 'b' * 64}}
 
 
+@pytest.mark.parametrize('defect', ['legacy', 'bad-entry', 'bad-report'])
+def test_endpointdlp_catalog_rejects_malformed_or_legacy_omission_reports(defect):
+    catalog = {'schema': quarantine._STREAM_SCHEMA, 'checkpoint_id': 'synthetic',
+               'checkpoint_sha256': 'c' * 64, 'profile': 'work', 'owner': _authority()['owner'],
+               'entries': [], 'work_stream_omissions': {}}
+    if defect == 'legacy':
+        catalog['schema'] = quarantine._SCHEMA
+    elif defect == 'bad-entry':
+        catalog['entries'] = ['invalid']
+    with pytest.raises(QuarantineError, match='omission report'):
+        QuarantineStore._validate(catalog, _authority())
+
+
 def _capture(tmp_path):
     bodies = [
         (_identity('work_state/note.txt', 'file', 'synthetic secret name'), b'file stream'),

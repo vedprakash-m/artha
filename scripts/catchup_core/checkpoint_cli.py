@@ -958,15 +958,16 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912 - explic
                 command.add_argument('--' + field, required=True)
     for name in ('work-privacy-status', 'work-privacy-enroll', 'work-privacy-reconcile',
                  'work-privacy-recover-pending', 'work-privacy-revoke',
-                 'work-privacy-stream-preview', 'work-privacy-stream-upgrade'):
+                 'work-privacy-stream-preview', 'work-privacy-stream-upgrade',
+                 'work-privacy-stream-policy-preview', 'work-privacy-stream-policy-adopt'):
         command = sub.add_parser(name)
         if name in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke',
-                    'work-privacy-stream-upgrade'}:
+                    'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}:
             command.add_argument('--reviewed', action='store_true',
                                  help='confirm the required explicit Work review')
         if name == 'work-privacy-revoke':
             command.add_argument('--member', required=True, help='bound Work member alias/path')
-        if name == 'work-privacy-stream-upgrade':
+        if name in {'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}:
             command.add_argument('--sha256', required=True, help='exact reviewed stream-inventory digest')
     for name in ("inventory", "create", "diff"):
         command = sub.add_parser(name)
@@ -1257,7 +1258,16 @@ def _inspect_recovery(path: Path, secret: str) -> dict[str, Any]:
         out['work_binding'] = 'present_unverified' if isinstance(binding, dict) else 'unbound_inspection_only'
         if manifest['schema'] == 'artha.checkpoint.v3':
             out['streams'] = len(manifest['streams'])
+            out.update(_work_omission_summary(manifest))
     return out
+
+
+def _work_omission_summary(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    report = manifest.get('context', {}).get('work_stream_omissions')
+    return ({'stream_policy': report['policy'], 'omitted_streams_observed': len(report['streams']),
+             'omission_report_sha256': hashlib.sha256(json.dumps(
+                 report, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
+             'metadata_preservation': 'endpointdlp_omitted'} if report is not None else {})
 
 
 def _remove_artifact(store: Path, name: str) -> None:
@@ -1337,6 +1347,8 @@ def _work_privacy_summary(current: Mapping[str, Any]) -> dict[str, Any]:
         'current': True,
         'generation': current['generation'],
         'member_count': len(current['members']),
+        **({'stream_policy': current['stream_policy'], 'metadata_preservation': 'endpointdlp_omitted'}
+           if current.get('stream_policy') else {}),
     }
 
 
@@ -1380,6 +1392,14 @@ def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,  # 
                     'stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False}
         except _work_privacy_errors() as exc:
             raise ck.CheckpointBlocked('reviewed Work stream history upgrade could not be completed') from exc
+    if args.command in {'work-privacy-stream-policy-preview', 'work-privacy-stream-policy-adopt'}:
+        try:
+            if args.command.endswith('-preview'):
+                return protocol.preview_stream_policy()
+            return _work_privacy_summary(protocol.adopt_stream_policy(
+                reviewed=args.reviewed, expected_digest=args.sha256))
+        except _work_privacy_errors() as exc:
+            raise ck.CheckpointBlocked('Work stream omission policy review or adoption could not be completed') from exc
     if args.command == 'work-privacy-revoke':
         try:
             with protocol.transaction() as transaction:
@@ -1398,7 +1418,8 @@ def _work_recovery_status(manifest: Mapping[str, Any], protocol: Any, backend: A
         access.authorize_checkpoint(manifest)
         return {'work_authority_verified': True, 'work_members_blocked': len(access.denied),
                 'work_streams_blocked': len(access.stream_denied),
-                'work_stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False}
+                'work_stream_recovery': 'encrypted_quarantine_only', 'stream_plaintext_available': False,
+                **_work_omission_summary(manifest)}
     context = manifest.get('context')
     binding = context.get('work_binding') if isinstance(context, dict) else None
     if not isinstance(binding, dict):
@@ -1423,6 +1444,10 @@ def _work_binding_matches(binding: Mapping[str, Any], current: Mapping[str, Any]
         or (current.get('schema') == 'artha.work-member-history.v2'
             and binding.get('schema') == 'artha.work-checkpoint-binding.v2'
             and binding.get('streams') == current.get('streams'))
+        or (current.get('schema') == 'artha.work-member-history.v3'
+            and binding.get('schema') == 'artha.work-checkpoint-binding.v3'
+            and binding.get('stream_policy') == current.get('stream_policy')
+            and binding.get('streams') == current.get('streams'))
     )
     return (schemas_match and binding.get('identity') == current.get('identity')
             and binding.get('generation') == current.get('generation')
@@ -1435,8 +1460,10 @@ def _verify_work_checkpoint_inventory(binding: Mapping[str, Any], roots: Mapping
     members = binding.get('members')
     if not isinstance(members, Mapping):
         raise ck.CheckpointBlocked('Work checkpoint member binding is invalid')
-    if binding.get('schema') == 'artha.work-checkpoint-binding.v2':
-        captured = ck._capture_work_streams(roots, exclude)
+    stream_binding = binding.get('schema') in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}
+    policy = binding.get('stream_policy')
+    if stream_binding:
+        captured = ck._capture_work_streams(roots, exclude, **({'stream_policy': policy} if policy else {}))
         found = captured.files
         streams = {
             _stream_key(header['owner'], header['owner_kind'], header['name'], header['stream_type']):
@@ -1455,8 +1482,8 @@ def _verify_work_checkpoint_inventory(binding: Mapping[str, Any], roots: Mapping
         raise ck.CheckpointBlocked('Work checkpoint differs from its journaled member inventory')
     for name, member in members.items():
         path = actual[name]
-        if binding.get('schema') == 'artha.work-checkpoint-binding.v2':
-            entry = ck._work_member_entry(name, path, captured.owner_snapshots[name])
+        if stream_binding:
+            entry = ck._work_member_entry(name, path, captured.owner_snapshots[name], omit_endpointdlp=bool(policy))
             if not isinstance(member, Mapping) or {'size': entry.size, 'sha256': entry.sha256} != member:
                 raise ck.CheckpointBlocked('Work checkpoint member differs from its journaled bytes')
             continue
@@ -1483,7 +1510,7 @@ def _create_checkpoint(args: argparse.Namespace, backend: Any, local: Path | Non
             raise ck.CheckpointBlocked('explicit reviewed Work enrollment is required before recovery capture')
         work_binding = work_protocol.bind_checkpoint()
         if work_binding.get('schema') not in {'artha.work-checkpoint-binding.v1',
-                                              'artha.work-checkpoint-binding.v2'}:
+                                              'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}:
             raise ck.CheckpointBlocked('Work checkpoint binding schema is not supported')
     secret = passphrase(True)
     ck._check_passphrase(secret)
@@ -1660,7 +1687,7 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
             return int(ExitCode.COMPLETE)
         if args.command.startswith('work-privacy-'):
             if (args.command in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke',
-                                 'work-privacy-stream-upgrade'}
+                                 'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}
                     and not args.reviewed):
                 raise ck.CheckpointBlocked('explicit --reviewed confirmation is required')
             out = _work_privacy_command(args, _REPO, state_local, backend)
@@ -1684,6 +1711,7 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
                    "files": len(manifest["entries"]), "verified": True}
             if manifest['schema'] == 'artha.checkpoint.v3':
                 out['streams'] = len(manifest['streams'])
+                out.update(_work_omission_summary(manifest))
         elif args.command == "recovery":
             if args.inspection_only:
                 print(json.dumps(_inspect_recovery(Path(args.path), passphrase(False))), file=stdout)
@@ -1728,6 +1756,9 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
             out = ck.restore(Path(args.path), work_destination, cipher,
                              list(work_roots.values()), replay_privacy=work_access.replay,
                              expected_profile='work', quarantine_factory=work_access.factory)
+            if 'work_stream_omissions' in out:
+                del out['work_stream_omissions']
+                out.update(_work_omission_summary(manifest))
         else:
             roots_live, _ = profile_layout("personal", local, registry_root=registry_root)
             from catchup_core.recovery_access import RecoveryAccess  # noqa: PLC0415

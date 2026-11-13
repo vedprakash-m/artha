@@ -740,6 +740,132 @@ def _upgrade_streams(protocol):
     return protocol.upgrade_stream_history(reviewed=True, expected_digest=preview['inventory_sha256'])
 
 
+@pytest.fixture
+def policy_streams(protocol, monkeypatch):
+    streams = {}
+    def inventory(stream_policy=None):
+        return {key: value for key, value in streams.items()
+                if not (stream_policy and json.loads(key)[2:] == ['sec.endpointdlp', '$DATA'])}
+    monkeypatch.setattr(protocol, '_inventory_streams', inventory)
+    return streams
+
+
+def test_endpointdlp_policy_transition_retains_history_and_invalidates_omitted_stream(protocol, policy_streams):
+    enroll(protocol)
+    omitted = _stream_key('work_state/notes.md', 'file', 'sec.endpointdlp')
+    retained = _stream_key('work_state/notes.md', 'file', 'important')
+    policy_streams.update({omitted: _stream_record(b'old label'), retained: _stream_record(b'keep')})
+    _upgrade_streams(protocol)
+    old = protocol.bind_checkpoint()
+    previous = protocol.current()
+    policy_streams[omitted] = _stream_record(b'changing label')
+    preview = protocol.preview_stream_policy()
+    after = protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    assert after['schema'] == 'artha.work-member-history.v3'
+    assert after['generation'] == previous['generation'] + 1
+    assert after['events'][:-1] == previous['events']
+    assert after['streams'] == {retained: policy_streams[retained]}
+    assert protocol.denied_streams(old, [omitted, retained]) == {omitted}
+    binding = protocol.bind_checkpoint()
+    assert binding['schema'] == 'artha.work-checkpoint-binding.v3'
+    assert binding['stream_policy'] == 'artha.work-stream-policy.endpointdlp.v1'
+    assert protocol.check_checkpoint(binding)['generation'] == after['generation']
+    policy_streams[omitted] = _stream_record(b'changed again')
+    assert protocol.current()['generation'] == after['generation']
+    protocol.publish({'work_state/new.md': b'new primary'})
+    assert protocol.current()['stream_policy'] == binding['stream_policy']
+
+
+@pytest.mark.parametrize('fault', ['review', 'digest', 'primary', 'other-stream'])
+def test_endpointdlp_transition_refuses_unreviewed_or_unrelated_drift(protocol, policy_streams, fault):
+    enroll(protocol)
+    key = _stream_key('work_state/notes.md', 'file', 'mandatory')
+    policy_streams[key] = _stream_record(b'keep')
+    _upgrade_streams(protocol)
+    preview = protocol.preview_stream_policy()
+    if fault == 'primary':
+        (protocol.roots['work_state'] / 'notes.md').write_bytes(b'unjournaled primary')
+    elif fault == 'other-stream':
+        policy_streams[key] = _stream_record(b'unjournaled stream')
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.adopt_stream_policy(reviewed=fault != 'review',
+            expected_digest='0' * 64 if fault == 'digest' else preview['inventory_sha256'])
+    assert not (protocol.authority_dir / 'pending').exists()
+    assert protocol._load_current(drift=False)['schema'] == 'artha.work-member-history.v2'
+
+
+@pytest.mark.parametrize('stage', ['intent', 'capsule', 'head', 'readback', 'complete'])
+def test_endpointdlp_policy_transition_recovers_interruption(protocol, policy_streams, stage):
+    enroll(protocol)
+    policy_streams[_stream_key('work_state/notes.md', 'file', 'sec.endpointdlp')] = _stream_record(b'label')
+    _upgrade_streams(protocol)
+    preview = protocol.preview_stream_policy()
+    def interrupt(observed):
+        if observed == stage:
+            raise RuntimeError('synthetic interruption')
+    protocol.observe = interrupt
+    with pytest.raises(RuntimeError, match='synthetic interruption'):
+        protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    protocol.observe = lambda _: None
+    policy_streams[_stream_key('work_state/notes.md', 'file', 'sec.endpointdlp')] = _stream_record(b'new label')
+    after = protocol.recover_pending()
+    assert after['generation'] == 3 and after['schema'] == 'artha.work-member-history.v3'
+    assert not (protocol.authority_dir / 'pending').exists()
+
+
+@pytest.mark.parametrize('name', ['SEC.ENDPOINTDLP', 'sec.endpointdlp.extra', 'MSIP_Label', 'unknown'])
+def test_endpointdlp_policy_does_not_exempt_other_names(protocol, policy_streams, name):
+    enroll(protocol)
+    _upgrade_streams(protocol)
+    preview = protocol.preview_stream_policy()
+    protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    policy_streams[_stream_key('work_state/notes.md', 'file', name)] = _stream_record(b'new stream')
+    with pytest.raises(WorkPrivacyBlocked, match='drift'):
+        protocol.current()
+
+
+@pytest.mark.parametrize('field,value', [
+    ('stream_policy', 'unknown'), ('stream_policy_since', True), ('stream_policy_since', 2),
+    ('stream_since', None), ('streams', []),
+])
+def test_endpointdlp_history_rejects_malformed_policy_fields(protocol, policy_streams, field, value):
+    enroll(protocol)
+    _upgrade_streams(protocol)
+    preview = protocol.preview_stream_policy()
+    current = protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    history = {key: item for key, item in current.items() if key != 'head'}
+    history[field] = value
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol._validate_history(history)
+
+
+def test_endpointdlp_policy_rejects_downgrade_early_binding_and_implicit_read_policy(protocol, policy_streams):
+    enroll(protocol)
+    _upgrade_streams(protocol)
+    old = protocol.bind_checkpoint()
+    preview = protocol.preview_stream_policy()
+    current = protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    new = protocol.bind_checkpoint()
+    early = {key: value for key, value in old.items() if key != 'mac'}
+    early.update(schema='artha.work-checkpoint-binding.v3', stream_policy=module.STREAM_POLICY)
+    with pytest.raises(WorkPrivacyBlocked, match='predates'):
+        protocol._check_checkpoint(protocol._sign(early, 'checkpoint'), current)
+    downgraded = {key: value for key, value in new.items() if key not in {'mac', 'stream_policy'}}
+    downgraded['schema'] = 'artha.work-checkpoint-binding.v2'
+    with pytest.raises(WorkPrivacyBlocked, match='policy'):
+        protocol._check_checkpoint(protocol._sign(downgraded, 'checkpoint'), current)
+    with pytest.raises(WorkPrivacyBlocked, match='policy'):
+        WorkPrivacy._inventory_streams(protocol, 'unknown')
+    with pytest.raises(WorkPrivacyBlocked, match='requires existing'):
+        protocol.preview_stream_policy()
+    with pytest.raises(WorkPrivacyBlocked, match='unavailable'):
+        protocol._prepare(current, current['members'], {}, (), streams={}, adopt_policy=True)
+    after = dict(current, schema='artha.work-member-history.v2', generation=current['generation'] + 1,
+                 events=[*current['events'], {}])
+    with pytest.raises(WorkPrivacyBlocked, match='downgraded'):
+        protocol._continuity(current, after)
+
+
 def test_stream_history_upgrade_requires_matching_explicit_review(protocol, stream_inventory):
     enroll(protocol)
     legacy = protocol.bind_checkpoint()
@@ -1026,7 +1152,7 @@ root = Path(sys.argv[1])
 def observe(stage):
     if stage == sys.argv[3]:
         (root / 'ready').write_text(stage)
-        if sys.argv[2] in {'die', 'stream-die'}:
+        if sys.argv[2] in {'die', 'stream-die', 'policy-die'}:
             os._exit(73)
         while not (root / 'release').exists():
             time.sleep(.02)
@@ -1045,6 +1171,13 @@ elif sys.argv[2] == 'stream-check':
     key = json.dumps(['work_state/notes.md', 'file', 'tracked', '$DATA'], separators=(',', ':'))
     assert current['schema'] == 'artha.work-member-history.v2'
     assert current['streams'][key] == {'size': 16, 'sha256': hashlib.sha256(b'synthetic stream').hexdigest()}
+elif sys.argv[2] == 'policy-die':
+    preview = p.preview_stream_policy()
+    p.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+elif sys.argv[2] == 'policy-check':
+    current = p.current()
+    assert current['schema'] == 'artha.work-member-history.v3'
+    assert current['generation'] == 3 and not current['streams']
 else:
     p.publish({'work_state/new.md': b'from separate process'})
 """
@@ -1094,6 +1227,22 @@ def test_stream_history_survives_real_process_death(protocol, stage):
     finish(child(protocol, 'stream-check'))
     assert not (protocol.authority_dir / 'pending').exists()
     assert stream.read_bytes() == b'synthetic stream'
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='requires native Windows named streams')
+@pytest.mark.parametrize('stage', ['intent', 'capsule', 'head', 'readback', 'complete'])
+def test_endpointdlp_policy_survives_real_process_death(protocol, stage):
+    finish(child(protocol, 'enroll'))
+    stream = Path(str(protocol.roots['work_state'] / 'notes.md') + ':sec.endpointdlp')
+    stream.write_bytes(b'synthetic stream')
+    finish(child(protocol, 'stream-die', 'none'))
+    finish(child(protocol, 'policy-die', stage), 73)
+    assert (protocol.authority_dir / 'pending').exists()
+    stream.write_bytes(b'changed volatile metadata')
+    finish(child(protocol, 'recover'))
+    finish(child(protocol, 'policy-check'))
+    assert not (protocol.authority_dir / 'pending').exists()
+    assert stream.read_bytes() == b'changed volatile metadata'
 
 
 def test_independent_writer_is_excluded_while_first_is_pending(protocol):

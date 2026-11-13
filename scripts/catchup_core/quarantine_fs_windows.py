@@ -55,6 +55,16 @@ class NamedStreamData:
     data: bytes
 
 
+ENDPOINTDLP_STREAM = ('sec.endpointdlp', '$DATA')
+
+
+def stream_owner_snapshot(snapshot: FileSnapshot, *, omit_endpointdlp: bool = False) -> FileSnapshot:
+    """Project shared file timestamps only with explicit policy and separate byte checks."""
+    if omit_endpointdlp:
+        return FileSnapshot(snapshot.identity, snapshot.size, 0, 0)
+    return snapshot
+
+
 _MAX_NAMED_STREAMS = 1024
 _MAX_NAMED_STREAM_BYTES = 8 * 1024 * 1024
 _MAX_NAMED_STREAM_TOTAL_BYTES = 32 * 1024 * 1024
@@ -1308,23 +1318,25 @@ def require_ordinary_stream(path: Path, *, directory: bool) -> None:
 
 def read_named_streams(
     path: Path, *, directory: bool, max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
-    max_streams: int = _MAX_NAMED_STREAMS,
+    max_streams: int = _MAX_NAMED_STREAMS, omit_endpointdlp: bool = False,
 ) -> tuple[NamedStreamData, ...]:
     """Read verified named streams in memory; callers must recheck before publication."""
     _, streams = read_named_streams_with_snapshot(
         path, directory=directory, max_total_bytes=max_total_bytes, max_streams=max_streams,
+        omit_endpointdlp=omit_endpointdlp,
     )
     return streams
 
 
-def read_named_streams_with_snapshot(
+def read_named_streams_with_snapshot(  # noqa: PLR0912 - pinned native handles and explicit omission boundary
     path: Path, *, directory: bool, max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
-    max_streams: int = _MAX_NAMED_STREAMS,
+    max_streams: int = _MAX_NAMED_STREAMS, omit_endpointdlp: bool = False,
+    omitted: list[NamedStreamInfo] | None = None,
 ) -> tuple[FileSnapshot, tuple[NamedStreamData, ...]]:
     """Return the pinned owner's verified snapshot together with its named streams."""
     if (type(directory) is not bool or path.parent == path
             or type(max_total_bytes) is not int or max_total_bytes < 0
-            or type(max_streams) is not int or max_streams < 0):
+            or type(max_streams) is not int or max_streams < 0 or type(omit_endpointdlp) is not bool):
         raise QuarantineFilesystemError('source stream owner is unsupported')
     with ExitStack() as stack:
         parent = stack.enter_context(WindowsQuarantineDirectory.open(path.parent, owner_private=False))
@@ -1342,6 +1354,10 @@ def read_named_streams_with_snapshot(
             raise QuarantineFilesystemError('source stream inventory exceeds its remaining bound')
         captured: list[NamedStreamData] = []
         for info in inventory:
+            if omit_endpointdlp and (info.name, info.stream_type) == ENDPOINTDLP_STREAM:
+                if omitted is not None:
+                    omitted.append(info)
+                continue
             name = f'{path.name}:{info.name}:{info.stream_type}'
             handle = native.create_or_open(
                 parent.handle, name, directory=False, create=False, access=native.GENERIC_READ,
@@ -1360,7 +1376,12 @@ def read_named_streams_with_snapshot(
                     raise QuarantineFilesystemError('source stream size changed')
                 captured.append(NamedStreamData(info.name, info.stream_type, data))
         after = native.named_streams(owner.handle, directory=directory)
-        if set(inventory) != set(after) or owner.snapshot() != before:
+        def mandatory(values: tuple[NamedStreamInfo, ...]) -> set[NamedStreamInfo]:
+            return {info for info in values
+                    if not (omit_endpointdlp and (info.name, info.stream_type) == ENDPOINTDLP_STREAM)}
+        if (mandatory(inventory) != mandatory(after)
+                or stream_owner_snapshot(owner.snapshot(), omit_endpointdlp=omit_endpointdlp)
+                != stream_owner_snapshot(before, omit_endpointdlp=omit_endpointdlp)):
             raise QuarantineFilesystemError('source streams changed during capture')
         parent._revalidate()
         if isinstance(owner, WindowsQuarantineDirectory):

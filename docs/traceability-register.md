@@ -89,6 +89,7 @@ These cases do not establish live acceptance or completion of the parent require
 | RA-07.AC1.exchange-identity | tests/catchup_core/test_exchange.py::test_response_identity_and_cohort_are_checked_separately_from_answer_text |
 | RA-10.AC1.observed-model | tests/catchup_core/test_exchange.py::test_returned_shadow_output_records_whether_model_identity_was_reported |
 | RA-20.AC1.escrow-integrity | tests/catchup_core/test_state_checkpoint.py::test_checkpoint_authentication_also_covers_recovery_escrow |
+| RA-20.AC1.work-metadata-omission | tests/catchup_core/test_work_stream_recovery.py::test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen |
 | RA-20.AC1.passphrase-inspection | tests/catchup_core/test_state_checkpoint_cli.py::test_passphrase_only_inspection_needs_no_host_keys_and_cannot_activate |
 | RA-20.AC1.unreadable-subtree | tests/catchup_core/test_state_checkpoint.py::test_unreadable_directory_cannot_disappear_from_inventory |
 | RA-20.AC1.capture-database-generation | tests/catchup_core/test_state_checkpoint.py::test_database_change_after_member_capture_blocks_publication |

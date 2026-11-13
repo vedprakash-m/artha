@@ -523,6 +523,8 @@ class QuarantineStore:
             self._catalog = {'schema': _STREAM_SCHEMA if stream_schema else _SCHEMA, 'checkpoint_id': generation,
                              'checkpoint_sha256': checkpoint_sha256, 'profile': context['profile'],
                              'owner': context['owner'], 'entries': []}
+            if stream_schema and 'work_stream_omissions' in value['context']:
+                self._catalog['work_stream_omissions'] = value['context']['work_stream_omissions']
 
     def _capturing(self) -> tuple[dict[str, Any], dict[str, Any]]:
         if self._failed or self._capture is None or self._catalog is None:
@@ -622,9 +624,9 @@ class QuarantineStore:
             return result
 
     @staticmethod
-    def _validate(catalog: dict[str, Any], context: dict[str, Any]) -> None:
+    def _validate(catalog: dict[str, Any], context: dict[str, Any]) -> None:  # noqa: PLR0912 - explicit catalog validation
         required = {'schema', 'checkpoint_id', 'checkpoint_sha256', 'profile', 'owner', 'entries'}
-        if (not required <= set(catalog) or set(catalog) - required - {'recovery_affinity'}
+        if (not required <= set(catalog) or set(catalog) - required - {'recovery_affinity', 'work_stream_omissions'}
                 or catalog.get('schema') not in {_SCHEMA, _STREAM_SCHEMA}
                 or (catalog.get('schema') == _STREAM_SCHEMA and context['profile'] != 'work')
                 or catalog.get('profile') != context['profile']
@@ -638,6 +640,17 @@ class QuarantineStore:
             if not isinstance(affinity, dict) or affinity.get('schema') != 'artha.recovery-affinity.v1':
                 raise QuarantineError('original recovery affinity metadata is invalid')
             _json(affinity)
+        if 'work_stream_omissions' in catalog:
+            try:
+                if catalog['schema'] != _STREAM_SCHEMA:
+                    raise ck.CheckpointError('omissions require Work stream quarantine')
+                if any(not isinstance(entry, dict) for entry in catalog['entries']):
+                    raise ck.CheckpointError('invalid Work quarantine inventory')
+                files = {entry['path']: entry for entry in catalog['entries'] if entry.get('kind') == 'file'}
+                ck._validate_work_omissions(catalog['work_stream_omissions'], None, files,
+                                            _stream_inventory(catalog['entries']))
+            except (ck.CheckpointError, KeyError, TypeError):
+                raise QuarantineError('quarantine Work stream omission report is invalid') from None
         identities: set[tuple[str, ...]] = set()
         identifiers: set[str] = set()
         total = count = 0

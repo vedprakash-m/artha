@@ -263,6 +263,26 @@ def test_native_read_returns_the_verified_owner_snapshot(tmp_path, directory):
     ]
 
 
+@pytest.mark.skipif(sys.platform != 'win32', reason='native NTFS omission reading')
+def test_endpointdlp_omission_never_opens_payload_and_retains_other_streams(tmp_path, monkeypatch):
+    owner = tmp_path / 'document.txt'
+    owner.write_bytes(b'primary bytes')
+    Path(str(owner) + ':sec.endpointdlp').write_bytes(b'volatile metadata')
+    Path(str(owner) + ':sec.endpointdlp.extra').write_bytes(b'mandatory metadata')
+    native = fs._native()
+    original = native.create_or_open
+    def open_checked(parent, name, **kwargs):
+        assert not name.endswith(':sec.endpointdlp:$DATA'), 'omitted payload was opened'
+        return original(parent, name, **kwargs)
+    monkeypatch.setattr(native, 'create_or_open', open_checked)
+    omitted = []
+    _, streams = fs.read_named_streams_with_snapshot(owner, directory=False,
+                                                    omit_endpointdlp=True, omitted=omitted)
+    assert [(item.name, item.data) for item in streams] == [('sec.endpointdlp.extra', b'mandatory metadata')]
+    assert [(item.name, item.size) for item in omitted] == [('sec.endpointdlp', 17)]
+    assert owner.read_bytes() == b'primary bytes'
+
+
 @pytest.mark.skipif(sys.platform != 'win32', reason='native NTFS stream reading')
 @pytest.mark.parametrize(('max_bytes', 'max_streams'), [(3, 1), (4, 0)])
 def test_native_read_refuses_remaining_budget_before_opening_streams(tmp_path, monkeypatch, max_bytes, max_streams):

@@ -911,6 +911,10 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_has_separate_envelope_and_shared_vault_recovery_only"
     },
+    "RA-20.AC1.work-metadata-omission": {
+      "evidence_type": "synthetic",
+      "fixture": "tests/catchup_core/test_work_stream_recovery.py::test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen"
+    },
     "RA-20.AC1.work-privacy-gate": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_work_checkpoint_cannot_bypass_privacy_gate_by_omitting_profile"
@@ -957,8 +961,8 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "8f6040efff0c6a3cae8db6ce7815e70be0af9f312041e4b3863012b4c5530824",
+  "implementation_sha256": "a4c1af32f629fb0dc815478506e706acf108b4148e6fdd735b20b21dabee086d",
   "spec": "specs/re-artha.md",
-  "spec_sha256": "c2a4abb26c612e1fb89e5c643685300163d7b80046eee30d6a8223083b415115",
+  "spec_sha256": "ba1585b33dbc598c2d591528aa1c5cb7525ccf08e421b2225468403e574a3b71",
   "spec_version": "0.8.0"
 }

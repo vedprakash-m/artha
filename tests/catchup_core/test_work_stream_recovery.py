@@ -45,7 +45,7 @@ def scenario(tmp_path, monkeypatch):
     ]
     inventory = {_key(identity): {'size': len(body), 'sha256': hashlib.sha256(body).hexdigest()}
                  for identity, body in bodies if identity['owner'].startswith('work_state')}
-    monkeypatch.setattr(protocol, '_inventory_streams', lambda: dict(inventory))
+    monkeypatch.setattr(protocol, '_inventory_streams', lambda stream_policy=None: dict(inventory))
     preview = protocol.preview_stream_history()
     protocol.upgrade_stream_history(reviewed=True, expected_digest=preview['inventory_sha256'])
     binding = protocol.bind_checkpoint()
@@ -79,6 +79,40 @@ def _extract(scenario):
                     quarantine=store, manifest=scenario.manifest)
     access.replay(scenario.dest)
     return access
+
+
+def test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen(scenario):
+    from test_work_stream_checkpoint import _omission_context
+    preview = scenario.protocol.preview_stream_policy()
+    scenario.protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
+    def bind(manifest):
+        manifest['roots'] = ['work_state', 'external']
+        _omission_context(manifest)
+        manifest['context']['work_binding'] = scenario.protocol.bind_checkpoint()
+    scenario.source, scenario.manifest = _checkpoint(scenario.source, streams=scenario.bodies, edit_manifest=bind)
+    access = WorkRecoveryAccess(scenario.repo, scenario.protocol, CIPHER)
+    access.authorize_checkpoint(scenario.manifest)
+    report = ck.restore(scenario.source, scenario.dest, CIPHER, [], expected_profile='work',
+                        replay_privacy=access.replay, quarantine_factory=access.factory)
+    expected = scenario.manifest['context']['work_stream_omissions']
+    assert report['work_stream_omissions'] == expected
+    reopened = WorkRecoveryAccess(scenario.repo, scenario.protocol, CIPHER)
+    store = reopened.open_store(scenario.dest)
+    assert store.load_catalog()['work_stream_omissions'] == expected
+    assert len(store.inventory()) == 5
+    catalog = store.load_catalog()
+    for damage in (None, dict(expected, semantics='changed')):
+        altered = copy.deepcopy(catalog)
+        if damage is None:
+            del altered['work_stream_omissions']
+        else:
+            altered['work_stream_omissions'] = damage
+        with pytest.raises(ck.CheckpointBlocked, match='omission report'):
+            access._validate_catalog(altered, access.binding)
+    legacy = copy.deepcopy(catalog)
+    legacy['recovery_affinity']['work_binding']['schema'] = 'artha.work-checkpoint-binding.v2'
+    with pytest.raises(ck.CheckpointBlocked, match='legacy'):
+        access._validate_catalog(legacy, legacy['recovery_affinity']['work_binding'])
 
 
 def test_streams_are_quarantined_with_current_authority_and_only_documents_are_reviewable(scenario):

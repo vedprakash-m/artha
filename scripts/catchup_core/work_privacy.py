@@ -48,6 +48,9 @@ _MAX_STREAMS_PER_OWNER = 1024
 _HEX = re.compile(r'[0-9a-f]{64}')
 _ALIAS = re.compile(r'[a-z][a-z0-9_]{0,63}')
 _DEVICE = re.compile(r'(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?', re.IGNORECASE)
+STREAM_POLICY = 'artha.work-stream-policy.endpointdlp.v1'
+_STREAM_HISTORIES = {'artha.work-member-history.v2', 'artha.work-member-history.v3'}
+_STREAM_BINDINGS = {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}
 
 
 class WorkPrivacyBlocked(RuntimeError):
@@ -573,7 +576,9 @@ class WorkPrivacy:
             if total > _MAX_STREAM_TOTAL_BYTES:
                 raise WorkPrivacyBlocked('Work stream inventory exceeds its byte bound')
 
-    def _inventory_streams(self) -> dict[str, Any]:
+    def _inventory_streams(self, stream_policy: str | None = None) -> dict[str, Any]:
+        if stream_policy not in (None, STREAM_POLICY):
+            raise WorkPrivacyBlocked('unsupported Work stream policy')
         streams: dict[str, Any] = {}
         owners: set[str] = set()
         total = 0
@@ -587,6 +592,7 @@ class WorkPrivacy:
             for stream in read_named_streams(
                 path, directory=kind == 'directory', max_total_bytes=_MAX_STREAM_TOTAL_BYTES - total,
                 max_streams=min(_MAX_STREAMS_PER_OWNER, _MAX_MEMBERS - len(streams)),
+                **({'omit_endpointdlp': True} if stream_policy else {}),
             ):
                 key = _stream_key(owner, kind, stream.name, stream.stream_type)
                 if key in streams or len(streams) >= _MAX_MEMBERS:
@@ -625,6 +631,14 @@ class WorkPrivacy:
         self._validate_stream_inventory(streams, self._inventory())
         return streams
 
+    def _current_streams(self, history: Mapping[str, Any]) -> dict[str, Any]:
+        policy = history.get('stream_policy')
+        return self._inventory_streams(policy) if policy else self._inventory_streams()
+
+    def _without_omitted(self, streams: Mapping[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in streams.items()
+                if self._stream_parts(key)[2:] != quarantine_fs_windows.ENDPOINTDLP_STREAM}
+
     def _history(self, head: Mapping[str, Any]) -> dict[str, Any]:
         body = self._verify(head, 'head')
         if (set(body) != {'schema', 'identity', 'generation', 'capsule_sha256', 'previous'}
@@ -644,10 +658,12 @@ class WorkPrivacy:
     def _validate_history(self, history: dict[str, Any]) -> None:  # noqa: PLR0912 - explicit history validation
         schema = history.get('schema')
         fields = {'schema', 'profile', 'identity', 'generation', 'members', 'invalidated', 'revoked', 'events'}
-        if schema == 'artha.work-member-history.v2':
+        if schema in _STREAM_HISTORIES:
             fields |= {'streams', 'stream_invalidated', 'stream_since'}
+        if schema == 'artha.work-member-history.v3':
+            fields |= {'stream_policy', 'stream_policy_since'}
         if (set(history) != fields
-                or schema not in {'artha.work-member-history.v1', 'artha.work-member-history.v2'}
+                or schema not in {'artha.work-member-history.v1', *_STREAM_HISTORIES}
                 or history['profile'] != 'work'
                 or type(history['generation']) is not int or not 1 <= history['generation'] <= _MAX_GENERATIONS
                 or not isinstance(history['members'], dict) or len(history['members']) > _MAX_MEMBERS
@@ -672,7 +688,7 @@ class WorkPrivacy:
                 raise WorkPrivacyBlocked('invalid Work invalidation')
         for name in history['revoked']:
             self._member(name)
-        if schema == 'artha.work-member-history.v2':
+        if schema in _STREAM_HISTORIES:
             self._validate_stream_inventory(history['streams'], history['members'])
             if (type(history['stream_since']) is not int
                     or not 2 <= history['stream_since'] <= history['generation']
@@ -683,11 +699,19 @@ class WorkPrivacy:
                 self._stream_parts(key)
                 if type(generation) is not int or not history['stream_since'] <= generation <= history['generation']:
                     raise WorkPrivacyBlocked('invalid Work stream invalidation')
+        if (schema == 'artha.work-member-history.v3'
+                and (history['stream_policy'] != STREAM_POLICY or type(history['stream_policy_since']) is not int
+                    or not history['stream_since'] < history['stream_policy_since'] <= history['generation']
+                    or self._without_omitted(history['streams']) != history['streams'])):
+            raise WorkPrivacyBlocked('invalid Work stream omission policy')
         for generation, event in enumerate(history['events'], 1):
             event_fields = {'generation', 'members_sha256', 'previous_head_sha256'}
-            stream_event = schema == 'artha.work-member-history.v2' and generation >= history['stream_since']
+            stream_event = schema in _STREAM_HISTORIES and generation >= history['stream_since']
             if stream_event:
                 event_fields.add('streams_sha256')
+            policy_event = schema == 'artha.work-member-history.v3' and generation >= history['stream_policy_since']
+            if policy_event:
+                event_fields.add('stream_policy_sha256')
             if (not isinstance(event, dict) or set(event) != event_fields
                     or event['generation'] != generation
                     or not isinstance(event['members_sha256'], str) or not _HEX.fullmatch(event['members_sha256'])
@@ -695,11 +719,12 @@ class WorkPrivacy:
                     or (generation > 1 and (not isinstance(event['previous_head_sha256'], str)
                                            or not _HEX.fullmatch(event['previous_head_sha256'])))
                     or (stream_event and (not isinstance(event['streams_sha256'], str)
-                                          or not _HEX.fullmatch(event['streams_sha256'])))):
+                                          or not _HEX.fullmatch(event['streams_sha256'])))
+                    or (policy_event and event.get('stream_policy_sha256') != _digest(STREAM_POLICY))):
                 raise WorkPrivacyBlocked('invalid Work history continuity')
         if history['events'][-1]['members_sha256'] != _digest(history['members']):
             raise WorkPrivacyBlocked('Work member inventory differs from history')
-        if (schema == 'artha.work-member-history.v2'
+        if (schema in _STREAM_HISTORIES
                 and history['events'][-1]['streams_sha256'] != _digest(history['streams'])):
             raise WorkPrivacyBlocked('Work stream inventory differs from history')
 
@@ -725,8 +750,8 @@ class WorkPrivacy:
             raise WorkPrivacyBlocked('Work head differs from acknowledged history; rollback or interrupted publication')
         if drift and self._inventory() != history['members']:
             raise WorkPrivacyBlocked('unjournaled Work member drift requires reviewed reconciliation')
-        if (drift and history['schema'] == 'artha.work-member-history.v2'
-                and (self._inventory_streams() != history['streams'] or self._inventory() != history['members'])):
+        if (drift and history['schema'] in _STREAM_HISTORIES
+                and (self._current_streams(history) != history['streams'] or self._inventory() != history['members'])):
             raise WorkPrivacyBlocked('unjournaled Work stream drift requires reviewed reconciliation')
         self._expect_head(head)
         return {**history, 'head': head}
@@ -803,8 +828,16 @@ class WorkPrivacy:
                 or not set(before['revoked']) <= set(after['revoked'])
                 or any(after['invalidated'].get(name, 0) < version for name, version in before['invalidated'].items())):
             raise WorkPrivacyBlocked('Work history cannot roll back invalidations or identity')
-        if before['schema'] == 'artha.work-member-history.v2':
-            if (after['schema'] != before['schema'] or after['stream_since'] != before['stream_since']):
+        if before['schema'] in _STREAM_HISTORIES:
+            if (after['schema'] not in _STREAM_HISTORIES or after['stream_since'] != before['stream_since']
+                    or (before['schema'] == 'artha.work-member-history.v3'
+                        and (after['schema'] != before['schema']
+                             or after.get('stream_policy') != before['stream_policy']
+                             or after.get('stream_policy_since') != before['stream_policy_since']))
+                    or (before['schema'] == 'artha.work-member-history.v2'
+                        and after['schema'] == 'artha.work-member-history.v3'
+                        and (after.get('stream_policy') != STREAM_POLICY
+                             or after.get('stream_policy_since') != after['generation']))):
                 raise WorkPrivacyBlocked('Work stream history cannot be downgraded')
             changed = {key for key in set(before['streams']) | set(after['streams'])
                        if before['streams'].get(key) != after['streams'].get(key)}
@@ -821,7 +854,7 @@ class WorkPrivacy:
 
     def _prepare(self, before: dict[str, Any], members: dict[str, Any], changes: Mapping[str, bytes | None],
                  revoke: Sequence[str], *, streams: dict[str, Any] | None = None,
-                 upgrade_streams: bool = False) -> dict[str, Any]:
+                 upgrade_streams: bool = False, adopt_policy: bool = False) -> dict[str, Any]:
         generation = before['generation'] + 1
         invalidated = dict(before['invalidated'])
         changed = {name for name in set(before['members']) | set(members)
@@ -835,7 +868,7 @@ class WorkPrivacy:
                 raise WorkPrivacyBlocked('explicit Work stream migration is unavailable')
             after.update(schema='artha.work-member-history.v2', streams=streams,
                          stream_since=generation, stream_invalidated=dict.fromkeys(streams, generation))
-        elif before['schema'] == 'artha.work-member-history.v2':
+        elif before['schema'] in _STREAM_HISTORIES:
             next_streams = before['streams'] if streams is None else streams
             if streams is None:
                 removed = {(name, 'file') for name, value in changes.items() if value is None}
@@ -848,8 +881,15 @@ class WorkPrivacy:
             after.update(streams=next_streams, stream_invalidated=stream_invalidated)
         elif streams is not None:
             raise WorkPrivacyBlocked('Work stream history requires an explicit migration')
-        if after['schema'] == 'artha.work-member-history.v2':
+        if adopt_policy:
+            if before['schema'] != 'artha.work-member-history.v2' or streams is None:
+                raise WorkPrivacyBlocked('explicit Work stream policy migration is unavailable')
+            after.update(schema='artha.work-member-history.v3', stream_policy=STREAM_POLICY,
+                         stream_policy_since=generation)
+        if after['schema'] in _STREAM_HISTORIES:
             event['streams_sha256'] = _digest(after['streams'])
+        if after['schema'] == 'artha.work-member-history.v3':
+            event['stream_policy_sha256'] = _digest(STREAM_POLICY)
         after.update(generation=generation, members=members, invalidated=invalidated,
                      revoked=sorted(set(before['revoked']) | set(revoke)),
                      events=[*before['events'], event])
@@ -980,8 +1020,8 @@ class WorkPrivacy:
         for name in set(current) | set(before['members']) | set(after['members']):
             if current.get(name) not in (before['members'].get(name), after['members'].get(name)):
                 raise WorkPrivacyBlocked('unjournaled Work drift during pending publication')
-        if after['schema'] == 'artha.work-member-history.v2':
-            streams = self._inventory_streams()
+        if after['schema'] in _STREAM_HISTORIES:
+            streams = self._current_streams(after)
             previous = before.get('streams', after['streams'])
             if any(streams.get(key) not in (previous.get(key), after['streams'].get(key))
                    for key in set(streams) | set(previous) | set(after['streams'])):
@@ -997,8 +1037,8 @@ class WorkPrivacy:
             self.observe('member')
         if self._inventory() != after['members']:
             raise WorkPrivacyBlocked('Work inventory drift at publication')
-        if (after['schema'] == 'artha.work-member-history.v2'
-                and self._inventory_streams() != after['streams']):
+        if (after['schema'] in _STREAM_HISTORIES
+                and self._current_streams(after) != after['streams']):
             raise WorkPrivacyBlocked('Work stream drift at publication')
         self._expect_head(native)
         if native == before['head']:
@@ -1012,8 +1052,8 @@ class WorkPrivacy:
         self._expect_head(head)
         if self._inventory() != after['members']:
             raise WorkPrivacyBlocked('Work inventory drift after publication')
-        if (after['schema'] == 'artha.work-member-history.v2'
-                and self._inventory_streams() != after['streams']):
+        if (after['schema'] in _STREAM_HISTORIES
+                and self._current_streams(after) != after['streams']):
             raise WorkPrivacyBlocked('Work stream drift after publication')
         _delete(self.authority_dir / 'pending')
         return self._load_current()
@@ -1033,7 +1073,7 @@ class WorkPrivacy:
         with self._locked():
             before = self._load_current(drift=False)
             members = self._inventory()
-            streams = self._inventory_streams() if before['schema'] == 'artha.work-member-history.v2' else None
+            streams = self._current_streams(before) if before['schema'] in _STREAM_HISTORIES else None
             pending = self._prepare(before, members, {}, (), streams=streams)
             _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
             self.observe('intent')
@@ -1080,6 +1120,41 @@ class WorkPrivacy:
             self.observe('intent')
             return self._finish(pending)
 
+    def _stream_policy_review(self) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        before = self._load_current(drift=False)
+        if before['schema'] != 'artha.work-member-history.v2':
+            raise WorkPrivacyBlocked('Work stream policy requires existing all-stream history')
+        if self._inventory() != before['members']:
+            raise WorkPrivacyBlocked('unjournaled Work primary drift blocks stream policy migration')
+        streams = self._inventory_streams(STREAM_POLICY)
+        self._validate_stream_inventory(streams, before['members'])
+        if (streams != self._without_omitted(before['streams'])
+                or self._inventory() != before['members'] or self._inventory_streams(STREAM_POLICY) != streams):
+            raise WorkPrivacyBlocked('unjournaled non-exempt Work stream drift blocks policy migration')
+        self._expect_head(before['head'])
+        review = self._stream_review(before, streams)
+        review['stream_policy'] = STREAM_POLICY
+        review['inventory_sha256'] = _digest({'review': review, 'policy': STREAM_POLICY})
+        return before, streams, review
+
+    def preview_stream_policy(self) -> dict[str, Any]:
+        """Review only the exact omission policy; refuse unrelated unjournaled drift."""
+        with self._locked():
+            return self._stream_policy_review()[2]
+
+    def adopt_stream_policy(self, *, reviewed: bool, expected_digest: str) -> dict[str, Any]:
+        """Publish one monotonic policy transition without changing source streams."""
+        if reviewed is not True or not isinstance(expected_digest, str) or not _HEX.fullmatch(expected_digest):
+            raise WorkPrivacyBlocked('explicit Work stream policy review and digest are required')
+        with self._locked():
+            before, streams, review = self._stream_policy_review()
+            if not hmac.compare_digest(expected_digest, review['inventory_sha256']):
+                raise WorkPrivacyBlocked('reviewed Work stream policy inventory no longer matches')
+            pending = self._prepare(before, before['members'], {}, (), streams=streams, adopt_policy=True)
+            _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
+            self.observe('intent')
+            return self._finish(pending)
+
     def bind_checkpoint(self) -> dict[str, Any]:
         """Authenticated provenance only. Every surviving member still needs human review."""
         with self._locked():
@@ -1088,24 +1163,28 @@ class WorkPrivacy:
                     'identity': current['identity'], 'generation': current['generation'],
                     'head_sha256': _digest(current['head']), 'members': current['members'],
                     'plaintext_allowed': False}
-            if current['schema'] == 'artha.work-member-history.v2':
+            if current['schema'] in _STREAM_HISTORIES:
                 body.update(schema='artha.work-checkpoint-binding.v2', streams=current['streams'])
+            if current['schema'] == 'artha.work-member-history.v3':
+                body.update(schema='artha.work-checkpoint-binding.v3', stream_policy=current['stream_policy'])
             return self._sign(body, 'checkpoint')
 
     def _check_checkpoint(self, binding: Mapping[str, Any], current: dict[str, Any]) -> None:
         body = self._verify(binding, 'checkpoint')
         fields = {'schema', 'profile', 'identity', 'generation', 'head_sha256', 'members', 'plaintext_allowed'}
-        if body.get('schema') == 'artha.work-checkpoint-binding.v2':
+        if body.get('schema') in _STREAM_BINDINGS:
             fields.add('streams')
+        if body.get('schema') == 'artha.work-checkpoint-binding.v3':
+            fields.add('stream_policy')
         if (set(body) != fields
-                or body['schema'] not in {'artha.work-checkpoint-binding.v1', 'artha.work-checkpoint-binding.v2'}
+                or body['schema'] not in {'artha.work-checkpoint-binding.v1', *_STREAM_BINDINGS}
                 or body['profile'] != 'work'
                 or body['identity'] != current['identity'] or body['plaintext_allowed'] is not False
                 or type(body['generation']) is not int or not 1 <= body['generation'] <= current['generation']):
             raise WorkPrivacyBlocked('checkpoint lacks original Work installation binding')
         generation = body['generation']
         if (body['schema'] == 'artha.work-checkpoint-binding.v1'
-                and current['schema'] == 'artha.work-member-history.v2'
+                and current['schema'] in _STREAM_HISTORIES
                 and generation >= current['stream_since']):
             raise WorkPrivacyBlocked('checkpoint binding omits required stream history')
         event = current['events'][generation - 1]
@@ -1113,12 +1192,22 @@ class WorkPrivacy:
                 else current['events'][generation]['previous_head_sha256'])
         if event['members_sha256'] != _digest(body['members']) or body['head_sha256'] != head:
             raise WorkPrivacyBlocked('checkpoint history is not retained in current Work authority')
-        if body['schema'] == 'artha.work-checkpoint-binding.v2':
-            if (current['schema'] != 'artha.work-member-history.v2'
+        if body['schema'] in _STREAM_BINDINGS:
+            self._validate_stream_inventory(body['streams'], body['members'])
+        policy_generation = current.get('stream_policy_since')
+        if policy_generation is not None and generation >= policy_generation:
+            if (body['schema'] != 'artha.work-checkpoint-binding.v3'
+                    or body.get('stream_policy') != STREAM_POLICY
+                    or event.get('stream_policy_sha256') != _digest(body['stream_policy'])
+                    or self._without_omitted(body['streams']) != body['streams']):
+                raise WorkPrivacyBlocked('checkpoint omits or changes its Work stream policy')
+        elif body['schema'] == 'artha.work-checkpoint-binding.v3':
+            raise WorkPrivacyBlocked('checkpoint stream policy predates authenticated adoption')
+        if body['schema'] in _STREAM_BINDINGS:  # noqa: SIM102 - keep stream-history checks grouped
+            if (current['schema'] not in _STREAM_HISTORIES
                     or generation < current['stream_since']
                     or event.get('streams_sha256') != _digest(body['streams'])):
                 raise WorkPrivacyBlocked('checkpoint stream history is not retained in current Work authority')
-            self._validate_stream_inventory(body['streams'], body['members'])
 
     def check_checkpoint(self, binding: Mapping[str, Any]) -> dict[str, Any]:
         with self._locked():
@@ -1141,7 +1230,7 @@ class WorkPrivacy:
             current = self._load_current()
             self._check_checkpoint(binding, current)
             identities = {key: self._stream_parts(key) for key in streams}
-            if binding['schema'] != 'artha.work-checkpoint-binding.v2':
+            if binding['schema'] not in _STREAM_BINDINGS:
                 return set(identities)
             return {key for key, (owner, kind, _, _) in identities.items()
                     if kind != 'file' or key not in binding['streams']

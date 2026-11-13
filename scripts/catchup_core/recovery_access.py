@@ -594,6 +594,7 @@ class WorkRecoveryAccess:
         self.checkpoint_sha256: str | None = None
         self.entries: dict[str, dict[str, Any]] | None = None
         self.streams: dict[str, dict[str, Any]] | None = None
+        self.stream_omissions: dict[str, Any] | None = None
         self.capture_store: QuarantineStore | None = None
 
     @staticmethod
@@ -741,7 +742,8 @@ class WorkRecoveryAccess:
                 raise ck.CheckpointBlocked('legacy Work binding cannot authorize streams')
             return set()
         bound = binding.get('streams')
-        if binding.get('schema') != 'artha.work-checkpoint-binding.v2' or not isinstance(bound, dict):
+        if (binding.get('schema') not in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}
+                or not isinstance(bound, dict)):
             raise ck.CheckpointBlocked('Work checkpoint stream binding is invalid')
         journaled = {key: {'size': entry['size'], 'sha256': entry['sha256']}
                      for key, entry in streams.items()
@@ -761,7 +763,7 @@ class WorkRecoveryAccess:
         entries = self._member_entries(manifest.get('entries', []))
         streams = self._manifest_streams(manifest)
         if (manifest.get('schema') == 'artha.checkpoint.v3') != (
-                binding.get('schema') == 'artha.work-checkpoint-binding.v2'):
+                binding.get('schema') in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}):
             raise ck.CheckpointBlocked('Work checkpoint and binding versions do not match')
         external = self._validate_member_binding(binding, entries)
         external_streams = self._validate_stream_binding(binding, streams)
@@ -769,7 +771,8 @@ class WorkRecoveryAccess:
             current = self.protocol.check_checkpoint(binding)
             denied = self.protocol.denied_members(binding, list(binding['members']))
             stream_denied = (self.protocol.denied_streams(binding, list(binding['streams']))
-                             if binding.get('schema') == 'artha.work-checkpoint-binding.v2' else set())
+                             if binding.get('schema') in {
+                                 'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'} else set())
             confirmed = self.protocol.current()
         except (WorkPrivacyBlocked, QuarantineFilesystemError, KeyUnavailableError,
                 SessionBusy, KeyringError, OSError) as exc:
@@ -784,18 +787,20 @@ class WorkRecoveryAccess:
         self.checkpoint_id = str(manifest.get('generation', ''))
         self.entries = entries
         self.streams = streams
+        self.stream_omissions = deepcopy(manifest.get('context', {}).get('work_stream_omissions'))
 
     def factory(self, dest: Path, manifest: Mapping[str, Any], checkpoint_sha256: str) -> QuarantineStore:
         self._destination(dest)
         binding = self._manifest_binding(manifest)
         if (self.binding != binding or self.checkpoint_id != manifest.get('generation')
                 or (manifest.get('schema') == 'artha.checkpoint.v3') != (
-                    binding.get('schema') == 'artha.work-checkpoint-binding.v2')
+                    binding.get('schema') in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'})
                 or self.pinned is None or self.actor is None):
             raise ck.CheckpointBlocked('Work checkpoint authority was not verified before extraction')
         entries = self._member_entries(manifest.get('entries', []))
         streams = self._manifest_streams(manifest)
-        if self.entries != entries or self.streams != streams:
+        if (self.entries != entries or self.streams != streams
+                or self.stream_omissions != manifest.get('context', {}).get('work_stream_omissions')):
             raise ck.CheckpointBlocked('Work checkpoint changed after authority verification')
         self._validate_member_binding(binding, entries)
         self._validate_stream_binding(binding, streams)
@@ -829,11 +834,18 @@ class WorkRecoveryAccess:
             raise ck.CheckpointBlocked('Work quarantine checkpoint identity changed')
         if self._catalog_binding(catalog) != binding:
             raise ck.CheckpointBlocked('Work quarantine checkpoint binding changed')
+        report = catalog.get('work_stream_omissions')
+        if binding.get('schema') == 'artha.work-checkpoint-binding.v3':
+            if (not isinstance(report, dict) or report.get('policy') != binding.get('stream_policy')
+                    or (self.stream_omissions is not None and report != self.stream_omissions)):
+                raise ck.CheckpointBlocked('Work quarantine stream omission report changed or is missing')
+        elif report is not None:
+            raise ck.CheckpointBlocked('legacy Work quarantine cannot declare stream omissions')
         catalog_entries = catalog.get('entries', [])
         entries = self._member_entries([entry for entry in catalog_entries if entry['kind'] != 'stream'])
         streams = self._stream_entries([entry for entry in catalog_entries if entry['kind'] == 'stream'])
         if (catalog.get('schema') == 'artha.recovery-quarantine.v2') != (
-                binding.get('schema') == 'artha.work-checkpoint-binding.v2'):
+                binding.get('schema') in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}):
             raise ck.CheckpointBlocked('Work quarantine and binding versions do not match')
         external = self._validate_member_binding(binding, entries)
         external_streams = self._validate_stream_binding(binding, streams)
@@ -966,7 +978,8 @@ class WorkRecoveryAccess:
             checked = self.protocol.check_checkpoint(binding)
             denied = self.protocol.denied_members(binding, list(binding['members']))
             stream_denied = (self.protocol.denied_streams(binding, list(binding['streams']))
-                             if binding.get('schema') == 'artha.work-checkpoint-binding.v2' else set())
+                             if binding.get('schema') in {
+                                 'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'} else set())
             confirmed = self.protocol.current()
         except (WorkPrivacyBlocked, QuarantineFilesystemError, KeyUnavailableError,
                 SessionBusy, KeyringError, OSError) as exc:

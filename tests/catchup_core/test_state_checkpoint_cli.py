@@ -1,6 +1,7 @@
 """WP-18 command surface: profiles, quiescence, key escrow and the restore privacy gate."""
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -2995,6 +2996,7 @@ def test_personal_capture_excludes_work_authority_staging_and_services(host, mon
     ("work-privacy-reconcile",),
     ("work-privacy-revoke", "--member", "work_state/secret.md"),
     ("work-privacy-stream-upgrade", "--sha256", "0" * 64),
+    ("work-privacy-stream-policy-adopt", "--sha256", "0" * 64),
 ])
 def test_work_privacy_mutations_require_review_before_authority_access(host, monkeypatch, argv):
     before = dict(host.backend.store)
@@ -3060,8 +3062,27 @@ def test_work_stream_history_cli_upgrades_only_the_reviewed_inventory(host, monk
     assert all(value not in output + error for value in ("secret.md", stream.name, "synthetic-content"))
 
 
+def test_endpointdlp_policy_cli_requires_exact_review_and_reports_limit(host, monkeypatch):
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    monkeypatch.setattr(cli, '_work_privacy', lambda *_: protocol)
+    monkeypatch.setattr(protocol, '_inventory_streams', lambda _policy=None: {})
+    preview = protocol.preview_stream_history()
+    protocol.upgrade_stream_history(reviewed=True, expected_digest=preview['inventory_sha256'])
+    code, output, error = host.run('work-privacy-stream-policy-preview')
+    assert code == 0, error
+    preview = json.loads(output)
+    code, output, error = host.run('work-privacy-stream-policy-adopt', '--reviewed', '--sha256', '0' * 64)
+    assert code == 20 and not output
+    code, output, error = host.run('work-privacy-stream-policy-adopt', '--reviewed',
+                                   '--sha256', preview['inventory_sha256'])
+    assert code == 0, error
+    result = json.loads(output)
+    assert result['generation'] == 3 and result['metadata_preservation'] == 'endpointdlp_omitted'
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Work named streams exist only on Windows")
-def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_drift(host, monkeypatch):
+@pytest.mark.parametrize('omit_endpointdlp', [False, True])
+def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_drift(host, monkeypatch, omit_endpointdlp):
     from pathlib import Path
     protocol = _enroll_synthetic_work(host, monkeypatch)
     monkeypatch.setattr(cli, "_work_privacy", lambda *_: protocol)
@@ -3071,6 +3092,8 @@ def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_dri
     folder.mkdir()
     Path(str(folder) + ':synthetic-directory-stream').write_bytes(b'SYNTHETIC-DIRECTORY')
     Path(str(owner.parent) + ':synthetic-root-stream').write_bytes(b'SYNTHETIC-ROOT')
+    if omit_endpointdlp:
+        Path(str(owner) + ':sec.endpointdlp').write_bytes(b'volatile metadata')
 
     code, output, error = host.run("work-privacy-stream-preview")
     assert code == 0, error
@@ -3079,8 +3102,16 @@ def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_dri
     code, output, error = host.run(
         "work-privacy-stream-upgrade", "--reviewed", "--sha256", preview["inventory_sha256"])
     assert code == 0, error
+    if omit_endpointdlp:
+        code, output, error = host.run('work-privacy-stream-policy-preview')
+        assert code == 0, error
+        policy_preview = json.loads(output)
+        code, output, error = host.run('work-privacy-stream-policy-adopt', '--reviewed',
+                                      '--sha256', policy_preview['inventory_sha256'])
+        assert code == 0, error
     binding = protocol.bind_checkpoint()
-    assert binding["schema"] == "artha.work-checkpoint-binding.v2"
+    assert binding['schema'] == ('artha.work-checkpoint-binding.v3' if omit_endpointdlp
+                                else 'artha.work-checkpoint-binding.v2')
     assert len(binding["streams"]) == 3
 
     destination = host.tmp / "stream-work"
@@ -3095,6 +3126,10 @@ def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_dri
     assert len(manifest['streams']) == 3
     code, output, error = host.run('verify', str(archive), '--profile', 'work')
     assert code == 0 and json.loads(output)['streams'] == 3, error
+    if omit_endpointdlp:
+        assert json.loads(output)['omitted_streams_observed'] == 1
+        inspected = cli._inspect_recovery(archive, 'correct horse battery staple')
+        assert inspected['metadata_preservation'] == 'endpointdlp_omitted'
     code, output, error = host.run('recovery', str(archive))
     assert code == 0 and json.loads(output)['work_authority_verified'] is True, error
     code, output, error = host.run('diff', str(archive), '--profile', 'work')
@@ -3104,6 +3139,12 @@ def test_work_stream_history_cli_creates_a_generation_checkpoint_and_refuses_dri
     assert code == 0, error
     assert json.loads(output)['quarantined_streams'] == 3
     assert json.loads(output)['blocked_streams'] == 2
+    if omit_endpointdlp:
+        assert 'work_stream_omissions' not in json.loads(output)
+        assert 'secret.md' not in output and 'sec.endpointdlp' not in output
+        assert json.loads(output)['omission_report_sha256'] == hashlib.sha256(json.dumps(
+            manifest['context']['work_stream_omissions'], sort_keys=True, separators=(',', ':'),
+            allow_nan=False).encode()).hexdigest()
     assert not (restored / 'work_state').exists()
     assert 'synthetic-cli-stream' not in output + error and 'SYNTHETIC-ROOT' not in output + error
     code, output, error = host.run('work-privacy-revoke', '--member', 'work_state/secret.md', '--reviewed')

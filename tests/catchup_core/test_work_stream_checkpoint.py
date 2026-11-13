@@ -132,6 +132,68 @@ def test_work_v3_authenticates_exact_typed_stream_frames_and_contents(tmp_path):
     assert b'synthetic secret name' not in raw and b'synthetic secret stream bytes' not in raw
 
 
+def _omission_context(manifest):
+    from catchup_core.work_privacy import STREAM_POLICY
+    manifest['context']['work_binding'].update(schema='artha.work-checkpoint-binding.v3',
+                                               stream_policy=STREAM_POLICY)
+    manifest['context']['work_stream_omissions'] = {
+        'policy': STREAM_POLICY, 'semantics': 'observed_names_not_preserved', 'roots': sorted(manifest['roots']),
+        'streams': [{**_identity(OWNER, 'file', 'sec.endpointdlp'), 'size': 17}]}
+
+
+def test_endpointdlp_manifest_authenticates_explicit_omission_report(tmp_path):
+    path, expected = _checkpoint(tmp_path / 'work.ack', edit_manifest=_omission_context)
+    assert ck.verify(path, CIPHER) == expected
+
+
+@pytest.mark.parametrize('fault', ['missing', 'wrong-policy', 'wrong-name', 'wrong-owner', 'bool-size', 'duplicate'])
+def test_endpointdlp_manifest_rejects_incomplete_or_ambiguous_omissions(tmp_path, fault):
+    def damage(manifest):
+        _omission_context(manifest)
+        report = manifest['context']['work_stream_omissions']
+        if fault == 'missing':
+            del manifest['context']['work_stream_omissions']
+        elif fault == 'wrong-policy':
+            report['policy'] = 'unknown'
+        elif fault == 'duplicate':
+            report['streams'].append(dict(report['streams'][0]))
+        else:
+            report['streams'][0][{'wrong-name': 'name', 'wrong-owner': 'owner', 'bool-size': 'size'}[fault]] = {
+                'wrong-name': 'sec.endpointdlp.extra', 'wrong-owner': 'other/file', 'bool-size': True}[fault]
+    path, _ = _checkpoint(tmp_path / 'bad.ack', edit_manifest=damage)
+    with pytest.raises(ck.CheckpointError):
+        ck.verify(path, CIPHER)
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='native NTFS omission capture')
+@pytest.mark.parametrize('change', ['mandatory', 'same-size-primary', 'replaced-owner', 'unknown-stream'])
+def test_endpointdlp_capture_recheck_allows_only_exempt_metadata_change(tmp_path, change):
+    from catchup_core.work_privacy import STREAM_POLICY
+    root = tmp_path / 'work'
+    root.mkdir()
+    owner = root / 'note.txt'
+    owner.write_bytes(ORDINARY)
+    Path(str(owner) + ':sec.endpointdlp').write_bytes(b'old volatile metadata')
+    Path(str(owner) + ':mandatory').write_bytes(b'mandatory bytes')
+    roots = {'work_state': root}
+    captured = ck._capture_work_streams(roots, {}, stream_policy=STREAM_POLICY)
+    Path(str(owner) + ':sec.endpointdlp').write_bytes(b'changed volatile metadata')
+    ck._recheck_work_streams(captured, roots, {})
+    assert [(header['name'], data) for header, data in captured.streams] == [('mandatory', b'mandatory bytes')]
+    assert captured.omissions[0]['name'] == 'sec.endpointdlp'
+    if change == 'mandatory':
+        Path(str(owner) + ':mandatory').write_bytes(b'changed mandatory bytes')
+    elif change == 'same-size-primary':
+        owner.write_bytes(b'x' * len(ORDINARY))
+    elif change == 'replaced-owner':
+        owner.unlink()
+        owner.write_bytes(ORDINARY)
+    else:
+        Path(str(owner) + ':unknown').write_bytes(b'new stream')
+    with pytest.raises(ck.CheckpointBlocked):
+        ck._recheck_work_streams(captured, roots, {})
+
+
 @pytest.mark.parametrize(('magic', 'schema', 'profile'), [
     (b'ACK2', 'artha.checkpoint.v3', 'work'),
     (b'ACK3', 'artha.checkpoint.v2', 'work'),
@@ -645,6 +707,39 @@ def _prototype_create(tmp_path, roots, binding, **kwargs):
         roots, tmp_path / 'out', CIPHER, {}, 'synthetic passphrase long enough', now=NOW,
         lock_path=tmp_path / 'checkpoint.lock', exclude={}, context={'work_binding': binding},
         quiesce=lambda: (), before_publish=kwargs.get('before_publish', lambda: None))
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='native NTFS policy checkpoint capture')
+@pytest.mark.parametrize('mutation', ['exempt', 'primary', 'mandatory'])
+def test_endpointdlp_public_capture_preserves_primary_and_reports_only_approved_omission(tmp_path, mutation):
+    from catchup_core.work_privacy import STREAM_POLICY
+    root, document = _public_tree(tmp_path)
+    omitted = Path(str(document) + ':sec.endpointdlp')
+    omitted.write_bytes(b'volatile metadata')
+    roots = {'work_state': root}
+    binding = _public_binding(roots)
+    binding.update(schema='artha.work-checkpoint-binding.v3', stream_policy=STREAM_POLICY)
+    binding['streams'].pop(_key(_identity(OWNER, 'file', 'sec.endpointdlp')))
+    def change():
+        if mutation == 'exempt':
+            omitted.write_bytes(b'changed metadata after capture')
+        elif mutation == 'primary':
+            document.write_bytes(b'x' * len(ORDINARY))
+        else:
+            Path(str(document) + ':synthetic secret name').write_bytes(b'changed mandatory bytes')
+    if mutation != 'exempt':
+        with pytest.raises(ck.CheckpointBlocked):
+            _public_create(tmp_path, roots, binding, before_publish=change)
+        assert not list((tmp_path / 'out').glob('*'))
+        return
+    path = _public_create(tmp_path, roots, binding, before_publish=change)
+    manifest = ck.verify(path, CIPHER)
+    report = manifest['context']['work_stream_omissions']
+    assert report['policy'] == STREAM_POLICY and report['semantics'] == 'observed_names_not_preserved'
+    assert report['streams'] == [{**_identity(OWNER, 'file', 'sec.endpointdlp'), 'size': 17}]
+    assert manifest['entries'][0]['source_sha256'] == hashlib.sha256(ORDINARY).hexdigest()
+    assert len(manifest['streams']) == 4 and all(stream['name'] != 'sec.endpointdlp' for stream in manifest['streams'])
+    assert document.read_bytes() == ORDINARY and omitted.read_bytes() == b'changed metadata after capture'
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='native NTFS stream capture')

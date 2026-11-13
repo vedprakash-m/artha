@@ -45,6 +45,7 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from catchup_core import quarantine_fs_windows, quarantine_review, recovery_quarantine, work_privacy
 from catchup_core.backup import atomic_bytes
 from catchup_core.crypto import DecryptionError, EnvelopeCipher
+from catchup_core.quarantine_fs_windows import stream_owner_snapshot
 from catchup_core.session_lock import session_lock, session_lock_reader
 
 if TYPE_CHECKING:
@@ -477,7 +478,7 @@ def _work_stream_header(header: Mapping[str, Any]) -> dict[str, Any]:
     return dict(header)
 
 
-def _work_stream_manifest(
+def _work_stream_manifest(  # noqa: PLR0912 - explicit old/new authenticated manifest validation
     manifest: Mapping[str, Any], entries: list[dict[str, Any]],
     streams: list[dict[str, Any]], names: _PathNames,
 ) -> None:
@@ -491,8 +492,13 @@ def _work_stream_manifest(
     binding = context.get('work_binding') if isinstance(context, dict) else None
     fields = {'schema', 'profile', 'identity', 'generation', 'head_sha256', 'members',
               'plaintext_allowed', 'streams', 'mac'}
+    policy = binding.get('stream_policy') if isinstance(binding, dict) else None
+    policy_schema = isinstance(binding, dict) and binding.get('schema') == 'artha.work-checkpoint-binding.v3'
+    if policy_schema:
+        fields.add('stream_policy')
     if (not isinstance(binding, dict) or set(binding) != fields
-            or binding.get('schema') != 'artha.work-checkpoint-binding.v2' or binding.get('profile') != 'work'
+            or binding.get('schema') not in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}
+            or (policy_schema and policy != work_privacy.STREAM_POLICY) or binding.get('profile') != 'work'
             or binding.get('plaintext_allowed') is not False
             or type(binding.get('generation')) is not int or binding['generation'] < 1
             or any(not isinstance(binding.get(key), str) or not re.fullmatch(r'[0-9a-f]{64}', binding[key])
@@ -514,6 +520,8 @@ def _work_stream_manifest(
         raise CheckpointError('checkpoint Work members differ from their binding')
     expected_streams: dict[str, dict[str, Any]] = {}
     for stream in streams:
+        if policy and (stream['name'], stream['stream_type']) == quarantine_fs_windows.ENDPOINTDLP_STREAM:
+            raise CheckpointError('checkpoint includes a stream declared omitted by its policy')
         owner = stream['owner']
         if owner.split('/', 1)[0] not in roots:
             raise CheckpointError('checkpoint stream is outside its included roots')
@@ -528,6 +536,39 @@ def _work_stream_manifest(
     if (binding['streams'] != expected_streams
             or any(type(stream['size']) is not int for stream in binding['streams'].values())):
         raise CheckpointError('checkpoint Work streams differ from their binding')
+    report = context.get('work_stream_omissions') if isinstance(context, dict) else None
+    if policy_schema:
+        _validate_work_omissions(report, roots, file_entries, names)
+    elif report is not None:
+        raise CheckpointError('legacy checkpoint cannot declare stream omissions')
+
+
+def _validate_work_omissions(report: Any, roots: Sequence[str] | None,
+                             files: Mapping[str, Any], names: _PathNames) -> None:
+    if (not isinstance(report, dict) or set(report) != {'policy', 'semantics', 'roots', 'streams'}
+            or report['policy'] != work_privacy.STREAM_POLICY
+            or report['semantics'] != 'observed_names_not_preserved'
+            or not isinstance(report['roots'], list) or not report['roots']
+            or any(not isinstance(root, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', root)
+                   for root in report['roots'])
+            or len(set(report['roots'])) != len(report['roots'])
+            or (roots is not None and report['roots'] != sorted(roots))
+            or not isinstance(report['streams'], list) or len(report['streams']) > _MAX_WORK_STREAMS):
+        raise CheckpointError('checkpoint requires an explicit Work stream omission report')
+    seen: set[str] = set()
+    for item in report['streams']:
+        if not isinstance(item, dict) or set(item) != {'kind', 'owner', 'owner_kind', 'name', 'stream_type', 'size'}:
+            raise CheckpointError('checkpoint stream omission is invalid')
+        header = _work_stream_header({key: value for key, value in item.items() if key != 'size'})
+        key = work_privacy._stream_key(header['owner'], header['owner_kind'], header['name'], header['stream_type'])
+        if (key in seen or (header['name'], header['stream_type']) != quarantine_fs_windows.ENDPOINTDLP_STREAM
+                or header['owner'].split('/', 1)[0] not in report['roots']
+                or (header['owner_kind'] == 'file' and header['owner'] not in files)
+                or type(item['size']) is not int or not 0 <= item['size'] <= _MAX_WORK_STREAM_BYTES):
+            raise CheckpointError('checkpoint stream omission is invalid or ambiguous')
+        if header['owner_kind'] == 'directory':
+            names.add_directory(header['owner'])
+        seen.add(key)
 
 
 def _portability_problems(found: Mapping[str, Path]) -> list[str]:
@@ -549,11 +590,15 @@ class _CapturedWorkStreams:
     excluded: dict[str, str]
     owner_snapshots: dict[str, FileSnapshot]
     streams: tuple[tuple[dict[str, Any], bytes], ...]
+    stream_policy: str | None = None
+    omissions: tuple[dict[str, Any], ...] = ()
+    primary_sha256: tuple[tuple[str, str], ...] = ()
 
 
-def _capture_work_streams(roots: Mapping[str, Path], exclude: Mapping[str, str]) -> _CapturedWorkStreams:
+def _capture_work_streams(roots: Mapping[str, Path], exclude: Mapping[str, str], *,
+                          stream_policy: str | None = None) -> _CapturedWorkStreams:
     """Capture included Work streams in memory; no recovery authority is implied."""
-    if (sys.platform != 'win32' or not roots
+    if (stream_policy not in (None, work_privacy.STREAM_POLICY) or sys.platform != 'win32' or not roots
             or any(not isinstance(alias, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', alias)
                    for alias in roots)):
         raise CheckpointBlocked('Work stream capture is unavailable or has invalid roots')
@@ -573,17 +618,24 @@ def _capture_work_streams(roots: Mapping[str, Path], exclude: Mapping[str, str])
         raise CheckpointBlocked('Work stream owner inventory has unsafe or ambiguous paths') from None
     snapshots: dict[str, FileSnapshot] = {}
     captured: list[tuple[dict[str, Any], bytes]] = []
+    omissions: list[dict[str, Any]] = []
     total = 0
     owners = [(key, path, 'file') for key, path in found.items()]
     owners.extend((key, path, 'directory') for key, path in directories.items())
     try:
         for key, path, kind in sorted(owners):
+            omitted: list[quarantine_fs_windows.NamedStreamInfo] = []
+            options: dict[str, Any] = {'omit_endpointdlp': True, 'omitted': omitted} if stream_policy else {}
             snapshot, streams = quarantine_fs_windows.read_named_streams_with_snapshot(
                 path, directory=kind == 'directory',
                 max_total_bytes=_MAX_WORK_STREAM_TOTAL_BYTES - total,
-                max_streams=min(_MAX_WORK_STREAMS_PER_OWNER, _MAX_WORK_STREAMS - len(captured)),
+                max_streams=min(_MAX_WORK_STREAMS_PER_OWNER, _MAX_WORK_STREAMS - len(captured) - len(omissions)),
+                **options,
             )
-            snapshots[key] = snapshot
+            snapshots[key] = quarantine_fs_windows.stream_owner_snapshot(snapshot, omit_endpointdlp=bool(stream_policy))
+            omissions.extend({'kind': 'stream', 'owner': key, 'owner_kind': kind,
+                              'name': item.name, 'stream_type': item.stream_type, 'size': item.size}
+                             for item in omitted)
             for stream in streams:
                 header = _work_stream_header({'kind': 'stream', 'owner': key, 'owner_kind': kind,
                                               'name': stream.name, 'stream_type': stream.stream_type})
@@ -593,13 +645,20 @@ def _capture_work_streams(roots: Mapping[str, Path], exclude: Mapping[str, str])
         raise CheckpointBlocked(
             'Work stream inventory is unavailable, incomplete, changed, or exceeds its bound',
         ) from None
-    return _CapturedWorkStreams(found, directories, excluded, snapshots, tuple(captured))
+    primary = tuple((key, _work_member_entry(key, path, snapshots[key], omit_endpointdlp=True).sha256)
+                    for key, path in sorted(found.items())) if stream_policy else ()
+    return _CapturedWorkStreams(found, directories, excluded, snapshots, tuple(captured), stream_policy,
+                                tuple(omissions), primary)
 
 
 def _recheck_work_streams(
     captured: _CapturedWorkStreams, roots: Mapping[str, Path], exclude: Mapping[str, str],
 ) -> None:
-    if _capture_work_streams(roots, exclude) != captured:
+    current = _capture_work_streams(roots, exclude, **({'stream_policy': captured.stream_policy}
+                                                     if captured.stream_policy else {}))
+    if (current.files != captured.files or current.directories != captured.directories
+            or current.excluded != captured.excluded or current.owner_snapshots != captured.owner_snapshots
+            or current.streams != captured.streams or current.primary_sha256 != captured.primary_sha256):
         raise CheckpointBlocked('Work stream owners or content changed during capture')
 
 
@@ -637,6 +696,8 @@ def _work_quarantine_capacity(
             'recovery_affinity': {'schema': 'artha.recovery-affinity.v1',
                                   'work_binding': manifest['context']['work_binding']},
         }
+        if 'work_stream_omissions' in manifest['context']:
+            catalog['work_stream_omissions'] = manifest['context']['work_stream_omissions']
         quarantine._json(catalog, quarantine.MAX_CATALOG_BYTES)
     except (quarantine.QuarantineError, KeyError, TypeError, ValueError):
         raise CheckpointBlocked('Work checkpoint exceeds encrypted quarantine capacity') from None
@@ -930,6 +991,7 @@ def _stream_member(writer: _Writer, key: str, path: Path, source: str, mode: int
 
 def _stream_work_member(
     writer: _Writer, key: str, path: Path, pinned: FileSnapshot, source: str, mode: int,
+    *, omit_endpointdlp: bool = False,
 ) -> Entry:
     """Capture a pinned Work file through bounded native handles, or refuse its partial frames."""
     try:
@@ -941,7 +1003,7 @@ def _stream_work_member(
         _safe(key)
         with quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent, \
                 parent.open_file(path.name, private=False) as handle:
-            before = handle.snapshot()
+            before = quarantine_fs_windows.stream_owner_snapshot(handle.snapshot(), omit_endpointdlp=omit_endpointdlp)
             if before != pinned or handle.check_path(expected_identity=pinned.identity) != pinned.identity:
                 raise CheckpointBlocked('Work member changed before capture')
             handle.seek(0)
@@ -968,7 +1030,8 @@ def _stream_work_member(
                     del pending[:_CHUNK]
             if pending:
                 writer.frame('d', bytes(pending))
-            if (size != before.size or digest.hexdigest() != source or handle.snapshot() != before
+            if (size != before.size or digest.hexdigest() != source
+                    or stream_owner_snapshot(handle.snapshot(), omit_endpointdlp=omit_endpointdlp) != before
                     or handle.check_path(expected_identity=pinned.identity) != pinned.identity):
                 raise CheckpointBlocked('Work member changed during capture')
             writer.frame('e', json.dumps({'size': size, 'sha256': source}).encode())
@@ -977,14 +1040,14 @@ def _stream_work_member(
         raise CheckpointBlocked('Work member capture could not be verified') from None
 
 
-def _work_member_entry(key: str, path: Path, pinned: FileSnapshot) -> Entry:
+def _work_member_entry(key: str, path: Path, pinned: FileSnapshot, *, omit_endpointdlp: bool = False) -> Entry:
     """Inventory ordinary Work bytes through the same pinned native boundary as capture."""
     if not 0 <= pinned.size <= recovery_quarantine.MAX_MEMBER_BYTES:
         raise CheckpointBlocked('Work member exceeds its capture bound')
     try:
         with quarantine_fs_windows.WindowsQuarantineDirectory.open(path.parent, owner_private=False) as parent, \
                 parent.open_file(path.name, private=False) as handle:
-            if handle.snapshot() != pinned:
+            if stream_owner_snapshot(handle.snapshot(), omit_endpointdlp=omit_endpointdlp) != pinned:
                 raise CheckpointBlocked('Work member changed before inventory')
             handle.seek(0)
             digest, prefix, remaining = hashlib.sha256(), bytearray(), pinned.size
@@ -996,7 +1059,7 @@ def _work_member_entry(key: str, path: Path, pinned: FileSnapshot) -> Entry:
                 prefix.extend(piece[:max(0, len(_SQLITE_HEADER) - len(prefix))])
                 remaining -= len(piece)
             mode = stat.S_IMODE(path.lstat().st_mode)
-            if (handle.snapshot() != pinned
+            if (stream_owner_snapshot(handle.snapshot(), omit_endpointdlp=omit_endpointdlp) != pinned
                     or handle.check_path(expected_identity=pinned.identity) != pinned.identity):
                 raise CheckpointBlocked('Work member changed during inventory')
             if prefix == _SQLITE_HEADER:
@@ -1056,8 +1119,9 @@ def _create_work_streams(  # noqa: PLR0912, PLR0915 - one fail-closed ACK3 captu
         busy = list(quiesce())
         if busy:
             raise CheckpointBlocked("not quiesced: " + "; ".join(busy))
-        captured = _capture_work_streams(roots, exclude)
-        planned = [asdict(_work_member_entry(key, path, captured.owner_snapshots[key]))
+        policy = context['work_binding'].get('stream_policy')
+        captured = _capture_work_streams(roots, exclude, **({'stream_policy': policy} if policy else {}))
+        planned = [asdict(_work_member_entry(key, path, captured.owner_snapshots[key], omit_endpointdlp=bool(policy)))
                    for key, path in sorted(captured.files.items())]
         source = {entry['path']: entry['sha256'] for entry in planned}
         modes = {entry['path']: entry['mode'] for entry in planned}
@@ -1070,6 +1134,10 @@ def _create_work_streams(  # noqa: PLR0912, PLR0915 - one fail-closed ACK3 captu
             'excluded': captured.excluded,
             'context': dict(context, capture_semantics='authenticated_work_generation'),
             'escrow_items': sorted(escrow)}
+        if policy:
+            manifest['context']['work_stream_omissions'] = {
+                'policy': policy, 'semantics': 'observed_names_not_preserved', 'roots': sorted(roots),
+                'streams': list(captured.omissions)}
         try:
             _work_stream_manifest(manifest, planned, streams, _PathNames())
         except CheckpointError:
@@ -1092,7 +1160,8 @@ def _create_work_streams(  # noqa: PLR0912, PLR0915 - one fail-closed ACK3 captu
                              + struct.pack(">I", len(sealed)) + sealed)
                 writer = _Writer(handle, cipher, generation)
                 entries = [asdict(_stream_work_member(writer, key, captured.files[key],
-                                                      captured.owner_snapshots[key], source[key], modes[key]))
+                                                      captured.owner_snapshots[key], source[key], modes[key],
+                                                      omit_endpointdlp=bool(policy)))
                            for key in sorted(captured.files)]
                 if entries != planned:
                     raise CheckpointBlocked('Work member changed during capture')
@@ -1118,7 +1187,7 @@ def _create_work_streams(  # noqa: PLR0912, PLR0915 - one fail-closed ACK3 captu
                 raise CheckpointBlocked('Work checkpoint failed its pre-publication verification') from None
             before_publish()
             _recheck_work_streams(captured, roots, exclude)
-            if [asdict(_work_member_entry(key, path, captured.owner_snapshots[key]))
+            if [asdict(_work_member_entry(key, path, captured.owner_snapshots[key], omit_endpointdlp=bool(policy)))
                     for key, path in sorted(captured.files.items())] != planned:
                 raise CheckpointBlocked('Work member changed during capture') from None
             try:
@@ -1149,7 +1218,7 @@ def create(  # noqa: PLR0912, PLR0915 - one fail-closed capture transaction
     if profile == 'work' and context is not None and 'work_binding' in context:
         binding = context['work_binding']
         schema = binding.get('schema') if isinstance(binding, Mapping) else None
-        if schema == 'artha.work-checkpoint-binding.v2':
+        if schema in {'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}:
             _check_passphrase(passphrase)
             return _create_work_streams(
                 roots, dest_dir, cipher, escrow, passphrase, now=now, lock_path=lock_path,
@@ -1668,10 +1737,10 @@ def _restore(  # noqa: PLR0912, PLR0915 - ordered authenticated restore and priv
         if expected_profile == 'work':
             context = manifest.get('context')
             binding = context.get('work_binding') if isinstance(context, dict) else None
-            binding_schema = ('artha.work-checkpoint-binding.v2' if manifest['schema'] == 'artha.checkpoint.v3'
-                              else 'artha.work-checkpoint-binding.v1')
+            binding_schemas = ({'artha.work-checkpoint-binding.v2', 'artha.work-checkpoint-binding.v3'}
+                               if manifest['schema'] == 'artha.checkpoint.v3' else {'artha.work-checkpoint-binding.v1'})
             if (not isinstance(binding, dict)
-                    or binding.get('schema') != binding_schema
+                    or binding.get('schema') not in binding_schemas
                     or binding.get('profile') != 'work' or binding.get('plaintext_allowed') is not False):
                 raise CheckpointBlocked('unbound Work checkpoints are inspection-only')
         checkpoint_sha256 = reader.digest.hexdigest() if reader is not None else ''
@@ -1726,6 +1795,8 @@ def _restore(  # noqa: PLR0912, PLR0915 - ordered authenticated restore and priv
         result.update(streams=len(streams), quarantined_streams=len(streams),
                       quarantined_stream_bytes=sum(entry['size'] for entry in streams),
                       blocked_streams=blocked_streams)
+        if 'work_stream_omissions' in manifest['context']:
+            result['work_stream_omissions'] = manifest['context']['work_stream_omissions']
     return result
 
 
@@ -1796,8 +1867,10 @@ def _sqlite_table_diff(saved_image: bytes, live_path: Path) -> dict[str, dict[st
 
 def _work_stream_diff(manifest: Mapping[str, Any], roots: Mapping[str, Path],
                       exclude: Mapping[str, str], *, include_tables: bool) -> dict[str, Any]:
-    captured = _capture_work_streams(roots, exclude)
-    current = {name: _work_member_entry(name, path, captured.owner_snapshots[name]).sha256
+    policy = manifest['context']['work_binding'].get('stream_policy')
+    captured = _capture_work_streams(roots, exclude, **({'stream_policy': policy} if policy else {}))
+    current = {name: _work_member_entry(name, path, captured.owner_snapshots[name],
+                                      omit_endpointdlp=bool(policy)).sha256
                for name, path in captured.files.items()}
     _recheck_work_streams(captured, roots, exclude)
     saved = {entry['path']: entry['source_sha256'] for entry in manifest['entries']}
