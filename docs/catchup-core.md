@@ -1,5 +1,26 @@
 # The Catch-up core (`scripts/catchup_core/`)
 
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved option 1: a narrow Windows Work recovery exception for the
+exact `sec.endpointdlp:$DATA` stream. All primary contents and all other named
+streams remain mandatory. Originals are never stripped or relabeled. This
+supersedes earlier all-stream preservation requirements only for this namespace;
+the producer and payload semantics are not inferred from its name.
+
+Use `python -m catchup_core.checkpoint_cli` with `scripts` on `PYTHONPATH`.
+Preview with `work-privacy-stream-policy-preview`; adopt
+only the reviewed digest with `work-privacy-stream-policy-adopt --reviewed
+--sha256 DIGEST`. These are separate operations; capture never adopts implicitly.
+Primary or non-exempt stream drift blocks adoption. History and binding v3
+authenticate `artha.work-stream-policy.endpointdlp.v1`; older bindings retain
+their historical meaning. ACK3 authenticates observed omitted owner/name/type/
+size metadata and explicitly says `observed_names_not_preserved`. Exempt metadata
+may change after that observation. Verification and recovery report the limitation;
+encrypted quarantine retains it. CLI summaries expose counts and a report digest,
+not owner paths or stream payloads. Plaintext/export/release holds remain.
+
+
 ## Shared Work/Personal credentials — owner decision, 2026-11-12
 
 Owner decision, 2026-11-12: Work and Personal may share credentials. Distinct

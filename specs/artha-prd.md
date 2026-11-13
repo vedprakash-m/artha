@@ -1,4 +1,17 @@
 # Artha — Personal Intelligence OS
+
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved option 1: a narrow Windows Work recovery exception for the
+exact `sec.endpointdlp:$DATA` stream. All primary contents and all other named
+streams remain mandatory. Originals are never stripped or relabeled. This
+supersedes earlier all-stream preservation requirements only for this namespace;
+the producer and payload semantics are not inferred from its name.
+
+Work recovery promises complete primary contents and all non-exempt named streams,
+with authenticated disclosure of the omitted metadata and its recovery limitation.
+No claim of lossless all-stream recovery or release acceptance follows.
+
 <!-- pii-guard: ignore-file -->
 ## Product Requirements Document · v7.31.0
 

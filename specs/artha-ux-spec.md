@@ -1,4 +1,14 @@
 ﻿# Artha — UX Specification
+
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved the narrow metadata exception. Recovery must disclose that
+`sec.endpointdlp:$DATA` metadata is omitted, even if no matching stream was
+observed during capture. Report counts as observations, not a stable snapshot of
+excluded metadata. Verify, passphrase inspection and recovery expose the policy
+and limitation. A successful restore does not mean the omitted labels were
+restored or that recovered files are approved for export. Originals stay intact.
+
 <!-- pii-guard: ignore-file -->
 
 > **Version**: 3.26.0 | **Status**: Active Development | **Date**: November 5, 2026

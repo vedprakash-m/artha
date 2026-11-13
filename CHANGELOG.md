@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Windows Work metadata exception — owner approved, 2026-11-12
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Explicit exact-name omission policy, monotonic history transition, primary-byte checks and authenticated recovery limitation | `work_privacy.py`, `quarantine_fs_windows.py`, `checkpoint.py`, `checkpoint_cli.py`, `recovery_access.py`, `recovery_quarantine.py`, capability mapping and affected tests | 52 final native cases, 41 minimum-Python cases, 57 exact public candidate tests; 199/204 changed executable lines covered (95% gate passed). Live activation and recovery remain pending. |
+
+
 ### Implemented — owner-approved Work/Personal credential sharing, 2026-11-12
 
 | Change | Modified files | Validation |

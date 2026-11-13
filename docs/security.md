@@ -1,5 +1,23 @@
 # Artha Security Model
 
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved option 1: a narrow Windows Work recovery exception for the
+exact `sec.endpointdlp:$DATA` stream. All primary contents and all other named
+streams remain mandatory. Originals are never stripped or relabeled. This
+supersedes earlier all-stream preservation requirements only for this namespace;
+the producer and payload semantics are not inferred from its name.
+
+The exception requires an explicit authenticated policy transition, preserves
+native predecessor continuity and revocations, and never grants content access.
+Excluded payloads are not opened. Primary hashes and all mandatory stream bytes
+are checked; identity, owner, link, path, ACL, bounds and quarantine controls
+remain. Under the explicit policy, shared file timestamps cannot substitute
+for those byte checks. Default strict capture retains its timestamp checks.
+An authenticated omission report survives checkpoint verification and encrypted
+quarantine. Omitted metadata is not preserved or automatically reconstructed.
+
+
 ## Work/Personal credential sharing — owner decision, 2026-11-12
 
 Owner decision, 2026-11-12: Work and Personal may share credentials. Distinct

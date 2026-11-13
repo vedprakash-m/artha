@@ -1,4 +1,24 @@
 # Artha — Technical Specification
+
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved option 1: a narrow Windows Work recovery exception for the
+exact `sec.endpointdlp:$DATA` stream. All primary contents and all other named
+streams remain mandatory. Originals are never stripped or relabeled. This
+supersedes earlier all-stream preservation requirements only for this namespace;
+the producer and payload semantics are not inferred from its name.
+
+History v3 adds fixed `stream_policy` and monotonic `stream_policy_since`; events
+from adoption bind the policy digest. Binding v3 includes the policy and mandatory
+streams. Adoption pins the exact predecessor, primary hashes and non-exempt
+inventory, invalidates excluded historical streams, retains old events and uses
+the existing authenticated pending/roll-forward protocol. No reset or downgrade.
+ACK3 manifests and encrypted quarantine catalogs retain `work_stream_omissions`
+(policy, roots, observed typed owner/name/size entries, and explicit observation
+semantics). Same-size primary mutation, mandatory stream changes and unknown
+names still refuse. Shared LastWrite/ChangeTime are projected only under this
+policy with repeated primary hashes and mandatory stream byte verification.
+
 <!-- pii-guard: ignore-file -->
 
 > **Version**: 3.52.0 | **Status**: Active Development | **Date**: November 5, 2026

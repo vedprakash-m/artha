@@ -1,5 +1,37 @@
 # re-artha implementation status — 2026-11-05
 
+## Approved Windows Work metadata exception — 2026-11-12
+
+The owner approved the narrow exception design. Read-only native enumeration
+identified exactly `sec.endpointdlp:$DATA` on 176 owners, without payload reads.
+A subsequent live policy preview verified all 212 primary files / 829,314,152
+bytes against authenticated generation 11 and found no non-exempt stream drift.
+Receipt: artha-work-stream-policy-preview-25218acd0f6c44548010cfc13b7be738.json
+(2026-11-13 00:13:10 UTC; November 12 local date). It performed no source or
+authority writes and did not activate the policy. Engineering implements an
+explicit monotonic transition and authenticated omission reports through
+encrypted quarantine. Verified engineering outcomes follow.
+Live policy activation, registry review and actual checkpoint/recovery remain
+unperformed; no release or 100% completion is claimed.
+
+The final source cohort passed 52 native synthetic cases, including the full CLI
+capture/verify/passphrase-inspect/recovery/diff/restore lifecycle and local
+process termination at each policy publication stage. The minimum supported
+Windows Python 3.11 selection passed 41 cases. Exact public candidate validation
+passed 57 tests, including generated-register checks. Changed executable-line
+coverage is 199/204 (97.5%); the required 95% diff gate passed directly against
+the final source measurement, without coverage reuse from the changed CLI.
+Ruff, strict typing of 70 core files, 435-file import check and the state-write
+ratchet passed. Full current privacy policy passed on 1,128 tracked inputs,
+with 22 fresh Gitleaks inputs and verified identical-byte scanner evidence for
+unchanged inputs. Earlier sandbox-native failures and incomplete snapshots are
+retained; the committed predecessor separately reproduced the missing policy.
+The broader native regression is still running an unchanged high-cardinality
+Personal capacity case; no aggregate result or whole-core 95% claim is made.
+Delivery stays local; hosted CI, live policy activation, native dependency
+confirmation and the actual recovery rehearsal remain pending.
+
+
 ## Work/Personal credential sharing approved and implemented — 2026-11-12
 
 The owner decided: "It’s ok to share credentials between Work and Personal domains.
