@@ -464,18 +464,20 @@ def test_harness_measures_windows_code_only_on_windows():
 
 
 def test_posix_harness_config_excludes_only_windows_guarded_blocks():
+    import re
     import tomllib
     config = tomllib.loads((REPO / "tools" / "coverage-posix.toml").read_text())["tool"]["coverage"]
     shared = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["coverage"]
     excluded = config["report"]["exclude_lines"]
     assert set(shared["report"]["exclude_lines"]) <= set(excluded)
+    re.compile("|".join(f"(?:{pattern})" for pattern in excluded), re.MULTILINE)
     extra = [pattern for pattern in excluded if pattern not in shared["report"]["exclude_lines"]]
     assert set(extra) == {
         "if sys\\.platform == ['\"]win32['\"]",
         "if os\\.name == ['\"]nt['\"]",
-        r"(?ms)^(?:@contextmanager\n)?def _windows_[A-Za-z0-9_]+\b.*?(?=^(?:@|def )|\Z)",
-        r"(?ms)^    (?:@contextmanager\n    )?def _windows_[A-Za-z0-9_]+\b.*?(?=^    (?:@|def )|^\S|\Z)",
-        r"(?ms)^            with _windows_lock\(handle, shared=shared\):.*?(?=^        else:)",
-        r"(?ms)^    def _(?:opened|publish|physical)_native\b.*?(?=^    def |^\S|\Z)",
+        r"(?ms:^(?:@contextmanager\n)?def _windows_[A-Za-z0-9_]+\b.*?(?=^(?:@|def )|\Z))",
+        r"(?ms:^    (?:@contextmanager\n    )?def _windows_[A-Za-z0-9_]+\b.*?(?=^    (?:@|def )|^\S|\Z))",
+        r"(?ms:^            with _windows_lock\(handle, shared=shared\):.*?(?=^        else:))",
+        r"(?ms:^    def _(?:opened|publish|physical)_native\b.*?(?=^    def |^\S|\Z))",
     }
     assert config["run"] == shared["run"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 import functools
+import hashlib
 import ntpath
 import os
 import re
@@ -12,7 +13,7 @@ import unicodedata
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from ctypes import wintypes
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -46,6 +47,7 @@ class NamedStreamInfo:
     name: str
     stream_type: str
     size: int
+    fingerprint: bytes | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -493,8 +495,19 @@ class _Native:
         if next_offset or name_size != 14 or buffer.raw[24:38] != '::$DATA'.encode('utf-16-le'):
             raise QuarantineFilesystemError('named source streams cannot be preserved')
 
-    def named_streams(self, handle: int, *, directory: bool) -> tuple[NamedStreamInfo, ...]:
+    def named_streams(
+        self, handle: int, *, directory: bool,
+        parent: WindowsQuarantineDirectory | None = None, owner_name: str | None = None,
+        max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
+        max_streams: int = _MAX_NAMED_STREAMS, omit_endpointdlp: bool = False,
+    ) -> tuple[NamedStreamInfo, ...]:
         """Enumerate bounded named data streams on a previously verified, pinned handle."""
+        if ((parent is None) != (owner_name is None)
+                or (parent is not None and parent._native is not self)
+                or type(max_total_bytes) is not int or max_total_bytes < 0
+                or type(max_streams) is not int or max_streams < 0
+                or type(omit_endpointdlp) is not bool):
+            raise QuarantineFilesystemError('source stream inventory options are unsupported')
         before = self.snapshot(handle)
         buffer = ctypes.create_string_buffer(_MAX_STREAM_INFORMATION_BYTES)
         if not self.kernel32.GetFileInformationByHandleEx(handle, 7, buffer, len(buffer)):
@@ -504,6 +517,19 @@ class _Native:
                 raise QuarantineFilesystemError('source stream inventory is unavailable')
         else:
             streams = _parse_stream_information(buffer.raw, directory=directory)
+        if (len(streams) > max_streams
+                or sum(info.size for info in streams) > max_total_bytes):
+            raise QuarantineFilesystemError('source stream inventory exceeds its remaining bound')
+        if parent is not None and owner_name is not None:
+            owner_identity = before.identity
+            streams = tuple(
+                info if omit_endpointdlp and (info.name, info.stream_type) == ENDPOINTDLP_STREAM
+                else NamedStreamInfo(
+                    info.name, info.stream_type, info.size,
+                    _fingerprint_named_stream(self, parent, owner_name, owner_identity, info),
+                )
+                for info in streams
+            )
         if self.snapshot(handle) != before:
             raise QuarantineFilesystemError('source stream inventory changed during inspection')
         return streams
@@ -1316,6 +1342,29 @@ def require_ordinary_stream(path: Path, *, directory: bool) -> None:
                 raise QuarantineFilesystemError('source changed during stream inventory')
 
 
+def _fingerprint_named_stream(
+    native: _Native, parent: WindowsQuarantineDirectory, owner_name: str,
+    owner_identity: FileIdentity, info: NamedStreamInfo,
+) -> bytes:
+    name = f'{owner_name}:{info.name}:{info.stream_type}'
+    handle = native.create_or_open(
+        parent.handle, name, directory=False, create=False, access=native.GENERIC_READ,
+        source_stream=True,
+    )
+    try:
+        stream = WindowsQuarantineFile(native, parent, name, handle, private=False, source_stream=True)
+    except BaseException:
+        native.close(handle)
+        raise
+    with stream:
+        if stream.identity != owner_identity or stream.snapshot().size != info.size:
+            raise QuarantineFilesystemError('source stream identity or size changed')
+        data = stream.read(_MAX_NAMED_STREAM_BYTES)
+        if len(data) != info.size:
+            raise QuarantineFilesystemError('source stream size changed')
+        return hashlib.sha256(data).digest()
+
+
 def read_named_streams(
     path: Path, *, directory: bool, max_total_bytes: int = _MAX_NAMED_STREAM_TOTAL_BYTES,
     max_streams: int = _MAX_NAMED_STREAMS, omit_endpointdlp: bool = False,
@@ -1349,7 +1398,11 @@ def read_named_streams_with_snapshot(  # noqa: PLR0912 - pinned native handles a
             owner = stack.enter_context(parent.open_file(path.name, private=False))
         native = parent._native
         before = owner.snapshot()
-        inventory = native.named_streams(owner.handle, directory=directory)
+        inventory = native.named_streams(
+            owner.handle, directory=directory, parent=parent, owner_name=path.name,
+            max_total_bytes=max_total_bytes, max_streams=max_streams,
+            omit_endpointdlp=omit_endpointdlp,
+        )
         if len(inventory) > max_streams or sum(info.size for info in inventory) > max_total_bytes:
             raise QuarantineFilesystemError('source stream inventory exceeds its remaining bound')
         captured: list[NamedStreamData] = []
@@ -1374,8 +1427,14 @@ def read_named_streams_with_snapshot(  # noqa: PLR0912 - pinned native handles a
                 data = stream.read(_MAX_NAMED_STREAM_BYTES)
                 if len(data) != info.size:
                     raise QuarantineFilesystemError('source stream size changed')
+                if hashlib.sha256(data).digest() != info.fingerprint:
+                    raise QuarantineFilesystemError('source stream content changed')
                 captured.append(NamedStreamData(info.name, info.stream_type, data))
-        after = native.named_streams(owner.handle, directory=directory)
+        after = native.named_streams(
+            owner.handle, directory=directory, parent=parent, owner_name=path.name,
+            max_total_bytes=max_total_bytes, max_streams=max_streams,
+            omit_endpointdlp=omit_endpointdlp,
+        )
         def mandatory(values: tuple[NamedStreamInfo, ...]) -> set[NamedStreamInfo]:
             return {info for info in values
                     if not (omit_endpointdlp and (info.name, info.stream_type) == ENDPOINTDLP_STREAM)}

@@ -341,9 +341,9 @@ def test_native_read_refuses_stream_mutation_during_capture(tmp_path, monkeypatc
     original = fs._Native.named_streams
     called = False
 
-    def mutate_after_enumeration(native, handle, *, directory):
+    def mutate_after_enumeration(native, handle, *, directory, **kwargs):
         nonlocal called
-        result = original(native, handle, directory=directory)
+        result = original(native, handle, directory=directory, **kwargs)
         if not called:
             called = True
             if mutation == 'add':
@@ -354,7 +354,14 @@ def test_native_read_refuses_stream_mutation_during_capture(tmp_path, monkeypatc
                 stream.write_bytes(b'modified')
         return result
 
+    original_snapshot = fs._Native.snapshot
+
+    def stable_timestamps(native, handle):
+        snapshot = original_snapshot(native, handle)
+        return fs.FileSnapshot(snapshot.identity, snapshot.size, 1, 1)
+
     monkeypatch.setattr(fs._Native, 'named_streams', mutate_after_enumeration)
+    monkeypatch.setattr(fs._Native, 'snapshot', stable_timestamps)
     with pytest.raises(fs.QuarantineFilesystemError):
         fs.read_named_streams(owner, directory=False)
 

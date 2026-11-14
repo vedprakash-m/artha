@@ -18,8 +18,8 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if sys\\.platform == ['\"]win32['\"]",
     "if os\\.name == ['\"]nt['\"]",
-    "(?ms)^(?:@contextmanager\\n)?def _windows_[A-Za-z0-9_]+\\b.*?(?=^(?:@|def )|\\Z)",
-    "(?ms)^    (?:@contextmanager\\n    )?def _windows_[A-Za-z0-9_]+\\b.*?(?=^    (?:@|def )|^\\S|\\Z)",
-    "(?ms)^            with _windows_lock\\(handle, shared=shared\\):.*?(?=^        else:)",
-    "(?ms)^    def _(?:opened|publish|physical)_native\\b.*?(?=^    def |^\\S|\\Z)",
+    "(?ms:^(?:@contextmanager\\n)?def _windows_[A-Za-z0-9_]+\\b.*?(?=^(?:@|def )|\\Z))",
+    "(?ms:^    (?:@contextmanager\\n    )?def _windows_[A-Za-z0-9_]+\\b.*?(?=^    (?:@|def )|^\\S|\\Z))",
+    "(?ms:^            with _windows_lock\\(handle, shared=shared\\):.*?(?=^        else:))",
+    "(?ms:^    def _(?:opened|publish|physical)_native\\b.*?(?=^    def |^\\S|\\Z))",
 ]
