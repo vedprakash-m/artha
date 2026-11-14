@@ -308,6 +308,7 @@ def test_portable_inventory_checks_exact_bytes_and_identity(tmp_path, monkeypatc
     assert privacy._member_digest(member, 15) == expected
     assert privacy._hash_chunks(lambda _: pytest.fail('empty file read'), 0) == {
         'size': 0, 'sha256': hashlib.sha256(b'').hexdigest()}
+    before = member.stat()
     fstat = portable_os.fstat
     calls = 0
 
@@ -316,6 +317,7 @@ def test_portable_inventory_checks_exact_bytes_and_identity(tmp_path, monkeypatc
         calls += 1
         if calls == 2:
             member.write_bytes(b'changed content')
+            os.utime(member, ns=(before.st_atime_ns, before.st_mtime_ns + 10_000_000_000))
         return fstat(fd)
 
     monkeypatch.setattr(portable_os, 'fstat', mutate)
