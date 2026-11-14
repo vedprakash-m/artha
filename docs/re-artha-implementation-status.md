@@ -384,6 +384,61 @@ Work provider-account and synced-history retention reviews remain separate. Lost
 activation, arbitrary stream export and directory/root plaintext recovery retain their
 approved holds. No live enrollment, migration, restore, provider call or release occurred.
 
+## Original Windows/Work requirements audit — 2026-11-10
+
+The original WIN-1 through WIN-6 contract is **not fully accepted**. The earlier
+Windows engineering deliveries do not establish live native credential custody,
+current Work privacy, an actual recovery rehearsal or release acceptance.
+
+| Requirement | Implemented or observed | Remaining acceptance |
+|---|---|---|
+| WIN-1/2 | Native filesystem, encrypted quarantine, common review/export contracts, real process interruption and source-affinity controls are implemented. Windows Work publication preserves object identity, permissions and alternate streams. | Retain current native regression evidence and independently review the actual recovery outcome. |
+| WIN-3 | Synthetic credential separation/currentness controls are implemented. Owner-approved Work status found no enrollment; bounded source preview reached a native timestamp-change refusal. No existing key was installed or replaced. | Actual native credential-store/DPAPI observation, reviewed historical dependencies and independently current privacy continuity. A disposable native probe is prepared; it requires its own owner approval. |
+| WIN-4 | Work capture/recovery remains separate from Personal storage and authority. Historical content uses encrypted quarantine and current native Work authority. | Review and enroll the actual Work inventory, then separately approve and observe a bounded live Work recovery rehearsal. Unstable source metadata must first be resolved or reviewed; it is not silently ignored. |
+| WIN-5 | Common Windows contracts and supported writer fences are implemented. Native Python 3.11 writer/replay checks pass; the broader security run remains open. | Record its actual result against the exact source. Earlier whole-suite failures remain failed snapshots; no new full aggregate is inferred. |
+| WIN-6 | Local source hashes, synthetic outcomes and machine-local preview receipts are retained. | Exact live recovery/evaluation/release artifacts and owner acceptance. No signatures, passed outcomes, cutover or hosted CI results are fabricated. |
+
+The live audit exposed a concrete size-limit defect: primary-file history used an
+8 MiB per-file / 32 MiB aggregate buffered reader even though encrypted capture and
+quarantine support larger assets. The repair hashes through bounded 64 KiB native
+reads and validates existing inventory at 16 GiB per file / 64 GiB in total. Ordinary
+staged edits retain their 8 MiB / 32 MiB limits. Large existing files can be deleted
+or replaced with small values without buffering the old content. No format, source
+omission, automatic enrollment or relaxed identity/timestamp guard is introduced.
+
+Current-file core coverage is **93.70% lines / 89.16% branches**. Retained Windows
+coverage is reused only for 69 files verified byte-identical to the tested `c4ad036`
+cohort; the changed Work history file uses fresh coverage from **166 passed, 14 skipped**
+(one expensive unchanged archive case deselected). Changed production coverage is
+**64/65 lines (98.5%)**. This is source-verified coverage evidence, not a new full-suite
+pass. The earlier template-exclusion aggregate remains failed. The broad Python 3.11
+security run has also observed a native large-quarantine failure; that exact test
+passes when rerun alone, and the aggregate is not relabeled green.
+
+Native Python 3.11 writer/race selection passed **53 cases, two skipped**, with seven
+final replay-limit/successful-publication cases also passing. The public archive /
+encrypted-quarantine case passes on a synthetic file above the old 8 MiB limit.
+Final private producer verification passed with **1,114 source fingerprints, 24 private
+sources, zero State Files** and verified child cleanup. Private originals remain
+unchanged. Both Ruff passes, strict typing of 70 core files, generated-register checks,
+imports and the write-path ratchet passed. Large-asset recovery can be slow because
+current inventory is repeatedly verified; actual Work workload latency remains open.
+
+The affected archive/history/cache/publication selection passed **476 tests, 14 skipped**.
+Its narrow three-module combined coverage measured **84.37%**, failing that invocation's
+85% check. No failed coverage invocation is relabeled green. The independent core
+floors and changed-line gate above pass; the final replay-bound changes are covered by
+the fresh 166-case selection. Whole working-tree and exact staged privacy scans passed.
+Local code/test/manifest commit: `2ebcff4`; the active pre-commit hook passed. No push.
+
+The approved stream policy still withholds arbitrary plaintext stream export and
+directory/root reattachment. Ordinary-file exports also retain their existing
+`.md`/`.txt`/`.pdf`/`.csv` whitelist and 16 MiB bound; other primary formats remain
+encrypted in quarantine. Large-asset recovery proves encrypted preservation, not
+plaintext PowerPoint/image/video release. These intentional policies do not authorize
+an extra exporter as a shortcut to a 100% claim. Work remains unenrolled; no live backup,
+restore, migration, deletion, provider call, authority activation or push occurred.
+
 ## Final accountability privacy repair (Windows)
 
 The first accountability delivery is published as `f0f78cc` and `4fd0679`.

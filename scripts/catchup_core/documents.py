@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from catchup_core.ledger import PermissionDenied
+
 MAX_BYTES = 8 * 1024 * 1024
 MAX_PAGES = 40
 MAX_TEXT = 200_000
@@ -106,6 +108,7 @@ def extract_pdf(data: bytes, *, runner: Callable[..., Any] = subprocess.run, mod
     environment = {k: v for k, v in os.environ.items() if k in (
         "SYSTEMROOT", "WINDIR", "LANG", "TMPDIR", "TEMP", "TMP", "PYTHONHOME",
         "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH")}
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
     environment["ARTHA_NO_REEXEC"] = "1"
     try:
         process = runner(
@@ -123,7 +126,12 @@ def extract_pdf(data: bytes, *, runner: Callable[..., Any] = subprocess.run, mod
     return dict(json.loads(process.stdout))
 
 
+def _require_personal_document_admission() -> None:
+    raise PermissionDenied("personal document unavailable: source classification is not established")
+
+
 def ingest(path: Path, subject: str, ledger: Any, viewer: str, now: datetime) -> str:
+    _require_personal_document_admission()
     from catchup_core.backup import atomic_bytes  # noqa: PLC0415
     from catchup_core.ids import content_hmac  # noqa: PLC0415
     from catchup_core.policy import authorize_source  # noqa: PLC0415
@@ -151,6 +159,7 @@ def ingest(path: Path, subject: str, ledger: Any, viewer: str, now: datetime) ->
 
 
 def fetch_documents(ledger: Any, viewer: str) -> Any:
+    _require_personal_document_admission()
     from catchup_core.coordinator import ConnectorFetch, ConnectorRecord  # noqa: PLC0415
     from catchup_core.policy import authorize_source  # noqa: PLC0415
 

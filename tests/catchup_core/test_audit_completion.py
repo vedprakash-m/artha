@@ -20,6 +20,8 @@ from catchup_core.scorecard import Case, score
 from test_coordinator import CIPHER, NOW, PACK, cal, email, req
 import test_coordinator
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 
 @pytest.fixture
 def world(tmp_path):
@@ -160,6 +162,7 @@ def test_nonpilot_review_obligation_prevents_quiet_claim(world, tmp_path):
 
 def test_document_identity_is_bound_to_subject(world, tmp_path, monkeypatch):
     led, _, _, _ = world
+    monkeypatch.setattr(documents, "_require_personal_document_admission", lambda: None)
     monkeypatch.setattr(documents, 'extract_pdf', lambda _: {'pages': ['Synthetic notice'], 'complete': True})
     source = tmp_path / 'input.pdf'
     source.write_bytes(b'%PDF-synthetic')

@@ -37,7 +37,18 @@ LIMITATIONS = (
 
 
 def setup(runner: h.ScratchRunner) -> None:
+    state = runner.root / "state"
+    (state / "goals.md").write_text("---\ngoals: []\nsprints: []\n---\n", encoding="utf-8")
+    (state / "open_items.md").write_text("", encoding="utf-8")
     runner.seed(h.seed_school_fact)
+
+    def admit_empty_state(deps) -> None:
+        from catchup_core.curated import read_authorized_state
+
+        for name in ("goals", "open_items"):
+            read_authorized_state(state, name, deps.ledger, deps.viewer, deps.subjects)
+
+    runner.seed(admit_empty_state)
 
 
 def _digest(path: Path) -> str:
@@ -60,7 +71,7 @@ def scenario(runner, report: h.Report) -> None:
                and "stale" in o.data["freshness"])
     for command, key in (("history", "briefings"), ("items", "items"), ("goals", "goals")):
         h.run_step(runner, report, [command, h.SHADOW],
-                   f"{command} answers with a list, even on first use" + (
+                   f"{command} answers with a list for an available empty State File" + (
                        " (live: or names the missing scoped consent)" if runner.live else ""),
                    list_check(key, live=runner.live))
     before = _digest(config)

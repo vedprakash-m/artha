@@ -7,7 +7,7 @@ Commands, in order:
   cli mcp  tools/call propose_correction <fact> <value> read  draft only (applied: false)
   beliefs --shadow                                      read  the Fact is unchanged after the proposal
   cli mcp  tools/call propose_feedback                  read  draft only (applied: false)
-  cli mcp  tools/call beliefs {viewer: ...}             read  refused: unknown argument
+  cli mcp  tools/call beliefs {viewer: ...}             read  refused: invalid arguments
   cli mcp  tools/call forget                            read  refused: unknown tool (-32602)
   beliefs --shadow --actor uat-other-person             read  refused: actor is not the configured viewer
   beliefs --shadow --subject adult1                     scratch-only  consent-required person shows nothing
@@ -83,8 +83,8 @@ def scenario(runner, report: h.Report) -> None:  # noqa: PLR0915
     report.check("cli mcp: tools/call propose_feedback", "returns a draft; applied is false",
                  payload, not error and payload.get("applied") is False)
     error, payload = h.tool_payload(by_id.get(6, {}))
-    report.check("cli mcp: tools/call beliefs {viewer}", "a caller cannot choose the viewer: unknown argument",
-                 payload, error and "unknown argument" in str(payload))
+    report.check("cli mcp: tools/call beliefs {viewer}", "a caller cannot choose the viewer: invalid arguments",
+                 payload, error and payload == {"error": "invalid arguments"})
     forget = by_id.get(7, {})
     report.check("cli mcp: tools/call forget", "no write tool exists: JSON-RPC error -32602",
                  forget, forget.get("error", {}).get("code") == -32602)

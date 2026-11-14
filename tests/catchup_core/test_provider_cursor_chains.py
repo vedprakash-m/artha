@@ -17,6 +17,8 @@ from catchup_core import coordinator as co
 from catchup_core import runtime
 from catchup_core.contracts import FailureClass, RunStatus
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 GRAPH = 'https://graph.microsoft.com/v1.0'
 
 
@@ -28,8 +30,10 @@ def _http(status):
 
 @pytest.fixture
 def run_source(env, monkeypatch, tmp_path):  # noqa: F811
-    """run(handler_module, connector, kwargs, cid) through the real runtime fetcher."""
+    """Run provider-path tests with synthetic source admission through the real adapter."""
     import lib.retry as retry
+    from catchup_core.adapters import fetch_via_handler
+
     ledger, _, make, _ = env
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'local'))
     monkeypatch.setattr(retry, 'with_retry', lambda fn, **kw: fn())
@@ -38,10 +42,18 @@ def run_source(env, monkeypatch, tmp_path):  # noqa: F811
         config = SimpleNamespace(sources={'calendar': {'connector': connector, 'account_scope': 'acct-a',
             'subjects': ['kid1'], 'kwargs': dict(kwargs)}}, subjects=['kid1'], consent_required=frozenset(),
             viewer='ved')
-        fetchers = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda name: module,
-                                          lambda name: {'access_token': 'synthetic-token', 'apple_id': 'a@example.test',
-                                                        'app_password': 'synthetic'}, {'calendar': True}, ledger)
-        return co.run_catchup(req(cid), make({'calendar': fetchers['calendar']}))
+        fetch_kwargs = dict(config.sources['calendar']['kwargs'])
+        sync_scope = getattr(module, 'SYNC_TOKEN_SCOPE', None) or (
+            'configured_calendars' if connector == 'google_calendar' else None)
+        if sync_scope is not None and fetch_kwargs.get('sync_changes') is True:
+            cursor = ledger.get_cursor('calendar', 'acct-a')
+            if cursor:
+                fetch_kwargs.update(runtime._cursor_kwargs(sync_scope, cursor, fetch_kwargs))
+        auth = {'access_token': 'synthetic-token', 'apple_id': 'a@example.test', 'app_password': 'synthetic'}
+        fetcher = lambda: fetch_via_handler(
+            'calendar', 'acct-a', module.fetch, since='2026-10-01T00:00:00Z', auth_context=auth,
+            fetch_kwargs=fetch_kwargs, required=True)
+        return co.run_catchup(req(cid), make({'calendar': fetcher}))
     return ledger, run
 
 
@@ -1062,49 +1074,42 @@ def test_imap_sync_option_validation():
 
 # ── Runtime hand-off of committed cursors ────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize(('scope', 'cursor', 'expected_kw', 'expected'), [
-    ('mailbox', '{"opaque":true}', 'sync_cursor', '{"opaque":true}'),
-    ('discovered_calendars', json.dumps({'version': 1, 'collections': {'https://x/y/': 'tok'}}), 'sync_tokens',
-     {'https://x/y/': 'tok'}),
-    ('configured_calendars', json.dumps({'version': 1, 'collections': {'cal1': 'tok'}}), 'sync_tokens',
-     {'cal1': 'tok'}),
-])
-def test_runtime_hands_each_handler_kind_its_committed_cursor(env, scope, cursor, expected_kw, expected):  # noqa: F811
+def test_runtime_keeps_sources_unavailable_until_classification_is_established(env):  # noqa: F811
     ledger, _, _, _ = env
-    ledger.set_coverage('src', 'acct-a', 'complete', cursor_generation=cursor)
     calls = []
-    handler = SimpleNamespace(SYNC_TOKEN_SCOPE=scope, fetch=lambda **kw: (calls.append(kw), iter(()))[1])
+    handler = SimpleNamespace(fetch=lambda **kw: (calls.append(('fetch', kw)), iter(()))[1])
     config = SimpleNamespace(sources={'src': {'connector': 'whatever', 'account_scope': 'acct-a', 'subjects': ['kid1'],
         'kwargs': {'sync_changes': True, 'calendar_ids': ['cal1']}}}, subjects=['kid1'],
         consent_required=frozenset(), viewer='ved')
-    fetchers = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda name: handler, lambda name: {},
-                                      {'src': True}, ledger)
-    fetchers['src']()
-    assert calls[0][expected_kw] == expected
+    fetchers = runtime.build_fetchers(
+        config, '2026-10-01T00:00:00Z', lambda name: calls.append(('load', name)) or handler,
+        lambda name: calls.append(('auth', name)) or {}, {'src': True}, ledger)
+    result = fetchers['src']()
+    assert result.status.value == 'unavailable'
+    assert 'personal source classification unavailable' in result.blind_spots
+    assert calls == []
 
 
-def test_runtime_rejects_a_collection_cursor_for_an_unconfigured_calendar_only_when_calendars_are_configured(env):  # noqa: F811
+def test_runtime_keeps_sources_unavailable_even_with_an_invalid_cursor(env):  # noqa: F811
     ledger, _, _, _ = env
     ledger.set_coverage('src', 'acct-a', 'complete',
                         cursor_generation=json.dumps({'version': 1, 'collections': {'other': 'tok'}}))
-    handler = SimpleNamespace(SYNC_TOKEN_SCOPE='configured_calendars', fetch=lambda **kw: iter(()))
     config = SimpleNamespace(sources={'src': {'connector': 'c', 'account_scope': 'acct-a', 'subjects': ['kid1'],
         'kwargs': {'sync_changes': True, 'calendar_ids': ['cal1']}}}, subjects=['kid1'],
         consent_required=frozenset(), viewer='ved')
-    result = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda n: handler, lambda n: {}, {'src': True},
-                                    ledger)['src']()
-    assert 'collection cursor requires explicit reset' in result.blind_spots
+    result = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda n: pytest.fail('handler must not load'),
+                                    lambda n: pytest.fail('auth must not load'), {'src': True}, ledger)['src']()
+    assert 'personal source classification unavailable' in result.blind_spots
 
 
-def test_runtime_does_not_hand_a_cursor_to_a_source_that_has_not_opted_in(env):  # noqa: F811
+def test_runtime_does_not_load_a_handler_for_an_unclassified_source(env):  # noqa: F811
     ledger, _, _, _ = env
     ledger.set_coverage('src', 'acct-a', 'complete', cursor_generation='{"opaque":true}')
-    calls = []
-    handler = SimpleNamespace(SYNC_TOKEN_SCOPE='mailbox', fetch=lambda **kw: (calls.append(kw), iter(()))[1])
     config = SimpleNamespace(sources={'src': {'connector': 'c', 'account_scope': 'acct-a', 'subjects': ['kid1'],
         'kwargs': {}}}, subjects=['kid1'], consent_required=frozenset(), viewer='ved')
-    runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda n: handler, lambda n: {}, {'src': True}, ledger)['src']()
-    assert 'sync_cursor' not in calls[0] and 'sync_tokens' not in calls[0]
+    result = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda n: pytest.fail('handler must not load'),
+                                    lambda n: pytest.fail('auth must not load'), {'src': True}, ledger)['src']()
+    assert result.status.value == 'unavailable'
 
 
 def test_caldav_cursor_without_a_timezone_or_with_bad_members_is_unusable(dav_run):

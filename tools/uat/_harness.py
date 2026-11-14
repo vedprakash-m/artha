@@ -25,6 +25,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from contextlib import ExitStack, contextmanager
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -114,7 +115,7 @@ SCRATCH_CONFIG = {
 
 
 class ScratchRunner:
-    """Synthetic workspace: ``<tmp>/repo`` (config, state) and ``<tmp>/private`` (ledgers; keys held in memory)."""
+    """Synthetic workspace with test-only scope admission; no live data or keyring access."""
 
     live = False
 
@@ -129,6 +130,65 @@ class ScratchRunner:
         self.environ = {"ARTHA_LOCAL_DIR": str(self.private)}
         self.keyring = FakeKeyring()
         self.allow_local_writes = True
+
+    @contextmanager
+    def synthetic_scope(self):
+        """Admit only this scratch run's synthetic records for downstream UAT checks."""
+        from catchup_core import commands, corpus, curated, documents, fact_access, field_confirmation, ids  # noqa: PLC0415
+        from catchup_core.ledger import Ledger  # noqa: PLC0415
+        from unittest.mock import patch  # noqa: PLC0415
+
+        def bind_synthetic_fact(self, db, fact_id, version, content_hmac, _provenance):
+            self._record_personal_binding(
+                db, "fact", fact_id, version, "ledger", self._owner, content_hmac)
+            self._record_personal_binding(
+                db, "fact_version", fact_id, version, "ledger", self._owner, content_hmac)
+
+        upsert_signal = Ledger.upsert_signal
+
+        def upsert_reviewed_signal(self, signal):
+            signal_id, created = upsert_signal(self, signal)
+            row = self.signal_row(signal_id)
+            if not self._has_personal_binding(
+                "signal", signal_id, row["upstream_version"], row["connector"],
+                row["account_scope"], row["content_hmac"],
+            ):
+                with self.transaction() as db:
+                    self._record_personal_binding(
+                        db, "signal", signal_id, row["upstream_version"], row["connector"],
+                        row["account_scope"], row["content_hmac"], provenance="source_review")
+            return signal_id, created
+
+        def identity(directory, name, ledger):
+            path = directory / f"{name}.md"
+            info = path.lstat()
+            version = f"{info.st_dev}:{info.st_ino}:{info.st_size}:{info.st_mtime_ns}"
+            digest = ids.content_hmac(ledger._id_key, version)
+            if not ledger._has_personal_binding("curated", name, version, "state", ledger._owner, digest):
+                with ledger.transaction() as db:
+                    ledger._record_personal_binding(
+                        db, "curated", name, version, "state", ledger._owner, digest,
+                        provenance="source_review")
+            return path, version, digest
+
+        with ExitStack() as stack:
+            for method in (
+                "require_personal_connector_admission",
+                "require_personal_signal_admission",
+                "require_personal_fact_admission",
+                "require_personal_calendar_admission",
+            ):
+                stack.enter_context(patch.object(Ledger, method, lambda self: None))
+            stack.enter_context(patch.object(Ledger, "protect_legacy_values", lambda self: 0))
+            stack.enter_context(patch.object(Ledger, "_bind_fact_after_write", bind_synthetic_fact))
+            stack.enter_context(patch.object(Ledger, "upsert_signal", upsert_reviewed_signal))
+            stack.enter_context(patch.object(curated, "_personal_state_identity", identity))
+            stack.enter_context(patch.object(documents, "_require_personal_document_admission", lambda: None))
+            stack.enter_context(patch.object(fact_access, "require_documentary_scope", lambda: None))
+            stack.enter_context(patch.object(field_confirmation, "require_documentary_scope", lambda: None))
+            stack.enter_context(patch.object(corpus, "_require_personal_corpus_admission", lambda: None))
+            stack.enter_context(patch.object(commands, "_require_personal_snapshot_admission", lambda: None))
+            yield
 
     def _request(self, mode: str, actor: str | None = None) -> Any:
         from catchup_core.contracts import CatchupRequest, ExecutionMode  # noqa: PLC0415
@@ -286,10 +346,13 @@ def main(requirement: str, title: str, scenario: Scenario, argv: Sequence[str] |
     report.limitations.extend(limitations)
     try:
         if base is not None:
-            runner.initialise()
-            if setup is not None:
-                setup(runner)
-        scenario(runner, report)
+            with runner.synthetic_scope():
+                runner.initialise()
+                if setup is not None:
+                    setup(runner)
+                scenario(runner, report)
+        else:
+            scenario(runner, report)
     except Exception as exc:  # noqa: BLE001 - a crash is a failed step in the report, not a traceback
         report.check("(scenario)", "completes", f"{type(exc).__name__}: {exc}", False)
     finally:

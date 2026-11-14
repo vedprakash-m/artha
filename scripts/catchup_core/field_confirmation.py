@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from catchup_core import ids
 from catchup_core.contracts import FactStatus, Provenance
+from catchup_core.fact_access import require_documentary_scope
 from catchup_core.ledger import Ledger, LedgerError, PermissionDenied
 from catchup_core.policy import authorize_source
 
@@ -92,6 +93,7 @@ class FieldReviewStore:
         self.source_text = source_text
 
     def _current(self, binding: FieldBinding) -> str:
+        require_documentary_scope()
         led = self.ledger
         if self.viewer != led._owner:
             raise PermissionDenied("only the configured owner may review documentary fields")
@@ -164,6 +166,7 @@ class FieldReviewStore:
             ["document-field-review-v1", identity, self.viewer, stamp, generation, revision, scope]))
 
     def _requirement(self, binding: FieldBinding) -> tuple[str, int]:
+        require_documentary_scope()
         identity = self._identity(binding)
         row = self.ledger.conn.execute("SELECT * FROM document_field_requirements WHERE binding_id=?",
                                        (identity,)).fetchone()
@@ -179,6 +182,7 @@ class FieldReviewStore:
         return identity, int(row["revision"])
 
     def _confirmation(self, identity: str, revision: int) -> dict[str, Any] | None:
+        require_documentary_scope()
         row = self.ledger.conn.execute("SELECT * FROM document_field_confirmations WHERE binding_id=?",
                                        (identity,)).fetchone()
         if row is None:
@@ -265,6 +269,7 @@ class FieldReviewStore:
 
     def _link(self, binding: FieldBinding, identity: str, state: str) -> None:
         from catchup_core.fact_access import document_link_proof  # noqa: PLC0415
+        require_documentary_scope()
         db = self.ledger.conn
         fact = db.execute('SELECT * FROM facts WHERE fact_id=?', (binding.fact_id,)).fetchone()
         if fact is None or fact['provenance_class'] == 'user_confirmed':
@@ -295,6 +300,7 @@ class FieldReviewStore:
         return {name: payload[name] for name in ("binding_id", "receipt", "state", "recorded_at")}
 
     def verified(self, binding: FieldBinding) -> bool:
+        require_documentary_scope()
         try:
             self._text(binding)
             db = self.ledger.conn
@@ -314,6 +320,7 @@ class FieldReviewStore:
 
 
 def field_command(args: Namespace, deps: Deps) -> dict[str, Any]:
+    require_documentary_scope()
     deps.validate_inputs()
     if deps.viewer != deps.ledger._owner:
         raise PermissionDenied('only the configured owner may review documentary fields')

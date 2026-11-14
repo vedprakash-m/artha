@@ -91,7 +91,9 @@ def test_results_are_inert_bounded_and_errors_leak_nothing():
 
     def huge(_name, _args):
         return {f"k{i}": "x" * 4000 for i in range(40)}            # each string is capped at 4,000; the total is capped too
-    assert payload(call(huge, "beliefs"))["truncated"] is True
+    response = call(huge, "beliefs")
+    assert response["result"]["isError"] is True
+    assert payload(response) == {"error": "result exceeds the configured limit"}
     single = payload(call(lambda *_a: {"blob": "x" * 200_000}, "beliefs"))["blob"]
     assert len(single) <= 4000                                          # one value can never dominate
 

@@ -133,16 +133,16 @@ class TestMainLeadingFlag:
 
     def test_leading_flag_calls_format_leading(self, tmp_path, monkeypatch):
         goals_file = self._make_goals_md(tmp_path)
-        monkeypatch.setattr(gv, "_GOALS_FILE", goals_file)
+        monkeypatch.setattr(gv, "_WORK_GOALS_FILE", goals_file)
         monkeypatch.setattr(gv, "_WORK_STATE_DIR", tmp_path / "state" / "work")
         with patch.object(gv, "_REFLECT_READER_AVAILABLE", False), \
-             patch("sys.argv", ["goals_view.py", "--leading"]):
+             patch("sys.argv", ["goals_view.py", "--leading", "--scope", "work"]):
             exit_code = gv.main()
         assert exit_code == 0
 
     def test_no_leading_flag_uses_format(self, tmp_path, monkeypatch):
         goals_file = self._make_goals_md(tmp_path)
-        monkeypatch.setattr(gv, "_GOALS_FILE", goals_file)
-        with patch("sys.argv", ["goals_view.py", "--format", "flash"]):
+        monkeypatch.setattr(gv, "_WORK_GOALS_FILE", goals_file)
+        with patch("sys.argv", ["goals_view.py", "--format", "flash", "--scope", "work"]):
             exit_code = gv.main()
         assert exit_code == 0

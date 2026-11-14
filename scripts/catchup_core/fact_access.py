@@ -1,7 +1,7 @@
-"""Value-free Fact authorization shared by the Ledger and the scoped action worker.
+"""Fact metadata authorization and documentary state resolution.
 
-These helpers grant no database authority: callers must establish their own trusted
-connection, resolved household policy and current privacy checkpoint first.
+The caller must supply a trusted Ledger using the same connection. Documentary
+state resolution can read bound Fact and evidence payloads while checking a receipt.
 """
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from catchup_core.ledger import Ledger
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,11 @@ class FactMetadata:
     validity_unknown: bool
     observed_at: str
     recorded_at: str
+
+
+def require_documentary_scope() -> None:
+    from catchup_core.ledger import PersonalScopeUnavailable  # noqa: PLC0415
+    raise PersonalScopeUnavailable('documentary scope unavailable')
 
 
 def consent_active(conn: sqlite3.Connection, policy: AccessPolicy, subject: str, operation: str,
@@ -96,14 +104,25 @@ def may_view(conn: sqlite3.Connection, policy: AccessPolicy, row: sqlite3.Row, v
 
 
 def require_metadata(conn: sqlite3.Connection, policy: AccessPolicy, fact_id: str, viewer: str,
-                     now: str, *, operation: str = 'view', source_operation: bool = False) -> FactMetadata:
-    """Authorize metadata without selecting or decrypting any source value."""
-    from catchup_core.ledger import LedgerError, PermissionDenied  # noqa: PLC0415
+                     now: str, *, operation: str = 'view', source_operation: bool = False,
+                     authority: Ledger | None = None) -> FactMetadata:
+    """Authorize metadata using the Ledger's policy, clock, and scope bindings."""
+    from catchup_core.ledger import Ledger, LedgerError, PermissionDenied  # noqa: PLC0415
+    if not isinstance(authority, Ledger) or authority.conn is not conn:
+        raise PermissionDenied('personal scope unavailable')
+    policy = AccessPolicy(authority._owner, authority._consent_subjects, authority._known_subjects)
+    now = authority._clock()
+    source_operation = source_operation or operation in ('export', 'emergency')
+    scope = conn.execute('SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?', (fact_id,)).fetchone()
+    if scope is None:
+        raise LedgerError(f'unknown Fact {fact_id}')
+    authority._require_personal_fact_version(
+        fact_id, str(scope['recorded_at']), str(scope['scope_hmac'] or ''), 'fact_evidence')
     row = conn.execute('SELECT fact_id,domain,primary_subject_id,status,provenance_class,'
                        'valid_from,valid_to,validity_unknown,'
                        'observed_at,recorded_at FROM facts WHERE fact_id=?', (fact_id,)).fetchone()
     if row is None:
-        raise LedgerError(f'unknown fact {fact_id}')
+        raise LedgerError(f'unknown Fact {fact_id}')
     if not may_view(conn, policy, row, viewer, now):
         raise PermissionDenied(f'{viewer} may not view {fact_id}')
     subjects = subjects_for(conn, row)
@@ -113,12 +132,20 @@ def require_metadata(conn: sqlite3.Connection, policy: AccessPolicy, fact_id: st
     if source_operation and not sources_allowed(conn, policy, fact_id, subjects, viewer, operation, now):
         raise PermissionDenied(f'{operation} requires source-scoped consent')
     values: dict[str, Any] = dict(row)
-    values['status'], values['provenance_class'] = document_fact_state(conn, policy, row, now)
+    values['status'], values['provenance_class'] = document_fact_state(conn, policy, row, now, authority)
+    current_scope = conn.execute('SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?',
+                                 (fact_id,)).fetchone()
+    if (current_scope is None or row['recorded_at'] != scope['recorded_at']
+            or tuple(current_scope) != tuple(scope)):
+        raise PermissionDenied('personal scope changed during retrieval')
+    authority._require_personal_fact_version(
+        fact_id, str(scope['recorded_at']), str(scope['scope_hmac'] or ''), 'fact_evidence')
     values['validity_unknown'] = bool(values['validity_unknown'])
     return FactMetadata(**values)
 
 
 def document_link_proof(conn: sqlite3.Connection, link: dict[str, Any]) -> str:
+    require_documentary_scope()
     material: list[Any] = [{name: value for name, value in link.items() if name != 'proof'}]
     queries = (
         ('SELECT * FROM facts WHERE fact_id=?', link['fact_id']),
@@ -140,7 +167,7 @@ def document_link_proof(conn: sqlite3.Connection, link: dict[str, Any]) -> str:
 
 
 def document_fact_state(conn: sqlite3.Connection, policy: AccessPolicy, row: sqlite3.Row,  # noqa: PLR0912
-                        now: str) -> tuple[str, str]:
+                        now: str, authority: Ledger) -> tuple[str, str]:
     status, provenance = str(row['status']), str(row['provenance_class'])
     if provenance == 'user_confirmed' or status not in ('current', 'unknown'):
         return status, provenance
@@ -155,13 +182,23 @@ def document_fact_state(conn: sqlite3.Connection, policy: AccessPolicy, row: sql
                                     (source[0],)).fetchone() for source in documents)
     if not marked and not uncertain:
         return status, provenance
+    require_documentary_scope()
     for found in conn.execute('SELECT * FROM document_field_links WHERE fact_id=?', (fact_id,)):
         link = dict(found)
-        source = conn.execute('SELECT * FROM signals WHERE signal_id=?', (link['signal_id'],)).fetchone()
+        requirement = conn.execute('SELECT fact_id,signal_id FROM document_field_requirements WHERE binding_id=?',
+                                   (link['binding_id'],)).fetchone()
         receipt = conn.execute('SELECT state,signal_id FROM document_field_confirmations WHERE binding_id=?',
                                (link['binding_id'],)).fetchone()
-        if (source is None or receipt is None or receipt['state'] != 'confirmed'
-                or receipt['signal_id'] != link['signal_id'] or source['connector'] != 'documents'
+        if (requirement is None or requirement['fact_id'] != fact_id
+                or requirement['signal_id'] != link['signal_id']
+                or receipt is None or receipt['state'] != 'confirmed' or receipt['signal_id'] != link['signal_id']
+                or not conn.execute('SELECT 1 FROM fact_evidence WHERE fact_id=? AND signal_id=? '
+                                    'AND span_start=? AND span_end=?', (fact_id, link['signal_id'],
+                                     link['span_start'], link['span_end'])).fetchone()):
+            continue
+        authority.require_personal_signal(str(link['signal_id']), allow_obsolete=True)
+        source = conn.execute('SELECT * FROM signals WHERE signal_id=?', (link['signal_id'],)).fetchone()
+        if (source is None or source['connector'] != 'documents'
                 or source['processing_state'] == 'excluded' or source['span_unit'] != 'utf8-byte'
                 or not source['evidence_blob_ref'] or link['reviewer'] != policy.owner
                 or link['fact_version'] != row['recorded_at'] or link['domain'] != row['domain']
@@ -171,10 +208,6 @@ def document_fact_state(conn: sqlite3.Connection, policy: AccessPolicy, row: sql
             continue
         if not conn.execute('SELECT 1 FROM source_heads WHERE signal_id=? AND complete=1',
                             (link['signal_id'],)).fetchone():
-            continue
-        if not conn.execute('SELECT 1 FROM fact_evidence WHERE fact_id=? AND signal_id=? '
-                            'AND span_start=? AND span_end=?', (fact_id, link['signal_id'],
-                             link['span_start'], link['span_end'])).fetchone():
             continue
         attribution = conn.execute('SELECT subjects FROM signal_access WHERE signal_id=?',
                                    (link['signal_id'],)).fetchone()

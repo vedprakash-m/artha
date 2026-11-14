@@ -35,7 +35,74 @@ def pdf(text="Registration closes 2026-10-14"):
     return out.getvalue()
 
 
-def test_real_text_pdf_is_grounded_to_page_without_plaintext_output(tmp_path):
+@pytest.fixture
+def admitted_personal_documents(monkeypatch):
+    monkeypatch.setattr(documents, "_require_personal_document_admission", lambda: None)
+
+
+def test_unclassified_document_ingest_stops_before_file_access(tmp_path, monkeypatch):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-synthetic document")
+    accesses = []
+    real_stat, real_read = Path.stat, Path.read_bytes
+
+    def stat(path, *args, **kwargs):
+        if path == source:
+            accesses.append("stat")
+        return real_stat(path, *args, **kwargs)
+
+    def read(path):
+        if path == source:
+            accesses.append("read")
+        return real_read(path)
+
+    def extract(data):
+        accesses.append("extract")
+        return {"pages": ["synthetic"], "complete": True}
+
+    with lg.Ledger(tmp_path / "runtime" / "ledger.db", id_key=KEY, cipher=CIPHER,
+                   known_subjects=frozenset({"owner"})).open() as led:
+        led.migrate()
+        monkeypatch.setattr(Path, "stat", stat)
+        monkeypatch.setattr(Path, "read_bytes", read)
+        monkeypatch.setattr(documents, "extract_pdf", extract)
+        with pytest.raises(lg.PermissionDenied, match="personal document"):
+            documents.ingest(source, "owner", led, "owner", NOW)
+        assert accesses == []
+        assert not (led._path.parent / "documents").exists()
+
+
+def test_unclassified_saved_document_stops_before_read_or_decrypt(tmp_path, monkeypatch):
+    import json
+
+    directory = tmp_path / "documents"
+    directory.mkdir()
+    source = directory / "doc_synthetic.ae1"
+    payload = {"subject": "owner", "complete": True, "pages": ["synthetic"]}
+    source.write_bytes(CIPHER.encrypt(json.dumps(payload).encode(), aad=b"doc_synthetic")[0])
+    accesses = []
+    real_read = Path.read_bytes
+
+    def read(path):
+        if path == source:
+            accesses.append("read")
+        return real_read(path)
+
+    class TrackedCipher:
+        def decrypt(self, data, *, aad):
+            accesses.append("decrypt")
+            return CIPHER.decrypt(data, aad=aad)
+
+    with lg.Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER).open() as led:
+        led.migrate()
+        led._cipher = TrackedCipher()
+        monkeypatch.setattr(Path, "read_bytes", read)
+        with pytest.raises(lg.PermissionDenied, match="personal document"):
+            documents.fetch_documents(led, "owner")
+        assert accesses == []
+
+
+def test_real_text_pdf_is_grounded_to_page_without_plaintext_output(tmp_path, admitted_personal_documents):
     data = pdf()
     assert "2026-10-14" in documents.extract_pdf(data)["pages"][0]
     path = tmp_path / "source.pdf"
@@ -73,7 +140,9 @@ def test_method_is_worker_context_not_an_ocr_marker():
 @pytest.mark.parametrize("metadata,expected", [({}, "unknown"), ({"page_methods": ["ocr"]}, "ocr"),
     ({"page_methods": ["text"]}, "text"), ({"page_methods": ["forged"]}, "unknown"),
     ({"page_methods": "text"}, "unknown")])
-def test_fetch_transports_explicit_method_and_legacy_is_unknown(tmp_path, metadata, expected):
+def test_fetch_transports_explicit_method_and_legacy_is_unknown(
+    tmp_path, metadata, expected, admitted_personal_documents
+):
     import json
     with lg.Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER) as led:
         led.migrate()

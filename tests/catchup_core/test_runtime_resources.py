@@ -34,8 +34,7 @@ def builder(tmp_path, monkeypatch):
         ledger.close()
 
 
-@pytest.mark.parametrize('target', ['build_fetchers', '_bundle_fetchers', '_implementation_fingerprint',
-                                    'LegacyStateAdapter', 'command_extractor', '_default_loaders'])
+@pytest.mark.parametrize('target', ['build_fetchers', '_implementation_fingerprint', 'command_extractor'])
 @pytest.mark.parametrize('error', [OSError, KeyboardInterrupt])
 def test_actual_builder_closes_open_ledger_after_a_wiring_failure(builder, monkeypatch, target, error):
     build, opened = builder

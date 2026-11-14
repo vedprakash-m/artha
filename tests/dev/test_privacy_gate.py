@@ -317,6 +317,43 @@ def privacy_scanner(monkeypatch):
     return privacy_scan
 
 
+def test_gitleaks_retries_windows_access_violation_once(monkeypatch, tmp_path, privacy_scanner):
+    results = iter([0xC0000005, 0])
+    calls = []
+
+    def scanner(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, next(results), "[]", "")
+
+    monkeypatch.setattr(privacy_scanner.subprocess, "run", scanner)
+    findings = privacy_scanner.run_gitleaks(
+        tmp_path, binary=sys.executable, content=b"selected bytes", path="selected.py",
+        config=tmp_path / ".gitleaks.toml",
+    )
+
+    assert findings == []
+    assert len(calls) == 2
+    assert calls[0] == calls[1]
+
+
+def test_gitleaks_repeated_windows_access_violation_fails_closed(monkeypatch, tmp_path, privacy_scanner):
+    calls = []
+
+    def scanner(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0xC0000005, "", "")
+
+    monkeypatch.setattr(privacy_scanner.subprocess, "run", scanner)
+    findings = privacy_scanner.run_gitleaks(
+        tmp_path, binary=sys.executable, content=b"selected bytes", path="selected.py",
+        config=tmp_path / ".gitleaks.toml",
+    )
+
+    assert len(calls) == 2
+    assert len(findings) == 1
+    assert "scanner error (exit 3221225477)" in findings[0].reason
+
+
 @pytest.mark.parametrize("mode", ["staged", "staged-repeat", "range"])
 def test_unreadable_git_blob_fails_closed(sandbox, monkeypatch, privacy_scanner, mode):
     sandbox.write("docs/selected.md", "synthetic content\n")
@@ -466,7 +503,7 @@ def test_tracked_scan_gitleaks_receives_selected_bytes_only(sandbox, monkeypatch
         calls.append(kwargs["input"])
         assert args[1] == "stdin"
         assert kwargs.get("text", False) is False
-        assert "-c" in args and "-r" in args and args[args.index("-r") + 1] == "-"
+        assert "--report-path=-" in args and f"--config={sandbox.root / '.gitleaks.toml'}" in args
         if kwargs["input"] == raw:
             return subprocess.CompletedProcess(args, 1, b'[{"File":"stdin","RuleID":"canary"}]', b"")
         return subprocess.CompletedProcess(args, 0, b"[]", b"")

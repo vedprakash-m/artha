@@ -423,6 +423,13 @@ def _fetch_one(
             source_tag=source_tag,
             **extra_kwargs,
         ):
+            # Calendar deletion tombstones carry only an id (no start); they are not
+            # malformed events. Skip them as catchup_core.adapters does; id-less ones still
+            # fail. Full cancelled events (with start) keep flowing through validation.
+            if (isinstance(record, dict) and record.get("status") == "cancelled"
+                    and not record.get("start")
+                    and isinstance(record.get("id"), str) and record["id"].strip()):
+                continue
             # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
             # Malformed records are SKIPPED with a WARNING (never crash pipeline).
             try:

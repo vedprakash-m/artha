@@ -45,17 +45,14 @@ from typing import Any
 import yaml
 
 from catchup_core import core_items, ids, reminders, yaml_cache
-from catchup_core.adapters import fetch_via_handler
-from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
+from catchup_core.backup import atomic_bytes, database_bytes
 from catchup_core.blobs import EncryptedBlobStore
 from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode, FailureClass
-from catchup_core.coordinator import ConnectorFetch, ConnectorRecord, ContextLines, Deps
+from catchup_core.coordinator import ConnectorFetch, ContextLines, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, system_keyring
 from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
 from catchup_core.exchange import ExchangeExtractor
-from catchup_core.incumbent import GuardedIncumbent
 from catchup_core.ledger import FactView, KeyringSealedStore, Ledger, LedgerError, PermissionDenied
-from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.policy import (
     ReleaseEvidenceGuard,
     authorize_source,
@@ -223,60 +220,19 @@ def _cursor_kwargs(scope: str, cursor: str, fetch_kwargs: Mapping[str, Any]) -> 
 def build_fetchers(
     config: RuntimeConfig,
     since: str,
-    handler_loader: Callable[[str], Any],
-    auth_loader: Callable[[str], Mapping[str, Any]],
+    handler_loader: Callable[[str], Any] | None,
+    auth_loader: Callable[[str], Mapping[str, Any]] | None,
     required: Mapping[str, bool],
     ledger: Ledger | None = None,
 ) -> dict[str, Callable[[], ConnectorFetch]]:
-    """One callable per pilot source; load/auth failures become *unavailable*, not crashes."""
+    """Keep sources unavailable until a source-side personal-scope binding is configured."""
     fetchers: dict[str, Callable[[], ConnectorFetch]] = {}
     for pack_name, spec in config.sources.items():
-        def run(pack_name: str = pack_name, spec: Mapping[str, Any] = spec) -> ConnectorFetch:
-            try:
-                if str(spec.get("namespace", "personal")) != "personal":
-                    raise PermissionError("Work sources cannot enter personal context")
-                if ledger is None and config.consent_required:
-                    raise PermissionDenied("fetch requires the current consent ledger")
-                permission_generation = (ledger._permission_generation()
-                                         if ledger is not None and config.consent_required else None)
-                if ledger is not None:
-                    authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
-                                     f"{pack_name}:{spec['account_scope']}", config.viewer)
-                    if str(spec.get("namespace", "personal")) != "personal":
-                        raise PermissionError("Work sources cannot enter personal context")
-                handler = handler_loader(str(spec["connector"]))
-                auth = auth_loader(str(spec["connector"]))
-            except Exception:
-                from catchup_core.contracts import FailureClass  # noqa: PLC0415
-                return ConnectorFetch(pack_name, str(spec["account_scope"]), (), CoverageStatus.UNAVAILABLE,
-                                      FailureClass.AUTH, ("connector could not be loaded or authorised",),
-                                      required.get(pack_name, True))
-            start = since
-            if ledger is not None:
-                last = next((r["completed_at"] for r in ledger.coverage_rows()
-                             if r["connector"] == pack_name and r["account_scope"] == spec["account_scope"]), None)
-                if last:
-                    start = (datetime.fromisoformat(last.replace("Z", "+00:00")) - timedelta(hours=24)).isoformat()
-            fetch_kwargs = dict(spec.get('kwargs') or {})
-            sync_changes = fetch_kwargs.get('sync_changes') is True
-            sync_scope = getattr(handler, 'SYNC_TOKEN_SCOPE', None) or (
-                'configured_calendars' if spec['connector'] == 'google_calendar' else None)
-            if sync_scope is not None and sync_changes and ledger is not None:
-                cursor = ledger.get_cursor(pack_name, str(spec['account_scope']))
-                if cursor:
-                    try:
-                        fetch_kwargs.update(_cursor_kwargs(sync_scope, cursor, fetch_kwargs))
-                    except (ValueError, KeyError, TypeError):
-                        from catchup_core.contracts import FailureClass  # noqa: PLC0415
-                        return ConnectorFetch(pack_name, str(spec['account_scope']), (), CoverageStatus.DEGRADED,
-                            FailureClass.PROVIDER, ('collection cursor requires explicit reset',),
-                            required.get(pack_name, True))
-            fetched = fetch_via_handler(
-                pack_name, str(spec["account_scope"]), handler.fetch, since=start, auth_context=auth,
-                fetch_kwargs=fetch_kwargs, required=required.get(pack_name, True),
-                calendar_kinds=spec.get("calendar_kinds"))
-            return _bind_provider_generation(fetched, ledger, config, pack_name, spec, permission_generation)
-        fetchers[pack_name] = run
+        account_scope = str(spec.get("account_scope", "unclassified"))
+        def unavailable(name: str = pack_name, scope: str = account_scope) -> ConnectorFetch:
+            return ConnectorFetch(name, scope, (), CoverageStatus.UNAVAILABLE, FailureClass.PERMISSION,
+                                  ("personal source classification unavailable",), required.get(name, True))
+        fetchers[pack_name] = unavailable
     return fetchers
 
 
@@ -424,40 +380,30 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
     try:
         if not safety_control and effective.mode is ExecutionMode.AUTHORITATIVE:
             ledger.ensure_authority_host(request.host)
-        if handler_loader is None or auth_loader is None:
-            handler_loader, auth_loader = _default_loaders()
         required = {s.connector: s.required for s in pack.sources}
         clock: Callable[[], datetime] = now or (lambda: datetime.now(UTC))
         def now_fn() -> datetime:
             return clock().astimezone(pack.timezone)
         since = (now_fn() - timedelta(days=int(config.policy.get("bootstrap_days", 30)))).isoformat()
         fetchers = build_fetchers(config, since, handler_loader, auth_loader, required, ledger)
-        fetchers["capture"] = _capture_fetcher(local, cipher, config.viewer)
-        from catchup_core.documents import fetch_documents  # noqa: PLC0415
-        fetchers["documents"] = lambda: fetch_documents(ledger, config.viewer)
-        bundle_fetchers = _bundle_fetchers(config, ledger, keyring_backend, required, clock)
-        fetchers.update(bundle_fetchers)
         def curated_reader(name: str) -> str:
             from catchup_core.curated import read_authorized_state  # noqa: PLC0415
             return read_authorized_state(root / 'state', name, ledger, config.viewer, config.subjects)
         def context_version() -> str:
-            # Hash ciphertext in place; no decryption, private content, or filenames enter the journal.
+            generation = ledger._permission_generation()
             digest = hashlib.sha256()
-            for path in sorted((root / 'state').iterdir()):
-                if path.is_file() and path.name.endswith(('.md', '.md.age', '.yaml', '.yml')):
-                    digest.update(ids.content_hmac(id_key, path.name).encode())
-                    digest.update(ids.content_hmac(id_key, path.read_bytes().hex()).encode())
+            for name in ('goals', 'responsibilities', 'household_tasks', 'open_items'):
+                try:
+                    content = curated_reader(name)
+                except (OSError, LedgerError, ValueError, yaml.YAMLError):
+                    content = None
+                marker = 'unavailable' if content is None else 'available'
+                value = ids.content_hmac(id_key, f'{name}\0{marker}\0{content or ""}')
+                digest.update(value.encode())
+            if generation != ledger._permission_generation():
+                raise PermissionDenied('personal permissions changed during retrieval; retry')
             return digest.hexdigest()
         def finalize(catchup_id: str) -> None:
-            curated = {p.name: p.read_bytes() for p in (root / "state").iterdir()
-                       if p.is_file() and p.name.endswith((".md", ".md.age", ".yaml", ".yml"))}
-            def unchanged() -> bool:
-                return all((root / "state" / name).read_bytes() == data for name, data in curated.items())
-            encrypted_snapshot(local / "snapshots" / f"{catchup_id}.ae1", local / "ledger.db", cipher,
-                               blobs=local / "blobs", curated=curated,
-                               action_db=action_database_path(root) if request.mode.value == "authoritative" else None,
-                               idempotent=True, guard=unchanged)
-            _prune_snapshots(local / "snapshots", now_fn(), int(config.policy.get("snapshot_retention_days", 30)))
             atomic_bytes(local / "health.json", json.dumps({"last_catch_up": now_fn().isoformat(),
                 "catchup_id": catchup_id, "mode": request.mode.value}).encode())
         def input_version() -> str:
@@ -494,10 +440,11 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
             model_log=_model_log_writer(local, now_fn),
             metrics=_metrics_writer(local, now_fn),
             trace=_trace_writer(local, now_fn),
+            context_version=context_version,
             provider_label=(f"command:{ext_cmd.split()[0].rsplit('/', 1)[-1]}" if ext_cmd else "session-assistant"),
             subjects=config.subjects, viewer=config.viewer, now=now_fn,
             source_class=source_class,
-            incumbent=GuardedIncumbent(LegacyStateAdapter(root / "state", domains, now_fn(), reader=curated_reader)),
+            incumbent=None,
             publisher=make_file_publisher(local, now_fn, cipher=cipher),
             preflight=lambda: _runtime_preflight(ledger),
             inspection_preflight=lambda: _storage_preflight(ledger),
@@ -529,9 +476,7 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
             scope_subjects={"capture": [config.viewer],
                             **{name: spec.get("subjects", config.subjects) for name, spec in config.sources.items()}},
             expected_scopes={**{name: spec['account_scope'] for name, spec in config.sources.items()},
-                             'capture': config.viewer, 'documents': 'manual',
-                             **{name: config.policy['bundles'][name]['account_scope'] for name in bundle_fetchers}},
-            context_version=context_version,
+                             'capture': config.viewer, 'documents': 'manual'},
         )
     except BaseException:
         ledger.close()
@@ -640,6 +585,11 @@ def _access_subjects_for(config: RuntimeConfig, connector: str, text: str) -> li
     return [str(subject) for subject in config.sources.get(connector, {}).get("subjects", config.subjects)]
 
 
+def _require_personal_scope_migration_review(ledger: Ledger) -> None:
+    if ledger.schema_version() < 20 <= max(n for n, _ in Ledger.available_migrations()):
+        raise RuntimeConfigError("existing ledger requires a reviewed Personal scope migration")
+
+
 def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, cipher: EnvelopeCipher,
                  id_key: ids.HmacKey, keyring_backend: Any, *,
                  read_only: bool = False) -> tuple[Ledger, EncryptedBlobStore]:
@@ -649,8 +599,14 @@ def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, ci
         ledger = Ledger(local / "ledger.db", id_key=id_key, cipher=cipher, owner_id=config.viewer,
                         consent_subjects=config.consent_required,
                         known_subjects=frozenset((*config.subjects, config.viewer)),
-                        sealed=KeyringSealedStore(keyring_backend, request.mode.value, cipher=cipher)
-                        ).open(read_only=read_only)
+                        sealed=KeyringSealedStore(keyring_backend, request.mode.value, cipher=cipher))
+        if not is_new and not read_only:
+            ledger.open(read_only=True)
+            try:
+                _require_personal_scope_migration_review(ledger)
+            finally:
+                ledger.close()
+        ledger.open(read_only=read_only)
         try:
             if read_only:
                 if ledger.schema_version() != max(n for n, _ in Ledger.available_migrations()):
@@ -658,6 +614,8 @@ def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, ci
                 if ledger.conn.execute("SELECT 1 FROM deletion_journal WHERE state<>'receipted'").fetchone():
                     raise RuntimeConfigError("pending erasure recovery requires a local maintenance session")
             else:
+                if not is_new:
+                    _require_personal_scope_migration_review(ledger)
                 ledger.migrate(backup=_backup_for(local, cipher=cipher))
             if is_new:
                 ledger.seal_privacy()
@@ -823,13 +781,8 @@ def _load_packs(domains: tuple[str, ...]) -> DomainPack:
 
 def _capture_fetcher(local: Path, cipher: EnvelopeCipher, viewer: str) -> Callable[[], ConnectorFetch]:
     def fetch() -> ConnectorFetch:
-        records = []
-        for path in sorted((local / "inbox").glob("cap_*.ae1")):
-            data = json.loads(cipher.decrypt(path.read_bytes(), aad=path.stem.encode()))
-            if data["actor"] != viewer or data["id"] != path.stem:
-                raise RuntimeConfigError("captured note identity does not match this viewer")
-            records.append(ConnectorRecord(path.stem, data["text"], occurred_at=data["observed_at"]))
-        return ConnectorFetch("capture", viewer, tuple(records), required=False)
+        return ConnectorFetch("capture", viewer, (), CoverageStatus.UNAVAILABLE, FailureClass.PERMISSION,
+                              ("personal source classification unavailable",), required=False)
     return fetch
 
 

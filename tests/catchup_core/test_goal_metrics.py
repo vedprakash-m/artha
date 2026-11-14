@@ -14,7 +14,7 @@ from test_release_regressions import NOW
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_sources):
     from test_release_regressions import world as fixture
 
     yield from fixture.__wrapped__(tmp_path)
@@ -114,7 +114,9 @@ def test_malformed_metric_next_action_is_a_review_gap(world, tmp_path, value):
     assert lines.commitment_count == 1
 
 
-def test_missing_metric_next_action_is_explicit_in_the_shared_goals_command(world, tmp_path):
+def test_missing_metric_next_action_is_explicit_in_the_shared_goals_command(
+    world, tmp_path, admitted_curated_state
+):
     from argparse import Namespace
     import yaml
     from catchup_core.commands import execute
@@ -213,7 +215,9 @@ def test_future_coverage_cannot_hide_behind_an_older_complete_source(world, kind
     assert "unknown" in goals.observe_goals(ledger, [row], "owner", NOW)[0]
 
 
-def test_future_observation_stays_unknown_through_commands_and_briefing_until_its_time(world, tmp_path):
+def test_future_observation_stays_unknown_through_commands_and_briefing_until_its_time(
+    world, tmp_path, admitted_curated_state
+):
     from argparse import Namespace
 
     import yaml

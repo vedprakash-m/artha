@@ -15,6 +15,8 @@ from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.ledger import PermissionDenied
 import test_integrated_surfaces
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources", "admitted_curated_state")
+
 
 @pytest.fixture
 def app(tmp_path):

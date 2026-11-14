@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import hmac
 import json
 import os
 import sqlite3
@@ -43,7 +44,8 @@ from catchup_core.privacy_history import PrivacyCapsules
 
 __all__ = [
     "FactInput", "FactView", "FileSealedStore", "ForgetReceipt", "Ledger", "LedgerError", "LedgerLocked",
-    "MemorySealedStore", "MigrationRefused", "PermissionDenied", "SealedCheckpoint", "SealedStore",
+    "MemorySealedStore", "MigrationRefused", "PermissionDenied", "PersonalScopeUnavailable",
+    "SealedCheckpoint", "SealedStore",
     "SignalInput", "Suppressed",
 ]
 
@@ -60,6 +62,10 @@ class MigrationRefused(LedgerError):
 
 class PermissionDenied(LedgerError):
     pass
+
+
+class PersonalScopeUnavailable(PermissionDenied):
+    """The trusted scope needed for this operation is not available."""
 
 
 class Suppressed(LedgerError):
@@ -569,6 +575,198 @@ class Ledger:
                  sig.evidence_blob_ref, ProcessingState.FETCHED.value))
         return signal_id, True
 
+    @staticmethod
+    def _scope_binding_proof(
+        key: ids.HmacKey, object_type: str, object_id: str, object_version: str,
+        source_id: str, account_id: str, content_hmac: str, scope: str,
+        provenance: str, permission_generation: int,
+    ) -> str:
+        material = json.dumps({
+            "object_type": object_type, "object_id": object_id, "object_version": object_version,
+            "source_id": source_id, "account_id": account_id, "content_hmac": content_hmac,
+            "scope": scope, "provenance": provenance, "permission_generation": permission_generation,
+        }, sort_keys=True, separators=(",", ":"))
+        return ids.content_hmac(key, material)
+
+    def _record_personal_binding(
+        self, db: sqlite3.Connection, object_type: str, object_id: str, object_version: str,
+        source_id: str, account_id: str, content_hmac: str, *,
+        provenance: str = "trusted_writer", scope: str = "personal",
+    ) -> None:
+        generation = self._permission_generation()
+        proof = self._scope_binding_proof(
+            self._id_key, object_type, object_id, object_version, source_id, account_id,
+            content_hmac, scope, provenance, generation)
+        db.execute(
+            "INSERT INTO scope_bindings(object_type,object_id,object_version,source_id,account_id,"
+            "content_hmac,scope,provenance,permission_generation,proof,created_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (object_type, object_id, object_version, source_id, account_id, content_hmac, scope,
+             provenance, generation, proof, self._clock()))
+
+    def _has_personal_binding(
+        self, object_type: str, object_id: str, object_version: str,
+        source_id: str, account_id: str, content_hmac: str,
+    ) -> bool:
+        generation = self._permission_generation()
+        rows = self.conn.execute(
+            "SELECT scope,provenance,permission_generation,proof,source_id,account_id,content_hmac "
+            "FROM scope_bindings WHERE object_type=? AND object_id=? AND object_version=? "
+            "AND permission_generation=?",
+            (object_type, object_id, object_version, generation)).fetchall()
+        if len(rows) != 1:
+            return False
+        row = rows[0]
+        if (row["scope"] != "personal" or row["provenance"] not in ("source_review", "trusted_writer")
+                or row["source_id"] != source_id or row["account_id"] != account_id
+                or row["content_hmac"] != content_hmac
+                or type(row["permission_generation"]) is not int):
+            return False
+        expected = self._scope_binding_proof(
+            self._id_key, object_type, object_id, object_version, source_id, account_id,
+            content_hmac, row["scope"], row["provenance"], generation)
+        return hmac.compare_digest(str(row["proof"]), expected)
+
+    def _signal_identity_matches(
+        self, signal_id: object, connector: object, account_scope: object,
+        upstream_id: object, upstream_version: object,
+    ) -> bool:
+        if (not isinstance(signal_id, str) or not signal_id
+                or not isinstance(connector, str) or not connector
+                or not isinstance(account_scope, str) or not account_scope
+                or not isinstance(upstream_id, str) or not upstream_id
+                or not isinstance(upstream_version, str) or not upstream_version):
+            return False
+        return ids.signal_id(self._id_key, connector, account_scope, upstream_id, upstream_version) == signal_id
+
+    def _scope_binding_matches_object(self, db: sqlite3.Connection, binding: sqlite3.Row) -> bool:
+        object_type = str(binding["object_type"])
+        if object_type == "signal":
+            row = db.execute(
+                "SELECT connector,account_scope,upstream_id,upstream_version,content_hmac "
+                "FROM signals WHERE signal_id=?",
+                (binding["object_id"],)).fetchone()
+            return bool(row and row["upstream_version"] == binding["object_version"]
+                        and row["connector"] == binding["source_id"]
+                        and row["account_scope"] == binding["account_id"]
+                        and row["content_hmac"] == binding["content_hmac"]
+                        and self._signal_identity_matches(
+                            binding["object_id"], row["connector"], row["account_scope"],
+                            row["upstream_id"], row["upstream_version"]))
+        if object_type == "fact":
+            row = db.execute(
+                "SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (binding["object_id"],)).fetchone()
+        elif object_type == "fact_version":
+            row = db.execute(
+                "SELECT recorded_at,scope_hmac FROM fact_versions WHERE fact_id=? AND recorded_at=?",
+                (binding["object_id"], binding["object_version"])).fetchone()
+        else:
+            return False
+        return bool(row and row["recorded_at"] == binding["object_version"]
+                    and binding["source_id"] == "ledger" and binding["account_id"] == self._owner
+                    and row["scope_hmac"] == binding["content_hmac"])
+
+    def _refresh_personal_scope_bindings(self, db: sqlite3.Connection, previous_generation: int) -> None:
+        bindings = db.execute(
+            "SELECT object_type,object_id,object_version,source_id,account_id,content_hmac,scope,"
+            "provenance,permission_generation,proof FROM scope_bindings WHERE permission_generation=?",
+            (previous_generation,)).fetchall()
+        counts: dict[tuple[str, str, str], int] = {}
+        for binding in bindings:
+            key = (str(binding["object_type"]), str(binding["object_id"]), str(binding["object_version"]))
+            counts[key] = counts.get(key, 0) + 1
+        for binding in bindings:
+            key = (str(binding["object_type"]), str(binding["object_id"]), str(binding["object_version"]))
+            if (counts[key] != 1 or binding["scope"] != "personal"
+                    or binding["provenance"] not in ("source_review", "trusted_writer")
+                    or type(binding["permission_generation"]) is not int):
+                continue
+            expected = self._scope_binding_proof(
+                self._id_key, *key, str(binding["source_id"]), str(binding["account_id"]),
+                str(binding["content_hmac"]), str(binding["scope"]), str(binding["provenance"]),
+                previous_generation)
+            if (hmac.compare_digest(str(binding["proof"]), expected)
+                    and self._scope_binding_matches_object(db, binding)):
+                self._record_personal_binding(
+                    db, *key, str(binding["source_id"]), str(binding["account_id"]),
+                    str(binding["content_hmac"]), provenance=str(binding["provenance"]))
+
+    def require_personal_signal(self, signal_id: str, *, allow_obsolete: bool = False) -> sqlite3.Row:
+        """Validate source-side scope metadata without opening the evidence blob."""
+        self._require_unlocked()
+        self.require_personal_signal_admission()
+        row: sqlite3.Row | None = self.conn.execute(
+            "SELECT signal_id,connector,account_scope,upstream_id,upstream_version,content_hmac "
+            "FROM signals WHERE signal_id=?", (signal_id,)).fetchone()
+        if (row is None or not self._signal_identity_matches(
+                    signal_id, row["connector"], row["account_scope"], row["upstream_id"], row["upstream_version"])
+                or (not allow_obsolete and self.source_is_obsolete(signal_id))
+                or self.is_tombstoned(row["connector"], row["account_scope"],
+                                      row["upstream_id"], row["content_hmac"])
+                or not self._has_personal_binding(
+                    "signal", signal_id, row["upstream_version"], row["connector"],
+                    row["account_scope"], row["content_hmac"])):
+            raise PermissionDenied("personal scope unavailable")
+        return row
+
+    def require_personal_connector_admission(self) -> None:
+        # Shared Connector scope cannot be authenticated before requesting payloads.
+        raise PersonalScopeUnavailable("personal Connector scope unavailable")
+
+    def require_personal_signal_admission(self) -> None:
+        # Current Signal proofs do not authenticate the subjects used for authorization.
+        raise PersonalScopeUnavailable("personal Signal scope unavailable")
+
+    def require_personal_fact_admission(self) -> None:
+        # Current Fact proofs do not authenticate the subjects and evidence used for authorization.
+        raise PersonalScopeUnavailable("personal Fact scope unavailable")
+
+    def require_personal_calendar_admission(self) -> None:
+        # Existing calendar projections lack authenticated dependency bindings.
+        raise PersonalScopeUnavailable("personal calendar scope unavailable")
+
+    def _require_personal_fact_version(self, fact_id: str, version: str, content_hmac: str,
+                                       evidence_table: str) -> None:
+        self.require_personal_fact_admission()
+        if not self._has_personal_binding(
+                "fact_version" if evidence_table == "fact_version_evidence" else "fact",
+                fact_id, version, "ledger", self._owner, content_hmac):
+            raise PermissionDenied("personal scope unavailable")
+        if evidence_table not in ("fact_evidence", "fact_version_evidence"):
+            raise LedgerError("invalid Fact evidence table")
+        if evidence_table == "fact_version_evidence":
+            rows = self.conn.execute(
+                "SELECT signal_id FROM fact_version_evidence WHERE fact_id=? AND recorded_at=?",
+                (fact_id, version)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT signal_id FROM fact_evidence WHERE fact_id=?", (fact_id,)).fetchall()
+        for row in rows:
+            self.require_personal_signal(str(row["signal_id"]), allow_obsolete=True)
+
+    def require_personal_curated(self, name: str, version: str, content_hmac: str) -> None:
+        if not self._has_personal_binding(
+                "curated", name, version, "state", self._owner, content_hmac):
+            raise PermissionDenied("personal scope unavailable")
+
+    def _bind_fact_after_write(self, db: sqlite3.Connection, fact_id: str, version: str,
+                               content_hmac: str, provenance: str) -> None:
+        evidence_ids = [str(row[0]) for row in db.execute(
+            "SELECT signal_id FROM fact_evidence WHERE fact_id=?", (fact_id,))]
+        signals = [db.execute(
+            "SELECT signal_id,connector,account_scope,upstream_version,content_hmac FROM signals "
+            "WHERE signal_id=?", (signal_id,)).fetchone() for signal_id in evidence_ids]
+        admitted = bool(evidence_ids) and len(signals) == len(evidence_ids) and all(
+            signal is not None and self._has_personal_binding(
+                "signal", str(signal["signal_id"]), str(signal["upstream_version"]),
+                str(signal["connector"]), str(signal["account_scope"]), str(signal["content_hmac"]))
+            for signal in signals)
+        if admitted or (provenance == Provenance.USER_CONFIRMED.value and not evidence_ids):
+            self._record_personal_binding(
+                db, "fact", fact_id, version, "ledger", self._owner, content_hmac)
+            self._record_personal_binding(
+                db, "fact_version", fact_id, version, "ledger", self._owner, content_hmac)
+
     def set_processing_state(self, signal_id: str, state: ProcessingState, reason: str | None = None) -> None:
         self._require_unlocked()
         if state is ProcessingState.EXCLUDED and not reason:
@@ -602,33 +800,15 @@ class Ledger:
         return json.dumps(value, sort_keys=True), 0, None
 
     def protect_legacy_values(self) -> int:
-        """Upgrade earlier sensitive plaintext rows without changing their identity or history."""
+        """Refuse automatic legacy processing until its Personal scope is reviewed."""
         self._require_unlocked()
-        changed = 0
-        with self.transaction() as db:
-            for table in ("facts", "fact_versions"):
-                rows = db.execute(
-                    f"SELECT t.rowid,t.fact_id,t.typed_value FROM {table} t JOIN facts f ON f.fact_id=t.fact_id "  # noqa: S608
-                    "WHERE t.value_encrypted=0 AND f.confidentiality<>'ordinary'").fetchall()
-                for row in rows:
-                    text, encrypted, version = self._encode_value(row[1], json.loads(row[2]), Confidentiality.SENSITIVE)
-                    db.execute(f"UPDATE {table} SET typed_value=?,value_encrypted=?,key_version=? WHERE rowid=?",  # noqa: S608
-                               (text, encrypted, version, row[0]))
-                    changed += 1
-            for row in db.execute("SELECT alert_id,deadline,latest_useful_action FROM alerts "
-                                  "WHERE deadline IS NOT NULL OR latest_useful_action IS NOT NULL").fetchall():
-                if self._cipher is None:
-                    raise LedgerError("Alert dates require encryption")
-                text, version = self._cipher.encrypt_json(
-                    {"deadline": row[1], "latest_useful_action": row[2]}, aad=f"alert:{row[0]}".encode())
-                db.execute("UPDATE alerts SET deadline=NULL,latest_useful_action=NULL,dates_encrypted=?,"
-                           "dates_key_version=? WHERE alert_id=?", (text, version, row[0]))
-                changed += 1
-        if changed:
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            self.conn.execute("VACUUM")
-            self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        return changed
+        if (self.conn.execute("SELECT 1 FROM facts WHERE value_encrypted=0 "
+                              "AND confidentiality<>'ordinary' LIMIT 1").fetchone()
+                or self.conn.execute("SELECT 1 FROM fact_versions v JOIN facts f USING(fact_id) "
+                                     "WHERE v.value_encrypted=0 AND f.confidentiality<>'ordinary' LIMIT 1").fetchone()
+                or self.conn.execute("SELECT 1 FROM alerts LIMIT 1").fetchone()):
+            raise PermissionDenied("legacy personal data requires reviewed migration")
+        return 0
 
     @staticmethod
     def _last_version(conn: sqlite3.Connection, fact_id: str) -> str | None:
@@ -640,6 +820,8 @@ class Ledger:
                  expected_permission_generation: int | None = None) -> str:
         """Create a Fact, or add a new version of an existing one (history is append-only)."""
         self._require_unlocked()
+        if fact_id is not None:
+            self.require_personal_fact_admission()
         is_new = fact_id is None
         fid = fact_id or ids.new_id("fct")
         text, encrypted, key_version = self._encode_value(fid, fact.value, fact.confidentiality)
@@ -680,11 +862,14 @@ class Ledger:
                 "|".join(f"{s}:{a}:{b}" for s, a, b in sorted(fact.evidence)).encode()).hexdigest()
             c.execute(
                 "INSERT INTO fact_versions(fact_id,recorded_at,value_encrypted,key_version,valid_from,valid_to,"
-                "validity_unknown,provenance_class,evidence_digest,typed_value,status,rule_version,observed_at,occurred_at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "validity_unknown,provenance_class,evidence_digest,typed_value,status,rule_version,observed_at,occurred_at,"
+                "scope_hmac)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (fid, now, encrypted, key_version, fact.valid_from, fact.valid_to, int(fact.validity_unknown),
                  fact.provenance.value, digest, text, fact.status.value, fact.rule_version,
-                 fact.observed_at, fact.occurred_at))
+                 fact.observed_at, fact.occurred_at, ids.content_hmac(self._id_key, text)))
+            scope_hmac = ids.content_hmac(self._id_key, text)
+            c.execute("UPDATE facts SET scope_hmac=? WHERE fact_id=?", (scope_hmac, fid))
             for subject, role in fact.co_subjects:
                 c.execute("INSERT OR REPLACE INTO fact_subjects(fact_id,subject_id,role) VALUES(?,?,?)",
                           (fid, subject, role))
@@ -696,6 +881,7 @@ class Ledger:
                 c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
                           (fid, now, signal_id, start, end))
             c.execute("UPDATE facts SET obligation_key=? WHERE fact_id=?", (fact.obligation_key, fid))
+            self._bind_fact_after_write(c, fid, now, scope_hmac, fact.provenance.value)
         return fid
 
     def set_document_method(self, signal_id: str, method: str) -> None:
@@ -732,7 +918,8 @@ class Ledger:
         from catchup_core.fact_access import AccessPolicy, require_metadata  # noqa: PLC0415
         self._require_unlocked()
         return require_metadata(self.conn, AccessPolicy(self._owner, self._consent_subjects, self._known_subjects),
-            fact_id, viewer_id, self._clock(), operation=operation, source_operation=(operation == 'export'))
+            fact_id, viewer_id, self._clock(), operation=operation,
+            source_operation=(operation in ('export', 'emergency')), authority=self)
 
     def _may_view_sources(self, fact_id: str, subjects: set[str], viewer: str) -> bool:
         required = (subjects & self._consent_subjects) - {viewer}
@@ -759,12 +946,37 @@ class Ledger:
 
     def get_fact(self, fact_id: str, viewer_id: str) -> FactView:
         self._require_unlocked()
-        row = self.conn.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+        scope = self.conn.execute(
+            "SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+        if scope is None:
+            raise LedgerError(f"unknown fact {fact_id}")
+        self._require_personal_fact_version(
+            fact_id, str(scope["recorded_at"]), str(scope["scope_hmac"] or ""), "fact_evidence")
+        row = self.conn.execute(
+            "SELECT fact_id,domain,predicate,primary_subject_id,confidentiality,valid_from,valid_to,"
+            "validity_unknown,occurred_at,observed_at,recorded_at,provenance_class,status,obligation_key,"
+            "scope_hmac FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
         if row is None:
             raise LedgerError(f"unknown fact {fact_id}")
+        if (row["recorded_at"], row["scope_hmac"]) != tuple(scope):
+            raise PermissionDenied("personal scope changed during retrieval")
         if not self._may_view(row, viewer_id):
             raise PermissionDenied(f"{viewer_id} may not view {fact_id}")
-        value = self._decode_value(fact_id, row["typed_value"], bool(row["value_encrypted"]))
+        self._require_personal_fact_version(fact_id, str(row["recorded_at"]), str(row["scope_hmac"] or ""),
+                                            "fact_evidence")
+        value_row = self.conn.execute(
+            "SELECT typed_value,value_encrypted,scope_hmac,recorded_at FROM facts WHERE fact_id=?",
+            (fact_id,)).fetchone()
+        if value_row is None:
+            raise LedgerError("Fact changed during retrieval")
+        if (value_row["recorded_at"] != row["recorded_at"]
+                or value_row["scope_hmac"] != row["scope_hmac"]
+                or not hmac.compare_digest(str(row["scope_hmac"] or ""),
+                                           ids.content_hmac(self._id_key, value_row["typed_value"]))):
+            raise PermissionDenied("personal scope changed during retrieval")
+        self._require_personal_fact_version(
+            fact_id, str(row["recorded_at"]), str(row["scope_hmac"] or ""), "fact_evidence")
+        value = self._decode_value(fact_id, value_row["typed_value"], bool(value_row["value_encrypted"]))
         evidence = tuple(
             (str(e["signal_id"]), int(e["span_start"]), int(e["span_end"]))
             for e in self.conn.execute(
@@ -772,7 +984,7 @@ class Ledger:
                 (fact_id,)))
         from catchup_core.fact_access import AccessPolicy, document_fact_state  # noqa: PLC0415
         status, provenance = document_fact_state(self.conn,
-            AccessPolicy(self._owner, self._consent_subjects, self._known_subjects), row, self._clock())
+            AccessPolicy(self._owner, self._consent_subjects, self._known_subjects), row, self._clock(), self)
         return FactView(
             fact_id=fact_id, domain=row["domain"], predicate=row["predicate"], value=value,
             primary_subject_id=row["primary_subject_id"], confidentiality=row["confidentiality"],
@@ -790,19 +1002,56 @@ class Ledger:
 
     def fact_history(self, fact_id: str, viewer_id: str, as_of: str | None = None) -> list[dict[str, Any]]:
         """What Artha believed over time ("what did Artha know then?")."""
-        self.get_fact(fact_id, viewer_id)         # permission and existence
+        self._require_unlocked()
+        scope = self.conn.execute(
+            "SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+        if scope is None:
+            raise LedgerError("unknown Fact")
+        self._require_personal_fact_version(
+            fact_id, str(scope["recorded_at"]), str(scope["scope_hmac"] or ""), "fact_evidence")
+        current = self.conn.execute(
+            "SELECT fact_id,domain,primary_subject_id FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+        if current is None:
+            raise LedgerError("unknown Fact")
+        if not self._may_view(current, viewer_id):
+            raise PermissionDenied(f"{viewer_id} may not view {fact_id}")
         cutoff = _instant(as_of) if as_of is not None else None
         # Legacy versions retain their exact keys. SQLite text ordering and julianday's millisecond precision
         # cannot provide this microsecond/offset-aware comparison; order the one Fact's history in memory.
-        versions = sorted(self.conn.execute('SELECT * FROM fact_versions WHERE fact_id=?', (fact_id,)),
+        versions = sorted(self.conn.execute(
+            'SELECT fact_id,recorded_at,status,provenance_class,valid_from,valid_to,key_version,validity_unknown,'
+            'observed_at,occurred_at,scope_hmac FROM fact_versions WHERE fact_id=?', (fact_id,)),
                           key=lambda row: _instant(row['recorded_at']))
+        if cutoff is not None:
+            versions = [row for row in versions if _instant(row["recorded_at"]) <= cutoff]
+        for row in versions:
+            self._require_personal_fact_version(
+                fact_id, str(row["recorded_at"]), str(row["scope_hmac"] or ""), "fact_version_evidence")
+        self.get_fact_metadata(fact_id, viewer_id)
+        version_ids = [str(row["recorded_at"]) for row in versions]
+        payloads = {}
+        for version in version_ids:
+            payload = self.conn.execute(
+                "SELECT typed_value,value_encrypted,scope_hmac FROM fact_versions "
+                "WHERE fact_id=? AND recorded_at=?",
+                (fact_id, version)).fetchone()
+            if payload is None:
+                raise LedgerError("Fact history changed during retrieval")
+            payloads[version] = payload
+        for row in versions:
+            version = str(row["recorded_at"])
+            if (payloads[version]["scope_hmac"] != row["scope_hmac"]
+                    or not hmac.compare_digest(str(row["scope_hmac"] or ""),
+                        ids.content_hmac(self._id_key, payloads[version]["typed_value"]))):
+                raise PermissionDenied("personal scope changed during retrieval")
+            self._require_personal_fact_version(
+                fact_id, version, str(row["scope_hmac"] or ""), "fact_version_evidence")
         out: list[dict[str, Any]] = []
         for row in versions:
-            if cutoff is not None and _instant(row['recorded_at']) > cutoff:
-                break
+            payload = payloads[str(row["recorded_at"])]
             out.append({
                 "recorded_at": row["recorded_at"], "status": row["status"],
-                "value": self._decode_value(fact_id, row["typed_value"], bool(row["value_encrypted"])),
+                "value": self._decode_value(fact_id, payload["typed_value"], bool(payload["value_encrypted"])),
                 "provenance_class": row["provenance_class"], "valid_from": row["valid_from"],
                 "valid_to": row["valid_to"], "key_version": row["key_version"],
                 "validity_unknown": bool(row["validity_unknown"]),
@@ -814,6 +1063,7 @@ class Ledger:
 
     def facts_for(self, domain: str, predicate: str, viewer_id: str,
                   statuses: Sequence[FactStatus] = (FactStatus.CURRENT,)) -> list[FactView]:
+        self.require_personal_fact_admission()
         marks = ",".join("?" for _ in statuses)
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
             f"SELECT fact_id FROM facts WHERE domain=? AND predicate=? AND status IN ({marks}) "  # noqa: S608
@@ -829,6 +1079,7 @@ class Ledger:
     def add_evidence(self, fact_id: str, signal_id: str, span_start: int, span_end: int) -> None:
         """Corroboration changes current knowledge, never a past version's evidence."""
         self._require_unlocked()
+        self.require_personal_fact_admission()
         if self.conn.execute("SELECT 1 FROM fact_evidence WHERE fact_id=? AND signal_id=? "
                              "AND span_start=? AND span_end=?", (fact_id, signal_id, span_start, span_end)).fetchone():
             return
@@ -843,17 +1094,21 @@ class Ledger:
                 "SELECT signal_id,span_start,span_end FROM fact_evidence WHERE fact_id=? ORDER BY signal_id,span_start",
                 (fact_id,))).encode()).hexdigest()
             c.execute("INSERT INTO fact_versions SELECT fact_id,?,value_encrypted,key_version,valid_from,valid_to,"
-                      "validity_unknown,provenance_class,?,typed_value,status,rule_version,observed_at,occurred_at "
+                      "validity_unknown,provenance_class,?,typed_value,status,rule_version,observed_at,occurred_at,"
+                      "scope_hmac "
                       "FROM facts WHERE fact_id=?",
                       (now, digest, fact_id))
             c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
                       "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
             c.execute("UPDATE facts SET recorded_at=? WHERE fact_id=?", (now, fact_id))
+            self._bind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""),
+                                        str(row["provenance_class"]))
 
     def set_fact_status(self, fact_id: str, status: FactStatus, provenance: Provenance | None = None, *,
                         withdraw_signals: Sequence[str] = ()) -> None:
         """Change a Fact's lifecycle status; the previous state stays in ``fact_versions``."""
         self._require_unlocked()
+        self.require_personal_fact_admission()
         with self.transaction() as c:
             now = _after(self._last_version(c, fact_id), self._clock())
             row = c.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
@@ -870,13 +1125,15 @@ class Ledger:
                     (fact_id,)).fetchall()).encode()).hexdigest()
             c.execute(
                 "INSERT INTO fact_versions(fact_id,recorded_at,value_encrypted,key_version,valid_from,valid_to,"
-                "validity_unknown,provenance_class,evidence_digest,typed_value,status,rule_version,observed_at,occurred_at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "validity_unknown,provenance_class,evidence_digest,typed_value,status,rule_version,observed_at,occurred_at,"
+                "scope_hmac)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (fact_id, now, row["value_encrypted"], row["key_version"], row["valid_from"], row["valid_to"],
                  row["validity_unknown"], prov, digest, row["typed_value"], status.value, row["rule_version"],
-                 row['observed_at'], row['occurred_at']))
+                 row['observed_at'], row['occurred_at'], row["scope_hmac"]))
             c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
                       "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
+            self._bind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""), prov)
         self.correction_notice(fact_id, "Source belief changed; inspect the current evidence before acting.")
 
     def facts_matching(self, domain: str, predicate: str, subject_id: str,
@@ -887,6 +1144,7 @@ class Ledger:
         The obligation filter is applied in SQL (``facts_obligation`` index) so only the matching Facts are decoded and
         decrypted; loading every Fact of the predicate made reconciliation quadratic in the number of obligations.
         """
+        self.require_personal_fact_admission()
         marks = ",".join("?" for _ in statuses)
         extra, bound = ("", ()) if obligation_key is None else (" AND obligation_key=?", (obligation_key,))
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
@@ -938,6 +1196,7 @@ class Ledger:
 
     def replace_source_support(self, signal_id: str) -> None:
         """Withdraw obsolete versions only after complete interpretation; retain history."""
+        self.require_personal_fact_admission()
         row = self.signal_row(signal_id)
         if row is None:
             raise LedgerError("unknown Signal")
@@ -985,6 +1244,7 @@ class Ledger:
     def cancel_calendar(self, connector: str, scope: str, upstream: str) -> None:
         """Journal withdrawal before changing projections; every step is safe to replay after process death."""
         self._require_unlocked()
+        self.require_personal_fact_admission()
         with self.transaction() as db:
             db.execute("INSERT OR REPLACE INTO calendar_cancellations VALUES(?,?,?,1)", (connector, scope, upstream))
         sources = tuple(r[0] for r in self.conn.execute(
@@ -1030,6 +1290,12 @@ class Ledger:
         output: list[CalendarEvent] = []
         if viewer != self._owner or self._cipher is None:
             return output
+        self.require_personal_calendar_admission()
+        if not self.conn.execute("SELECT 1 FROM calendar_records r WHERE NOT EXISTS "
+            "(SELECT 1 FROM calendar_cancellations c WHERE c.connector=r.connector "
+            "AND c.account_scope=r.account_scope AND c.upstream_id=r.upstream_id AND c.pending=1) "
+            "LIMIT 1").fetchone():
+            return output
         for row in self.conn.execute("SELECT r.* FROM calendar_records r WHERE NOT EXISTS "
             "(SELECT 1 FROM calendar_cancellations c WHERE c.connector=r.connector "
             "AND c.account_scope=r.account_scope AND c.upstream_id=r.upstream_id AND c.pending=1)"):
@@ -1073,6 +1339,7 @@ class Ledger:
 
     # ── pipeline working set ──────────────────────────────────────────────────
     def signals_in_state(self, state: ProcessingState) -> list[sqlite3.Row]:
+        self.require_personal_signal_admission()
         return self.conn.execute(
             "SELECT * FROM signals WHERE processing_state=? ORDER BY signal_id", (state.value,)).fetchall()
 
@@ -1094,6 +1361,7 @@ class Ledger:
                           (signal_id, idx, text, version))
 
     def candidates_for(self, signal_id: str) -> list[dict[str, Any]]:
+        self.require_personal_signal_admission()
         if self._cipher is None:
             raise LedgerError("candidates are stored encrypted; no key available")
         out: list[dict[str, Any]] = []
@@ -1169,6 +1437,13 @@ class Ledger:
             self.cancel_calendar(connector, account_scope, upstream)
         return len(matching)
 
+    def _unlisted_calendar_upstreams(
+            self, connector: str, account_scope: str, collection_id: str, listed: Collection[str]) -> list[str]:
+        prefix = "calendar:[" + json.dumps(str(collection_id)) + ","
+        return [str(row[0]) for row in self.conn.execute(
+            "SELECT upstream_id FROM calendar_records WHERE connector=? AND account_scope=?",
+            (connector, account_scope)) if str(row[0]).startswith(prefix) and row[0] not in listed]
+
     def withdraw_unlisted_calendar_occurrences(
             self, connector: str, account_scope: str, collection_id: str, listed: Collection[str],
             window_start: str | None = None, window_end: str | None = None) -> int:
@@ -1181,6 +1456,9 @@ class Ledger:
         """
         self._require_unlocked()
         if self._cipher is None:
+            return 0
+        self.require_personal_calendar_admission()
+        if not self._unlisted_calendar_upstreams(connector, account_scope, collection_id, listed):
             return 0
         from datetime import date as _date  # noqa: PLC0415
         prefix = "calendar:[" + json.dumps(str(collection_id)) + ","
@@ -1229,6 +1507,7 @@ class Ledger:
 
     def require_signal_operation(self, signal_id: str, viewer: str, operation: str = "view") -> None:
         """Authorize raw evidence and evaluations before disclosure, including legacy Fact provenance."""
+        self.require_personal_signal_admission()
         from catchup_core.policy import authorize_source  # noqa: PLC0415
         source = self.signal_row(signal_id)
         if (source is None or source['exclusion_reason'] == 'forgotten'
@@ -1265,6 +1544,8 @@ class Ledger:
                 for signal in self.conn.execute("SELECT signal_id FROM signals WHERE connector=? AND account_scope=?",
                                                  (coverage['connector'], coverage['account_scope'])):
                     self.require_signal_operation(signal[0], viewer)
+            except PersonalScopeUnavailable:
+                raise
             except PermissionDenied:
                 continue
             visible.append(coverage)
@@ -1425,11 +1706,13 @@ class Ledger:
     def revoke_consent(self, consent_id: str) -> None:
         self._require_unlocked()
         with self.transaction() as c:
+            previous_generation = self._permission_generation()
             cur = c.execute(
                 "UPDATE consent SET revoked_at=?, revocation_version=revocation_version+1 "
                 "WHERE consent_id=? AND revoked_at IS NULL", (self._clock(), consent_id))
             if cur.rowcount != 1:
                 raise LedgerError(f"unknown or already revoked consent {consent_id}")
+            self._refresh_personal_scope_bindings(c, previous_generation)
         self.seal_privacy()
 
     def privacy_history(self) -> dict[str, Any]:

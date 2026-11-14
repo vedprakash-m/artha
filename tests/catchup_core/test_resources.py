@@ -38,7 +38,7 @@ def signal(ledger, name, connector='mail', account='one', observed='2026-10-01T0
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_sources):
     with opened(tmp_path / 'synthetic.db') as ledger:
         ledger.migrate()
         yield ledger, AdmissionStore(ledger, ResourcePolicy.from_mapping(LIMITS))

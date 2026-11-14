@@ -12,6 +12,8 @@ from catchup_core.contracts import FactStatus
 
 TOOL = Path(__file__).resolve().parents[2] / "tools" / "benchmark_core.py"
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 
 @pytest.fixture(scope="module")
 def bench():

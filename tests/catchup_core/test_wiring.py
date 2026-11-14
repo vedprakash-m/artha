@@ -12,6 +12,8 @@ from catchup_core.ledger import LedgerError, SignalInput
 from catchup_core.resources import AdmissionStore, ResourcePolicy
 from test_release_regressions import NOW
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 world = pytest.importorskip("test_release_regressions").world
 
 POLICY = ResourcePolicy.from_mapping({"max_requests_per_month": 50, "max_pending_signals": 4})

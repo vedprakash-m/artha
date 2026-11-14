@@ -21,6 +21,8 @@ from catchup_core.goals import (
 )
 from catchup_core.plans import MilestoneState
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 KEY = ids.HmacKey(1, b"k" * 32)
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"c" * 32}))
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)

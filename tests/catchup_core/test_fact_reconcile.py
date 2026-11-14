@@ -12,6 +12,8 @@ from catchup_core.contracts import FactStatus, Provenance
 from catchup_core.extract import Candidate
 from catchup_core.reconcile import authority_rank, legacy_import, reconcile
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 PACK = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "kids_school.yaml")
 KEY = ids.HmacKey(1, b"i" * 32)
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x07" * 32}))
@@ -395,7 +397,8 @@ def test_official_document_corroboration_promotes_unknown_same_value_fact(env):
     ("documents", "official_document", "ocr"),
     ("documents", "official_document", None),
 ])
-def test_low_quality_corroboration_keeps_same_value_unknown(env, connector, source_class, method):
+def test_low_quality_corroboration_keeps_same_value_unknown(
+        env, admitted_documentary_scope, connector, source_class, method):
     ledger, signal, run = env
     predicate = "accommodation_status"
     original = signal("unverified", "rumor")

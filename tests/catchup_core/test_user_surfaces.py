@@ -22,7 +22,7 @@ CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"7" * 32}))
 
 
 @pytest.fixture
-def store(tmp_path):
+def store(tmp_path, admitted_personal_scope):
     led = lg.Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER,
                     consent_subjects=frozenset({"adult"})).open()
     led.migrate()
@@ -95,18 +95,21 @@ def test_historical_explanation_uses_the_selected_observation_time(store, tmp_pa
     assert before['validity_unknown'] is True
 
 
-def test_legacy_sensitive_values_are_reencrypted_without_rewriting_history(store):
+def test_legacy_sensitive_values_require_a_reviewed_migration(store):
     fid = fact(store, confidentiality=lg.Confidentiality.SENSITIVE)
     old = store.get_fact(fid, "owner")
     payload = json.dumps("SYNTHETIC-LEGACY-SECRET")
     store.conn.execute("UPDATE facts SET typed_value=?,value_encrypted=0,key_version=NULL WHERE fact_id=?", (payload, fid))
     store.conn.execute("UPDATE fact_versions SET typed_value=?,value_encrypted=0,key_version=NULL WHERE fact_id=?",
                        (payload, fid))
-    assert store.protect_legacy_values() == 2
-    assert store.protect_legacy_values() == 0
-    current = store.get_fact(fid, "owner")
-    assert current.value == "SYNTHETIC-LEGACY-SECRET" and current.recorded_at == old.recorded_at
-    assert b"SYNTHETIC-LEGACY-SECRET" not in store._path.read_bytes()
+    with pytest.raises(lg.PermissionDenied, match="reviewed migration"):
+        store.protect_legacy_values()
+    current = store.conn.execute(
+        "SELECT typed_value,value_encrypted,recorded_at FROM facts WHERE fact_id=?", (fid,)).fetchone()
+    version = store.conn.execute(
+        "SELECT typed_value,value_encrypted,recorded_at FROM fact_versions WHERE fact_id=?", (fid,)).fetchone()
+    assert tuple(current) == (payload, 0, old.recorded_at)
+    assert tuple(version)[0:2] == (payload, 0)
 
 
 def test_consent_expiry_compares_instants_across_offsets(tmp_path):
@@ -130,7 +133,7 @@ def test_terminal_projection_is_readable_and_inert():
 
 
 @pytest.mark.parametrize("goals", [[], [{"id": "G-1", "title": "Practice", "status": "active"}]])
-def test_terminal_goals_preserve_review_observations_and_gaps(goals, store, tmp_path):
+def test_terminal_goals_preserve_review_observations_and_gaps(goals, store, tmp_path, admitted_curated_state):
     from catchup_core import commands
 
     state = tmp_path / "state"
@@ -266,7 +269,8 @@ def test_encrypted_export_privacy_replay_and_blocked_legacy_restore(tmp_path, mo
     assert not destination.exists() and export.read_bytes() == ciphertext
 
 
-def test_feedback_becomes_an_encrypted_unreviewed_replay_case_that_forget_deletes(store, tmp_path):
+def test_feedback_becomes_an_encrypted_unreviewed_replay_case_that_forget_deletes(
+        store, tmp_path, admitted_personal_sources):
     blobs = EncryptedBlobStore(tmp_path / "blobs", CIPHER, KEY)
     store._blob_deleter = blobs.delete
     text = "Registration closes 2026-10-14 for kid1."

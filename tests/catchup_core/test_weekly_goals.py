@@ -18,8 +18,8 @@ import test_goal_metrics
 
 
 @pytest.fixture
-def world(tmp_path):
-    yield from test_goal_metrics.world.__wrapped__(tmp_path)
+def world(tmp_path, admitted_personal_sources, admitted_curated_state):
+    yield from test_goal_metrics.world.__wrapped__(tmp_path, admitted_personal_sources)
 
 
 @pytest.mark.parametrize('old,new,change', [
@@ -201,6 +201,8 @@ def test_weekly_command_and_mcp_share_the_read_only_goal_model(world, tmp_path):
     state.mkdir()
     (state / 'goals.md').write_text(yaml.safe_dump({'goals': [metric()]}))
     deps = world[2]()
+    from catchup_core.curated import read_authorized_state
+    read_authorized_state(state, 'goals', led, 'owner', deps.subjects)
     before = led.conn.total_changes
     led.conn.execute('PRAGMA query_only=ON')
     result = commands.execute(Namespace(command='goals', weekly=True), deps, tmp_path)

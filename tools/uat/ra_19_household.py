@@ -44,7 +44,15 @@ LIMITATIONS = (
 
 
 def setup(runner: h.ScratchRunner) -> None:
-    (runner.root / "state" / "household_tasks.md").write_text(TASKS, encoding="utf-8")
+    state = runner.root / "state"
+    (state / "household_tasks.md").write_text(TASKS, encoding="utf-8")
+
+    def admit_household_state(deps) -> None:
+        from catchup_core.curated import read_authorized_state
+
+        read_authorized_state(state, "household_tasks", deps.ledger, deps.viewer, deps.subjects)
+
+    runner.seed(admit_household_state)
 
 
 def scenario(runner, report: h.Report) -> None:

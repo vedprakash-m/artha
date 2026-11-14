@@ -213,5 +213,6 @@ def test_an_oversized_file_is_refused_before_it_is_read(tmp_path, monkeypatch):
         _consent_subjects = frozenset()
         _path = tmp_path / "ledger.db"
     monkeypatch.setattr("catchup_core.policy.authorize_source", lambda *a, **k: None)
+    monkeypatch.setattr(documents, "_require_personal_document_admission", lambda: None)
     with pytest.raises(ValueError, match="smaller"):
         documents.ingest(big, "owner", Ledger(), "owner", __import__("datetime").datetime(2026, 10, 21))

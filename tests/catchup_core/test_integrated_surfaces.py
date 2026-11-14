@@ -20,6 +20,8 @@ from catchup_core.triage import CalendarEvent
 from test_user_surfaces import CIPHER, KEY, Keyring
 from catchup_core.blobs import EncryptedBlobStore
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources", "admitted_curated_state")
+
 NOW = datetime(2026, 10, 12, tzinfo=timezone.utc)
 PACK = dp.load_pack_file(Path(dp.__file__).parent / "packs/kids_school.yaml")
 MODEL_IDENTITY = {'provider': 'synthetic', 'model': 'offline-extractor', 'revision': 'fixture-1',
@@ -268,21 +270,24 @@ def test_canonical_goals_and_open_items_reach_catchup(app):
     assert "G-1" in result.briefing_text
 
 
-def test_capture_is_encrypted_and_fetched_during_catchup(app):
+def test_capture_is_encrypted_but_unavailable_during_catchup(app):
+    from catchup_core.contracts import CoverageStatus, FailureClass
+
     root, deps, _, _ = app
     capture = commands.execute(args("capture", text="Owner note 2026-10-17"), deps, root)
     path = deps.ledger._path.parent / "inbox" / f"{capture['captured']}.ae1"
     assert b"Owner note" not in path.read_bytes()
     got = runtime._capture_fetcher(deps.ledger._path.parent, CIPHER, "owner")()
-    assert got.records[0].text == "Owner note 2026-10-17"
-    with pytest.raises(runtime.RuntimeConfigError):
-        runtime._capture_fetcher(deps.ledger._path.parent, CIPHER, "someone_else")()
+    assert got.status is CoverageStatus.UNAVAILABLE and got.error is FailureClass.PERMISSION
+    assert not got.records
+    assert "unavailable" in capture["next"]
 
 
 def test_pause_activity_export_and_forget(app, monkeypatch):
     root, deps, _, _ = app
     actions_db = deps.ledger._path.parent.parent / "actions.db"
     monkeypatch.setattr("catchup_core.runtime.action_database_path", lambda _workspace: actions_db)
+    monkeypatch.setattr(commands, "_require_personal_snapshot_admission", lambda: None)
     assert commands.execute(args("activity"), deps, root) == {"activity": [], "actions_paused": False}
     with sqlite3.connect(actions_db) as db:
         db.execute("CREATE TABLE actions(id,action_type,domain,status,created_at)")

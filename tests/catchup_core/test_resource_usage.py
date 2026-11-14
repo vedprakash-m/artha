@@ -45,7 +45,7 @@ def policy(**extra):
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_sources):
     with opened(tmp_path / 'synthetic.db') as ledger:
         ledger.migrate()
         yield ledger

@@ -27,7 +27,7 @@ from lib import action_evidence as evidence
 
 
 @pytest.fixture
-def case(tmp_path):
+def case(tmp_path, admitted_personal_scope):
     root = tmp_path / 'installation'
     (root / 'config').mkdir(parents=True)
     pack = Path(__file__).resolve().parents[2] / 'scripts/catchup_core/packs/kids_school.yaml'
@@ -62,7 +62,7 @@ def case(tmp_path):
             def get_password(self, service, account):
                 assert (service, account) == ('artha-privacy-authoritative', 'checkpoint')
                 return json.dumps(asdict(checkpoint))
-        context = evidence._metadata_context(root, ledger, config, Backend(), compute_payload_hash(proposal))
+        context = evidence._metadata_context(root, ledger, config, Backend(), compute_payload_hash(proposal), pre)
         queue = tmp_path / 'actions.db'
         sqlite3.connect(queue).close()
         evidence.bind(queue, proposal, context)
@@ -387,9 +387,17 @@ def test_freshness_refuses_undeclared_missing_or_stale_sources(case, mutation, r
 
 
 @pytest.mark.parametrize('provenance', ['model_hypothesis', 'legacy_unverified', 'disputed'])
-def test_worker_refuses_unverified_fact_provenance(case, provenance):
+def test_worker_refuses_postverification_fact_provenance_change(case, provenance):
     case.ledger.conn.execute('UPDATE facts SET provenance_class=? WHERE fact_id=?', (provenance, case.fid))
-    with pytest.raises(ClaimRefused, match='provenance'):
+    with pytest.raises(ClaimRefused, match='changed since parent verification'):
+        verify(case)
+
+
+def test_worker_rechecks_parent_verified_scope_bindings(case):
+    with closing(sqlite3.connect(case.ledger._path)) as db, db:
+        db.execute("UPDATE scope_bindings SET proof='changed' WHERE object_type='fact' AND object_id=?",
+                   (case.fid,))
+    with pytest.raises(ClaimRefused, match='changed since parent verification'):
         verify(case)
 
 

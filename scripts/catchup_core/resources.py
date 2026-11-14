@@ -544,6 +544,7 @@ class AdmissionStore:
     def select_pending(self, priority_signal_ids: Sequence[str] = (), *,
                        current_catchup_id: str | None = None) -> list[sqlite3.Row]:
         """Select bounded normalized Signals, allowing an admitted Catch-up to resume."""
+        self.ledger.require_personal_signal_admission()
         if current_catchup_id is not None:
             _identifier(current_catchup_id, 'current_catchup_id')
         if isinstance(priority_signal_ids, (str, bytes)):

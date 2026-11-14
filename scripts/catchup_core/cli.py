@@ -325,7 +325,12 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
     """Open storage, run one command under the session lock, close it.  Shared by the CLI and the MCP server."""
     import socket  # noqa: PLC0415
 
-    from catchup_core.commands import execute  # noqa: PLC0415
+    from catchup_core.commands import _require_personal_snapshot_admission, execute  # noqa: PLC0415
+    if args.command == "export":
+        _require_personal_snapshot_admission()
+    if args.command == "ingest":
+        from catchup_core.documents import _require_personal_document_admission  # noqa: PLC0415
+        _require_personal_document_admission()
     from catchup_core.runtime import build_deps, inspection_freshness, load_runtime_config  # noqa: PLC0415
     from catchup_core.session_lock import session_lock  # noqa: PLC0415
     root = Path(__file__).resolve().parents[2]

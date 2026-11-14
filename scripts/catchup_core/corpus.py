@@ -15,7 +15,7 @@ from typing import Any
 
 from catchup_core.backup import atomic_bytes
 from catchup_core.crypto import DecryptionError
-from catchup_core.ledger import PermissionDenied
+from catchup_core.ledger import PermissionDenied, PersonalScopeUnavailable
 
 SEVERITIES = ("P1", "P2")
 CASE_TYPES = ("positive", "negative", "cross_domain", "goal_correction")
@@ -26,6 +26,11 @@ EXCERPT_CHARS = 400
 
 class CorpusError(ValueError):
     pass
+
+
+def _require_personal_corpus_admission() -> None:
+    # Legacy labels and outcomes do not bind their complete dependency sets.
+    raise PersonalScopeUnavailable("personal corpus scope unavailable")
 
 
 def _dir(ledger: Any) -> Path:
@@ -39,27 +44,38 @@ def _excerpt(text: str) -> str:
 
 def prefill(ledger: Any, text_of: Any, connector: str, domain: str) -> list[dict[str, Any]]:
     """One unlabeled case per fetched Signal of ``connector``, showing what the core surfaced from it."""
+    _require_personal_corpus_admission()
     cases = []
     rows = ledger.conn.execute(
-        "SELECT signal_id, upstream_id, observed_at, evidence_blob_ref FROM signals WHERE connector=? "
+        "SELECT signal_id FROM signals WHERE connector=? "
         "ORDER BY observed_at, signal_id", (connector,)).fetchall()
-    outcome = latest_outcome(ledger)
+    outcome = None
+    outcome_loaded = False
     for row in rows:
         try:
             ledger.require_signal_operation(row["signal_id"], ledger._owner)
+        except PersonalScopeUnavailable:
+            raise
         except PermissionDenied:
             continue
+        if not outcome_loaded:
+            outcome = latest_outcome(ledger)
+            outcome_loaded = True
+        source = ledger.conn.execute(
+            "SELECT observed_at,evidence_blob_ref FROM signals WHERE signal_id=?", (row["signal_id"],)).fetchone()
+        if source is None:
+            raise CorpusError("corpus source changed during retrieval")
         surfaced = sorted(a["obligation_key"] for a in (outcome or {}).get("alerts", [])
                           if row["signal_id"] in a["signals"])
-        text = text_of(row["evidence_blob_ref"])
+        text = text_of(source["evidence_blob_ref"])
         case_id = "case_" + str(row["signal_id"]).removeprefix("sig_")[:16]
         cases.append({
             "case_id": case_id, "domain": domain,
-            "signal_id": row["signal_id"], "observed_at": row["observed_at"],
+            "signal_id": row["signal_id"], "observed_at": source["observed_at"],
             "title": _excerpt(text.splitlines()[0] if text.strip() else "")[:90], "excerpt": _excerpt(text),
             "core_surfaced": surfaced, "labeled": labeled(ledger, case_id),
             "evaluation_catchup": outcome.get("catchup_id") if outcome else None,
-            "blob_ref": row["evidence_blob_ref"],
+            "blob_ref": source["evidence_blob_ref"],
         })
     return cases
 
@@ -177,6 +193,7 @@ def record_label(ledger: Any, case: Mapping[str, Any], label: Mapping[str, Any],
 
 
 def load_labels(ledger: Any) -> list[dict[str, Any]]:
+    _require_personal_corpus_admission()
     out = []
     for path in sorted(_dir(ledger).glob("case_*.ae1")):
         try:
@@ -226,12 +243,16 @@ def record_outcome(ledger: Any, catchup_id: str, payload: Mapping[str, Any], now
 
 
 def latest_outcome(ledger: Any, catchup_id: str | None = None) -> dict[str, Any] | None:
-    query = "SELECT e.* FROM catchup_evaluations e JOIN stage_journal j ON j.catchup_id=e.catchup_id " \
+    _require_personal_corpus_admission()
+    query = "SELECT e.catchup_id FROM catchup_evaluations e JOIN stage_journal j ON j.catchup_id=e.catchup_id " \
             "AND j.stage='PRESENTED' AND j.status='committed'"
-    row = ledger.conn.execute(query + (" WHERE e.catchup_id=?" if catchup_id else "")
+    identity = ledger.conn.execute(query + (" WHERE e.catchup_id=?" if catchup_id else "")
         + " ORDER BY e.created_at DESC,e.catchup_id DESC LIMIT 1", (catchup_id,) if catchup_id else ()).fetchone()
-    if row is None:
+    if identity is None:
         return None
+    row = ledger.conn.execute("SELECT * FROM catchup_evaluations WHERE catchup_id=?", (identity[0],)).fetchone()
+    if row is None:
+        raise CorpusError("evaluation changed during retrieval")
     outcome = dict(ledger._cipher.decrypt_json(row["payload"], aad=f"evaluation:{row['catchup_id']}".encode()))
     provider_generations = outcome.get("provider_signal_generations", {})
     outcome_generation = outcome.get("permission_generation")

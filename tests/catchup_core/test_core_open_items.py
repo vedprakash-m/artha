@@ -13,6 +13,8 @@ from catchup_core.triage import AlertDraft
 
 from test_coordinator import cal, email, req, world  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 
 def draft(key="k1", deadline=date(2026, 11, 4), severity=Severity.P2, **kw):
     fields = dict(obligation_key=key, domain="kids_school", subject_id="kid1", predicate="signup_deadline", fact_id="f1",

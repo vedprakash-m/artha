@@ -10,6 +10,8 @@ from catchup_core import corpus, heldout, policy
 from catchup_core import ledger as lg
 from catchup_core.contracts import FactStatus, Provenance
 
+pytestmark = pytest.mark.usefixtures('admitted_personal_corpus')
+
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
 CUTOFF = '2026-10-01T00:00:00+00:00'
 AS_OF = '2026-10-28T00:00:00+00:00'

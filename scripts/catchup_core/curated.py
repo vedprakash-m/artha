@@ -5,13 +5,14 @@ import hashlib
 import importlib
 import json
 import re
+import stat
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from catchup_core.ledger import FactView, Ledger, PermissionDenied
+from catchup_core.ledger import FactView, Ledger, PermissionDenied, PersonalScopeUnavailable
 from catchup_core.policy import authorize_source
 
 CompletionVerifier = Callable[[Any, str], bool]
@@ -69,6 +70,7 @@ def has_completion_evidence(value: Any, key: str = "", verify: CompletionVerifie
 def completion_fact(ledger: Any, viewer: str, reference: Any, key: str) -> Any:
     """Resolve an exact current, permission-filtered explicit confirmation version."""
     from catchup_core.ledger import LedgerError  # noqa: PLC0415
+    ledger.require_personal_fact_admission()
     if isinstance(reference, str) and reference.startswith('fact:') and '@' in reference:
         fid, version = reference[5:].split('@', 1)
     else:
@@ -80,6 +82,8 @@ def completion_fact(ledger: Any, viewer: str, reference: Any, key: str) -> Any:
         fid, version = row
     try:
         fact = ledger.get_fact(fid, viewer)
+    except PersonalScopeUnavailable:
+        raise
     except LedgerError:
         return None
     valid = bool(fact.recorded_at == version and fact.status == 'current'
@@ -253,36 +257,59 @@ def read_authorized_state(directory: Path, name: str, ledger: Ledger, viewer: st
     Explicit scopes are owner-authored metadata, not inferred from prose. Legacy untagged records retain whole-file
     authorization. A Goal and its nested metric/milestones are one permission unit; Sprints inherit that unit.
     """
+    path, version, digest = _personal_state_identity(directory, name, ledger)
+    ledger.require_personal_curated(name, version, digest)
     generation = ledger._permission_generation()
     scope = f'curated:{name}'
     fallback = tuple(set(subjects) | ledger._consent_subjects)
-    if name not in {'goals', 'responsibilities', 'household_tasks', 'open_items'}:
+    text = read_state(directory, name)
+    if _personal_state_identity(directory, name, ledger) != (path, version, digest):
+        raise PermissionDenied('personal scope changed during retrieval')
+    all_authored = records(text, name, include_closed=include_closed)
+    authored = [row for row in all_authored if _audience_visible(row, viewer)]
+    if any('subject' not in row and 'subject_id' not in row
+           and isinstance(row.get('owner', ''), str) and not row.get('owner', '').strip() for row in authored):
         authorize_source(ledger, fallback, ledger._consent_subjects, scope, viewer)
-        projection = read_state(directory, name)
+    allowed = [row for row in authored if _record_visible(row, ledger, viewer, scope)]
+    if name == 'open_items':
+        projected = []
+        for row in allowed:
+            fact = completion_fact(ledger, viewer, row.get('completion_evidence'), completion_key('open_item', row))
+            projected.append({**row, 'status': 'done',
+                              'completion_evidence': f'fact:{fact.fact_id}@{fact.recorded_at}'} if fact else row)
+        projection: str = yaml.safe_dump([{'id': row.get('id'), **row} for row in projected], sort_keys=False)
     else:
-        text = read_state(directory, name)
-        all_authored = records(text, name, include_closed=include_closed)
-        authored = [row for row in all_authored if _audience_visible(row, viewer)]
-        if any('subject' not in row and 'subject_id' not in row
-               and isinstance(row.get('owner', ''), str) and not row.get('owner', '').strip() for row in authored):
-            authorize_source(ledger, fallback, ledger._consent_subjects, scope, viewer)
-        allowed = [row for row in authored if _record_visible(row, ledger, viewer, scope)]
-        if name == 'open_items':
-            projected = []
-            for row in allowed:
-                fact = completion_fact(ledger, viewer, row.get('completion_evidence'), completion_key('open_item', row))
-                projected.append({**row, 'status': 'done',
-                                  'completion_evidence': f'fact:{fact.fact_id}@{fact.recorded_at}'} if fact else row)
-            # Preserve the canonical parser's id-first block convention.
-            projection = yaml.safe_dump([{'id': row.get('id'), **row} for row in projected], sort_keys=False)
-        else:
-            result = {name: allowed}
-            if name == 'goals':
-                result['sprints'] = _scoped_sprints(text, all_authored, allowed, ledger, viewer, fallback)
-            projection = yaml.safe_dump(result, sort_keys=False)
+        result = {name: allowed}
+        if name == 'goals':
+            result['sprints'] = _scoped_sprints(text, all_authored, allowed, ledger, viewer, fallback)
+        projection = yaml.safe_dump(result, sort_keys=False)
     if generation != ledger._permission_generation():
         raise PermissionDenied('curated permissions changed during retrieval; retry')
     return projection
+
+
+def _personal_state_identity(directory: Path, name: str, _ledger: Ledger) -> tuple[Path, str, str]:
+    if name not in {'goals', 'responsibilities', 'household_tasks', 'open_items'}:
+        raise PermissionDenied('personal scope unavailable')
+    try:
+        parents = (directory, *directory.parents)
+        for parent in parents:
+            info = parent.lstat()
+            if (stat.S_ISLNK(info.st_mode)
+                    or getattr(info, 'st_file_attributes', 0) & getattr(stat, 'FILE_ATTRIBUTE_REPARSE_POINT', 0x400)):
+                raise PermissionDenied('personal scope unavailable')
+    except OSError:
+        raise PermissionDenied('personal scope unavailable') from None
+    encrypted = directory / f'{name}.md.age'
+    try:
+        encrypted.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise PermissionDenied('personal scope unavailable') from None
+    else:
+        raise PermissionDenied('encrypted personal scope unavailable')
+    raise PermissionDenied('personal scope unavailable')
 
 
 def _scoped_sprints(text: str, goals: list[dict[str, Any]], allowed: list[dict[str, Any]],

@@ -542,8 +542,8 @@ def run_gitleaks(repo: Path, *, staged: bool = False, log_opts: str | None = Non
     except ScannerError:
         return [Finding("(gitleaks)", "scanner error: gitleaks config missing, malformed or unsupported (fail closed)")]
     args = [exe, "stdin" if content is not None else "git",
-            "--no-banner", "--redact", "-l", "error", "-f", "json", "-r", "-"]
-    args += ["-c", str(config)]
+            "--no-banner", "--redact", "--log-level=error", "--report-format=json",
+            "--report-path=-", f"--config={config}"]
     if staged:
         args += ["--staged"]
     elif log_opts:
@@ -553,6 +553,9 @@ def run_gitleaks(repo: Path, *, staged: bool = False, log_opts: str | None = Non
     try:
         result = subprocess.run(args, input=content, capture_output=True,
                                 text=content is None, timeout=600, env=git_env())
+        if result.returncode == 0xC0000005:
+            result = subprocess.run(args, input=content, capture_output=True,
+                                    text=content is None, timeout=600, env=git_env())
     except (OSError, subprocess.SubprocessError) as exc:
         return [Finding(path or "(gitleaks)", f"scanner failed to run ({type(exc).__name__}) (fail closed)")]
     if result.returncode in (0, 1):

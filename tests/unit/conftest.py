@@ -18,6 +18,38 @@ if str(_SCRIPTS) not in sys.path:
 
 import pii_guard  # noqa: E402
 
+
+@pytest.fixture
+def admitted_personal_scope(monkeypatch):
+    """Exercise downstream Ledger behavior with synthetic test-only admission."""
+    from catchup_core.ledger import Ledger
+
+    for method in (
+        "require_personal_connector_admission",
+        "require_personal_signal_admission",
+        "require_personal_fact_admission",
+        "require_personal_calendar_admission",
+    ):
+        monkeypatch.setattr(Ledger, method, lambda self: None)
+
+    upsert_signal = Ledger.upsert_signal
+
+    def upsert_reviewed_signal(self, signal):
+        signal_id, created = upsert_signal(self, signal)
+        row = self.signal_row(signal_id)
+        if not self._has_personal_binding(
+            "signal", signal_id, row["upstream_version"], row["connector"],
+            row["account_scope"], row["content_hmac"],
+        ):
+            with self.transaction() as db:
+                self._record_personal_binding(
+                    db, "signal", signal_id, row["upstream_version"], row["connector"],
+                    row["account_scope"], row["content_hmac"], provenance="source_review")
+        return signal_id, created
+
+    monkeypatch.setattr(Ledger, "upsert_signal", upsert_reviewed_signal)
+
+
 # Unicode escapes used intentionally — avoids triggering the pii_guard language
 # fence on this source file while keeping the values human-readable in comments.
 # \u0935\u0947\u0926 = Devanagari script test string (used in i18n PII detection tests)

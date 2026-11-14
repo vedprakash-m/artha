@@ -126,7 +126,7 @@ def test_a_failed_payment_is_p2_and_an_ok_payment_is_quiet(value, expected):
 # --- triage through the unchanged core -----------------------------------------------------------------------------
 
 @pytest.fixture
-def ledger(tmp_path):
+def ledger(tmp_path, admitted_personal_sources):
     led = lg.Ledger(tmp_path / "l.db", id_key=KEY, cipher=CIPHER, owner_id="ved").open()
     led.migrate()
     yield led

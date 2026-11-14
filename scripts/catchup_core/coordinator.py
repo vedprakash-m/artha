@@ -50,7 +50,7 @@ from catchup_core.crypto import DecryptionError, KeyUnavailableError
 from catchup_core.domain_pack import DomainPack
 from catchup_core.exchange import AwaitingExtraction, ExchangeExtractor, ExtractionPending, PendingRequest
 from catchup_core.incumbent import GuardedIncumbent, IncumbentOutput
-from catchup_core.ledger import Ledger, LedgerError, PermissionDenied, SignalInput, Suppressed
+from catchup_core.ledger import Ledger, LedgerError, PermissionDenied, PersonalScopeUnavailable, SignalInput, Suppressed
 from catchup_core.reconcile import reconcile
 from catchup_core.resources import AdmissionStore, PolicyRequired, ResourceLimit
 from catchup_core.session_lock import SessionBusy, session_lock
@@ -124,7 +124,7 @@ class Deps:
     viewer: str
     now: Callable[[], datetime]
     source_class: Mapping[str, str] = field(default_factory=dict)
-    incumbent: GuardedIncumbent = field(default_factory=lambda: GuardedIncumbent(None))
+    incumbent: GuardedIncumbent | None = field(default_factory=lambda: GuardedIncumbent(None))
     calendar: Callable[[], Sequence[CalendarEvent]] = lambda: ()
     obligation_states: Callable[[], Mapping[str, str]] = lambda: {}
     reminder_proposer: Callable[[Sequence[AlertDraft]], object] | None = None
@@ -233,20 +233,33 @@ class _Run:
     def _fetch_one(self, name: str, fetcher: Callable[[], ConnectorFetch]) -> list[str]:
         d = self.deps
         d.validate_inputs()
+        self.led.require_personal_connector_admission()
         try:
             got = fetcher()
+        except PersonalScopeUnavailable:
+            raise
         except Exception:  # degrade only this connector's scope
             self.failures.append(FailureClass.PROVIDER)
             self.led.set_coverage(name, "unknown", CoverageStatus.UNAVAILABLE.value,
                                   catchup_id=self.request.catchup_id)
             return []
-        with self.led.transaction():
-            created = self._store_fetch(got, name)
+        created = self._store_fetch(got, name)
         if got.commit is not None:
             got.commit()
         return created
 
-    def _store_fetch(self, got: ConnectorFetch, name: str) -> list[str]:  # noqa: PLR0912
+    def _preflight_fetch_withdrawals(self, got: ConnectorFetch) -> None:
+        if got.cancelled or got.deleted_collections:
+            self.led.require_personal_fact_admission()
+        if got.status is CoverageStatus.COMPLETE and not got.cursor_reset and got.full_listings:
+            self.led.require_personal_calendar_admission()
+
+    def _store_fetch(self, got: ConnectorFetch, name: str) -> list[str]:
+        self._preflight_fetch_withdrawals(got)
+        with self.led.transaction():
+            return self._store_fetch_in_transaction(got, name)
+
+    def _store_fetch_in_transaction(self, got: ConnectorFetch, name: str) -> list[str]:  # noqa: PLR0912
         d = self.deps
         self.led.set_source_subjects(got.connector, got.account_scope, d.scope_subjects.get(name, d.subjects))
         if got.error is not None:
@@ -297,13 +310,9 @@ class _Run:
             for coll_id, window_start, window_end in got.full_listings:
                 self.led.withdraw_unlisted_calendar_occurrences(
                     got.connector, got.account_scope, coll_id, listed, window_start, window_end)
-        cursor_to_commit: str | None = None
-        if got.cursor_reset:
-            reset_cursor = True
-        else:
-            reset_cursor = False
-            if got.cursor and got.status is CoverageStatus.COMPLETE:
-                cursor_to_commit = got.cursor
+        reset_cursor = got.cursor_reset
+        cursor_to_commit = got.cursor if not reset_cursor and got.cursor and got.status is CoverageStatus.COMPLETE \
+            else None
         self.led.set_coverage(got.connector, got.account_scope, got.status.value, got.blind_spots,
                               completed_at=(got.completed_at or _iso(self.now))
                               if got.status is CoverageStatus.COMPLETE else None,
@@ -325,6 +334,8 @@ class _Run:
             return False
         try:
             self.led.require_signal_operation(sid, viewer)
+        except PersonalScopeUnavailable:
+            raise
         except PermissionDenied:
             return False
         return True
@@ -368,13 +379,29 @@ class _Run:
                 out.extend(self._fetch_one(name, fetcher))
         return tuple(out)
 
+    def _personal_signal_is_bound(self, sid: str) -> bool:
+        try:
+            self.led.require_personal_signal(sid)
+        except PersonalScopeUnavailable:
+            raise
+        except PermissionDenied:
+            return False
+        return True
+
     # ── NORMALIZE ────────────────────────────────────────────────────────────
     def _stage_normalize(self) -> tuple[str, ...]:
         out: list[str] = []
         for row in self.led.signals_in_state(ProcessingState.FETCHED):
             sid = row["signal_id"]
+            if not self._personal_signal_is_bound(sid):
+                self.led.set_processing_state(sid, ProcessingState.EXCLUDED, "personal scope unavailable")
+                self.led.record_failure(sid, "normalize", FailureClass.PERMISSION.value)
+                self.failures.append(FailureClass.PERMISSION)
+                continue
             try:
                 text = self.deps.blobs.get(row["evidence_blob_ref"])
+            except PersonalScopeUnavailable:
+                raise
             except Exception:
                 self.led.set_processing_state(sid, ProcessingState.EXCLUDED, "evidence unreadable")
                 self.led.record_failure(sid, "normalize", FailureClass.DECODE.value)
@@ -395,6 +422,7 @@ class _Run:
     def _extract_authorize(self, sid: str, subjects: Sequence[str]) -> sqlite3.Row:
         from catchup_core.policy import authorize_source  # noqa: PLC0415
         self.deps.validate_inputs()
+        self.led.require_personal_signal(sid)
         row = self.led.signal_row(sid)
         if (row is None or self.led.source_is_obsolete(sid)
                 or self.led.is_tombstoned(row['connector'], row['account_scope'],
@@ -412,53 +440,43 @@ class _Run:
         self.led.record_failure(sid, 'resource', FailureClass.POLICY.value)
         self.failures.append(FailureClass.POLICY)
 
-    def _extract_one(self, row: sqlite3.Row) -> bool:
-        d, sid = self.deps, row["signal_id"]
+    def _extract_permission_failure(self, sid: str) -> bool:
+        self.led.record_failure(sid, "extract", FailureClass.PERMISSION.value)
+        self.failures.append(FailureClass.PERMISSION)
+        return False
+
+    def _extract_ready(self, sid: str) -> bool:
+        if not self._personal_signal_is_bound(sid):
+            self.led.record_failure(sid, "extract", FailureClass.PERMISSION.value)
+            self.failures.append(FailureClass.PERMISSION)
+            return False
         if self.led.conn.execute("SELECT 1 FROM signal_failures WHERE signal_id=? AND stage='version'",
                                  (sid,)).fetchone():
             self.led.set_processing_state(sid, ProcessingState.RECONCILED)
             return False
+        return True
+
+    def _extract_one(self, row: sqlite3.Row) -> bool:
+        d, sid = self.deps, row["signal_id"]
+        if not self._extract_ready(sid):
+            return False
         text = d.blobs.get(row["evidence_blob_ref"])
         subjects = d.subjects_for(row["connector"], text) if d.subjects_for else d.subjects
         if not subjects:
-            self.led.record_failure(sid, "extract", FailureClass.PERMISSION.value)
-            self.failures.append(FailureClass.PERMISSION)
-            return False
+            return self._extract_permission_failure(sid)
         try:
             self._extract_authorize(sid, subjects)
+        except PersonalScopeUnavailable:
+            raise
         except PermissionDenied:
-            self.led.record_failure(sid, "extract", FailureClass.PERMISSION.value)
-            self.failures.append(FailureClass.PERMISSION)
-            return False
+            return self._extract_permission_failure(sid)
         klass = d.source_class.get(row["connector"], row["connector"])
-        candidates: list[ex.Candidate] = []
-        incumbent_candidates: list[dict[str, object]] = []
         pending_count = len(self._pending)
         self.led.clear_failure(sid, 'resource')
-        complete = True
-        for start in range(0, len(text), 7600):  # overlap retains sentences crossing an excerpt boundary
-            signal = ex.NormalizedSignal(sid, row["connector"], text[start:start + 8000], klass,
-                                         row["occurred_at"])
-            try:
-                parsed = self._extract_chunk(signal, subjects)
-            except PermissionDenied:
-                self.led.record_failure(sid, 'extract', FailureClass.PERMISSION.value)
-                self.failures.append(FailureClass.PERMISSION)
-                return False
-            if parsed is None:
-                complete = False
-                continue
-            complete = complete and parsed.complete and not parsed.rejections
-            for other in parsed.other_obligations:
-                a, b = other["span"]
-                span = _rebase_span(text, start, a, b, row['span_unit'])
-                incumbent_candidates.append({**other, "span": list(span)})
-            for candidate in parsed.candidates:
-                a, b = candidate.span
-                span = _rebase_span(text, start, a, b, row['span_unit'])
-                candidates.append(ex.Candidate(candidate.predicate, candidate.value, candidate.subject_id,
-                    sid, span, candidate.quote,
-                    obligation_ref=candidate.obligation_ref))
+        extracted = self._extract_candidates(row, text, subjects, klass)
+        if extracted is None:
+            return False
+        complete, candidates, incumbent_candidates = extracted
         if (len(self._pending) > pending_count or self.led.conn.execute(
             "SELECT 1 FROM signal_failures WHERE signal_id=? AND stage='resource'", (sid,)).fetchone()):
             return False
@@ -490,6 +508,39 @@ class _Run:
             for c in unique.values()] + incumbent_candidates)
         self.led.set_processing_state(sid, ProcessingState.EXTRACTED)
         return True
+
+    def _extract_candidates(
+            self, row: sqlite3.Row, text: str, subjects: Sequence[str], klass: str,
+    ) -> tuple[bool, list[ex.Candidate], list[dict[str, object]]] | None:
+        sid = row["signal_id"]
+        candidates: list[ex.Candidate] = []
+        incumbent_candidates: list[dict[str, object]] = []
+        complete = True
+        for start in range(0, len(text), 7600):  # overlap retains sentences crossing an excerpt boundary
+            signal = ex.NormalizedSignal(sid, row["connector"], text[start:start + 8000], klass,
+                                         row["occurred_at"])
+            try:
+                parsed = self._extract_chunk(signal, subjects)
+            except PersonalScopeUnavailable:
+                raise
+            except PermissionDenied:
+                self._extract_permission_failure(sid)
+                return None
+            if parsed is None:
+                complete = False
+                continue
+            complete = complete and parsed.complete and not parsed.rejections
+            for other in parsed.other_obligations:
+                a, b = other["span"]
+                span = _rebase_span(text, start, a, b, row['span_unit'])
+                incumbent_candidates.append({**other, "span": list(span)})
+            for candidate in parsed.candidates:
+                a, b = candidate.span
+                span = _rebase_span(text, start, a, b, row['span_unit'])
+                candidates.append(ex.Candidate(candidate.predicate, candidate.value, candidate.subject_id,
+                    sid, span, candidate.quote,
+                    obligation_ref=candidate.obligation_ref))
+        return complete, candidates, incumbent_candidates
 
     def _extract_chunk(  # noqa: PLR0912, PLR0915
         self, signal: ex.NormalizedSignal, subjects: Sequence[str],
@@ -572,6 +623,7 @@ class _Run:
         return parsed if parsed.ok else ex.ExtractionResult((), complete=False)
 
     def _stage_extract(self) -> tuple[str, ...]:
+        self.led.require_personal_signal_admission()
         for row in self.led.conn.execute("SELECT signal_id FROM signal_failures WHERE stage='extract' "
                                          "AND retry_eligible=1 AND attempts<3").fetchall():
             self.led.set_processing_state(row[0], ProcessingState.NORMALIZED)
@@ -662,6 +714,8 @@ class _Run:
         for a in result.alerts + result.horizon + result.supporting:
             try:
                 fact = self.led.get_fact(a.fact_id, self.deps.viewer)
+            except PersonalScopeUnavailable:
+                raise
             except (LedgerError, KeyError):
                 continue
             refs = []
@@ -746,6 +800,11 @@ class _Run:
     def _incumbent_output(self) -> IncumbentOutput:
         """The guarded incumbent runs once per Catch-up (never writes, never publishes)."""
         if self._incumbent is None:
+            if self.deps.incumbent is None:
+                self._incumbent = IncumbentOutput(coverage=(CoverageEntry(
+                    "incumbent", "legacy-state", CoverageStatus.UNAVAILABLE, required=False,
+                    detail="personal classification unavailable"),))
+                return self._incumbent
             from catchup_core.policy import authorize_source  # noqa: PLC0415
             permitted = []
             for row in self.led.signals_in_state(ProcessingState.RECONCILED):

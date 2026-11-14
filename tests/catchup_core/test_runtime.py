@@ -31,18 +31,21 @@ def test_bundle_inventory_requires_resolved_source_and_account(bundles):
         rt._bundle_fetchers(config, None, FakeKeyring(), {}, lambda: None)
 
 
-def test_runtime_inventory_uses_the_configured_bundle_account(tmp_path):
+def test_runtime_inventory_uses_the_configured_source_account_before_fetch_admission(tmp_path):
     repo = tmp_path / 'repo'
     (repo / 'state').mkdir(parents=True)
-    write_cfg(repo, bundles={'school_email': {'account_scope': 'remote', 'producer': 'secondary',
-        'recipient': 'authority', 'dir': str(tmp_path / 'bundles')}})
+    write_cfg(repo, sources={"school_email": {"connector": "gmail", "account_scope": "remote"}})
+    calls = []
     deps = rt.build_deps(CatchupRequest('cu_inventory', 'ved', 'cli', mode=ExecutionMode.SHADOW),
         repo_root=repo, environ={'ARTHA_LOCAL_DIR': str(tmp_path / 'private')}, keyring_backend=FakeKeyring(),
-        handler_loader=lambda _: None, auth_loader=lambda _: {})
+        handler_loader=lambda name: calls.append(("handler", name)),
+        auth_loader=lambda name: calls.append(("auth", name)))
     try:
         assert deps.expected_scopes['school_email'] == 'remote'
-        deps.ledger.grant_consent('adult1', 'adult1', 'school_email:remote', ['ingest', 'disclose', 'view'], 'ved')
-        assert deps.fetchers['school_email']().account_scope == 'remote'
+        fetched = deps.fetchers['school_email']()
+        assert fetched.account_scope == 'remote'
+        assert fetched.status is CoverageStatus.UNAVAILABLE and fetched.error is FailureClass.PERMISSION
+        assert calls == []
     finally:
         deps.ledger.close()
 
@@ -148,17 +151,21 @@ def test_command_extractor_fails_closed():
         rt.command_extractor("python3 scripts/catchup_core/extractor_cmd.py", runner=bad)("p")
 
 
-def test_fetchers_degrade_when_loading_or_auth_fails():
+def test_fetchers_remain_unavailable_until_personal_source_classification():
     cfg = rt.RuntimeConfig({"school_email": {"connector": "gmail", "account_scope": "p"}}, ["k"], "o")
+    calls = []
 
     def broken_loader(name):
+        calls.append(name)
         raise ImportError("not allowlisted")
-    f = rt.build_fetchers(cfg, "2026-10-01T00:00:00Z", broken_loader, lambda n: {}, {"school_email": True})
+    f = rt.build_fetchers(cfg, "2026-10-01T00:00:00Z", broken_loader,
+                          lambda name: calls.append(name) or {}, {"school_email": True})
     got = f["school_email"]()
-    assert got.status is CoverageStatus.UNAVAILABLE and got.error is FailureClass.AUTH and got.required
+    assert got.status is CoverageStatus.UNAVAILABLE and got.error is FailureClass.PERMISSION and got.required
+    assert calls == []
 
 
-def test_fetchers_use_handler_and_kwargs():
+def test_fetchers_do_not_load_handlers_before_personal_source_classification():
     seen = {}
 
     class Handler:
@@ -171,11 +178,11 @@ def test_fetchers_use_handler_and_kwargs():
     f = rt.build_fetchers(cfg, "2026-10-01T00:00:00Z", lambda n: Handler, lambda n: {"token": "t"},
                           {"school_email": False})
     got = f["school_email"]()
-    assert got.status is CoverageStatus.COMPLETE and len(got.records) == 1 and not got.required
-    assert seen["query"] == "label:school" and seen["auth_context"] == {"token": "t"}
+    assert got.status is CoverageStatus.UNAVAILABLE and got.error is FailureClass.PERMISSION and not got.required
+    assert seen == {}
 
 
-def test_consent_authorized_provider_fetch_carries_permission_generation(tmp_path):
+def test_consent_does_not_replace_personal_source_classification(tmp_path):
     from test_coordinator import CIPHER, KEY
     from catchup_core.ledger import Ledger
 
@@ -198,10 +205,13 @@ def test_consent_authorized_provider_fetch_carries_permission_generation(tmp_pat
             ["adult"], "owner", frozenset({"adult"}))
         fetched = rt.build_fetchers(config, "2026-10-01T00:00:00Z", lambda _: Handler, lambda _: {},
                                     {"school_email": True}, led)["school_email"]()
-        assert fetched.provider_permission_generation == generation
+        assert fetched.status is CoverageStatus.UNAVAILABLE
+        assert fetched.error is FailureClass.PERMISSION
+        assert fetched.provider_permission_generation is None
+        assert generation == led._permission_generation()
 
 
-def test_provider_fetch_does_not_attest_a_consent_generation_revoked_during_fetch(tmp_path):
+def test_consent_revocation_does_not_open_an_unclassified_source(tmp_path):
     from test_coordinator import CIPHER, KEY
     from catchup_core.ledger import Ledger
 
@@ -212,9 +222,11 @@ def test_provider_fetch_does_not_attest_a_consent_generation_revoked_during_fetc
         grant = led.grant_consent("adult", "adult", "school_email:acct",
                                   ["ingest", "disclose", "view"], "owner")
 
+        calls = []
         class Handler:
             @staticmethod
             def fetch(**_kwargs):
+                calls.append(True)
                 led.revoke_consent(grant)
                 return iter([{"id": "m1", "source": "school_email", "date_iso": "2026-10-11",
                               "subject": "s", "body": "b"}])
@@ -224,18 +236,21 @@ def test_provider_fetch_does_not_attest_a_consent_generation_revoked_during_fetc
             ["adult"], "owner", frozenset({"adult"}))
         fetched = rt.build_fetchers(config, "2026-10-01T00:00:00Z", lambda _: Handler, lambda _: {},
                                     {"school_email": True}, led)["school_email"]()
+        assert fetched.status is CoverageStatus.UNAVAILABLE
+        assert fetched.error is FailureClass.PERMISSION
         assert fetched.provider_permission_generation is None
+        assert calls == []
 
 
-def test_verified_scope_fetch_uses_overlap_and_work_is_refused(tmp_path, monkeypatch):
+def test_existing_coverage_does_not_admit_personal_or_work_fetches(tmp_path, monkeypatch):
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'private-coverage'))
     from test_user_surfaces import CIPHER, KEY
     from catchup_core.ledger import Ledger
-    seen = {}
+    seen = []
     class Handler:
         @staticmethod
         def fetch(**kw):
-            seen.update(kw)
+            seen.append(kw)
             return iter(())
     with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER).open() as led:
         led.migrate()
@@ -243,10 +258,10 @@ def test_verified_scope_fetch_uses_overlap_and_work_is_refused(tmp_path, monkeyp
         spec = {"connector": "gmail", "account_scope": "personal"}
         cfg = rt.RuntimeConfig({"school_email": spec}, ["kid1"], "owner")
         fetch = rt.build_fetchers(cfg, "2026-01-01T00:00:00Z", lambda _: Handler, lambda _: {}, {}, led)
-        assert fetch["school_email"]().status is CoverageStatus.COMPLETE
-        assert seen["since"] == "2026-10-10T10:00:00+00:00"
+        assert fetch["school_email"]().status is CoverageStatus.UNAVAILABLE
         cfg.sources["school_email"]["namespace"] = "work"
         assert fetch["school_email"]().status is CoverageStatus.UNAVAILABLE
+        assert seen == []
 
 
 def test_unknown_requested_pack_and_private_storage_in_repo_are_refused(tmp_path):
@@ -285,16 +300,14 @@ def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeyp
         auth_loader=lambda n: {}, now=lambda: datetime(2026, 10, 12, tzinfo=timezone.utc))
     try:
         assert (local / "catchup_core" / "shadow" / "ledger.db").exists()
-        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {
-            "school_email", "calendar", "capture", "documents"}
+        assert deps.pack.domain == "kids_school" and set(deps.fetchers) == {"school_email", "calendar"}
         assert deps.ledger.schema_version() >= 2 and deps.viewer == "ved"
         assert deps.ledger._consent_subjects == frozenset({"adult1"})   # the gate is actually armed
         assert deps.expected_scopes == {'school_email': 'personal', 'calendar': 'family',
                                         'capture': 'ved', 'documents': 'manual'}
         keys = {n for (_s, n) in kr.store}
         assert {"key.1", "current_version"} <= keys                       # keys live in the credential store
-        out = deps.incumbent.run([])
-        assert [c.domain for c in out.conclusions] == ["finance"]
+        assert deps.incumbent is None
         # a full shadow run with nothing configured to fetch still completes honestly
         from catchup_core.coordinator import run_catchup
         # Exercise runtime checks against synthetic inventory, never the developer's scheduler.
@@ -302,7 +315,7 @@ def test_build_deps_wires_local_storage_keys_and_shadow_safety(tmp_path, monkeyp
                             lambda: SimpleNamespace(passed=True))
         result = run_catchup(request, deps)
         assert result.briefing_id is None and result.mode is ExecutionMode.SHADOW
-        assert '0/2 required source scopes complete this Catch-up' in result.briefing_text
+        assert result.briefing_text is None
     finally:
         deps.ledger.close()
 
@@ -348,6 +361,32 @@ def test_backup_callback_copies_the_database(tmp_path):
     with closing(sqlite3.connect(dest)) as c:
         assert c.execute("SELECT x FROM example").fetchone()[0] == 42
     assert dest.name.startswith("ledger.pre-migration.")
+
+
+def test_existing_ledger_personal_scope_upgrade_requires_review(tmp_path, monkeypatch):
+    from catchup_core import crypto, ids
+    from catchup_core.ledger import Ledger
+
+    migrations = Ledger.available_migrations()
+    assert migrations[-1][0] >= 20
+    monkeypatch.setattr(Ledger, "available_migrations",
+                        staticmethod(lambda: [(number, path) for number, path in migrations if number < 20]))
+    key = ids.HmacKey(1, b"i" * 32)
+    cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"7" * 32}))
+    with Ledger(tmp_path / "ledger.db", id_key=key, cipher=cipher).open() as ledger:
+        ledger.migrate()
+        assert ledger.schema_version() == 19
+    monkeypatch.setattr(Ledger, "available_migrations", staticmethod(lambda: migrations))
+    monkeypatch.setattr(Ledger, "migrate", lambda *_args, **_kwargs: pytest.fail("unreviewed migration started"))
+    request = CatchupRequest("synthetic", "ved", "cli", mode=ExecutionMode.SHADOW)
+    config = rt.RuntimeConfig({}, ["kid1"], "ved")
+
+    with pytest.raises(rt.RuntimeConfigError, match="reviewed.*migration"):
+        rt._open_ledger(tmp_path, config, request, cipher, key, FakeKeyring())
+
+    with Ledger(tmp_path / "ledger.db", id_key=key, cipher=cipher).open(read_only=True) as ledger:
+        assert ledger.schema_version() == 19
+    assert list(tmp_path.glob("ledger.pre-migration.*")) == []
 
 
 def test_stale_ledger_blocks_build(tmp_path):

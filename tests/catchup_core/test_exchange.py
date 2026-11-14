@@ -17,6 +17,8 @@ from catchup_core import coordinator as co  # noqa: E402
 from catchup_core import exchange as xc  # noqa: E402
 from catchup_core.contracts import ExitCode, RunStatus  # noqa: E402
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_corpus")
+
 world = tc.world        # share the end-to-end fixture
 EXTRACT, cal, email, req = tc.EXTRACT, tc.cal, tc.email, tc.req
 

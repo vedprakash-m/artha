@@ -311,7 +311,9 @@ def test_two_real_migration_processes_converge_without_duplicate_history(tmp_pat
         assert led.conn.execute('SELECT count(*) FROM schema_history').fetchone()[0] == LATEST
 
 
-def test_source_time_upgrade_preserves_unknown_history_instead_of_copying_current_time(tmp_path, monkeypatch):
+def test_source_time_upgrade_preserves_unknown_history_instead_of_copying_current_time(
+    tmp_path, monkeypatch, admitted_personal_scope
+):
     available = lg.Ledger.available_migrations()
     path = tmp_path / 'prior.db'
     with monkeypatch.context() as patch:
@@ -328,6 +330,21 @@ def test_source_time_upgrade_preserves_unknown_history_instead_of_copying_curren
                     'FROM facts', (stamp,))
     with lg.Ledger(path, id_key=KEY) as led:
         led.migrate(backup=backup)
+        with led.transaction() as db:
+            scope_hmac = lg.ids.content_hmac(led._id_key, '1')
+            db.execute('UPDATE facts SET scope_hmac=? WHERE fact_id=?', (scope_hmac, 'fct_old'))
+            db.execute('UPDATE fact_versions SET scope_hmac=? WHERE fact_id=?', (scope_hmac, 'fct_old'))
+            current = db.execute(
+                'SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?', ('fct_old',)
+            ).fetchone()
+            led._record_personal_binding(
+                db, 'fact', 'fct_old', current['recorded_at'], 'ledger', led._owner, current['scope_hmac'])
+            for version in db.execute(
+                'SELECT recorded_at,scope_hmac FROM fact_versions WHERE fact_id=?', ('fct_old',)
+            ).fetchall():
+                led._record_personal_binding(
+                    db, 'fact_version', 'fct_old', version['recorded_at'], 'ledger', led._owner,
+                    version['scope_hmac'])
         history = led.fact_history('fct_old', 'owner')
         assert history[0]['observed_at'] is None and history[0]['occurred_at'] is None
         assert history[1]['observed_at'] == '2026-10-13T00:00:00Z'

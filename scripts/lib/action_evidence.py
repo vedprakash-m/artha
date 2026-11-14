@@ -14,16 +14,18 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager, closing
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
 from catchup_core.actions import ClaimRefused, _instant, _verify_fact, normalize_preconditions
-from catchup_core.fact_access import AccessPolicy, consent_active, require_metadata
+from catchup_core.fact_access import AccessPolicy, consent_active
 
-_SCHEMA = 'artha.action-evidence.v1'
+_SCHEMA = 'artha.action-evidence.v2'
 _FIELDS = {'schema', 'root', 'ledger_path', 'namespace', 'payload_hash', 'expires_at', 'files',
-           'owner', 'known_subjects', 'consent_subjects', 'sources', 'domains', 'head', 'household_day', 'household_timezone'}
+           'owner', 'known_subjects', 'consent_subjects', 'sources', 'domains', 'head', 'household_day',
+           'household_timezone', 'fact_metadata', 'evidence_digest'}
 
 
 def _files(root: Path, domains: list[str]) -> dict[str, str | None]:
@@ -80,8 +82,114 @@ def _head(backend: Any) -> dict[str, Any]:
     return asdict(checkpoint)
 
 
-def _metadata_context(root: Path, ledger: Any, config: Any, backend: Any, payload_hash: str) -> dict[str, Any]:
+def _evidence_digest(conn: sqlite3.Connection, fact_ids: set[str]) -> str:
+    if not fact_ids:
+        return hashlib.sha256(b'[]').hexdigest()
+    facts = tuple(sorted(fact_ids))
+    marks = ','.join('?' for _ in facts)
+    evidence = conn.execute(
+        f'SELECT signal_id FROM fact_evidence WHERE fact_id IN ({marks}) UNION '
+        f'SELECT signal_id FROM fact_version_evidence WHERE fact_id IN ({marks})',
+        (*facts, *facts)).fetchall()
+    signal_ids = tuple(sorted({str(row[0]) for row in evidence}))
+    payload: dict[str, Any] = {}
+
+    def add(name: str, query: str, params: tuple[Any, ...]) -> None:
+        rows = [dict(row) for row in conn.execute(query, params)]
+        payload[name] = sorted(
+            json.dumps(row, sort_keys=True, separators=(',', ':'), default=lambda value: value.hex()
+                       if isinstance(value, bytes) else str(value))
+            for row in rows)
+
+    add('facts', f'SELECT * FROM facts WHERE fact_id IN ({marks})', facts)
+    for table in ('fact_versions', 'fact_subjects', 'fact_viewers', 'fact_evidence',
+                  'fact_version_evidence'):
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            add(table, f'SELECT * FROM {table} WHERE fact_id IN ({marks})', facts)
+    if signal_ids:
+        signal_marks = ','.join('?' for _ in signal_ids)
+        add('signals', f'SELECT * FROM signals WHERE signal_id IN ({signal_marks})', signal_ids)
+        add('scope_bindings',
+            f'SELECT * FROM scope_bindings WHERE object_id IN ({marks},{signal_marks})',
+            (*facts, *signal_ids))
+        add('source_heads', f'SELECT * FROM source_heads WHERE signal_id IN ({signal_marks})', signal_ids)
+        sources = conn.execute(
+            f'SELECT connector,account_scope,upstream_id,content_hmac FROM signals '
+            f'WHERE signal_id IN ({signal_marks})', signal_ids).fetchall()
+        tombstone_terms = ' OR '.join(
+            '(connector=? AND account_scope=? AND upstream_id=?) OR content_hmac=?' for _ in sources)
+        if tombstone_terms:
+            tombstone_params = tuple(value for row in sources for value in (row[0], row[1], row[2], row[3]))
+            add('tombstones', f'SELECT * FROM tombstones WHERE {tombstone_terms}', tombstone_params)
+        cancellation_terms = ' OR '.join(
+            '(connector=? AND account_scope=? AND upstream_id=?)' for _ in sources)
+        if cancellation_terms:
+            cancellation_params = tuple(value for row in sources for value in row[:3])
+            add('calendar_cancellations',
+                f'SELECT * FROM calendar_cancellations WHERE {cancellation_terms}', cancellation_params)
+    else:
+        add('scope_bindings',
+            f'SELECT * FROM scope_bindings WHERE object_type IN (\'fact\',\'fact_version\') '
+            f'AND object_id IN ({marks})', facts)
+
+    subjects = {str(row[0]) for row in conn.execute(
+        f'SELECT primary_subject_id FROM facts WHERE fact_id IN ({marks})', facts)}
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fact_subjects'").fetchone():
+        subjects.update(str(row[0]) for row in conn.execute(
+            f'SELECT subject_id FROM fact_subjects WHERE fact_id IN ({marks})', facts))
+    if subjects:
+        subject_ids = tuple(sorted(subjects))
+        subject_marks = ','.join('?' for _ in subject_ids)
+        add('consent', f'SELECT * FROM consent WHERE subject_id IN ({subject_marks})', subject_ids)
+
+    binding_ids: set[str] = set()
+    if signal_ids:
+        for table in ('document_field_links', 'document_field_requirements'):
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                columns = {str(row[1]) for row in conn.execute(f'PRAGMA table_info({table})')}
+                predicates, params = [], []
+                if 'fact_id' in columns:
+                    predicates.append(f'fact_id IN ({marks})')
+                    params.extend(facts)
+                if 'signal_id' in columns:
+                    signal_marks = ','.join('?' for _ in signal_ids)
+                    predicates.append(f'signal_id IN ({signal_marks})')
+                    params.extend(signal_ids)
+                if predicates:
+                    rows = conn.execute(
+                        f'SELECT * FROM {table} WHERE {" OR ".join(predicates)}', tuple(params)).fetchall()
+                    binding_ids.update(str(row['binding_id']) for row in rows if 'binding_id' in row.keys())
+        for table_row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'document_%'"):
+            table = str(table_row[0])
+            columns = {str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')}
+            predicates, params = [], []
+            if 'fact_id' in columns:
+                predicates.append(f'fact_id IN ({marks})')
+                params.extend(facts)
+            if 'signal_id' in columns:
+                signal_marks = ','.join('?' for _ in signal_ids)
+                predicates.append(f'signal_id IN ({signal_marks})')
+                params.extend(signal_ids)
+            if 'binding_id' in columns and binding_ids:
+                binding_marks = ','.join('?' for _ in binding_ids)
+                predicates.append(f'binding_id IN ({binding_marks})')
+                params.extend(sorted(binding_ids))
+            if predicates:
+                add(table, f'SELECT * FROM "{table}" WHERE {" OR ".join(predicates)}', tuple(params))
+    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _metadata_context(root: Path, ledger: Any, config: Any, backend: Any, payload_hash: str,
+                      preconditions: dict[str, Any]) -> dict[str, Any]:
     from catchup_core.runtime import _load_packs
+    normalized = normalize_preconditions(preconditions)
+    fact_ids = set(normalized.get('fact_versions', {}))
+    fact_metadata = {
+        fid: asdict(ledger.get_fact_metadata(fid, config.viewer, operation='export'))
+        for fid in sorted(fact_ids)
+    }
     household = getattr(config, 'policy', {}).get('household_from_profile') is True
     timezone = _load_packs(tuple(config.domains)).timezone
     return {'schema': _SCHEMA, 'root': str(root.resolve()), 'ledger_path': str(ledger._path.resolve()),
@@ -92,7 +200,8 @@ def _metadata_context(root: Path, ledger: Any, config: Any, backend: Any, payloa
         'sources': {name: {'account_scope': spec['account_scope']} for name, spec in config.sources.items()},
         'domains': list(config.domains), 'head': _head(backend),
         'household_day': datetime.now(UTC).astimezone(timezone).date().isoformat() if household else None,
-        'household_timezone': str(timezone) if household else None}
+        'household_timezone': str(timezone) if household else None,
+        'fact_metadata': fact_metadata, 'evidence_digest': _evidence_digest(ledger.conn, fact_ids)}
 
 
 def require_freshness(conn: sqlite3.Connection, root: Path, config: Any, normalized: dict[str, Any],
@@ -210,7 +319,9 @@ def prepare(proposal: Any, root: Path, preconditions: dict[str, Any]) -> dict[st
         revision = (ledger.conn.total_changes, ledger.conn.execute('PRAGMA data_version').fetchone()[0])
         verify_evidence_preconditions({**preconditions, 'provider_versions': {}}, ledger=ledger, viewer=config.viewer)
         require_freshness(ledger.conn, root, config, preconditions, datetime.now(UTC))
-        context = _metadata_context(root, ledger, config, backend, compute_payload_hash(proposal))
+        if (ledger.conn.total_changes, ledger.conn.execute('PRAGMA data_version').fetchone()[0]) != revision:
+            raise ClaimRefused('action evidence changed during capability preparation')
+        context = _metadata_context(root, ledger, config, backend, compute_payload_hash(proposal), preconditions)
         if (ledger.conn.total_changes, ledger.conn.execute('PRAGMA data_version').fetchone()[0]) != revision:
             raise ClaimRefused('action evidence changed during capability preparation')
         return context
@@ -235,14 +346,21 @@ def native_head_reader() -> Any:
 class _MetadataLedger:
     def __init__(self, conn: sqlite3.Connection, context: dict[str, Any], now: str):
         self.conn = conn
+        self.context = context
         self.policy = AccessPolicy(context['owner'], frozenset(context['consent_subjects']),
                                    frozenset(context['known_subjects']))
         self._consent_subjects = self.policy.consent_subjects
         self.now = now
 
     def get_fact_metadata(self, fid: str, viewer: str, *, operation: str = 'view') -> Any:
-        return require_metadata(self.conn, self.policy, fid, viewer, self.now,
-                                operation=operation, source_operation=(operation == 'export'))
+        from catchup_core.fact_access import FactMetadata
+        fact_metadata = self.context.get('fact_metadata')
+        if not isinstance(fact_metadata, dict) or fid not in fact_metadata:
+            from catchup_core.ledger import PermissionDenied  # noqa: PLC0415
+            raise PermissionDenied('personal scope unavailable')
+        if viewer != self.policy.owner or operation != 'export':
+            raise ClaimRefused('action evidence capability does not authorize this Fact')
+        return FactMetadata(**fact_metadata[fid])
 
     def consent_active(self, subject: str, operation: str, viewer: str, scope: str | None = None) -> bool:
         return consent_active(self.conn, self.policy, subject, operation, viewer, scope, self.now)
@@ -290,6 +408,10 @@ def verify_worker(proposal: Any, root: Path, preconditions: dict[str, Any], cont
             require_provider_scope(proposal)
         if _instant(normalized['fresh_until']) <= current:
             raise ClaimRefused('action evidence freshness limit expired')
+        fact_ids = set(normalized['fact_versions'])
+        if (set(context['fact_metadata']) != fact_ids
+                or _evidence_digest(conn, fact_ids) != context['evidence_digest']):
+            raise ClaimRefused('action evidence changed since parent verification')
         permission = int(conn.execute('SELECT COALESCE(SUM(revocation_version),0) FROM consent').fetchone()[0])
         checkpoint = conn.execute('SELECT checkpoint_id,tombstone_digest,permission_generation FROM '
                                   'deletion_checkpoint ORDER BY checkpoint_id DESC LIMIT 1').fetchone()

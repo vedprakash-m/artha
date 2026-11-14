@@ -15,6 +15,8 @@ KEY = ids.HmacKey(1, b"i" * 32)
 LATEST = lg.Ledger.available_migrations()[-1][0]
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x07" * 32}))
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 
 @pytest.fixture
 def clock():
@@ -142,6 +144,7 @@ def test_processing_state_transitions_and_closure(led):
 
 def test_ordinary_fact_roundtrip_with_evidence_and_viewers(led):
     sid, _ = led.upsert_signal(sig())
+    _bind_signal_as_personal(led, sid)
     fid = led.put_fact(fact(evidence=((sid, 0, 10),), viewers=("spouse",), co_subjects=(("kid2", "sibling"),)))
     view = led.get_fact(fid, "ved")
     assert view.value == {"date": "2026-10-19"} and view.evidence == ((sid, 0, 10),)
@@ -150,9 +153,279 @@ def test_ordinary_fact_roundtrip_with_evidence_and_viewers(led):
         led.get_fact(fid, "stranger")
 
 
+def test_unbound_signal_fact_is_denied_before_value_decode(led, monkeypatch):
+    sid, _ = led.upsert_signal(sig())
+    fid = led.put_fact(fact(evidence=((sid, 0, 10),)))
+
+    statements = []
+    led.conn.set_trace_callback(statements.append)
+    def forbidden_decode(*_args):
+        pytest.fail("unclassified source Fact was decoded")
+
+    monkeypatch.setattr(led, "_decode_value", forbidden_decode)
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        led.get_fact(fid, "ved")
+    assert not any("typed_value" in statement.lower() and statement.lstrip().lower().startswith("select")
+                   for statement in statements)
+
+
+def _bind_signal_as_personal(led, signal_id):
+    row = led.signal_row(signal_id)
+    with led.transaction() as db:
+        led._record_personal_binding(
+            db, "signal", signal_id, row["upstream_version"], row["connector"], row["account_scope"],
+            row["content_hmac"], provenance="source_review")
+
+
+def test_reviewed_signal_preserves_fact_identity_and_history(led):
+    sid, _ = led.upsert_signal(sig())
+    _bind_signal_as_personal(led, sid)
+    fid = led.put_fact(fact(evidence=((sid, 0, 10),)))
+    first = led.get_fact(fid, "ved")
+    led.put_fact(fact(value={"date": "2026-10-22"}, evidence=((sid, 0, 10),)), fact_id=fid)
+
+    assert led.get_fact(fid, "ved").fact_id == fid
+    assert [row["value"] for row in led.fact_history(fid, "ved")] == [
+        {"date": "2026-10-19"}, {"date": "2026-10-22"}]
+    assert first.fact_id == fid
+
+
+def test_signal_binding_rejects_changed_upstream_identity_and_revocation_does_not_refresh(led):
+    sid, _ = led.upsert_signal(sig(upstream="source-A"))
+    consent_id = led.grant_consent("adult_child", "adult_child", "kids_school", ("view",), "ved")
+    _bind_signal_as_personal(led, sid)
+    led.conn.execute("UPDATE signals SET upstream_id='source-B' WHERE signal_id=?", (sid,))
+
+    with pytest.raises(lg.PermissionDenied, match="personal scope"):
+        led.require_personal_signal(sid)
+
+    led.revoke_consent(consent_id)
+    generation = led._permission_generation()
+    refreshed = led.conn.execute(
+        "SELECT COUNT(*) FROM scope_bindings WHERE object_type='signal' AND object_id=? "
+        "AND permission_generation=?", (sid, generation)).fetchone()[0]
+    assert refreshed == 0
+    with pytest.raises(lg.PermissionDenied, match="personal scope"):
+        led.require_personal_signal(sid)
+
+
+def test_signal_identity_rejects_missing_components(led):
+    sid, _ = led.upsert_signal(sig())
+    row = led.signal_row(sid)
+    identity = [sid, row["connector"], row["account_scope"], row["upstream_id"], row["upstream_version"]]
+
+    for index in range(len(identity)):
+        malformed = identity.copy()
+        malformed[index] = None
+        assert not led._signal_identity_matches(*malformed)
+
+
+@pytest.mark.parametrize("scope", ["work", "mixed", "unknown"])
+def test_nonpersonal_or_conflicting_signal_scope_is_denied_before_fact_payload(led, scope):
+    sid, _ = led.upsert_signal(sig())
+    row = led.signal_row(sid)
+    with led.transaction() as db:
+        led._record_personal_binding(
+            db, "signal", sid, row["upstream_version"], row["connector"], row["account_scope"],
+            row["content_hmac"], provenance="source_review", scope=scope)
+    fid = led.put_fact(fact(evidence=((sid, 0, 10),)))
+    statements = []
+    led.conn.set_trace_callback(statements.append)
+
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        led.get_fact(fid, "ved")
+    assert not any("typed_value" in statement.lower() and statement.lstrip().lower().startswith("select")
+                   for statement in statements)
+
+
+def test_stale_permission_generation_denies_before_fact_payload(led):
+    sid, _ = led.upsert_signal(sig())
+    _bind_signal_as_personal(led, sid)
+    fid = led.put_fact(fact(evidence=((sid, 0, 10),)))
+    led.grant_consent("adult_child", "adult_child", "kids_school", ("view",), "ved")
+    led.conn.execute("UPDATE consent SET revocation_version=revocation_version+1")
+    statements = []
+    led.conn.set_trace_callback(statements.append)
+
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        led.get_fact(fid, "ved")
+    assert not any("typed_value" in statement.lower() and statement.lstrip().lower().startswith("select")
+                   for statement in statements)
+
+
+def test_fact_history_denies_unbound_nested_version_before_payload_read(led):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    led.put_fact(fact(value={"date": "2026-10-22"}, provenance=Provenance.USER_CONFIRMED), fact_id=fid)
+    old_version = led.conn.execute(
+        "SELECT recorded_at FROM fact_versions WHERE fact_id=? ORDER BY recorded_at LIMIT 1", (fid,)).fetchone()[0]
+    led.conn.execute(
+        "DELETE FROM scope_bindings WHERE object_type='fact_version' AND object_id=? AND object_version=?",
+        (fid, old_version))
+    statements = []
+    led.conn.set_trace_callback(statements.append)
+
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        led.fact_history(fid, "ved")
+    assert not any("typed_value" in statement.lower() and statement.lstrip().lower().startswith("select")
+                   for statement in statements)
+
+
+@pytest.mark.parametrize("surface", ["current", "history"])
+def test_changed_fact_payload_without_updated_marker_is_not_decoded(led, monkeypatch, surface):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    table = "facts" if surface == "current" else "fact_versions"
+    led.conn.execute(f"UPDATE {table} SET typed_value=? WHERE fact_id=?",
+                     ('"changed synthetic payload"', fid))
+    monkeypatch.setattr(led, "_decode_value", lambda *_args: pytest.fail("unbound Fact value was decoded"))
+
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        if surface == "current":
+            led.get_fact(fid, "ved")
+        else:
+            led.fact_history(fid, "ved")
+
+
+def test_fact_scope_swap_during_retrieval_never_decodes_value(led, monkeypatch):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    require_version = led._require_personal_fact_version
+    changed = False
+
+    def swap_scope(fact_id, version, content_hmac, evidence_table):
+        nonlocal changed
+        require_version(fact_id, version, content_hmac, evidence_table)
+        if not changed and evidence_table == "fact_evidence":
+            led.conn.execute("UPDATE facts SET scope_hmac='swapped' WHERE fact_id=?", (fid,))
+            changed = True
+
+    monkeypatch.setattr(led, "_require_personal_fact_version", swap_scope)
+    monkeypatch.setattr(led, "_decode_value", lambda *_args: pytest.fail("stale Fact value was decoded"))
+    with pytest.raises(lg.PermissionDenied, match="scope changed"):
+        led.get_fact(fid, "ved")
+
+
+def test_fact_history_scope_swap_never_decodes_version_value(led, monkeypatch):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    require_version = led._require_personal_fact_version
+    changed = False
+
+    def swap_scope(fact_id, version, content_hmac, evidence_table):
+        nonlocal changed
+        require_version(fact_id, version, content_hmac, evidence_table)
+        if not changed and evidence_table == "fact_version_evidence":
+            led.conn.execute(
+                "UPDATE fact_versions SET scope_hmac='swapped' WHERE fact_id=? AND recorded_at=?",
+                (fid, version))
+            changed = True
+
+    monkeypatch.setattr(led, "_require_personal_fact_version", swap_scope)
+    monkeypatch.setattr(led, "_decode_value", lambda *_args: pytest.fail("stale Fact history was decoded"))
+    with pytest.raises(lg.PermissionDenied, match="scope changed"):
+        led.fact_history(fid, "ved")
+
+
+class _MissingQueryRow:
+    def fetchone(self):
+        return None
+
+
+class _MissingQueryConnection:
+    def __init__(self, connection, query):
+        self._connection = connection
+        self._query = " ".join(query.split())
+
+    def execute(self, query, *args, **kwargs):
+        if " ".join(query.split()) == self._query:
+            return _MissingQueryRow()
+        return self._connection.execute(query, *args, **kwargs)
+
+
+def test_fact_metadata_refuses_row_removed_after_authorization(led, monkeypatch):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    with monkeypatch.context() as patched:
+        patched.setattr(led, "_conn", _MissingQueryConnection(
+            led.conn, "SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?"))
+
+        with pytest.raises(lg.LedgerError, match="unknown Fact"):
+            led.get_fact_metadata(fid, "ved")
+
+
+def test_fact_refuses_missing_payload_after_authorization(led, monkeypatch):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    with monkeypatch.context() as patched:
+        patched.setattr(led, "_conn", _MissingQueryConnection(
+            led.conn, "SELECT typed_value,value_encrypted,scope_hmac,recorded_at FROM facts WHERE fact_id=?"))
+        patched.setattr(led, "_decode_value", lambda *_args: pytest.fail("missing Fact value was decoded"))
+
+        with pytest.raises(lg.LedgerError, match="Fact changed during retrieval"):
+            led.get_fact(fid, "ved")
+
+
+def test_fact_history_refuses_missing_payload_after_authorization(led, monkeypatch):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    with monkeypatch.context() as patched:
+        patched.setattr(led, "_conn", _MissingQueryConnection(
+            led.conn, "SELECT typed_value,value_encrypted,scope_hmac FROM fact_versions "
+                      "WHERE fact_id=? AND recorded_at=?"))
+        patched.setattr(led, "_decode_value", lambda *_args: pytest.fail("missing history value was decoded"))
+
+        with pytest.raises(lg.LedgerError, match="Fact history changed during retrieval"):
+            led.fact_history(fid, "ved")
+
+
+def test_invalid_scope_binding_is_not_carried_forward_on_revocation(led):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    consent_id = led.grant_consent("adult_child", "adult_child", "kids_school", ("view",), "ved")
+    led.conn.execute(
+        "UPDATE scope_bindings SET scope='work' WHERE object_type='fact' AND object_id=?", (fid,))
+
+    led.revoke_consent(consent_id)
+    row = led.conn.execute("SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (fid,)).fetchone()
+    assert not led._has_personal_binding(
+        "fact", fid, row["recorded_at"], "ledger", led._owner, row["scope_hmac"])
+
+
+def test_personal_fact_version_rejects_unknown_evidence_table(led):
+    fid = led.put_fact(fact(provenance=Provenance.USER_CONFIRMED))
+    row = led.conn.execute("SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (fid,)).fetchone()
+
+    with pytest.raises(lg.LedgerError, match="invalid Fact evidence table"):
+        led._require_personal_fact_version(fid, row["recorded_at"], row["scope_hmac"], "unexpected")
+
+
+@pytest.mark.parametrize("legacy", ["fact", "history", "alert"])
+def test_legacy_protection_refuses_before_reading_unreviewed_payload(led, legacy):
+    fid = led.put_fact(fact(confidentiality=Confidentiality.SENSITIVE,
+                            provenance=Provenance.USER_CONFIRMED))
+    if legacy == "alert":
+        led.conn.execute(
+            "INSERT INTO alerts(alert_id,obligation_key,domain,primary_subject_id,severity,deadline,status,"
+            "first_seen,last_seen) VALUES('a','o','health','ved','P1','2026-10-12','open','t','t')")
+    else:
+        table = "facts" if legacy == "fact" else "fact_versions"
+        led.conn.execute(f"UPDATE {table} SET typed_value='\"legacy\"',value_encrypted=0,key_version=NULL "
+                         "WHERE fact_id=?", (fid,))
+    payload_reads = []
+
+    def authorize(action, table, column, _database, _trigger):
+        if action == sqlite3.SQLITE_READ and (
+                (table in ("facts", "fact_versions") and column == "typed_value")
+                or (table == "alerts" and column in ("deadline", "latest_useful_action"))):
+            payload_reads.append((table, column))
+        return sqlite3.SQLITE_OK
+
+    led.conn.set_authorizer(authorize)
+    try:
+        with pytest.raises(lg.PermissionDenied, match="reviewed migration"):
+            led.protect_legacy_values()
+    finally:
+        led.conn.set_authorizer(None)
+    assert payload_reads == []
+
+
 def test_restricted_fact_is_stored_only_as_ciphertext(led):
     fid = led.put_fact(fact(predicate="accommodation_status", value="approved",
-                            confidentiality=Confidentiality.RESTRICTED))
+                            confidentiality=Confidentiality.RESTRICTED,
+                            provenance=Provenance.USER_CONFIRMED))
     raw = led.conn.execute("SELECT typed_value, value_encrypted, key_version FROM facts WHERE fact_id=?",
                            (fid,)).fetchone()
     assert raw["value_encrypted"] == 1 and raw["key_version"] == 1
@@ -175,12 +448,12 @@ def test_check_constraint_blocks_restricted_plaintext_even_via_sql(led):
     with pytest.raises(sqlite3.IntegrityError):
         led.conn.execute(
             "INSERT INTO facts VALUES('f','d','p','{}',0,NULL,'s','restricted',NULL,NULL,0,NULL,'t','t',"
-            "'verified_source','current',NULL,'')")
+            "'verified_source','current',NULL,'',NULL)")
 
 
 def test_fact_versions_are_append_only_history(led):
-    fid = led.put_fact(fact(value={"date": "2026-10-19"}))
-    led.put_fact(fact(value={"date": "2026-10-22"}), fact_id=fid)
+    fid = led.put_fact(fact(value={"date": "2026-10-19"}, provenance=Provenance.USER_CONFIRMED))
+    led.put_fact(fact(value={"date": "2026-10-22"}, provenance=Provenance.USER_CONFIRMED), fact_id=fid)
     hist = led.fact_history(fid, "ved")
     assert [h["value"]["date"] for h in hist] == ["2026-10-19", "2026-10-22"]
     # what Artha knew at the time of the first recording
@@ -203,9 +476,10 @@ def test_validity_check_constraint(led):
 
 
 def test_facts_for_filters_status_and_permission(led):
-    a = led.put_fact(fact(viewers=("spouse",)))
-    b = led.put_fact(fact(value={"date": "x"}, status=FactStatus.SUPERSEDED))
-    led.put_fact(fact(value={"date": "y"}))     # owner-only
+    a = led.put_fact(fact(viewers=("spouse",), provenance=Provenance.USER_CONFIRMED))
+    b = led.put_fact(fact(value={"date": "x"}, status=FactStatus.SUPERSEDED,
+                          provenance=Provenance.USER_CONFIRMED))
+    led.put_fact(fact(value={"date": "y"}, provenance=Provenance.USER_CONFIRMED))     # owner-only
     got = led.facts_for("kids_school", "exam_registration_deadline", "spouse")
     assert [g.fact_id for g in got] == [a]
     both = led.facts_for("kids_school", "exam_registration_deadline", "ved",
@@ -217,7 +491,8 @@ def test_facts_for_filters_status_and_permission(led):
 
 def test_restricted_data_about_another_person_needs_consent(led):
     fid = led.put_fact(fact(predicate="accommodation_status", value="approved", primary_subject_id="adult_child",
-                            confidentiality=Confidentiality.RESTRICTED, viewers=("spouse",)))
+                            confidentiality=Confidentiality.RESTRICTED, viewers=("spouse",),
+                            provenance=Provenance.USER_CONFIRMED))
     with pytest.raises(lg.PermissionDenied):
         led.get_fact(fid, "spouse")
     with pytest.raises(lg.PermissionDenied):
@@ -293,8 +568,10 @@ def test_open_items_need_a_key(tmp_path, clock):
 
 def _forget_fixture(led):
     sid, _ = led.upsert_signal(sig("m9", hmac="HM9"))
+    _bind_signal_as_personal(led, sid)
     fid = led.put_fact(fact(evidence=((sid, 0, 5),)))
     other_sid, _ = led.upsert_signal(sig("m10", hmac="HM10"))
+    _bind_signal_as_personal(led, other_sid)
     other = led.put_fact(fact(value={"date": "2026-11-01"}, evidence=((other_sid, 0, 5),)))
     led.upsert_alert("ob:1", domain="d", primary_subject_id="kid1", severity="P2", fact_ids=[fid])
     led.upsert_alert("ob:2", domain="d", primary_subject_id="kid1", severity="P2", fact_ids=[other])
@@ -420,7 +697,9 @@ def test_stage_journal_records_and_updates(led):
 
 def test_unique_provenance_values_cover_enum(led):
     for prov in Provenance:
-        fid = led.put_fact(fact(provenance=prov))
+        sid, _ = led.upsert_signal(sig(f"prov-{prov.value}", hmac=f"hash-{prov.value}"))
+        _bind_signal_as_personal(led, sid)
+        fid = led.put_fact(fact(provenance=prov, evidence=((sid, 0, 1),)))
         assert led.get_fact(fid, "ved").provenance_class == prov.value
 
 

@@ -9,6 +9,8 @@ from test_coordinator import KEY, CIPHER
 from catchup_core import corpus, ledger as lg
 from catchup_core.backup import encrypted_snapshot, read_snapshot
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_corpus_access")
+
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
 
 
@@ -22,6 +24,11 @@ def store(tmp_path):
 
 def signal(led, subject='owner', upstream='u1'):
     sid, _ = led.upsert_signal(lg.SignalInput('mail', 'private', upstream, 'v1', NOW.isoformat(), upstream, 'blob'))
+    row = led.signal_row(sid)
+    with led.transaction() as db:
+        led._record_personal_binding(
+            db, "signal", sid, row["upstream_version"], row["connector"],
+            row["account_scope"], row["content_hmac"], provenance="source_review")
     led.set_signal_subjects(sid, [subject])
     return sid
 

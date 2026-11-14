@@ -8,6 +8,8 @@ from test_coordinator import CIPHER, KEY
 from catchup_core import corpus
 from catchup_core import ledger as lg
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_corpus")
+
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
 
 

@@ -140,7 +140,7 @@ def test_json_output_and_exit_code_follow_the_result(monkeypatch):
 
 
 @pytest.fixture
-def goal_world(tmp_path):
+def goal_world(tmp_path, admitted_personal_sources):
     from test_release_regressions import world
     yield from world.__wrapped__(tmp_path)
 
@@ -260,7 +260,9 @@ def test_milestone_goal_target_met_and_confirmation_versions_are_retained(goal_w
     assert ledger.conn.execute('SELECT count(*) FROM goal_observations').fetchone()[0] == before
 
 
-def test_corrected_completion_updates_goal_and_marks_archived_briefing(goal_world, tmp_path):
+def test_corrected_completion_updates_goal_and_marks_archived_briefing(
+    goal_world, tmp_path, admitted_curated_state
+):
     from argparse import Namespace
     from catchup_core import commands, runtime, coordinator
     from catchup_core.contracts import FactStatus
@@ -311,7 +313,9 @@ def test_goal_evidence_cannot_change_mid_evaluation(goal_world):
         gl.observe_goals(ledger,[row],'owner',NOW,dependencies={fid:'obsolete'})
 
 
-def test_owner_can_withdraw_and_reconfirm_completion_without_replaying_old_approval(goal_world,tmp_path):
+def test_owner_can_withdraw_and_reconfirm_completion_without_replaying_old_approval(
+    goal_world, tmp_path, admitted_curated_state
+):
     from argparse import Namespace
     from catchup_core import commands
     from catchup_core.curated import verify_completion,completion_key,milestone_record
@@ -351,6 +355,11 @@ def test_competing_process_update_cannot_overwrite_reviewed_fact(goal_world):
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
 from catchup_core.ledger import Ledger, FactInput
 from test_release_regressions import KEY, CIPHER, NOW
+Ledger.require_personal_fact_admission = lambda self: None
+def bind_synthetic_fact(self, db, fact_id, version, content_hmac, _provenance):
+    self._record_personal_binding(db, "fact", fact_id, version, "ledger", self._owner, content_hmac)
+    self._record_personal_binding(db, "fact_version", fact_id, version, "ledger", self._owner, content_hmac)
+Ledger._bind_fact_after_write = bind_synthetic_fact
 with Ledger(sys.argv[3], id_key=KEY, cipher=CIPHER).open() as ledger:
     ledger.put_fact(FactInput('kids_school', 'exam_registration_deadline', '2026-10-06', 'kid1', NOW.isoformat()), sys.argv[4])
 """
@@ -419,7 +428,9 @@ def test_owner_correction_keeps_original_source_scope_for_goal_recomputation(goa
     assert dependencies == {fid:ledger.get_fact(fid,'owner').recorded_at}
 
 
-def test_reopen_without_completion_requires_evidence_and_expired_preview_cannot_apply(goal_world,tmp_path):
+def test_reopen_without_completion_requires_evidence_and_expired_preview_cannot_apply(
+    goal_world, tmp_path, admitted_curated_state
+):
     from argparse import Namespace
     from datetime import timedelta
     from catchup_core import commands

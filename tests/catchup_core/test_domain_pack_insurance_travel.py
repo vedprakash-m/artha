@@ -126,7 +126,9 @@ def test_given_negated_or_conditional_payment_wording_then_received_is_not_groun
     ("claim_status", "open", Severity.P3),
     ("claim_status", "closed", None),
 ])
-def test_given_an_insurance_fact_when_triaged_then_the_rule_fires_at_the_right_day(ledger, predicate, value, expected):
+def test_given_an_insurance_fact_when_triaged_then_the_rule_fires_at_the_right_day(
+    ledger, predicate, value, expected, admitted_personal_sources
+):
     assert severity_of(ledger, load("insurance"), predicate, value) is expected
 
 
@@ -142,13 +144,17 @@ def test_given_an_insurance_fact_when_triaged_then_the_rule_fires_at_the_right_d
     ("document_expiry_date", "2027-04-11", None),           # 181 days
     ("document_expiry_date", "2026-10-01", Severity.P1),    # expired, outstanding
 ])
-def test_given_a_travel_fact_when_triaged_then_the_rule_fires_at_the_right_day(ledger, predicate, value, expected):
+def test_given_a_travel_fact_when_triaged_then_the_rule_fires_at_the_right_day(
+    ledger, predicate, value, expected, admitted_personal_sources
+):
     assert severity_of(ledger, load("travel"), predicate, value) is expected
 
 
 # ── AC4 payment resolves the premium ──────────────────────────────────────
 
-def test_given_a_later_premium_payment_when_triaged_then_the_premium_is_settled(ledger):
+def test_given_a_later_premium_payment_when_triaged_then_the_premium_is_settled(
+    ledger, admitted_personal_sources
+):
     pack = load("insurance")
     assert pack.predicates["premium_payment_status"].resolves == "premium_due_date"
     due = put(ledger, "insurance", "premium_due_date", "2026-10-14", obligation="example insurer")
@@ -158,7 +164,9 @@ def test_given_a_later_premium_payment_when_triaged_then_the_premium_is_settled(
     assert result.alerts == () and result.horizon == ()
 
 
-def test_given_a_payment_for_another_insurer_then_the_premium_stays_open(ledger):
+def test_given_a_payment_for_another_insurer_then_the_premium_stays_open(
+    ledger, admitted_personal_sources
+):
     pack = load("insurance")
     due = put(ledger, "insurance", "premium_due_date", "2026-10-14", obligation="example insurer")
     paid = put(ledger, "insurance", "premium_payment_status", "paid", obligation="sample mutual")

@@ -159,7 +159,9 @@ def test_google_invalid_future_window_is_rejected(patched, days):
         _fetch(calendar_ids=['primary'], window_days=days)
 
 
-def test_actual_handler_cancellation_withdraws_only_its_calendar(patched, tmp_path, monkeypatch):
+def test_actual_handler_cancellation_withdraws_only_its_calendar(
+    patched, tmp_path, monkeypatch, admitted_personal_scope
+):
     from catchup_core import adapters, crypto, ids, ledger as lg
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'local'))
     patched(_FakeService({'a': [[_evt(1)]], 'b': [[_evt(1)]]}))

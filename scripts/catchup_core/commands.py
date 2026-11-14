@@ -13,13 +13,16 @@ from typing import Any
 from catchup_core import ids, views
 from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
 from catchup_core.coordinator import Deps
-from catchup_core.ledger import LedgerError
+from catchup_core.ledger import LedgerError, PermissionDenied, PersonalScopeUnavailable
 
 _CODE_ROOT = Path(__file__).resolve().parents[2]      # where the capability code lives, not the user workspace
 
 
+def _require_personal_snapshot_admission() -> None:
+    raise PermissionDenied("personal snapshot unavailable: dependency classification is not established")
+
+
 def _authorize_export_artifact(deps: Deps, name: str, data: bytes) -> None:
-    from catchup_core.ledger import PermissionDenied  # noqa: PLC0415
     from catchup_core.policy import authorize_source  # noqa: PLC0415
     led = deps.ledger
     relative = Path(name)
@@ -62,6 +65,8 @@ def _authorize_export_artifact(deps: Deps, name: str, data: bytes) -> None:
 def _signal_visible(ledger: Any, signal_id: str, viewer: str) -> bool:
     try:
         ledger.require_signal_operation(signal_id, viewer)
+    except PersonalScopeUnavailable:
+        raise
     except LedgerError:
         return False
     return True
@@ -69,6 +74,8 @@ def _signal_visible(ledger: Any, signal_id: str, viewer: str) -> bool:
 
 def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # noqa: PLR0911, PLR0912, PLR0915
     # A flat command router: each branch is independent and returns one typed projection.
+    if args.command == "export":
+        _require_personal_snapshot_admission()
     deps.validate_inputs()
     led, viewer = deps.ledger, deps.viewer
     from catchup_core.contracts import ExecutionMode  # noqa: PLC0415
@@ -259,7 +266,9 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
                               "observed_at": deps.now().isoformat()}).encode()
         atomic_bytes(led._path.parent / "inbox" / f"{capture_id}.ae1",
                      cipher.encrypt(payload, aad=capture_id.encode())[0])
-        return {"captured": capture_id, "next": "Reviewed during the next Catch-up."}
+        return {"captured": capture_id, "next": (
+            "Captured; Catch-up review is unavailable until personal source classification is established."
+        )}
     if args.command == "ingest":
         from catchup_core.documents import ingest  # noqa: PLC0415
         names = [sid for sid, name in deps.subject_labels.items() if name.casefold() == args.subject.casefold()]

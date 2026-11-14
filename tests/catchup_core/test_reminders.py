@@ -3,14 +3,22 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from catchup_core import coordinator as co
 from catchup_core import reminders
 from catchup_core.contracts import ExecutionMode, Severity
 from catchup_core.triage import AlertDraft
 
-from test_coordinator import cal, email, req, world  # noqa: F401
+import test_coordinator
+from test_coordinator import cal, email, req
 
 LABELS = {"kid1": "Synthetic Kid"}
+
+
+@pytest.fixture
+def world(tmp_path, admitted_personal_scope):
+    yield from test_coordinator.world.__wrapped__(tmp_path)
 
 
 def draft(key="k1", deadline=date(2026, 11, 4), days=4, state="actionable", **kw):

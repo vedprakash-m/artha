@@ -44,10 +44,8 @@ OLD = "2020-01-01T00:00:00+00:00"
 
 
 @pytest.fixture
-def store(tmp_path, monkeypatch):
+def store(tmp_path, monkeypatch, admitted_personal_sources):
     tmp_path = tmp_path.resolve()
-    migrations = [(number, path) for number, path in Ledger.available_migrations() if number <= 16]
-    monkeypatch.setattr(Ledger, "available_migrations", staticmethod(lambda: migrations))
     key = ids.HmacKey(1, b"r" * 32)
     cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"s" * 32}))
     blobs = EncryptedBlobStore(tmp_path / "blobs", cipher, key)
@@ -513,9 +511,11 @@ def test_known_classes_without_proven_api_remain_unsupported(store):
     review = planner(store, dict.fromkeys(("source", "document", "corpus", "replay", "briefing", "trace",
                                           "snapshot", "history"), 1))
     preview = review.preview()
-    assert decisions(preview, "document")[0].status == "protected"
+    assert not decisions(preview, "document")
+    assert dict(preview.coverage)["document"] == "unsupported"
     for artifact_class in ("corpus", "briefing", "history"):
-        assert decisions(preview, artifact_class)[0].status == "unsupported"
+        assert not decisions(preview, artifact_class)
+        assert dict(preview.coverage)[artifact_class] == "unsupported"
     assert dict(preview.coverage)["trace"] == "unsupported"
     assert review.apply(preview, preview.digest, mutation_guard=nullcontext).applied == 0
 
@@ -1036,8 +1036,8 @@ def killed_expiry(root, ready):
     import os
     from pathlib import Path
 
-    original = Ledger.available_migrations
-    Ledger.available_migrations = staticmethod(lambda: [(n, p) for n, p in original() if n <= 16])
+    Ledger.require_personal_fact_admission = lambda self: None
+    Ledger.require_personal_signal_admission = lambda self: None
     root = Path(root)
     key = ids.HmacKey(1, b"r" * 32)
     cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"s" * 32}))
@@ -1151,7 +1151,8 @@ def test_row_bound_applies_to_each_table_and_names_the_table_that_is_too_large(s
         ledger.conn.executemany(f"INSERT INTO {table} VALUES(?)", [(n,) for n in range(40)])
     existing = max(ledger.conn.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
                    for (name,) in ledger.conn.execute("SELECT name FROM sqlite_master WHERE type='table'"))
-    bound = max(existing, 45)
+    table_count = ledger.conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+    bound = max(existing, table_count + 1, 45)
     assert planner(store, max_rows=bound).preview().entries         # 80+ probe rows in total, under the bound each
     ledger.conn.execute("CREATE TABLE probe_big(id INTEGER)")
     ledger.conn.executemany("INSERT INTO probe_big VALUES(?)", [(n,) for n in range(bound + 1)])
@@ -1159,8 +1160,7 @@ def test_row_bound_applies_to_each_table_and_names_the_table_that_is_too_large(s
         planner(store, max_rows=bound).preview()
 
 
-def test_preview_works_on_a_ledger_with_every_migration_applied(tmp_path):
-    """Given the current schema (usage, cache, admission tables), when previewed, then it needs no policy edit."""
+def test_current_schema_refuses_retention_without_personal_scope_admission(tmp_path):
     root = tmp_path.resolve()
     key = ids.HmacKey(1, b"r" * 32)
     cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"s" * 32}))
@@ -1170,8 +1170,8 @@ def test_preview_works_on_a_ledger_with_every_migration_applied(tmp_path):
                     clock=lambda: NOW.isoformat(), blob_deleter=blobs.delete).open()
     try:
         ledger.migrate()
-        preview = RetentionPlanner(ledger, RetentionPolicy.unset(), "owner", NOW, root).preview()
-        assert all(status == "policy_needed" for klass, status in preview.coverage if klass != "snapshot")
+        with pytest.raises(RetentionError, match="retention preview unavailable"):
+            RetentionPlanner(ledger, RetentionPolicy.unset(), "owner", NOW, root).preview()
     finally:
         ledger.close()
 

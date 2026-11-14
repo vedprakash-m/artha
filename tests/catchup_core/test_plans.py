@@ -8,6 +8,8 @@ from datetime import date
 from catchup_core import runtime as rt
 from catchup_core.plans import evaluate_plans, plan_lines
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 TODAY = date(2026, 10, 20)
 GOAL = {"id": "G1", "milestones": [
     {"id": "m1", "title": "Gather documents", "status": "done", "evidence": "receipt 2026-10-02"},

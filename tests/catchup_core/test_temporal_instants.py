@@ -8,7 +8,7 @@ from catchup_core import crypto, ids, ledger as lg
 
 
 @pytest.fixture
-def temporal(tmp_path):
+def temporal(tmp_path, admitted_personal_scope):
     clock = ['2026-10-24T10:00:00Z']
     cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b't' * 32}))
     with lg.Ledger(tmp_path / 'ledger.db', id_key=ids.HmacKey(1, b'i' * 32), cipher=cipher,

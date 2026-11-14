@@ -9,6 +9,8 @@ import pytest
 from catchup_core import interchange, ledger as lg, user_config
 from test_user_surfaces import CIPHER, KEY
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 T = "2026-10-12T00:00:00Z"
 
 

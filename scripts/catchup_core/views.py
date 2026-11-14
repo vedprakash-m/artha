@@ -10,11 +10,12 @@ from typing import Any
 from catchup_core import ids
 from catchup_core.blobs import EncryptedBlobStore, private_atomic_bytes
 from catchup_core.contracts import FactStatus
-from catchup_core.ledger import Ledger, PermissionDenied
+from catchup_core.ledger import Ledger, PermissionDenied, PersonalScopeUnavailable
 
 
 def beliefs(ledger: Ledger, viewer: str, *, domain: str | None = None,
             subject: str | None = None) -> list[dict[str, Any]]:
+    ledger.require_personal_fact_admission()
     output: list[dict[str, Any]] = []
     for row in ledger.conn.execute("SELECT fact_id FROM facts WHERE status IN ('current','disputed','unknown') "
                                    "ORDER BY domain,predicate,recorded_at"):
@@ -143,6 +144,8 @@ def _feedback_visible(ledger: Ledger, viewer: str, obligation: str) -> bool:
     try:
         for ref in refs:
             ledger.get_fact(ref[0], viewer)
+    except PersonalScopeUnavailable:
+        raise
     except PermissionDenied:
         return False
     return True
@@ -167,6 +170,8 @@ def review_feedback(ledger: Ledger, viewer: str, directory: Path, feedback_id: s
                 continue
             for ref in refs:
                 ledger.get_fact(ref[0], viewer)
+        except PersonalScopeUnavailable:
+            raise
         except PermissionDenied:
             continue
         if label:

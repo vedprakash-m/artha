@@ -21,6 +21,8 @@ from catchup_core.incumbent import (
     GuardedIncumbent, IncumbentConclusion, IncumbentOutput, PilotWriteRefused, ProposedChange, route_mixed,
 )
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 KEY = ids.HmacKey(1, b"i" * 32)
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x07" * 32}))
 NOW = datetime(2026, 10, 12, 16, 0, tzinfo=timezone.utc)
@@ -50,10 +52,28 @@ EXTRACT = model_for({QUOTE: ("exam_registration_deadline", "2026-10-14", "kid1")
 def world(tmp_path):
     ledger = lg.Ledger(tmp_path / "l.db", id_key=KEY, cipher=CIPHER, owner_id="ved").open()
     ledger.migrate()
+    reviewed = {"enabled": True}
+    upsert_signal = ledger.upsert_signal
+
+    def upsert_reviewed_signal(signal):
+        signal_id, created = upsert_signal(signal)
+        if reviewed["enabled"]:
+            row = ledger.signal_row(signal_id)
+            if not ledger._has_personal_binding(
+                    "signal", signal_id, row["upstream_version"], row["connector"],
+                    row["account_scope"], row["content_hmac"]):
+                with ledger.transaction() as db:
+                    ledger._record_personal_binding(
+                        db, "signal", signal_id, row["upstream_version"], row["connector"],
+                        row["account_scope"], row["content_hmac"], provenance="source_review")
+        return signal_id, created
+
+    ledger.upsert_signal = upsert_reviewed_signal
     blobs = EncryptedBlobStore(tmp_path / "blobs", CIPHER, KEY)
     published: list[tuple[str, int]] = []
 
-    def make(fetchers, extractor=EXTRACT, **kw):
+    def make(fetchers, extractor=EXTRACT, source_reviewed=True, **kw):
+        reviewed["enabled"] = source_reviewed
         return co.Deps(
             ledger=ledger, pack=PACK, blobs=blobs, id_key=KEY, fetchers=fetchers, extractor=extractor,
             subjects=["kid1", "kid2"], viewer="ved", now=lambda: NOW,
@@ -87,9 +107,10 @@ def test_default_coverage_header_states_when_no_required_scopes_are_configured(w
     assert 'Coverage: no required source scopes configured.' in result.briefing_text
 
 
-def test_frozen_outcome_records_only_provider_fetch_provenance(world):
+def test_frozen_outcome_records_only_provider_fetch_provenance(world, monkeypatch):
     from catchup_core import corpus
 
+    monkeypatch.setattr(corpus, "_require_personal_corpus_admission", lambda: None)
     led, _, make, _ = world
     generation = led._permission_generation()
     trusted = replace(email()(), provider_permission_generation=generation)
@@ -153,6 +174,36 @@ def test_checkpoint_fence_blocks_catchup_before_fetch_or_journal_mutation(world,
         result = co.run_catchup(req(), deps)
     assert result.status is RunStatus.BLOCKED and not calls and not published
     assert led.conn.execute('SELECT count(*) FROM stage_journal').fetchone()[0] == 0
+
+
+def test_unclassified_signal_is_denied_before_blob_read_or_extraction(world):
+    led, blobs, make, _ = world
+    reads = []
+    model_calls = []
+    original_get = blobs.get
+
+    def tracked_get(reference):
+        reads.append(reference)
+        return original_get(reference)
+
+    def tracked_model(prompt):
+        model_calls.append(prompt)
+        return EXTRACT(prompt)
+
+    deps = make({"school_email": email(), "calendar": cal()}, extractor=tracked_model, source_reviewed=False)
+    deps.blobs.get = tracked_get
+    result = co.run_catchup(req(), deps)
+
+    assert result.status in (RunStatus.DEGRADED, RunStatus.COMPLETE)
+    assert not reads and not model_calls
+    signal_id = led.conn.execute(
+        "SELECT signal_id FROM signals WHERE processing_state='excluded' "
+        "AND exclusion_reason='personal scope unavailable'").fetchone()[0]
+    assert not co._Run(req(), deps, 0)._extract_one(led.signal_row(signal_id))
+    assert not reads and not model_calls
+    assert led.conn.execute(
+        "SELECT COUNT(*) FROM signals WHERE processing_state='excluded' "
+        "AND exclusion_reason='personal scope unavailable'").fetchone()[0] == 1
 
 
 @pytest.mark.parametrize('current_fetched', [False, True])

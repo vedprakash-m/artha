@@ -16,7 +16,7 @@ from typing import Any
 from catchup_core import corpus
 from catchup_core.backup import atomic_bytes
 from catchup_core.corpus import CorpusError
-from catchup_core.ledger import LedgerError, PermissionDenied
+from catchup_core.ledger import LedgerError, PermissionDenied, PersonalScopeUnavailable
 
 MIN_FIELDS = 100                      # owner-approved target per field type (D-3); 300+ preferred
 BASIS = "blind-owner"
@@ -95,10 +95,13 @@ def _truth(labels: Sequence[Mapping[str, Any]]) -> list[tuple[Mapping[str, Any],
 
 
 def _facts(ledger: Any, signal_id: str, viewer: str) -> list[Any]:
+    ledger.require_personal_fact_admission()
     out = []
     for row in ledger.conn.execute("SELECT DISTINCT fact_id FROM fact_evidence WHERE signal_id=?", (signal_id,)):
         try:
             fact = ledger.get_fact(row[0], viewer)
+        except PersonalScopeUnavailable:
+            raise
         except (PermissionDenied, LedgerError):
             continue
         if fact.status == "current":

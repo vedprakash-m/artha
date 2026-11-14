@@ -306,28 +306,8 @@ def artha_fetch_data(
     source: str | None = None,
     max_results: int = 200,
 ) -> str:
-    """Fetch email/calendar/LMS data from enabled connectors.
-
-    Args:
-        since:       ISO-8601 start timestamp, e.g. "2026-03-01T00:00:00Z"
-        source:      Optional connector name (e.g. "gmail", "outlook_calendar").
-                     If omitted, fetches from all enabled connectors.
-        max_results: Maximum number of records to return (default 200).
-
-    Returns JSON array of records. Equivalent to: python scripts/pipeline.py
-    """
-    params: dict[str, Any] = {"since": since, "source": source, "max_results": max_results}
-    rl = _check_rate_limit("artha_fetch_data")
-    if rl:
-        return rl
-    try:
-        source_filter = [source] if source else None
-        records = _fetch_in_memory(since, source_filter, max_results)
-        _audit("artha_fetch_data", params, f"ok:{len(records)}_records")
-        return json.dumps(records, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_fetch_data", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    """Return a fixed denial until trusted personal source classification is available."""
+    return json.dumps({"error": "personal source classification unavailable"})
 
 
 @mcp.tool()
@@ -378,33 +358,8 @@ def artha_health_check(source: str | None = None) -> str:
 
 @mcp.tool()
 def artha_read_state(domain: str, pii_redact: bool = True) -> str:
-    """Read a domain state file. Auto-decrypts encrypted .age files.
-    PII is redacted before returning (configurable).
-
-    Args:
-        domain:     Domain name (e.g. "finance", "health", "goals").
-                    The .md extension is optional.
-        pii_redact: Redact PII patterns before returning (default True).
-
-    Returns the state file text, or JSON error object on failure.
-    """
-    params: dict[str, Any] = {"domain": domain, "pii_redact": pii_redact}
-    rl = _check_rate_limit("artha_read_state")
-    if rl:
-        return rl
-    try:
-        content = _read_state_file(domain)
-        if pii_redact:
-            from pii_guard import filter_text  # type: ignore[import]
-            content, _ = filter_text(content)
-        _audit("artha_read_state", params, "ok")
-        return content
-    except FileNotFoundError as exc:
-        _audit("artha_read_state", params, f"not_found:{domain}")
-        return json.dumps({"error": str(exc)})
-    except Exception as exc:
-        _audit("artha_read_state", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    """Return a fixed denial until trusted personal State classification is available."""
+    return json.dumps({"error": "personal State classification unavailable"})
 
 
 @mcp.tool()
@@ -596,61 +551,8 @@ def artha_write_state(
     content: str,
     approved: bool = False,
 ) -> str:
-    """Write content to a domain state file. Sensitive domains are encrypted automatically.
-
-    ⚠️  WRITE OPERATION — set approved=True to confirm.
-
-    Args:
-        domain:   Domain name (e.g. "goals", "home", "learning").
-        content:  Full markdown content to write to the state file.
-        approved: Must be True to proceed.
-
-    Returns JSON: {status, domain, encrypted}.
-    """
-    params: dict[str, Any] = {"domain": domain, "content_length": len(content)}
-    rejection = _require_approval(approved, "artha_write_state", params)
-    if rejection:
-        return rejection
-
-    try:
-        valid = _known_domains()
-        clean = domain.removesuffix(".md")
-        if clean not in valid:
-            _audit("artha_write_state", params, f"error:unknown_domain={domain}")
-            return json.dumps({
-                "error": f"Unknown domain '{domain}'.",
-                "valid_domains": sorted(valid),
-            })
-
-        # Empty-content guard
-        if not content.strip():
-            _audit("artha_write_state", params, "rejected:empty_content")
-            return json.dumps({"error": "Write rejected: content is empty."})
-
-        # Net-negative guard — block writes that would discard >50% of existing content
-        try:
-            existing = _read_state_file(clean)
-            existing_len = len(existing.strip())
-            new_len = len(content.strip())
-            if existing_len > 100 and new_len < existing_len * 0.5:
-                _audit("artha_write_state", params,
-                       f"rejected:net_negative existing={existing_len} new={new_len}")
-                return json.dumps({
-                    "error": "Net-negative write guard: new content is less than 50% "
-                             "of existing size. Pass the full updated content.",
-                    "existing_bytes": existing_len,
-                    "new_bytes": new_len,
-                })
-        except FileNotFoundError as exc:
-            _log.warning("write_guard_skipped_new_file domain=%s error=%s", clean, exc)
-            pass  # new domain file — no guard needed
-
-        encrypted = _write_state_file(clean, content)
-        _audit("artha_write_state", params, f"ok:encrypted={encrypted}")
-        return json.dumps({"status": "ok", "domain": clean, "encrypted": encrypted})
-    except Exception as exc:
-        _audit("artha_write_state", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    """Return a fixed denial until trusted personal State classification is available."""
+    return json.dumps({"error": "personal State classification unavailable"})
 
 
 @mcp.tool()

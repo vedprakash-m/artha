@@ -43,7 +43,7 @@
   "scripts/migrate_oi.py": 2,
   "scripts/migrate_state.py": 2,
   "scripts/narrative/__init__.py": 1,
-  "scripts/pipeline.py": 9,
+  "scripts/pipeline.py": 8,
   "scripts/pr_manager.py": 1,
   "scripts/render_openai_cv.py": 2,
   "scripts/retrospective_view.py": 1,
@@ -71,7 +71,6 @@
   "scripts/work/compaction_manifest.py": 1,
   "scripts/work/decisions.py": 3,
   "scripts/work/discovery.py": 2,
-  "scripts/work/meetings.py": 1,
   "scripts/work/ops_dashboard.py": 1,
   "scripts/work/reflect.py": 1,
   "scripts/work/regenerate_reflections.py": 1,
@@ -79,6 +78,6 @@
   "scripts/work/xhealth/scripts/build_routing_index.py": 1,
   "scripts/work_domain_writers.py": 1,
   "scripts/work_loop.py": 6,
-  "scripts/work_notes.py": 3,
+  "scripts/work_notes.py": 2,
   "scripts/work_warm_start.py": 1
 }

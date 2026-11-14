@@ -16,8 +16,12 @@ from catchup_core import exchange as xc
 from catchup_core.contracts import ProcessingState, RunStatus
 from catchup_core.resources import AdmissionStore, ResourcePolicy
 
-world = tc.world
 EMPTY = json.dumps({'complete': True, 'candidates': []})
+
+
+@pytest.fixture
+def world(tmp_path, admitted_personal_sources):
+    yield from tc.world.__wrapped__(tmp_path)
 
 
 def configured(make, ledger, *, records=None, extractor=tc.EXTRACT, **limits):

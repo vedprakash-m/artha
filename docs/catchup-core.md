@@ -399,26 +399,36 @@ The Telegram, Slack and Discord code, the always-on engine and the nudge daemon 
   sequence and authority generation; a crash before acknowledgment replays safely.
 - Runtime retrieval rejects unresolved household IDs. The profile retains generated person IDs so a corrected name,
   corrected birth date or key rotation cannot silently change the identity. Parental grants do not become adult consent.
-- Bundle ingestion/export rechecks current operation permissions. Full snapshot export refuses inaccessible data;
-  a permission-filtered portable household exchange remains a later deliverable. The local owner can forget retained
-  data after revocation. Restores retain the sealed deletion history and quarantine action snapshots.
+- Bundle ingestion/export rechecks current operation permissions. Full snapshot export is currently unavailable
+  before dependency access because trusted classification is not established; a permission-filtered portable
+  household exchange remains a later deliverable. The local owner can forget retained data after revocation.
+  Restores retain the sealed deletion history and quarantine action snapshots.
 - Grounded obligation names link independent messages; contradictory independent sources dispute rather than creating
   two current deadlines. Missing identity is not guessed. Non-pilot obligations are validated as source spans and passed
   to the incumbent as review commitments, with no permission to mutate pilot records or dispatch actions.
 - Freshness follows the exact evidence/account scope, including enums and appointments. Historical explanations use
   historical status/provenance/validity. Corrections add notices to affected Briefing history without changing its text.
-- Snapshots include encrypted State Files and YAML, detect changing database/curated inputs, and expire old generations
-  during Catch-up (default 30 days, always preserving one current generation). Approved rollback bytes must decrypt and
-  pass database integrity checks. No background cleanup process is installed.
+- Runtime snapshot creation and retention pruning are currently held pending trusted classification of their inputs.
+  Any approved rollback bytes must decrypt and pass database integrity checks. No background cleanup process is installed.
 - Capability health uses per-capability operation evidence. “Measured” additionally requires reviewed consented case IDs
   in the approved scorecard's `capability_reviews`, not a passing test count or an unrelated finalized Catch-up.
 
 ## Documents and Goal observations
 
-`cli.py ingest <file.pdf> --subject <name> --shadow` imports a text PDF after scoped permission checks. Original bytes and
-page text are encrypted locally; extraction runs in a short-lived process with byte/page/time limits. Image-only or
-unreadable pages stay incomplete. No OCR result is asserted as a verified field. `documents:manual` consent is separate
-from permission to read another person's mail. Original document ingestion is local and does not upload the PDF.
+Personal Connector, Signal, Fact and calendar admission currently fails closed because
+the persisted proofs do not authenticate all subjects, evidence and projection
+dependencies needed for authorization. Personal Fact writes and reads therefore raise
+`PersonalScopeUnavailable` before reading Fact values or updating an existing Fact.
+New Facts can still be recorded, but this does not make them readable. A subject label,
+source review or consent grant alone does not establish the missing proof. These
+runtime paths remain unavailable until the proofs bind the required authorization
+inputs; the test-only admitted scope fixture is limited to synthetic tests and does
+not alter runtime policy.
+
+`cli.py ingest <file.pdf> --subject <name> --shadow` and saved-document fetch are currently unavailable before file
+access because trusted personal source classification is not established. A subject label or `documents:manual`
+consent is not that classification. The bounded local document interpreter remains in the code, but its existence
+does not make the ingest or fetch routes available. No OCR result is asserted as a verified field.
 
 An explicitly authored active Goal can declare a minimum metric:
 
@@ -920,6 +930,11 @@ pending until verified; explicit pending recovery accepts only exact before/afte
 or unjournaled primary changes require review; version-2 history also checks stream drift.
 Version-1 histories track primary content only and grant no stream recovery authority. A separately reviewed
 stream-history upgrade is required for stream-aware checkpoints, not ordinary native publication.
+Primary-file inventory uses bounded 64 KiB reads and accepts existing files up to 16 GiB,
+with a 64 GiB aggregate limit matching encrypted quarantine. Ordinary staged edits remain
+limited to 8 MiB per file and 32 MiB per publication. Large existing files can be deleted
+or replaced with a small value without loading their old bytes into memory. Inventory
+still refuses an object whose identity or native timestamps change during the read.
 Enrollment binds Windows machine/user, random installation and canonical `state/work`/`local/work` roots;
 the dedicated identity key/current history are never captured or restored. Pending, drifted, mismatched
 or missing authority blocks capture/recovery. Old unbound checkpoints stay inspection-only.
@@ -928,6 +943,9 @@ Work capture retains encrypted cache members, but cache authority, keys, credent
 cannot become clean exports. Historical Work prose goes to encrypted quarantine with current-history
 checks and exact per-file human review. Restored copies never activate or dispatch. Missing original
 identity/key/history permits inspection only; no key installation or lost-host promotion.
+Reviewed ordinary-file exports retain the existing `.md`/`.txt`/`.pdf`/`.csv` whitelist
+and 16 MiB limit. Other primary formats remain encrypted in quarantine. Large-asset
+capture/recovery does not add plaintext PowerPoint, image, video or arbitrary-binary export.
 
 Employer-specific producers/tests remain private and gitignored. Opted-in
 `python tools/run_tests_isolated.py --private-work --evidence ABSOLUTE_EXTERNAL_JSON_PATH`

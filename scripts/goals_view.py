@@ -2,7 +2,7 @@
 """
 goals_view.py — Script-backed /goals command renderer
 ======================================================
-Reads state/goals.md (plaintext, no vault required).
+Personal and mixed-scope Goals are unavailable until an exact personal binding exists.
 Displays goal scorecard with progress bars, status indicators,
 and priority grouping.
 
@@ -16,7 +16,7 @@ Output: Markdown formatted goals scorecard.
 
 Exit codes:
   0 — success
-  1 — goals.md missing or unreadable
+  1 — personal Goals are unclassified or unreadable
 
 Ref: specs/enhance.md §1.13 / §10.0.1
 """
@@ -328,10 +328,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--scope", choices=["personal", "work", "all"], default="personal",
-        help="personal=state/goals.md only (default); work=state/work/work-goals.md only; "
-             "all=merge both files (work goals tagged [work])",
+        help="personal and all require a trusted personal-scope binding; work reads only work-goals.md",
     )
     args = parser.parse_args()
+
+    if args.scope != "work":
+        print("Personal Goals are unavailable without a trusted personal-scope binding.", file=sys.stderr)
+        return 1
 
     # Load goals based on scope
     if args.scope == "work":

@@ -21,7 +21,8 @@ import test_release_regressions as regressions
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_sources, admitted_curated_state,
+          admitted_documentary_scope):
     yield from regressions.world.__wrapped__(tmp_path)
 
 
@@ -158,7 +159,7 @@ def test_question_and_revoked_enum_evidence_require_review(text):
     assert not result.candidates and result.rejections
 
 
-def test_unprocessed_document_requires_export_consent(world, tmp_path):
+def test_unprocessed_document_requires_export_consent(world, tmp_path, admitted_personal_snapshot):
     led, _, deps, _ = world
     led._consent_subjects = frozenset({"adult"})
     led.grant_consent("adult", "adult", "documents:manual", ["ingest", "disclose", "view"], "owner")
@@ -172,7 +173,9 @@ def test_unprocessed_document_requires_export_consent(world, tmp_path):
     assert not target.exists()
 
 
-def test_authorized_unprocessed_document_is_in_the_exact_export(world, tmp_path):
+def test_authorized_unprocessed_document_is_in_the_exact_export(
+    world, tmp_path, admitted_personal_snapshot
+):
     from catchup_core.backup import read_snapshot
     led, _, deps, _ = world
     led._consent_subjects = frozenset({"adult"})
@@ -187,7 +190,9 @@ def test_authorized_unprocessed_document_is_in_the_exact_export(world, tmp_path)
     assert read_snapshot(target, CIPHER)["documents/doc_test.ae1"] == data
 
 
-def test_orphan_evidence_is_never_exported_without_provenance(world, tmp_path):
+def test_orphan_evidence_is_never_exported_without_provenance(
+    world, tmp_path, admitted_personal_snapshot
+):
     _, blobs, deps, _ = world
     blobs.put("orphan", "unattributed material")
     with pytest.raises(PermissionDenied, match="provenance"):
@@ -195,7 +200,9 @@ def test_orphan_evidence_is_never_exported_without_provenance(world, tmp_path):
 
 
 @pytest.mark.parametrize("actor,allowed", [("owner", True), ("other", False)])
-def test_capture_export_binds_actor_and_identity(world, tmp_path, actor, allowed):
+def test_capture_export_binds_actor_and_identity(
+    world, tmp_path, actor, allowed, admitted_personal_snapshot
+):
     led, _, deps, _ = world
     directory = tmp_path / "inbox"
     directory.mkdir()
@@ -627,6 +634,8 @@ def test_approved_pattern_extractor_has_no_workspace_or_credential_environment(m
 @pytest.mark.parametrize('record', ['unknown:R', 'milestone:G', 'milestone:G:a:extra', 'responsibility:missing'])
 def test_completion_rejects_missing_or_malformed_identities(world, tmp_path, record):
     (tmp_path / 'state').mkdir()
+    if record == 'responsibility:missing':
+        (tmp_path / 'state' / 'responsibilities.md').write_text('', encoding='utf-8')
     with pytest.raises(ValueError):
         commands.execute(Namespace(command='complete', record=record, apply=None), world[2](), tmp_path)
 
@@ -812,6 +821,9 @@ sys.path[:0] = [sys.argv[1], sys.argv[2]]
 from catchup_core.ledger import Ledger
 from test_release_regressions import KEY,CIPHER
 with Ledger(sys.argv[3], id_key=KEY, cipher=CIPHER).open() as ledger:
+    Ledger.require_personal_fact_admission = lambda self: None
+    Ledger.require_personal_signal_admission = lambda self: None
+    Ledger.require_personal_calendar_admission = lambda self: None
     ledger.conn.create_function('crash', 0, lambda: os._exit(23))
     ledger.conn.execute('CREATE TEMP TRIGGER crash_write BEFORE INSERT ON fact_versions BEGIN SELECT crash(); END')
     ledger.cancel_calendar('calendar', 'acct', 'e')
@@ -890,7 +902,7 @@ def test_completion_rejects_malformed_co_subjects(subjects):
         completion_subjects({'co_subjects': subjects}, 'owner')
 
 
-def test_document_export_with_unknown_subject_never_writes(world, tmp_path):
+def test_document_export_with_unknown_subject_never_writes(world, tmp_path, admitted_personal_snapshot):
     led, _, deps, _ = world
     directory = tmp_path / 'documents'; directory.mkdir()
     payload = {'schema':'artha.document.v1','subject':None}
@@ -901,7 +913,106 @@ def test_document_export_with_unknown_subject_never_writes(world, tmp_path):
     assert not target.exists()
 
 
-def test_unknown_replay_artifact_never_enters_export(world, tmp_path):
+def test_personal_snapshot_export_denied_before_dependency_capture(world, tmp_path, monkeypatch):
+    calls = []
+
+    def database_bytes(*args, **kwargs):
+        calls.append("database")
+        return b"synthetic database"
+
+    def encrypted_snapshot(*args, **kwargs):
+        calls.append("snapshot")
+
+    monkeypatch.setattr(commands, "database_bytes", database_bytes)
+    monkeypatch.setattr(commands, "encrypted_snapshot", encrypted_snapshot)
+    target = tmp_path / "export.ae1"
+    with pytest.raises(PermissionDenied, match="personal snapshot"):
+        commands.execute(Namespace(command="export", path=str(target)), world[2](), tmp_path)
+    assert calls == []
+    assert not target.exists()
+
+
+def test_document_ingest_command_denied_before_payload_read(world, tmp_path, monkeypatch):
+    from pathlib import Path
+    from catchup_core import documents
+
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-synthetic document")
+    reads = []
+    real_read = Path.read_bytes
+
+    def read(path):
+        if path == source:
+            reads.append("read")
+        return real_read(path)
+
+    monkeypatch.setattr(Path, "read_bytes", read)
+    monkeypatch.setattr(documents, "extract_pdf", lambda data: {"pages": ["synthetic"], "complete": True})
+    with pytest.raises(PermissionDenied, match="personal document"):
+        commands.execute(Namespace(command="ingest", path=str(source), subject="owner"), world[2](), tmp_path)
+    assert reads == []
+    assert not (tmp_path / "documents").exists()
+
+
+def test_capture_reports_that_catchup_review_is_unavailable(world, tmp_path):
+    led, _, deps, _ = world
+    result = commands.execute(Namespace(command="capture", text="synthetic capture"), deps(), tmp_path)
+    path = led._path.parent / "inbox" / f"{result['captured']}.ae1"
+    assert b"synthetic capture" not in path.read_bytes()
+    assert result["next"] == (
+        "Captured; Catch-up review is unavailable until personal source classification is established."
+    )
+
+
+def test_unclassified_capture_fetch_is_unavailable_before_file_access(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from catchup_core import runtime
+    from catchup_core.contracts import CoverageStatus, FailureClass
+
+    directory = tmp_path / "inbox"
+    directory.mkdir()
+    (directory / "cap_synthetic.ae1").write_bytes(b"synthetic ciphertext")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unclassified capture was accessed")
+
+    monkeypatch.setattr(Path, "glob", forbidden)
+    monkeypatch.setattr(Path, "read_bytes", forbidden)
+    monkeypatch.setattr(type(CIPHER), "decrypt", forbidden)
+    result = runtime._capture_fetcher(tmp_path, CIPHER, "owner")()
+    assert result.status is CoverageStatus.UNAVAILABLE
+    assert result.error is FailureClass.PERMISSION
+    assert result.records == ()
+    assert result.blind_spots == ("personal source classification unavailable",)
+
+
+@pytest.mark.parametrize("command", ["ingest", "export"])
+def test_unclassified_document_and_snapshot_cli_refuse_before_runtime_setup(tmp_path, monkeypatch, command):
+    from catchup_core import cli, runtime
+
+    calls = []
+
+    def runtime_setup(*args, **kwargs):
+        calls.append("runtime")
+        raise AssertionError("unclassified request reached runtime setup")
+
+    monkeypatch.setattr(runtime, "load_runtime_config", runtime_setup)
+    monkeypatch.setattr(runtime, "build_deps", runtime_setup)
+    path = tmp_path / "synthetic-private-canary.pdf"
+    args = ([command, str(path), "--subject", "owner", "--shadow"]
+            if command == "ingest" else [command, str(path), "--shadow"])
+    out, err = io.StringIO(), io.StringIO()
+    assert cli.main(args, out=out, err=err) == 20
+    assert out.getvalue() == ""
+    expected = "personal document" if command == "ingest" else "personal snapshot"
+    assert expected in err.getvalue()
+    assert "synthetic-private-canary" not in err.getvalue()
+    assert calls == []
+    assert not path.exists()
+
+
+def test_unknown_replay_artifact_never_enters_export(world, tmp_path, admitted_personal_snapshot):
     directory = tmp_path / 'replay'; directory.mkdir()
     (directory/'fbk_unknown.ae1').write_bytes(b'opaque ciphertext')
     target = tmp_path / 'export.ae1'

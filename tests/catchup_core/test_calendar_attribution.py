@@ -9,6 +9,8 @@ from catchup_core.contracts import CoverageStatus, RunStatus
 
 from test_coordinator import cal, email, req, world  # noqa: F401
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
 CANDIDATES = ["kid1", "kid2"]
 
 

@@ -20,6 +20,7 @@ _EMERGENCY_STATUSES = ("current", "disputed", "unknown")
 
 
 def build_interchange(ledger: Ledger, viewer: str) -> dict[str, Any]:
+    ledger.require_personal_fact_admission()
     facts: list[dict[str, Any]] = []
     omitted = 0
     for row in ledger.conn.execute("SELECT fact_id FROM facts ORDER BY fact_id").fetchall():
@@ -71,8 +72,7 @@ def read_interchange(path: Path, cipher: EnvelopeCipher) -> dict[str, Any]:
 def emergency_view(ledger: Ledger, viewer: str) -> dict[str, Any]:
     """Facts a designated custodian may see: each adult subject granted this person 'emergency' (and view) access
     for that Domain and its sources, and the person is a listed viewer. Anything else is simply absent."""
-    from catchup_core.fact_access import AccessPolicy, require_metadata  # noqa: PLC0415
-    policy = AccessPolicy(ledger._owner, ledger._consent_subjects, ledger._known_subjects)
+    ledger.require_personal_fact_admission()
     marks = ",".join("?" for _ in _EMERGENCY_STATUSES)
     rows = ledger.conn.execute(  # `marks` is only "?" placeholders; values are bound
         f"SELECT fact_id FROM facts WHERE status IN ({marks}) ORDER BY domain,predicate,fact_id",  # noqa: S608
@@ -80,8 +80,7 @@ def emergency_view(ledger: Ledger, viewer: str) -> dict[str, Any]:
     facts: list[dict[str, Any]] = []
     for row in rows:
         try:
-            require_metadata(ledger.conn, policy, row[0], viewer, ledger._clock(), operation="emergency",
-                             source_operation=True)
+            ledger.get_fact_metadata(row[0], viewer, operation="emergency")
             fact = ledger.get_fact(row[0], viewer)
         except (PermissionDenied, LedgerError):
             continue

@@ -15,6 +15,8 @@ from catchup_core.extract import NormalizedSignal, parse_output
 from catchup_core.runtime import _backup_for, make_file_publisher
 from catchup_core.scorecard import score
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 NOW = datetime(2026, 10, 12, 16, tzinfo=timezone.utc)
 PACK = dp.load_pack_file(Path(dp.__file__).parent / "packs/kids_school.yaml")
 KEY = ids.HmacKey(1, b"i" * 32)

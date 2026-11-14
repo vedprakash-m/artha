@@ -17,7 +17,7 @@ import test_coordinator
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_scope):
     yield from test_coordinator.world.__wrapped__(tmp_path)
 
 

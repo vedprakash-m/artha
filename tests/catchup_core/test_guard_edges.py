@@ -59,6 +59,7 @@ def test_feedback_refuses_unknown_and_evidence_free_alerts(led):
         views.feedback(led, "owner", "k", "useful", "x", NOW)
 
 
+@pytest.mark.usefixtures("admitted_personal_scope")
 def test_acknowledge_marks_the_alert(led):
     fid = led.put_fact(lg.FactInput(domain="kids_school", predicate="test_date", value="2026-10-14",
                                     observed_at="t", primary_subject_id="kid1"))
@@ -67,7 +68,9 @@ def test_acknowledge_marks_the_alert(led):
     assert led.get_alert("k")["status"] == "acknowledged"
 
 
-def test_export_and_capture_need_the_encryption_key(tmp_path):
+@pytest.mark.usefixtures("admitted_personal_scope")
+def test_export_and_capture_need_the_encryption_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(commands, "_require_personal_snapshot_admission", lambda: None)
     keyless = lg.Ledger(tmp_path / "k.db", id_key=KEY).open()
     keyless.migrate()
     try:

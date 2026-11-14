@@ -14,6 +14,8 @@ from catchup_core.contracts import FactStatus
 NOW = '2026-10-24T12:00:00Z'
 FUTURE = '2026-10-24T13:00:00Z'
 
+pytestmark = pytest.mark.usefixtures('admitted_personal_scope')
+
 
 @pytest.fixture
 def evidence(tmp_path):

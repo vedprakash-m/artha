@@ -116,10 +116,10 @@ def _text_result(value: Any, *, error: bool = False) -> dict[str, Any]:
     from catchup_core.views import safe_projection  # noqa: PLC0415
     data = safe_projection(value) if isinstance(value, Mapping) else value
     text = json.dumps(data, default=str, sort_keys=True)
-    if len(text) > MAX_RESULT_CHARS:
-        text = json.dumps({"truncated": True, "note": "Result too large; narrow the request (domain or subject).",
-                           "preview": text[: MAX_RESULT_CHARS // 4]})
-    return {"content": [{"type": "text", "text": text}], "isError": error}
+    oversized = len(text) > MAX_RESULT_CHARS
+    if oversized:
+        text = json.dumps({"error": "result exceeds the configured limit"})
+    return {"content": [{"type": "text", "text": text}], "isError": error or oversized}
 
 
 class _RpcError(Exception):
@@ -147,12 +147,12 @@ def _dispatch(method: Any, params: Any, run: Callable[[str, _Arguments], Any]) -
         raise _RpcError(-32602, "Unknown tool")
     try:
         args = _validate(_BY_NAME[params["name"]], params.get("arguments"))
-    except ValueError as exc:
-        return _text_result({"error": str(exc)}, error=True)
+    except ValueError:
+        return _text_result({"error": "invalid arguments"}, error=True)
     try:
         return _text_result(run(params["name"], args))
-    except Exception as exc:
-        return _text_result({"error": f"{type(exc).__name__}: the request could not be completed"}, error=True)
+    except Exception:
+        return _text_result({"error": "the request could not be completed"}, error=True)
 
 
 def handle(message: Any, run: Callable[[str, _Arguments], Any]) -> dict[str, Any] | None:

@@ -56,7 +56,9 @@ def test_given_the_vehicle_pack_when_loaded_then_it_is_strict_and_declares_what_
     assert not pack.extension_ready
 
 
-def test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts_without_vehicle_code(ledger):
+def test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts_without_vehicle_code(
+    ledger, admitted_personal_sources
+):
     pack = dp.load_pack_file(PACKS / "vehicle.yaml")
     put(ledger, "registration_renewal_date", "2026-10-14")
     result = run(ledger, pack)
@@ -65,7 +67,9 @@ def test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts
     assert alert.severity is Severity.P1 and alert.days_until == 2 and alert.state == "actionable"
 
 
-def test_given_an_open_recall_when_triaged_then_it_is_p2_and_a_remedied_recall_is_quiet(ledger):
+def test_given_an_open_recall_when_triaged_then_it_is_p2_and_a_remedied_recall_is_quiet(
+    ledger, admitted_personal_sources
+):
     pack = dp.load_pack_file(PACKS / "vehicle.yaml")
     put(ledger, "recall_status", "open", subject="vehicle1")
     put(ledger, "recall_status", "remedied", subject="vehicle2")

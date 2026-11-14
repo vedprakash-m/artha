@@ -78,6 +78,31 @@ def test_every_record_rejected_is_degraded_never_complete_empty():
     assert coll.runs[0].rejected == 2
 
 
+def test_cancelled_tombstone_is_not_rejected_or_emitted():
+    """google_calendar emits id-only tombstones for cancelled events (showDeleted)."""
+    tomb = {"id": "evt9", "calendar_id": "primary", "status": "cancelled", "source": "google_calendar"}
+    (_n, lines, _e, err), coll = _run(_Handler([_cal(1), tomb]))
+    assert err is None and len(lines) == 1
+    run = coll.runs[0]
+    assert run.rejected == 0 and run.records == 1 and run.status() == "complete"
+
+
+def test_full_cancelled_event_with_start_is_still_emitted():
+    (_n, lines, _e, _err), coll = _run(_Handler([_cal(1, status="cancelled")]))
+    assert len(lines) == 1 and json.loads(lines[0])["status"] == "cancelled"
+    assert coll.runs[0].rejected == 0 and coll.runs[0].records == 1
+
+
+def test_tombstone_without_id_and_active_event_without_start_still_degrade():
+    no_id = {"calendar_id": "primary", "status": "cancelled", "source": "google_calendar"}
+    active = _cal(2, status="confirmed")
+    active.pop("start")
+    (_n, lines, _e, _err), coll = _run(_Handler([no_id, active]))
+    assert lines == []
+    run = coll.runs[0]
+    assert run.rejected == 2 and run.status() == "degraded"
+
+
 def test_valid_empty_result_is_complete():
     (_n, lines, _e, err), coll = _run(_Handler([]))
     assert lines == [] and err is None

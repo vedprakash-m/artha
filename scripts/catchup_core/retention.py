@@ -275,6 +275,7 @@ class RetentionPlanner:
         return value
 
     def _tables(self) -> dict[str, list[dict[str, Any]]]:
+        self.ledger.require_personal_fact_admission()
         tables: dict[str, list[dict[str, Any]]] = {}
         names = self.ledger.conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").fetchmany(self.max_rows + 1)

@@ -15,6 +15,8 @@ from catchup_core.blobs import EncryptedBlobStore
 from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode, RunStatus
 from catchup_core.scorecard import Case, score
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "kids_school" / "scenarios.json"
 DATA = json.loads(FIXTURE.read_text(encoding="utf-8"))
 NOW = datetime.fromisoformat(DATA["now"])

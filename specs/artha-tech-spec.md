@@ -8352,10 +8352,19 @@ The following implemented specs are also folded here and archived with a `-2026-
   only; it neither inventories streams nor grants stream recovery authority. Reviewed
   version-2 migration remains required for stream-aware checkpoints, not ordinary
   native publication. Non-Windows mutation remains unavailable.
+- Work primary-file inventory hashes through bounded 64 KiB reads, with native
+  identity/timestamp and owner/path checks before accepting a digest. Existing assets
+  use the encrypted quarantine limits: 16 GiB per file and 64 GiB in total. Staged
+  edits, including pending replay, remain limited to 8 MiB per file and 32 MiB per publication. A large existing
+  file can be deleted or replaced with a bounded new value without buffering its old
+  bytes. History validates the same inventory bounds; named-stream limits are unchanged.
 - Arbitrary plaintext stream export/reattachment is outside the owner-delegated
   completion slice. Captured streams remain
   encrypted and counted; supported documents retain their reviewed export path. These
   explicit limitations are never described as successful native stream restoration.
+  The existing ordinary-file export whitelist is `.md`, `.txt`, `.pdf` and `.csv`,
+  capped at 16 MiB. Other primary formats remain encrypted in quarantine; large-asset
+  capture does not add a PowerPoint, image, video or arbitrary-binary release path.
 - The generated audit manifest hashes source text with canonical LF line endings,
   matching `.gitattributes` on Windows and other checkouts. Real content changes still
   change its implementation checksum. Runtime release, resume and recovery authority

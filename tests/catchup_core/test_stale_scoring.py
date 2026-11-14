@@ -15,7 +15,7 @@ from test_triage import KEY, CIPHER, NOW, conn_of  # noqa: F401
 
 
 @pytest.fixture
-def env(tmp_path):
+def env(tmp_path, admitted_personal_sources):
     ledger = lg.Ledger(tmp_path / "l.db", id_key=KEY, cipher=CIPHER, owner_id="ved").open()
     ledger.migrate()
     yield ledger

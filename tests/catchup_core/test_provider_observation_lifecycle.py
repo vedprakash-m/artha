@@ -33,6 +33,8 @@ from catchup_core.contracts import (
 )
 from catchup_core.triage import CalendarEvent
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
+
 KEY = ids.HmacKey(1, b"i" * 32)
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x07" * 32}))
 NOW = datetime(2026, 10, 14, 16, 0, tzinfo=timezone.utc)
@@ -91,6 +93,22 @@ def env(tmp_path):
 
 def req(cid: str = "c1") -> CatchupRequest:
     return CatchupRequest(cid, actor="ved", channel="full", mode=ExecutionMode.AUTHORITATIVE, host="localhost")
+
+
+def _synthetic_admitted_fetcher(handler, connector, account_scope, since, auth_context, fetch_kwargs, ledger):
+    from catchup_core.adapters import fetch_via_handler
+    from catchup_core import runtime
+
+    kwargs = dict(fetch_kwargs)
+    sync_scope = getattr(handler, "SYNC_TOKEN_SCOPE", None) or (
+        "configured_calendars" if connector == "google_calendar" else None)
+    if sync_scope is not None and kwargs.get("sync_changes") is True:
+        cursor = ledger.get_cursor("calendar", account_scope)
+        if cursor:
+            kwargs.update(runtime._cursor_kwargs(sync_scope, cursor, kwargs))
+    return lambda: fetch_via_handler(
+        "calendar", account_scope, handler.fetch, since=since, auth_context=auth_context,
+        fetch_kwargs=kwargs, required=True)
 
 
 def test_opaque_provider_cursor_persists_only_after_scoped_local_commit(env):
@@ -188,16 +206,16 @@ def test_runtime_loads_committed_google_collection_tokens_without_changing_them(
     cursor = json.dumps({'version': 1, 'collections': {'primary': 'opaque token /+=='}})
     ledger.set_coverage('calendar', 'acct-a', 'complete', cursor_generation=cursor)
     calls = []
-    def fetch(**kwargs):
-        calls.append(kwargs)
-        return iter(())
     config = SimpleNamespace(sources={'calendar': {'connector': 'google_calendar', 'account_scope': 'acct-a',
         'subjects': ['kid1'], 'kwargs': {'sync_changes': True, 'calendar_ids': ['primary']}}},
         subjects=['kid1'], consent_required=frozenset(), viewer='ved')
     fetchers = runtime.build_fetchers(config, '2026-10-01T00:00:00Z',
-        lambda name: SimpleNamespace(fetch=fetch), lambda name: {}, {'calendar': True}, ledger)
-    fetchers['calendar']()
-    assert calls[0]['sync_tokens'] == {'primary': 'opaque token /+=='}
+        lambda name: calls.append(("load", name)), lambda name: calls.append(("auth", name)),
+        {'calendar': True}, ledger)
+    result = fetchers['calendar']()
+    assert result.status is CoverageStatus.UNAVAILABLE
+    assert result.blind_spots == ("personal source classification unavailable",)
+    assert calls == []
 
 
 def test_provider_410_reset_clears_cursor_and_demands_full_resync_without_gap_free_claim(env):
@@ -464,7 +482,7 @@ def _g_event(event_id, day=15, status='confirmed', summary=None):
 
 @pytest.fixture
 def chain(env, monkeypatch, tmp_path):
-    """Run Catch-up through the real runtime fetcher, Google handler, validator and adapter."""
+    """Run provider-path tests through synthetic admission, the handler, validator and adapter."""
     import sys
     import types
     from types import SimpleNamespace
@@ -485,9 +503,10 @@ def chain(env, monkeypatch, tmp_path):
         config = SimpleNamespace(sources={'calendar': {'connector': 'google_calendar', 'account_scope': 'acct-a',
             'subjects': ['kid1'], 'kwargs': {'sync_changes': True, 'calendar_ids': list(calendar_ids)}}},
             subjects=['kid1'], consent_required=frozenset(), viewer='ved')
-        fetchers = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda name: gcal,
-                                          lambda name: {}, {'calendar': True}, ledger)
-        return co.run_catchup(req(cid), make({'calendar': fetchers['calendar']}))
+        fetcher = _synthetic_admitted_fetcher(
+            gcal, "google_calendar", "acct-a", "2026-10-01T00:00:00Z", {},
+            config.sources["calendar"]["kwargs"], ledger)
+        return co.run_catchup(req(cid), make({'calendar': fetcher}))
 
     state['run'] = run
     yield ledger, run
@@ -778,10 +797,11 @@ def test_caldav_mixed_delta_failure_commits_explicit_cancellation_without_advanc
         'subjects': ['kid1'], 'kwargs': {'sync_changes': True}}},
         subjects=['kid1'], consent_required=frozenset(), viewer='ved')
     for index in range(2):
-        fetchers = runtime.build_fetchers(config, '2026-10-01T00:00:00Z', lambda name: caldav,
-            lambda name: {'apple_id': 'synthetic@example.invalid', 'app_password': 'synthetic'},
-            {'calendar': True}, ledger)
-        result = co.run_catchup(req(f'dav-failure-{index}'), make({'calendar': fetchers['calendar']}))
+        fetcher = _synthetic_admitted_fetcher(
+            caldav, "icloud_calendar", "acct-a", "2026-10-01T00:00:00Z",
+            {'apple_id': 'synthetic@example.invalid', 'app_password': 'synthetic'},
+            config.sources['calendar']['kwargs'], ledger)
+        result = co.run_catchup(req(f'dav-failure-{index}'), make({'calendar': fetcher}))
         assert result.status is RunStatus.DEGRADED
         assert ledger.get_cursor('calendar', 'acct-a') == cursor
         assert _calendar_ids(ledger) == [recs[1].upstream_id]

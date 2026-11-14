@@ -13,6 +13,8 @@ import pytest
 from catchup_core import crypto, ids, ledger as lg
 from catchup_core.field_confirmation import FieldBinding, FieldReviewStore
 
+pytestmark = pytest.mark.usefixtures("admitted_personal_sources", "admitted_documentary_scope")
+
 KEY = ids.HmacKey(1, b"i" * 32)
 CIPHER = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"7" * 32}))
 NOW = datetime(2026, 10, 24, tzinfo=timezone.utc)

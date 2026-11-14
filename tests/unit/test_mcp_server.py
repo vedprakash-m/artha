@@ -24,6 +24,16 @@ sys.modules.setdefault(
     "mcp.server.fastmcp", MagicMock(FastMCP=MagicMock())
 )
 
+class _IdentityDecoratorFastMCP:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def tool(self):
+        return lambda function: function
+
+
+sys.modules["mcp.server.fastmcp"].FastMCP = _IdentityDecoratorFastMCP
+
 
 # ── _require_approval ────────────────────────────────────────────────────────
 
@@ -134,3 +144,46 @@ class TestAudit:
         assert "secret123" not in text
         assert "body text" not in text
         assert "artha_send_email" in text
+
+
+class TestPersonalReadBoundary:
+    def test_fetch_and_state_reads_fail_closed_before_helpers(self):
+        import mcp_server
+
+        with patch.object(mcp_server, "_fetch_in_memory", side_effect=AssertionError), \
+             patch.object(mcp_server, "_read_state_file", side_effect=AssertionError), \
+             patch.object(mcp_server, "_check_rate_limit", side_effect=AssertionError):
+            assert json.loads(mcp_server.artha_fetch_data("2026-10-01")) == {
+                "error": "personal source classification unavailable"}
+            assert json.loads(mcp_server.artha_read_state("goals")) == {
+                "error": "personal State classification unavailable"}
+
+    def test_state_write_fails_closed_before_read_or_write_helpers(self):
+        import mcp_server
+
+        with patch.object(mcp_server, "_known_domains", side_effect=AssertionError), \
+             patch.object(mcp_server, "_read_state_file", side_effect=AssertionError), \
+             patch.object(mcp_server, "_write_state_file", side_effect=AssertionError):
+            assert json.loads(mcp_server.artha_write_state("goals", "# synthetic", approved=True)) == {
+                "error": "personal State classification unavailable"}
+
+    def test_core_mcp_oversize_and_exception_results_are_fixed(self):
+        from catchup_core import mcp as core_mcp
+
+        with patch.object(core_mcp, "MAX_RESULT_CHARS", 20):
+            oversized = core_mcp._text_result({"payload": "SYNTHETIC-CANARY" * 10})
+        assert oversized["isError"] is True
+        assert "SYNTHETIC-CANARY" not in oversized["content"][0]["text"]
+
+        result = core_mcp.handle(
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+             "params": {"name": "beliefs", "arguments": {}}},
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("SYNTHETIC-EXCEPTION-CANARY")))
+        assert "SYNTHETIC-EXCEPTION-CANARY" not in result["result"]["content"][0]["text"]
+        assert result["result"]["content"][0]["text"] == '{"error": "the request could not be completed"}'
+
+        invalid = core_mcp.handle(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+             "params": {"name": "beliefs", "arguments": "SYNTHETIC-CANARY"}},
+            lambda *_args: pytest.fail("invalid arguments reached the handler"))
+        assert invalid["result"]["content"][0]["text"] == '{"error": "invalid arguments"}'

@@ -221,7 +221,8 @@ def _seal_escrow(items: Mapping[str, bytes], passphrase: str) -> bytes:
     body = json.dumps({k: base64.b64encode(v).decode() for k, v in sorted(items.items())}).encode()
     if len(body) + 47 > _MAX_ESCROW:
         raise CheckpointBlocked('recovery keys exceed the escrow size limit')
-    return _ESCROW_MAGIC + salt + nonce + AESGCM(_kdf(passphrase, salt)).encrypt(nonce, body, _ESCROW_MAGIC)
+    encrypted = AESGCM(_kdf(passphrase, salt)).encrypt(nonce, body, _ESCROW_MAGIC)
+    return _ESCROW_MAGIC + salt + nonce + encrypted
 
 
 def _read_head(handle: BinaryIO) -> tuple[str, bytes]:

@@ -105,6 +105,38 @@ Work status remains unenrolled. Historical dependency/privacy review, the earlie
 source-metadata refusal, live recovery and release acceptance remain open; these
 results do not establish 100% original Windows/Work acceptance.
 
+### Implemented — bounded large-asset Windows Work history, 2026-11-10
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Hash existing Work primary files through bounded 64 KiB reads, preserving native identity/timestamp checks. Match encrypted quarantine's 16 GiB member / 64 GiB aggregate inventory bounds. Large existing files can be deleted or replaced with a small value without buffering old content. | `scripts/catchup_core/work_privacy.py`, native member tests, generated manifest, technical spec and Work guide | A >32 MiB synthetic inventory case failed before the fix. Native large-file inventory, mutation, size-race, hardlink and read-time mutation cases pass. A synthetic file above the former 8 MiB limit passes public archive, verification and encrypted quarantine recovery. |
+| Keep staged writes and pending replay bounded independently of inventory: 8 MiB per file / 32 MiB per publication, including encoded and decoded replay checks. | Same production module and tests | Two replay-bound counterexamples failed before the fix. Final history/replay selection: 166 passed, 14 skipped; changed production lines: 64/65 covered (98.5%). |
+
+The affected public selection passed **476 tests, 14 skipped**, including the large
+archive/recovery case. Its narrow three-module combined coverage was **84.37%**, so
+that invocation failed its 85% coverage check; it is not reported as a green gate.
+The final replay changes were then validated by the fresh history/replay selection
+above. The required current-file core floors and changed-line gate pass separately.
+Working-tree and exact staged privacy scans passed. Code/test/manifest delivery is
+local main `2ebcff4`; the active pre-commit hook passed. No push was performed.
+
+Current-file core coverage meets the independent floors: **93.70% lines, 89.16%
+branches**. This combines retained Windows measurements for 69 core files verified
+byte-identical to their tested commit with fresh measurements of the changed file.
+It does not claim a new full-suite pass. Native Python 3.11 writer/race checks passed
+53 cases with two skipped; seven final replay-bound/successful-publication cases also
+passed. Final private producer verification passed with 1,114 fingerprinted sources,
+24 private sources and zero State Files. Both Ruff passes, strict core typing and
+generated-register checks passed.
+
+The original Windows/Work acceptance remains open. Approved live status found no Work
+enrollment; bounded source preview now crosses the old size limit but refuses a native
+metadata change during read. Actual credential custody, current privacy, recovery
+rehearsal and release acceptance are not inferred from synthetic results. Repeated
+current-inventory verification can make large recovery slow; actual workload latency
+remains unmeasured. No live source mutation, enrollment, backup, restore or release
+activation was performed.
+
 ### Implemented — version-1 Windows Work writer availability, 2026-11-10
 
 | Change | Modified files | Validation |

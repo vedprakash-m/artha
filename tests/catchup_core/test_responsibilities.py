@@ -103,7 +103,7 @@ def test_invalid_source_freshness_and_unrecognized_lifecycle_do_not_produce_chec
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, admitted_personal_sources):
     import test_release_regressions as regressions
     yield from regressions.world.__wrapped__(tmp_path)
 
