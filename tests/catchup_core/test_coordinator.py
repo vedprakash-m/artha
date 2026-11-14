@@ -796,6 +796,23 @@ def test_health_reconciles_a_lost_tail_but_does_not_reopen_a_completed_catchup(w
     assert final['runs'] == 1 and final['unknown_runs'] == 0 and final['p95_seconds'] == 62
 
 
+def test_health_does_not_report_a_recorded_metric_sequence_as_missing(world):
+    from catchup_core.commands import _performance
+    ledger, _b, _make, _p = world
+    ledger._clock = lambda: '2026-10-22T10:00:01Z'
+    directory = ledger._path.parent / 'metrics'
+    directory.mkdir()
+    ledger.next_metric_sequence('recorded', implementation_version='current')
+    record = {'catchup_id': 'recorded', 'mode': 'authoritative', 'implementation_version': 'current',
+              'metric_sequence': 1, 'status': 'paused', 'resumed': False, 'total_seconds': 1,
+              'at': '2026-10-22T10:00:00Z', 'ended_at': '2026-10-22T10:00:01Z', 'stages': {}}
+    (directory / '2026-10.jsonl').write_text(json.dumps(record) + '\n')
+
+    report = _performance(ledger, ledger._path.parent, implementation_version='current')
+
+    assert report['unknown_runs'] == 0 and report['paused_runs'] == 1
+
+
 def test_unreadable_metrics_do_not_crash_health_or_claim_an_empty_verified_history(world, monkeypatch):
     from catchup_core.commands import _performance
     from catchup_core import metrics

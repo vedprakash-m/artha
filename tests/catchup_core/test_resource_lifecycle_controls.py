@@ -139,6 +139,16 @@ def test_fair_backlog_slice_noop_when_under_limit():
     assert fair_backlog_slice(rows, limit=0) == rows
 
 
+def test_backlog_fairness_groups_rows_without_connector_together():
+    db = sqlite3.connect(':memory:')
+    try:
+        db.row_factory = sqlite3.Row
+        rows = db.execute("SELECT 'one' AS signal_id UNION ALL SELECT 'two'").fetchall()
+    finally:
+        db.close()
+    assert [row['signal_id'] for row in fair_backlog_slice(rows, 1)] == ['one']
+
+
 # ── 4. Anti-resurrection retention checks ─────────────────────────────────────
 
 @pytest.fixture
