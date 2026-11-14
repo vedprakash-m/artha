@@ -453,10 +453,14 @@ def test_harness_measures_windows_code_only_on_windows():
     windows = _harness_dry_run(OS="Windows_NT")
     posix = _harness_dry_run(OS="")
     assert "--cov=catchup_core.quarantine_fs_windows" in windows
+    assert "--cov=catchup_core.storage_adoption" in windows
     assert "test_quarantine_fs_windows.py" in windows
+    assert "test_storage_adoption.py" in windows
     assert "--cov-config=pyproject.toml" in windows
     assert "--cov=catchup_core.quarantine_fs_windows" not in posix
+    assert "--cov=catchup_core.storage_adoption" not in posix
     assert "test_quarantine_fs_windows.py" not in posix
+    assert "test_storage_adoption.py" not in posix
     assert "--cov-config=tools/coverage-posix.toml" in posix
     assert "--cov-fail-under=85" in posix and "--cov-fail-under=85" in windows
 

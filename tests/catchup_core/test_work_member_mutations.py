@@ -19,7 +19,7 @@ from catchup_core.session_lock import SessionBusy
 from catchup_core.work_privacy import WorkPrivacy, WorkPrivacyBlocked
 from lib import work_publication as wp
 
-pytestmark = pytest.mark.skipif(os.name != 'nt', reason='native Windows Work publication')
+windows_only = pytest.mark.skipif(os.name != 'nt', reason='native Windows Work publication')
 IDENTITY = {'platform': 'win32', 'machine': 'synthetic-machine', 'user': 'S-1-5-21-1001'}
 
 
@@ -72,6 +72,7 @@ def native_metadata(member):
 
 
 @pytest.mark.parametrize('raw', [b'new', b'longer synthetic notes' * 12, b''])
+@windows_only
 def test_v1_update_preserves_streams_without_migration_or_stream_authority(legacy_enrolled, monkeypatch, raw):
     p, member = legacy_enrolled
     binding = p.bind_checkpoint()
@@ -86,6 +87,7 @@ def test_v1_update_preserves_streams_without_migration_or_stream_authority(legac
     assert p.denied_members(binding, ['work_state/notes.md']) == {'work_state/notes.md'}
 
 
+@windows_only
 def test_v1_delete_invalidates_member_without_inventing_stream_history(legacy_enrolled):
     p, member = legacy_enrolled
     binding = p.bind_checkpoint()
@@ -104,6 +106,7 @@ def test_non_windows_member_mutation_gate_remains_held(monkeypatch, schema):
                                            {'work_state/notes.md': b'update'})
 
 
+@windows_only
 def test_large_asset_history_uses_bounded_reads_and_allows_small_publication(legacy_enrolled, monkeypatch):
     p, member = legacy_enrolled
     asset = member.parent / 'synthetic.bin'
@@ -143,6 +146,7 @@ def test_large_asset_history_uses_bounded_reads_and_allows_small_publication(leg
 
 
 @pytest.mark.parametrize('raw', [None, b'small replacement'])
+@windows_only
 def test_large_existing_member_can_be_deleted_or_replaced_without_buffering(legacy_enrolled, raw):
     p, member = legacy_enrolled
     with member.open('r+b') as out:
@@ -160,6 +164,7 @@ def test_large_existing_member_can_be_deleted_or_replaced_without_buffering(lega
 
 
 @pytest.mark.parametrize('mutation', ['grow', 'truncate', 'same-size', 'early-end', 'short-read'])
+@windows_only
 def test_inventory_detects_mutation_and_handles_partial_native_reads(legacy_enrolled, monkeypatch, mutation):
     p, member = legacy_enrolled
     original = fs.WindowsQuarantineFile.read_chunk
@@ -197,6 +202,7 @@ def test_inventory_detects_mutation_and_handles_partial_native_reads(legacy_enro
 
 
 @pytest.mark.parametrize('limit', ['member', 'total'])
+@windows_only
 def test_inventory_bounds_refuse_before_reading_over_budget(legacy_enrolled, monkeypatch, limit):
     p, member = legacy_enrolled
     if limit == 'member':
@@ -218,6 +224,7 @@ def test_inventory_bounds_refuse_before_reading_over_budget(legacy_enrolled, mon
 
 
 @pytest.mark.parametrize('limit', ['member', 'total'])
+@windows_only
 def test_large_inventory_does_not_expand_staged_write_limits(legacy_enrolled, monkeypatch, limit):
     p, member = legacy_enrolled
     before = p.current()
@@ -234,6 +241,7 @@ def test_large_inventory_does_not_expand_staged_write_limits(legacy_enrolled, mo
 
 
 @pytest.mark.parametrize('limit', ['member', 'decoded', 'total'])
+@windows_only
 def test_pending_replay_retains_small_staged_byte_limits(legacy_enrolled, monkeypatch, limit):
     p, _ = legacy_enrolled
     before = p.current()
@@ -254,6 +262,7 @@ def test_pending_replay_retains_small_staged_byte_limits(legacy_enrolled, monkey
 
 
 @pytest.mark.parametrize('limit', ['member', 'total'])
+@windows_only
 def test_authenticated_history_retains_inventory_size_bounds(legacy_enrolled, monkeypatch, limit):
     p, member = legacy_enrolled
     history = {key: value for key, value in p.current().items() if key != 'head'}
@@ -270,6 +279,7 @@ def test_inventory_digest_refuses_incomplete_or_excess_chunks(piece):
 
 
 @pytest.mark.parametrize('change', ['grow', 'shrink'])
+@windows_only
 def test_inventory_rechecks_file_size_after_native_open(tmp_path, monkeypatch, change):
     member = tmp_path / 'synthetic.bin'
     member.write_bytes(b'initial')
@@ -325,6 +335,7 @@ def test_portable_inventory_checks_exact_bytes_and_identity(tmp_path, monkeypatc
         privacy._member_digest(member, 15)
 
 
+@windows_only
 def test_large_native_asset_round_trips_through_public_encrypted_recovery(legacy_enrolled, tmp_path):
     from datetime import UTC, datetime
 
@@ -368,6 +379,7 @@ def test_large_native_asset_round_trips_through_public_encrypted_recovery(legacy
 
 
 @pytest.mark.parametrize('raw', [b'new', b'longer synthetic notes' * 12, b''])
+@windows_only
 def test_enrolled_update_preserves_identity_security_and_all_streams(enrolled, raw):
     p, member = enrolled
     before = p.current()
@@ -387,6 +399,7 @@ def test_enrolled_update_preserves_identity_security_and_all_streams(enrolled, r
     assert not (p.authority_dir / 'pending').exists()
 
 
+@windows_only
 def test_enrolled_delete_invalidates_owned_streams_and_preserves_root_stream(enrolled):
     p, member = enrolled
     binding = p.bind_checkpoint()
@@ -400,6 +413,7 @@ def test_enrolled_delete_invalidates_owned_streams_and_preserves_root_stream(enr
     assert p.denied_streams(binding, list(file_streams)) == file_streams
 
 
+@windows_only
 def test_late_stream_is_preserved_and_keeps_publication_pending(enrolled):
     p, member = enrolled
     metadata = native_metadata(member)
@@ -420,6 +434,7 @@ def test_late_stream_is_preserved_and_keeps_publication_pending(enrolled):
         p.recover_pending()
 
 
+@windows_only
 def test_native_update_handle_excludes_competing_primary_writers(enrolled):
     _, member = enrolled
     code = 'import sys;open(sys.argv[1],"r+b").write(b"other")'
@@ -432,6 +447,7 @@ def test_native_update_handle_excludes_competing_primary_writers(enrolled):
     assert allowed.returncode == 0
 
 
+@windows_only
 def test_update_and_creation_publish_as_one_reviewed_generation(enrolled):
     p, member = enrolled
     before = p.current()
@@ -443,6 +459,7 @@ def test_update_and_creation_publish_as_one_reviewed_generation(enrolled):
     assert result['streams'] == before['streams']
 
 
+@windows_only
 def test_unjournaled_primary_change_refuses_before_intent(enrolled):
     p, member = enrolled
     with p.transaction() as tx:
@@ -453,6 +470,7 @@ def test_unjournaled_primary_change_refuses_before_intent(enrolled):
     assert not (p.authority_dir / 'pending').exists()
 
 
+@windows_only
 def test_producer_read_modify_write_and_delete_follow_v2_history(enrolled):
     p, member = enrolled
     previous = wp.set_protocol_factory(lambda: p)
@@ -495,6 +513,7 @@ p.publish({'work_state/notes.md':None if sys.argv[3]=='delete' else b'replacemen
 @pytest.mark.parametrize('phase', ['intent', 'partial', 'member', 'head', 'complete'])
 @pytest.mark.parametrize('operation', ['update', 'delete'])
 @pytest.mark.parametrize('history_fixture', ['legacy_enrolled', 'enrolled'])
+@windows_only
 def test_real_interruption_replays_only_exact_member_states(request, history_fixture, phase, operation):
     if operation == 'delete' and phase == 'partial':
         pytest.skip('native deletion has no partial-primary write step')
