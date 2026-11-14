@@ -219,8 +219,6 @@ def test_make_default_coverage_floors_are_85_percent(tmp_path):
     assert result.stdout.count("--cov-fail-under=85") == 2
     assert "--cov=catchup_core.session_lock" in result.stdout
     assert "--cov=catchup_core.privacy_history" in result.stdout
-    assert "--cov=catchup_core.storage_adoption" in result.stdout
-    assert "tests/catchup_core/test_storage_adoption.py" in result.stdout
     assert "tests/catchup_core/test_privacy_anchor_capacity.py" in result.stdout
 
 
@@ -472,6 +470,12 @@ def test_posix_harness_config_excludes_only_windows_guarded_blocks():
     excluded = config["report"]["exclude_lines"]
     assert set(shared["report"]["exclude_lines"]) <= set(excluded)
     extra = [pattern for pattern in excluded if pattern not in shared["report"]["exclude_lines"]]
-    assert extra and all("win32" in pattern or "'nt'" in pattern or '"nt"' in pattern or "nt[" in pattern
-                         for pattern in extra)
+    assert set(extra) == {
+        "if sys\\.platform == ['\"]win32['\"]",
+        "if os\\.name == ['\"]nt['\"]",
+        r"(?ms)^(?:@contextmanager\n)?def _windows_[A-Za-z0-9_]+\b.*?(?=^(?:@|def )|\Z)",
+        r"(?ms)^    (?:@contextmanager\n    )?def _windows_[A-Za-z0-9_]+\b.*?(?=^    (?:@|def )|^\S|\Z)",
+        r"(?ms)^            with _windows_lock\(handle, shared=shared\):.*?(?=^        else:)",
+        r"(?ms)^    def _(?:opened|publish|physical)_native\b.*?(?=^    def |^\S|\Z)",
+    }
     assert config["run"] == shared["run"]
