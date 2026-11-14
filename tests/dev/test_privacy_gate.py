@@ -166,9 +166,21 @@ def test_repository_gitignore_protects_state_and_briefings(sandbox, rel, ignored
     assert result.returncode == int(not ignored), out(result)
 
 
+@pytest.mark.parametrize(("rel", "ignored"), [
+    ("token.json", True),
+    ("private/oauth_token_backup.json", True),
+    ("private/example.json", False),
+])
+def test_repository_gitignore_protects_token_json(sandbox, rel, ignored):
+    shutil.copy(REPO / ".gitignore", sandbox.root / ".gitignore")
+    result = sandbox.git("check-ignore", "--no-index", "--", rel, check=False)
+    assert result.returncode == int(not ignored), out(result)
+
+
 @pytest.mark.parametrize(("rel", "blocked"), [
     ("state/new-domain/nested/state.md", True),
     ("briefings/nested/briefing.txt", True),
+    ("private/token.json", True),
     ("state/templates/nested/example.md", False),
     ("state/learned_procedures/example.md", False),
 ])

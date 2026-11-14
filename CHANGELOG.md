@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Windows stream integrity and token-file exclusions, 2026-11-14
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Detect named-stream content changes during capture, even when size and timestamps are unchanged. Add portable regression coverage for the fingerprint and capture checks. | `scripts/catchup_core/quarantine_fs_windows.py`, `tests/catchup_core/test_work_stream_inventory.py`, `tests/catchup_core/test_stream_integrity_portable.py` | Native stream tests and 20 portable synthetic cases passed; the portable cases also fail against the pre-fix implementation. |
+| Ignore token-named JSON files consistently with the existing privacy guard, including generic and nested names. | `.gitignore`, `tests/dev/test_privacy_gate.py` | Two missing-ignore cases failed before the fix; eight focused ignore and forced-add checks passed afterward. |
+
 ### Activated — Windows Work metadata policy only, 2026-11-12
 
 | Change | Affected state / files | Validation |

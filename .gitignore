@@ -134,12 +134,11 @@ scripts/_run_tests_internal.py
 
 # --- Token and credential files ---
 .tokens/
-*.token.json
+*token*.json
 # Finalization audit (re-artha 12.8): defence in depth for secrets that are not in the folders above
 .env
 .env.*
 !.env.example
-*-token.json
 *credentials*.json
 *creds*.json
 *.pem

@@ -1,5 +1,19 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows stream validation and release status — 2026-11-14
+
+Commit `44cadaf` fingerprints mandatory named streams during inventory and compares
+captured bytes against both inventories. Native stream tests and 20 portable synthetic
+regressions passed. At that commit, the Windows contracts, Linux/macOS test matrices
+and PII Check passed; the Linux core branch-coverage gate failed at 84.90% against its
+85% floor. The portable tests exercise previously uncovered branches, but only hosted
+coverage can establish the Linux result.
+
+The filesystem change touches the signed release slice. The release-drift advisory
+requires an owner re-sign or reversal before an authoritative Catch-up. The previously
+deferred native Work recovery, owner acceptance and release are still incomplete; the
+synthetic checks do not constitute native recovery or release acceptance.
+
 ## Native Windows Work metadata policy active — 2026-11-12
 
 The owner explicitly selected policy-only activation while keeping recovery deferred.
