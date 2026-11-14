@@ -1,13 +1,32 @@
 # re-artha implementation status — 2026-11-05
 
+## Hosted and synthetic validation — 2026-11-14
+
+At commit `b54f982`, [hosted CI](https://github.com/vedprakash-m/artha/actions/runs/43643603391)
+and [PII Check](https://github.com/vedprakash-m/artha/actions/runs/43643603561)
+passed. This includes Windows contract tests on Python 3.11 and 3.12. The Linux
+core line-and-branch coverage gate reached 87.93% against its 85% floor; the
+separate hook and policy gate reached 87.49% against the same floor. Local
+tracked/untracked and unpushed privacy scans also passed.
+
+The source-pinned, synthetic-only private Work verifier passed its reviewed
+`tests/work/test_work_publication_producers.py` selection. It fingerprinted
+1,121 source paths, including 24 private Work paths, and copied no State Files.
+This is not a full private Work suite or native recovery acceptance.
+
+On Windows, retries of local test shards 1–3 and original shard 4 passed.
+Original shard 0 had 1,880 passes, 18 skips and 31 fixture errors; a
+directory-grouped rerun of 34 affected cases passed. The full isolated suite
+and original shard 5 were still running when this entry was recorded. No
+aggregate Windows full-suite pass is inferred from these partial results.
+
 ## Windows stream validation and release status — 2026-11-14
 
 Commit `44cadaf` fingerprints mandatory named streams during inventory and compares
 captured bytes against both inventories. Native stream tests and 20 portable synthetic
 regressions passed. At that commit, the Windows contracts, Linux/macOS test matrices
 and PII Check passed; the Linux core branch-coverage gate failed at 84.90% against its
-85% floor. The portable tests exercise previously uncovered branches, but only hosted
-coverage can establish the Linux result.
+85% floor. The later hosted coverage result is recorded above.
 
 The filesystem change touches the signed release slice. The release-drift advisory
 requires an owner re-sign or reversal before an authoritative Catch-up. The previously
