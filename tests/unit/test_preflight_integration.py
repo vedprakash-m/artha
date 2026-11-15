@@ -65,6 +65,16 @@ class TestCheckActionHandlers:
 # ---------------------------------------------------------------------------
 
 class TestRunPreflightIntegration:
+    @pytest.fixture(autouse=True)
+    def mock_provider_checks(self, monkeypatch):
+        monkeypatch.setattr(pf, "check_workiq", lambda: pf.CheckResult("WorkIQ", "P1", True, "synthetic"))
+        monkeypatch.setattr(pf, "check_ado_auth", lambda: pf.CheckResult("ADO", "P1", True, "synthetic"))
+        monkeypatch.setattr(pf, "check_ha_connectivity", lambda: pf.CheckResult("HA", "P1", True, "synthetic"))
+        monkeypatch.setattr(
+            pf, "check_script_health",
+            lambda name, args, severity="P0": pf.CheckResult(name, severity, True, "synthetic"),
+        )
+
     def test_run_preflight_returns_results_list(self, tmp_path, monkeypatch):
         monkeypatch.setattr(pf, "ARTHA_DIR", str(tmp_path))
         (tmp_path / "config").mkdir(parents=True, exist_ok=True)

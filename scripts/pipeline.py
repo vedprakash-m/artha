@@ -1202,20 +1202,25 @@ def run_pipeline(
     try:
         import subprocess as _subprocess
         _action_status_path.parent.mkdir(parents=True, exist_ok=True)
+        _action_env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
         _ao_result = _subprocess.run(
             [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--run"],
-            capture_output=True, text=True, timeout=60,
-            cwd=str(_REPO_ROOT),
+            capture_output=True, timeout=60,
+            cwd=str(_REPO_ROOT), env=_action_env,
         )
         _list_result = _subprocess.run(
             [sys.executable, str(_SCRIPTS_DIR / "action_orchestrator.py"), "--list"],
-            capture_output=True, text=True, timeout=30,
-            cwd=str(_REPO_ROOT),
+            capture_output=True, timeout=30,
+            cwd=str(_REPO_ROOT), env=_action_env,
+        )
+        _ao_stdout, _ao_stderr, _list_stdout, _list_stderr = (
+            output.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+            for output in (_ao_result.stdout, _ao_result.stderr, _list_result.stdout, _list_result.stderr)
         )
         import re as _re
-        _queued_match = _re.search(r"Proposals queued:\s*(\d+)", _ao_result.stdout)
+        _queued_match = _re.search(r"Proposals queued:\s*(\d+)", _ao_stdout)
         _new_count = int(_queued_match.group(1)) if _queued_match else 0
-        _pending_match = _re.search(r"PENDING ACTIONS \((\d+)\)", _list_result.stdout)
+        _pending_match = _re.search(r"PENDING ACTIONS \((\d+)\)", _list_stdout)
         _pending_count = int(_pending_match.group(1)) if _pending_match else 0
 
         _status = "OK"
@@ -1227,28 +1232,35 @@ def run_pipeline(
 
         _status_parts = [
             f"{_status} | {_new_count} new proposals | {_pending_count} pending",
-            _ao_result.stdout.strip(),
+            _ao_stdout.strip(),
         ]
-        if _ao_result.stderr.strip():
+        if _ao_stderr.strip():
             _status_parts.append("--- ACTION STDERR ---")
-            _status_parts.append(_ao_result.stderr.strip())
-        if _list_result.stdout.strip():
+            _status_parts.append(_ao_stderr.strip())
+        if _list_stdout.strip():
             _status_parts.append("--- CURRENT ACTION QUEUE ---")
-            _status_parts.append(_list_result.stdout.strip())
-        if _list_result.stderr.strip():
+            _status_parts.append(_list_stdout.strip())
+        if _list_stderr.strip():
             _status_parts.append("--- ACTION LIST STDERR ---")
-            _status_parts.append(_list_result.stderr.strip())
+            _status_parts.append(_list_stderr.strip())
 
         _action_status_path.write_text(
-            "\n".join(part for part in _status_parts if part)
+            "\n".join(part for part in _status_parts if part), encoding="utf-8"
         )
-        if _ao_result.stdout.strip():
-            print(_ao_result.stdout, flush=True)
-        if _list_result.stdout.strip() and "PENDING ACTIONS" in _list_result.stdout:
-            print(_list_result.stdout, flush=True)
+        for _output in (_ao_stdout, _list_stdout if "PENDING ACTIONS" in _list_stdout else ""):
+            if _output.strip():
+                try:
+                    print(_output, flush=True)
+                except UnicodeEncodeError:
+                    print("[pipeline] Action output escaped for the console encoding.", file=sys.stderr)
+                    _console_encoding = sys.stdout.encoding or "ascii"
+                    print(
+                        _output.encode(_console_encoding, errors="backslashreplace").decode(_console_encoding),
+                        flush=True,
+                    )
     except Exception as _ao_exc:  # noqa: BLE001
         _action_status_path.write_text(
-            f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}"
+            f"FAILED | {type(_ao_exc).__name__}: {_ao_exc}", encoding="utf-8"
         )
         print(f"[pipeline] WARNING: action layer failed: {_ao_exc}", file=sys.stderr)
 

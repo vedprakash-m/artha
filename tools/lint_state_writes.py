@@ -80,14 +80,14 @@ def main(argv: list[str]) -> int:
         return 1
     regressions, improvements = compare(current, baseline)
     if regressions:
-        print("FAIL: new direct .write_text() calls — route state writes through "
+        print("FAIL: new direct .write_text() calls - route state writes through "
               "state_writer.write(), tmp writes through state_writer.write_atomic():")
         print("\n".join(f"  {r}" for r in regressions))
         return 1
     if improvements:
-        print("note: counts dropped — run `python tools/lint_state_writes.py --update-baseline` to ratchet:")
+        print("note: counts dropped - run `python tools/lint_state_writes.py --update-baseline` to ratchet:")
         print("\n".join(f"  {i}" for i in improvements))
-    print(f"✓ No new direct .write_text() calls ({sum(current.values())} legacy, baseline {sum(baseline.values())})")
+    print(f"OK: No new direct .write_text() calls ({sum(current.values())} legacy, baseline {sum(baseline.values())})")
     return 0
 
 

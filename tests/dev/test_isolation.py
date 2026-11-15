@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import socket
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -44,6 +45,42 @@ def test_external_connect_is_blocked():
 def test_external_dns_is_blocked():
     with pytest.raises(iso.NetworkAccessError):
         socket.getaddrinfo("example.com", 443)
+
+
+@pytest.mark.parametrize("command", [
+    ["npx", "-y", "@microsoft/workiq@0.4.1", "ask", "-q", "synthetic"],
+    ["npx", "-y", "@microsoft/workiq", "ask"],
+    ["npx", "-y", "workiq", "ask"],
+    [r"C:\Program Files\nodejs\npx.CMD", "-y", "@microsoft/workiq@0.4.1", "ask"],
+    [r"C:\tools\workiq.exe", "ask", "-q", "synthetic"],
+    r'"C:\tools\workiq.exe" ask -q synthetic',
+    "npx -y @microsoft/workiq@0.4.1 ask",
+    "npx -y workiq@0.4.1 ask",
+])
+def test_workiq_subprocess_is_refused_before_spawn(monkeypatch, command):
+    def unexpected_spawn(*args, **kwargs):
+        raise AssertionError("subprocess was spawned")
+
+    monkeypatch.setattr(subprocess.Popen, "_execute_child", unexpected_spawn)
+    with pytest.raises(iso.NetworkAccessError, match="WorkIQ"):
+        subprocess.Popen(command)
+
+
+def test_workiq_executable_override_is_refused_before_spawn(monkeypatch):
+    def unexpected_spawn(*args, **kwargs):
+        raise AssertionError("subprocess was spawned")
+
+    monkeypatch.setattr(subprocess.Popen, "_execute_child", unexpected_spawn)
+    with pytest.raises(iso.NetworkAccessError, match="WorkIQ"):
+        subprocess.Popen(["placeholder"], executable=r"C:\tools\workiq.exe")
+
+
+def test_workiq_argument_does_not_block_an_unrelated_process():
+    import sys
+    result = subprocess.run(
+        [sys.executable, "-c", "pass", "workiq"], capture_output=True, timeout=30,
+    )
+    assert result.returncode == 0
 
 
 def test_loopback_connect_is_allowed():

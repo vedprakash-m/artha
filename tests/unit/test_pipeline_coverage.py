@@ -1,7 +1,9 @@
 """WP-02: the pipeline turns validator rejections into degraded coverage (WP02.AC1-AC4)."""
 from __future__ import annotations
 
+import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterator
@@ -242,6 +244,63 @@ def test_pipeline_freshness_advances_only_complete_connectors(monkeypatch, recor
 
     freshness.assert_called_once()
     assert freshness.call_args.kwargs["fetched_connectors"] == expected
+
+
+@pytest.mark.parametrize("run_rc,malformed,legacy_console", [
+    (0, False, False), (4, False, False), (0, True, False), (0, False, True),
+])
+def test_pipeline_action_status_preserves_unicode_with_legacy_encoding(
+    tmp_path, monkeypatch, run_rc, malformed, legacy_console,
+):
+    script = tmp_path / "action_orchestrator.py"
+    run_output = ("    sys.stdout.buffer.write(b'\\xff')\n" if malformed
+                  else "    print('Proposals queued: 2 \\U0001f680')\n")
+    script.write_text(
+        "import sys\n"
+        "if '--run' in sys.argv:\n"
+        f"{run_output}"
+        "    print('run \\u2713', file=sys.stderr)\n"
+        f"    sys.exit({run_rc})\n"
+        "print('PENDING ACTIONS (3) \\U0001f680')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    monkeypatch.setattr(pipeline, "_SCRIPTS_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(pipeline, "_load_handler", lambda _: _Handler([_cal(1)]))
+    monkeypatch.setattr(pipeline, "load_auth_context", lambda _: {})
+    monkeypatch.setattr(pipeline, "_update_connector_freshness", lambda **kwargs: None)
+    if legacy_console:
+        original_run = subprocess.run
+        console = io.BytesIO()
+        legacy_stdout = io.TextIOWrapper(console, encoding="cp1252", errors="strict", write_through=True)
+
+        def run_with_legacy_console(args, **kwargs):
+            result = original_run(args, **kwargs)
+            if len(args) >= 3 and args[1] == str(script) and args[2] == "--list":
+                monkeypatch.setattr(sys, "stdout", legacy_stdout)
+            return result
+
+        monkeypatch.setattr(subprocess, "run", run_with_legacy_console)
+    cfg = {"connectors": {"google_calendar": {
+        "enabled": True, "fetch": {"handler": "connectors.google_calendar"},
+        "retry": {"max_attempts": 0},
+    }}}
+
+    assert pipeline.run_pipeline(cfg, since="2026-10-10T00:00:00Z") == 0
+
+    status = (tmp_path / "tmp" / "action_layer_status.txt").read_text(encoding="utf-8")
+    if malformed:
+        assert status.startswith("FAILED | UnicodeDecodeError:")
+        return
+    expected = "OK" if run_rc == 0 else "DEGRADED | run_rc=4 list_rc=0"
+    assert f"{expected} | 2 new proposals | 3 pending" in status
+    assert "Proposals queued: 2 \U0001f680" in status
+    assert "run \u2713" in status
+    assert "PENDING ACTIONS (3) \U0001f680" in status
+    if legacy_console:
+        assert b"\\U0001f680" in console.getvalue()
 
 
 @pytest.mark.parametrize("existing", [False, True])

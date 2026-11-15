@@ -9,10 +9,12 @@ Guarantees
 ----------
 * ``HOME`` (and the Windows equivalents) point at a per-session temp dir, so
   ``~/.artha-local``, ``~/.artha-tokens`` and friends are never the real ones.
-* The OS credential store is replaced by the null keyring backend.
+* Python keyring uses the null backend, including in child environments.
 * Credential-shaped environment variables are removed.
 * Non-loopback sockets and DNS lookups raise :class:`NetworkAccessError`
   unless the running test is marked ``network``.
+* Known WorkIQ CLI and npx invocations are refused. This is not a general
+  subprocess network sandbox.
 * Production data directories inside the checkout are snapshotted so a test
   that mutates them fails the session (:class:`ProtectedSnapshot`).
 """
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import ntpath
 import os
 import re
 import socket
@@ -27,7 +30,7 @@ import tempfile
 from pathlib import Path
 
 def install_credential_guard() -> None:
-    """Scrubbed child environments must not silently re-enable the host's native credential store."""
+    """Keep Python child credentials inert and refuse direct WorkIQ processes."""
     import subprocess
     original = subprocess.Popen
     if getattr(original, '_artha_credential_guard', False):
@@ -35,6 +38,32 @@ def install_credential_guard() -> None:
     class IsolatedPopen(original):
         _artha_credential_guard = True
         def __init__(self, *args, **kwargs):
+            command = args[0] if args else kwargs.get('args')
+            if isinstance(command, (list, tuple)) and command:
+                executable = os.fsdecode(kwargs.get('executable') or command[0])
+                parts = [os.fsdecode(part).lower() for part in command]
+                program = ntpath.basename(executable).lower()
+                is_workiq = program in {
+                    'workiq', 'workiq.cmd', 'workiq.exe',
+                } or any(
+                    part == '@microsoft/workiq' or part.startswith('@microsoft/workiq@')
+                    for part in parts
+                ) or (
+                    program in {'npx', 'npx.cmd', 'npx.exe'}
+                    and any(part == 'workiq' or part.startswith('workiq@') for part in parts)
+                )
+            elif isinstance(command, (str, bytes, os.PathLike)):
+                overridden = kwargs.get('executable')
+                is_workiq = bool(overridden and ntpath.basename(os.fsdecode(overridden)).lower() in {
+                    'workiq', 'workiq.cmd', 'workiq.exe',
+                }) or bool(re.search(
+                    r"""(?i)(?:@microsoft/workiq(?=@|[\s"']|$)|(?:^|[\\/\s"'])workiq(?:\.cmd|\.exe)?(?=@|[\s"']|$))""",
+                    os.fsdecode(command),
+                ))
+            else:
+                is_workiq = False
+            if is_workiq:
+                raise NetworkAccessError("WorkIQ subprocess blocked in tests; mock the provider")
             environment = dict(os.environ if kwargs.get('env') is None else kwargs['env'])
             environment['PYTHON_KEYRING_BACKEND'] = NULL_KEYRING
             kwargs['env'] = environment

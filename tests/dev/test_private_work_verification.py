@@ -384,7 +384,7 @@ def test_cleanup_failure_is_nonzero_and_never_success_shaped(source, tmp_path, m
             return original_run(args, **kwargs)
         return subprocess.CompletedProcess(args, 0)
 
-    def cleanup(path):
+    def cleanup(path, **kwargs):
         retained.append(path)
         raise OSError("WORK_PAYLOAD_SENTINEL")
 
@@ -401,6 +401,32 @@ def test_cleanup_failure_is_nonzero_and_never_success_shaped(source, tmp_path, m
     finally:
         for path in retained:
             original_cleanup(path)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows trailing-dot paths are platform-specific")
+def test_private_workspace_cleanup_removes_trailing_dot_file(source, tmp_path, monkeypatch):
+    evidence = tmp_path / "cleanup-trailing-dot.json"
+    original_run = runner.subprocess.run
+    workspace_parent = Path(runner.tempfile.gettempdir())
+    created = []
+
+    def execute(args, **kwargs):
+        if args[0] == "git":
+            return original_run(args, **kwargs)
+        workspace = Path(kwargs["cwd"]).parent
+        created.append(workspace)
+        Path("\\\\?\\" + str(workspace / "trailing.")).write_text("synthetic")
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(runner.subprocess, "run", execute)
+    try:
+        assert runner.verify_private_work(source, evidence, []) == 0
+        assert not list(workspace_parent.iterdir())
+    finally:
+        for workspace in created:
+            Path("\\\\?\\" + str(workspace / "trailing.")).unlink(missing_ok=True)
+            if workspace.exists():
+                runner.shutil.rmtree(workspace)
 
 
 def test_new_source_during_copy_is_not_unfingerprinted(source, tmp_path, monkeypatch):

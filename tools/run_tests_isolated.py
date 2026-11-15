@@ -140,6 +140,31 @@ def _evidence_path(path: Path, root: Path) -> Path:
     return resolved
 
 
+def _remove_workspace(workspace: Path) -> None:
+    if os.name == "nt":
+        name = str(workspace)
+        if not name.startswith("\\\\?\\"):
+            name = "\\\\?\\UNC\\" + name[2:] if name.startswith("\\\\") else "\\\\?\\" + name
+        workspace = Path(name)
+
+        def remove_read_only_file(function, path, error):
+            exc = error[1]
+            if function is not os.unlink or not isinstance(exc, PermissionError):
+                raise exc
+            info = os.lstat(path)
+            if (not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    or info.st_mode & stat.S_IWRITE):
+                raise exc
+            os.chmod(path, info.st_mode | stat.S_IWRITE)
+            function(path)
+
+        shutil.rmtree(workspace, onerror=remove_read_only_file)
+    else:
+        shutil.rmtree(workspace)
+
+
 def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
     """Run only synthetic private tests; never persist or echo pytest output."""
     workspace = None
@@ -203,7 +228,7 @@ def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
     finally:
         if workspace is not None:
             try:
-                shutil.rmtree(workspace)
+                _remove_workspace(workspace)
             except OSError:
                 exit_code = 2
                 if record is not None:
@@ -396,7 +421,7 @@ def main(argv: list[str]) -> int:
                 normalize_coverage_xml(report, dest, root)
         return result.returncode
     finally:
-        shutil.rmtree(workspace, ignore_errors=True)
+        _remove_workspace(workspace)
 
 
 if __name__ == "__main__":

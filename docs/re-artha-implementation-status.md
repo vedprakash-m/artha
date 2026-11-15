@@ -1,6 +1,76 @@
 # re-artha implementation status — 2026-11-05
 
+## Test provider boundary — 2026-11-14
+
+A public Windows test shard was stopped after a WorkIQ health subprocess launched.
+Whether it contacted the service or accessed credentials is unknown; earlier tests
+may also have attempted probes. The affected preflight tests now mock provider health
+checks, and the test process refuses known direct WorkIQ CLI and npx invocations.
+Synthetic spawn-boundary cases reproduced gaps before the guard; the isolation and
+preflight selection passed 75 cases on each of Python 3.13 and 3.12.
+
+The guard, Python socket/keyring isolation and validation-only command shims are
+cooperative safeguards, not an OS sandbox for native processes or Python grandchildren.
+They do not prove that the stopped probe or other subprocesses had no network or
+credential access. Production preflight behavior was not changed.
+
+## Windows validation boundary repairs — 2026-11-14
+
+On the working-tree candidate based on `0b2dcf1`, Pipeline's Action Layer
+subprocess output and status are decoded and written as UTF-8; output that a
+legacy console cannot represent is escaped, and malformed bytes produce a failed
+status. Isolated Windows workspace cleanup handles trailing-dot and read-only
+files, refuses read-only files with multiple hardlinks and surfaces cleanup
+failures. The state-write gate now uses ASCII console messages.
+
+The focused selection passed 145 cases on each of Python 3.13 and 3.12, and
+47 Windows canaries passed. Changed-line coverage for Pipeline and the isolated
+runner was 36/37 (97%); this excludes the state-write gate and is not whole-core
+coverage. These synthetic checks do not establish native Work recovery, UAT or
+release acceptance.
+
+Across isolated Windows public-test partitions on Python 3.13, 11,399 cases passed,
+183 were skipped and 20 were expected failures. The partitions cover 458 eligible
+public test modules; two shards were each divided into three disjoint item
+selections with verified complete unions. This is not a single-process full-suite
+run. Private `tests/work` modules are excluded from that public selection.
+
+Separately, six disjoint Windows core-coverage partitions passed 5,294 cases with
+108 skipped. Their verified union covered 5,402 collected cases and the same 70
+source files. Coverage was 92.89% combined, 94.10% line and 89.67% branch,
+above the owner-approved 85% floors. The core changed-line gate found no changed
+core lines in this candidate.
+
+Four disjoint Windows security/policy harness partitions passed 1,891 cases with
+91 skipped. Their verified union covered all 1,982 collected cases and the same
+19 source files. Harness coverage was 87.32% combined, above its 85% floor;
+line coverage was 89.31% and branch coverage was 81.92%. The harness has no
+separate branch floor. These coverage selections overlap the public test
+partitions and must not be added to their total.
+
+The candidate's source-pinned private Work verifier passed one reviewed synthetic
+test module out of 44 private Work test modules. Its receipt fingerprinted 1,122
+source paths, including 24 private Work paths; it copied no State Files. This
+evidence preceded later documentation-only edits and is not native Work recovery
+or a full private Work suite.
+
+A source-pinned tracked/untracked privacy scan passed on 1,132 paths before this
+documentation update. An earlier full scan failed closed when Gitleaks crashed
+on `tests/catchup_core/test_restore_quarantine.py` with exit `0xC0000409`;
+five single-file repetitions and the later full scan passed, but the crash cause
+remains unknown. It did not report a secret.
+
+All six Windows requirements still lack complete acceptance. Native Work
+recovery remains explicitly deferred; owner UAT and release evidence are
+outstanding, and the changed signed-release input requires owner-reviewed
+re-signing or reversal before an authoritative Catch-up. The feature spec
+remains active.
+
 ## Hosted and synthetic validation — 2026-11-14
+
+At commit `0b2dcf1`, [hosted CI](https://github.com/vedprakash-m/artha/actions/runs/43653428868)
+and [PII Check](https://github.com/vedprakash-m/artha/actions/runs/43653428891)
+passed. The later working-tree candidate above is not covered by those runs.
 
 At commit `b54f982`, [hosted CI](https://github.com/vedprakash-m/artha/actions/runs/43643603391)
 and [PII Check](https://github.com/vedprakash-m/artha/actions/runs/43643603561)

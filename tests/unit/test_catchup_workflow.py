@@ -495,8 +495,11 @@ class TestPreflightGating:
             TOKEN_DIR=str(workflow_dir / ".tokens"),
             LOCK_FILE=str(workflow_dir / ".artha-decrypted"),
             WORKIQ_CACHE_FILE=str(workflow_dir / "tmp" / ".workiq_cache.json"),
+            check_workiq=lambda: CheckResult("WorkIQ", "P1", True, "synthetic"),
+            check_ado_auth=lambda: CheckResult("ADO", "P1", True, "synthetic"),
+            check_ha_connectivity=lambda: CheckResult("HA", "P1", True, "synthetic"),
         ):
-            results = run_preflight(quiet=True)  # quiet=True avoids network calls
+            results = run_preflight(quiet=True)
 
         assert isinstance(results, list)
         assert len(results) > 0

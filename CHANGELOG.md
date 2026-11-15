@@ -9,6 +9,27 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Windows validation and action output, 2026-11-14
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Preserve Action Layer subprocess output and status as UTF-8; escape output only when the console cannot represent it, and record malformed output as a failed Action Layer status. | `scripts/pipeline.py`, `tests/unit/test_pipeline_coverage.py` | Synthetic Unicode, legacy-console, malformed-output and degraded-status cases. |
+| Clean isolated workspaces containing Windows trailing-dot or read-only files; refuse read-only files with multiple hardlinks and surface cleanup failures. | `tools/run_tests_isolated.py`, `tests/dev/test_isolated_runner.py`, `tests/dev/test_private_work_verification.py` | Native Windows cleanup and refusal regressions. |
+| Make state-write gate messages printable on legacy Windows consoles. | `tools/lint_state_writes.py`, `tests/dev/test_lint_state_writes_encoding.py` | Success, improvement and failure output tested with CP1252 and CP437. |
+| Mock provider checks in preflight tests and refuse known WorkIQ CLI and npx invocations in the test process. | `tests/_isolation.py`, `tests/dev/test_isolation.py`, `tests/unit/test_preflight_integration.py`, `tests/unit/test_catchup_workflow.py` | Spawn-boundary cases failed before the fix; the isolation and preflight selection passed 75 cases on each of Python 3.13 and 3.12. This is not a native-process sandbox. |
+
+The focused selection passed 145 cases on each of Python 3.13 and 3.12; 47 Windows
+canaries also passed. Pipeline and isolated-runner changed-line coverage was 97%
+(36/37 lines); this excludes the state-write gate and is not whole-core coverage.
+Across isolated Windows public-test partitions, 11,399 cases passed, 183 were
+skipped and 20 were expected failures. The partitions cover 458 eligible public
+test modules; they are not a single-process full-suite run.
+Separate, overlapping Windows coverage partitions passed 5,294 core cases
+(108 skipped; 92.89% combined, 94.10% line, 89.67% branch) and 1,891
+security/policy harness cases (91 skipped; 87.32% combined). The 85% core
+and harness floors passed. Native Work recovery, owner UAT and release
+acceptance remain open.
+
 ### Fixed — Windows stream integrity and token-file exclusions, 2026-11-14
 
 | Change | Modified files | Validation |

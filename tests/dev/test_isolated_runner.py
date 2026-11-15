@@ -353,6 +353,114 @@ def test_main_keeps_machine_local_test_data_outside_the_copied_code_root(tmp_pat
     assert not workspace.exists()
 
 
+def test_main_surfaces_workspace_cleanup_failure(tmp_path, monkeypatch):
+    workspace = tmp_path / "isolated"
+    workspace.mkdir()
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(workspace))
+    monkeypatch.setattr(
+        runner, "build_workspace",
+        lambda root, dest, **kwargs: dest.mkdir(parents=True, exist_ok=True) or 0,
+    )
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+
+    def remove(path, *, ignore_errors=False, onerror=None):
+        if not ignore_errors:
+            raise PermissionError("synthetic cleanup failure")
+
+    monkeypatch.setattr(runner.shutil, "rmtree", remove)
+    with pytest.raises(PermissionError, match="synthetic cleanup failure"):
+        runner.main(["--synthetic-only", "tests"])
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows trailing-dot paths are platform-specific")
+def test_main_removes_workspace_containing_a_trailing_dot_file(tmp_path, monkeypatch):
+    workspace = tmp_path / "isolated"
+    workspace.mkdir()
+    unusual = Path("\\\\?\\" + str(workspace / "trailing."))
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(workspace))
+    monkeypatch.setattr(
+        runner, "build_workspace",
+        lambda root, dest, **kwargs: dest.mkdir(parents=True, exist_ok=True) or 0,
+    )
+
+    def execute(*args, **kwargs):
+        unusual.write_text("synthetic")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", execute)
+    try:
+        assert runner.main(["--synthetic-only", "tests"]) == 0
+        assert not workspace.exists()
+    finally:
+        unusual.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-only deletion is platform-specific")
+def test_main_removes_workspace_containing_a_read_only_file(tmp_path, monkeypatch):
+    workspace = tmp_path / "isolated"
+    workspace.mkdir()
+    read_only = workspace / "read-only"
+    monkeypatch.setattr(runner.tempfile, "mkdtemp", lambda **_: str(workspace))
+    monkeypatch.setattr(
+        runner, "build_workspace",
+        lambda root, dest, **kwargs: dest.mkdir(parents=True, exist_ok=True) or 0,
+    )
+
+    def execute(*args, **kwargs):
+        read_only.write_text("synthetic")
+        read_only.chmod(stat.S_IREAD)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", execute)
+    try:
+        assert runner.main(["--synthetic-only", "tests"]) == 0
+        assert not workspace.exists()
+    finally:
+        if read_only.exists():
+            read_only.chmod(stat.S_IWRITE)
+            read_only.unlink()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-only deletion is platform-specific")
+def test_workspace_cleanup_does_not_change_external_hardlink_permissions(tmp_path):
+    workspace = tmp_path / "isolated"
+    workspace.mkdir()
+    original = tmp_path / "outside"
+    original.write_text("synthetic")
+    link = workspace / "linked"
+    try:
+        os.link(original, link)
+    except OSError as exc:
+        pytest.skip(f"OS hardlinks unavailable: {type(exc).__name__}")
+    original.chmod(stat.S_IREAD)
+    try:
+        with pytest.raises(PermissionError):
+            runner._remove_workspace(workspace)
+        assert not original.stat().st_mode & stat.S_IWRITE
+    finally:
+        original.chmod(stat.S_IWRITE)
+        if link.exists():
+            link.unlink()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows cleanup callback is platform-specific")
+@pytest.mark.parametrize(
+    ("operation", "error"),
+    [(os.rmdir, PermissionError("directory denied")), (os.unlink, FileNotFoundError("file missing"))],
+)
+def test_workspace_cleanup_propagates_unrelated_errors(tmp_path, monkeypatch, operation, error):
+    def remove(path, *, onerror):
+        onerror(operation, str(path), (type(error), error, None))
+
+    monkeypatch.setattr(runner.shutil, "rmtree", remove)
+    with pytest.raises(type(error)) as raised:
+        runner._remove_workspace(tmp_path / "workspace")
+    assert raised.value is error
+
+
 def test_synthetic_only_rejects_private_work_mode(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         runner, "verify_private_work",
