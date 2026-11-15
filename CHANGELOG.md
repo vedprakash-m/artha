@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Recorded — Windows and Work validation follow-up, 2026-11-15
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Record subsequent synthetic Windows refusals, repeated private Work verification failures and remaining acceptance boundaries without treating retries as a fix. | `docs/re-artha-implementation-status.md`, `CHANGELOG.md` | Targeted synthetic diagnostic passed 80 cases without reproducing the Windows failures. Two private Work checks failed with output suppressed; their cause remains unknown. |
+
 ### Fixed — Windows validation and action output, 2026-11-14
 
 | Change | Modified files | Validation |

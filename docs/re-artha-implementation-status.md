@@ -1,5 +1,36 @@
 # re-artha implementation status — 2026-11-05
 
+## Windows and Work validation follow-up — 2026-11-15
+
+The Windows fixes were delivered in commit `fa4bc2d`; its
+[hosted CI](https://github.com/vedprakash-m/artha/actions/runs/43681701507) and
+[PII Check](https://github.com/vedprakash-m/artha/actions/runs/43681701496) passed.
+
+A subsequent synthetic Windows selection recorded 533 passes, five skips and one
+setup error, `source streams changed during capture`. Eight isolated repetitions
+of the affected case passed. A later selection of the two related stream modules
+recorded 111 passes, two skips and one failure, `file changed during bounded read`;
+its affected parameter cases passed separately. A targeted synthetic diagnostic
+subsequently passed 80 cases without reproducing either failure. The causes remain
+unknown; passing retries do not erase the failures.
+
+The reviewed synthetic private Work verification failed twice with pytest exit 1,
+including a serial retry with validation-only provider command shims. An earlier
+run passed with the same Python executable and the same 1,122 fingerprinted source
+paths. Its test output is intentionally suppressed; the failure cause is unknown.
+This verification covers one reviewed module, not the private Work suite.
+
+A source-pinned tracked/untracked privacy scan passed on 1,132 unchanged paths
+before this documentation update; staged and unpushed scans also passed. Local
+audit metadata did not establish whether the previously stopped WorkIQ probe
+contacted a service or accessed credentials.
+
+The Work generation has not been freshly verified. Native recovery, independent
+evaluation, owner UAT, release evidence and acceptance remain open. The Personal
+held-out admission path remains unavailable for legacy records without complete
+dependency bindings; Work evaluation retains separate authority. The feature
+specification remains active.
+
 ## Test provider boundary — 2026-11-14
 
 A public Windows test shard was stopped after a WorkIQ health subprocess launched.
