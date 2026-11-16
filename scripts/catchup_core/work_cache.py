@@ -37,6 +37,10 @@ class WorkCacheBlocked(RuntimeError):
     """A cache cannot be read or persisted safely; never fall back to plaintext."""
 
 
+class WorkCacheArchiveMissing(WorkCacheBlocked):
+    """A retired legacy cache is missing its encrypted archive."""
+
+
 def _is_cloud_reparse(metadata: os.stat_result | Any) -> bool:
     return (getattr(metadata, "st_reparse_tag", 0) & _CLOUD_REPARSE_MASK) == _CLOUD_REPARSE_TAG
 
@@ -165,7 +169,7 @@ class WorkCache:
                 and all(c in '0123456789abcdef' for c in marker['sha256'])):
             archive = self.root / f"legacy-{marker['sha256']}.json.age"
             if _bounded(archive) is None:
-                raise WorkCacheBlocked('retired Work cache archive is missing')
+                raise WorkCacheArchiveMissing('retired Work cache archive is missing')
             return str(marker['sha256'])
         return None
 

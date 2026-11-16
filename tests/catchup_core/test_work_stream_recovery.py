@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation
+from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
 from catchup_core import checkpoint as ck
 from catchup_core import checkpoint_cli
 from catchup_core import quarantine_review
@@ -239,7 +239,7 @@ def test_later_work_history_blocks_affected_streams(scenario, change):
         scenario.protocol.publish({}, revoke=['work_state/note.txt'])
     else:
         scenario.inventory[file_key] = {'size': 3, 'sha256': hashlib.sha256(b'new').hexdigest()}
-        scenario.protocol.reconcile(reviewed=True)
+        reconcile_reviewed(scenario.protocol)
     access = _extract(scenario)
     entries = access.open_store(scenario.dest).inventory()
     owner = next(entry for entry in entries if entry['kind'] == 'file')

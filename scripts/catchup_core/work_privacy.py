@@ -1075,13 +1075,105 @@ class WorkPrivacy:
                 raise WorkPrivacyBlocked('invalid Work pending intent')
             return self._finish(pending)
 
-    def reconcile(self, *, reviewed: bool) -> dict[str, Any]:
+    @staticmethod
+    def _review_changes(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, str]:
+        changes = {}
+        for name in sorted(set(before) | set(after)):
+            if name not in before:
+                changes[name] = 'added'
+            elif name not in after:
+                changes[name] = 'removed'
+            elif before[name] != after[name]:
+                changes[name] = 'changed'
+        return changes
+
+    def _reconciliation_review(self, *, details: bool = False) -> tuple[
+            dict[str, Any], dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
+        before = self._load_current(drift=False)
+        members = self._inventory()
+        streams = self._current_streams(before) if before['schema'] in _STREAM_HISTORIES else None
+        if streams is not None:
+            self._validate_stream_inventory(streams, members)
+        if self._inventory() != members:
+            raise WorkPrivacyBlocked('Work inventory changed during reconciliation review')
+        if streams is not None and (self._current_streams(before) != streams or self._inventory() != members):
+            raise WorkPrivacyBlocked('Work stream inventory changed during reconciliation review')
+        if self._load_current(drift=False) != before:
+            raise WorkPrivacyBlocked('Work authority changed during reconciliation review')
+
+        member_changes = self._review_changes(before['members'], members)
+        previous_streams = before.get('streams', {})
+        stream_changes = self._review_changes(previous_streams, streams) if streams is not None else {}
+        affected_members = set(member_changes) & set(before['members'])
+        owner_streams = []
+        prior_file_streams = set()
+        for key in previous_streams:
+            owner, kind, _, _ = self._stream_parts(key)
+            if kind == 'file':
+                if owner in affected_members:
+                    owner_streams.append(key)
+                if owner in affected_members or key in stream_changes:
+                    prior_file_streams.add(key)
+        owner_streams.sort()
+
+        def counts(changes: Mapping[str, str]) -> dict[str, int]:
+            return {kind: sum(value == kind for value in changes.values())
+                    for kind in ('added', 'changed', 'removed')}
+
+        effects = {
+            'generation': before['generation'], 'next_generation': before['generation'] + 1,
+            'advances_generation': True,
+            'member_count': len(members), 'member_bytes': sum(value['size'] for value in members.values()),
+            'member_changes': counts(member_changes), 'prior_members_affected': len(affected_members),
+            'stream_history': streams is not None,
+            'stream_scope': ('not_enrolled' if streams is None else
+                             'endpointdlp_omitted' if before.get('stream_policy') else 'all'),
+            'stream_count': len(streams) if streams is not None else None,
+            'stream_bytes': sum(value['size'] for value in streams.values()) if streams is not None else None,
+            'stream_changes': counts(stream_changes) if streams is not None else None,
+            'prior_file_streams_affected': len(prior_file_streams) if streams is not None else None,
+            'revocations_retained': len(before['revoked']),
+            'recovery_effect': ('Older versions of changed members and affected file streams may be unavailable; '
+                                'existing revocations remain in force.'),
+        }
+        record = {
+            'schema': 'artha.work-reconciliation-review.v1',
+            'identity': before['identity'], 'head_sha256': _digest(before['head']),
+            'history_schema': before['schema'], 'stream_policy': before.get('stream_policy'),
+            'predecessor_sha256': _digest(before),
+            'before_members': before['members'], 'after_members': members,
+            'before_streams': before.get('streams'), 'after_streams': streams,
+            'member_changes': member_changes, 'stream_changes': stream_changes,
+            'owner_invalidated_streams': owner_streams, 'retained_revocations': before['revoked'],
+            'effects': effects,
+        }
+        review = {'inventory_sha256': _digest(record), **effects}
+        if details:
+            def stream_detail(key: str) -> dict[str, str]:
+                owner, kind, name, stream_type = self._stream_parts(key)
+                return {'owner': owner, 'kind': kind, 'name': name, 'stream_type': stream_type}
+
+            review['details'] = {
+                'members': [{'member': name, 'change': change} for name, change in member_changes.items()],
+                'streams': [{**stream_detail(key), 'change': change} for key, change in stream_changes.items()],
+                'owner_invalidated_streams': [stream_detail(key) for key in owner_streams],
+            }
+        return before, members, streams, review
+
+    def preview_reconciliation(self, *, details: bool = False) -> dict[str, Any]:
+        """Review the authenticated predecessor and stable proposed inventory without publishing."""
+        with self._locked():
+            return self._reconciliation_review(details=details)[3]
+
+    def reconcile(self, *, reviewed: bool, expected_digest: str | None = None) -> dict[str, Any]:
         if reviewed is not True:
             raise WorkPrivacyBlocked('explicit review required for Work drift reconciliation')
+        if not isinstance(expected_digest, str) or not _HEX.fullmatch(expected_digest):
+            raise WorkPrivacyBlocked('the reviewed Work reconciliation digest is required')
         with self._locked():
-            before = self._load_current(drift=False)
-            members = self._inventory()
-            streams = self._current_streams(before) if before['schema'] in _STREAM_HISTORIES else None
+            before, members, streams, review = self._reconciliation_review()
+            if not hmac.compare_digest(expected_digest, review['inventory_sha256']):
+                raise WorkPrivacyBlocked('reviewed Work reconciliation inventory no longer matches')
             pending = self._prepare(before, members, {}, (), streams=streams)
             _atomic(self.authority_dir / 'pending', self._encrypt(pending, 'pending'))
             self.observe('intent')

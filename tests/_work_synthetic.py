@@ -27,3 +27,9 @@ def install_synthetic_work_creation(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(work_privacy, '_native_creation_available', lambda: True)
     monkeypatch.setattr(work_privacy, '_create_member', synthetic_member_creation)
+
+
+def reconcile_reviewed(protocol: Any) -> dict[str, Any]:
+    """Obtain a fresh synthetic review immediately before adopting it."""
+    review = protocol.preview_reconciliation()
+    return protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])

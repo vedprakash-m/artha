@@ -26,13 +26,23 @@ def read_receipt(path: Path, *, max_age: int) -> dict | None:
 
 
 def write_receipt(path: Path, *, available: bool, auth_valid: bool) -> None:
+    from catchup_core.session_lock import default_installation_dir, session_lock, writer_fence
+    from lib import work_publication
     from lib.state_writer import write_atomic
+
     if path.is_symlink():
         raise ValueError('WorkIQ health receipt must not be a link')
-    from catchup_core.session_lock import session_lock, require_active_installation
-    require_active_installation(path)
-    with session_lock(path.parent / 'cache.lock'):
-        result = write_atomic(path, json.dumps({'available': bool(available), 'auth_valid': bool(auth_valid),
-                                      'platform': 'Windows', 'checked_at': datetime.now(timezone.utc).isoformat()}))
-        if not result.success:
-            raise OSError('WorkIQ health receipt could not be persisted')
+    with writer_fence(path), session_lock(path.parent / 'cache.lock'):
+        content = json.dumps({'available': bool(available), 'auth_valid': bool(auth_valid),
+                              'platform': 'Windows', 'checked_at': datetime.now(timezone.utc).isoformat()})
+
+        def legacy() -> None:
+            # Enrollment holds this lock while it inventories the legacy receipt.
+            with session_lock(default_installation_dir() / 'work-privacy.lock'):
+                if work_publication.enrolled():
+                    raise work_publication.WorkPublicationBlocked('Work enrollment changed during receipt publication')
+                result = write_atomic(path, content)
+                if not result.success:
+                    raise OSError('WorkIQ health receipt could not be persisted')
+
+        work_publication.publish_text(path, content, legacy=legacy)

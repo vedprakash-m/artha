@@ -16,6 +16,7 @@ The synthetic-only mode copies no files under ``state/``.
 Local-only private Work evidence (not shared CI or release authority):
     python tools/run_tests_isolated.py --private-work --evidence ABSOLUTE_NEW_JSON
 Only the reviewed synthetic producer selection is permitted; its output is suppressed.
+Add --diagnose to record numbered failing cases and predefined categories only.
 Private verification also excludes every State File before fingerprinting or copying.
 This is a cooperative isolated test workspace, not an OS or host sandbox.
 """
@@ -25,6 +26,7 @@ import os
 import hashlib
 import json
 import platform
+import re
 import shutil
 import stat
 import subprocess
@@ -44,6 +46,7 @@ PRIVATE_WORK_TEST = "tests/work/test_work_publication_producers.py"
 PRIVATE_WORK_FILES = (
     "scripts/work_loop.py", "scripts/work_bootstrap.py", "scripts/work_warm_start.py",
     "scripts/work_domain_writers.py", "scripts/work_reader.py", "scripts/work_notes.py",
+    "scripts/schemas/briefing_block.py", "scripts/lib/workiq_circuit_breaker.py",
     "scripts/work/__init__.py", "scripts/work/helpers.py", "scripts/work/briefing.py",
     "scripts/work/health.py", "scripts/work/decisions.py", "scripts/work/discovery.py",
     "scripts/work/meetings.py", "scripts/work/career.py", "scripts/work/narrative.py",
@@ -51,6 +54,16 @@ PRIVATE_WORK_FILES = (
     "scripts/work/reflection_key.py", "scripts/work/sweep.py", "scripts/work/scoring.py",
     "scripts/work/reconcile.py", "scripts/work/ops_dashboard.py", PRIVATE_WORK_TEST,
 )
+_DIAGNOSTIC_ENV = "ARTHA_PRIVATE_WORK_DIAGNOSTICS"
+_DIAGNOSTIC_SCHEMA = "artha.private-work-diagnostic.v1"
+_DIAGNOSTIC_KINDS = frozenset({
+    "assertion", "missing-file", "permission", "timeout", "import",
+    "network-guard", "os-error", "other",
+})
+_DIAGNOSTIC_CATEGORIES = frozenset(
+    f"{phase}-{kind}" for phase in ("setup", "call", "teardown") for kind in _DIAGNOSTIC_KINDS
+)
+_DIAGNOSTIC_LIMIT = 128 * 1024
 
 
 def _no_links(path: Path, *, allow_missing_leaf: bool = False) -> os.stat_result | None:
@@ -165,7 +178,105 @@ def _remove_workspace(workspace: Path) -> None:
         shutil.rmtree(workspace)
 
 
-def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
+def _read_private_diagnostics(path: Path) -> list[dict[str, str]]:
+    info = _no_links(path)
+    if info is None or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ValueError("invalid private diagnostic")
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+            raise ValueError("changed private diagnostic")
+        raw = stream.read(_DIAGNOSTIC_LIMIT + 1)
+        finished = os.fstat(stream.fileno())
+    if (len(raw) > _DIAGNOSTIC_LIMIT or finished.st_size != len(raw)
+            or (opened.st_size, opened.st_mtime_ns) != (finished.st_size, finished.st_mtime_ns)):
+        raise ValueError("invalid private diagnostic size")
+    value = json.loads(raw.decode("utf-8"))
+    if (not isinstance(value, dict) or set(value) != {"schema", "failures"}
+            or value["schema"] != _DIAGNOSTIC_SCHEMA or not isinstance(value["failures"], list)):
+        raise ValueError("invalid private diagnostic format")
+    failures = value["failures"]
+    for failure in failures:
+        if not isinstance(failure, dict) or set(failure) != {"case", "category"}:
+            raise ValueError("invalid private diagnostic entry")
+        case, category = failure["case"], failure["category"]
+        if not isinstance(case, str) or not isinstance(category, str):
+            raise ValueError("invalid private diagnostic entry")
+        valid_test = bool(re.fullmatch(r"CASE-[0-9]{4}", case)) and case != "CASE-0000"
+        if not ((valid_test and category in _DIAGNOSTIC_CATEGORIES)
+                or (case == "COLLECTION" and category == "collection-error")
+                or (case == "SESSION" and category == "session-error")):
+            raise ValueError("unapproved private diagnostic entry")
+    return failures
+
+
+def pytest_configure(config) -> None:
+    """Register only when explicitly loaded by the private diagnostic runner."""
+    destination = os.environ.get(_DIAGNOSTIC_ENV)
+    if not destination:
+        return
+    import pytest
+
+    class PrivateDiagnostics:
+        def __init__(self) -> None:
+            self.cases = {}
+            self.failures = []
+
+        @pytest.hookimpl(trylast=True)
+        def pytest_collection_modifyitems(self, items) -> None:
+            if len(items) > 9999:
+                raise pytest.UsageError("private diagnostic case limit exceeded")
+            self.cases = {item: f"CASE-{index:04d}" for index, item in enumerate(items, 1)}
+
+        def pytest_collectreport(self, report) -> None:
+            if report.failed:
+                self.failures.append({"case": "COLLECTION", "category": "collection-error"})
+
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_runtest_makereport(self, item, call):
+            outcome = yield
+            if not outcome.get_result().failed:
+                return
+            case = self.cases.get(item)
+            if case is None or call.when not in {"setup", "call", "teardown"}:
+                self.failures.append({"case": "SESSION", "category": "session-error"})
+                return
+            error = call.excinfo.value if call.excinfo is not None else None
+            isolation = sys.modules.get("_isolation")
+            network_guard = getattr(isolation, "NetworkAccessError", None)
+            if isinstance(network_guard, type) and isinstance(error, network_guard):
+                kind = "network-guard"
+            elif isinstance(error, (AssertionError, pytest.fail.Exception)):
+                kind = "assertion"
+            elif isinstance(error, FileNotFoundError):
+                kind = "missing-file"
+            elif isinstance(error, PermissionError):
+                kind = "permission"
+            elif isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):
+                kind = "timeout"
+            elif isinstance(error, ImportError):
+                kind = "import"
+            elif isinstance(error, OSError):
+                kind = "os-error"
+            else:
+                kind = "other"
+            self.failures.append({"case": case, "category": f"{call.when}-{kind}"})
+
+        def pytest_internalerror(self) -> None:
+            self.failures.append({"case": "SESSION", "category": "session-error"})
+
+        @pytest.hookimpl(trylast=True)
+        def pytest_sessionfinish(self, session) -> None:
+            if session.exitstatus and not self.failures:
+                self.failures.append({"case": "SESSION", "category": "session-error"})
+            with Path(destination).open("x", encoding="utf-8") as stream:
+                json.dump({"schema": _DIAGNOSTIC_SCHEMA, "failures": self.failures}, stream)
+
+    config.pluginmanager.register(PrivateDiagnostics(), "artha-private-work-diagnostics")
+
+
+def verify_private_work(root: Path, evidence: Path, args: list[str], *, diagnose: bool = False) -> int:
     """Run only synthetic private tests; never persist or echo pytest output."""
     workspace = None
     record = None
@@ -178,6 +289,10 @@ def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
             raise ValueError("unreviewed pytest arguments")
         manifest = _private_manifest(root)
         executable = Path(sys.executable)
+        command = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
+        if diagnose:
+            command.extend(["-p", "tools.run_tests_isolated"])
+        command.extend(args)
         record = {
             "schema": "artha.private-work-verification.v1",
             "scope": "local-synthetic-only",
@@ -186,7 +301,7 @@ def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
             "sources": manifest,
             "private_sources": list(PRIVATE_WORK_FILES),
             "pytest_args": args,
-            "command": [executable.name, "-m", "pytest", "-p", "no:cacheprovider", *args],
+            "command": [executable.name, *command[1:]],
             "runtime": {
                 "python_version": sys.version,
                 "implementation": platform.python_implementation(),
@@ -212,14 +327,22 @@ def verify_private_work(root: Path, evidence: Path, args: list[str]) -> int:
         # Environment-supplied pytest options would invalidate the exact selection.
         env.pop("PYTEST_ADDOPTS", None)
         env.pop("PYTEST_PLUGINS", None)
+        env.pop(_DIAGNOSTIC_ENV, None)
+        diagnostic = workspace / "diagnostics.json"
+        if diagnose:
+            env[_DIAGNOSTIC_ENV] = str(diagnostic)
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
-            cwd=str(dest), env=env,
+            command, cwd=str(dest), env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         record["returncode"] = result.returncode
         _check_sources(root, manifest)
         _check_sources(dest, manifest)
+        if diagnose:
+            failures = _read_private_diagnostics(diagnostic)
+            if (result.returncode == 0) != (not failures):
+                raise ValueError("inconsistent private diagnostic")
+            record["diagnostics"] = failures
         record["outcome"] = "passed" if result.returncode == 0 else "failed"
         exit_code = result.returncode
     except (OSError, ValueError, RuntimeError):
@@ -388,14 +511,23 @@ def _xml_reports(args: list[str], checkout: Path) -> list[Path]:
 
 def main(argv: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
+    if "--diagnose" in argv and "--private-work" not in argv:
+        print("--diagnose requires --private-work", file=sys.stderr)
+        return 2
     if "--private-work" in argv and "--synthetic-only" in argv:
         print("--private-work and --synthetic-only cannot be combined", file=sys.stderr)
         return 2
     if "--private-work" in argv:
         if len(argv) < 3 or argv[:2] != ["--private-work", "--evidence"]:
-            print("usage: --private-work --evidence ABSOLUTE_NEW_JSON [reviewed pytest args]",
+            print("usage: --private-work --evidence ABSOLUTE_NEW_JSON [--diagnose] [reviewed pytest args]",
                   file=sys.stderr)
             return 2
+        if argv[3:].count("--diagnose") > 1:
+            print("--diagnose may be supplied only once", file=sys.stderr)
+            return 2
+        if "--diagnose" in argv[3:]:
+            return verify_private_work(root, Path(argv[2]),
+                                       [arg for arg in argv[3:] if arg != "--diagnose"], diagnose=True)
         return verify_private_work(root, Path(argv[2]), argv[3:])
     if argv.count("--synthetic-only") > 1:
         print("usage: [--synthetic-only] [pytest args...]", file=sys.stderr)

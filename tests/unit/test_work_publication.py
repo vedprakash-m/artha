@@ -8,7 +8,7 @@ from contextlib import nullcontext
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation
+from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
 from catchup_core import work_privacy
 from catchup_core.session_lock import SessionBusy
 from catchup_core.work_privacy import for_installation
@@ -176,7 +176,7 @@ def test_manual_drift_blocks_until_reviewed_reconciliation(work):
     with pytest.raises(wp.WorkPublicationBlocked, match='drift'):
         wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)
     assert (work['state'] / 'work-notes.md').read_bytes() == b'manual edit'
-    work['make']().reconcile(reviewed=True)
+    reconcile_reviewed(work['make']())
     with (nullcontext() if os.name == 'nt' else
           pytest.raises(wp.WorkPublicationBlocked, match='temporarily paused')):
         wp.append_text(work['state'] / 'work-notes.md', 'more', legacy=never)

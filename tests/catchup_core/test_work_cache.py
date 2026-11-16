@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation
+from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
 from catchup_core import work_cache as wc
 from catchup_core.vault import AgeVault
 
@@ -465,7 +465,7 @@ def test_missing_legacy_or_retired_archive_refuses_migration(store):
     with pytest.raises(wc.WorkCacheBlocked, match='already retired'):
         store.migration_plan()
     archive.unlink()
-    with pytest.raises(wc.WorkCacheBlocked, match='archive is missing'):
+    with pytest.raises(wc.WorkCacheArchiveMissing, match='archive is missing'):
         store.load()
 
 
@@ -653,7 +653,7 @@ def test_enrolled_update_refuses_manual_cache_drift(journaled):
     with pytest.raises(wc.WorkCacheBlocked, match='journal'):
         cache.update({'second': {}})
     assert cache.path.read_bytes() == manual
-    make().reconcile(reviewed=True)
+    reconcile_reviewed(make())
     assert make().current()['generation'] == 3
 
 

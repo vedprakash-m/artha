@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation
+from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
 from catchup_core.work_privacy import WorkPrivacy, WorkPrivacyBlocked
 from catchup_core import work_privacy as module
 
@@ -420,19 +420,19 @@ def test_changed_deleted_and_revoked_paths_deny_all_older_members(protocol):
     protocol.publish({'work_state/new.md': b'new'})
     notes = protocol.roots['work_state'] / 'notes.md'
     notes.write_bytes(b'corrected')
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_members(historical, ['work_state/notes.md']) == {'work_state/notes.md'}
     fresh = protocol.bind_checkpoint()
     assert protocol.denied_members(fresh, ['work_state/notes.md']) == set()
     notes.unlink()
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     protocol.publish({}, revoke=['work_state/new.md'])
     assert protocol.denied_members(fresh, ['work_state/notes.md', 'work_state/new.md']) == {
         'work_state/notes.md', 'work_state/new.md'}
     current = protocol.bind_checkpoint()
     assert protocol.denied_members(current, ['work_state/new.md']) == {'work_state/new.md'}
     (protocol.roots['work_state'] / 'new.md').write_bytes(b'rewritten')
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_members(protocol.bind_checkpoint(), ['work_state/new.md']) == {'work_state/new.md'}
 
 
@@ -451,7 +451,7 @@ def test_unjournaled_drift_blocks_capture_and_writer_until_review(protocol, drif
         protocol.publish({'work_state/next.md': b'next'})
     with pytest.raises(WorkPrivacyBlocked, match='review'):
         protocol.reconcile(reviewed=False)
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.current()['generation'] == 2
     assert protocol.denied_members(original, [path.relative_to(protocol.repo).as_posix().replace('state/work/', 'work_state/')])
 
@@ -610,7 +610,7 @@ def test_reconciliation_retains_prior_revocation(protocol):
     enroll(protocol)
     protocol.publish({}, revoke=['work_state/notes.md'])
     (protocol.roots['work_state'] / 'notes.md').write_bytes(b'unknown rewritten prose')
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     binding = protocol.bind_checkpoint()
     assert protocol.denied_members(binding, ['work_state/notes.md']) == {'work_state/notes.md'}
 
@@ -772,6 +772,288 @@ def policy_streams(protocol, monkeypatch):
                 if not (stream_policy and json.loads(key)[2:] == ['sec.endpointdlp', '$DATA'])}
     monkeypatch.setattr(protocol, '_inventory_streams', inventory)
     return streams
+
+
+def test_reconcile_review_preview_is_metadata_only_and_adopts_exact_changes(protocol):
+    root = protocol.roots['work_state']
+    (root / 'remove-private.md').write_bytes(b'remove synthetic content')
+    enroll(protocol)
+    old_binding = protocol.bind_checkpoint()
+    before = protocol.current()
+    authority = {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()}
+    native = dict(protocol.backend.values)
+    (root / 'notes.md').write_bytes(b'changed synthetic content')
+    (root / 'remove-private.md').unlink()
+    (root / 'added-private.md').write_bytes(b'added synthetic content')
+
+    review = protocol.preview_reconciliation()
+    detail = protocol.preview_reconciliation(details=True)
+    assert review['inventory_sha256'] == detail['inventory_sha256']
+    assert len(review['inventory_sha256']) == 64
+    assert review['member_changes'] == {'added': 1, 'changed': 1, 'removed': 1}
+    assert review['generation'] == before['generation']
+    assert review['next_generation'] == before['generation'] + 1
+    assert review['advances_generation'] is True
+    assert review['stream_history'] is False
+    assert {item['member']: item['change'] for item in detail['details']['members']} == {
+        'work_state/added-private.md': 'added',
+        'work_state/notes.md': 'changed',
+        'work_state/remove-private.md': 'removed',
+    }
+    assert not any(text in json.dumps(review) for text in
+                   ('notes.md', 'remove-private.md', 'added-private.md', 'synthetic content'))
+    assert {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()} == authority
+    assert protocol.backend.values == native
+
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['generation'] == before['generation'] + 1
+    assert set(after['members']) == {'work_state/notes.md', 'work_state/added-private.md'}
+    assert protocol.denied_members(old_binding, ['work_state/notes.md', 'work_state/remove-private.md']) == {
+        'work_state/notes.md', 'work_state/remove-private.md'}
+
+
+def test_reconcile_review_no_drift_still_advances_generation(protocol):
+    before = enroll(protocol)
+    review = protocol.preview_reconciliation()
+    assert review['member_changes'] == {'added': 0, 'changed': 0, 'removed': 0}
+    assert review['advances_generation'] is True
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['generation'] == before['generation'] + 1
+    assert after['members'] == before['members']
+
+
+def test_reconcile_review_v1_does_not_invent_stream_authority(protocol, monkeypatch):
+    enroll(protocol)
+    monkeypatch.setattr(protocol, '_inventory_streams', lambda: pytest.fail('v1 has no stream inventory'))
+    review = protocol.preview_reconciliation()
+    assert review['stream_scope'] == 'not_enrolled'
+    assert review['stream_count'] is None and review['stream_bytes'] is None
+    assert review['stream_changes'] is None and review['prior_file_streams_affected'] is None
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['schema'] == 'artha.work-member-history.v1' and 'streams' not in after
+
+
+@pytest.mark.parametrize('digest', [None, '', 'not-a-digest', 'A' * 64, '0' * 64, 42])
+def test_reconcile_review_refuses_missing_invalid_or_unmatched_digest_before_intent(protocol, digest):
+    enroll(protocol)
+    (protocol.roots['work_state'] / 'notes.md').write_bytes(b'unreviewed synthetic drift')
+    authority = {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()}
+    native = dict(protocol.backend.values)
+
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.reconcile(reviewed=True, expected_digest=digest)
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.reconcile(reviewed=True)
+    assert not (protocol.authority_dir / 'pending').exists()
+    assert {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()} == authority
+    assert protocol.backend.values == native
+
+
+@pytest.mark.parametrize('change', ['member', 'addition', 'deletion', 'stream', 'head', 'identity', 'policy'])
+def test_reconcile_review_refuses_stale_inventory_or_authority(protocol, policy_streams, change):
+    enroll(protocol)
+    key = _stream_key('work_state/notes.md', 'file', 'synthetic-private-stream')
+    policy_streams[key] = _stream_record(b'original')
+    _upgrade_streams(protocol)
+    review = protocol.preview_reconciliation()
+    member = protocol.roots['work_state'] / 'notes.md'
+    if change == 'member':
+        member.write_bytes(b'changed since review')
+    elif change == 'addition':
+        (member.parent / 'added.md').write_bytes(b'added since review')
+    elif change == 'deletion':
+        member.unlink()
+        del policy_streams[key]
+    elif change == 'stream':
+        policy_streams[key] = _stream_record(b'changed since review')
+    elif change == 'head':
+        protocol.publish({'work_state/new.md': b'changed authority'})
+    elif change == 'identity':
+        protocol.native_identity = lambda: dict(IDENTITY, machine='different-synthetic-machine')
+    else:
+        policy_review = protocol.preview_stream_policy()
+        protocol.adopt_stream_policy(reviewed=True, expected_digest=policy_review['inventory_sha256'])
+    authority = {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()}
+    native = dict(protocol.backend.values)
+
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert not (protocol.authority_dir / 'pending').exists()
+    assert {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()} == authority
+    assert protocol.backend.values == native
+
+
+def test_reconcile_review_rechecks_inventory_before_returning_digest(protocol, monkeypatch):
+    enroll(protocol)
+    original = protocol._inventory
+    calls = 0
+
+    def unstable_inventory():
+        nonlocal calls
+        snapshot = original()
+        calls += 1
+        if calls == 1:
+            (protocol.roots['work_state'] / 'notes.md').write_bytes(b'changed during preview')
+        return snapshot
+
+    monkeypatch.setattr(protocol, '_inventory', unstable_inventory)
+    with pytest.raises(WorkPrivacyBlocked, match='changed|drift'):
+        protocol.preview_reconciliation()
+    assert not (protocol.authority_dir / 'pending').exists()
+
+
+@pytest.mark.parametrize('change', ['head', 'identity'])
+def test_reconcile_review_rechecks_authority_before_returning_digest(protocol, monkeypatch, change):
+    enroll(protocol)
+    original = protocol._inventory
+    calls = 0
+
+    def changed_authority():
+        nonlocal calls
+        snapshot = original()
+        calls += 1
+        if calls == 1:
+            if change == 'head':
+                protocol.backend.set_password(protocol.HEAD_SERVICE, 'head', '{}')
+            else:
+                protocol.native_identity = lambda: dict(IDENTITY, machine='changed-synthetic-machine')
+        return snapshot
+
+    monkeypatch.setattr(protocol, '_inventory', changed_authority)
+    with pytest.raises(WorkPrivacyBlocked):
+        protocol.preview_reconciliation()
+    assert not (protocol.authority_dir / 'pending').exists()
+
+
+def test_reconcile_review_refuses_stream_changes_during_preview(protocol, policy_streams, monkeypatch):
+    enroll(protocol)
+    key = _stream_key('work_state/notes.md', 'file', 'synthetic-stream')
+    policy_streams[key] = _stream_record(b'original')
+    _upgrade_streams(protocol)
+    original = protocol._inventory_streams
+    calls = 0
+
+    def changed_streams(stream_policy=None):
+        nonlocal calls
+        snapshot = original(stream_policy)
+        calls += 1
+        if calls == 1:
+            policy_streams[key] = _stream_record(b'changed during preview')
+        return snapshot
+
+    monkeypatch.setattr(protocol, '_inventory_streams', changed_streams)
+    with pytest.raises(WorkPrivacyBlocked, match='stream inventory changed'):
+        protocol.preview_reconciliation()
+    assert not (protocol.authority_dir / 'pending').exists()
+
+
+def test_reconcile_review_reports_unchanged_owned_streams_and_preserves_revocation(protocol, stream_inventory):
+    root = protocol.roots['work_state']
+    (root / 'revoked.md').write_bytes(b'synthetic revoked content')
+    enroll(protocol)
+    key = _stream_key('work_state/notes.md', 'file', 'synthetic-private-stream')
+    stream_inventory[key] = _stream_record(b'unchanged')
+    _upgrade_streams(protocol)
+    protocol.publish({}, revoke=['work_state/revoked.md'])
+    binding = protocol.bind_checkpoint()
+    (root / 'notes.md').write_bytes(b'changed primary')
+
+    review = protocol.preview_reconciliation()
+    detail = protocol.preview_reconciliation(details=True)
+    assert review['stream_history'] is True
+    assert review['stream_changes'] == {'added': 0, 'changed': 0, 'removed': 0}
+    assert review['prior_file_streams_affected'] == 1
+    assert review['revocations_retained'] == 1
+    assert 'synthetic-private-stream' not in json.dumps(review)
+    assert any(item['owner'] == 'work_state/notes.md' and item['name'] == 'synthetic-private-stream'
+               for item in detail['details']['owner_invalidated_streams'])
+
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['revoked'] == ['work_state/revoked.md']
+    assert protocol.denied_members(binding, ['work_state/notes.md', 'work_state/revoked.md']) == {
+        'work_state/notes.md', 'work_state/revoked.md'}
+    assert protocol.denied_streams(binding, [key]) == {key}
+
+
+@pytest.mark.parametrize('kind,change,affected', [
+    ('file', 'added', 0), ('file', 'changed', 1), ('file', 'removed', 1),
+    ('directory', 'changed', 0),
+])
+def test_reconcile_review_reports_stream_changes_and_prior_file_effects(
+        protocol, stream_inventory, kind, change, affected):
+    enroll(protocol)
+    owner = 'work_state/notes.md' if kind == 'file' else 'work_state'
+    key = _stream_key(owner, kind, 'synthetic-stream')
+    if change != 'added':
+        stream_inventory[key] = _stream_record(b'original')
+    _upgrade_streams(protocol)
+    binding = protocol.bind_checkpoint()
+    if change == 'removed':
+        del stream_inventory[key]
+    else:
+        stream_inventory[key] = _stream_record(b'new')
+
+    review = protocol.preview_reconciliation()
+    detail = protocol.preview_reconciliation(details=True)
+    assert review['stream_scope'] == 'all'
+    assert review['stream_changes'] == {name: int(name == change) for name in ('added', 'changed', 'removed')}
+    assert review['prior_file_streams_affected'] == affected
+    assert detail['details']['streams'] == [
+        {'owner': owner, 'kind': kind, 'name': 'synthetic-stream', 'stream_type': '$DATA', 'change': change}]
+    assert 'synthetic-stream' not in json.dumps(review)
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['streams'] == stream_inventory
+    if kind == 'file' and change != 'added':
+        assert protocol.denied_streams(binding, [key]) == {key}
+
+
+def test_reconcile_review_v3_preserves_only_the_approved_stream_omission(protocol, policy_streams):
+    enroll(protocol)
+    omitted = _stream_key('work_state/notes.md', 'file', 'sec.endpointdlp')
+    required = _stream_key('work_state/notes.md', 'file', 'sec.endpointdlp.extra')
+    policy_streams.update({omitted: _stream_record(b'label'), required: _stream_record(b'required')})
+    _upgrade_streams(protocol)
+    policy = protocol.preview_stream_policy()
+    protocol.adopt_stream_policy(reviewed=True, expected_digest=policy['inventory_sha256'])
+    before = protocol.preview_reconciliation()
+    assert before['stream_scope'] == 'endpointdlp_omitted' and before['stream_count'] == 1
+
+    policy_streams[omitted] = _stream_record(b'new label')
+    assert protocol.preview_reconciliation()['inventory_sha256'] == before['inventory_sha256']
+    policy_streams[required] = _stream_record(b'changed required stream')
+    with pytest.raises(WorkPrivacyBlocked, match='no longer matches'):
+        protocol.reconcile(reviewed=True, expected_digest=before['inventory_sha256'])
+    assert not (protocol.authority_dir / 'pending').exists()
+    review = protocol.preview_reconciliation()
+    assert review['stream_changes'] == {'added': 0, 'changed': 1, 'removed': 0}
+    after = protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    assert after['schema'] == 'artha.work-member-history.v3'
+    assert after['stream_policy'] == module.STREAM_POLICY
+    assert after['streams'] == {required: policy_streams[required]}
+
+
+def test_reconcile_review_intervening_drift_after_intent_stays_pending(protocol):
+    initial = enroll(protocol)
+    member = protocol.roots['work_state'] / 'notes.md'
+    member.write_bytes(b'reviewed synthetic drift')
+    review = protocol.preview_reconciliation()
+
+    def mutate(stage):
+        if stage == 'intent':
+            member.write_bytes(b'unreviewed synthetic drift')
+
+    protocol.observe = mutate
+    with pytest.raises(WorkPrivacyBlocked, match='drift'):
+        protocol.reconcile(reviewed=True, expected_digest=review['inventory_sha256'])
+    protocol.observe = lambda _: None
+    assert (protocol.authority_dir / 'pending').exists()
+    assert protocol._native_head() == initial['head']
+    with pytest.raises(WorkPrivacyBlocked, match='pending'):
+        protocol.preview_reconciliation()
+    with pytest.raises(WorkPrivacyBlocked, match='drift'):
+        protocol.recover_pending()
+    member.write_bytes(b'reviewed synthetic drift')
+    assert protocol.recover_pending()['generation'] == initial['generation'] + 1
 
 
 def test_endpointdlp_policy_transition_retains_history_and_invalidates_omitted_stream(protocol, policy_streams):
@@ -937,16 +1219,16 @@ def test_stream_only_drift_requires_review_and_invalidates_old_binding(protocol,
         protocol.current()
     with pytest.raises(WorkPrivacyBlocked, match='review'):
         protocol.reconcile(reviewed=False)
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_streams(old, [key]) == {key}
     fresh = protocol.bind_checkpoint()
     assert protocol.denied_streams(fresh, [key]) == set()
 
     del stream_inventory[key]
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_streams(fresh, [key]) == {key}
     stream_inventory[key] = _stream_record(b'old')
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_streams(old, [key]) == {key}
 
 
@@ -958,7 +1240,7 @@ def test_changed_owner_invalidates_unchanged_old_stream(protocol, stream_invento
     binding = protocol.bind_checkpoint()
 
     (protocol.roots['work_state'] / 'notes.md').write_bytes(b'corrected owner')
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
 
     assert protocol.denied_streams(binding, [key]) == {key}
     assert protocol.denied_streams(protocol.bind_checkpoint(), [key]) == set()
@@ -1131,7 +1413,7 @@ def test_native_stream_history_tracks_file_directory_and_root_streams(protocol):
     Path(str(owner) + ':file-stream').write_bytes(b'changed')
     with pytest.raises(WorkPrivacyBlocked, match='drift'):
         protocol.current()
-    protocol.reconcile(reviewed=True)
+    reconcile_reviewed(protocol)
     assert protocol.denied_streams(binding, [file_stream]) == {file_stream}
 
 

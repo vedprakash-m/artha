@@ -9,6 +9,31 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Validated — Combined main candidate, 2026-11-15
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Require exact reviewed Work reconciliation digests; publish enrolled WorkIQ health receipts through the Work writer; distinguish a missing retired cache archive; retain display-only WorkIQ summaries and bounded private-verification diagnostics. | `scripts/catchup_core/{checkpoint_cli,work_privacy,work_cache}.py`, `scripts/connectors/workiq_bridge.py`, `scripts/lib/workiq_health.py`, `scripts/pipeline.py`, `tools/run_tests_isolated.py`, related synthetic tests and documentation | Full public isolated suite: 11,207 passed, 512 skipped, 20 xfailed. Core combined coverage 88.04%, line 89.03%, branch 85.40%; changed core lines 98%. Security harness: 1,717 passed, 130 skipped, 87.56% combined. Static and working-byte privacy gates passed. |
+
+The private synthetic Work selection passed after its local fixture installed the
+existing non-Windows synthetic creation helper. This is source-pinned local evidence,
+not native Windows acceptance or a public test artifact. Private test sources stay
+ignored. No live reconciliation, Personal migration, provider probe or release
+activation was performed. Other editing sessions were confirmed stopped before Git delivery.
+
+
+### Changed — WorkIQ display and cache diagnostics, 2026-11-15
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Keep WorkIQ display-only data in the current refresh and report a missing retired-cache archive without exposing cache content or bypassing preservation. | `scripts/connectors/workiq_bridge.py`, `scripts/pipeline.py`, `scripts/catchup_core/work_cache.py`, related tests and `docs/catchup-core.md` | Synthetic cache and connector tests: 230 passed; Pipeline diagnostic selection: 12 passed. Source-pinned private Work verification passed its reviewed synthetic selection. Live recovery and Catch-up UAT remain open. |
+
+### Fixed — Stuck-item preflight evidence, 2026-11-15
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Preserve numeric engagement counts while scoring only explicit item IDs. Report missing, malformed and aggregate-only recurrence evidence as a bounded, nonblocking P2 advisory on both preflight surfaces. | `scripts/lib/loop_detector.py`, `scripts/preflight.py`, `scripts/preflight/__init__.py`, `scripts/preflight/state_checks.py`, `tests/unit/test_stuck_item_health.py` | Synthetic regression cohort: 33 failures before repair; final affected cohort 85 passed, all 35 changed executable lines covered. Ruff, import, State-write and register checks passed. Earlier full synthetic-only snapshot: 11,193 passed, five failed; follow-up fixes resolve the duplicate-check and two register failures. Shared suppression debt and an excluded template fixture remain; no green aggregate, live UAT or release claimed. |
+
 ### Recorded — Windows and Work validation follow-up, 2026-11-15
 
 | Change | Modified files | Validation |

@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation
+from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
 from catchup_core import checkpoint as ck
 from catchup_core import checkpoint_cli as cli
 from catchup_core.crypto import KeyringKeyProvider
@@ -1517,7 +1517,7 @@ def test_work_history_invalidation_blocks_historical_member_before_review(host, 
             assert protocol.current() == before
             assert not (protocol.authority_dir / 'pending').exists()
             (host.repo / 'state/work/briefing.md').write_bytes(b'corrected Work note')
-            current = protocol.reconcile(reviewed=True)
+            current = reconcile_reviewed(protocol)
         assert current['invalidated']['work_state/briefing.md'] > before['generation']
     else:
         protocol.publish({}, revoke=['work_state/briefing.md'])
@@ -2993,7 +2993,7 @@ def test_personal_capture_excludes_work_authority_staging_and_services(host, mon
 
 @pytest.mark.parametrize("argv", [
     ("work-privacy-enroll",),
-    ("work-privacy-reconcile",),
+    ("work-privacy-reconcile", "--sha256", "0" * 64),
     ("work-privacy-revoke", "--member", "work_state/secret.md"),
     ("work-privacy-stream-upgrade", "--sha256", "0" * 64),
     ("work-privacy-stream-policy-adopt", "--sha256", "0" * 64),
@@ -3217,6 +3217,65 @@ def test_work_privacy_status_does_not_repair_pending_publication(host, monkeypat
     assert pending.read_bytes() == before
 
 
+def test_reconcile_review_cli_requires_digest_and_keeps_default_output_private(host, monkeypatch):
+    protocol = _enroll_synthetic_work(host, monkeypatch)
+    monkeypatch.setattr(cli, "_work_privacy", lambda *_: protocol)
+    (host.repo / "state/work/secret.md").write_text("SYNTHETIC-PRIVATE-RECONCILIATION")
+    before = dict(host.backend.store)
+
+    code, output, error = host.run("work-privacy-reconcile-preview")
+    assert code == 0, error
+    review = json.loads(output)
+    assert review["member_changes"]["changed"] == 1
+    assert all(value not in output + error for value in ("secret.md", "SYNTHETIC-PRIVATE-RECONCILIATION"))
+    assert host.backend.store == before
+    assert not (protocol.authority_dir / "pending").exists()
+
+    code, output, _ = host.run("work-privacy-reconcile", "--reviewed")
+    assert code == 30 and not output
+    assert host.backend.store == before
+    assert not (protocol.authority_dir / "pending").exists()
+    code, output, error = host.run(
+        "work-privacy-reconcile", "--reviewed", "--sha256", review["inventory_sha256"],
+    )
+    assert code == 0, error
+    assert json.loads(output)["generation"] == 2
+    assert "secret.md" not in output + error
+
+
+def test_reconcile_review_cli_detail_requires_terminal_before_authority_access(host, monkeypatch):
+    monkeypatch.setattr(cli, "_work_privacy", lambda *_: pytest.fail("redirected detail accessed Work authority"))
+    code, output, error = host.run("work-privacy-reconcile-preview", "--details")
+    assert code == 20 and not output
+    assert "terminal" in error.lower()
+
+
+def test_reconcile_review_cli_escapes_detail_and_sanitizes_errors(host, monkeypatch):
+    from catchup_core.work_privacy import WorkPrivacyBlocked
+
+    class Terminal(io.StringIO):
+        def isatty(self):
+            return True
+
+    class Protocol:
+        def preview_reconciliation(self, *, details=False):
+            if not details:
+                raise WorkPrivacyBlocked("SYNTHETIC-PRIVATE-ERROR")
+            return {"inventory_sha256": "0" * 64,
+                    "details": {"members": [{"member": "work_state/private\u009b[31m", "change": "changed"}]}}
+
+    monkeypatch.setattr(cli, "_work_privacy", lambda *_: Protocol())
+    code, output, error = host.run("work-privacy-reconcile-preview")
+    assert code == 20 and not output
+    assert "SYNTHETIC-PRIVATE-ERROR" not in error
+    output, error = Terminal(), io.StringIO()
+    code = cli.run(("work-privacy-reconcile-preview", "--details"), output, error,
+                   backend=host.backend, local=host.local, host_platform="win32")
+    assert code == 0, error.getvalue()
+    assert "\u009b" not in output.getvalue() and "\\u009b" in output.getvalue()
+    assert json.loads(output.getvalue())["details"]["members"][0]["member"].endswith("\u009b[31m")
+
+
 def test_work_privacy_reconcile_and_recover_pending_are_explicit_cli_operations(host, monkeypatch):
     from pathlib import Path
     from catchup_core import work_privacy
@@ -3225,7 +3284,11 @@ def test_work_privacy_reconcile_and_recover_pending_are_explicit_cli_operations(
     monkeypatch.setattr(cli, "_work_privacy", lambda *_: protocol)
     member = host.repo / "state/work/secret.md"
     member.write_text("reviewed reconciliation")
-    code, output, error = host.run("work-privacy-reconcile", "--reviewed")
+    code, output, error = host.run("work-privacy-reconcile-preview")
+    assert code == 0, error
+    review = json.loads(output)
+    code, output, error = host.run(
+        "work-privacy-reconcile", "--reviewed", "--sha256", review["inventory_sha256"])
     assert code == 0, error
     assert json.loads(output)["generation"] == 2
     assert "secret.md" not in output

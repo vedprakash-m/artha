@@ -31,6 +31,15 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 STUCK_APPEARANCE_THRESHOLD = 3
 
 
+def _item_ids(value: Any) -> list[str]:
+    """Counts are engagement metrics, never evidence of individual item IDs."""
+    if value is None or (type(value) is int and value >= 0):
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) or not item for item in value):
+        raise ValueError("invalid item history")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -77,9 +86,9 @@ def item_recurrence_score(
         if not isinstance(run, dict):
             continue
 
-        surfaced = run.get("items_surfaced") or []
-        closed = run.get("items_closed") or []
-        corrected = run.get("items_corrected") or []
+        surfaced = _item_ids(run.get("items_surfaced"))
+        closed = _item_ids(run.get("items_closed"))
+        corrected = _item_ids(run.get("items_corrected"))
 
         if item_id in surfaced:
             appearances += 1
@@ -112,7 +121,7 @@ def all_surfaced_items(briefing_history: list[dict[str, Any]]) -> set[str]:
     for run in briefing_history:
         if not isinstance(run, dict):
             continue
-        for item_id in (run.get("items_surfaced") or []):
+        for item_id in _item_ids(run.get("items_surfaced")):
             if item_id:
                 items.add(str(item_id))
     return items
@@ -146,22 +155,38 @@ def load_briefing_history(
         max_entries: Maximum number of entries to load (most recent first).
 
     Returns:
-        List of run dicts (may be empty if file absent or malformed).
+        List of run dicts. Missing, unreadable or malformed history raises;
+        callers must not present unavailable evidence as a healthy empty history.
     """
     if runs_path is None:
         runs_path = _REPO_ROOT / "state" / "catch_up_runs.yaml"
 
-    if not runs_path.exists():
-        return []
+    import yaml  # type: ignore[import-not-found]
+    raw = yaml.safe_load(runs_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list) or any(not isinstance(run, dict) for run in raw):
+        raise ValueError("invalid briefing history")
+    return raw[:max_entries]
 
+
+def stuck_items_health(runs_path: Path) -> tuple[bool, str]:
+    """Shared advisory result; errors never disclose parser or payload text."""
     try:
-        import yaml  # type: ignore[import-not-found]
-        raw = yaml.safe_load(runs_path.read_text(encoding="utf-8")) or []
-        if not isinstance(raw, list):
-            return []
-        return raw[:max_entries]
+        history = load_briefing_history(runs_path)
+        for run in history:
+            for field in ("items_surfaced", "items_closed", "items_corrected"):
+                _item_ids(run.get(field))
+        explicit = [run for run in history if isinstance(run.get("items_surfaced"), list)]
+        if not explicit:
+            return False, "Stuck items unavailable: no explicit item-ID history"
+        stuck = find_stuck_items(history)
+        message = (f"Stuck items detected {format_stuck_items_badge(stuck)}: "
+                   f"{len(stuck)} item(s) looping without closure" if stuck else
+                   "No stuck items detected ✓")
+        if len(explicit) != len(history):
+            return False, message + "; item-ID history incomplete"
+        return True, message
     except Exception:
-        return []
+        return False, "Stuck items unavailable: history could not be checked"
 
 
 def format_stuck_items_badge(stuck: list[RecurrenceScore]) -> str:

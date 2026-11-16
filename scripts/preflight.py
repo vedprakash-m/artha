@@ -56,6 +56,7 @@ from typing import Optional
 
 from connectors.workiq_bridge import WORKIQ_VERSION_PIN
 from lib.local_paths import audit_log_path
+from preflight.state_checks import check_stuck_items
 
 
 # ---------------------------------------------------------------------------
@@ -2562,34 +2563,6 @@ def check_slo_burn_rate() -> CheckResult:
         return CheckResult(
             "SLO burn rate (ST-04)", "P2", False,
             f"SLO burn rate check failed: {exc}",
-        )
-
-
-def check_stuck_items() -> CheckResult:
-    """ST-05 — Detect items stuck in briefings without closure (P2, informational)."""
-    try:
-        _lib_dir = os.path.join(SCRIPTS_DIR, "lib")
-        import sys as _sys
-        if _lib_dir not in _sys.path:
-            _sys.path.insert(0, _lib_dir)
-        from loop_detector import find_stuck_items, load_briefing_history, format_stuck_items_badge  # type: ignore
-        runs_path = Path(ARTHA_DIR) / "state" / "catch_up_runs.yaml"
-        history = load_briefing_history(runs_path=runs_path)
-        stuck = find_stuck_items(history)
-        if stuck:
-            badge = format_stuck_items_badge(stuck)
-            return CheckResult(
-                "stuck items (ST-05)", "P2", True,
-                f"Stuck items detected {badge}: {len(stuck)} item(s) looping without closure",
-            )
-        return CheckResult(
-            "stuck items (ST-05)", "P2", True,
-            "No stuck items detected ✓",
-        )
-    except Exception as exc:
-        return CheckResult(
-            "stuck items (ST-05)", "P2", True,
-            f"Stuck items check skipped: {exc}",
         )
 
 

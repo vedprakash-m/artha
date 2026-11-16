@@ -252,6 +252,29 @@ class TestWorkiqBridgeFetch:
         with pytest.raises(ValueError, match="Unknown mode"):
             list(fetch(mode="bogus_mode", auth_context={}))
 
+    def test_missing_retired_archive_reports_safe_reason(self, monkeypatch):
+        from catchup_core.work_cache import WorkCacheArchiveMissing
+        from connectors import workiq_bridge as wb
+
+        def fail():
+            raise WorkCacheArchiveMissing("synthetic private data")
+
+        monkeypatch.setattr(wb, "_load_cache", fail)
+        with pytest.raises(RuntimeError, match="retired archive is missing") as error:
+            list(wb.fetch(auth_context={}))
+        assert "synthetic private data" not in str(error.value)
+
+    def test_other_cache_errors_remain_redacted(self, monkeypatch):
+        from connectors import workiq_bridge as wb
+
+        def fail():
+            raise RuntimeError("synthetic private data")
+
+        monkeypatch.setattr(wb, "_load_cache", fail)
+        with pytest.raises(RuntimeError, match="encrypted Work cache unavailable") as error:
+            list(wb.fetch(auth_context={}))
+        assert "synthetic private data" not in str(error.value)
+
     def test_fetch_cache_hit_skips_subprocess(self):
         """Cache hit should yield records without calling _ask_workiq."""
         from connectors import workiq_bridge as wb
@@ -296,6 +319,62 @@ class TestWorkiqBridgeFetch:
             patch("connectors.workiq_bridge._find_npx", return_value=None),
         ):
             assert health_check({}) is False
+
+
+class TestWorkiqDisplayFetch:
+    @pytest.mark.parametrize("mode", ["calendar", "email", "teams"])
+    @pytest.mark.parametrize("status", ["summary", "empty", "partial", "truncated"])
+    def test_display_is_redacted_and_never_uses_cache(self, monkeypatch, mode, status):
+        from connectors import workiq_bridge as bridge
+
+        response = {"status": status, "content": "synthetic confidential narrative"}
+        query = MagicMock(return_value=json.dumps(response))
+        monkeypatch.setattr(bridge, "_ask_workiq", query)
+        monkeypatch.setattr(bridge, "_redact_keywords", lambda: ["confidential"])
+        monkeypatch.setattr(bridge, "_redact_replacement", lambda: "[REDACTED]")
+        monkeypatch.setattr(bridge, "_load_cache", lambda: pytest.fail("display read cache"))
+        monkeypatch.setattr(bridge, "_save_cache", lambda _: pytest.fail("display wrote cache"))
+        for parser in ("_parse_calendar", "_parse_email", "_parse_teams"):
+            monkeypatch.setattr(bridge, parser, lambda *args: pytest.fail("display used structured parser"))
+
+        result = bridge.fetch_display(auth_context={}, mode=mode)
+
+        assert result == {"status": status, "content": "synthetic [REDACTED] narrative"}
+        query.assert_called_once()
+        assert "json" in query.call_args.args[0].lower()
+
+    @pytest.mark.parametrize("raw", ["", "not-json", "{incomplete"])
+    def test_invalid_provider_output_is_not_silently_reported_empty(self, monkeypatch, raw):
+        from connectors import workiq_bridge as bridge
+
+        monkeypatch.setattr(bridge, "_ask_workiq", lambda _: raw)
+        with pytest.raises(ValueError) as error:
+            bridge.fetch_display(auth_context={}, mode="calendar")
+        assert raw == "" or raw not in str(error.value)
+
+    @pytest.mark.parametrize("response", [
+        None, [], {}, {"status": "summary", "content": ""},
+        {"status": "summary", "content": 1}, {"status": "complete", "content": "synthetic"},
+        {"status": None, "content": "synthetic"},
+    ])
+    def test_invalid_response_shape_does_not_expose_provider_text(self, monkeypatch, response):
+        from connectors import workiq_bridge as bridge
+
+        raw = json.dumps(response)
+        monkeypatch.setattr(bridge, "_ask_workiq", lambda _: raw)
+        with pytest.raises(ValueError) as error:
+            bridge.fetch_display(auth_context={}, mode="calendar")
+        assert "synthetic" not in str(error.value)
+
+    @pytest.mark.parametrize("mode", ["people", "documents", "teams_ai", "invalid"])
+    def test_only_approved_work_scopes_are_requested(self, monkeypatch, mode):
+        from connectors import workiq_bridge as bridge
+
+        query = MagicMock()
+        monkeypatch.setattr(bridge, "_ask_workiq", query)
+        with pytest.raises(ValueError):
+            bridge.fetch_display(auth_context={}, mode=mode)
+        query.assert_not_called()
 
 
 class TestWorkiqQueryFailures:

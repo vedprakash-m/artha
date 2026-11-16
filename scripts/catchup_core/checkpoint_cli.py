@@ -2,7 +2,8 @@
 
 Commands: ``inventory``, ``create``, ``verify``, ``recovery``, ``diff``, ``restore``,
 metadata-only ``registry-preview``, ``registry-declare``, ``registry-review`` and the
-Work-only ``work-privacy-status``, ``work-privacy-enroll``, ``work-privacy-reconcile``,
+Work-only ``work-privacy-status``, ``work-privacy-enroll``, ``work-privacy-reconcile-preview``,
+``work-privacy-reconcile``,
 ``work-privacy-recover-pending``, ``work-privacy-revoke`` and reviewed stream-history commands.
 These Work commands report metadata only; enrollment, reconciliation and revocation require
 ``--reviewed``, and status never repairs pending authority.
@@ -956,17 +957,23 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912 - explic
         if name == 'registry-review':
             for field in ('sha256', 'reviewer', 'reviewed-at'):
                 command.add_argument('--' + field, required=True)
-    for name in ('work-privacy-status', 'work-privacy-enroll', 'work-privacy-reconcile',
+    for name in ('work-privacy-status', 'work-privacy-enroll', 'work-privacy-reconcile-preview',
+                 'work-privacy-reconcile',
                  'work-privacy-recover-pending', 'work-privacy-revoke',
                  'work-privacy-stream-preview', 'work-privacy-stream-upgrade',
                  'work-privacy-stream-policy-preview', 'work-privacy-stream-policy-adopt'):
         command = sub.add_parser(name)
+        if name == 'work-privacy-reconcile-preview':
+            command.add_argument('--details', action='store_true',
+                                 help='show changed identifiers in an owner-controlled local terminal')
         if name in {'work-privacy-enroll', 'work-privacy-reconcile', 'work-privacy-revoke',
                     'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}:
             command.add_argument('--reviewed', action='store_true',
                                  help='confirm the required explicit Work review')
         if name == 'work-privacy-revoke':
             command.add_argument('--member', required=True, help='bound Work member alias/path')
+        if name == 'work-privacy-reconcile':
+            command.add_argument('--sha256', required=True, help='exact reviewed reconciliation digest')
         if name in {'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}:
             command.add_argument('--sha256', required=True, help='exact reviewed stream-inventory digest')
     for name in ("inventory", "create", "diff"):
@@ -1354,6 +1361,11 @@ def _work_privacy_summary(current: Mapping[str, Any]) -> dict[str, Any]:
 
 def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,  # noqa: PLR0911, PLR0912
                           backend: Any) -> Mapping[str, Any]:
+    if args.command == 'work-privacy-reconcile-preview':
+        try:
+            return _work_privacy(repo, local, backend).preview_reconciliation(details=args.details)
+        except _work_privacy_errors() as exc:
+            raise ck.CheckpointBlocked('Work reconciliation preview is unavailable') from exc
     protocol = _work_privacy(repo, local, backend)
     if args.command == 'work-privacy-status':
         if not protocol.is_enrolled():
@@ -1369,7 +1381,7 @@ def _work_privacy_command(args: argparse.Namespace, repo: Path, local: Path,  # 
             raise ck.CheckpointBlocked('Work enrollment could not be completed') from exc
     if args.command == 'work-privacy-reconcile':
         try:
-            return _work_privacy_summary(protocol.reconcile(reviewed=True))
+            return _work_privacy_summary(protocol.reconcile(reviewed=args.reviewed, expected_digest=args.sha256))
         except _work_privacy_errors() as exc:
             raise ck.CheckpointBlocked('Work drift reconciliation could not be completed') from exc
     if args.command == 'work-privacy-recover-pending':
@@ -1690,8 +1702,10 @@ def run(argv: Sequence[str], stdout: TextIO, stderr: TextIO, *, backend: Any = N
                                  'work-privacy-stream-upgrade', 'work-privacy-stream-policy-adopt'}
                     and not args.reviewed):
                 raise ck.CheckpointBlocked('explicit --reviewed confirmation is required')
+            if args.command == 'work-privacy-reconcile-preview' and args.details and not stdout.isatty():
+                raise ck.CheckpointBlocked('Work reconciliation details require an owner-controlled terminal')
             out = _work_privacy_command(args, _REPO, state_local, backend)
-            print(json.dumps(out), file=stdout)
+            print(json.dumps(out, ensure_ascii=True), file=stdout)
             return int(ExitCode.BLOCKED if out.get('current') is False else ExitCode.COMPLETE)
         if args.command in ("inventory", "diff"):
             roots, exclude = profile_layout(args.profile, local, registry_root=registry_root)

@@ -1,5 +1,12 @@
 # The Catch-up core (`scripts/catchup_core/`)
 
+## WorkIQ retired-cache archive
+
+If a retired legacy-cache marker references a missing encrypted archive, WorkIQ
+reports that specific condition and refuses the cache. Restore the matching
+archive through a separately reviewed recovery process; do not remove the marker
+or bypass the preservation check. Other cache failures remain redacted.
+
 ## Windows Work ciphertext capture cost — 2026-11-12
 
 Encrypted Work capture checks the acknowledged native privacy head during internal
@@ -911,13 +918,22 @@ Explicit lifecycle commands use the same checkpoint CLI:
 
 - `work-privacy-status`: bounded metadata only; never enrolls or repairs.
 - `work-privacy-enroll --reviewed`: explicitly enrolls native identity and current inventory.
-- `work-privacy-reconcile --reviewed`: adopts reviewed current bytes while invalidating older versions.
+- `work-privacy-reconcile-preview`: checks the authenticated predecessor and repeated inventories, then reports
+  aggregate changes, recovery effects and a review digest without publishing. `--details` displays changed
+  identifiers only in an explicitly owner-controlled local terminal; redirected output is refused.
+- `work-privacy-reconcile --sha256 DIGEST --reviewed`: adopts the complete inventory only if it still matches
+  the reviewed preview, invalidating affected older members and file streams while preserving revocations.
 - `work-privacy-recover-pending`: rolls authenticated interrupted intent forward only.
 - `work-privacy-revoke --member work_state/notes.md --reviewed`: permanently restricts recovery of that member.
 - `work-privacy-stream-preview`: reports aggregate stream counts, bytes and a digest without publishing a migration.
 - `work-privacy-stream-upgrade --sha256 DIGEST --reviewed`: upgrades only the exact previewed stream inventory.
 
-Do not invoke these live operations merely to validate code. Missing review refuses before effects.
+Do not invoke these live operations merely to validate code. A live preview reads Work members and required
+streams and requires separate authorization. Missing confirmation, missing digest or a changed review refuses
+before an intent is written. The digest binds freshness, not human approval; a terminal check cannot authenticate
+the viewer or prevent recording. Even aggregate metadata and hashes can be sensitive. A reconciliation with no
+drift still advances a generation. Repeated scans detect observed changes but do not freeze other writers;
+detectable drift after an intent leaves it pending for explicit recovery.
 The stream-history commands require a separately reviewed live migration. After a reviewed upgrade,
 Windows Work `create` writes ACK3 for the exact authenticated Work generation, preserving native file,
 directory and root streams in encrypted form. `verify` authenticates the archive and `diff` reports

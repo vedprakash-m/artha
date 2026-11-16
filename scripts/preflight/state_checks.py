@@ -14,6 +14,15 @@ from preflight._types import (
 )
 from lib.local_paths import audit_log_path
 
+
+def check_stuck_items() -> CheckResult:
+    """ST-05: unavailable recurrence evidence is a nonblocking P2 failure."""
+    from lib.loop_detector import stuck_items_health
+
+    passed, message = stuck_items_health(Path(ARTHA_DIR) / "state/catch_up_runs.yaml")
+    return CheckResult("stuck items (ST-05)", "P2", passed, message)
+
+
 def check_state_directory() -> CheckResult:
     """Verify state/ directory exists and is writable."""
     if not os.path.isdir(STATE_DIR):

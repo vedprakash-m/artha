@@ -1,5 +1,49 @@
 # re-artha implementation status — 2026-11-05
 
+## Combined Mac engineering validation — 2026-11-15
+
+The current public isolated selection passed 11,207 tests, with 512 skips and 20
+expected failures. Core coverage passed at 88.04% combined, 89.03% lines and 85.40%
+branches; changed core lines measured 98%. The POSIX security harness passed 1,717
+tests, 130 skipped, at 87.56% combined coverage. Syntax, Ruff, strict typing, schema,
+import, State-write and generated-register checks passed. Working-tree privacy,
+PII and secret scanning passed; staged and final history gates remain delivery steps.
+
+A private synthetic producer selection initially failed on this Mac because its
+fixture did not install the existing synthetic creation helper; production correctly
+refused unsupported native creation. The corrected local private fixture passed.
+The private verifier uses a canonical, non-symlink temporary root. Its source-pinned
+receipt remains local and does not establish native Windows behavior or live UAT.
+No production custody, migration, reconciliation, provider operation or release was
+performed. These results establish local engineering validation; hosted CI remains pending.
+
+
+## WorkIQ archive diagnostic — 2026-11-15
+
+The retired WorkIQ cache marker is present, but its matching machine-local
+encrypted archive was not found. The current encrypted cache is present. The
+cause of the missing archive is unknown. The cache still refuses access; the
+marker was not removed, and no archive was fabricated or preservation guard
+bypassed. A filename-only search found no matching archive in the accessible
+Personal OneDrive folder. The other machine was not checked.
+
+WorkIQ now reports this missing-archive condition specifically without exposing
+cache content; other cache errors remain redacted. Synthetic cache and connector
+tests passed 230 cases, and the isolated Pipeline diagnostic selection passed
+12 cases. The source-pinned private Work verifier passed its reviewed synthetic
+selection on the current code; that is not a full private Work suite or native
+recovery acceptance.
+
+The owner-directed Catch-up finalized as partial. Its core shadow stopped at the
+legacy-data review gate and no email was sent. The owner subsequently authorized
+a shadow-ledger backup and reset, but fresh-ledger behavior and Catch-up UAT
+remain unverified. Another Catch-up requires separate authorization and blocker
+resolution. Email remains disabled by owner decision.
+
+Native Work recovery remains deferred. Live reconciliation, owner UAT, release
+re-signing or reversal, and release acceptance remain open. The feature
+specification remains active.
+
 ## Windows and Work validation follow-up — 2026-11-15
 
 The Windows fixes were delivered in commit `fa4bc2d`; its

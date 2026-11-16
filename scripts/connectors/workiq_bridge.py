@@ -593,6 +593,47 @@ def _ask_workiq_mcp(question: str) -> Optional[str]:
     return None
 
 
+_DISPLAY_SCOPES: dict[str, str] = {
+    "calendar": "my calendar meetings for today and the next 2 days",
+    "email": "my important unread or flagged work email from the last 48 hours",
+    "teams": "Teams messages from the last 48 hours that mention me or need my reply",
+}
+_DISPLAY_STATUSES = frozenset({"summary", "empty", "partial", "truncated"})
+
+
+def fetch_display(*, auth_context: dict, mode: str) -> dict[str, str]:
+    """Return a same-refresh WorkIQ display block ``{status, content}``.
+
+    Display-only: never reads or writes the cache and never produces records.
+    Invalid provider output raises ValueError without echoing provider text.
+    """
+    if mode not in _DISPLAY_SCOPES:
+        raise ValueError("WorkIQ display mode is not an approved Work scope")
+    prompt = (
+        f"Summarize {_DISPLAY_SCOPES[mode]}. Respond with only a JSON object: "
+        '{"status": "summary" | "empty" | "partial" | "truncated", "content": "<nonempty text>"}. '
+        'Use "empty" with a short sentence when there is nothing, "partial" or "truncated" '
+        "when you could not cover everything."
+    )
+    raw = _ask_workiq(prompt)
+    text = (raw or "").strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        raise ValueError("WorkIQ display response is not valid JSON") from None
+    if not isinstance(data, dict):
+        raise ValueError("WorkIQ display response is not a JSON object")
+    status, content = data.get("status"), data.get("content")
+    if not isinstance(status, str) or status not in _DISPLAY_STATUSES:
+        raise ValueError("WorkIQ display response has an invalid status")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("WorkIQ display response has no content")
+    return {"status": status, "content": _apply_redact(content, _redact_keywords(), _redact_replacement())}
+
+
 def fetch(
     *,
     since: str = "",
@@ -630,8 +671,12 @@ def fetch(
         raise ValueError(f"[workiq_bridge] Unknown mode: {mode!r}")
     if mode == "people" and (not isinstance(person_name, str) or not person_name.strip()):
         raise ValueError("WorkIQ people mode requires a nonempty person_name")
+    from catchup_core.work_cache import WorkCacheArchiveMissing
+
     try:
         cache = _load_cache()
+    except WorkCacheArchiveMissing:
+        raise RuntimeError("encrypted Work cache unavailable: retired archive is missing") from None
     except RuntimeError:
         raise RuntimeError("encrypted Work cache unavailable; review storage or legacy migration") from None
 

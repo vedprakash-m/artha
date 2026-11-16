@@ -88,6 +88,24 @@ class TestFetchSingleAuthCtx:
         assert error is None
 
 
+def test_workiq_missing_archive_is_visible_without_private_details(monkeypatch):
+    import pipeline
+    from catchup_core.work_cache import WorkCacheArchiveMissing
+    from connectors import workiq_bridge
+
+    def fail():
+        raise WorkCacheArchiveMissing("synthetic private data")
+
+    monkeypatch.setattr(workiq_bridge, "_load_cache", fail)
+    cfg = _cfg_with("workiq_bridge", handler="connectors.workiq_bridge")
+    lines, _, error = pipeline.fetch_single("workiq_bridge", cfg, auth_ctx={})
+
+    assert lines == []
+    assert error is not None
+    assert "retired archive is missing" in error
+    assert "synthetic private data" not in error
+
+
 class TestFetchSingleSinceDefault:
     """since=None → defaults to approximately 48 hours ago (within 5s tolerance)."""
 
@@ -141,3 +159,105 @@ class TestFetchSingleExtraFetchOverrides:
         merged = captured_fetch_cfg[0]
         assert merged["max_results"] == 50, "caller max_results should override YAML"
         assert merged["window_days"] == 7, "caller window_days should override YAML"
+
+
+class TestWorkiqDisplayFetch:
+    def test_uses_allowlisted_workiq_handler_and_configured_auth(self, monkeypatch):
+        from types import SimpleNamespace
+        import pipeline
+
+        cfg = _cfg_with("workiq_bridge", handler="connectors.workiq_bridge")
+        response = {"status": "summary", "content": "synthetic narrative"}
+        fetch = MagicMock(return_value=response)
+        handler = SimpleNamespace(__name__="connectors.workiq_bridge", fetch_display=fetch)
+        load_handler = MagicMock(return_value=handler)
+        load_auth = MagicMock(return_value={"account": "synthetic"})
+        monkeypatch.setattr(pipeline, "_load_handler", load_handler)
+        monkeypatch.setattr(pipeline, "load_auth_context", load_auth)
+
+        block, elapsed, error = pipeline.fetch_workiq_display(cfg, mode="calendar")
+
+        assert block == response
+        assert elapsed >= 0
+        assert error is None
+        load_handler.assert_called_once_with("connectors.workiq_bridge")
+        load_auth.assert_called_once()
+        assert fetch.call_args.kwargs["auth_context"] == {"account": "synthetic"}
+        assert fetch.call_args.kwargs["mode"] == "calendar"
+
+    def test_refuses_unallowlisted_or_other_connector_handler(self, monkeypatch):
+        from types import SimpleNamespace
+        import pipeline
+
+        cfg = _cfg_with("workiq_bridge", handler="connectors.evil_module")
+        auth = MagicMock()
+        monkeypatch.setattr(pipeline, "load_auth_context", auth)
+        block, _, error = pipeline.fetch_workiq_display(cfg, mode="calendar")
+        assert block is None and error
+        auth.assert_not_called()
+
+        cfg = _cfg_with("workiq_bridge", handler="connectors.msgraph_email")
+        wrong_fetch = MagicMock()
+        monkeypatch.setattr(
+            pipeline, "_load_handler",
+            lambda _: SimpleNamespace(__name__="connectors.msgraph_email", fetch_display=wrong_fetch),
+        )
+        block, _, error = pipeline.fetch_workiq_display(cfg, mode="calendar")
+        assert block is None and error
+        wrong_fetch.assert_not_called()
+        auth.assert_not_called()
+
+    @pytest.mark.parametrize("failure", ["auth", "query"])
+    def test_errors_are_explicit_without_disclosing_provider_text(
+        self, monkeypatch, capsys, caplog, failure
+    ):
+        from types import SimpleNamespace
+        import pipeline
+
+        cfg = _cfg_with("workiq_bridge", handler="connectors.workiq_bridge")
+        secret = "synthetic-sensitive-provider-text"
+        fetch = MagicMock(side_effect=RuntimeError(secret))
+        handler = SimpleNamespace(__name__="connectors.workiq_bridge", fetch_display=fetch)
+        monkeypatch.setattr(pipeline, "_load_handler", lambda _: handler)
+        monkeypatch.setattr(
+            pipeline, "load_auth_context",
+            MagicMock(side_effect=RuntimeError(secret)) if failure == "auth" else MagicMock(return_value={}),
+        )
+        monkeypatch.setattr(pipeline, "with_retry", lambda call, **_: call())
+
+        block, _, error = pipeline.fetch_workiq_display(cfg, mode="email")
+
+        assert block is None and error
+        assert secret not in error
+        assert secret not in capsys.readouterr().err
+        assert secret not in caplog.text
+
+    @pytest.mark.parametrize("recover", [True, False])
+    def test_retryable_errors_retry_without_exposing_provider_text(
+        self, monkeypatch, capsys, caplog, recover
+    ):
+        from types import SimpleNamespace
+        import lib.retry as retry
+        import pipeline
+
+        cfg = _cfg_with("workiq_bridge", handler="connectors.workiq_bridge")
+        cfg["connectors"]["workiq_bridge"]["retry"]["max_attempts"] = 2
+        secret = "synthetic-sensitive-provider-text"
+        response = {"status": "summary", "content": "synthetic narrative"}
+        failure = RuntimeError(f"429 {secret}")
+        fetch = MagicMock(side_effect=[failure, response] if recover else failure)
+        handler = SimpleNamespace(__name__="connectors.workiq_bridge", fetch_display=fetch)
+        monkeypatch.setattr(pipeline, "_load_handler", lambda _: handler)
+        monkeypatch.setattr(pipeline, "load_auth_context", lambda _: {})
+        monkeypatch.setattr(retry.time, "sleep", lambda _: None)
+
+        block, _, error = pipeline.fetch_workiq_display(cfg, mode="email")
+
+        assert fetch.call_count > 1
+        if recover:
+            assert block == response and error is None
+        else:
+            assert block is None and error
+        captured = capsys.readouterr()
+        assert secret not in (error or "")
+        assert secret not in captured.out + captured.err + caplog.text

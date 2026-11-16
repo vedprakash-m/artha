@@ -30,7 +30,7 @@ from preflight.state_checks import (
     check_state_directory, check_state_templates, check_open_items,
     check_briefings_directory, check_briefings_archive_coverage,
     check_profile_completeness, _is_bootstrap_stub,
-    check_prompt_size, check_planning_signals,
+    check_prompt_size, check_planning_signals, check_stuck_items,
 )
 from preflight.integration_checks import (
     check_bridge_health, check_workiq, check_ado_auth, check_ha_connectivity,
@@ -126,6 +126,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P2 — Prompt size ceiling (RD-38: compact Artha.md ≤ 25KB) ─────────
     checks.append(check_prompt_size())
+    checks.append(check_stuck_items())
 
     # ── P1 — Action handler health checks + expiry sweep (Step 0c) ───────
     checks.append(check_action_handlers())

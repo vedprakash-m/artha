@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from _work_synthetic import reconcile_reviewed
 from test_work_privacy import KEY
 
 from catchup_core import quarantine_fs_windows as fs
@@ -60,6 +62,37 @@ def legacy_enrolled(tmp_path, monkeypatch):
 @pytest.fixture
 def enrolled(legacy_enrolled):
     p, member = legacy_enrolled
+    review = p.preview_stream_history()
+    p.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
+    return p, member
+
+
+@pytest.fixture
+def health_receipt_protocol(tmp_path, monkeypatch):
+    local = tmp_path / 'local'
+    monkeypatch.setenv('ARTHA_LOCAL_DIR', str(local))
+    repo = tmp_path / 'repo'
+    state = repo / 'state/work'
+    cache = local / 'work/cache'
+    state.mkdir(parents=True)
+    cache.mkdir(parents=True)
+    member = cache / 'health.json'
+    member.write_text(json.dumps({'available': False, 'auth_valid': False, 'platform': 'Windows',
+                                  'checked_at': '2000-01-01T00:00:00+00:00'}))
+    p = WorkPrivacy(repo, local, {'work_state': state, 'work_local': local / 'work'},
+                    backend=FileBackend(tmp_path / 'keys'), native_identity=lambda: dict(IDENTITY))
+    previous = wp.set_protocol_factory(lambda: p)
+    try:
+        yield p, member
+    finally:
+        wp.set_protocol_factory(previous)
+
+
+@pytest.fixture
+def enrolled_health_receipt(health_receipt_protocol):
+    p, member = health_receipt_protocol
+    p.enroll(KEY, reviewed=True, installation_id='synthetic-installation')
+    Path(str(member) + ':synthetic').write_bytes(b'keep this stream')
     review = p.preview_stream_history()
     p.upgrade_stream_history(reviewed=True, expected_digest=review['inventory_sha256'])
     return p, member
@@ -130,7 +163,7 @@ def test_large_asset_history_uses_bounded_reads_and_allows_small_publication(leg
         return original(opened, count)
 
     monkeypatch.setattr(fs.WindowsQuarantineFile, 'read_chunk', bounded)
-    current = p.reconcile(reviewed=True)
+    current = reconcile_reviewed(p)
     digest = hashlib.sha256()
     block = bytes(65536)
     remaining = size
@@ -153,7 +186,7 @@ def test_large_existing_member_can_be_deleted_or_replaced_without_buffering(lega
         out.truncate((8 << 20) + 17)
         out.flush()
         os.fsync(out.fileno())
-    p.reconcile(reviewed=True)
+    reconcile_reviewed(p)
     metadata = native_metadata(member)
     result = p.publish({'work_state/notes.md': raw})
     if raw is None:
@@ -199,6 +232,53 @@ def test_inventory_detects_mutation_and_handles_partial_native_reads(legacy_enro
     else:
         with pytest.raises(WorkPrivacyBlocked, match='changed'):
             p.current()
+
+
+@windows_only
+def test_reconcile_review_detects_real_process_drift_during_preview(enrolled, tmp_path, monkeypatch):
+    p, member = enrolled
+    ready, proceed = tmp_path / 'child-ready', tmp_path / 'child-proceed'
+    program = (
+        "import sys, time\n"
+        "from pathlib import Path\n"
+        "member, ready, proceed = map(Path, sys.argv[1:])\n"
+        "ready.write_text('ready')\n"
+        "for _ in range(1000):\n"
+        "    if proceed.exists():\n"
+        "        member.write_bytes(b'changed by synthetic child')\n"
+        "        break\n"
+        "    time.sleep(.02)\n"
+        "else:\n"
+        "    sys.exit(9)\n"
+    )
+    process = subprocess.Popen([sys.executable, '-c', program, str(member), str(ready), str(proceed)],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 15
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert ready.exists()
+        original = p._inventory
+        started = False
+
+        def race_inventory():
+            nonlocal started
+            snapshot = original()
+            if not started:
+                started = True
+                proceed.write_text('proceed')
+                out, err = process.communicate(timeout=20)
+                assert process.returncode == 0, (out, err)
+            return snapshot
+
+        monkeypatch.setattr(p, '_inventory', race_inventory)
+        with pytest.raises(WorkPrivacyBlocked, match='changed|drift'):
+            p.preview_reconciliation()
+        assert not (p.authority_dir / 'pending').exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)
 
 
 @pytest.mark.parametrize('limit', ['member', 'total'])
@@ -351,7 +431,7 @@ def test_large_native_asset_round_trips_through_public_encrypted_recovery(legacy
         out.flush()
         os.fsync(out.fileno())
     Path(str(asset) + ':synthetic').write_bytes(b'large asset stream')
-    p.reconcile(reviewed=True)
+    reconcile_reviewed(p)
     preview = p.preview_stream_history()
     p.upgrade_stream_history(reviewed=True, expected_digest=preview['inventory_sha256'])
     binding = p.bind_checkpoint()
@@ -484,6 +564,129 @@ def test_producer_read_modify_write_and_delete_follow_v2_history(enrolled):
         assert not member.exists() and 'work_state/notes.md' not in p.current()['members']
     finally:
         wp.set_protocol_factory(previous)
+
+
+@windows_only
+def test_health_receipt_publication_preserves_work_authority_and_streams(enrolled_health_receipt):
+    from lib.workiq_health import read_receipt, write_receipt
+
+    p, member = enrolled_health_receipt
+    before = p.current()
+    binding = p.bind_checkpoint()
+    metadata = native_metadata(member)
+    write_receipt(member, available=True, auth_valid=True)
+    after = p.current()
+    assert after['generation'] == before['generation'] + 1
+    assert read_receipt(member, max_age=86400)['available'] is True
+    assert native_metadata(member) == metadata
+    assert Path(str(member) + ':synthetic').read_bytes() == b'keep this stream'
+    assert p.denied_members(binding, ['work_local/cache/health.json']) == {'work_local/cache/health.json'}
+    assert not (p.authority_dir / 'pending').exists()
+
+
+@windows_only
+def test_health_receipt_refuses_when_work_authority_has_drift(enrolled_health_receipt):
+    from lib.workiq_health import write_receipt
+
+    p, member = enrolled_health_receipt
+    member.write_bytes(b'unreviewed synthetic drift')
+    with pytest.raises(wp.WorkPublicationBlocked):
+        write_receipt(member, available=True, auth_valid=True)
+    assert member.read_bytes() == b'unreviewed synthetic drift'
+    assert not (p.authority_dir / 'pending').exists()
+
+
+@windows_only
+def test_health_receipt_refuses_if_enrollment_wins_legacy_race(health_receipt_protocol, monkeypatch):
+    from lib.workiq_health import write_receipt
+
+    p, member = health_receipt_protocol
+    before = member.read_bytes()
+    probe = wp._probe
+
+    def enroll_after_probe():
+        active = probe()
+        if active is None:
+            p.enroll(KEY, reviewed=True, installation_id='synthetic-installation')
+        return active
+
+    monkeypatch.setattr(wp, '_probe', enroll_after_probe)
+    with pytest.raises(wp.WorkPublicationBlocked, match='enrollment changed'):
+        write_receipt(member, available=True, auth_valid=True)
+    assert member.read_bytes() == before
+    assert p.current()['generation'] == 1
+
+
+@windows_only
+@pytest.mark.parametrize('write_fails', [False, True])
+def test_legacy_health_receipt_write_and_failure(health_receipt_protocol, monkeypatch, write_fails):
+    from lib.workiq_health import read_receipt, write_receipt
+
+    p, member = health_receipt_protocol
+    before = member.read_bytes()
+    if write_fails:
+        monkeypatch.setattr('lib.state_writer.write_atomic', lambda *_args: SimpleNamespace(success=False))
+        with pytest.raises(OSError, match='could not be persisted'):
+            write_receipt(member, available=True, auth_valid=True)
+        assert member.read_bytes() == before
+    else:
+        write_receipt(member, available=True, auth_valid=True)
+        assert read_receipt(member, max_age=86400)['available'] is True
+    assert not p.is_enrolled()
+
+
+@windows_only
+@pytest.mark.parametrize('lock_name', ['work-privacy.lock', 'installation.lock'])
+def test_legacy_health_receipt_respects_enrollment_and_capture_locks(health_receipt_protocol, lock_name):
+    from catchup_core.session_lock import session_lock
+
+    p, member = health_receipt_protocol
+    before = member.read_bytes()
+    code = ('import sys; from pathlib import Path; sys.path.insert(0, sys.argv[2]); '
+            'from lib.workiq_health import write_receipt; '
+            'write_receipt(Path(sys.argv[1]), available=True, auth_valid=True)')
+    with session_lock(p.local / lock_name):
+        child = subprocess.run([sys.executable, '-c', code, str(member),
+                                str(Path(privacy.__file__).resolve().parents[1])],
+                               capture_output=True, text=True, timeout=20)
+    assert child.returncode != 0 and 'SessionBusy' in child.stderr
+    assert member.read_bytes() == before
+    assert not p.is_enrolled()
+
+
+@windows_only
+@pytest.mark.parametrize('entry', ['package', 'script'])
+def test_preflight_reports_health_receipt_publication_refusal(enrolled_health_receipt, monkeypatch, entry):
+    import importlib.util
+
+    p, member = enrolled_health_receipt
+    member.write_bytes(b'unreviewed synthetic drift')
+    if entry == 'package':
+        from preflight import integration_checks as checks
+    else:
+        name = '_preflight_receipt_regression'
+        spec = importlib.util.spec_from_file_location(name, Path(privacy.__file__).resolve().parents[1] / 'preflight.py')
+        assert spec is not None and spec.loader is not None
+        checks = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, checks)
+        spec.loader.exec_module(checks)
+
+    def registry_unavailable(*_args):
+        raise OSError('synthetic registry unavailable')
+
+    monkeypatch.setitem(sys.modules, 'winreg', SimpleNamespace(HKEY_LOCAL_MACHINE=1, HKEY_CURRENT_USER=2,
+                                                             OpenKey=registry_unavailable))
+    monkeypatch.setattr('platform.system', lambda: 'Windows')
+    monkeypatch.setattr('shutil.which', lambda *_args, **_kwargs: 'synthetic-npx')
+    monkeypatch.setattr(subprocess, 'run', lambda *_args, **_kwargs:
+                        SimpleNamespace(returncode=0, stdout='synthetic identity', stderr=''))
+    monkeypatch.setattr(checks, 'ARTHA_DIR', str(p.repo))
+    monkeypatch.setattr(checks, 'WORKIQ_CACHE_FILE', str(member))
+    monkeypatch.setattr(checks, '_SUBPROCESS_ENV', {'PATH': ''})
+    result = checks.check_workiq()
+    assert not result.passed and result.message == 'WorkIQ probe receipt could not be persisted'
+    assert member.read_bytes() == b'unreviewed synthetic drift'
+    assert not (p.authority_dir / 'pending').exists()
 
 
 CHILD = r'''

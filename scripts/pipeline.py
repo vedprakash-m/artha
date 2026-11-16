@@ -663,6 +663,46 @@ def fetch_single(
     return (lines, elapsed, error)
 
 
+def fetch_workiq_display(
+    cfg: dict[str, Any], *, mode: str,
+) -> tuple[dict[str, str] | None, float, str | None]:
+    """Fetch one same-refresh WorkIQ display block; returns (block, elapsed_sec, error).
+
+    Display-only: the block is never cached, parsed into records or written to state.
+    Errors are generic so provider text never reaches the caller, stderr or logs.
+    """
+    t0 = time.monotonic()
+    name = "workiq_bridge"
+    conn_cfg = next((c for c in _normalize_connectors(cfg) if c.get("name") == name), None)
+    if conn_cfg is None:
+        return (None, 0.0, f"connector '{name}' not found in config")
+    handler_path = conn_cfg.get("fetch", {}).get("handler", "") or f"connectors.{name}"
+    try:
+        handler = _load_handler(handler_path)
+    except ImportError:
+        return (None, time.monotonic() - t0, "WorkIQ display handler is not allowlisted")
+    if getattr(handler, "__name__", "") != f"{_CONNECTOR_PKG}.{name}":
+        return (None, time.monotonic() - t0, "WorkIQ display handler is not the WorkIQ bridge")
+    try:
+        auth = load_auth_context(conn_cfg)
+    except Exception as exc:
+        return (None, time.monotonic() - t0, f"WorkIQ display auth failed ({type(exc).__name__})")
+    retry_cfg = conn_cfg.get("retry", {})
+    try:
+        block = with_retry(
+            lambda: handler.fetch_display(auth_context=auth, mode=mode),
+            max_retries=retry_cfg.get("max_attempts", 3),
+            base_delay=retry_cfg.get("base_delay_seconds", 1.0),
+            backoff_mult=retry_cfg.get("backoff_multiplier", 2.0),
+            max_delay=retry_cfg.get("max_delay_seconds", 30.0),
+            context=f"workiq_display.{mode}",
+            label=name,
+        )
+    except Exception as exc:
+        return (None, time.monotonic() - t0, f"WorkIQ display {mode} failed ({type(exc).__name__})")
+    return (block, time.monotonic() - t0, None)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline run
 # ---------------------------------------------------------------------------

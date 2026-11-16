@@ -24,7 +24,10 @@ def source(tmp_path, monkeypatch):
     env = runner._git_env()
     env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
     subprocess.run(["git", "init", "-q"], cwd=root, env=env, check=True, capture_output=True)
-    (root / ".gitignore").write_text("scripts/work*\ntests/work/\nscratch/\n")
+    (root / ".gitignore").write_text(
+        "scripts/work*\nscripts/schemas/\nscripts/lib/workiq_circuit_breaker.py\n"
+        "scripts/lib/unreviewed.py\ntests/work/\nscratch/\n"
+    )
     (root / "public.py").write_text("PUBLIC = 1\n")
     subprocess.run(["git", "add", ".gitignore", "public.py"], cwd=root, env=env,
                    check=True, capture_output=True)
@@ -35,6 +38,14 @@ def source(tmp_path, monkeypatch):
     (root / runner.PRIVATE_WORK_TEST).write_text(
         "def test_synthetic():\n    print('WORK_PAYLOAD_SENTINEL')\n    assert True\n")
     (root / "scripts/work/unreviewed.py").write_text("SECRET = 'DO NOT COPY'\n")
+    schema = root / "scripts/schemas/briefing_block.py"
+    schema.parent.mkdir(parents=True, exist_ok=True)
+    schema.write_text("# synthetic schema\n")
+    (schema.parent / "unreviewed.py").write_text("SECRET = 'DO NOT COPY'\n")
+    breaker = root / "scripts/lib/workiq_circuit_breaker.py"
+    breaker.parent.mkdir(parents=True, exist_ok=True)
+    breaker.write_text("# synthetic breaker\n")
+    (breaker.parent / "unreviewed.py").write_text("SECRET = 'DO NOT COPY'\n")
     (root / "tests/work/conftest.py").write_text("raise RuntimeError('private conftest')\n")
     workspace_parent = tmp_path / "external-workspaces"
     workspace_parent.mkdir()
@@ -60,6 +71,35 @@ def test_opt_in_copies_only_reviewed_private_files_and_binds_public_bytes(source
     assert not (dest / "tests/work/conftest.py").exists()
     assert not (dest / "scripts/work/unreviewed.py").exists()
     assert manifest["public.py"] == hashlib.sha256((dest / "public.py").read_bytes()).hexdigest()
+
+
+def test_briefing_schema_is_only_copied_with_reviewed_private_selection(source, tmp_path):
+    schema = "scripts/schemas/briefing_block.py"
+    ordinary = tmp_path / "ordinary"
+    runner.build_workspace(source, ordinary, synthetic_only=True)
+    assert not (ordinary / schema).exists()
+
+    manifest = runner._private_manifest(source)
+    assert schema in manifest
+    private = tmp_path / "private"
+    runner._build_private_workspace(source, private, manifest)
+    assert (private / schema).read_bytes() == (source / schema).read_bytes()
+    assert not (private / "scripts/schemas/unreviewed.py").exists()
+
+
+def test_breaker_is_only_copied_with_reviewed_private_selection(source, tmp_path):
+    breaker = "scripts/lib/workiq_circuit_breaker.py"
+    ordinary = tmp_path / "ordinary"
+    runner.build_workspace(source, ordinary, synthetic_only=True)
+    assert not (ordinary / breaker).exists()
+
+    manifest = runner._private_manifest(source)
+    assert breaker in manifest
+    private = tmp_path / "private"
+    runner._build_private_workspace(source, private, manifest)
+    assert (private / breaker).read_bytes() == (source / breaker).read_bytes()
+    assert manifest[breaker] == hashlib.sha256((private / breaker).read_bytes()).hexdigest()
+    assert not (private / "scripts/lib/unreviewed.py").exists()
 
 
 @pytest.mark.parametrize('relative', ['state/templates/example.md', 'state/learned_procedures/example.md',
@@ -268,6 +308,7 @@ def test_outcome_exit_arguments_fingerprints_and_no_payload(source, tmp_path, mo
     original = runner.subprocess.run
     monkeypatch.setenv("PYTEST_ADDOPTS", "--junitxml=UNSAFE_OUTPUT")
     monkeypatch.setenv("PYTEST_PLUGINS", "unreviewed_plugin")
+    monkeypatch.setenv("ARTHA_PRIVATE_WORK_DIAGNOSTICS", "UNAPPROVED_OUTPUT")
 
     def execute(args, **kwargs):
         if args[0] == "git":
@@ -276,6 +317,7 @@ def test_outcome_exit_arguments_fingerprints_and_no_payload(source, tmp_path, mo
         assert kwargs["stderr"] == subprocess.DEVNULL
         assert "PYTEST_ADDOPTS" not in kwargs["env"]
         assert "PYTEST_PLUGINS" not in kwargs["env"]
+        assert "ARTHA_PRIVATE_WORK_DIAGNOSTICS" not in kwargs["env"]
         assert Path(kwargs["cwd"]).joinpath(runner.PRIVATE_WORK_TEST).exists()
         return subprocess.CompletedProcess(args, exit_code)
 
@@ -289,6 +331,7 @@ def test_outcome_exit_arguments_fingerprints_and_no_payload(source, tmp_path, mo
     assert record["outcome"] == ("passed" if exit_code == 0 else "failed")
     assert record["returncode"] == exit_code
     assert record["verification_exitcode"] == exit_code
+    assert "diagnostics" not in record
     assert record["pytest_args"] == args
     assert record["command"] == [Path(sys.executable).name, "-m", "pytest",
                                  "-p", "no:cacheprovider", *args]
@@ -309,6 +352,217 @@ def test_real_failed_test_output_is_not_emitted(source, tmp_path, capsys):
     assert runner.verify_private_work(source, evidence, [runner.PRIVATE_WORK_TEST, "-q"]) == 1
     assert json.loads(evidence.read_text())["outcome"] == "failed"
     assert "WORK_PAYLOAD_SENTINEL" not in "".join(capsys.readouterr()) + evidence.read_text()
+
+
+def _install_diagnostic_plugin(source):
+    plugin = source / "tools" / "run_tests_isolated.py"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_bytes((REPO / "tools" / "run_tests_isolated.py").read_bytes())
+
+
+def test_diagnostic_reports_only_numbered_cases_and_allowed_categories(source, tmp_path, capsys):
+    _install_diagnostic_plugin(source)
+    (source / runner.PRIVATE_WORK_TEST).write_text(
+        "import pytest\n"
+        "@pytest.fixture\n"
+        "def broken_fixture():\n    raise PermissionError('WORK_PAYLOAD_SENTINEL')\n"
+        "def test_WORK_PAYLOAD_SENTINEL():\n"
+        "    print('WORK_PAYLOAD_SENTINEL')\n    assert False, 'WORK_PAYLOAD_SENTINEL'\n"
+        "def test_missing():\n    raise FileNotFoundError('WORK_PAYLOAD_SENTINEL')\n"
+        "def test_setup(broken_fixture):\n    pass\n"
+        "def test_other():\n    raise RuntimeError('WORK_PAYLOAD_SENTINEL')\n"
+    )
+    evidence = tmp_path / "diagnostic.json"
+    assert runner.verify_private_work(source, evidence, [], diagnose=True) == 1
+    record = json.loads(evidence.read_text())
+    assert record["outcome"] == "failed"
+    assert record["diagnostics"] == [
+        {"case": "CASE-0001", "category": "call-assertion"},
+        {"case": "CASE-0002", "category": "call-missing-file"},
+        {"case": "CASE-0003", "category": "setup-permission"},
+        {"case": "CASE-0004", "category": "call-other"},
+    ]
+    assert "WORK_PAYLOAD_SENTINEL" not in evidence.read_text() + "".join(capsys.readouterr())
+    assert not list(source.parent.joinpath("external-workspaces").iterdir())
+
+
+def test_diagnostic_reports_collection_failure_without_exception_text(source, tmp_path, capsys):
+    _install_diagnostic_plugin(source)
+    (source / runner.PRIVATE_WORK_TEST).write_text("raise ImportError('WORK_PAYLOAD_SENTINEL')\n")
+    evidence = tmp_path / "collection.json"
+    assert runner.verify_private_work(source, evidence, [], diagnose=True) != 0
+    record = json.loads(evidence.read_text())
+    assert record["diagnostics"] == [{"case": "COLLECTION", "category": "collection-error"}]
+    assert "WORK_PAYLOAD_SENTINEL" not in evidence.read_text() + "".join(capsys.readouterr())
+
+
+def test_diagnostic_reports_session_failure_when_no_tests_collected(source, tmp_path):
+    _install_diagnostic_plugin(source)
+    (source / runner.PRIVATE_WORK_TEST).write_text("# no tests collected\n")
+    evidence = tmp_path / "empty.json"
+    assert runner.verify_private_work(source, evidence, [], diagnose=True) == 5
+    record = json.loads(evidence.read_text())
+    assert record["outcome"] == "failed"
+    assert record["diagnostics"] == [{"case": "SESSION", "category": "session-error"}]
+
+
+def test_diagnostic_plugin_classifies_failures_without_exposing_messages(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    class NetworkAccessError(Exception):
+        pass
+
+    monkeypatch.setitem(sys.modules, "_isolation", SimpleNamespace(NetworkAccessError=NetworkAccessError))
+    destination = tmp_path / "diagnostics.json"
+    monkeypatch.setenv(runner._DIAGNOSTIC_ENV, str(destination))
+    plugins = {}
+    manager = SimpleNamespace(register=lambda plugin, name: plugins.update({name: plugin}))
+    runner.pytest_configure(SimpleNamespace(pluginmanager=manager))
+    plugin = plugins["artha-private-work-diagnostics"]
+    secret = "WORK_PAYLOAD_SENTINEL"
+    errors = [
+        (NetworkAccessError(secret), "call-network-guard"),
+        (AssertionError(secret), "call-assertion"),
+        (pytest.fail.Exception(secret), "call-assertion"),
+        (FileNotFoundError(secret), "call-missing-file"),
+        (PermissionError(secret), "call-permission"),
+        (TimeoutError(secret), "call-timeout"),
+        (subprocess.TimeoutExpired(secret, 1), "call-timeout"),
+        (ImportError(secret), "call-import"),
+        (OSError(secret), "call-os-error"),
+        (RuntimeError(secret), "call-other"),
+    ]
+    items = [object() for _ in errors]
+    plugin.pytest_collection_modifyitems(items)
+
+    def report(item, error, *, failed=True, when="call"):
+        call = SimpleNamespace(excinfo=SimpleNamespace(value=error), when=when)
+        hook = plugin.pytest_runtest_makereport(item, call)
+        next(hook)
+        with pytest.raises(StopIteration):
+            hook.send(SimpleNamespace(get_result=lambda: SimpleNamespace(failed=failed)))
+
+    for item, (error, _) in zip(items, errors):
+        report(item, error)
+    report(items[0], None, failed=False)
+    report(object(), RuntimeError(secret))
+    plugin.pytest_collectreport(SimpleNamespace(failed=True))
+    plugin.pytest_internalerror()
+    plugin.pytest_sessionfinish(SimpleNamespace(exitstatus=1))
+    failures = runner._read_private_diagnostics(destination)
+    assert failures == [
+        *[{"case": f"CASE-{i:04d}", "category": category}
+          for i, (_, category) in enumerate(errors, 1)],
+        {"case": "SESSION", "category": "session-error"},
+        {"case": "COLLECTION", "category": "collection-error"},
+        {"case": "SESSION", "category": "session-error"},
+    ]
+    assert secret not in destination.read_text()
+
+
+def test_diagnostic_plugin_requires_opt_in_and_bounds_collection(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    plugins = {}
+    manager = SimpleNamespace(register=lambda plugin, name: plugins.update({name: plugin}))
+    config = SimpleNamespace(pluginmanager=manager)
+    monkeypatch.delenv(runner._DIAGNOSTIC_ENV, raising=False)
+    runner.pytest_configure(config)
+    assert not plugins
+    destination = tmp_path / "diagnostics.json"
+    monkeypatch.setenv(runner._DIAGNOSTIC_ENV, str(destination))
+    runner.pytest_configure(config)
+    plugin = plugins["artha-private-work-diagnostics"]
+    with pytest.raises(pytest.UsageError):
+        plugin.pytest_collection_modifyitems([object()] * 10000)
+    plugin.pytest_sessionfinish(SimpleNamespace(exitstatus=5))
+    assert runner._read_private_diagnostics(destination) == [
+        {"case": "SESSION", "category": "session-error"}
+    ]
+
+
+@pytest.mark.parametrize(
+    "kind", ["missing", "untrusted-case", "untrusted-category", "extra-field",
+             "oversized", "inconsistent-success", "inconsistent-failure",
+             "invalid-schema", "invalid-entry-type"],
+)
+def test_diagnostic_refuses_missing_or_untrusted_data(source, tmp_path, monkeypatch, capsys, kind):
+    original = runner.subprocess.run
+
+    def execute(args, **kwargs):
+        if args[0] == "git":
+            return original(args, **kwargs)
+        assert kwargs["stdout"] == subprocess.DEVNULL
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        path = Path(kwargs["env"]["ARTHA_PRIVATE_WORK_DIAGNOSTICS"])
+        entry = {"case": "CASE-0001", "category": "call-assertion"}
+        if kind == "untrusted-case":
+            entry["case"] = "WORK_PAYLOAD_SENTINEL"
+        elif kind == "untrusted-category":
+            entry["category"] = "WORK_PAYLOAD_SENTINEL"
+        elif kind == "extra-field":
+            entry["extra"] = "WORK_PAYLOAD_SENTINEL"
+        elif kind == "invalid-entry-type":
+            entry["case"] = 1
+        if kind == "oversized":
+            path.write_text("WORK_PAYLOAD_SENTINEL" * 10000)
+        elif kind != "missing":
+            failures = [] if kind == "inconsistent-failure" else [entry]
+            schema = "invalid" if kind == "invalid-schema" else "artha.private-work-diagnostic.v1"
+            path.write_text(json.dumps({"schema": schema, "failures": failures}))
+        return subprocess.CompletedProcess(args, 1 if kind == "inconsistent-failure" else 0)
+
+    monkeypatch.setattr(runner.subprocess, "run", execute)
+    evidence = tmp_path / "refused-diagnostic.json"
+    assert runner.verify_private_work(source, evidence, [], diagnose=True) == 2
+    record = json.loads(evidence.read_text())
+    assert record["outcome"] == "refused"
+    assert "diagnostics" not in record
+    assert "WORK_PAYLOAD_SENTINEL" not in evidence.read_text() + "".join(capsys.readouterr())
+    assert not list(source.parent.joinpath("external-workspaces").iterdir())
+
+
+def test_diagnostic_refuses_hardlinked_file(tmp_path):
+    original = tmp_path / "original.json"
+    original.write_text('{"schema":"artha.private-work-diagnostic.v1","failures":[]}')
+    linked = tmp_path / "diagnostic.json"
+    try:
+        os.link(original, linked)
+    except OSError:
+        pytest.skip("host cannot create hardlinks")
+    with pytest.raises(ValueError):
+        runner._read_private_diagnostics(linked)
+
+
+def test_diagnostic_refuses_a_file_replaced_after_inspection(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    path = tmp_path / "diagnostic.json"
+    path.write_text('{"schema":"artha.private-work-diagnostic.v1","failures":[]}')
+    actual = path.stat()
+    monkeypatch.setattr(runner, "_no_links", lambda _path: SimpleNamespace(
+        st_mode=actual.st_mode, st_nlink=1, st_dev=actual.st_dev, st_ino=actual.st_ino + 1))
+    with pytest.raises(ValueError, match="changed private diagnostic"):
+        runner._read_private_diagnostics(path)
+
+
+def test_main_routes_diagnostics_only_when_explicitly_requested(monkeypatch, tmp_path):
+    calls = []
+
+    def verify(root, evidence, args, *, diagnose=False):
+        calls.append((root, evidence, args, diagnose))
+        return 7
+
+    monkeypatch.setattr(runner, "verify_private_work", verify)
+    path = tmp_path / "record.json"
+    assert runner.main(["--private-work", "--evidence", str(path), "--diagnose"]) == 7
+    assert calls == [(REPO, path, [], True)]
+
+
+@pytest.mark.parametrize("args", [["--diagnose"], ["--private-work", "--evidence", "x.json",
+                                                   "--diagnose", "--diagnose"]])
+def test_main_refuses_diagnostics_without_unique_private_opt_in(args):
+    assert runner.main(args) == 2
 
 
 @pytest.mark.parametrize("copy_changed", [False, True])
