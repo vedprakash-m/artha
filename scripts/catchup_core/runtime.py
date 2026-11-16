@@ -367,7 +367,8 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
     id_key = _id_key(id_provider)
     release_guard = None
     if not safety_control and effective.mode is ExecutionMode.AUTHORITATIVE:
-        release_guard = ReleaseEvidenceGuard(config.policy, cipher, cohort)
+        release_guard = ReleaseEvidenceGuard(config.policy, cipher, cohort, viewer=config.viewer,
+                                             runtime_inputs_checked=True)
         release_guard.validate()
     if config.policy.get("household_from_profile") is True and (not safety_control or configuration_control):
         _bind_household(config, root, id_key, (now or (lambda: datetime.now(UTC)))().astimezone(pack.timezone).date(),
@@ -378,6 +379,8 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
                                  read_only=(inspection and not mutation) or configuration_control)
 
     try:
+        if release_guard is not None:
+            release_guard.bind_authority_connection(ledger.conn)
         if not safety_control and effective.mode is ExecutionMode.AUTHORITATIVE:
             ledger.ensure_authority_host(request.host)
         required = {s.connector: s.required for s in pack.sources}

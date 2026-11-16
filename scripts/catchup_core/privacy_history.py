@@ -86,6 +86,11 @@ class PrivacyCapsules:
         digest = capsule_digest(record)
         with (self.directory / (digest + '.ae1')).open('rb') as handle:
             data = handle.read(_MAX_CAPSULE_BYTES + 1)
+        return self.decode(data, record)
+
+    def decode(self, data: bytes, record: Mapping[str, Any]) -> dict[str, Any]:
+        """Verify pinned capsule bytes without reopening a caller's protected file handle."""
+        digest = capsule_digest(record)
         if len(data) > _MAX_CAPSULE_BYTES or hashlib.sha256(data).hexdigest() != digest:
             raise ValueError('privacy capsule bytes differ from their trusted anchor')
         plain = self._cipher.decrypt(data, aad=self._aad)

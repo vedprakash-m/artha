@@ -18,6 +18,7 @@ from typing import Any, BinaryIO, TypeGuard, cast
 from catchup_core.contracts import CatchupRequest, ExecutionMode
 from catchup_core.crypto import EnvelopeCipher
 from catchup_core.ledger import Ledger, PermissionDenied
+from catchup_core.renewal_runtime import prepare, resolve
 from catchup_core.scorecard import Case, score
 
 
@@ -46,7 +47,10 @@ def validate_release(request: CatchupRequest, config: Mapping[str, Any], *, view
         return
     if config.get('cutover') is not True:
         raise PermissionDenied('authoritative cutover is disabled; use --shadow')
-    _validate_release_evidence(request, config, domains=domains, hostname=hostname, cohort=cohort)
+    approved_cohort = cohort
+    if isinstance(config.get('release'), dict) and 'renewal' in config['release']:
+        approved_cohort = resolve(config, cohort or evaluation_cohort(config, domains), viewer=viewer)
+    _validate_release_evidence(request, config, domains=domains, hostname=hostname, cohort=approved_cohort)
 
 
 def _validate_release_evidence(request: CatchupRequest, config: Mapping[str, Any], *,  # noqa: PLR0912 - explicit release gates
@@ -116,12 +120,13 @@ def _validate_release_evidence(request: CatchupRequest, config: Mapping[str, Any
 
 
 def evaluation_cohort(config: Mapping[str, Any], domains: Sequence[str], *,
-                      extractor_command: str | None = None, workspace: Path | None = None) -> dict[str, str]:
+                      extractor_command: str | None = None, workspace: Path | None = None,
+                      source_root: Path | None = None) -> dict[str, str]:
     """Pin evaluation inputs independently of release approval and the cutover switch."""
     from catchup_core import CORE_CONTRACT_VERSION  # noqa: PLC0415
-    from catchup_core.runtime import _PACKS, _PROMPTS, _implementation_fingerprint  # noqa: PLC0415
-    root = Path(__file__).resolve().parents[2]
-    package = Path(__file__).parent
+    from catchup_core.runtime import _implementation_fingerprint  # noqa: PLC0415
+    root = source_root or Path(__file__).resolve().parents[2]
+    package = root / "scripts" / "catchup_core"
     def digest(value: Any) -> str:
         return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     def files(paths: Sequence[Path]) -> str:
@@ -150,8 +155,8 @@ def evaluation_cohort(config: Mapping[str, Any], domains: Sequence[str], *,
         model = digest({'provider': 'local', 'model': 'pattern-extractor',
                         'revision': files([package / 'extractor_cmd.py']), 'command': command})
     return {'implementation': _implementation_fingerprint(root),
-            'prompts': files(sorted(_PROMPTS.glob('*.md'))),
-            'packs': files([_PACKS / f'{domain}.yaml' for domain in sorted(domains)]),
+            'prompts': files(sorted((package / 'prompts').glob('*.md'))),
+            'packs': files([package / 'packs' / f'{domain}.yaml' for domain in sorted(domains)]),
             'configuration': digest({'policy': {k: v for k, v in config.items() if k not in {'release', 'cutover'}},
                                      'workspace_inputs': workspace_inputs}),
             'model': model, 'contract': CORE_CONTRACT_VERSION}
@@ -761,10 +766,13 @@ def verify_rollback(config: Mapping[str, Any], cipher: EnvelopeCipher) -> dict[s
 
 class ReleaseEvidenceGuard:
     """Cache preservation only while all approved records and trusted local file revisions remain unchanged."""
-    def __init__(self, config: Mapping[str, Any], cipher: EnvelopeCipher, cohort: Mapping[str, str] | None = None):
+    def __init__(self, config: Mapping[str, Any], cipher: EnvelopeCipher, cohort: Mapping[str, str] | None = None,
+                 *, viewer: str = "owner", runtime_inputs_checked: bool = False):
         self._config = config
         self._cipher = cipher
+        self._viewer = viewer
         self._cohort = cohort or evaluation_cohort(config, config['release']['domains'])
+        self._renewal = prepare(config, self._cohort, viewer=viewer) if runtime_inputs_checked else None
         self._verified: tuple[tuple[str, str, tuple[int, int, int, int, int]], ...] | None = None
 
     @staticmethod
@@ -796,15 +804,21 @@ class ReleaseEvidenceGuard:
             records.append((str(path.resolve()), approved_record, self._revision(path)))
         return tuple(records)
 
+    def bind_authority_connection(self, connection: sqlite3.Connection) -> None:
+        if self._renewal is not None:
+            self._renewal.connection = connection
+
     def validate(self) -> None:
+        cohort = (self._renewal.validate() if self._renewal is not None else
+                  resolve(self._config, self._cohort, viewer=self._viewer))
         release = self._config['release']
         evidence = _evidence_field(release)
         for field, label in (('stage1_clearance', 'Stage 1 clearance'), (evidence, 'release evidence')):
             data = _approved_file(release[field], label)
             if field == 'scorecard':
-                _validate_evaluation_cohort(json.loads(data), self._cohort)
+                _validate_evaluation_cohort(json.loads(data), cohort)
             elif field == 'slice_waiver':
-                _validate_slice_waiver(data, release['domains'], self._cohort)
+                _validate_slice_waiver(data, release['domains'], cohort)
         identity = self._identity(release)
         if identity != self._verified:
             manifest = verify_rollback(self._config, self._cipher)
