@@ -8370,3 +8370,15 @@ The following implemented specs are also folded here and archived with a `-2026-
   change its implementation checksum. Runtime release, resume and recovery authority
   fingerprints keep their existing byte-exact rules; this audit checksum does not
   authorize a release or reinterpret a stored receipt.
+
+
+### ST-05 recurrence evidence compatibility — 2026-11-15
+
+Both preflight entry points use the same recurrence health calculation. Numeric
+`items_surfaced` engagement metrics remain counts and never supply item IDs.
+Only explicit ID lists contribute recurrence, closure or correction evidence.
+Absent or aggregate-only history is unavailable; mixed history preserves supported
+findings while disclosing incomplete item evidence. Malformed or unreadable history
+and detector exceptions produce fixed bounded P2 failures, without payload-bearing
+exception text. These advisories do not block P0 gating. No new telemetry schema,
+State rewrite, Personal admission, migration or release activation is introduced.
