@@ -4391,3 +4391,11 @@ machine <age>; the latest Catch-up ran on another machine." Per-source "not fetc
 machine's coverage is current. The vault line additionally names plaintext copies of vaulted State ("Plaintext copies
 of vaulted state (backups or conflict copies): … Encrypt or remove them"). Preflight shows degraded handlers of held
 action types as "held, not checked" rather than a warning, because they cannot run.
+
+### Release renewal receipt — 2026-11-17
+
+`tools/release_renewal.py deliver|status` prints one compact public line:
+`main <sha> pushed | CI <state> | renewal <renewed|unchanged|held> | <stage> | <status> | <detail>`.
+Held results name a fixed reason (`verification`, `inputs`, `authority`, `evidence`, `gates`, `ci`, `budget`,
+`journal`) and never include private journal content. "unchanged" appears only when the existing approval is still
+valid. Not yet observed on a live host.

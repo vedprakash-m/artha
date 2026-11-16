@@ -3220,3 +3220,12 @@ Quality requirements added after the audit: credentials exist only in the OS cre
 holds no plaintext copy of vaulted State; session-start freshness lines never report sources fetched on another
 machine as unfetched; held action types are not reported as degraded; a change that would invalidate the signed
 release is named before commit; and extraction answers come only from the pinned extractor model.
+
+### Automatic release renewal — 2026-11-17 (engineering only)
+
+After an owner-enrolled standing delegation, a validated `main` delivery whose changes stay inside the approved
+scope may renew the release approval without a new signature: local gates, push and current CI must all pass and
+current privacy authority must still hold. Changes outside the scope, failed or stale CI, migrations, pending
+erasure and changed consent are held with a named reason. Renewal never rewrites earlier evidence, lifts existing
+holds or turns an invalid release green. Engineering is complete; native enrollment, the initial eligible scope and
+live adoption/UAT need separate owner decisions and have not been performed.

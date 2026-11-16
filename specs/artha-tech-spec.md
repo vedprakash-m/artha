@@ -8382,3 +8382,23 @@ findings while disclosing incomplete item evidence. Malformed or unreadable hist
 and detector exceptions produce fixed bounded P2 failures, without payload-bearing
 exception text. These advisories do not block P0 gating. No new telemetry schema,
 State rewrite, Personal admission, migration or release activation is introduced.
+
+### Automatic release renewal engineering — 2026-11-17
+
+Feature spec: `specs/automatic-release-renewal.md` (active until separately authorized adoption/UAT).
+Opt-in only: without a `release.renewal` pointer (`{schema: artha.release.renewal.v1, delegation: <digest>}`)
+in `config/catchup_core.yaml`, release validation is unchanged and native renewal authority is never opened.
+
+| Module | Contract |
+|---|---|
+| `renewal_inputs.py` | Strict bounded source manifest; cumulative comparison against the approved root. Unknown, protected, added, deleted or executable-mode changes are held. |
+| `renewal_ci.py` | Exact repository, commit, workflow definition, `main` push event, freshness, required jobs and latest attempt. Known prior failures stay held. |
+| `renewal_authority.py` | Native head in credential store entry `release.renewal`; fenced by `installation_fence` plus `release-renewal.lock`. Enroll, replace, revoke, task approval, activation, recovery and journal. Local storage must lie outside the checkout and synced folders. |
+| `renewal_metadata.py` | Read-only ledger/privacy metadata: schema version, pending erasure, authority host, deletion checkpoint and consent/tombstone history compared with the native capsule. Never opens Signals, Facts, State Files or provider payloads. |
+| `renewal_delivery.py` | PREPARED → LOCAL_VALIDATED → COMMITTED → PUSHED → CI_VERIFIED → ELIGIBLE → ACTIVATING → VERIFIED. One foreground delivery per installation (`release-delivery.lock`); 24h local gate receipts; 30 CI requests. A delivery that changes no runtime input never reports an all-clear when the existing approval is invalid. |
+| `renewal_runtime.py` | `resolve` maps the current cohort to the approved base cohort; `RenewalLease` rechecks native epoch and current privacy authority on each use without a source rescan. Used by `policy.validate_release` and `ReleaseEvidenceGuard`; shadow runs never read it. |
+| `renewal_entry.py`, `tools/release_renewal.py` | `proposal`, `enroll`, `replace`, `attach`, `plan`, `approve`, `deliver`, `status`, `recover`, `revoke`. Effects require `--quiescent` and isolated Python; after enrollment only the preserved evaluator copy runs delivery. |
+
+Renewal never re-signs historical observations, lifts migration/admission/recovery holds or grants waivers.
+It is cooperating-writer exclusion, not OS confinement. Open: owner decisions D1–D3 and the initial-scope
+choice, native enrollment, and live adoption/UAT.
