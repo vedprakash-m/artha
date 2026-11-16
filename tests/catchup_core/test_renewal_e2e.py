@@ -29,13 +29,29 @@ from test_renewal_authority import Keyring
 from test_renewal_workspace import git
 
 
+def _copy_listed_scripts(original: Path, root: Path) -> None:
+    # Copy only files Git would list, so gitignored local-only files (e.g. scripts/work/)
+    # never enter the synthetic release. Without .git (isolated runner copy) the tree is pre-filtered.
+    if not (original / '.git').exists():
+        shutil.copytree(original / 'scripts', root / 'scripts', ignore=shutil.ignore_patterns('__pycache__'))
+        return
+    listed = git(original, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'scripts')
+    for name in filter(None, listed.split('\0')):
+        source = original / name
+        if '__pycache__' in source.parts or not source.is_file():
+            continue
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
 def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(configured, tmp_path, monkeypatch):
     monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
     config, request, keyring, _ = configured
     root = tmp_path / 'repo'
     original = Path(__file__).parents[2]
-    shutil.copytree(original / 'scripts', root / 'scripts', ignore=shutil.ignore_patterns('__pycache__'))
+    _copy_listed_scripts(original, root)
     (root / '.github/workflows').mkdir(parents=True)
     workflow = b'name: Synthetic\non: push\njobs: {}\n'
     (root / '.github/workflows/ci.yml').write_bytes(workflow)
