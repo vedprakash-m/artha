@@ -9,17 +9,19 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-### Added — Automatic release renewal engineering, 2026-11-17
+### Added — Automatic release renewal engineering, 2026-11-16
 
 | Change | Modified files | Validation |
 |---|---|---|
 | Opt-in renewal of the release approval after a validated `main` delivery. Bounded source/CI checks, native renewal authority with journal and recovery, read-only privacy metadata, staged delivery with a public receipt, runtime lease, and an owner CLI. Without a `release.renewal` pointer, behavior is unchanged. | `scripts/catchup_core/renewal_{inputs,ci,store,custody,authority,metadata,workspace,github,runner,delivery,runtime,entry}.py`, `scripts/catchup_core/{policy,runtime,privacy_history}.py`, `tools/release_renewal.py`, `docs/spec-manifest.json`, `tests/catchup_core/test_renewal_*.py` | 280 renewal tests cover AR-01..AR-26, including real-process concurrency. Core coverage suite 5,295 passed (88.50%; changed core lines 96%). Security harness 1,717 passed (87.57%). Mypy, Ruff, import, PII and validate gates passed. |
 | Hold one foreground delivery per installation so a concurrent second delivery cannot overwrite a pushed receipt (AR-10). | `scripts/catchup_core/renewal_delivery.py` | AR-10 real-process test failed before the fix and passes after it. |
+| Allow a task-only delegation (empty `routine` list) for the owner-chosen path A: routine delivery holds every change; exact `plan`/`approve` candidates still deliver. | `scripts/catchup_core/renewal_authority.py`, `tests/catchup_core/test_renewal_authority.py` | New test failed before the change; isolated renewal selection 280 passed. |
 
 The full public suite passed 11,468 cases; its failures came from separate uncommitted career work, or were
-cleared by regenerating the capability register. Native enrollment, the initial eligible scope (owner decisions
-D1–D3) and live adoption/UAT have not been performed, so automatic renewal is not yet available. The feature spec
-stays active until they are.
+cleared by regenerating the capability register. Owner decisions recorded 2026-11-16: first delivery uses exact
+task-approved candidates (path A), D1 accepted, D2 adopted. Re-signing the release, D3 enrollment approval, native
+enrollment and live adoption/UAT have not been performed, so automatic renewal is not yet available. The feature
+spec stays active until they are.
 
 ### Validated — Combined main candidate, 2026-11-15
 

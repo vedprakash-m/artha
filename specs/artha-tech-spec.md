@@ -8400,5 +8400,6 @@ in `config/catchup_core.yaml`, release validation is unchanged and native renewa
 | `renewal_entry.py`, `tools/release_renewal.py` | `proposal`, `enroll`, `replace`, `attach`, `plan`, `approve`, `deliver`, `status`, `recover`, `revoke`. Effects require `--quiescent` and isolated Python; after enrollment only the preserved evaluator copy runs delivery. |
 
 Renewal never re-signs historical observations, lifts migration/admission/recovery holds or grants waivers.
-It is cooperating-writer exclusion, not OS confinement. Open: owner decisions D1–D3 and the initial-scope
-choice, native enrollment, and live adoption/UAT.
+It is cooperating-writer exclusion, not OS confinement. Decided 2026-11-16: path A (exact task-approved
+candidates via `plan`/`approve`; `proposal` routine scope may stay empty), D1 accepted, D2 adopted. Open: re-signed
+release for the current cohort, D3 approval of a concrete `proposal` digest, native enrollment, live adoption/UAT.

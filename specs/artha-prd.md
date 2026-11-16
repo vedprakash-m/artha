@@ -3227,5 +3227,8 @@ After an owner-enrolled standing delegation, a validated `main` delivery whose c
 scope may renew the release approval without a new signature: local gates, push and current CI must all pass and
 current privacy authority must still hold. Changes outside the scope, failed or stale CI, migrations, pending
 erasure and changed consent are held with a named reason. Renewal never rewrites earlier evidence, lifts existing
-holds or turns an invalid release green. Engineering is complete; native enrollment, the initial eligible scope and
-live adoption/UAT need separate owner decisions and have not been performed.
+holds or turns an invalid release green. Engineering is complete. On 2026-11-16 the owner chose the narrower first
+delivery (exact task-approved candidates, amending V1's initially enrolled routine component), accepted possible
+Catch-up interruption during mutable-checkout delivery and adopted the versioned renewal contract. Re-signing the
+release for the current cohort, approval of a concrete enrollment proposal, native enrollment and live adoption/UAT
+have not been performed.
