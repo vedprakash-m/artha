@@ -141,7 +141,7 @@ class Authority:
                 or not is_digest(policy['context']) or not isinstance(policy['protected'], list)
                 or not isinstance(policy['dependencies'], dict) or not policy['dependencies']
                 or not isinstance(policy['gates'], list)
-                or not isinstance(policy['routine'], list) or not policy['routine']
+                or not isinstance(policy['routine'], list)
                 or not isinstance(policy['evaluator'], dict) or not policy['evaluator']):
             raise RenewalError('release delegation contract is invalid')
         source = SourceManifest.parse(encoded(policy['base_source']))

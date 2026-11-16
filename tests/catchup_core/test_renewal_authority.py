@@ -141,7 +141,22 @@ def test_AR13_invalid_times_refuse(value):
         _time(value)
 
 
-@pytest.mark.parametrize('field,value', [('routine', []), ('routine', ['unknown.py']),
+def test_AR16_task_only_delegation_holds_routine_and_accepts_exact_task(tmp_path, world):
+    _, delegation, _ = world
+    local = tmp_path / 'task-only'
+    authority = Authority(local, BINDING, credentials=CredentialStore(backend=Keyring(), local=local),
+                          now=lambda: NOW, checkout=tmp_path / 'repo')
+    policy = {**delegation, 'routine': []}
+    authority.enroll(policy, expected_digest=digest(policy), reviewed=True, validate_base=lambda _: None,
+                     evaluator=EVALUATOR)
+    with pytest.raises(RenewalError):
+        authority.routine(target())
+    approval = approve(authority)
+    authority.activate(approval, {'commit': 'e' * 40, 'tree': 'c' * 40}, verify=lambda *_: None)
+    assert authority.validate(target(), validate_base=lambda _: None)['approval'] == approval
+
+
+@pytest.mark.parametrize('field,value', [('routine', ['unknown.py']),
     ('routine', ['scripts/policy.py']), ('protected', ['unknown.py']), ('protected', [3]),
     ('dependencies', {'x': []}), ('dependencies', {'x': [3]}), ('gates', []), ('gates', [{}]),
     ('expires_at', 'invalid'), ('evaluator', {'scripts/policy.py': 'f' * 64})])
