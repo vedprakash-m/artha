@@ -67,7 +67,8 @@
         "tests/catchup_core/test_actions.py",
         "tests/catchup_core/test_action_evidence_preconditions.py",
         "tests/catchup_core/test_action_mapping.py",
-        "tests/unit/test_action_hardening.py",
+        "tests/unit/test_action_queue.py",
+        "tests/unit/test_action_executor.py",
         "tests/unit/test_reminder_reconcile.py",
         "tests/unit/test_action_queue_durability.py",
         "tests/unit/test_action_quarantine.py",
@@ -243,8 +244,7 @@
       "tests": [
         "tests/catchup_core/test_domain_pack.py",
         "tests/catchup_core/test_composite_pack.py",
-        "tests/catchup_core/test_domain_pack_contracts.py",
-        "tests/catchup_core/test_domain_pack_additional.py"
+        "tests/catchup_core/test_domain_pack_contracts.py"
       ]
     },
     "RA-15.AC1": {
@@ -721,7 +721,7 @@
     },
     "RA-14.AC1.core-neutrality": {
       "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_core_modules_when_scanned_then_no_new_module_names_a_domain"
+      "fixture": "tests/catchup_core/test_domain_pack.py::test_given_the_core_modules_when_scanned_then_no_new_module_names_a_domain"
     },
     "RA-14.AC1.deny-beats-allow": {
       "evidence_type": "synthetic",
@@ -729,15 +729,15 @@
     },
     "RA-14.AC1.second-domain-composite": {
       "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_vehicle_pack_composed_with_another_then_both_domains_stay_separate"
+      "fixture": "tests/catchup_core/test_domain_pack.py::test_given_the_vehicle_pack_composed_with_another_then_both_domains_stay_separate"
     },
     "RA-14.AC1.second-domain-loads": {
       "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_the_vehicle_pack_when_loaded_then_it_is_strict_and_declares_what_it_lacks"
+      "fixture": "tests/catchup_core/test_domain_pack.py::test_given_the_vehicle_pack_when_loaded_then_it_is_strict_and_declares_what_it_lacks"
     },
     "RA-14.AC1.second-domain-triage": {
       "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_domain_pack_additional.py::test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts_without_vehicle_code"
+      "fixture": "tests/catchup_core/test_domain_pack.py::test_given_a_vehicle_registration_due_soon_when_triaged_then_the_core_alerts_without_vehicle_code"
     },
     "RA-14.AC1.source-freshness": {
       "evidence_type": "synthetic",
@@ -969,7 +969,7 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "03bdae4c0dfb7b84bedf744874ab6212a2552d1b955e3b2ca8e2609744bcfc8b",
+  "implementation_sha256": "f6eb621e6c331d9415aa6a46afc54f9695a1312be406d91f9c29ce5733203111",
   "spec": "specs/re-artha.md",
   "spec_sha256": "51af4a54b9fc8ad039b5db9d1cfb9502876aac5fb4e672492b75ac7055c7597b",
   "spec_version": "0.8.0"
