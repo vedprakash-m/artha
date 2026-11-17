@@ -83,7 +83,7 @@ def test_generated_commands_start_real_interpreter_with_unicode_stdin_and_space_
     argv = [executable, '-NoProfile', '-NonInteractive', '-Command', command] if shell == 'pwsh' else [executable, '-c', command]
     payload = {'toolName': 'read_file', 'toolArgs': {'filePath': 'synthetic-例.txt'}}
     done = subprocess.run(argv, cwd=root, input=json.dumps(payload, ensure_ascii=False), text=True, encoding='utf-8',
-        capture_output=True, timeout=15, env={
+        capture_output=True, timeout=60, env={
             **os.environ, 'HOME': str(home), 'CLAUDE_PROJECT_DIR': str(root), 'PYTHONUTF8': '0'})
     assert done.returncode == 0, done.stderr
     output = json.loads(done.stdout)

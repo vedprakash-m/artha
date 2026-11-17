@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Hook-portability pwsh timeout under coverage, 2026-11-17
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Hosted run `44183066899` on `5d3b32f` failed only the Linux coverage-harness job. The pwsh hook-portability test took 15.12 s against its 15 s subprocess timeout, because pwsh starts slowly on a loaded runner. The subprocess timeout is now 60 s. | `tests/unit/test_hook_portability.py` | Ran the test locally. |
+
 ### Fixed — Windows quarantine scale-test timeout, 2026-11-17
 
 | Change | Modified files | Validation |
