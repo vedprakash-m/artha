@@ -492,6 +492,87 @@ def normalize_coverage_xml(report: Path, checkout: Path, origin: Path) -> int:
     return len(replacements)
 
 
+_LOCAL_WORK_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".sql"}
+
+
+def _copy_local_work_overlay(root: Path, dest: Path) -> int:
+    """Copy local-only Work scripts and tests into an isolated disposable workspace."""
+    copied = 0
+    for rel_dir in ("scripts", "tests/lib", "tests/work"):
+        base = root / rel_dir
+        if not base.is_dir() or base.is_symlink():
+            continue
+        for src in sorted(base.rglob("*")):
+            if src.is_symlink() or not src.is_file():
+                continue
+            if any(part in {"__pycache__", ".pytest_cache"} for part in src.parts):
+                continue
+            if src.suffix.lower() not in _LOCAL_WORK_SUFFIXES:
+                continue
+            rel = src.relative_to(root)
+            if rel.as_posix() == "tests/work/_pytest_results.txt":
+                continue
+            target = dest / rel
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+            copied += 1
+    return copied
+
+
+def _strip_collection_noise(args: list[str]) -> list[str]:
+    """Keep target paths and selection/split flags when exporting node IDs."""
+    out: list[str] = []
+    skip_next = False
+    value_flags = {"-n", "--numprocesses", "--cov", "--cov-report", "--cov-config",
+                   "--cov-fail-under", "--tb", "--durations", "--maxfail", "-o"}
+    for idx, arg in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"-q", "--quiet", "-v", "--verbose", "--cov-branch", "--cov-append"}:
+            continue
+        if arg in value_flags:
+            skip_next = True
+            continue
+        if any(arg.startswith(p) for p in ("--cov=", "--cov-report=", "--cov-config=",
+                                           "--cov-fail-under=", "--tb=", "--durations=",
+                                           "-n", "--numprocesses=")):
+            continue
+        out.append(arg)
+    return out
+
+
+def _export_nodeids(dest: Path, env: dict[str, str], args: list[str], out_path: Path) -> None:
+    """Record selected test node IDs from the isolated workspace before cleanup."""
+    collect_args = _strip_collection_noise(args)
+    res = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only", "-q", *collect_args],
+        cwd=str(dest), env=env, capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    nodeids = [
+        line.strip() for line in res.stdout.splitlines()
+        if "::" in line and not line.lstrip().startswith(("[", "=", "-", "<"))
+    ]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text("\n".join(nodeids) + ("\n" if nodeids else ""), encoding="utf-8")
+
+
+def _export_coverage(dest: Path, env: dict[str, str], out_path: Path) -> None:
+    """Combine any shard .coverage.* files inside ``dest`` and copy out before cleanup."""
+    cov_file = dest / ".coverage"
+    if not cov_file.is_file() or list(dest.glob(".coverage.*")):
+        subprocess.run(
+            [sys.executable, "-m", "coverage", "combine", "--keep"],
+            cwd=str(dest), env=env, check=False, capture_output=True,
+        )
+    if not cov_file.is_file():
+        raise FileNotFoundError(f"coverage data file was not produced in {dest}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(cov_file, out_path)
+
+
 def _xml_reports(args: list[str], checkout: Path) -> list[Path]:
     reports = []
     for index, arg in enumerate(args):
@@ -516,6 +597,9 @@ def main(argv: list[str]) -> int:
         print("--private-work and --synthetic-only cannot be combined", file=sys.stderr)
         return 2
     if "--private-work" in argv:
+        if "--local-work" in argv:
+            print("--private-work and --local-work cannot be combined", file=sys.stderr)
+            return 2
         if len(argv) < 3 or argv[:2] != ["--private-work", "--evidence"]:
             print("usage: --private-work --evidence ABSOLUTE_NEW_JSON [--diagnose] [reviewed pytest args]",
                   file=sys.stderr)
@@ -527,22 +611,68 @@ def main(argv: list[str]) -> int:
             return verify_private_work(root, Path(argv[2]),
                                        [arg for arg in argv[3:] if arg != "--diagnose"], diagnose=True)
         return verify_private_work(root, Path(argv[2]), argv[3:])
-    if argv.count("--synthetic-only") > 1:
-        print("usage: [--synthetic-only] [pytest args...]", file=sys.stderr)
-        return 2
-    synthetic_only = "--synthetic-only" in argv
-    args = [arg for arg in argv if arg != "--synthetic-only"]
+
+    synthetic_only = False
+    local_work = False
+    export_cov: Path | None = None
+    export_nodes: Path | None = None
+    args: list[str] = []
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--synthetic-only":
+            if synthetic_only or local_work:
+                print("usage: [--synthetic-only] [pytest args...]", file=sys.stderr)
+                return 2
+            synthetic_only = True
+        elif arg == "--local-work":
+            if local_work or synthetic_only or "--evidence" in argv:
+                print("--local-work cannot be combined with --synthetic-only or --evidence", file=sys.stderr)
+                return 2
+            local_work = True
+        elif arg == "--export-coverage":
+            if idx + 1 >= len(argv):
+                print("--export-coverage requires a path", file=sys.stderr)
+                return 2
+            export_cov = Path(argv[idx + 1]).resolve()
+            idx += 1
+        elif arg == "--export-nodeids":
+            if idx + 1 >= len(argv):
+                print("--export-nodeids requires a path", file=sys.stderr)
+                return 2
+            export_nodes = Path(argv[idx + 1]).resolve()
+            idx += 1
+        else:
+            args = argv[idx:]
+            break
+        idx += 1
+
+    if local_work:
+        if os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"} or os.environ.get("GITHUB_ACTIONS"):
+            print("ERROR: --local-work is local-only and refuses CI environments", file=sys.stderr)
+            return 2
+        if not (root / "tests" / "work").is_dir():
+            print("ERROR: tests/work/ is not present on this machine", file=sys.stderr)
+            return 2
+
     workspace = Path(tempfile.mkdtemp(prefix="artha-ws-"))
     dest = workspace / "checkout"
     try:
         copied = build_workspace(root, dest, synthetic_only=synthetic_only)
+        if local_work:
+            copied += _copy_local_work_overlay(root, dest)
         (dest / "state" / "career").mkdir(parents=True, exist_ok=True)
-        mode = " synthetic-only" if synthetic_only else ""
+        mode = " local-work" if local_work else (" synthetic-only" if synthetic_only else "")
         print(f"isolated{mode} workspace: {dest} ({copied} files)", file=sys.stderr)
-        args = args or ["tests", "-q", "--tb=short"]
+        if not args:
+            args = ["tests/work", "tests/lib", "-n", "auto", "-q", "--tb=short"] if local_work else [
+                "tests", "-q", "--tb=short"
+            ]
         env = _test_env(workspace)
         reports = _xml_reports(args, dest)
         before = {path: path.stat() if path.exists() else None for path in reports}
+        if export_nodes is not None:
+            _export_nodeids(dest, env, args, export_nodes)
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
             cwd=str(dest), env=env,
@@ -550,6 +680,8 @@ def main(argv: list[str]) -> int:
         for report in reports:
             if report.exists() and report.stat() != before[report]:
                 normalize_coverage_xml(report, dest, root)
+        if export_cov is not None:
+            _export_coverage(dest, env, export_cov)
         return result.returncode
     finally:
         _remove_workspace(workspace)

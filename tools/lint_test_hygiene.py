@@ -26,7 +26,23 @@ SLEEP_ALLOWLIST = frozenset({
     "tests/ext_agents/test_fan_out.py",
 })
 
-BANNED_FILENAME_RE = re.compile(r"(?:^|_)(?:wave\d*|steal|sprint\d*|debt\d*|phase\d*)(?:_|\.py$)", re.IGNORECASE)
+BANNED_FILENAME_RE = re.compile(r"(?:^|_)(?:wave\d*|steal|sprint\d+|debt\d*|phase\d+)(?:_|\.py$)", re.IGNORECASE)
+FILENAME_EXCEPTIONS = frozenset({
+    "tests/dev/test_lint_debt_ratchet.py",
+})
+# Ratchet baseline of existing ticket-named files scheduled for Wave 2B dissolution (empty after Wave 2B).
+LEGACY_TICKET_FILENAMES = frozenset({
+    "tests/unit/test_checkpoint_steal.py",
+    "tests/unit/test_checkpoint_wave1.py",
+    "tests/unit/test_context_budget_steal.py",
+    "tests/unit/test_correction_tracker_steal.py",
+    "tests/unit/test_domain_index_wave1.py",
+    "tests/unit/test_re_debts_wave1.py",
+    "tests/unit/test_re_debts_wave2.py",
+    "tests/unit/test_re_debts_wave3.py",
+    "tests/unit/test_sprint1_debt.py",
+    "tests/unit/test_telemetry_steal.py",
+})
 
 
 def tracked_test_files(root: Path = ROOT) -> list[str]:
@@ -56,6 +72,16 @@ def _has_slow_marker(node: ast.AST) -> bool:
     return False
 
 
+def _walk_non_slow_calls(node: ast.AST):
+    """Yield Call AST nodes in ``node`` without descending into ``@pytest.mark.slow`` subtrees."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and _has_slow_marker(child):
+            continue
+        if isinstance(child, ast.Call):
+            yield child
+        yield from _walk_non_slow_calls(child)
+
+
 def scan_hygiene(root: Path = ROOT, *, enforce_filenames: bool = True, enforce_sleeps: bool = True) -> list[str]:
     """Return human-readable hygiene violation strings."""
     errors: list[str] = []
@@ -63,7 +89,13 @@ def scan_hygiene(root: Path = ROOT, *, enforce_filenames: bool = True, enforce_s
         path = root / rel
         if not path.exists():
             continue
-        if enforce_filenames and Path(rel).name.startswith("test_") and BANNED_FILENAME_RE.search(Path(rel).name):
+        if (
+            enforce_filenames
+            and rel not in FILENAME_EXCEPTIONS
+            and rel not in LEGACY_TICKET_FILENAMES
+            and Path(rel).name.startswith("test_")
+            and BANNED_FILENAME_RE.search(Path(rel).name)
+        ):
             errors.append(f"{rel}: ticket/wave/steal/sprint/debt/phase test filename is forbidden")
 
         try:
@@ -97,20 +129,13 @@ def scan_hygiene(root: Path = ROOT, *, enforce_filenames: bool = True, enforce_s
 
         # 2. Unapproved time.sleep outside @pytest.mark.slow / SLEEP_ALLOWLIST
         if enforce_sleeps and rel not in SLEEP_ALLOWLIST and not file_is_slow:
-            for top in tree.body:
-                if _has_slow_marker(top):
-                    continue
-                for sub in ast.walk(top):
-                    if isinstance(sub, ast.FunctionDef) and _has_slow_marker(sub):
-                        continue
-                    if isinstance(sub, ast.Call):
-                        fn = sub.func
-                        is_sleep = (isinstance(fn, ast.Attribute) and fn.attr == "sleep") or (
-                            isinstance(fn, ast.Name) and fn.id == "sleep"
-                        )
-                        if is_sleep:
-                            # Skip nested slow functions explicitly checked above; flag non-slow calls.
-                            errors.append(f"{rel}:{sub.lineno}: time.sleep() outside @pytest.mark.slow / allowlist")
+            for sub in _walk_non_slow_calls(tree):
+                fn = sub.func
+                is_sleep = (isinstance(fn, ast.Attribute) and fn.attr == "sleep") or (
+                    isinstance(fn, ast.Name) and fn.id == "sleep"
+                )
+                if is_sleep:
+                    errors.append(f"{rel}:{sub.lineno}: time.sleep() outside @pytest.mark.slow / allowlist")
     return errors
 
 

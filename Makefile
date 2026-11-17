@@ -15,17 +15,26 @@ export DEVELOPER_DIR ?= /Library/Developer/CommandLineTools
 endif
 endif
 
-.PHONY: test lint ruff import-check lint-state-writes pii-scan validate preflight generate clean check help start install-fonts install-playwright coverage diff-coverage mypy privacy-history hooks
+.PHONY: test test-fast test-work test-noncore static lint ruff import-check lint-state-writes hygiene pii-scan validate preflight generate clean check help start install-fonts install-playwright coverage diff-coverage diff-coverage-check mypy privacy-history hooks
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 start: ## First-time setup — clone → demo briefing in 60 seconds
 	@bash setup.sh
 
-test: ## Run full test suite in an isolated copy of the checkout (never against live data)
-	$(PYTHON) tools/run_tests_isolated.py tests -q --tb=short --ignore=tests/work
+test: ## Run full tracked test suite in an isolated copy of the checkout
+	$(PYTHON) tools/run_tests_isolated.py tests -n auto -q --tb=short --ignore=tests/work
+
+test-fast: ## Fast local developer loop (-m "not slow" -n auto, <=60s target)
+	$(PYTHON) tools/run_tests_isolated.py tests -m "not slow" -n auto -q --tb=short --ignore=tests/work
+
+test-noncore: ## Run all tracked non-catchup_core tests in an isolated checkout
+	$(PYTHON) tools/run_tests_isolated.py tests --ignore=tests/catchup_core --ignore=tests/work -n auto -q --tb=short
+
+test-work: ## Local-only: run private tests/work + tests/lib in an isolated overlay (refuses CI)
+	$(PYTHON) tools/run_tests_isolated.py --local-work tests/work tests/lib -n auto -q --tb=short
 
 lint: ## Syntax-check all Python files (fails on any error)
 	@$(PYTHON) -m compileall -q -x '(__pycache__|\.archive|\.venv)' scripts tests tools artha.py
@@ -41,6 +50,9 @@ ruff: ## Run ruff linter (fails on violations or when ruff is missing)
 
 import-check: ## Catch 'from scripts.X' imports inside scripts/ (dual-import bug); parse errors fail
 	@$(PYTHON) tools/import_check.py scripts
+
+hygiene: ## AST checks for cross-test imports, non-slow sleeps, and banned ticket filenames
+	@$(PYTHON) tools/lint_test_hygiene.py
 
 pii-scan: ## Privacy gate: tracked + untracked nonignored working files and unpushed commits
 	@$(PYTHON) .githooks/privacy_scan.py --tracked
@@ -83,9 +95,11 @@ COV_MIN ?= 85
 COV_BRANCH_MIN ?= 85
 DIFF_BASE ?= origin/main
 DIFF_RANGE_NOTATION ?= ...
+# Extra pytest arguments, e.g. PYTEST_ARGS="-n auto" (CI runs the coverage gates under pytest-xdist).
+PYTEST_ARGS ?=
 
 coverage: ## Line+branch coverage floor on the new core package (fails below COV_MIN); isolated workspace
-	@$(PYTHON) tools/run_tests_isolated.py $(CORE_TESTS) -q -p no:cacheprovider --cov=$(CORE_PKG) --cov-branch \
+	@$(PYTHON) tools/run_tests_isolated.py $(CORE_TESTS) -q -p no:cacheprovider $(PYTEST_ARGS) --cov=$(CORE_PKG) --cov-branch \
 		--cov-report=term-missing --cov-report=xml:"$(abspath coverage.xml)" --cov-fail-under=$(COV_MIN)
 	@$(PYTHON) $(MAKE_DIR)tools/check_core_coverage.py coverage.xml --minimum=$(COV_MIN) --branch-minimum=$(COV_BRANCH_MIN)
 
@@ -106,7 +120,7 @@ HARNESS_COV_CONFIG = tools/coverage-posix.toml
 endif
 
 coverage-harness: ## Combined line+branch coverage floor on the hook and policy modules
-	@$(PYTHON) tools/run_tests_isolated.py $(HARNESS_RUN_TESTS) -q -p no:cacheprovider \
+	@$(PYTHON) tools/run_tests_isolated.py $(HARNESS_RUN_TESTS) -q -p no:cacheprovider $(PYTEST_ARGS) \
 		$(foreach m,$(HARNESS_RUN_MODULES),--cov=$(m)) --cov-config=$(HARNESS_COV_CONFIG) --cov-branch --cov-fail-under=$(COV_MIN) \
 		--cov-report=term-missing --cov-report=xml:"$(abspath coverage-harness.xml)"
 
@@ -122,16 +136,58 @@ diff-coverage-ready:
 		exit 1; \
 	fi
 
-diff-coverage: diff-coverage-ready coverage ## Changed-line coverage; refuses untracked core files (DIFF_BASE defaults to origin/main)
+CORE_PER_FILE_INCLUDES = \
+	--per-file-include='scripts/catchup_core/actions.py' \
+	--per-file-include='scripts/catchup_core/authority_transfer.py' \
+	--per-file-include='scripts/catchup_core/backup.py' \
+	--per-file-include='scripts/catchup_core/checkpoint*.py' \
+	--per-file-include='scripts/catchup_core/consent_cli.py' \
+	--per-file-include='scripts/catchup_core/crypto.py' \
+	--per-file-include='scripts/catchup_core/fact_access.py' \
+	--per-file-include='scripts/catchup_core/heldout.py' \
+	--per-file-include='scripts/catchup_core/ledger.py' \
+	--per-file-include='scripts/catchup_core/policy.py' \
+	--per-file-include='scripts/catchup_core/privacy_history.py' \
+	--per-file-include='scripts/catchup_core/quarantine*.py' \
+	--per-file-include='scripts/catchup_core/recovery*.py' \
+	--per-file-include='scripts/catchup_core/renewal*.py' \
+	--per-file-include='scripts/catchup_core/rule_of_two.py' \
+	--per-file-include='scripts/catchup_core/session_lock.py' \
+	--per-file-include='scripts/catchup_core/storage_adoption.py' \
+	--per-file-include='scripts/catchup_core/vault.py' \
+	--per-file-include='scripts/catchup_core/work_cache.py' \
+	--per-file-include='scripts/catchup_core/work_privacy.py'
+
+define DIFF_COVERAGE_CHECK
 	@$(PYTHON) "$(MAKE_DIR)tools/check_diff_coverage.py" coverage.xml --compare-branch="$(DIFF_BASE)" \
 		--diff-range-notation="$(DIFF_RANGE_NOTATION)" \
-		--include='scripts/catchup_core/*' --fail-under=$(COV_MIN)
+		--include='scripts/catchup_core/*' --fail-under=$(COV_MIN) \
+		--per-file-fail-under=95 $(CORE_PER_FILE_INCLUDES)
+endef
+
+diff-coverage: diff-coverage-ready coverage ## Changed-line coverage; refuses untracked core files (DIFF_BASE defaults to origin/main)
+	$(DIFF_COVERAGE_CHECK)
+
+diff-coverage-check: diff-coverage-ready ## diff-coverage against an existing coverage.xml (CI runs coverage once, then this)
+	$(DIFF_COVERAGE_CHECK)
 
 mypy: ## Strict type check of the new core package
 	@$(PYTHON) -m mypy --explicit-package-bases $(CORE_PKG)
 	@$(PYTHON) -m mypy --strict --follow-imports=silent --explicit-package-bases scripts/lib/credentials.py scripts/lib/credential_migration.py scripts/lib/action_credentials.py
 
-check: lint ruff import-check lint-state-writes test coverage diff-coverage coverage-harness mypy pii-scan validate ## Full CI check
+static: lint ruff import-check lint-state-writes hygiene validate mypy ## Fast static quality & hygiene gates
+	@$(PYTHON) tools/gen_capability_register.py --check
+	@$(PYTHON) scripts/tools/prompt_linter.py
+	@$(PYTHON) tools/test_ownership.py --check
+	@echo "✓ Static gates passed"
+
+check: ## Full local CI-parity check (single core coverage pass + non-core tests + static + pii-scan)
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) static
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) coverage PYTEST_ARGS="-n auto"
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) diff-coverage-check
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) coverage-harness PYTEST_ARGS="-n auto"
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) test-noncore
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) pii-scan
 	@echo "✓ All checks passed"
 
 install-fonts: ## Download Space Grotesk + DM Sans woff2 fonts for CV PDF generation

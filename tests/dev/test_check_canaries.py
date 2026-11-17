@@ -272,7 +272,7 @@ def test_first_main_push_changed_line_gate_uses_empty_tree(tmp_path, hits):
         f'<line number="1" hits="{hits}"/>'
         '</lines></class></classes></package></packages></coverage>')
     workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
-    step = next(step for step in workflow["jobs"]["core-quality"]["steps"]
+    step = next(step for step in workflow["jobs"]["tests-ubuntu-312"]["steps"]
                 if step.get("name", "").startswith("Changed-line coverage"))
     script = step["run"].replace("make diff-coverage",
         f'make -s -f "{MAKEFILE.as_posix()}" -o coverage diff-coverage')
@@ -287,19 +287,21 @@ def test_first_main_push_changed_line_gate_uses_empty_tree(tmp_path, hits):
     assert "No lines with coverage information" not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("job", ["tests", "core-windows"])
+@pytest.mark.parametrize("job", ["tests", "tests-ubuntu-312", "core-windows"])
 def test_ci_native_encryption_jobs_install_age_before_tests(job):
     import yaml
     workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
     steps = workflow["jobs"][job]["steps"]
     test_step = next(index for index, step in enumerate(steps)
                      if any(tool in step.get("run", "") for tool in
-                            ("tools/run_tests_isolated.py", "tools/run_windows_contracts.py")))
+                            ("tools/run_tests_isolated.py", "tools/run_windows_contracts.py", "make coverage")))
     installs = [step for step in steps[:test_step] if "install" in step.get("name", "").lower()
                 and "age" in step.get("run", "")]
     if job == "core-windows":
         assert any("FiloSottile/age/releases" in step["run"] and "Get-FileHash" in step["run"]
                    and "Get-Command age, age-keygen" in step["run"] for step in installs)
+    elif job == "tests-ubuntu-312":
+        assert any("apt-get install" in step["run"] and "age" in step["run"] for step in installs)
     else:
         assert any("apt-get install" in step["run"] and "age" in step["run"]
                    and "Linux" in step.get("if", "") for step in installs)
@@ -481,3 +483,70 @@ def test_posix_harness_config_excludes_only_windows_guarded_blocks():
         r"(?ms:^    def _(?:opened|publish|physical)_native\b.*?(?=^    def |^\S|\Z))",
     }
     assert config["run"] == shared["run"]
+
+
+def test_diff_gate_per_file_95_and_fail_closed_with_sibling_match(tmp_path):
+    """Unmatched changed sibling files still fail even when another file matched; per-file 95% rejects 90%."""
+    pytest.importorskip("diff_cover")
+    core = tmp_path / "scripts/catchup_core"
+    core.mkdir(parents=True)
+    lines = "\n".join([f"V{i} = {i}" for i in range(10)]) + "\n"
+    (core / "crypto.py").write_text(lines)
+    (core / "sibling.py").write_text("S = 1\n")
+    env = _env()
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    for args in (["init", "-q", "-b", "main"], ["add", "."],
+                 ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+                 ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, env=env)
+    # 9/10 lines hit on crypto.py -> 90% (>=85% overall, <95% per-file); sibling.py changed & unmeasured
+    (core / "crypto.py").write_text("\n".join([f"V{i} = {i + 100}" for i in range(10)]) + "\n")
+    (core / "sibling.py").write_text("S = 2\n")
+    xml_lines = "".join(f'<line number="{i}" hits="{1 if i <= 9 else 0}"/>' for i in range(1, 11))
+    cov_xml = tmp_path / "coverage.xml"
+    cov_xml.write_text(
+        f'<coverage><sources><source>{core.resolve().as_posix()}</source></sources>'
+        f'<packages><package name="core"><classes><class filename="crypto.py" name="crypto"><lines>'
+        f'{xml_lines}</lines></class></classes></package></packages></coverage>'
+    )
+    tool = REPO / "tools" / "check_diff_coverage.py"
+    fail_sibling = subprocess.run(
+        [sys.executable, str(tool), str(cov_xml), "--compare-branch=origin/main",
+         "--include=scripts/catchup_core/*", "--fail-under=85"],
+        cwd=tmp_path, capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert fail_sibling.returncode != 0
+    assert "sibling.py" in fail_sibling.stderr
+
+    # Clean sibling back so only crypto.py (90%) differs: passes overall 85%, fails per-file 95%
+    (core / "sibling.py").write_text("S = 1\n")
+    pass_85 = subprocess.run(
+        [sys.executable, str(tool), str(cov_xml), "--compare-branch=origin/main",
+         "--include=scripts/catchup_core/*", "--fail-under=85"],
+        cwd=tmp_path, capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert pass_85.returncode == 0, pass_85.stderr
+    fail_95 = subprocess.run(
+        [sys.executable, str(tool), str(cov_xml), "--compare-branch=origin/main",
+         "--include=scripts/catchup_core/*", "--fail-under=85",
+         "--per-file-include=scripts/catchup_core/crypto.py", "--per-file-fail-under=95"],
+        cwd=tmp_path, capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert fail_95.returncode != 0
+    assert "90.00%" in fail_95.stderr
+
+
+def test_hygiene_blocks_new_ticket_filenames_and_non_slow_sleeps(tmp_path):
+    """AST hygiene rejects newly created wave/steal filenames and unapproved sleeps."""
+    spec = importlib.util.spec_from_file_location("lint_hygiene", REPO / "tools" / "lint_test_hygiene.py")
+    hygiene = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hygiene)
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_new_wave2.py").write_text("def test_x():\n    assert True\n")
+    (tests_dir / "test_good.py").write_text("import time\ndef test_sleep():\n    time.sleep(0.1)\n")
+    errors = hygiene.scan_hygiene(tmp_path)
+    assert any("test_new_wave2.py" in err and "forbidden" in err for err in errors)
+    assert any("test_good.py" in err and "time.sleep()" in err for err in errors)

@@ -6,7 +6,6 @@ import pytest
 
 from core_helpers import (
     RENEWAL_NOW as NOW,
-    RenewalWorkspace as Workspace,
     build_renewal_authority_world,
     renewal_approve as approve,
     renewal_target as target,

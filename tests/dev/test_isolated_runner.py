@@ -499,3 +499,39 @@ def test_inplace_allowed_for_hermetic_dirs_or_clean_checkout_or_marker(tmp_path)
     (marked / "state" / "finance.md").write_text("x")
     (marked / runner.MARKER).write_text("")
     assert iso.inplace_run_allowed(marked, ["tests/unit/test_x.py"], environ={})
+
+
+def test_local_work_refuses_ci_and_conflicting_flags(monkeypatch, capsys):
+    monkeypatch.setenv("CI", "true")
+    assert runner.main(["--local-work"]) == 2
+    assert "local-only" in capsys.readouterr().err
+    monkeypatch.delenv("CI", raising=False)
+    assert runner.main(["--local-work", "--private-work"]) == 2
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_merge_windows_coverage_verifies_shards_and_normalizes_paths(tmp_path):
+    import sqlite3
+
+    merger = _load("merge_windows_coverage", REPO / "tools" / "merge_windows_coverage.py")
+    db = tmp_path / ".coverage.shard1"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE file (id integer primary key, path text, unique (path))")
+        conn.execute(
+            "INSERT INTO file VALUES (1, ?)",
+            (r"C:\Users\runneradmin\AppData\Local\Temp\artha-ws-abc\checkout\scripts\catchup_core\storage_adoption.py",),
+        )
+    assert merger.normalize_coverage_db(db, REPO) == 1
+    with sqlite3.connect(db) as conn:
+        row = conn.execute("SELECT path FROM file WHERE id = 1").fetchone()[0]
+    assert row == str((REPO / "scripts" / "catchup_core" / "storage_adoption.py").resolve())
+
+    manifest = {"commit": "abc", "run_id": "10", "run_attempt": "1", "shard": 1}
+    manifest2 = {"commit": "abc", "run_id": "10", "run_attempt": "1", "shard": 2}
+    merger.verify_shards([manifest, manifest2], [{"t1"}, {"t2"}], {"t1", "t2"}, commit="abc", run_id="10", run_attempt="1")
+    with pytest.raises(ValueError, match="zero tests"):
+        merger.verify_shards([manifest, manifest2], [{"t1"}, set()], {"t1", "t2"}, commit="abc", run_id="10", run_attempt="1")
+    with pytest.raises(ValueError, match="overlap"):
+        merger.verify_shards([manifest, manifest2], [{"t1"}, {"t1", "t2"}], {"t1", "t2"}, commit="abc", run_id="10", run_attempt="1")
+    with pytest.raises(ValueError, match="provenance"):
+        merger.verify_shards([manifest], [{"t1"}], {"t1"}, commit="other", run_id="10", run_attempt="1")

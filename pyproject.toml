@@ -56,13 +56,22 @@ graph = [
 ]
 all = ["artha[google,microsoft,apple,skills,channels,messaging,graph]"]
 dev = [
-    "pytest>=7.4.0",
-    "pytest-mock>=3.11.0",
-    "pytest-snapshot>=0.9.0",
-    "pytest-timeout>=2.1.0",
-    "datadiff>=2.2.0",
-    "anyio[trio]>=4.0.0",
-    "mypy>=1.10",
+    "pytest==9.0.2",
+    "pytest-mock==3.15.1",
+    "pytest-snapshot==0.9.0",
+    "pytest-timeout==2.4.0",
+    "pytest-xdist==3.8.0",
+    "pytest-cov==7.1.0",
+    "pytest-split==0.11.0",
+    "datadiff==2.2.0",
+    "anyio[trio]==4.12.1",
+    "mypy==2.4.0",
+    "diff-cover==10.6.0",
+    "ruff==0.17.5",
+]
+nightly = [
+    "mutmut==3.8.1",
+    "pytest-randomly==5.1.0",
 ]
 
 [project.scripts]
@@ -101,13 +110,24 @@ packages = [
 target-version = "py311"
 line-length = 120
 src = ["scripts", "tests"]
+extend-exclude = ["tests/work"]
 
 [tool.ruff.lint]
 select = [
     "F811",   # redefinition of unused name (caught Bug 2: duplicate health_check)
+    "F401",   # unused imports
+    "F841",   # unused local variables
+    "PT011",  # pytest.raises(Exception/ValueError/OSError) too broad without match=
+    "PT012",  # pytest.raises() block with multiple statements
+    "PT014",  # duplicate parametrize test cases
+    "PT015",  # assertion always fails (assert False)
+    "PT017",  # assert inside except block instead of pytest.raises
 ]
-# Future: add "F401" (unused import) and "F841" (unused variable) once
-# pre-existing violations are cleaned up.
+
+[tool.ruff.lint.per-file-ignores]
+"artha.py" = ["F401", "F841", "PT011", "PT012", "PT014", "PT015", "PT017"]
+"scripts/**/*.py" = ["F401", "F841", "PT011", "PT012", "PT014", "PT015", "PT017"]
+"tools/**/*.py" = ["F401", "F841", "PT011", "PT012", "PT014", "PT015", "PT017"]
 
 # ---------------------------------------------------------------------------
 # Pytest configuration
@@ -115,9 +135,12 @@ select = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state", "visuals", "work"]
+timeout = 120
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "prompt_regression: marks tests as prompt regression tests",
+    "incumbent_only: marks tests verifying incumbent compatibility",
+    "os_contract: marks tests verifying OS native filesystem/token contracts",
 ]
 
 # ---------------------------------------------------------------------------

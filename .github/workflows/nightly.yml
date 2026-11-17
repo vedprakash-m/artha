@@ -1,0 +1,144 @@
+name: Nightly Full Matrix, Order Randomization & Mutation Check
+
+# Strictly separate from ci.yml so scheduled runs never become latest in renewal_ci.py.
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-314-randomly:
+    name: Order-randomized test suite (ubuntu, 3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies (dev + nightly)
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev,nightly]"
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - name: Run full suite with run-id seeded order randomization
+        run: >-
+          python tools/run_tests_isolated.py tests --ignore=tests/work
+          -p randomly --randomly-seed=${{ github.run_id }} -n auto --tb=short --durations=25
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  windows-full-unit:
+    name: Cross-platform full suite + .test_durations refresh (windows, 3.12)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age
+        shell: pwsh
+        run: |
+          $version = 'v1.3.1'
+          $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
+          $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
+          Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
+          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+          $bin = Join-Path $env:RUNNER_TEMP 'age'
+          Add-Content -Path $env:GITHUB_PATH -Value $bin
+          $env:PATH = "$bin;$env:PATH"
+          Get-Command age, age-keygen -ErrorAction Stop
+      - name: Run full tracked Windows suite (TR-3 cross-platform verification)
+        run: python tools/run_tests_isolated.py tests --ignore=tests/work -n auto --tb=short --durations=25
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+      - name: Refresh Windows .test_durations for core-windows shards
+        run: >-
+          python tools/run_windows_contracts.py tests/catchup_core
+          tests/dev/test_windows_contract_launcher.py
+          tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py
+          tests/unit/test_action_process.py tests/unit/test_action_quarantine.py
+          tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
+          -q --tb=short --store-durations --durations-path .test_durations
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-test-durations
+          path: .test_durations
+          if-no-files-found: ignore
+          retention-days: 14
+
+  duration-ceiling:
+    name: Non-slow fast-suite duration ceiling check (ubuntu, 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - name: Verify fast suite finishes within 180s CI budget
+        run: |
+          t0=$(date +%s)
+          python tools/run_tests_isolated.py tests -m "not slow" -n auto --tb=short --ignore=tests/work
+          t1=$(date +%s)
+          elapsed=$((t1 - t0))
+          echo "Fast suite elapsed: ${elapsed}s"
+          test "$elapsed" -le 180
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  mutmut-regression:
+    name: Disposable-workspace mutation baseline check (ubuntu, 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies (dev + nightly)
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev,nightly]"
+      - name: Verify mutation runner availability in disposable clone
+        run: |
+          python -c "import mutmut; print('mutmut ready')"
+          python tools/run_tests_isolated.py tests/catchup_core/test_policy.py tests/catchup_core/test_coordinator.py tests/catchup_core/test_triage.py -q

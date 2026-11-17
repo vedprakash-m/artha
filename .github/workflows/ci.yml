@@ -2,146 +2,101 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
-  pull_request:
-    branches: ["main", "develop"]
+    branches: ["main"]
 
-# A newer push to the same ref supersedes an in-flight run; results are only meaningful for the tip.
+# Main push runs never cancel in-flight main verification runs (renewal_ci.py contract).
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-main-${{ github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
-  # ── Lint + Syntax ────────────────────────────────────────────────────────
-  lint:
-    name: Syntax check (py_compile)
+  # ── Static Quality & Hygiene Gates ──────────────────────────────────────────
+  static-gates:
+    name: Static gates (syntax, ruff, imports, hygiene, schemas, mypy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
-      - name: Syntax check all Python files
-        run: |
-          python -m compileall -q -x '(__pycache__|\.archive|\.venv)' scripts tests tools artha.py
-          echo "✓ Syntax OK"
-
-  # ── Ruff Linter ───────────────────────────────────────────────────────────
-  ruff:
-    name: Ruff lint (F811, F401, F841)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          python-version: "3.11"
-      - run: pip install ruff
-      - name: Run ruff
-        run: |
-          ruff check scripts/ tests/ tools/ --config pyproject.toml
-          ruff check scripts/catchup_core --config scripts/catchup_core/ruff.toml
-
-  # ── Import Convention ─────────────────────────────────────────────────────
-  import-check:
-    name: No dual-import patterns
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Check for 'from scripts.X' inside scripts/ (parse errors fail)
-        run: python tools/import_check.py scripts
-      - name: No new direct state writes (ratcheted baseline)
-        run: python tools/lint_state_writes.py .
-
-  # ── Test Suite ────────────────────────────────────────────────────────────
-  tests:
-    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.14"]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('scripts/requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-${{ matrix.python-version }}-
-
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
       - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Restore mypy cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-3.12-${{ hashFiles('pyproject.toml', 'scripts/**/*.py') }}
+          restore-keys: mypy-${{ runner.os }}-3.12-
+      - name: Syntax, Ruff, imports, state-writes, AST sleep/filename & schema gates
+        run: make lint ruff import-check lint-state-writes hygiene validate PYTHON=python
+      - name: Connector syntax and YAML integrity
         run: |
-          pip install --upgrade pip
-          pip install -r scripts/requirements.txt
-          pip install pytest pytest-mock pytest-cov mypy
+          set -e
+          for f in scripts/connectors/*.py; do
+            python -m py_compile "$f"
+          done
+          python -c "
+          import os, yaml
+          for path in ('config/connectors.yaml', 'config/channels.example.yaml'):
+              if os.path.exists(path):
+                  with open(path) as f:
+                      yaml.safe_load(f)
+          with open('config/actions.yaml') as f:
+              yaml.safe_load(f)
+          "
+      - name: Capability register, prompt linter & ownership gates
+        run: |
+          python tools/gen_capability_register.py --check
+          python scripts/tools/prompt_linter.py
+          python tools/test_ownership.py --check
+          python -m pytest -p no:cacheprovider tests/dev/test_ownership.py -q --tb=short
+      - name: Strict mypy and credential typing gate
+        run: |
+          make mypy PYTHON=python
+          python tools/run_tests_isolated.py tests/dev/test_credential_typing_gate.py -q --tb=short
 
+  # ── Single-Pass Core Coverage + Full Slow & Non-Core Suite (Ubuntu 3.12) ─────
+  tests-ubuntu-312:
+    name: Core coverage + slow & non-core suite (ubuntu, 3.12)
+    needs: static-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
       - name: Install age (Linux native encryption tests)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq age
           command -v age age-keygen
-
-      - name: Install age (macOS native encryption tests)
-        if: runner.os == 'macOS'
-        run: |
-          brew install age
-          command -v age age-keygen
-
       - name: Create required runtime directories
-        run: |
-          # Career Search output directories (FR-25 — not committed, created at setup)
-          mkdir -p state/career briefings/career
-          echo "✓ Runtime directories created"
-
-      - name: Debug environment
-        run: |
-          python --version
-          python -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE _t USING fts5(x)'); print('FTS5: OK')" || echo 'FTS5: NOT AVAILABLE'
-          python -c "import sqlite3; print('SQLite:', sqlite3.sqlite_version)"
-          python -c "import pydantic; print('pydantic:', pydantic.__version__)"
-
-      - name: Collect tests (diagnostic)
-        run: python -m pytest tests/ --ignore=tests/work --co -q 2>&1 || true
-        env:
-          PYTHONPATH: scripts
-          ARTHA_NO_REEXEC: "1"
-
-      - name: Run tests (isolated workspace — never against live data)
-        run: python tools/run_tests_isolated.py tests -v --tb=long --ignore=tests/work
-        env:
-          PYTHONPATH: scripts
-          ARTHA_NO_REEXEC: "1"
-
-  # ── New core: coverage floor + strict typing ──────────────────────────────
-  core-quality:
-    name: catchup_core coverage + strict mypy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r scripts/requirements.txt pytest pytest-mock pytest-cov mypy diff-cover
-      - name: Install age (in-memory vault tests run for real, not skipped)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+        run: mkdir -p state/career briefings/career
       - name: Coverage floor (>= 85% combined, line and branch)
-        run: make coverage PYTHON=python
-      - name: Changed-line coverage (>= 85%)
+        run: make coverage PYTHON=python PYTEST_ARGS="-n auto --durations=25 --tb=short"
+      - name: Changed-line coverage (>= 85% core, >= 95% per security file)
         env:
-          DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+          DIFF_BASE: ${{ github.event.before || 'origin/main' }}
         run: |
           DIFF_RANGE_NOTATION=...
           # A new branch has no base, and a force-push leaves the old tip unreachable: measure every core
@@ -151,115 +106,258 @@ jobs:
             DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
             DIFF_RANGE_NOTATION=..
           fi
-          make diff-coverage PYTHON=python DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
-      - name: Hook and policy modules coverage (>= 85% combined)
-        run: make coverage-harness PYTHON=python
-      - name: Strict mypy
-        run: make mypy PYTHON=python
+          make diff-coverage-check PYTHON=python DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
+      - name: Full non-core suite (including slow & dev tests)
+        run: >-
+          python tools/run_tests_isolated.py tests
+          --ignore=tests/catchup_core --ignore=tests/work -n auto --tb=short --durations=25
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
 
-  # ── Connector handler imports ─────────────────────────────────────────────
-  core-windows:
-    name: Catch-up Windows contracts (${{ matrix.python-version }})
-    runs-on: windows-latest
+  # ── Fast Cross-OS/Version Matrix (5 cells, -m "not slow") ───────────────────
+  tests:
+    name: pytest (${{ matrix.os }}, ${{ matrix.python-version }}, not slow)
+    needs: static-gates
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.11"
+          - os: macos-latest
+            python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.14"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -r scripts/requirements.txt pytest pytest-mock
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age (Linux native encryption tests)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          command -v age age-keygen
+      - name: Install age (macOS native encryption tests)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install age
+          command -v age age-keygen
+      - name: Create required runtime directories
+        run: mkdir -p state/career briefings/career
+      - name: Run fast test suite (isolated workspace)
+        run: python tools/run_tests_isolated.py tests -m "not slow" -n auto --tb=short --durations=25 --ignore=tests/work
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  # ── POSIX Security Harness Coverage + >=95% Per-File Diff Gate ─────────────
+  core-harness:
+    name: Hook and policy modules coverage
+    needs: static-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age (in-memory vault tests run for real, not skipped)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          command -v age age-keygen
+      - name: Hook and policy modules coverage (>= 85% combined)
+        run: make coverage-harness PYTHON=python PYTEST_ARGS="-n auto --durations=25 --tb=short"
+      - name: Changed-line harness coverage (>= 95% per file)
+        env:
+          DIFF_BASE: ${{ github.event.before || 'origin/main' }}
+        run: |
+          DIFF_RANGE_NOTATION=...
+          if [[ "$DIFF_BASE" =~ ^0+$ ]] || ! git cat-file -e "${DIFF_BASE}^{commit}" 2>/dev/null
+          then
+            DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
+            DIFF_RANGE_NOTATION=..
+          fi
+          python tools/check_diff_coverage.py coverage-harness.xml \
+            --compare-branch="$DIFF_BASE" --diff-range-notation="$DIFF_RANGE_NOTATION" \
+            --include='scripts/*' --fail-under=85 \
+            --per-file-include='scripts/*' --per-file-fail-under=95
+
+  # ── Windows Core + Native Contract Shards (3 versions x 4 shards = 12) ─────
+  core-windows:
+    name: Catch-up Windows contracts (${{ matrix.python-version }}, shard ${{ matrix.shard }})
+    needs: static-gates
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.14"]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Cache age binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\age-cache-v1.3.1
+          key: win-age-v1.3.1-c56e8ce2
       - name: Install age (Windows native encryption tests)
         shell: pwsh
         run: |
-          # Chocolatey has no `age` package; use the pinned upstream release and verify it.
-          $version = 'v1.3.1'
-          $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
-          $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
-          Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
-          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-          $bin = Join-Path $env:RUNNER_TEMP 'age'
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'age-cache-v1.3.1'
+          $bin = Join-Path $cacheDir 'age'
+          if (-not (Test-Path (Join-Path $bin 'age.exe'))) {
+            $version = 'v1.3.1'
+            $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
+            $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
+            if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
+            New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+            Expand-Archive -Path $zip -DestinationPath $cacheDir -Force
+          }
           Add-Content -Path $env:GITHUB_PATH -Value $bin
           $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
-      - name: Observe external metadata changes on fresh files (diagnostic only)
-        continue-on-error: true  # evidence for the unexplained guard refusals; never gates the contracts
-        run: python tools/diagnose_windows_metadata.py --dir "$env:RUNNER_TEMP" --files 50 --seconds 3
+      - name: Isolated core and native credential/action contracts (Python 3.12 coverage export)
+        if: matrix.python-version == '3.12'
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'win-cov'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          $cov = Join-Path $out "shard-${{ matrix.shard }}.coverage"
+          $nodes = Join-Path $out "shard-${{ matrix.shard }}.nodeids"
+          python tools/run_windows_contracts.py `
+            --export-coverage $cov --export-nodeids $nodes `
+            tests/catchup_core tests/dev/test_windows_contract_launcher.py `
+            tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py `
+            tests/unit/test_action_process.py tests/unit/test_action_quarantine.py `
+            tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py `
+            -q --tb=short --durations=25 -n auto --cov=scripts/catchup_core --cov-branch `
+            --splitting-algorithm duration_based_chunks --splits 4 --group ${{ matrix.shard }}
+          $manifest = @{
+            commit = "${{ github.sha }}"
+            run_id = "${{ github.run_id }}"
+            run_attempt = "${{ github.run_attempt }}"
+            shard = ${{ matrix.shard }}
+          } | ConvertTo-Json
+          Set-Content -Path (Join-Path $out 'manifest.json') -Value $manifest -Encoding utf8
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+      - name: Upload 3.12 shard coverage and node manifest
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: win-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}\win-cov
+          if-no-files-found: error
+          retention-days: 3
       - name: Isolated core and native credential/action contracts
+        if: matrix.python-version != '3.12'
         run: >-
           python tools/run_windows_contracts.py tests/catchup_core
           tests/dev/test_windows_contract_launcher.py
           tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py
           tests/unit/test_action_process.py tests/unit/test_action_quarantine.py
           tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
-          -q --tb=short
+          -q --tb=short --durations=25 -n auto --splitting-algorithm duration_based_chunks
+          --splits 4 --group ${{ matrix.shard }}
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Connector handler imports ─────────────────────────────────────────────
-  connectors-syntax:
-    name: Connector handler syntax + import
+  # ── Windows Shard Proof + Coverage Aggregation ──────────────────────────────
+  core-windows-coverage:
+    name: Windows shard completeness & native module coverage
+    needs: [core-windows]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: "3.11"
-      - name: Install minimal deps
-        run: pip install pyyaml
-      - name: Syntax check all connector handlers
-        run: |
-          for f in scripts/connectors/*.py; do
-            python -m py_compile "$f" && echo "OK $f"
-          done
-      - name: Validate connectors.yaml parses
-        run: |
-          python -c "
-          import yaml, os
-          path = 'config/connectors.yaml'
-          if not os.path.exists(path):
-              path = 'config/channels.example.yaml'
-              if not os.path.exists(path):
-                  print('connectors.yaml not in repo (gitignored — user-specific config). Skipping.')
-                  raise SystemExit(0)
-          with open(path) as f:
-              cfg = yaml.safe_load(f)
-          names = list((cfg or {}).get('connectors', cfg or {}).keys())
-          print(f'{path}: {len(names)} entries — {names}')
-          "
-      - name: Validate actions.yaml parses
-        run: |
-          python -c "
-          import yaml
-          with open('config/actions.yaml') as f:
-              cfg = yaml.safe_load(f)
-          actions = list(cfg.get('actions', {}).keys())
-          print(f'actions.yaml: {len(actions)} actions — {actions}')
-          "
-
-  # ── Schema Validation ─────────────────────────────────────────────────────
-  schema-validation:
-    name: Validate example profile against schema
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
-      - name: Install deps
-        run: pip install pyyaml jsonschema
-      - name: Validate example profile
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Download 3.12 Windows shard artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: win-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-*
+          path: ${{ runner.temp }}/win-shards
+      - name: Verify disjoint shard union and combine native Windows coverage
         run: |
-          python -c "
-          import json, yaml, jsonschema
-          with open('config/user_profile.example.yaml') as f:
-              profile = yaml.safe_load(f)
-          with open('config/user_profile.schema.json') as f:
-              schema = json.load(f)
-          jsonschema.validate(instance=profile, schema=schema)
-          print('✓ user_profile.example.yaml validates against schema')
-          "
+          python tools/merge_windows_coverage.py \
+            --shards-dir "${{ runner.temp }}/win-shards" --shards 4 \
+            --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
+            --output-xml coverage-windows.xml \
+            --include-target scripts/catchup_core/quarantine_fs_windows.py \
+            --include-target scripts/catchup_core/storage_adoption.py \
+            tests/catchup_core tests/dev/test_windows_contract_launcher.py \
+            tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py \
+            tests/unit/test_action_process.py tests/unit/test_action_quarantine.py \
+            tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
+          python tools/check_core_coverage.py coverage-windows.xml --minimum=85 --branch-minimum=85
+      - name: Changed-line Windows native coverage (>= 95% per file)
+        env:
+          DIFF_BASE: ${{ github.event.before || 'origin/main' }}
+        run: |
+          DIFF_RANGE_NOTATION=...
+          if [[ "$DIFF_BASE" =~ ^0+$ ]] || ! git cat-file -e "${DIFF_BASE}^{commit}" 2>/dev/null
+          then
+            DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
+            DIFF_RANGE_NOTATION=..
+          fi
+          python tools/check_diff_coverage.py coverage-windows.xml \
+            --compare-branch="$DIFF_BASE" --diff-range-notation="$DIFF_RANGE_NOTATION" \
+            --include='scripts/catchup_core/quarantine_fs_windows.py' \
+            --include='scripts/catchup_core/storage_adoption.py' \
+            --fail-under=85 \
+            --per-file-include='scripts/catchup_core/quarantine_fs_windows.py' \
+            --per-file-include='scripts/catchup_core/storage_adoption.py' \
+            --per-file-fail-under=95

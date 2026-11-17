@@ -2,36 +2,50 @@ name: PII Check
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
-    branches: ["**"]
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
   privacy-gate:
     name: Privacy gate (secrets, PII, forbidden files, owner identifiers)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0   # the whole pushed range is scanned, not only the tip
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
+      - name: Cache gitleaks binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/gitleaks-bin
+          key: linux-gitleaks-8.30.1
+
       - name: Install gitleaks (pinned, checksum-verified)
         run: |
-          VER=8.30.1
-          BASE=https://github.com/gitleaks/gitleaks/releases/download/v${VER}
-          curl -sSfL -o gl.tgz "${BASE}/gitleaks_${VER}_linux_x64.tar.gz"
-          curl -sSfL -o gl.sum "${BASE}/gitleaks_${VER}_checksums.txt"
-          grep "gitleaks_${VER}_linux_x64.tar.gz" gl.sum | sed 's#gitleaks_.*#gl.tgz#' | sha256sum -c -
-          tar -xzf gl.tgz gitleaks
-          sudo mv gitleaks /usr/local/bin/gitleaks
-          gitleaks version
+          BIN_DIR="${{ runner.temp }}/gitleaks-bin"
+          if [ ! -x "${BIN_DIR}/gitleaks" ]; then
+            VER=8.30.1
+            BASE=https://github.com/gitleaks/gitleaks/releases/download/v${VER}
+            curl -sSfL -o gl.tgz "${BASE}/gitleaks_${VER}_linux_x64.tar.gz"
+            curl -sSfL -o gl.sum "${BASE}/gitleaks_${VER}_checksums.txt"
+            grep "gitleaks_${VER}_linux_x64.tar.gz" gl.sum | sed 's#gitleaks_.*#gl.tgz#' | sha256sum -c -
+            mkdir -p "${BIN_DIR}"
+            tar -xzf gl.tgz -C "${BIN_DIR}" gitleaks
+          fi
+          echo "${BIN_DIR}" >> "$GITHUB_PATH"
+          "${BIN_DIR}/gitleaks" version
 
       - name: Scan every tracked file
         run: python .githooks/privacy_scan.py --tracked

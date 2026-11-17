@@ -613,15 +613,26 @@ def scan_range(repo: Path, rev_args: list[str], guard: Path = PII_GUARD,
 
 
 def scan_tracked(repo: Path = ARTHA_DIR, guard: Path = PII_GUARD) -> list[Finding]:
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
     try:
         config = _gitleaks_config(repo)
         deny = denylist_for(repo)
-        findings: list[Finding] = []
-        for rel, raw, where in tracked_items(repo):
+        items = list(tracked_items(repo))
+
+        def _scan_entry(item: tuple[str, bytes | None, str]) -> list[Finding]:
+            rel, raw, where = item
             content = raw.decode("utf-8", errors="replace") if raw is not None else None
-            findings.extend(scan_item(rel, content, where, guard, deny))
+            entry_findings = scan_item(rel, content, where, guard, deny)
             if raw is not None and rel not in GITLEAKS_PATH_EXEMPT:
-                findings.extend(run_gitleaks(repo, content=raw, path=rel, config=config))
+                entry_findings.extend(run_gitleaks(repo, content=raw, path=rel, config=config))
+            return entry_findings
+
+        workers = min(8, max(2, (os.cpu_count() or 2) * 2))
+        findings: list[Finding] = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for entry_findings in pool.map(_scan_entry, items):
+                findings.extend(entry_findings)
         return findings
     except (ScannerError, OSError) as exc:
         return [Finding("(git)", f"scanner unavailable: {exc} (fail closed)")]
