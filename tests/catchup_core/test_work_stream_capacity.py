@@ -11,8 +11,16 @@ import pytest
 from catchup_core import checkpoint as ck
 from catchup_core import recovery_quarantine as quarantine
 from catchup_core.recovery_quarantine import QuarantineStore
-from test_work_stream_checkpoint import CIPHER, ORDINARY, OWNER, _checkpoint, _identity, _key, _rewrite_frames
-from test_work_stream_quarantine import _authority
+from core_helpers import (
+    STREAM_CIPHER as CIPHER,
+    STREAM_ORDINARY as ORDINARY,
+    STREAM_OWNER as OWNER,
+    stream_checkpoint as _checkpoint,
+    stream_identity as _identity,
+    stream_key as _key,
+    stream_rewrite_frames as _rewrite_frames,
+    work_stream_quarantine_authority as _authority,
+)
 
 DENIAL = 'current Work invalidation or unjournaled dependency'
 

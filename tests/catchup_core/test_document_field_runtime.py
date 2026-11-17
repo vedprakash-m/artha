@@ -5,7 +5,16 @@ from argparse import Namespace
 from dataclasses import replace
 
 import pytest
-from test_coordinator import CIPHER, KEY, NOW, PACK, model_for, req
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_KEY as KEY,
+    CORE_NOW as NOW,
+    CORE_PACK as PACK,
+    FakeKeyring,
+    model_for,
+    coord_req as req,
+    write_cfg,
+)
 
 from catchup_core import coordinator as co, curated, fact_access, runtime as rt
 from catchup_core import documents, field_confirmation
@@ -15,7 +24,6 @@ from catchup_core.contracts import CoverageStatus, ExecutionMode, FactStatus, Fa
 from catchup_core.fact_access import AccessPolicy, require_metadata
 from catchup_core.ledger import FactInput, Ledger, LedgerError, PermissionDenied, Provenance, SignalInput
 from catchup_core.runtime import build_fetchers
-from test_runtime import FakeKeyring, write_cfg
 
 
 @pytest.fixture

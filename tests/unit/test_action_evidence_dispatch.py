@@ -80,7 +80,7 @@ def verify(case, context=None):
 def authority(case, tmp_path, monkeypatch):
     from catchup_core import crypto, runtime
     from catchup_core.contracts import CatchupRequest, ExecutionMode
-    from tests.catchup_core.test_runtime import FakeKeyring, write_cfg
+    from tests.catchup_core.core_helpers import FakeKeyring, write_cfg
 
     backend = FakeKeyring()
     monkeypatch.setattr(crypto, 'system_keyring', lambda: backend)
@@ -235,7 +235,7 @@ def test_real_authority_refuses_pending_schema_without_migration(authority, monk
 @pytest.mark.parametrize('initialized', [False, True])
 def test_real_household_authority_uses_existing_ids_without_enrollment(authority, initialized):
     from catchup_core.runtime import RuntimeConfigError
-    from tests.catchup_core.test_runtime import write_cfg
+    from tests.catchup_core.core_helpers import write_cfg
     from zoneinfo import ZoneInfo
 
     write_cfg(authority.root, household_from_profile=True, subjects=[], consent_required=[], viewer='owner')

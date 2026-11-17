@@ -500,7 +500,7 @@ def test_client_credential_and_shared_age_inspection_never_enroll(native, monkey
 
 @pytest.mark.parametrize('boundary', ['before', 'after', 'registry-save'])
 def test_process_death_at_native_head_publication_leaves_pending(tmp_path, boundary):
-    from test_credentials import SQLiteKeyring
+    from unit_helpers import SQLiteKeyring
     from catchup_core.recovery_registry import RegistryError, attest_legacy, registry_digest, snapshot
 
     backend = SQLiteKeyring(tmp_path / 'synthetic-keyring.db')
@@ -514,7 +514,7 @@ def test_process_death_at_native_head_publication_leaves_pending(tmp_path, bound
 import sys
 from pathlib import Path
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from unit_helpers import SQLiteKeyring
 from lib.credentials import CredentialStore
 from catchup_core import recovery_registry
 backend = SQLiteKeyring(sys.argv[3])

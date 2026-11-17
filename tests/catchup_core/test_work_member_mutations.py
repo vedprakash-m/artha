@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 from _work_synthetic import reconcile_reviewed
-from test_work_privacy import KEY
+from core_helpers import FileBackend, STREAM_CIPHER as CIPHER, WORK_IDENTITY as IDENTITY, WORK_PRIVACY_KEY as KEY
 
 from catchup_core import quarantine_fs_windows as fs
 from catchup_core import work_privacy as privacy
@@ -22,24 +22,6 @@ from catchup_core.work_privacy import WorkPrivacy, WorkPrivacyBlocked
 from lib import work_publication as wp
 
 windows_only = pytest.mark.skipif(os.name != 'nt', reason='native Windows Work publication')
-IDENTITY = {'platform': 'win32', 'machine': 'synthetic-machine', 'user': 'S-1-5-21-1001'}
-
-
-class FileBackend:
-    """Synthetic credentials shared only by this test's parent and child."""
-    def __init__(self, directory):
-        self.directory = Path(directory)
-        self.directory.mkdir(exist_ok=True)
-
-    def _path(self, service, account):
-        return self.directory / hashlib.sha256((service + '\0' + account).encode()).hexdigest()
-
-    def get_password(self, service, account):
-        path = self._path(service, account)
-        return path.read_text() if path.exists() else None
-
-    def set_password(self, service, account, value):
-        self._path(service, account).write_text(value)
 
 
 @pytest.fixture
@@ -421,7 +403,6 @@ def test_large_native_asset_round_trips_through_public_encrypted_recovery(legacy
 
     from catchup_core import checkpoint as ck
     from catchup_core.recovery_access import WorkRecoveryAccess
-    from test_work_stream_checkpoint import CIPHER
 
     p, member = legacy_enrolled
     asset = member.parent / 'synthetic.bin'
@@ -692,7 +673,7 @@ def test_preflight_reports_health_receipt_publication_refusal(enrolled_health_re
 CHILD = r'''
 import sys, threading
 from pathlib import Path
-from test_work_member_mutations import FileBackend, IDENTITY
+from core_helpers import FileBackend, WORK_IDENTITY as IDENTITY
 from catchup_core import work_privacy, quarantine_fs_windows as fs
 base, phase = Path(sys.argv[1]), sys.argv[2]
 def pause():

@@ -141,8 +141,8 @@ def test_json_output_and_exit_code_follow_the_result(monkeypatch):
 
 @pytest.fixture
 def goal_world(tmp_path, admitted_personal_sources):
-    from test_release_regressions import world
-    yield from world.__wrapped__(tmp_path)
+    from core_helpers import build_regression_world
+    yield from build_regression_world(tmp_path)
 
 
 def test_milestone_goal_counts_only_current_bound_completion_evidence(goal_world):
@@ -266,7 +266,7 @@ def test_corrected_completion_updates_goal_and_marks_archived_briefing(
     from argparse import Namespace
     from catchup_core import commands, runtime, coordinator
     from catchup_core.contracts import FactStatus
-    from test_release_regressions import request
+    from core_helpers import regression_request as request
     ledger, _, make, _ = goal_world
     state = tmp_path / 'state'; state.mkdir()
     (state / 'goals.md').write_text('goals:\n- id: G\n  owner: owner\n  title: Finish\n  status: active\n'

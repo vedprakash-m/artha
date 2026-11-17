@@ -7,8 +7,13 @@ import yaml
 from catchup_core import domain_pack as dp
 from catchup_core import ledger as lg
 from catchup_core.triage import triage
-
-from test_triage import KEY, CIPHER, NOW, conn_of, fresh  # noqa: F401
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_KEY as KEY,
+    CORE_NOW as NOW,
+    triage_conn_of as conn_of,
+    triage_fresh as fresh,
+)
 
 SIGNUP = "signup_deadline"
 

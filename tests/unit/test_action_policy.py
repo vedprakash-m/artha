@@ -13,9 +13,16 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from lib import action_policy  # noqa: E402
 from lib.action_policy import check_policy  # noqa: E402
-import test_action_evidence_dispatch as evidence_support  # noqa: E402
+from unit_helpers import create_evidence_case  # noqa: E402
 
-evidence_case = evidence_support.case
+
+@pytest.fixture
+def evidence_case(tmp_path, admitted_personal_scope):
+    case = create_evidence_case(tmp_path)
+    try:
+        yield case
+    finally:
+        case.ledger.close()
 
 NOW = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
 

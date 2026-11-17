@@ -6,8 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from lib import action_credentials as broker
-from test_action_process import proposal
-from test_credentials import MemoryKeyring
+from unit_helpers import MemoryKeyring, make_action_proposal as proposal
 
 
 @pytest.fixture

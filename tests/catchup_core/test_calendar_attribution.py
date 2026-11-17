@@ -7,9 +7,14 @@ from catchup_core import coordinator as co
 from catchup_core import runtime
 from catchup_core.contracts import CoverageStatus, RunStatus
 
-from test_coordinator import cal, email, req, world  # noqa: F401
+from core_helpers import build_coordinator_world, coord_cal as cal, coord_email as email, coord_req as req
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
+
+@pytest.fixture
+def world(tmp_path):
+    yield from build_coordinator_world(tmp_path)
 
 CANDIDATES = ["kid1", "kid2"]
 

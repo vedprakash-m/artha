@@ -8,49 +8,12 @@ from contextlib import nullcontext
 
 import pytest
 
-from _work_synthetic import install_synthetic_work_creation, reconcile_reviewed
+from _work_synthetic import reconcile_reviewed
 from catchup_core import work_privacy
 from catchup_core.session_lock import SessionBusy
 from catchup_core.work_privacy import for_installation
 from lib import work_publication as wp
-
-IDENTITY = {'platform': 'win32', 'machine': 'synthetic-machine', 'user': 'synthetic-user'}
-
-
-class Backend:
-    def __init__(self):
-        self.values = {}
-
-    def get_password(self, service, account):
-        return self.values.get((service, account))
-
-    def set_password(self, service, account, value):
-        self.values[service, account] = value
-
-
-@pytest.fixture
-def work(tmp_path, monkeypatch):
-    install_synthetic_work_creation(monkeypatch)
-    local = tmp_path / 'local'
-    monkeypatch.setenv('ARTHA_LOCAL_DIR', str(local))
-    repo = tmp_path / 'repo'
-    state = repo / 'state/work'
-    state.mkdir(parents=True)
-    (local / 'work').mkdir(parents=True)
-    (state / 'work-notes.md').write_bytes(b'synthetic notes\n')
-    backend = Backend()
-    make = lambda: for_installation(repo, local, backend=backend, native_identity=lambda: dict(IDENTITY))
-    previous = wp.set_protocol_factory(make)
-    yield {'repo': repo, 'local': local, 'state': state, 'make': make, 'backend': backend}
-    wp.set_protocol_factory(previous)
-
-
-def enroll(work):
-    return work['make']().enroll(b'k' * 32, reviewed=True, installation_id='synthetic-installation')
-
-
-def never():
-    pytest.fail('legacy writer must not run after enrollment')
+from unit_helpers import WORK_IDENTITY as IDENTITY, WorkBackend as Backend, enroll_work as enroll, never_legacy as never
 
 
 def _capture(errors, action):

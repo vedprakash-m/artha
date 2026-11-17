@@ -183,7 +183,7 @@ def test_fetchers_do_not_load_handlers_before_personal_source_classification():
 
 
 def test_consent_does_not_replace_personal_source_classification(tmp_path):
-    from test_coordinator import CIPHER, KEY
+    from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY
     from catchup_core.ledger import Ledger
 
     with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER, owner_id="owner",
@@ -212,7 +212,7 @@ def test_consent_does_not_replace_personal_source_classification(tmp_path):
 
 
 def test_consent_revocation_does_not_open_an_unclassified_source(tmp_path):
-    from test_coordinator import CIPHER, KEY
+    from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY
     from catchup_core.ledger import Ledger
 
     with Ledger(tmp_path / "ledger.db", id_key=KEY, cipher=CIPHER, owner_id="owner",
@@ -244,7 +244,7 @@ def test_consent_revocation_does_not_open_an_unclassified_source(tmp_path):
 
 def test_existing_coverage_does_not_admit_personal_or_work_fetches(tmp_path, monkeypatch):
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'private-coverage'))
-    from test_user_surfaces import CIPHER, KEY
+    from core_helpers import CORE_KEY as KEY, REGRESSION_CIPHER as CIPHER
     from catchup_core.ledger import Ledger
     seen = []
     class Handler:

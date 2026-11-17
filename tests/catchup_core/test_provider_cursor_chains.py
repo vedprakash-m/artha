@@ -11,7 +11,12 @@ import types
 from types import SimpleNamespace
 
 import pytest
-from test_provider_observation_lifecycle import MSG, _fact_rows, env, req  # noqa: F401  (env is a fixture)
+from core_helpers import (
+    CORE_MSG as MSG,
+    build_lifecycle_env,
+    lifecycle_fact_rows as _fact_rows,
+    lifecycle_req as req,
+)
 
 from catchup_core import coordinator as co
 from catchup_core import runtime
@@ -29,7 +34,12 @@ def _http(status):
 
 
 @pytest.fixture
-def run_source(env, monkeypatch, tmp_path):  # noqa: F811
+def env(tmp_path):
+    yield from build_lifecycle_env(tmp_path)
+
+
+@pytest.fixture
+def run_source(env, monkeypatch, tmp_path):
     """Run provider-path tests with synthetic source admission through the real adapter."""
     import lib.retry as retry
     from catchup_core.adapters import fetch_via_handler

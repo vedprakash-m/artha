@@ -97,3 +97,26 @@ def _seed_deva_name_for_ci():
     pii_guard._DEVA_NAME_LOADED = True
     yield
 
+
+@pytest.fixture
+def work(tmp_path, monkeypatch):
+    """Shared synthetic Work publication fixture (extracted from test_work_publication.py)."""
+    from _work_synthetic import install_synthetic_work_creation
+    from catchup_core.work_privacy import for_installation
+    from lib import work_publication as wp
+    from unit_helpers import WORK_IDENTITY, WorkBackend
+
+    install_synthetic_work_creation(monkeypatch)
+    local = tmp_path / "local"
+    monkeypatch.setenv("ARTHA_LOCAL_DIR", str(local))
+    repo = tmp_path / "repo"
+    state = repo / "state/work"
+    state.mkdir(parents=True)
+    (local / "work").mkdir(parents=True)
+    (state / "work-notes.md").write_bytes(b"synthetic notes\n")
+    backend = WorkBackend()
+    make = lambda: for_installation(repo, local, backend=backend, native_identity=lambda: dict(WORK_IDENTITY))
+    previous = wp.set_protocol_factory(make)
+    yield {"repo": repo, "local": local, "state": state, "make": make, "backend": backend}
+    wp.set_protocol_factory(previous)
+

@@ -13,7 +13,7 @@ from catchup_core.renewal_authority import Authority
 from catchup_core.renewal_inputs import SourceFile, SourceManifest
 from catchup_core.renewal_store import RenewalError, digest
 from lib.credentials import CredentialStore
-from test_runtime import FakeKeyring
+from core_helpers import FakeKeyring
 
 
 class Keyring(FakeKeyring):

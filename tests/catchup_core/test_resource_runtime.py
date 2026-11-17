@@ -2,13 +2,30 @@
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
-import test_coordinator as tc
+from core_helpers import (
+    CORE_EXTRACT,
+    CORE_MSG,
+    CORE_NOW,
+    CORE_PACK,
+    build_coordinator_world,
+    coord_cal,
+    coord_email,
+    coord_req,
+)
+
+tc = SimpleNamespace(
+    EXTRACT=CORE_EXTRACT,
+    MSG=CORE_MSG,
+    NOW=CORE_NOW,
+    PACK=CORE_PACK,
+    cal=coord_cal,
+    email=coord_email,
+    req=coord_req,
+)
 
 from catchup_core import coordinator as co
 from catchup_core import extract as ex
@@ -21,17 +38,17 @@ EMPTY = json.dumps({'complete': True, 'candidates': []})
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_sources):
-    yield from tc.world.__wrapped__(tmp_path)
+    yield from build_coordinator_world(tmp_path)
 
 
-def configured(make, ledger, *, records=None, extractor=tc.EXTRACT, **limits):
+def configured(make, ledger, *, records=None, extractor=CORE_EXTRACT, **limits):
     policy = ResourcePolicy(**{
         'max_requests_per_bundle': 10, 'max_prompt_bytes_per_bundle': 1000000,
         'max_requests_per_catchup': 100, 'max_requests_per_month': 100,
         'max_attempts_per_signal': 2, 'max_pending_signals': 10,
         'max_priority_streak': 2, **limits})
-    fetch = tc.email() if records is None else tc.email(records)
-    return make({'school_email': fetch, 'calendar': tc.cal()}, extractor=extractor,
+    fetch = coord_email() if records is None else coord_email(records)
+    return make({'school_email': fetch, 'calendar': coord_cal()}, extractor=extractor,
                 admissions=AdmissionStore(ledger, policy), require_resource_policy=True)
 
 

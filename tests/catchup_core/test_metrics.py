@@ -256,7 +256,7 @@ def test_measurements_from_different_implementations_do_not_establish_a_pass():
 def test_health_latency_uses_the_current_code_cohort_and_cost_keeps_older_work(tmp_path):
     from catchup_core.commands import _performance
     from catchup_core.ledger import Ledger
-    from test_release_regressions import CIPHER, KEY
+    from core_helpers import CORE_KEY as KEY, REGRESSION_CIPHER as CIPHER
     directory = tmp_path / 'metrics'
     directory.mkdir()
     rows = [run(1000, implementation_version='old', prompt_chars=1000)]

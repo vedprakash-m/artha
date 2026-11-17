@@ -1,9 +1,24 @@
-import test_renewal_authority as authority_fixtures
-world = authority_fixtures.world
+from types import SimpleNamespace
+
 import pytest
 
+from core_helpers import (
+    Keyring,
+    RenewalWorkspace as Workspace,
+    build_renewal_authority_world,
+    renewal_approve as approve,
+    renewal_private_directory,
+    renewal_target as target,
+)
 from catchup_core import renewal_entry
 from catchup_core.renewal_store import RenewalError
+
+authority_fixtures = SimpleNamespace(private_directory=renewal_private_directory)
+
+
+@pytest.fixture
+def world(tmp_path):
+    return build_renewal_authority_world(tmp_path)
 
 
 def test_cli_help_and_argument_limits(capsys):
@@ -37,8 +52,6 @@ def test_local_gate_failure_is_bounded(monkeypatch, tmp_path):
 @pytest.fixture
 def cli_world(world, monkeypatch):
     from catchup_core.renewal_entry import _parser
-    from test_renewal_authority import target
-    from test_renewal_delivery import Workspace
     authority, delegation, _ = world
     from types import SimpleNamespace
     monkeypatch.setattr(renewal_entry, "metadata_for", lambda _: SimpleNamespace(snapshot=lambda **kw: "0" * 64))
@@ -56,7 +69,6 @@ def cli_world(world, monkeypatch):
 
 def test_AR16_plan_exact_review_approve_and_delivery(cli_world, monkeypatch, capsys):
     from catchup_core.renewal_store import digest
-    from test_renewal_authority import target
     authority, workspace, args = cli_world
     args.command = 'plan'
     args.output = authority.local / 'task.json'
@@ -196,7 +208,6 @@ def adoption_cli(cli_world, monkeypatch, tmp_path):
     from catchup_core.renewal_authority import Authority
     from catchup_core.renewal_store import encoded
     from lib.credentials import CredentialStore
-    from test_renewal_authority import Keyring
     old, workspace, args = cli_world
     root = tmp_path / 'initial-checkout'
     (root / 'config').mkdir(parents=True)
@@ -278,7 +289,6 @@ def test_AR23_isolated_interpreter_ignores_candidate_startup_code(tmp_path):
 @pytest.fixture
 def pending_cli(cli_world, monkeypatch):
     from catchup_core.renewal_delivery import Delivery
-    from test_renewal_authority import approve, target
     authority, workspace, args = cli_world
     def crash(event):
         if event == 'intent':

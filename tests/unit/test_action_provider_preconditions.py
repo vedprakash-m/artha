@@ -12,7 +12,7 @@ from actions import _HANDLER_MAP
 from catchup_core.actions import ClaimRefused
 from lib import action_evidence
 from lib.action_policy import verify_action_preconditions
-from test_action_process import proposal
+from unit_helpers import make_action_proposal as proposal
 
 VERSIONED = {'provider_versions': {'e1': '"v1"'}}
 CORE = {'core_derived': True, 'fact_versions': {'f1': datetime.now(UTC).isoformat()}, 'subjects': ['adult'],

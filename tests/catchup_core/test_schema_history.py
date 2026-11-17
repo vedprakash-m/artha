@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from catchup_core import ledger as lg
-from test_ledger import KEY
+from core_helpers import CORE_KEY as KEY
 
 LATEST = lg.Ledger.available_migrations()[-1][0]
 

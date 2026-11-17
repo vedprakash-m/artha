@@ -501,14 +501,13 @@ def test_table_comparison_refuses_checkpoint_replacement_after_verification(
     if replacement_kind == 'personal':
         container(replacement, entries=[(key, database.read_bytes(), 'sqlite', 0o600)])
     else:
-        import test_work_stream_checkpoint as streams
+        from core_helpers import stream_checkpoint
 
         def bind_external_root(manifest):
             manifest['roots'] = ['work_artifact_1']
             manifest['context']['work_binding']['members'] = {}
 
-        monkeypatch.setattr(streams, 'CIPHER', CIPHER)
-        streams._checkpoint(replacement, streams=[], member_path=key, edit_manifest=bind_external_root)
+        stream_checkpoint(replacement, streams=[], member_path=key, edit_manifest=bind_external_root, cipher=CIPHER)
         assert ck.verify(replacement, CIPHER)['schema'] == 'artha.checkpoint.v3'
 
     original_sha = ck._sqlite_sha

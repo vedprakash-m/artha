@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from test_coordinator import CIPHER, KEY
+from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY
 
 from catchup_core import corpus
 from catchup_core import ledger as lg

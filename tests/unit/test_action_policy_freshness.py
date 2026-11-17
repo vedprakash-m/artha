@@ -10,7 +10,7 @@ import yaml
 
 from action_queue import ActionQueue, compute_payload_hash
 from lib import action_process
-from test_action_process import proposal
+from unit_helpers import make_action_proposal as proposal
 
 
 @pytest.fixture
@@ -175,8 +175,8 @@ def test_executing_and_success_audit_entries_count_one_attempt(claimed):
 
 def test_real_child_rechecks_policy_before_loading_any_provider(claimed, monkeypatch):
     import subprocess
-    import test_action_process
-    test_action_process.offline_capability.__wrapped__(monkeypatch)
+    from unit_helpers import install_empty_action_capability
+    install_empty_action_capability(monkeypatch)
     _, path, queue, item = claimed
     def withdraw_then_run(*args, **kwargs):
         path.write_text(path.read_text() + '\n# withdrawn before child entry\n')

@@ -282,7 +282,7 @@ def test_process_death_at_head_publication_preserves_complete_generations(tmp_pa
 import sys
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
 from pathlib import Path
-from test_credentials import SQLiteKeyring
+from unit_helpers import SQLiteKeyring
 from lib.credentials import CredentialStore
 vault=CredentialStore(backend=SQLiteKeyring(sys.argv[3]),local=Path(sys.argv[4]))
 write=vault._set

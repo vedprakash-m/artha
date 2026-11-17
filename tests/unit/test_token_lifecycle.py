@@ -31,7 +31,7 @@ import preflight as pf
 @pytest.fixture(autouse=True)
 def credential_store(tmp_path, monkeypatch):
     from lib.credentials import CredentialStore
-    from test_credentials import MemoryKeyring
+    from unit_helpers import MemoryKeyring
     import setup_msgraph_oauth as graph
     store = CredentialStore(backend=MemoryKeyring(), local=tmp_path / 'local')
     monkeypatch.setattr(graph, '_credential_store', lambda: store)

@@ -11,9 +11,14 @@ from catchup_core import core_items
 from catchup_core.contracts import ExecutionMode, Severity
 from catchup_core.triage import AlertDraft
 
-from test_coordinator import cal, email, req, world  # noqa: F401
+from core_helpers import build_coordinator_world, coord_cal as cal, coord_email as email, coord_req as req
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
+
+
+@pytest.fixture
+def world(tmp_path):
+    yield from build_coordinator_world(tmp_path)
 
 
 def draft(key="k1", deadline=date(2026, 11, 4), severity=Severity.P2, **kw):

@@ -13,8 +13,17 @@ import pytest
 
 from catchup_core import policy
 from catchup_core.ledger import PermissionDenied
-from test_cutover_fence import NOW, configured, synthetic_recovery_acceptance  # noqa: F401
-from test_integrated_surfaces import release_scorecard
+from core_helpers import (
+    CUTOVER_NOW as NOW,
+    build_cutover_configured,
+    release_scorecard,
+    synthetic_recovery_acceptance,
+)
+
+
+@pytest.fixture
+def configured(tmp_path, monkeypatch):
+    return build_cutover_configured(tmp_path, monkeypatch)
 
 _SPEC = importlib.util.spec_from_file_location(
     'release_evidence', Path(__file__).resolve().parents[2] / 'tools' / 'release_evidence.py')

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from actions import calendar_modify as handler
-from test_calendar_handler import _make_modify_proposal
+from unit_helpers import make_modify_proposal as _make_modify_proposal
 
 
 def service(monkeypatch,etag='"v1"'):

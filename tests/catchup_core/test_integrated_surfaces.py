@@ -17,7 +17,15 @@ from catchup_core.contracts import CatchupRequest, ExecutionMode, FactStatus, Ru
 from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.ledger import FactInput, Ledger, LedgerError, PermissionDenied, SignalInput
 from catchup_core.triage import CalendarEvent
-from test_user_surfaces import CIPHER, KEY, Keyring
+from core_helpers import (
+    CORE_KEY as KEY,
+    FakeKeyring,
+    Keyring,
+    REGRESSION_CIPHER as CIPHER,
+    build_preservation_checkpoint,
+    synthetic_recovery_acceptance,
+    write_cfg,
+)
 from catchup_core.blobs import EncryptedBlobStore
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_sources", "admitted_curated_state")
@@ -49,8 +57,6 @@ def test_release_cohort_rejects_changed_effective_workspace_inputs(tmp_path, dep
 
 @pytest.mark.parametrize('dependency', ['connectors.yaml', 'user_profile.yaml'])
 def test_runtime_refuses_changed_workspace_inputs_before_fetch_or_publication(tmp_path, dependency):
-    from test_runtime import FakeKeyring, write_cfg
-
     root = tmp_path / 'repo'
     (root / 'state').mkdir(parents=True)
     write_cfg(root, subjects=['kid1'], consent_required=[], viewer='owner', household_from_profile=True)
@@ -351,7 +357,6 @@ def test_cli_inspection_closes_storage_and_keeps_errors_on_stderr(app, monkeypat
 
 
 def test_release_checks_digest_live_evidence_host_and_identity(tmp_path):
-    from test_cutover_fence import build_preservation_checkpoint, synthetic_recovery_acceptance
     path = tmp_path / "score.json"
     card = release_scorecard()
     path.write_text(json.dumps(card))

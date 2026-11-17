@@ -10,15 +10,14 @@ from catchup_core import reminders
 from catchup_core.contracts import ExecutionMode, Severity
 from catchup_core.triage import AlertDraft
 
-import test_coordinator
-from test_coordinator import cal, email, req
+from core_helpers import build_coordinator_world, coord_cal as cal, coord_email as email, coord_req as req
 
 LABELS = {"kid1": "Synthetic Kid"}
 
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_scope):
-    yield from test_coordinator.world.__wrapped__(tmp_path)
+    yield from build_coordinator_world(tmp_path)
 
 
 def draft(key="k1", deadline=date(2026, 11, 4), days=4, state="actionable", **kw):

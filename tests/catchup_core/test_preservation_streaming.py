@@ -13,7 +13,7 @@ import pytest
 from catchup_core import checkpoint, policy
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.ledger import PermissionDenied
-from test_cutover_fence import synthetic_recovery_acceptance
+from core_helpers import synthetic_recovery_acceptance
 
 CIPHER = EnvelopeCipher(StaticKeyProvider({1: b'p' * 32}))
 SCOPE = {'schema': 'artha.installation-preservation.v1', 'repository_root': 'repo', 'runtime_root': 'local',

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from test_checkpoint_restore_integrity import CIPHER, container
+from core_helpers import RESTORE_CIPHER as CIPHER, restore_container as container
 
 from catchup_core import checkpoint as ck
 from catchup_core import recovery_access as recovery

@@ -8,7 +8,7 @@ import pytest
 from catchup_core import runtime
 from catchup_core.contracts import CatchupRequest, ExecutionMode
 from catchup_core.ledger import Ledger, LedgerError
-from test_runtime import FakeKeyring, write_cfg
+from core_helpers import CORE_KEY as KEY, FakeKeyring, write_cfg
 
 
 @pytest.fixture
@@ -78,7 +78,6 @@ def test_runtime_construction_and_execution_share_the_checkpoint_fence(builder, 
 
 def test_interrupted_inner_ledger_setup_closes_its_handle(tmp_path, monkeypatch):
     from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
-    from test_coordinator import KEY
     keyring = FakeKeyring()
     cipher = EnvelopeCipher(KeyringKeyProvider('synthetic-resource-key', backend=keyring))
     captured = []

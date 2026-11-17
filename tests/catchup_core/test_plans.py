@@ -83,11 +83,11 @@ def test_ready_milestone_has_an_inert_instruction_sheet_from_authored_steps():
 
 
 def test_instruction_sheet_is_retained_in_the_encrypted_catchup_artifact(tmp_path):
-    import test_release_regressions as regressions
+    from core_helpers import build_regression_world, regression_request
     from catchup_core.coordinator import run_catchup
     from catchup_core.contracts import RunStatus
     import yaml
-    world = regressions.world.__wrapped__(tmp_path)
+    world = build_regression_world(tmp_path)
     led, _, dependencies, published = next(world)
     try:
         text = yaml.safe_dump({'goals': [{'id': 'G', 'owner': 'owner', 'status': 'active', 'milestones': [
@@ -95,7 +95,7 @@ def test_instruction_sheet_is_retained_in_the_encrypted_catchup_artifact(tmp_pat
         deps = dependencies()
         deps.plan_lines = lambda: rt._plan_lines(tmp_path, reader=lambda _: text, today=TODAY,
                                                  ledger=led, viewer='owner')
-        result = run_catchup(regressions.request(), deps)
+        result = run_catchup(regression_request(), deps)
         assert result.status is RunStatus.COMPLETE and published
         assert '1 planned commitment(s)' in result.briefing_text
         assert 'instruction sheet' in result.briefing_text and 'Review the draft' in result.briefing_text

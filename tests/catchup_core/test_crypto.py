@@ -197,19 +197,18 @@ def test_keyring_set_failure_is_unavailable():
         crypto.KeyringKeyProvider(backend=ReadOnly()).current_version()
 
 
-def test_independent_first_use_cannot_overwrite_an_acknowledged_data_key(tmp_path, monkeypatch):
+def test_independent_first_use_cannot_overwrite_an_acknowledged_data_key(tmp_path):
     import subprocess
     import sys
     import time
     from pathlib import Path
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'unit'))
-    from test_credentials import SQLiteKeyring
+    from core_helpers import SQLiteKeyring
     backend = SQLiteKeyring(tmp_path / 'fake-keyring.db')
     code = r'''
 import sys,time
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from core_helpers import SQLiteKeyring
 from catchup_core.crypto import KeyringKeyProvider,EnvelopeCipher
 backend=SQLiteKeyring(sys.argv[3])
 root,label=Path(sys.argv[4]),sys.argv[5]
@@ -231,7 +230,7 @@ cipher=EnvelopeCipher(KeyringKeyProvider('synthetic-key-race',backend=backend))
 (root/('ack-'+label)).write_bytes(cipher.encrypt(('synthetic-'+label).encode())[0])
 '''
     workers = [subprocess.Popen([sys.executable, '-c', code, str(Path(crypto.__file__).resolve().parents[1]),
-        str(Path(__file__).resolve().parents[1] / 'unit'), str(backend.path), str(tmp_path), label],
+        str(Path(__file__).resolve().parent), str(backend.path), str(tmp_path), label],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for label in ('one', 'two')]
     try:
         until = time.monotonic() + 10
@@ -318,14 +317,13 @@ def test_service_lock_refuses_competing_updates_without_blocking_reads(tmp_path,
             provider.rotate()
 
 
-def test_independent_rotations_keep_every_acknowledged_ciphertext(tmp_path, monkeypatch):
+def test_independent_rotations_keep_every_acknowledged_ciphertext(tmp_path):
     import base64
     import json
     import subprocess
     import sys
     from pathlib import Path
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'unit'))
-    from test_credentials import SQLiteKeyring
+    from core_helpers import SQLiteKeyring
     backend = SQLiteKeyring(tmp_path / 'fake-keyring.db')
     service = 'synthetic-key-rotations'
     crypto.KeyringKeyProvider(service, backend=backend).current_version()
@@ -333,7 +331,7 @@ def test_independent_rotations_keep_every_acknowledged_ciphertext(tmp_path, monk
 import sys,time,json,base64
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from core_helpers import SQLiteKeyring
 from catchup_core.crypto import KeyringKeyProvider,EnvelopeCipher,KeyUnavailableError
 provider=KeyringKeyProvider('synthetic-key-rotations',backend=SQLiteKeyring(sys.argv[3]))
 rows=[]
@@ -349,7 +347,7 @@ while len(rows)<6:
 Path(sys.argv[4]).write_text(json.dumps(rows))
 '''
     workers = [subprocess.Popen([sys.executable, '-c', code, str(Path(crypto.__file__).resolve().parents[1]),
-        str(Path(__file__).resolve().parents[1] / 'unit'), str(backend.path), str(tmp_path / str(index))],
+        str(Path(__file__).resolve().parent), str(backend.path), str(tmp_path / str(index))],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for index in range(2)]
     try:
         for process in workers:
@@ -369,14 +367,13 @@ Path(sys.argv[4]).write_text(json.dumps(rows))
 
 @pytest.mark.parametrize('rotate', [False, True])
 @pytest.mark.parametrize('checkpoint', ['material', 'version'])
-def test_process_death_during_key_publication_preserves_recovery(tmp_path, monkeypatch, rotate, checkpoint):
+def test_process_death_during_key_publication_preserves_recovery(tmp_path, rotate, checkpoint):
     import base64
     import subprocess
     import sys
     import time
     from pathlib import Path
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'unit'))
-    from test_credentials import SQLiteKeyring
+    from core_helpers import SQLiteKeyring
     backend = SQLiteKeyring(tmp_path / 'fake-keyring.db')
     provider = crypto.KeyringKeyProvider('synthetic-key-death', backend=backend)
     old = crypto.EnvelopeCipher(provider).encrypt(b'synthetic-history')[0] if rotate else None
@@ -384,7 +381,7 @@ def test_process_death_during_key_publication_preserves_recovery(tmp_path, monke
 import sys,time
 from pathlib import Path
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from core_helpers import SQLiteKeyring
 from catchup_core.crypto import KeyringKeyProvider
 backend=SQLiteKeyring(sys.argv[3])
 root=Path(sys.argv[4])
@@ -400,7 +397,7 @@ provider=KeyringKeyProvider('synthetic-key-death',backend=backend)
 provider.rotate() if sys.argv[5]=='True' else provider.current_version()
 '''
     process = subprocess.Popen([sys.executable, '-c', code, str(Path(crypto.__file__).resolve().parents[1]),
-        str(Path(__file__).resolve().parents[1] / 'unit'), str(backend.path), str(tmp_path), str(rotate), checkpoint],
+        str(Path(__file__).resolve().parent), str(backend.path), str(tmp_path), str(rotate), checkpoint],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         until = time.monotonic() + 10

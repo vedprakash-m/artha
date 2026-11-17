@@ -9,16 +9,25 @@ from catchup_core.bundles import ProducerKey, export_fetch, import_bundles
 from catchup_core.contracts import CoverageStatus, RunStatus
 from catchup_core.triage import CalendarEvent
 from catchup_core import ledger as lg
-from test_coordinator import KEY, CIPHER
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_EXTRACT as EXTRACT,
+    CORE_KEY as KEY,
+    CORE_MSG as MSG,
+    CORE_NOW as NOW,
+    build_coordinator_world,
+    coord_cal as cal,
+    coord_email as email,
+    coord_req as req,
+    release_scorecard,
+)
 import pytest
 import json
-from test_coordinator import NOW, email, req
-import test_coordinator
 
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_scope):
-    yield from test_coordinator.world.__wrapped__(tmp_path)
+    yield from build_coordinator_world(tmp_path)
 
 
 def test_storage_failure_does_not_advance_fetch_watermark(world):
@@ -117,8 +126,6 @@ def test_named_obligation_conflicts_across_messages_instead_of_duplicate_alerts(
             }
         )
 
-    from test_coordinator import cal
-
     result = co.run_catchup(
         req(),
         make(
@@ -163,7 +170,6 @@ def test_goal_metric_is_persisted_and_recomputed_from_current_facts(world):
 def test_mixed_signal_reaches_incumbent_once_with_pilot_alert(world, tmp_path):
     from catchup_core.incumbent import GuardedIncumbent
     from catchup_core.legacy_state import LegacyStateAdapter
-    from test_coordinator import EXTRACT, cal, MSG
 
     led, _b, make, published = world
     quote = "Home inspection needs booking."
@@ -195,7 +201,6 @@ def test_mixed_signal_reaches_incumbent_once_with_pilot_alert(world, tmp_path):
 def test_capabilities_do_not_infer_action_success_from_finalization(world):
     from catchup_core.capabilities import runtime_states
     from pathlib import Path
-    from test_coordinator import cal
 
     led, _b, make, _p = world
     co.run_catchup(req(), make({"school_email": email(records=()), "calendar": cal()}))
@@ -220,7 +225,6 @@ def test_snapshot_refuses_concurrent_curated_edit(world, tmp_path):
 
 
 def test_old_briefing_gets_notice_without_rewriting_history(world):
-    from test_coordinator import cal
     from catchup_core.views import correct
 
     led, _b, make, _p = world
@@ -326,7 +330,6 @@ def test_snapshot_retention_expires_old_copies_but_keeps_current(tmp_path):
 
 def test_feedback_review_uses_saved_inputs_and_class_correctness(world, tmp_path):
     from catchup_core import views
-    from test_coordinator import cal
 
     led, blobs, make, _p = world
     co.run_catchup(req(), make({"school_email": email(), "calendar": cal()}))
@@ -349,8 +352,6 @@ def test_feedback_review_uses_saved_inputs_and_class_correctness(world, tmp_path
 
 
 def test_missing_completion_attestation_cannot_be_quiet(world):
-    from test_coordinator import cal
-
     _led, _blobs, make, _published = world
     deps = make({"school_email": email(), "calendar": cal()}, extractor=lambda _: json.dumps(dict(candidates=[])))
     got = co.run_catchup(req(), deps)
@@ -383,7 +384,6 @@ def test_feedback_statistics_disappear_when_access_is_revoked(world):
 @pytest.mark.parametrize("changed", ["precedence", "workload", "freshness"])
 def test_release_bounds_match_runtime_and_measured_inputs(changed):
     from catchup_core.policy import _validate_domains
-    from test_integrated_surfaces import release_scorecard
 
     data = release_scorecard()
     if changed == "precedence":

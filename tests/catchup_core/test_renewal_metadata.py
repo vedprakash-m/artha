@@ -7,8 +7,12 @@ import pytest
 from catchup_core import renewal_metadata
 from catchup_core.ledger import KeyringSealedStore, Ledger
 from catchup_core.renewal_store import RenewalError
-from test_renewal_authority import Keyring, private_directory
-from test_user_surfaces import CIPHER, KEY
+from core_helpers import (
+    CORE_KEY as KEY,
+    Keyring,
+    REGRESSION_CIPHER as CIPHER,
+    renewal_private_directory as private_directory,
+)
 
 NOW = datetime(2026, 1, 2, tzinfo=UTC)
 

@@ -1,14 +1,23 @@
-import test_renewal_authority as authority_fixtures
-world = authority_fixtures.world
 """Delivery orchestration never contacts a live provider in these tests."""
 from copy import deepcopy
 from datetime import timedelta
 
 import pytest
 
+from core_helpers import (
+    RENEWAL_NOW as NOW,
+    RenewalWorkspace as Workspace,
+    build_renewal_authority_world,
+    renewal_approve as approve,
+    renewal_target as target,
+)
 from catchup_core.renewal_delivery import Delivery
 from catchup_core.renewal_store import RenewalError
-from test_renewal_authority import NOW, approve, target
+
+
+@pytest.fixture
+def world(tmp_path):
+    return build_renewal_authority_world(tmp_path)
 
 
 class Workspace:

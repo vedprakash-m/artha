@@ -308,7 +308,7 @@ def test_invalid_digest_refuses_before_native_access(monkeypatch, bad):
 
 
 def test_current_owner_does_not_imply_write_dac_authority(legacy):
-    from test_quarantine_fs_windows import _set_test_dacl
+    from core_helpers import set_test_dacl as _set_test_dacl
 
     _set_test_dacl(legacy / 'installation.lock', 'D:P(A;;0x001b01ff;;;OW)(A;;FA;;;SY)')
     before = security(legacy), security(legacy / 'installation.lock')

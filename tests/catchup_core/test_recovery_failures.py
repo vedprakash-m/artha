@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from catchup_core import backup, ledger, session_lock as locks
-from test_user_surfaces import CIPHER, KEY, Keyring
+from core_helpers import CORE_KEY as KEY, Keyring, REGRESSION_CIPHER as CIPHER
 
 
 def test_process_lock_refuses_contention_in_the_same_process(tmp_path):

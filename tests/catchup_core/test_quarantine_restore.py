@@ -19,7 +19,13 @@ import pytest
 from catchup_core import checkpoint as ck
 from catchup_core import recovery_quarantine as quarantine
 from catchup_core.recovery_quarantine import QuarantineStore
-from test_checkpoint_restore_integrity import CIPHER, GENERATION, container, restore, scan_spy
+from core_helpers import (
+    RESTORE_CIPHER as CIPHER,
+    RESTORE_GENERATION as GENERATION,
+    restore_container as container,
+    restore_run as restore,
+    scan_spy,
+)
 
 
 def authority():

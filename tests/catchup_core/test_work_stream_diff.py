@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from catchup_core import checkpoint as ck
-from test_work_stream_checkpoint import CIPHER, ORDINARY, _checkpoint, _public_tree
+from core_helpers import (
+    STREAM_CIPHER as CIPHER,
+    STREAM_ORDINARY as ORDINARY,
+    stream_checkpoint as _checkpoint,
+    stream_public_tree as _public_tree,
+)
 
 pytestmark = pytest.mark.skipif(sys.platform != 'win32', reason='native Windows streams')
 

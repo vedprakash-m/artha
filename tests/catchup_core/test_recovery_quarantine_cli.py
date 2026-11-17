@@ -4,20 +4,22 @@ from __future__ import annotations
 import io
 import json
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from catchup_core import checkpoint_cli as cli
 from catchup_core import checkpoint as ck
-from test_checkpoint_restore_integrity import CIPHER
-import test_recovery_access as access_support
+from core_helpers import RECOVERY_NOW, RESTORE_CIPHER as CIPHER, build_recovery_setup, recovery_checkpoint
+
+access_support = SimpleNamespace(NOW=RECOVERY_NOW, checkpoint=recovery_checkpoint)
 
 SYNTHETIC_PASSPHRASE = 'synthetic checkpoint passphrase'
 
 
 @pytest.fixture
 def context(tmp_path, monkeypatch):
-    fixture = access_support.setup.__wrapped__(tmp_path)
+    fixture = build_recovery_setup(tmp_path)
     value = next(fixture)
     monkeypatch.setattr(cli, '_REPO', value.repo)
     monkeypatch.setattr(cli, '_cipher', lambda *args, **kwargs: CIPHER)

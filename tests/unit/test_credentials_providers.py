@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from lib.credentials import CredentialStore
-from test_credentials import MemoryKeyring
+from unit_helpers import MemoryKeyring
 
 
 @pytest.fixture
@@ -716,7 +716,7 @@ def test_actual_refresh_lock_and_revision_survive_an_independent_login_or_revoca
     import subprocess
     import sys
     from pathlib import Path
-    from test_credentials import SQLiteKeyring
+    from unit_helpers import SQLiteKeyring
     from lib.credentials import CredentialError
     backend = SQLiteKeyring(tmp_path / 'fake-keyring.db')
     local = tmp_path / 'local'
@@ -729,7 +729,7 @@ import sys
 from pathlib import Path
 from datetime import datetime,UTC,timedelta
 sys.path[:0]=[sys.argv[1],sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from unit_helpers import SQLiteKeyring
 from lib.credentials import CredentialStore
 vault=CredentialStore(backend=SQLiteKeyring(sys.argv[3]),local=Path(sys.argv[4]))
 def refresh(*args,**kwargs):

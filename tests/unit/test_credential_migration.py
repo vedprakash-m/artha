@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_credentials import MemoryKeyring
+from unit_helpers import MemoryKeyring
 
 from lib import credential_migration as migration
 from lib.credentials import CredentialStore
@@ -457,7 +457,7 @@ Path(sys.argv[1]).write_text('worker resumed after barrier')
 def test_migration_process_death_retains_recoverable_generations(tmp_path, boundary):
     import subprocess
     import sys
-    from test_credentials import SQLiteKeyring
+    from unit_helpers import SQLiteKeyring
     source, local = tmp_path / 'legacy', tmp_path / 'local'
     source.mkdir()
     for name in ('gmail-oauth-token.json', 'gcal-oauth-token.json'):
@@ -467,7 +467,7 @@ def test_migration_process_death_retains_recoverable_generations(tmp_path, bound
 import os, sys
 from pathlib import Path
 sys.path[:0] = [sys.argv[1], sys.argv[2]]
-from test_credentials import SQLiteKeyring
+from unit_helpers import SQLiteKeyring
 from lib import credential_migration as m
 source, local = Path(sys.argv[3]), Path(sys.argv[4])
 backend = SQLiteKeyring(sys.argv[5])

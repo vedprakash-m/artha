@@ -6,8 +6,7 @@ import hashlib
 import pytest
 
 from catchup_core.ledger import KeyringSealedStore, Ledger, LedgerLocked, SealedCheckpoint
-from test_runtime import FakeKeyring
-from test_user_surfaces import CIPHER, KEY
+from core_helpers import CORE_KEY as KEY, FakeKeyring, REGRESSION_CIPHER as CIPHER
 
 
 class WindowsSizedKeyring(FakeKeyring):

@@ -11,8 +11,14 @@ from catchup_core import domain_pack as dp
 from catchup_core import ledger as lg
 from catchup_core.contracts import Provenance
 from catchup_core.triage import triage
-
-from test_triage import KEY, CIPHER, NOW, build_pack, conn_of, fresh  # noqa: F401
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_KEY as KEY,
+    CORE_NOW as NOW,
+    build_triage_pack as build_pack,
+    triage_conn_of as conn_of,
+    triage_fresh as fresh,
+)
 
 BILL = "exam_registration_deadline"
 PAID = "exam_registration_paid"

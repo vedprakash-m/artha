@@ -9,7 +9,7 @@ import pytest
 
 from catchup_core import work_privacy
 from lib import work_publication as wp
-from test_work_publication import enroll, never, work  # noqa: F401
+from unit_helpers import enroll_work as enroll, never_legacy as never
 
 
 def test_producer_read_uses_the_bounded_work_reader(tmp_path, monkeypatch):

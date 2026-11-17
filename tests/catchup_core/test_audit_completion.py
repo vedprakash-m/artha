@@ -17,15 +17,25 @@ from catchup_core.goals import observe_goals
 from catchup_core.incumbent import GuardedIncumbent
 from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.scorecard import Case, score
-from test_coordinator import CIPHER, NOW, PACK, cal, email, req
-import test_coordinator
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_MSG as MSG,
+    CORE_NOW as NOW,
+    CORE_PACK as PACK,
+    adapter_gen as gen,
+    build_coordinator_world,
+    coord_cal as cal,
+    coord_email as email,
+    coord_req as req,
+    raw_email_rec as raw_email,
+)
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
 
 
 @pytest.fixture
 def world(tmp_path):
-    yield from test_coordinator.world.__wrapped__(tmp_path)
+    yield from build_coordinator_world(tmp_path)
 
 
 def test_restricted_alert_dates_never_persist_as_plaintext(world):
@@ -122,16 +132,15 @@ def test_partial_calendar_fetch_preserves_valid_cancellations():
 
 
 def test_actual_interrupted_adapter_keeps_positives_and_last_complete_watermark(world, tmp_path, monkeypatch):
-    from test_adapters import email as raw_email, gen
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'private-coverage'))
     led, _, make, _ = world
     first = fetch_via_handler('school_email', 'acct', gen([
-        raw_email(1, subject='Registration', body=test_coordinator.MSG)]), since=NOW.isoformat())
+        raw_email(1, subject='Registration', body=MSG)]), since=NOW.isoformat())
     co.run_catchup(req('cu_complete'), make({'school_email': lambda: first, 'calendar': cal()}))
     watermark = next(row['completed_at'] for row in led.coverage_rows() if row['connector'] == 'school_email')
     prior_head = led.conn.execute("SELECT signal_id FROM source_heads WHERE upstream_id='m1'").fetchone()[0]
     partial = fetch_via_handler('school_email', 'acct', gen([
-        raw_email(2, subject='Registration', body=test_coordinator.MSG)], exc=TimeoutError('interrupted')),
+        raw_email(2, subject='Registration', body=MSG)], exc=TimeoutError('interrupted')),
         since=NOW.isoformat())
     for cid in ('cu_partial', 'cu_partial_retry'):
         deps = make({'school_email': lambda: partial, 'calendar': cal()})

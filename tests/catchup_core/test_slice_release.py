@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-import test_cutover_fence
+from core_helpers import build_cutover_configured
 
 from catchup_core import policy
 from catchup_core.ledger import PermissionDenied
@@ -21,7 +21,7 @@ def approved(path: Path) -> dict:
 
 @pytest.fixture
 def sliced(tmp_path, monkeypatch):
-    config, request, keyring, build = test_cutover_fence.configured.__wrapped__(tmp_path, monkeypatch)
+    config, request, keyring, build = build_cutover_configured(tmp_path, monkeypatch)
     release = config['release']
     release['profile'] = 'slice'
     release.pop('scorecard')
@@ -49,7 +49,7 @@ def sliced(tmp_path, monkeypatch):
 
 
 def test_the_full_profile_is_unchanged_and_still_needs_its_scorecard(tmp_path, monkeypatch):
-    config, request, _, _ = test_cutover_fence.configured.__wrapped__(tmp_path, monkeypatch)
+    config, request, _, _ = build_cutover_configured(tmp_path, monkeypatch)
     policy.validate_release(request, config, viewer='owner', domains=['kids_school'], hostname='authority')
     config['release'].pop('scorecard')
     with pytest.raises(PermissionDenied, match='scorecard'):
@@ -199,7 +199,7 @@ def test_the_slice_recovery_receipt_waives_only_windows_work(sliced, change):
 
 
 def test_the_full_profile_still_demands_windows_work_recovery(tmp_path, monkeypatch):
-    config, request, _, _ = test_cutover_fence.configured.__wrapped__(tmp_path, monkeypatch)
+    config, request, _, _ = build_cutover_configured(tmp_path, monkeypatch)
     path = Path(config['release']['recovery_rehearsal']['path'])
     receipt = json.loads(path.read_text())
     receipt['schema'] = 'artha.recovery-rehearsal.slice.v1'

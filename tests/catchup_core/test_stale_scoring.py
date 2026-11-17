@@ -10,8 +10,7 @@ from catchup_core import domain_pack as dp
 from catchup_core import ledger as lg
 from catchup_core.contracts import Severity
 from catchup_core.triage import triage
-
-from test_triage import KEY, CIPHER, NOW, conn_of  # noqa: F401
+from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY, CORE_NOW as NOW, triage_conn_of as conn_of
 
 
 @pytest.fixture

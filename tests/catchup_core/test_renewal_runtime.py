@@ -1,5 +1,3 @@
-import test_renewal_authority as authority_fixtures
-world = authority_fixtures.world
 """The actual release validator retains historical evidence and independent controls."""
 from copy import deepcopy
 
@@ -16,7 +14,17 @@ from catchup_core import policy, renewal_runtime
 from catchup_core.contracts import CatchupRequest, ExecutionMode
 from catchup_core.ledger import PermissionDenied
 from catchup_core.renewal_store import RenewalError
-from test_renewal_authority import COHORT, approve, target
+from core_helpers import (
+    RENEWAL_COHORT as COHORT,
+    build_renewal_authority_world,
+    renewal_approve as approve,
+    renewal_target as target,
+)
+
+
+@pytest.fixture
+def world(tmp_path):
+    return build_renewal_authority_world(tmp_path)
 
 
 def test_AR19_unconfigured_legacy_does_not_open_native_authority(monkeypatch):

@@ -10,7 +10,7 @@ from catchup_core import policy
 from catchup_core.contracts import CatchupRequest
 from catchup_core.ledger import PermissionDenied
 from catchup_core.policy import _validate_domains
-from test_integrated_surfaces import release_scorecard
+from core_helpers import release_scorecard
 
 
 def verify(result):

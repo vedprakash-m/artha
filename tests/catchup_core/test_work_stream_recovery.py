@@ -20,8 +20,18 @@ from catchup_core import recovery_access
 from catchup_core.recovery_access import WorkRecoveryAccess
 from catchup_core.recovery_quarantine import QuarantineError
 from catchup_core.work_privacy import WorkPrivacy
-from test_work_privacy import Backend, KEY
-from test_work_stream_checkpoint import CIPHER, GENERATION, ORDINARY, _checkpoint, _identity, _key
+from core_helpers import (
+    STREAM_CIPHER as CIPHER,
+    STREAM_GENERATION as GENERATION,
+    STREAM_ORDINARY as ORDINARY,
+    WORK_PRIVACY_KEY as KEY,
+    WorkBackend as Backend,
+    stream_checkpoint as _checkpoint,
+    stream_identity as _identity,
+    stream_key as _key,
+    stream_omission_context as _omission_context,
+    stream_rewrite_frames as _rewrite_frames,
+)
 
 
 @pytest.fixture
@@ -82,7 +92,6 @@ def _extract(scenario):
 
 
 def test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen(scenario):
-    from test_work_stream_checkpoint import _omission_context
     preview = scenario.protocol.preview_stream_policy()
     scenario.protocol.adopt_stream_policy(reviewed=True, expected_digest=preview['inventory_sha256'])
     def bind(manifest):
@@ -116,8 +125,6 @@ def test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen(scenario):
 
 
 def test_ciphertext_capture_fragmentation_does_not_multiply_source_scans(scenario, monkeypatch):
-    from test_work_stream_checkpoint import _rewrite_frames
-
     original = scenario.protocol._inventory
     scans = []
 

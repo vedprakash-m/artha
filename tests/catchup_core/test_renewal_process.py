@@ -1,5 +1,3 @@
-import test_renewal_authority as authority_fixtures
-world = authority_fixtures.world
 """Real process death and cooperating writer races with a synthetic file-backed native store."""
 import hashlib
 import json
@@ -10,10 +8,23 @@ from pathlib import Path
 
 import pytest
 
+from core_helpers import (
+    RENEWAL_BINDING as BINDING,
+    RENEWAL_EVALUATOR as EVALUATOR,
+    RENEWAL_NOW as NOW,
+    RenewalWorkspace as Workspace,
+    build_renewal_authority_world,
+    renewal_approve as approve,
+    renewal_target as target,
+)
 from catchup_core.renewal_authority import Authority
 from catchup_core.renewal_store import RenewalError, digest
 from lib.credentials import CredentialStore
-from test_renewal_authority import BINDING, EVALUATOR, NOW, approve, target
+
+
+@pytest.fixture
+def world(tmp_path):
+    return build_renewal_authority_world(tmp_path)
 
 
 class FileKeyring:
@@ -123,7 +134,6 @@ a.activate(sys.argv[3], {'tree': 'c' * 40}, verify=lambda *_: None)
 def test_AR10_second_delivery_cannot_overwrite_a_pushed_receipt(tmp_path, world):
     import select
     from catchup_core.renewal_delivery import Delivery
-    from test_renewal_delivery import Workspace
     _, policy, _ = world
     authority = persistent(tmp_path, policy)
     approval = approve(authority)

@@ -4,7 +4,14 @@ from contextlib import closing
 import sqlite3
 
 import pytest
-from test_coordinator import KEY, CIPHER
+from core_helpers import (
+    COORDINATOR_CIPHER as CIPHER,
+    CORE_KEY as KEY,
+    build_coordinator_world,
+    coord_cal as cal,
+    coord_email as email,
+    coord_req as req,
+)
 
 from catchup_core import corpus, ledger as lg
 from catchup_core.backup import encrypted_snapshot, read_snapshot
@@ -120,10 +127,9 @@ def test_failed_physical_erasure_replays_the_same_corpus_identities(store, monke
 
 
 def test_actual_returned_briefing_is_scored_separately_from_labels(tmp_path):
-    from test_coordinator import world, email, cal, req
     from catchup_core import coordinator as co
     from catchup_core.contracts import ExecutionMode
-    generator = world.__wrapped__(tmp_path)
+    generator = build_coordinator_world(tmp_path)
     ledger, blobs, make, _ = next(generator)
     try:
         result = co.run_catchup(req('cu_evaluation', ExecutionMode.SHADOW), make({'school_email': email(), 'calendar': cal()}))

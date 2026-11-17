@@ -11,7 +11,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from catchup_core import documents
 from catchup_core import ledger as lg
-from test_coordinator import NOW, KEY, CIPHER
+from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY, CORE_NOW as NOW
 
 
 def pdf(text="Registration closes 2026-10-14"):

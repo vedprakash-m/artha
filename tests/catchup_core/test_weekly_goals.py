@@ -12,14 +12,19 @@ from catchup_core import cli, commands, goal_metrics, goals, views
 from catchup_core.contracts import ProcessingState, Provenance
 from catchup_core.ledger import FactInput, SignalInput
 from catchup_core.mcp import handle, tool_runner
-from test_goal_metrics import coverage, evidence, metric, payload
-from test_release_regressions import NOW
-import test_goal_metrics
+from core_helpers import (
+    CORE_NOW as NOW,
+    build_regression_world,
+    goal_coverage as coverage,
+    goal_evidence as evidence,
+    goal_metric as metric,
+    goal_payload as payload,
+)
 
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_sources, admitted_curated_state):
-    yield from test_goal_metrics.world.__wrapped__(tmp_path, admitted_personal_sources)
+    yield from build_regression_world(tmp_path)
 
 
 @pytest.mark.parametrize('old,new,change', [

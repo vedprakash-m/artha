@@ -7,7 +7,7 @@ from argparse import Namespace
 import pytest
 
 from catchup_core import interchange, ledger as lg, user_config
-from test_user_surfaces import CIPHER, KEY
+from core_helpers import CORE_KEY as KEY, REGRESSION_CIPHER as CIPHER
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_scope")
 

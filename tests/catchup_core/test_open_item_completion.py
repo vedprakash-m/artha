@@ -13,14 +13,14 @@ from catchup_core import runtime
 from catchup_core.curated import read_authorized_state, verify_completion
 from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.ledger import PermissionDenied
-import test_integrated_surfaces
+from core_helpers import build_integrated_app
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_sources", "admitted_curated_state")
 
 
 @pytest.fixture
 def app(tmp_path):
-    yield from test_integrated_surfaces.app.__wrapped__(tmp_path)
+    yield from build_integrated_app(tmp_path)
 
 
 def authored(root, *, owner='owner', subject='kid1'):

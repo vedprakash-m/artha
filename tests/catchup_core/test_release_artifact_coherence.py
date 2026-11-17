@@ -13,12 +13,12 @@ from catchup_core import coordinator, policy
 from catchup_core.contracts import RunStatus, Stage
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.ledger import PermissionDenied
-import test_cutover_fence
+from core_helpers import build_cutover_configured, release_scorecard
 
 
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
-    return test_cutover_fence.configured.__wrapped__(tmp_path, monkeypatch)
+    return build_cutover_configured(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize(
@@ -236,7 +236,6 @@ def test_a_mixed_case_cohort_is_rejected_even_when_aggregate_bounds_pass(configu
 @pytest.mark.parametrize('change', ['measurement', 'missing-catchup', 'anonymous-model'])
 def test_release_cohort_requires_versioned_measurements_and_observed_model(configured, change):
     import json
-    from test_integrated_surfaces import release_scorecard
     config, _, _, build = configured
     if change == 'anonymous-model':
         config.pop('model_identity')
@@ -266,7 +265,6 @@ def test_approving_evidence_or_enabling_cutover_does_not_change_the_evaluated_co
 
 @pytest.mark.parametrize('problem', ['boolean-floor', 'zero-budget', 'duplicate-identity'])
 def test_release_scorecard_rejects_ambiguous_case_identity_and_invalid_floors(problem):
-    from test_integrated_surfaces import release_scorecard
     result = release_scorecard()
     if problem == 'boolean-floor':
         result['bounds']['kids_school']['minimum_precision'] = True

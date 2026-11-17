@@ -3,24 +3,27 @@ from __future__ import annotations
 
 import io
 import json
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent))
+from core_helpers import (
+    CORE_EXTRACT as EXTRACT,
+    build_coordinator_world,
+    coord_cal as cal,
+    coord_email as email,
+    coord_req as req,
+)
 
-import test_coordinator as tc  # noqa: E402
-
-from catchup_core import cli as cli_mod  # noqa: E402
-from catchup_core import coordinator as co  # noqa: E402
-from catchup_core import exchange as xc  # noqa: E402
-from catchup_core.contracts import ExitCode, RunStatus  # noqa: E402
+from catchup_core import cli as cli_mod
+from catchup_core import coordinator as co
+from catchup_core import exchange as xc
+from catchup_core.contracts import ExitCode, RunStatus
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_corpus")
 
-world = tc.world        # share the end-to-end fixture
-EXTRACT, cal, email, req = tc.EXTRACT, tc.cal, tc.email, tc.req
+
+@pytest.fixture
+def world(tmp_path):
+    yield from build_coordinator_world(tmp_path)
 
 
 def test_request_id_is_a_stable_function_of_the_prompt():

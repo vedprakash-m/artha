@@ -104,15 +104,15 @@ def test_invalid_source_freshness_and_unrecognized_lifecycle_do_not_produce_chec
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_sources):
-    import test_release_regressions as regressions
-    yield from regressions.world.__wrapped__(tmp_path)
+    from core_helpers import build_regression_world
+    yield from build_regression_world(tmp_path)
 
 
 def test_runtime_checks_only_visible_fresh_scopes_and_pending_signals(world):
     import yaml
     from catchup_core.contracts import ProcessingState
     from catchup_core.ledger import SignalInput
-    from test_release_regressions import NOW
+    from core_helpers import CORE_NOW as NOW
     led, _, _, _ = world
     duty = rec(sources=['school_email:family'], freshness_hours=24)
     text = yaml.safe_dump({'responsibilities': [duty]})
@@ -143,7 +143,7 @@ def test_stop_evidence_pins_exact_version_and_rechecks_permission(world):
     import yaml
     from catchup_core.contracts import FactStatus, Provenance
     from catchup_core.ledger import FactInput
-    from test_release_regressions import NOW
+    from core_helpers import CORE_NOW as NOW
     led, _, _, _ = world
     observed = FactInput('home', 'registration_status', 'renewed', 'owner', NOW.isoformat(),
                          provenance=Provenance.USER_CONFIRMED)
@@ -180,7 +180,7 @@ def test_stop_condition_cannot_use_stale_uncertain_or_out_of_interval_facts(worl
     from dataclasses import replace
     from catchup_core.contracts import FactStatus, Provenance
     from catchup_core.ledger import FactInput
-    from test_release_regressions import NOW
+    from core_helpers import CORE_NOW as NOW
     led, _, _, _ = world
     if 'status' in change:
         change = {**change, 'status': FactStatus(change['status'])}
@@ -200,7 +200,7 @@ def test_duplicate_responsibilities_and_unscheduled_checked_duties_need_review()
 
 
 def test_missing_ledger_never_verifies_a_stop_condition():
-    from test_release_regressions import NOW
+    from core_helpers import CORE_NOW as NOW
     _, stop = rt._responsibility_checkers(None, 'owner', NOW, {})
     assert stop({'fact': 'fact:unknown@version', 'equals': True}, 72) is None
 
@@ -210,7 +210,7 @@ def test_verified_stop_is_informational_and_correction_removes_the_quiet_claim(w
     from catchup_core import coordinator
     from catchup_core.contracts import FactStatus, Provenance
     from catchup_core.ledger import FactInput
-    from test_release_regressions import NOW, request
+    from core_helpers import CORE_NOW as NOW, regression_request as request
     led, _, dependency_factory, _ = world
     fid = led.put_fact(FactInput('home', 'registration_status', 'renewed', 'owner', NOW.isoformat(),
                                  provenance=Provenance.USER_CONFIRMED))

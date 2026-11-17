@@ -17,9 +17,7 @@ from catchup_core.backup import encrypted_snapshot
 from catchup_core.contracts import CatchupRequest, ExecutionMode
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, StaticKeyProvider
 from catchup_core.ledger import Ledger, PermissionDenied
-from test_coordinator import KEY
-from test_integrated_surfaces import MODEL_IDENTITY, release_scorecard
-from test_runtime import FakeKeyring
+from core_helpers import CORE_KEY as KEY, FakeKeyring, MODEL_IDENTITY, release_scorecard
 
 NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
 ESCROW = {

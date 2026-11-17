@@ -16,14 +16,25 @@ from catchup_core.ledger import PermissionDenied
 from catchup_core.mcp import handle, serve
 from catchup_core.plans import evaluate_plans
 from catchup_core.responsibilities import evaluate_responsibilities
-from test_release_regressions import CIPHER, NOW, PACK, request
-import test_release_regressions as regressions
+from core_helpers import (
+    CORE_KEY as KEY,
+    CORE_NOW as NOW,
+    CORE_PACK as PACK,
+    FakeKeyring,
+    REGRESSION_CIPHER as CIPHER,
+    adapter_gen as gen,
+    build_regression_world,
+    raw_cal_rec as cal,
+    regression_request as request,
+    release_scorecard,
+    write_cfg,
+)
 
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_sources, admitted_curated_state,
           admitted_documentary_scope):
-    yield from regressions.world.__wrapped__(tmp_path)
+    yield from build_regression_world(tmp_path)
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -261,7 +272,6 @@ def test_read_only_goal_observation_does_not_write(world):
 
 def test_read_only_open_enforces_sqlite_boundary(world):
     from catchup_core.ledger import Ledger
-    from test_release_regressions import KEY
     import sqlite3
     led, _, _, _ = world
     with Ledger(led._path, id_key=KEY, cipher=CIPHER).open(read_only=True) as read:
@@ -271,7 +281,6 @@ def test_read_only_open_enforces_sqlite_boundary(world):
 
 def test_missing_inspection_keys_cannot_be_created():
     from catchup_core.crypto import KeyringKeyProvider, KeyUnavailableError
-    from test_runtime import FakeKeyring
     keys = FakeKeyring()
     with pytest.raises(KeyUnavailableError):
         KeyringKeyProvider(backend=keys, create=False).current_version()
@@ -290,7 +299,6 @@ def test_emergency_authority_does_not_require_quality_scorecard():
 @pytest.mark.parametrize("missing", ["P1", "P2", "negative", "cross_domain", "goal_correction"])
 def test_release_requires_each_consequential_review_cohort(missing):
     from catchup_core.policy import _validate_domains
-    from test_integrated_surfaces import release_scorecard
     data = release_scorecard()
     data["evaluations"] = [case for case in data["evaluations"]
                            if case.get("severity") != missing and case.get("case_type") != missing]
@@ -301,7 +309,6 @@ def test_release_requires_each_consequential_review_cohort(missing):
 @pytest.mark.parametrize("value", [False, True, -1, float("nan"), float("inf")])
 def test_release_bounds_reject_nonfinite_and_boolean_measurements(value):
     from catchup_core.policy import _validate_domains
-    from test_integrated_surfaces import release_scorecard
     data = release_scorecard()
     data["measurements"]["kids_school"]["monthly_usd"] = value
     with pytest.raises(PermissionDenied):
@@ -329,7 +336,6 @@ def test_runtime_preflight_blocks_unknown_footprint_without_using_the_host(world
 def test_read_only_runtime_never_migrates_recovers_or_enrolls(tmp_path, monkeypatch):
     from catchup_core import runtime as rt
     from catchup_core.contracts import ExecutionMode
-    from test_runtime import FakeKeyring, write_cfg
     repo = tmp_path / "repo"
     (repo / "state").mkdir(parents=True)
     write_cfg(repo)
@@ -353,7 +359,6 @@ def test_read_only_runtime_never_migrates_recovers_or_enrolls(tmp_path, monkeypa
 
 def test_calendar_kind_comes_from_trusted_calendar_configuration():
     from catchup_core.adapters import fetch_via_handler
-    from test_adapters import cal, gen
     got = fetch_via_handler("calendar", "family", gen([cal(1, calendar_id="school")]), since="x",
                             calendar_kinds={"school": "school"})
     assert got.records[0].calendar.kind == "school"

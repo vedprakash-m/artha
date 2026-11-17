@@ -15,7 +15,7 @@ import yaml
 from catchup_core import commands, curated, ids, runtime
 from catchup_core.contracts import CatchupRequest, ExecutionMode
 from catchup_core.ledger import Ledger, LedgerError, PermissionDenied
-from test_runtime import FakeKeyring, write_cfg
+from core_helpers import FakeKeyring, write_cfg
 
 _UNVERIFIED_PERSONAL_STATE_IDENTITY = curated._personal_state_identity
 

@@ -16,17 +16,24 @@ from catchup_core import policy, renewal_entry, renewal_github, renewal_runtime
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.ledger import PermissionDenied, Ledger, KeyringSealedStore
 from catchup_core.renewal_metadata import AuthorityMetadata
-from test_user_surfaces import KEY
+from core_helpers import (
+    CORE_KEY as KEY,
+    Keyring,
+    build_cutover_configured,
+    renewal_git as git,
+    renewal_private_directory as private_directory,
+)
 from catchup_core.renewal_authority import Authority
 from catchup_core.renewal_ci import Gate
 from catchup_core.renewal_delivery import Delivery
 from catchup_core.renewal_store import RenewalError, digest
 from catchup_core.renewal_workspace import Workspace
 from lib.credentials import CredentialStore
-import test_cutover_fence as cutover_fixtures
-configured = cutover_fixtures.configured
-from test_renewal_authority import Keyring, private_directory
-from test_renewal_workspace import git
+
+
+@pytest.fixture
+def configured(tmp_path, monkeypatch):
+    return build_cutover_configured(tmp_path, monkeypatch)
 
 
 def _copy_listed_scripts(original: Path, root: Path) -> None:

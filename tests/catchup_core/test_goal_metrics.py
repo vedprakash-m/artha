@@ -10,14 +10,12 @@ import pytest
 from catchup_core import goals
 from catchup_core.contracts import FactStatus, ProcessingState, Provenance
 from catchup_core.ledger import FactInput, SignalInput
-from test_release_regressions import NOW
+from core_helpers import CORE_NOW as NOW, build_regression_world, regression_request as request
 
 
 @pytest.fixture
 def world(tmp_path, admitted_personal_sources):
-    from test_release_regressions import world as fixture
-
-    yield from fixture.__wrapped__(tmp_path)
+    yield from build_regression_world(tmp_path)
 
 
 def metric(kind="outcome", **changes):
@@ -134,7 +132,6 @@ def test_missing_metric_next_action_is_explicit_in_the_shared_goals_command(
 def test_briefing_keeps_verified_metric_and_authored_action_with_exact_dependencies(world, tmp_path):
     import yaml
     from catchup_core import coordinator, runtime
-    from test_release_regressions import request
     ledger, blobs, make, _ = world
     text = 'G1 2026-10-12 125.25 USD'
     coverage(ledger)
@@ -223,7 +220,6 @@ def test_future_observation_stays_unknown_through_commands_and_briefing_until_it
     import yaml
 
     from catchup_core import commands, coordinator, runtime
-    from test_release_regressions import request
 
     ledger, blobs, make, _ = world
     coverage(ledger)
@@ -362,7 +358,6 @@ def test_goal_pack_capture_correction_and_forget_update_the_briefing(world,tmp_p
     import yaml
     from pathlib import Path
     from catchup_core import coordinator,domain_pack,runtime,views
-    from test_release_regressions import request
     ledger,_,make,published=world
     pack=domain_pack.load_pack_file(Path(domain_pack.__file__).parent/'packs/goals.yaml')
     text='G1 2026-10-12 125.25 USD'
@@ -395,7 +390,6 @@ def test_goal_progress_has_a_resolvable_compact_citation(world,tmp_path):
     import re
     import yaml
     from catchup_core import coordinator,runtime
-    from test_release_regressions import request
     ledger,_,make,_=world
     coverage(ledger)
     evidence(ledger,'G1 2026-10-12 125.25 USD')
@@ -419,7 +413,6 @@ def test_large_precise_decimal_does_not_round_through_binary_float(world):
 def test_untrusted_goal_title_cannot_invent_a_resolving_citation(world,tmp_path):
     import yaml
     from catchup_core import coordinator,runtime
-    from test_release_regressions import request
     ledger=world[0];coverage(ledger);evidence(ledger,'G1 2026-10-12 125 USD')
     row=metric();row['title']='A misleading reference [999]'
     deps=world[2]()

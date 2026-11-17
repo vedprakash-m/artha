@@ -11,7 +11,13 @@ from catchup_core.checkpoint import CheckpointBlocked
 from catchup_core.recovery_access import WorkRecoveryAccess
 from catchup_core.recovery_quarantine import QuarantineError, QuarantineStore
 from catchup_core.work_privacy import WorkPrivacyBlocked
-from test_work_stream_checkpoint import CIPHER, ORDINARY, _checkpoint, _identity, _key
+from core_helpers import (
+    STREAM_CIPHER as CIPHER,
+    STREAM_ORDINARY as ORDINARY,
+    stream_checkpoint as _checkpoint,
+    stream_identity as _identity,
+    stream_key as _key,
+)
 
 
 def _authority():

@@ -10,11 +10,20 @@ import pytest
 from catchup_core import cli, commands
 from catchup_core.ledger import LedgerError, SignalInput
 from catchup_core.resources import AdmissionStore, ResourcePolicy
-from test_release_regressions import NOW
+from core_helpers import (
+    CORE_NOW as NOW,
+    build_regression_world,
+    goal_coverage as coverage,
+    goal_evidence as evidence,
+    goal_metric as metric,
+)
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
 
-world = pytest.importorskip("test_release_regressions").world
+
+@pytest.fixture
+def world(tmp_path):
+    yield from build_regression_world(tmp_path)
 
 POLICY = ResourcePolicy.from_mapping({"max_requests_per_month": 50, "max_pending_signals": 4})
 
@@ -146,7 +155,6 @@ def test_given_apply_when_retention_runs_then_deletion_stays_held(world, tmp_pat
 from decimal import Decimal  # noqa: E402
 
 from catchup_core import goals  # noqa: E402
-from test_goal_metrics import coverage, evidence, metric  # noqa: E402
 
 SPRINT = {"id": "s1", "goal_ref": "G1", "status": "active", "start": "2026-10-01", "end": "2026-10-20"}
 

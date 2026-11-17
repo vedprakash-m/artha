@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from catchup_core import user_config
-from test_user_surfaces import CIPHER, KEY
+from core_helpers import CORE_KEY as KEY, REGRESSION_CIPHER as CIPHER
 
 KNOWN = frozenset({'owner', 'kid', 'adult'})
 REQUIRED = frozenset({'adult'})
