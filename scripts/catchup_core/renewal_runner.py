@@ -141,6 +141,8 @@ def _containment() -> Callable[[], None]:
 
 
 if __name__ == '__main__':
+    # The parent requires exactly b'PASS\n'; Windows text mode would otherwise send PASS\r\n.
+    sys.stdout.reconfigure(newline='\n')  # type: ignore[union-attr]
     try:
         _worker(json.loads(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]))
     except (RenewalError, OSError, ValueError, IndexError):

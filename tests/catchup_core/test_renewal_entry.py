@@ -16,6 +16,7 @@ def test_cli_help_and_argument_limits(capsys):
 def test_local_gates_never_pass_native_keys_to_child(monkeypatch, tmp_path):
     from types import SimpleNamespace
     seen = []
+    monkeypatch.setattr(renewal_entry.shutil, 'which', lambda name: f'/usr/bin/{name}')
     monkeypatch.setattr(renewal_entry, 'Workspace', lambda _: SimpleNamespace(git=lambda *_: 'a' * 40))
     proof = renewal_entry.local_gates(tmp_path, runner=lambda args, root, **kw: seen.append((args, root, kw)))
     assert seen[0][0][1] == 'check' and seen[0][1] == tmp_path
@@ -25,6 +26,7 @@ def test_local_gates_never_pass_native_keys_to_child(monkeypatch, tmp_path):
 
 def test_local_gate_failure_is_bounded(monkeypatch, tmp_path):
     from types import SimpleNamespace
+    monkeypatch.setattr(renewal_entry.shutil, 'which', lambda name: f'/usr/bin/{name}')
     monkeypatch.setattr(renewal_entry, 'Workspace', lambda _: SimpleNamespace(git=lambda *_: 'a' * 40))
     def held(*_a, **_kw):
         raise RenewalError('local delivery gates held')
@@ -204,7 +206,7 @@ def adoption_cli(cli_world, monkeypatch, tmp_path):
     policy = old.policy()
     (root / 'config/catchup_core.yaml').write_text(yaml.safe_dump({'viewer': 'owner', 'release': policy['base_release']}))
     local = tmp_path / 'initial-local'
-    local.mkdir(mode=0o700)
+    authority_fixtures.private_directory(local)
     authority = Authority(local, old.binding, credentials=CredentialStore(local=local, backend=Keyring()),
                           checkout=root, now=old.now)
     document = local / 'policy.json'

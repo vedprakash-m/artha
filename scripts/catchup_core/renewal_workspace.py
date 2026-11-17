@@ -129,7 +129,8 @@ class Workspace:
             raise RenewalError('source manifest could not be established') from None
 
     def tree(self) -> str:
-        if self.git('rev-parse', '--show-toplevel') != str(self.root):
+        # Path equality, not text: Git reports C:/... on Windows where Path renders C:\...
+        if Path(self.git('rev-parse', '--show-toplevel')) != self.root:
             raise RenewalError('delivery requires the canonical checkout identity')
         if self.git('symbolic-ref', '--short', 'HEAD') != 'main':
             raise RenewalError('delivery requires canonical main')

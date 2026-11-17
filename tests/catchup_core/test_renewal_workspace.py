@@ -233,10 +233,11 @@ def test_AR06_source_descriptor_and_postread_identity_races_refuse(repo, monkeyp
     def substituted(fd):
         value = original(fd)
         return SimpleNamespace(st_dev=value.st_dev, st_ino=value.st_ino + 1)
-    monkeypatch.setattr(module.os, 'fstat', substituted)
-    with pytest.raises(RenewalError, match='identity changed'):
-        module.source_file(path, 'scripts/example.py')
-    monkeypatch.setattr(module.os, 'fstat', original)
+    if os.name != 'nt':  # Windows reads through a verified directory handle, not a descriptor fstat.
+        monkeypatch.setattr(module.os, 'fstat', substituted)
+        with pytest.raises(RenewalError, match='identity changed'):
+            module.source_file(path, 'scripts/example.py')
+        monkeypatch.setattr(module.os, 'fstat', original)
     original_stat = module.Path.lstat
     calls = [0]
     def changed(self, **kwargs):

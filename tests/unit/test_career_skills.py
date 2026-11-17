@@ -184,7 +184,16 @@ def test_career_pdf_offline_render_preserves_local_assets(tmp_path, monkeypatch)
     pypdf = pytest.importorskip("pypdf")
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from threading import Thread
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
     from skills import career_pdf_generator as module
+
+    try:
+        with sync_playwright() as playwright:
+            playwright.chromium.launch().close()
+    except PlaywrightError as exc:
+        if "Executable doesn't exist" in str(exc):
+            pytest.skip("Playwright Chromium is not installed")
+        raise
 
     connections = []
 
@@ -218,8 +227,6 @@ def test_career_pdf_offline_render_preserves_local_assets(tmp_path, monkeypatch)
         monkeypatch.setattr(module, "CareerTrace", lambda: None)
         pdf = tmp_path / "synthetic.pdf"
         result = module.CareerPdfGenerator(report_number="001")._render_pdf(html, pdf)
-        if not result["success"] and "Executable doesn't exist" in result.get("error", ""):
-            pytest.skip("Playwright Chromium is not installed")
         assert result["success"], result.get("error")
         text = "".join(page.extract_text() for page in pypdf.PdfReader(pdf).pages)
         assert "LOCAL-CSS-LOADED" in text

@@ -72,7 +72,13 @@ def test_AR13_non_directory_ancestor_and_failed_publication(tmp_path, monkeypatc
     with pytest.raises(RenewalError):
         _chain(parent / 'child')
     store = ArtifactStore(tmp_path / 'release', b'k' * 32)
-    monkeypatch.setattr(os, 'link', lambda *_: (_ for _ in ()).throw(OSError('PRIVATE_CANARY')))
+    if os.name == 'nt':
+        from catchup_core import renewal_store
+        def refused(*_a, **_kw):
+            raise renewal_store.QuarantineFilesystemError('PRIVATE_CANARY')
+        monkeypatch.setattr(renewal_store.WindowsQuarantineDirectory, 'publish_write_once', refused)
+    else:
+        monkeypatch.setattr(os, 'link', lambda *_: (_ for _ in ()).throw(OSError('PRIVATE_CANARY')))
     with pytest.raises(RenewalError, match='^release artifact publication unavailable$'):
         store.put({'v': 1})
 

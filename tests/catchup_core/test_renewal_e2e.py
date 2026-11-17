@@ -25,7 +25,7 @@ from catchup_core.renewal_workspace import Workspace
 from lib.credentials import CredentialStore
 import test_cutover_fence as cutover_fixtures
 configured = cutover_fixtures.configured
-from test_renewal_authority import Keyring
+from test_renewal_authority import Keyring, private_directory
 from test_renewal_workspace import git
 
 
@@ -77,6 +77,7 @@ def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(
 
     workspace = SyntheticRemote(root)
     local = tmp_path / 'authority-local'
+    private_directory(local)
     authority = Authority(local, {'owner': 'owner', 'host': 'authority', 'repository': 'example/project',
                                   'profile': 'personal'}, credentials=CredentialStore(local=local, backend=Keyring()),
                           checkout=root)
@@ -84,7 +85,6 @@ def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(
     cipher = EnvelopeCipher(KeyringKeyProvider('artha-ledger', backend=keyring))
     sealed = KeyringSealedStore(authority.credentials._backend, 'authoritative', cipher=cipher,
                                 history_root=tmp_path / 'privacy')
-    local.mkdir(mode=0o700, exist_ok=True)
     with Ledger(local / 'ledger.db', id_key=KEY, cipher=cipher, sealed=sealed) as live:
         live.migrate()
         live.ensure_authority_host('authority')

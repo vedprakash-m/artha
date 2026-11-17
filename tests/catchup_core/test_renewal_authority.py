@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +19,15 @@ from test_runtime import FakeKeyring
 class Keyring(FakeKeyring):
     def delete_password(self, service, account):
         self.store.pop((service, account), None)
+
+
+def private_directory(path):
+    """Owner-private as production requires: mode 0700 on POSIX, a protected owner DACL on Windows."""
+    if os.name == 'nt':
+        from catchup_core.quarantine_fs_windows import ensure_private_directory
+        ensure_private_directory(path)
+    else:
+        path.mkdir(mode=0o700, exist_ok=True)
 
 
 NOW = datetime(2026, 1, 2, tzinfo=UTC)

@@ -1,5 +1,6 @@
 """Session child lifetime uses real processes and inert synthetic commands."""
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -87,9 +88,11 @@ def test_windows_loader_and_platform_cleanup_routes(monkeypatch):
     renewal_runner._containment()()
     calls = []
     monkeypatch.setattr(renewal_runner, 'sys', SimpleNamespace(platform='darwin'))
-    monkeypatch.setattr(renewal_runner.os, 'killpg', lambda *args: calls.append(args))
+    monkeypatch.setattr(renewal_runner.os, 'killpg', lambda *args: calls.append(args), raising=False)
+    monkeypatch.setattr(renewal_runner.os, 'getpgrp', getattr(os, 'getpgrp', lambda: 4242), raising=False)
+    monkeypatch.setattr(renewal_runner.signal, 'SIGKILL', getattr(signal, 'SIGKILL', 9), raising=False)
     renewal_runner._containment()()
-    assert calls[0][0] == os.getpgrp()
+    assert calls[0][0] == renewal_runner.os.getpgrp()
 
 
 def test_worker_environment_excludes_credentials_and_gate_overrides(tmp_path, monkeypatch):
@@ -146,7 +149,8 @@ def test_parent_timeout_requests_native_tree_cleanup(tmp_path, monkeypatch, plat
     child, killed = Child(), []
     monkeypatch.setattr(renewal_runner, 'start', lambda *_a, **_kw: child)
     monkeypatch.setattr(renewal_runner, 'sys', SimpleNamespace(platform=platform))
-    monkeypatch.setattr(renewal_runner.os, 'killpg', lambda pid, _: killed.append(pid))
+    monkeypatch.setattr(renewal_runner.os, 'killpg', lambda pid, _: killed.append(pid), raising=False)
+    monkeypatch.setattr(renewal_runner.signal, 'SIGKILL', getattr(signal, 'SIGKILL', 9), raising=False)
     with pytest.raises(RenewalError):
         renewal_runner.run(['synthetic'], tmp_path, timeout=1)
     assert killed == [child.pid]

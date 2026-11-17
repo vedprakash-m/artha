@@ -142,7 +142,8 @@ def test_prune_old_logs_preserves_recent_files(tmp_path):
 # ---------------------------------------------------------------------------
 def test_logger_falls_back_to_stderr_if_unwritable(tmp_path, capsys, monkeypatch):
     import lib.logger as _logger_mod
-    from lib.logger import _JsonlHandler, StructuredLogger
+    # One module object for both patch and use: another test may have re-imported lib.logger.
+    _JsonlHandler, StructuredLogger = _logger_mod._JsonlHandler, _logger_mod.StructuredLogger
 
     # Simulate unwritable dir by patching _ensure_log_dir to return False.
     # os.chmod(0o444) is unreliable on Windows (doesn't block subdirectory creation).

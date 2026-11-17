@@ -7,7 +7,7 @@ import pytest
 from catchup_core import renewal_metadata
 from catchup_core.ledger import KeyringSealedStore, Ledger
 from catchup_core.renewal_store import RenewalError
-from test_renewal_authority import Keyring
+from test_renewal_authority import Keyring, private_directory
 from test_user_surfaces import CIPHER, KEY
 
 NOW = datetime(2026, 1, 2, tzinfo=UTC)
@@ -16,7 +16,7 @@ NOW = datetime(2026, 1, 2, tzinfo=UTC)
 @pytest.fixture
 def metadata(tmp_path):
     local = tmp_path / 'local'
-    local.mkdir(mode=0o700)
+    private_directory(local)
     backend = Keyring()
     privacy = tmp_path / 'privacy'
     sealed = KeyringSealedStore(backend, 'authoritative', cipher=CIPHER, history_root=privacy)
