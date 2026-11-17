@@ -13,6 +13,7 @@ paths = [
   '''^tests/unit/test_pii_guard\.py$''',
   '''^tests/dev/test_privacy_gate\.py$''',
   '''^scripts/pii_guard\.py$''',
+  '''^\.test_durations$''',
 ]
 
 [[allowlists]]

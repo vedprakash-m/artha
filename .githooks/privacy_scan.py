@@ -140,6 +140,7 @@ PII_SCAN_EXEMPT = {
     ".githooks/pre-push",
     ".githooks/privacy_scan.py",
     "tests/dev/test_privacy_gate.py",
+    ".test_durations",
 }
 
 
@@ -480,6 +481,7 @@ GITLEAKS_PATH_EXEMPT = {
     "tests/unit/test_pii_guard.py",
     "tests/dev/test_privacy_gate.py",
     "scripts/pii_guard.py",
+    ".test_durations",
 }
 
 

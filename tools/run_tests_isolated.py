@@ -682,6 +682,8 @@ def main(argv: list[str]) -> int:
                 normalize_coverage_xml(report, dest, root)
         if export_cov is not None:
             _export_coverage(dest, env, export_cov)
+        if "--store-durations" in args and (dest / ".test_durations").is_file():
+            shutil.copy2(dest / ".test_durations", root / ".test_durations")
         return result.returncode
     finally:
         _remove_workspace(workspace)
