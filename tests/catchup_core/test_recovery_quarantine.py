@@ -692,7 +692,8 @@ def test_second_pass_decrypt_mutation_refuses_before_yield(setup, monkeypatch, a
 
 
 @pytest.mark.slow
-@pytest.mark.timeout(300)
+# 6,500 durable member writes take about 490 s on Windows; 300 s killed the xdist worker in CI.
+@pytest.mark.timeout(1200)
 def test_6500_tiny_members_seal_and_verify_schema_v1(setup):
     store, _ = setup
     entries = [entry_for(b'x', f'state/{index}.md') for index in range(6500)]

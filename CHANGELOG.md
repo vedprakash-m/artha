@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Windows quarantine scale-test timeout, 2026-11-17
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Hosted run `44176909472` on `53b14af` failed Windows shard 2 on Python 3.12 and 3.14: the 300 s timeout stopped the xdist worker during `test_6500_tiny_members_seal_and_verify_schema_v1`. The 6,500-member count comes from the spec, so it is unchanged; the timeout is now 1,200 s. The test took about 490 s locally; the 3.11 shard passed on the hosted runner. | `tests/catchup_core/test_recovery_quarantine.py` | The test passed locally in about 491 s. |
+
 ### Fixed — Hosted CI follow-up on `fbdf763`, 2026-11-16
 
 | Change | Modified files | Validation |

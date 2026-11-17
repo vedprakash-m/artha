@@ -1,5 +1,9 @@
 # re-artha implementation status — 2026-11-16
 
+## Windows quarantine scale-test timeout — 2026-11-17
+
+On `53b14af`, hosted run `44176909472` failed Windows shard 2 on Python 3.12 and 3.14. The 300 s timeout stopped `test_6500_tiny_members_seal_and_verify_schema_v1`. The timeout is now 1,200 s; the spec's 6,500-member count is unchanged.
+
 ## Hosted CI follow-up — 2026-11-16
 
 Hosted run `44171726034` on `fbdf763` failed four gates. All four are now fixed:
