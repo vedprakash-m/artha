@@ -147,7 +147,7 @@ def test_native_process_lock_excludes_legacy_exclusive(tmp_path, shared):
     path = tmp_path / "session.lock"
     path.write_bytes(b"\0")
     with held_process(path, shared):
-        with pytest.raises(OSError), _legacy_lock(path):
+        with pytest.raises(PermissionError), _legacy_lock(path):
             pass
     with _legacy_lock(path):
         pass
@@ -213,10 +213,13 @@ def test_reader_restores_position_after_body_failure(tmp_path):
     with session_lock(path):
         with session_lock_reader(path) as stream:
             stream.seek(4)
-            with pytest.raises(RuntimeError, match="synthetic body failure"):
+            def _nested_fail():
                 with session_lock_reader(path) as nested:
                     assert nested.read(2) == b"sy"
                     raise RuntimeError("synthetic body failure")
+
+            with pytest.raises(RuntimeError, match="synthetic body failure"):
+                _nested_fail()
             assert stream.tell() == 4
     with session_lock(path):
         pass

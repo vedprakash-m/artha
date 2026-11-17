@@ -12,11 +12,9 @@ Run:
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,11 +22,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
 
 import action_orchestrator as orch
-from action_orchestrator import run, _deduplicate
+from action_orchestrator import run
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +349,7 @@ def test_pipeline_output_flag(tmp_path, capsys):
 
     workspace_tmp = tmp_path / "tmp"
     workspace_tmp.mkdir()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"\-\-output\ must\ be\ inside\ the\ machine\-local\ directory"):
         _validate_output_path(workspace_tmp / "pipeline_output.jsonl", tmp_path)
 
 
@@ -408,9 +404,7 @@ def test_show_expanded_preview(artha_dir, capsys):
 
 def test_fresh_snapshot_no_append(tmp_path):
     """Running pipeline.py twice with --output → file contains only latest data."""
-    from pipeline import _validate_output_path
 
-    artha_dir = tmp_path
     output_path = _pipeline_output()
 
     # Simulate two pipeline runs writing different content

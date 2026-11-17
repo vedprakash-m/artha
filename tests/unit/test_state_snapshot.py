@@ -13,11 +13,12 @@ Coverage:
 from __future__ import annotations
 
 import re
-import time
 from pathlib import Path
 
 import pytest
 
+from _fixtures import PatchedDateTime
+import lib.state_snapshot as state_snapshot_mod
 # conftest adds scripts/ to sys.path
 from lib.state_snapshot import (
     _SNAP_RE,
@@ -69,7 +70,7 @@ class TestSnapshot:
 
     def test_creates_snap_dir(self, tmp_path):
         """snapshot() creates the tmp/state_snapshots directory if absent."""
-        result = snapshot("health", "content", artha_dir=tmp_path)
+        snapshot("health", "content", artha_dir=tmp_path)
         assert _snap_dir(tmp_path).is_dir()
 
     def test_domain_in_filename(self, tmp_path):
@@ -93,10 +94,10 @@ class TestSnapshot:
         assert result is not None
         assert _SNAP_RE.match(result.name)
 
-    def test_multiple_same_domain(self, tmp_path):
+    def test_multiple_same_domain(self, tmp_path, monkeypatch):
         """Multiple snapshots for same domain create distinct files."""
+        monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
         r1 = snapshot("finance", "v1", artha_dir=tmp_path)
-        time.sleep(1.1)  # ensure distinct timestamps
         r2 = snapshot("finance", "v2", artha_dir=tmp_path)
         assert r1 != r2
 
@@ -128,10 +129,10 @@ class TestListSnapshots:
         result = list_snapshots("finance", artha_dir=tmp_path / "no_such_dir")
         assert result == []
 
-    def test_newest_first(self, tmp_path):
+    def test_newest_first(self, tmp_path, monkeypatch):
         """Snapshots are returned newest-first (reverse lexicographic by timestamp)."""
+        monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
         r1 = snapshot("finance", "old", artha_dir=tmp_path)
-        time.sleep(1.1)
         r2 = snapshot("finance", "new", artha_dir=tmp_path)
         snaps = list_snapshots("finance", artha_dir=tmp_path)
         assert snaps[0] == r2  # newest first
@@ -166,10 +167,10 @@ class TestRestoreLatest:
         content = restore_latest("finance", artha_dir=tmp_path)
         assert content == "v1\ncontent"
 
-    def test_returns_latest_content(self, tmp_path):
+    def test_returns_latest_content(self, tmp_path, monkeypatch):
         """When multiple snapshots exist, returns the newest content."""
+        monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
         snapshot("finance", "version1", artha_dir=tmp_path)
-        time.sleep(1.1)
         snapshot("finance", "version2", artha_dir=tmp_path)
         content = restore_latest("finance", artha_dir=tmp_path)
         assert content == "version2"
@@ -203,11 +204,11 @@ class TestPrune:
         assert deleted == 3
         assert len(remaining) == 3
 
-    def test_keeps_newest(self, tmp_path):
+    def test_keeps_newest(self, tmp_path, monkeypatch):
         """Prune keeps the most recent snapshots."""
+        monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
         for i in range(4):
             snapshot("finance", f"v{i}", artha_dir=tmp_path, max_keep=10)
-            time.sleep(0.05)
         snaps_before = list_snapshots("finance", artha_dir=tmp_path)
         prune("finance", artha_dir=tmp_path, max_keep=2, max_age_hours=9999.0)
         remaining = list_snapshots("finance", artha_dir=tmp_path)

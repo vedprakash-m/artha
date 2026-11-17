@@ -26,14 +26,14 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Ensure scripts/ is on path for all imports
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-sys.path.insert(0, str(_SCRIPTS))
 
+from _fixtures import PatchedDateTime
 import action_bridge
 
 # The real (fail-closed) helpers, captured before the autouse fixture swaps them for
@@ -168,12 +168,12 @@ class TestBridgeFilename:
         assert len(parts) == 2
         assert len(parts[1]) == 8  # first 8 hex chars of UUID (no dashes)
 
-    def test_chronological_sort(self):
+    def test_chronological_sort(self, monkeypatch):
+        monkeypatch.setattr(action_bridge, "datetime", PatchedDateTime())
         name_early = _bridge_filename(str(uuid.uuid4()))
-        time.sleep(1.1)  # ensure different timestamp second
         name_late = _bridge_filename(str(uuid.uuid4()))
         assert name_late > name_early, (
-            f"Expected {name_late!r} > {name_early!r} after 1s sleep"
+            f"Expected {name_late!r} > {name_early!r}"
         )
 
 
@@ -280,14 +280,14 @@ class TestIngestProposals:
         count = ingest_proposals(bridge_dir, queue, tmp_artha)
         assert count == 0
 
-    def test_chronological_ingestion_order(self, bridge_dir, queue, tmp_artha):
+    def test_chronological_ingestion_order(self, bridge_dir, queue, tmp_artha, monkeypatch):
         """Files are processed oldest-first (alphabetical sort = ISO time sort)."""
+        monkeypatch.setattr(action_bridge, "datetime", PatchedDateTime())
         ids_in_order = []
         for _ in range(3):
             p = _proposal()
             ids_in_order.append(p.id)
             write_proposal(bridge_dir, p, pubkey=None)
-            time.sleep(1.1)  # ensure unique second-level timestamps
 
         ingested_ids = []
         original_ingest = queue.ingest_remote
@@ -472,7 +472,6 @@ class TestSchemaMigration:
         db_path = tmp_artha / "state" / "actions.db"
         monkeypatch.setenv("ARTHA_LOCAL_DB", str(db_path))
         q = ActionQueue(tmp_artha)
-        import sqlite3
         cur = q._conn.execute("PRAGMA table_info(actions)")
         cols = [row[1] for row in cur.fetchall()]
         assert "bridge_synced" in cols
@@ -496,7 +495,6 @@ class TestSchemaMigration:
         db_path = tmp_artha / "state" / "actions.db"
         monkeypatch.setenv("ARTHA_LOCAL_DB", str(db_path))
         q = ActionQueue(tmp_artha)
-        import sqlite3
         cur = q._conn.execute("PRAGMA table_info(actions_archive)")
         cols = [row[1] for row in cur.fetchall()]
         assert "bridge_synced" in cols

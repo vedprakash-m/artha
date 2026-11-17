@@ -503,7 +503,6 @@ circles:
     @staticmethod
     def _days_ago_ts(n: int) -> float:
         """Return an Apple CoreData timestamp for n days ago."""
-        from datetime import timezone
         d = date.today() - timedelta(days=n)
         unix_ts = d.toordinal() - date(1970, 1, 1).toordinal()
         return float(unix_ts * 86400 - 978307200)
@@ -512,7 +511,7 @@ circles:
 
     def test_db_unavailable_raises_file_not_found(self, tmp_path, monkeypatch):
         """Skill raises FileNotFoundError when WA DB is absent (non-macOS / no app)."""
-        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact, _WA_DB_SOURCE
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
         monkeypatch.setattr(
             "scripts.skills.whatsapp_last_contact._WA_DB_SOURCE",
             tmp_path / "nonexistent.sqlite",
@@ -538,7 +537,7 @@ circles:
 
     def test_stale_contact_surfaced(self, tmp_path, monkeypatch):
         """Contact with last WA > cadence threshold appears in nudges."""
-        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact, _WA_DB_COPY
+        from scripts.skills.whatsapp_last_contact import WhatsAppLastContact
 
         db = self._make_wa_db(tmp_path, [
             {"name": "Alice S", "jid": "15550110000@s.whatsapp.net",

@@ -27,6 +27,7 @@ def test_every_requirement_has_a_script() -> None:
     assert found == {"06", "09", "15", "19", "20", "21", "23"}
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("script", SCRIPTS, ids=[p.stem for p in SCRIPTS])
 def test_scratch_run_passes(script: Path, tmp_path: Path) -> None:
     result = _run(str(script), "--scratch", "--workspace", str(tmp_path))
@@ -52,6 +53,7 @@ def _age_keygen_available() -> bool:
         os.access(p, os.X_OK) for p in ("/opt/homebrew/bin/age-keygen", "/usr/local/bin/age-keygen"))
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _age_keygen_available(), reason="age-keygen unavailable")
 def test_work_cache_migration_scratch_run_passes_and_leaves_nothing(tmp_path: Path) -> None:
     result = _run(str(WP19), "--scratch", "--workspace", str(tmp_path))
@@ -100,7 +102,7 @@ def test_work_health_receipt_runs_production_writer_with_synthetic_probe(tmp_pat
             socket.socket()
         with pytest.raises(AssertionError):
             subprocess.Popen(["synthetic-npx"])
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match=r"scratch\ health\ receipt\ cannot\ access\ the\ registry"):
             winreg.OpenKey(winreg.HKEY_CURRENT_USER, "synthetic")
         writes.append((path, available, auth_valid))
         return write_receipt(path, available=available, auth_valid=auth_valid)

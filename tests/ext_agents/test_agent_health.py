@@ -7,7 +7,7 @@ import pytest
 
 from lib.agent_health import AgentHealthTracker, _CONSECUTIVE_FAILURES_DEGRADED  # type: ignore
 from lib.agent_registry import AgentRegistry  # type: ignore
-from .conftest import SAMPLE_AGENT_ENTRY, make_test_agent
+from .conftest import make_test_agent
 
 
 @pytest.fixture()

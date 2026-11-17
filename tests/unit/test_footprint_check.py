@@ -1,14 +1,10 @@
 """WP-01 / §6.12: Artha owns no background footprint (scheduler entry, daemon, listener)."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from preflight.footprint_checks import check_background_footprint  # noqa: E402
 

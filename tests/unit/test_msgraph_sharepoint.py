@@ -18,17 +18,13 @@ Tests cover:
 """
 from __future__ import annotations
 
-import hashlib
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import connectors.msgraph_sharepoint as sp
 

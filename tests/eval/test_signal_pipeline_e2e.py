@@ -6,14 +6,11 @@ Confirms each pattern category fires correctly and produces the right domain/typ
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-if str(_REPO / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO / "scripts"))
 
 from email_signal_extractor import EmailSignalExtractor  # type: ignore[import]
 

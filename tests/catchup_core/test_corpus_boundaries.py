@@ -118,7 +118,7 @@ def test_failed_physical_erasure_replays_the_same_corpus_identities(store, monke
     corpus.record_label(store, case, {'needs_alert': 'no'}, NOW)
     purge = store.purge_corpus
     monkeypatch.setattr(store, 'purge_corpus', lambda _: (_ for _ in ()).throw(OSError('interrupted')))
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="interrupted"):
         store.forget('mail', 'private', 'u1')
     assert corpus.load_labels(store) == []
     monkeypatch.setattr(store, 'purge_corpus', purge)
@@ -178,11 +178,14 @@ def test_old_snapshot_privacy_replay_erases_corpus_and_legacy_restore_is_blocked
 @pytest.mark.parametrize('field', ['signal', 'source'])
 def test_unresolved_subject_inputs_fail_before_becoming_authority(store, field):
     sid = signal(store)
-    with pytest.raises(ValueError, match='resolved'):
+    def _attempt():
         if field == 'signal':
             store.set_signal_subjects(sid, [''])
         else:
             store.set_source_subjects('mail', 'private', [''])
+
+    with pytest.raises(ValueError, match='resolved'):
+        _attempt()
     with pytest.raises(lg.LedgerError, match='identity'):
         store.purge_corpus(['../outside'])
 
@@ -209,8 +212,8 @@ def test_case_identity_and_corrupt_label_fail_closed(store, tmp_path):
     with pytest.raises(corpus.CorpusError, match='identity'):
         corpus.labeled(store, '../private')
     label = corpus.record_label(store, case, {'needs_alert': 'no'}, NOW)
+    other = signal(store, upstream='u2')
     with pytest.raises(corpus.CorpusError, match='another source'):
-        other = signal(store, upstream='u2')
         corpus.record_label(store, dict(case, signal_id=other), {'needs_alert': 'no'}, NOW)
     path = tmp_path / 'corpus' / f"{case['case_id']}.ae1"
     path.write_bytes(CIPHER.encrypt(json.dumps(dict(label, case_id='case_other')).encode(),

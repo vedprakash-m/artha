@@ -12,19 +12,14 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import unittest.mock as mock
-from datetime import datetime, timezone, timedelta
-from io import BytesIO
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 import connectors.slack as slack_mod
 from connectors.slack import (
@@ -32,7 +27,6 @@ from connectors.slack import (
     _mrkdwn_to_plain,
     _resolve_channels,
     _fetch_channel_history,
-    _resolve_user,
     _load_token,
     fetch,
     health_check,
@@ -42,6 +36,13 @@ from connectors.slack import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_slack_sleep(monkeypatch):
+    """Eliminate real retry backoff sleeps while letting sleep-asserting tests override."""
+    monkeypatch.setattr(slack_mod.time, "sleep", lambda _seconds: None)
+
 
 def _make_slack_response(ok: bool = True, **extra: Any) -> bytes:
     return json.dumps({"ok": ok, **extra}).encode("utf-8")

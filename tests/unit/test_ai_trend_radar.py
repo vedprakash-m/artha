@@ -18,21 +18,14 @@ Test matrix covers:
 """
 from __future__ import annotations
 
-import hashlib
 import json
-import sys
 import textwrap
-from datetime import date, datetime, timezone, timedelta
-from io import BytesIO
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 # Import module under test — importing *after* sys.path is patched
 from skills.ai_trend_radar import (  # noqa: E402

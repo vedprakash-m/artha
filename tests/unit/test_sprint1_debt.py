@@ -9,16 +9,12 @@ Covers:
 """
 
 import json
-import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 # Ensure scripts/ is on the path
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ===========================================================================
@@ -89,7 +85,7 @@ class TestMemorySensitivityEnforcement:
         return sum(1 for line in audit_path.read_text().splitlines() if event in line)
 
     def test_high_sensitivity_domain_blocked(self, tmp_path):
-        from lib.memory_writer import add_fact, _HIGH_SENSITIVITY_DOMAINS
+        from lib.memory_writer import add_fact
 
         memory_path = tmp_path / "memory.md"
         memory_path.write_text("---\nfacts: []\n---\n")

@@ -10,15 +10,11 @@ Coverage:
 """
 from __future__ import annotations
 
-import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from scorecard_view import _parse_goals_yaml, _parse_goals_index  # noqa: E402
 

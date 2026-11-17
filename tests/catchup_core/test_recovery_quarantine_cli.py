@@ -15,6 +15,7 @@ from core_helpers import RECOVERY_NOW, RESTORE_CIPHER as CIPHER, build_recovery_
 access_support = SimpleNamespace(NOW=RECOVERY_NOW, checkpoint=recovery_checkpoint)
 
 SYNTHETIC_PASSPHRASE = 'synthetic checkpoint passphrase'
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
@@ -74,6 +75,7 @@ def test_restore_and_metadata_inventory_never_write_historical_plaintext(context
             assert b'SYNTHETIC-PRIVATE-NOTES' not in path.read_bytes()
 
 
+@pytest.mark.slow
 def test_review_view_and_encrypted_release_require_current_export_consent(context):
     restored(context)
     identity = member(context)
@@ -113,6 +115,7 @@ def test_wrong_actor_is_refused_without_releasing_content(context, command):
     assert not (context.dest / 'reviewed-exports').exists()
 
 
+@pytest.mark.slow
 def test_withdrawn_consent_and_expired_review_cannot_publish(context):
     restored(context)
     identity = member(context)
@@ -181,6 +184,7 @@ def test_wrong_restore_actor_is_checked_before_checkpoint_decryption(context, mo
     assert code == 20 and result is None and 'owner' in error
     assert not context.dest.exists()
 
+@pytest.mark.slow
 def test_reviewed_export_can_be_viewed_after_review_token_expiry_with_current_consent(context):
     restored(context)
     grant(context)

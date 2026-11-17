@@ -115,7 +115,7 @@ def test_atomic_bytes_leaves_no_temp_file_when_replace_fails(tmp_path, monkeypat
     def refuse(_a, _b):
         raise OSError("cross-device")
     monkeypatch.setattr(backup.os, "replace", refuse)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"cross\-device"):
         backup.atomic_bytes(tmp_path / "x.ae1", b"cipher")
     assert list(tmp_path.iterdir()) == []
 

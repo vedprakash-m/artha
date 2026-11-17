@@ -6,19 +6,16 @@ history, health checks, and PII firewall integration.
 
 Ref: specs/act.md §5
 """
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from action_executor import ActionExecutor
 from actions.base import ActionProposal, ActionResult
-from action_queue import ActionQueue, compute_payload_hash
+from action_queue import compute_payload_hash
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +163,7 @@ class TestPropose:
                 )
 
     def test_propose_requires_non_empty_title(self, executor):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid\ proposal:\ proposal\.title\ is\ required"):
             executor.propose(
                 action_type="email_send",
                 domain="test",

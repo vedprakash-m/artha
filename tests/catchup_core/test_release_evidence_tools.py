@@ -14,10 +14,8 @@ import pytest
 from catchup_core import policy
 from catchup_core.ledger import PermissionDenied
 from core_helpers import (
-    CUTOVER_NOW as NOW,
     build_cutover_configured,
     release_scorecard,
-    synthetic_recovery_acceptance,
 )
 
 

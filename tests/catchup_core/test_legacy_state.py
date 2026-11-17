@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
+pytestmark = pytest.mark.incumbent_only
+
 from catchup_core.contracts import CoverageStatus
 from catchup_core.incumbent import GuardedIncumbent
 from catchup_core.legacy_state import LegacyStateAdapter

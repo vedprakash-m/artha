@@ -13,10 +13,8 @@ Coverage:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 # conftest adds scripts/ to sys.path
 from context_offloader import (
@@ -160,7 +158,7 @@ class TestOffloadAboveThreshold:
         """Large data → file created in tmp/."""
         big_data = _big_data(8_000)  # well above default 5K threshold
 
-        result = offload_artifact(
+        offload_artifact(
             name="pipeline_output",
             data=big_data,
             summary_fn=pipeline_summary,

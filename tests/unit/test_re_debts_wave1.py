@@ -18,9 +18,6 @@ Covers:
 """
 from __future__ import annotations
 
-import ast
-import hashlib
-import os
 import sys
 from pathlib import Path
 
@@ -34,8 +31,6 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS = _REPO / "scripts"
 _CONFIG  = _REPO / "config"
 
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ===========================================================================
@@ -132,14 +127,11 @@ class TestRD02VaultHookSentinel:
         sentinel_path = tmp_path / ".artha-decrypt-failed"
         monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_path))
 
-        # Reload vault_hook with patched env
-        if "vault_hook" in sys.modules:
-            del sys.modules["vault_hook"]
-        import importlib
+        # Reload vault_hook with patched env via monkeypatch so sys.modules restores
+        monkeypatch.delitem(sys.modules, "vault_hook", raising=False)
         # We patch subprocess.run to simulate a failed decrypt
         import subprocess as _sp
 
-        orig_run = _sp.run
         def _fake_run(cmd, **kwargs):
             class _Result:
                 returncode = 1

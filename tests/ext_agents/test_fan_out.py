@@ -27,16 +27,12 @@ Ref: specs/ext-agent-reloaded.md §EAR-5
 """
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.fan_out import FanOut, FanOutResult
 

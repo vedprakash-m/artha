@@ -14,12 +14,8 @@ Coverage:
 """
 from __future__ import annotations
 
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 # We test the inbox writing logic directly since we can't easily spin up the
 # full channel_listener asyncio daemon. Import the helpers we need.
@@ -114,7 +110,7 @@ class TestInboxCreation:
 
 class TestContentSafety:
     def test_inbox_does_not_store_raw_pii_markers(self, tmp_path):
-        inbox = _make_inbox(tmp_path)
+        _make_inbox(tmp_path)
         # The PII guard should catch SSN patterns — test the regex directly
         # rather than embedding a matching string in source code.
         import re

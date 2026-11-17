@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -86,7 +85,6 @@ class TestFullCatchupWithGuardrails:
     def test_input_guardrail_passes_clean_data(self, tmp_path):
         """Clean data passes all input guardrails without violation."""
         from middleware.guardrail_registry import GuardrailRegistry
-        from middleware.guardrails import TripwireResult
 
         registry = GuardrailRegistry()
         ctx = _make_context(step=8)
@@ -133,10 +131,13 @@ class TestFullCatchupWithGuardrails:
         ctx = _make_context()
         data = _clean_signal()
 
-        with pytest.raises(GuardrailViolation):
+        def _check():
             result = guardrail.check(ctx, data)
             if result.result == TripwireResult.HALT:
                 raise GuardrailViolation(guardrail.name, result.message or "HALT")
+
+        with pytest.raises(GuardrailViolation):
+            _check()
 
     def test_guardrail_redact_modifies_data(self):
         """A guardrail returning REDACT provides modified_data (not a hard block)."""
@@ -170,7 +171,7 @@ class TestFullCatchupWithGuardrails:
 
     def test_middleware_before_after_hooks_fire(self, tmp_path):
         """before_step and after_step hooks fire in order for each pipeline step."""
-        from middleware import StateMiddleware, compose_middleware
+        from middleware import compose_middleware
 
         event_log: list[str] = []
 

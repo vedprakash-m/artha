@@ -10,19 +10,14 @@ Run: pytest tests/unit/test_homeassistant_connector.py -v
 from __future__ import annotations
 
 import json
-import os
-import sys
-import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import MagicMock, patch, call
+from typing import List
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Ensure scripts/ is importable
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from connectors.homeassistant import (
     ConnectorOffLAN,

@@ -22,7 +22,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from lib.logger import begin_session_trace, end_session_trace, get_logger
 
@@ -121,7 +120,7 @@ class TestSessionTraceIdInPayload:
         end_session_trace()
 
     def test_session_trace_id_present_when_active(self, tmp_path):
-        sid = begin_session_trace("session42")
+        begin_session_trace("session42")
         log = get_logger("trace_active", logs_dir=tmp_path)
         log.info("test.event")
         payload = _read_last_log_line(tmp_path, "trace_active")
@@ -142,7 +141,7 @@ class TestSessionTraceIdInPayload:
         assert len(payload["trace_id"]) == 16
 
     def test_multiple_events_carry_same_session_id(self, tmp_path):
-        sid = begin_session_trace("persistent_sid")
+        begin_session_trace("persistent_sid")
         log = get_logger("trace_multi", logs_dir=tmp_path)
         log.info("event.one")
         log.info("event.two")

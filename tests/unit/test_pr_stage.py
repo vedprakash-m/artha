@@ -25,24 +25,32 @@ from pathlib import Path
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
-# fcntl is Unix-only; stub it out on Windows before importing any pr_stage module
+# fcntl is Unix-only; temporarily stub during Windows import without leaking sys.modules
 if sys.platform == "win32" and "fcntl" not in sys.modules:
-    from unittest.mock import MagicMock
-    sys.modules["fcntl"] = MagicMock()
-
-from pr_stage.domain import (
-    VALID_TRANSITIONS,
-    CardStatus,
-    ContentCard,
-    InvalidTransitionError,
-    is_duplicate_occasion,
-    make_card_id,
-    parse_card_id,
-    validate_transition,
-)
+    from unittest.mock import MagicMock, patch
+    with patch.dict(sys.modules, {"fcntl": MagicMock()}):
+        from pr_stage.domain import (
+            VALID_TRANSITIONS,
+            CardStatus,
+            ContentCard,
+            InvalidTransitionError,
+            is_duplicate_occasion,
+            make_card_id,
+            parse_card_id,
+            validate_transition,
+        )
+else:
+    from pr_stage.domain import (
+        VALID_TRANSITIONS,
+        CardStatus,
+        ContentCard,
+        InvalidTransitionError,
+        is_duplicate_occasion,
+        make_card_id,
+        parse_card_id,
+        validate_transition,
+    )
 
 
 # ---------------------------------------------------------------------------

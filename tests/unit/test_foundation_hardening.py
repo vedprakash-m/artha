@@ -4,8 +4,6 @@ Ref: specs/pay-debt.md §5.2
 """
 from __future__ import annotations
 
-import sys
-import io
 from pathlib import Path
 from unittest.mock import patch
 import pytest
@@ -157,7 +155,7 @@ def test_lib_common_deprecated_reexport():
 
 def test_audit_middleware_oserror_prints_to_stderr(tmp_path, capsys):
     """AuditMiddleware._append prints to stderr when audit write fails."""
-    import importlib, importlib.util, types
+    import importlib, importlib.util
 
     # Load audit_middleware with a patched path pointing to an unwritable location
     spec = importlib.util.spec_from_file_location(

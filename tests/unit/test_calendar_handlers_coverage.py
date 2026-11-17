@@ -1,7 +1,6 @@
 """WP-02: msgraph and caldav handlers report scope outcomes; failure is never 'empty'."""
 from __future__ import annotations
 
-import sys
 import types
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -9,8 +8,6 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from lib import connector_coverage as cc  # noqa: E402
 import connectors.caldav_calendar as caldav  # noqa: E402

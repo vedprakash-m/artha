@@ -10,7 +10,7 @@ import pytest
 
 from catchup_core import coordinator as co, crypto, domain_pack as dp, ids, ledger as lg
 from catchup_core.blobs import EncryptedBlobStore
-from catchup_core.contracts import CatchupRequest, ExecutionMode, RunStatus
+from catchup_core.contracts import CatchupRequest, RunStatus
 from catchup_core.extract import NormalizedSignal, parse_output
 from catchup_core.runtime import _backup_for, make_file_publisher
 from catchup_core.scorecard import score

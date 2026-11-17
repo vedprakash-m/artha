@@ -4,9 +4,7 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
-from typing import Any
 
-import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
@@ -144,7 +142,7 @@ def test_t6_6_validate_routing_table_passes_valid(capsys):
     # Ensure all routes use valid action types
     all_action_types = {row.get("action_type") for row in ac._FALLBACK_SIGNAL_ROUTING.values()}
     # They should all be in _ALLOWED_ACTION_TYPES
-    unknown = all_action_types - ac._ALLOWED_ACTION_TYPES
+    all_action_types - ac._ALLOWED_ACTION_TYPES
     # If there are unknown ones, they should only be from production data we haven't
     # added to the allowlist yet — that's fine, but the validator should still run
     ac._validate_routing_table()
@@ -158,7 +156,7 @@ def test_t6_6_validate_routing_table_passes_valid(capsys):
 
 def test_t6_7_derive_action_map_from_actions_config():
     """_derive_action_map builds correct module paths from actions.yaml config."""
-    from action_executor import _derive_action_map, _FALLBACK_ACTION_MAP
+    from action_executor import _derive_action_map
 
     config = {
         "email_send": {

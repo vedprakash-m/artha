@@ -1,6 +1,5 @@
 """Real process death and cooperating writer races with a synthetic file-backed native store."""
 import hashlib
-import json
 import os
 import subprocess
 import sys

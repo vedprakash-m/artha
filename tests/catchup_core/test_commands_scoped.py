@@ -81,14 +81,14 @@ def test_import_reads_but_never_accepts_authority_or_foreign_envelopes(store, tm
     elif mutation == "wrong_key":
         from catchup_core import crypto
         other = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"9" * 32}))
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match=r"not\ a\ readable\ interchange\ file\ for\ this\ installation"):
             interchange.read_interchange(target, other)
         return
     else:
         change = {"schema": {"schema": "artha.other.v9"}, "grant": {"consent": [{"audience": "*"}]},
                   "action": {"actions": [{"id": "a"}]}, "dispatchable": {"dispatchable": True}}[mutation]
         target.write_bytes(CIPHER.encrypt(json.dumps({**document, **change}).encode(), aad=b"artha.interchange.v1")[0])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"interchange\ file\ has\ an\ unknown\ schema\ or\ carries\ authority\ it\ must\ not\ carry|not\ a\ readable\ interchange\ file\ for\ this\ installation"):
         interchange.read_interchange(target, CIPHER)
 
 
@@ -170,7 +170,7 @@ def test_configuration_never_changes_held_or_consent_bearing_settings(config, ke
 
 @pytest.mark.parametrize("value", ["0", "-1", "3661", "abc", "1.5", "True", ""])
 def test_configuration_values_are_validated_before_preview(config, value):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"bootstrap_days\ must\ be\ a\ whole\ number\ from\ 1\ to\ 3660"):
         user_config.propose(config, "bootstrap_days", value)
 
 

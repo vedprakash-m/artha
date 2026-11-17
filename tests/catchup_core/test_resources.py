@@ -47,7 +47,7 @@ def world(tmp_path, admitted_personal_sources):
 @pytest.mark.parametrize('bad', [True, False, 0, -1, 1.0, '1', None, float('nan'), float('inf'), 2**63])
 @pytest.mark.parametrize('field', list(LIMITS))
 def test_policy_rejects_non_positive_non_integer_unbounded_values(field, bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"max_attempts_per_signal\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_pending_signals\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_priority_streak\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_prompt_bytes_per_bundle\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_requests_per_bundle\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_requests_per_catchup\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_requests_per_month\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647"):
         ResourcePolicy.from_mapping({**LIMITS, field: bad})
 
 
@@ -73,9 +73,9 @@ def test_durable_idempotency_and_exact_encrypted_cache(world):
     assert store.cached_output('catchup', 'changed-key') is None
     row = ledger.conn.execute('SELECT * FROM resource_cache').fetchone()
     assert 'private result' not in str(tuple(row))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"request\ key\ already\ bound\ to\ another\ Signal\ or\ prompt\ size"):
         store.admit('catchup', ident, 'hmac-one', 21, NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"cached\ output\ is\ immutable\ for\ an\ admitted\ request\ key"):
         store.cache_output('catchup', ident, 'hmac-one', 'replacement', NOW)
 
 
@@ -84,11 +84,11 @@ def test_wrong_signal_and_unreserved_key_cannot_cache(world):
     first, second = signal(ledger, 'first'), signal(ledger, 'second')
     store.admit('catchup', first, 'key', 10, NOW)
     for ident, key in [(second, 'key'), (first, 'other'), ('missing', 'key')]:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"output\ requires\ an\ exact\ Signal/request\ key\ admission"):
             store.cache_output('catchup', ident, key, 'output', NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"request\ key\ already\ bound\ to\ another\ Signal\ or\ prompt\ size"):
         store.admit('catchup', second, 'key', 10, NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"unknown\ Signal"):
         store.admit('catchup', 'missing', 'new', 10, NOW)
 
 
@@ -327,13 +327,16 @@ def test_sql_rejects_cache_for_wrong_signal(world, operation):
     ledger, store = world
     first, second = signal(ledger, 'first'), signal(ledger, 'second')
     store.admit('one', first, 'a', 1, NOW)
-    with pytest.raises(sqlite3.IntegrityError, match='Signal mismatch'):
+    def _attempt():
         if operation == 'insert':
             ledger.conn.execute('INSERT INTO resource_cache VALUES(?,?,?,?,?,?)',
                                 ('one', 'a', second, 'encrypted', 1, NOW.isoformat()))
         else:
             store.cache_output('one', first, 'a', 'output', NOW)
             ledger.conn.execute('UPDATE resource_cache SET signal_id=?', (second,))
+
+    with pytest.raises(sqlite3.IntegrityError, match='Signal mismatch'):
+        _attempt()
 
 
 @pytest.mark.parametrize('value', ['', ' ', 'x' * 513, None, 1])
@@ -345,7 +348,7 @@ def test_identifiers_fail_closed(world, value):
                       lambda: store.cancel('one', value),
                       lambda: store.is_cancelled(value),
                       lambda: store.select_pending([value])):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"actor\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters|catchup_id\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters|priority\ Signal\ ID\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters|request_key\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters"):
             operation()
 
 

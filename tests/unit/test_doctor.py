@@ -18,17 +18,13 @@ Ref: specs/improve.md §8 I-12
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 # Ensure artha.py root is importable
 _ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 import artha as artha_module
 
@@ -61,7 +57,7 @@ def _doctor_with_root(tmp_path: Path) -> int:
 class TestDoctorPythonVersion:
     def test_current_python_pass(self, tmp_path, capsys):
         """Running Python should be ≥3.11 in CI; doctor should report pass."""
-        rc = _doctor_with_root(tmp_path)
+        _doctor_with_root(tmp_path)
         out = capsys.readouterr().out
         # Regardless of exit code, Python version line should be in output
         assert "Python version" in out
@@ -87,7 +83,7 @@ class TestDoctorVenv:
             patch.object(sys, "base_prefix", sys.prefix),
             patch("sys.real_prefix", None if not hasattr(sys, "real_prefix") else None, create=True),
         ):
-            rc = _doctor_with_root(tmp_path)
+            _doctor_with_root(tmp_path)
         # Test may or may not fail depending on current env; just assert it ran
         out = capsys.readouterr().out
         assert "Virtual environment" in out
@@ -96,7 +92,7 @@ class TestDoctorVenv:
 class TestDoctorPackages:
     def test_missing_package_fails(self, tmp_path, capsys):
         """Mock importlib.import_module to raise ImportError for 'keyring'."""
-        original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else None
+        __builtins__.__import__ if hasattr(__builtins__, "__import__") else None
 
         import builtins
         real_import = builtins.__import__
@@ -126,7 +122,7 @@ class TestDoctorAge:
     def test_age_not_found_warns(self, tmp_path, capsys):
         """If age is not in PATH, doctor should warn (not fail)."""
         with patch("shutil.which", return_value=None):
-            rc = _doctor_with_root(tmp_path)
+            _doctor_with_root(tmp_path)
         out = capsys.readouterr().out
         assert "age binary" in out
         # Should be a warning (⚠), not failure — exit code may still be 0 from state dir fail

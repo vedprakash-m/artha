@@ -13,17 +13,12 @@ Coverage:
 """
 from __future__ import annotations
 
-import sys
-import tempfile
 from datetime import date, timedelta
 from pathlib import Path
 
-import pytest
 import yaml
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from pattern_engine import PatternEngine  # noqa: E402
 

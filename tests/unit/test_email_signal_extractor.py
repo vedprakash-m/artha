@@ -22,10 +22,8 @@ Signal type consolidation (v3.35.0 / simplify.md Phase 4):
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from email_signal_extractor import EmailSignalExtractor
 

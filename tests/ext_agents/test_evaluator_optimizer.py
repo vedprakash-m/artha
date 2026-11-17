@@ -22,15 +22,11 @@ Ref: specs/ext-agent-reloaded.md §EAR-6
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.evaluator_optimizer import (
     EvaluatorOptimizer,
@@ -268,7 +264,7 @@ def test_weekly_cap_respected(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _budget_remaining_internal(self):
-    from lib.evaluator_optimizer import _budget_remaining, _current_week
+    from lib.evaluator_optimizer import _budget_remaining
     return _budget_remaining(self._state, self.weekly_cap)
 
 EvaluatorOptimizer._budget_remaining_internal = _budget_remaining_internal

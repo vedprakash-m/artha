@@ -110,9 +110,12 @@ def test_action_enablement_cannot_be_coerced(claimed, value):
     document = yaml.safe_load(path.read_text())
     document['actions']['reminder_create']['enabled'] = value
     path.write_text(yaml.safe_dump(document))
-    with pytest.raises(ValueError):
+    def _attempt():
         policy = load_dispatch_policy(root, item.action_type)
         authorize_dispatch_policy(policy, item, 'owner', datetime.now(timezone.utc))
+
+    with pytest.raises(ValueError, match=r"Action\ policy\ control\ flags\ must\ be\ booleans\."):
+        _attempt()
 
 
 @pytest.mark.parametrize('field,value', [('held', 'reminder_create'), ('held', [False]),
@@ -123,7 +126,7 @@ def test_trial_lists_cannot_be_coerced(claimed, field, value):
     document = yaml.safe_load(path.read_text())
     document['live_trial'][field] = value
     path.write_text(yaml.safe_dump(document))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Action\ policy\ needs\ bounded,\ explicit\ control\ lists\."):
         load_dispatch_policy(root, item.action_type)
 
 
@@ -197,7 +200,7 @@ def test_dispatch_controls_reject_coerced_or_unbounded_values(claimed, field, va
     document = yaml.safe_load(path.read_text())
     document['actions']['reminder_create'][field] = value
     path.write_text(yaml.safe_dump(document))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Action\ policy\ control\ flags\ must\ be\ booleans\.|Action\ policy\ needs\ bounded,\ explicit\ control\ lists\.|Action\ rate\ limits\ must\ be\ bounded\ nonnegative\ integers\.|Action\ timeout\ must\ be\ an\ integer\ from\ 1\ to\ 120\ seconds\."):
         load_dispatch_policy(root, item.action_type)
 
 
@@ -206,7 +209,7 @@ def test_unreadable_or_unbounded_policy_cannot_authorize_dispatch(claimed, docum
     from lib.action_policy import load_dispatch_policy
     root, path, _, item = claimed
     path.write_bytes(document)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Action\ policy\ cannot\ be\ read\.|Action\ policy\ exceeds\ its\ size\ limit\.|Action\ policy\ needs\ explicit\ action\ and\ trial\ controls\.|Action\ policy\ needs\ explicit\ actions\."):
         load_dispatch_policy(root, item.action_type)
 
 
@@ -218,9 +221,9 @@ def test_current_policy_can_withhold_an_enabled_type(claimed, control):
     document['live_trial'][control] = [item.action_type]
     path.write_text(yaml.safe_dump(document))
     policy = load_dispatch_policy(root, item.action_type)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Action\ type\ is\ held\ by\ current\ policy\.|reminder_create\ is\ hand\-off\ only\ \(money,\ credentials,\ legal\ or\ permanent\ deletion\):\ Artha\ prepares\ an\ instruction\ sheet\ and\ does\ not\ execute\ it"):
         authorize_dispatch_policy(policy, item, 'owner', datetime.now(timezone.utc))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Action\ needs\ an\ accountable\ approver\.|Action\ type\ is\ held\ by\ current\ policy\."):
         authorize_dispatch_policy(policy, item, '', datetime.now(timezone.utc))
 
 

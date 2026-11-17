@@ -9,15 +9,10 @@ Execution log coverage:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +24,6 @@ def _run_archive_brief(raw_path: str, artha_dir: Path) -> tuple[str, int]:
 
     Returns (stdout_json_str, return_code).
     """
-    import io
     import lib.briefing_archive as _ba_module
 
     # Patch _ba module paths to artha_dir

@@ -172,37 +172,32 @@ def _make_test_registry(state_dir: Path, config_dir: Path = None) -> list:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def mock_backup_env(temp_artha_dir, monkeypatch):
-    """Redirect all Artha paths to a temp directory via foundation._config.
-
-    Patches foundation._config (the single source of truth) so backup.py,
-    vault.py, and any other module reading from _config see the temp paths.
-    Also pre-seeds a manifest with last_validate=today to suppress
-    auto-validation in backup_snapshot() tests (see bkp-rst.md R11 / RC-19).
-    """
-    state_dir  = temp_artha_dir / "state"
-    config_dir = temp_artha_dir / "config"
-    backup_dir = temp_artha_dir / "backups"
+def mock_backup_env(tmp_path, monkeypatch):
+    """Redirect all Artha paths to a temp directory via foundation._config."""
+    for sub in ("scripts", "state", "config", "prompts", ".tokens", "backups"):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    state_dir  = tmp_path / "state"
+    config_dir = tmp_path / "config"
+    backup_dir = tmp_path / "backups"
+    (state_dir / "audit.md").write_text("# Audit Log\n", encoding="utf-8")
 
     # Single fixture patch — propagates to all modules via shared _config dict
-    monkeypatch.setitem(foundation._config, "ARTHA_DIR",        temp_artha_dir)
+    monkeypatch.setitem(foundation._config, "ARTHA_DIR",        tmp_path)
     monkeypatch.setitem(foundation._config, "STATE_DIR",        state_dir)
     monkeypatch.setitem(foundation._config, "CONFIG_DIR",       config_dir)
     monkeypatch.setitem(foundation._config, "AUDIT_LOG",        state_dir / "audit.md")
-    monkeypatch.setitem(foundation._config, "LOCK_FILE",        temp_artha_dir / ".artha-decrypted")
+    monkeypatch.setitem(foundation._config, "LOCK_FILE",        tmp_path / ".artha-decrypted")
     monkeypatch.setitem(foundation._config, "BACKUP_DIR",       backup_dir)
     monkeypatch.setitem(foundation._config, "BACKUP_MANIFEST",  backup_dir / "manifest.json")
-    monkeypatch.setitem(foundation._config, "ARTHA_LOCAL_DIR",  temp_artha_dir / ".artha-local")
+    monkeypatch.setitem(foundation._config, "ARTHA_LOCAL_DIR",  tmp_path / ".artha-local")
     from lib.knowledge_graph import KnowledgeGraph
     monkeypatch.setattr(KnowledgeGraph, "__init__", lambda self: None)
     monkeypatch.setattr(KnowledgeGraph, "backup", lambda self, tier: None)
 
     # Seed config/settings.md for get_public_key()
-    config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "settings.md").write_text('age_recipient: "age1mockpublickey"\n')
 
     # Pre-seed manifest with last_validate=today to suppress auto-validation
-    backup_dir.mkdir(parents=True, exist_ok=True)
     today_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
     manifest_path = backup_dir / "manifest.json"
     manifest_path.write_text(
@@ -210,7 +205,7 @@ def mock_backup_env(temp_artha_dir, monkeypatch):
         encoding="utf-8",
     )
 
-    return temp_artha_dir
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -830,7 +825,7 @@ class TestBackupRegistry:
 
     def test_loads_sensitive_state_entries(self, mock_backup_env):
         config_dir = foundation._config["CONFIG_DIR"]
-        state_dir  = foundation._config["STATE_DIR"]
+        foundation._config["STATE_DIR"]
         self._write_profile(config_dir, [
             {"name": "finance", "sensitive": True},
             {"name": "health", "sensitive": True},
@@ -931,7 +926,7 @@ class TestBackupSnapshotComprehensive:
         p.write_text(_yaml.dump(profile), encoding="utf-8")
 
     def test_plain_state_file_is_encrypted_into_backup(self, mock_backup_env):
-        config_dir = foundation._config["CONFIG_DIR"]
+        foundation._config["CONFIG_DIR"]
         state_dir  = foundation._config["STATE_DIR"]
         (state_dir / "goals.md").write_text("---\n# Goals\nword " * 40)
         today = date(2026, 3, 9)
@@ -962,7 +957,7 @@ class TestBackupSnapshotComprehensive:
 
     def test_config_file_is_encrypted_into_backup(self, mock_backup_env):
         config_dir = foundation._config["CONFIG_DIR"]
-        artha_dir  = foundation._config["ARTHA_DIR"]
+        foundation._config["ARTHA_DIR"]
         (config_dir / "artha_config.yaml").write_text("todo_lists:\n  general: abc123\n")
         today = date(2026, 3, 9)
         registry = [
@@ -1321,7 +1316,7 @@ class TestDataOnlyRestore:
         assert "config skipped" in out.lower()
 
     def test_install_data_only_skips_config(self, mock_backup_env, tmp_path):
-        backup_dir = foundation._config["BACKUP_DIR"]
+        foundation._config["BACKUP_DIR"]
         zip_path = self._make_full_zip(tmp_path)
 
         def fake_decrypt(_identity, ciphertext):
@@ -1337,7 +1332,7 @@ class TestDataOnlyRestore:
         assert not (foundation._config["CONFIG_DIR"] / "routing.yaml").exists()
 
     def test_install_full_includes_config(self, mock_backup_env, tmp_path):
-        backup_dir = foundation._config["BACKUP_DIR"]
+        foundation._config["BACKUP_DIR"]
         zip_path = self._make_full_zip(tmp_path)
 
         def fake_decrypt(_identity, ciphertext):
@@ -1500,7 +1495,7 @@ class TestPruneProtection:
     def test_prune_protects_sole_carrier(self, mock_backup_env):
         """A ZIP is not pruned if it contains a domain checksum not found elsewhere."""
         backup_dir = foundation._config["BACKUP_DIR"]
-        state_dir  = foundation._config["STATE_DIR"]
+        foundation._config["STATE_DIR"]
 
         # Create 3 daily ZIPs: day1 has unique content, day2,3 have same content
         unique_content = _fake_age_bytes("unique-day1")
@@ -2201,7 +2196,7 @@ class TestArchiveSafetyHelpers:
             {**valid, "size": True},
             {**valid, "size": -1},
         ):
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=r"invalid\ payload\ checksum|invalid\ payload\ size|unsafe\ version\-3\ payload\ entry"):
                 backup._descriptor(broken, version="3")
         with pytest.raises(ValueError, match="duplicate JSON key"):
             backup._unique_json_pairs([("version", "2"), ("version", "3")])
@@ -2249,7 +2244,7 @@ class TestArchiveSafetyHelpers:
             else:
                 internal["files"] = {}
 
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=r"catalog\ file\ count\ mismatch|catalog\ stream\ count\ mismatch|duplicate\ archive\ entry|empty\ or\ invalid\ file\ manifest|invalid\ backup\ date|invalid\ payload\ size|invalid\ source\ type\ or\ file\ name|invalid\ stream\ manifest|unsafe\ named\-stream\ name|unsafe\ or\ duplicate\ restore\ path|version\-3\ file\ key\ does\ not\ match\ restore\ path"):
                 backup._archive_records(archive, internal, catalog)
 
     def test_archive_records_reject_directory_entries(self, mock_backup_env):

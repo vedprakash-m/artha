@@ -406,12 +406,15 @@ def test_query_only_worker_refuses_document_fact_without_scope_authority(
 
         worker.set_authorizer(authorize)
         try:
-            with pytest.raises(PermissionDenied, match="scope"):
+            def _attempt():
                 if entrypoint == "helper":
                     require_metadata(worker, policy, fid, "ved", NOW.isoformat())
                 else:
                     context = {"owner": "ved", "consent_subjects": [], "known_subjects": ["ved", "kid1"]}
                     _MetadataLedger(worker, context, NOW.isoformat()).get_fact_metadata(fid, "ved")
+
+            with pytest.raises(PermissionDenied, match="scope"):
+                _attempt()
         finally:
             worker.set_authorizer(None)
         assert worker.total_changes == 0
@@ -478,13 +481,16 @@ def test_fact_reads_hold_unverified_authorization_metadata_before_payload(runtim
 
     led.conn.set_authorizer(authorize)
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if surface == "metadata":
                 led.get_fact_metadata(fid, "ved")
             elif surface == "fact":
                 led.get_fact(fid, "ved")
             else:
                 led.fact_history(fid, "ved")
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert payload_reads == []
@@ -495,7 +501,7 @@ def test_fact_lists_report_unavailable_instead_of_an_empty_success(runtime, surf
     from catchup_core import interchange, views
 
     led, _ = runtime
-    with pytest.raises(PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "facts_for":
             led.facts_for("kids_school", "exam_registration_deadline", "ved")
         elif surface == "beliefs":
@@ -505,19 +511,25 @@ def test_fact_lists_report_unavailable_instead_of_an_empty_success(runtime, surf
         else:
             interchange.emergency_view(led, "ved")
 
+    with pytest.raises(PermissionDenied, match="scope"):
+        _attempt()
+
 
 @pytest.mark.parametrize("surface", ["matching", "completion", "evaluation"])
 def test_empty_fact_dependent_results_do_not_conceal_scope_hold(runtime, surface):
     from catchup_core import heldout
 
     led, _ = runtime
-    with pytest.raises(PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "matching":
             led.facts_matching("kids_school", "exam_registration_deadline", "ved")
         elif surface == "completion":
             curated.completion_fact(led, "ved", None, "synthetic")
         else:
             heldout._facts(led, "synthetic-missing-signal", "ved")
+
+    with pytest.raises(PermissionDenied, match="scope"):
+        _attempt()
 
 
 @pytest.mark.parametrize("operation", ["add_evidence", "set_status", "update"])
@@ -539,13 +551,16 @@ def test_fact_mutations_hold_before_existing_payload_or_changes(runtime, operati
     led.conn.set_authorizer(authorize)
     changes_before = led.conn.total_changes
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if operation == "add_evidence":
                 led.add_evidence(fid, sid, 0, 1)
             elif operation == "set_status":
                 led.set_fact_status(fid, FactStatus.UNKNOWN)
             else:
                 led.put_fact(fact, fact_id=fid)
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert led.conn.total_changes == changes_before
@@ -773,7 +788,7 @@ def test_signal_dependent_surfaces_hold_before_payload_or_effects(runtime, surfa
     led.conn.set_authorizer(authorize)
     changes_before = led.conn.total_changes
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if surface == "scheduler":
                 scheduler.select_pending()
             elif surface == "calendar":
@@ -786,6 +801,9 @@ def test_signal_dependent_surfaces_hold_before_payload_or_effects(runtime, surfa
                 commands._signal_visible(led, sid, "ved")
             else:
                 led.candidates_for(sid)
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert led.conn.total_changes == changes_before
@@ -798,7 +816,7 @@ def test_empty_signal_surfaces_still_require_scope_admission(runtime, surface):
     from catchup_core.resources import AdmissionStore, ResourcePolicy
 
     led, _ = runtime
-    with pytest.raises(PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "scheduler":
             policy = ResourcePolicy.from_mapping({"max_requests_per_month": 1, "max_pending_signals": 1})
             AdmissionStore(led, policy).select_pending()
@@ -810,6 +828,9 @@ def test_empty_signal_surfaces_still_require_scope_admission(runtime, surface):
         else:
             corpus.prefill(
                 led, lambda _ref: pytest.fail("empty corpus requested source payload"), "calendar", "synthetic")
+
+    with pytest.raises(PermissionDenied, match="scope"):
+        _attempt()
 
 
 def test_evaluation_scope_hold_precedes_outcome_payload_read(runtime):
@@ -948,7 +969,7 @@ def test_scope_hold_precedes_all_queries_enumeration_and_effects(runtime, monkey
         patch.setattr(led, "transaction", forbidden("transaction"))
         led.conn.set_trace_callback(lambda _sql: events.append("sql"))
         try:
-            with pytest.raises(PersonalScopeUnavailable, match="scope"):
+            def _attempt():
                 if surface == "scheduler":
                     scheduler.select_pending(UnreadablePriorities(("synthetic-priority",)),
                                              current_catchup_id="cu_synthetic")
@@ -965,6 +986,9 @@ def test_scope_hold_precedes_all_queries_enumeration_and_effects(runtime, monkey
                     corpus.latest_outcome(led, "cu_control")
                 else:
                     corpus.load_labels(led)
+
+            with pytest.raises(PersonalScopeUnavailable, match="scope"):
+                _attempt()
         finally:
             led.conn.set_trace_callback(None)
 
@@ -1194,7 +1218,7 @@ def test_global_signal_scope_failure_is_not_treated_as_missing_or_provider_error
         fetches.append("fetch")
         raise PersonalScopeUnavailable("personal scope unavailable")
 
-    with pytest.raises(PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "coverage":
             led.visible_coverage("ved")
         elif surface == "provider":
@@ -1205,6 +1229,9 @@ def test_global_signal_scope_failure_is_not_treated_as_missing_or_provider_error
             # Test-only admission bypass exercises the fetcher's own scope denial.
             monkeypatch.setattr(led, "require_personal_connector_admission", lambda: None)
             run._fetch_one("calendar", unavailable)
+
+    with pytest.raises(PermissionDenied, match="scope"):
+        _attempt()
     assert led.conn.total_changes == changes_before
     if surface == "fetch":
         assert fetches == ["fetch"]
@@ -1251,13 +1278,16 @@ def test_fact_scope_hold_is_not_silently_treated_as_missing_evidence(runtime, su
     led.upsert_alert("synthetic-obligation", domain="kids_school", primary_subject_id="ved",
                      severity="P2", fact_ids=(fid,))
 
-    with pytest.raises(PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "completion":
             curated.completion_fact(led, "ved", f"fact:{fid}@{stamp}", "synthetic")
         elif surface == "evaluation":
             heldout._facts(led, sid, "ved")
         else:
             views._feedback_visible(led, "ved", "synthetic-obligation")
+
+    with pytest.raises(PermissionDenied, match="scope"):
+        _attempt()
 
 
 @pytest.mark.parametrize("surface", ["metadata", "fact", "history"])
@@ -1278,13 +1308,16 @@ def test_fact_subject_change_without_a_new_binding_is_denied_before_payload(runt
 
     led.conn.set_authorizer(authorize)
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if surface == "metadata":
                 led.get_fact_metadata(fid, "ved")
             elif surface == "fact":
                 led.get_fact(fid, "ved")
             else:
                 led.fact_history(fid, "ved")
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert payload_reads == []
@@ -1329,7 +1362,7 @@ def test_documentary_review_holds_before_source_and_receipt_payload(runtime, fac
     led.conn.set_authorizer(authorize)
     changes_before = led.conn.total_changes
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if operation == "preview":
                 review.preview(binding)
             elif operation == "confirm":
@@ -1346,6 +1379,9 @@ def test_documentary_review_holds_before_source_and_receipt_payload(runtime, fac
                 review._link(binding, "synthetic", "confirmed")
             else:
                 fact_access.document_link_proof(led.conn, {})
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert led.conn.total_changes == changes_before
@@ -1400,13 +1436,16 @@ def test_unbound_document_requirement_is_not_read(runtime, admitted_personal_sco
 
     led.conn.set_authorizer(authorize)
     try:
-        with pytest.raises(PermissionDenied, match="scope"):
+        def _attempt():
             if surface == "metadata":
                 led.get_fact_metadata(fid, "ved")
             elif surface == "fact":
                 led.get_fact(fid, "ved")
             else:
                 field_confirmation.field_command(Namespace(fact_id=fid, apply=None, reopen=False), deps)
+
+        with pytest.raises(PermissionDenied, match="scope"):
+            _attempt()
     finally:
         led.conn.set_authorizer(None)
     assert payload_reads == []
@@ -1565,5 +1604,5 @@ def test_unrelated_permission_generation_does_not_erase_runtime_receipt(runtime,
 
 @pytest.mark.parametrize("method", ["confidence 99%", True, 1])
 def test_connector_record_rejects_nonliteral_document_methods(method):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"document_method\ must\ be\ text,\ ocr\ or\ unknown"):
         co.ConnectorRecord("synthetic", "synthetic", document_method=method)

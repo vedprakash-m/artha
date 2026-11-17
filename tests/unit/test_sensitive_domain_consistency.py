@@ -10,14 +10,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import sys
 
-import pytest
 
 # ── Ensure scripts/ is importable ────────────────────────────────────────────
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 
 def _foundation_domains() -> frozenset[str]:

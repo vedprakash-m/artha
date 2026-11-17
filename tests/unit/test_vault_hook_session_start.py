@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import pytest
 
 import vault_hook as vh  # noqa: E402
 
@@ -42,10 +41,9 @@ def test_session_start_subcommand_is_wired(tmp_path, monkeypatch, capsys):
     _point_at(tmp_path, monkeypatch)
     (tmp_path / ".artha-decrypted").write_text("{}")
     monkeypatch.setattr(sys, "argv", ["vault_hook.py", "session-start"])
-    try:
+    with pytest.raises(SystemExit) as exc:
         vh.main()
-    except SystemExit as exc:
-        assert exc.code == 0
+    assert exc.value.code == 0
     assert "[VAULT-WARN]" in capsys.readouterr().out
 
 

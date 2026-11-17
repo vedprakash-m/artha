@@ -1,10 +1,7 @@
 """The spouse label comes from the local profile; source carries no household names."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 import import_transactions as it  # noqa: E402
 

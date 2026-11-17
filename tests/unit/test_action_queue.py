@@ -6,17 +6,10 @@ deduplication, expiry, archival, and audit trail.
 
 Ref: specs/act.md §2, §3
 """
-import json
-import sqlite3
-import tempfile
-import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from action_queue import ActionQueue
 from actions.base import ActionProposal, ActionResult
@@ -153,7 +146,7 @@ class TestStateMachine:
         p = _make_proposal()
         tmp_db.propose(p)
         tmp_db.transition(p.id, "rejected", actor="user")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"is\ in\ terminal\ state\ 'rejected';\ no\ further\ transitions\ allowed"):
             tmp_db.transition(p.id, "approved", actor="user")
 
     def test_approved_to_executing(self, tmp_db):

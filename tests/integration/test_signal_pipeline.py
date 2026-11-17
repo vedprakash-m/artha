@@ -17,7 +17,6 @@ import re
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import yaml
@@ -52,24 +51,23 @@ def _make_blocked_module(name: str) -> types.ModuleType:
 # Tests
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
-def extractor():
+@pytest.fixture
+def extractor(monkeypatch):
     """EmailSignalExtractor instance, loaded with LLM modules blocked."""
     blocked = {
         "anthropic": _make_blocked_module("anthropic"),
         "openai": _make_blocked_module("openai"),
         "litellm": _make_blocked_module("litellm"),
     }
-    # Clear any cached imports from other test modules
+    for k, v in blocked.items():
+        monkeypatch.setitem(sys.modules, k, v)
     for mod_name in list(sys.modules.keys()):
         if "email_signal_extractor" in mod_name:
-            del sys.modules[mod_name]
-
-    with patch.dict("sys.modules", blocked):
-        if str(_SCRIPTS) not in sys.path:
-            sys.path.insert(0, str(_SCRIPTS))
-        from email_signal_extractor import EmailSignalExtractor  # type: ignore[import]
-        return EmailSignalExtractor()
+            monkeypatch.delitem(sys.modules, mod_name, raising=False)
+    if str(_SCRIPTS) not in sys.path:
+        monkeypatch.syspath_prepend(str(_SCRIPTS))
+    from email_signal_extractor import EmailSignalExtractor  # type: ignore[import]
+    return EmailSignalExtractor()
 
 
 class TestSignalPipelinePrecision:
@@ -159,26 +157,21 @@ class TestSignalPipelinePIIHygiene:
 class TestSignalPipelineNoLLM:
     """The entire extraction must complete with LLM modules blocked at import time."""
 
-    def test_pipeline_runs_without_llm_clients(self):
+    def test_pipeline_runs_without_llm_clients(self, monkeypatch):
         """Confirm extractor works end-to-end with anthropic/openai fully removed."""
-        blocked = {
-            "anthropic": _make_blocked_module("anthropic"),
-            "openai": _make_blocked_module("openai"),
-        }
-        # Evict cached imports
+        for name in ("anthropic", "openai"):
+            monkeypatch.setitem(sys.modules, name, _make_blocked_module(name))
         for mod_name in list(sys.modules.keys()):
             if "email_signal_extractor" in mod_name:
-                del sys.modules[mod_name]
-
-        with patch.dict("sys.modules", blocked):
-            if str(_SCRIPTS) not in sys.path:
-                sys.path.insert(0, str(_SCRIPTS))
-            from email_signal_extractor import EmailSignalExtractor  # type: ignore[import]
-            ext = EmailSignalExtractor()
-            result = ext.extract([{
-                "id": "llm_block_e2e",
-                "subject": "Rent due December 31",
-                "from": "landlord@test.com",
-                "snippet": "Pay your rent of $2,400 by 2026-12-31.",
-            }])
-            assert isinstance(result, list), "extract() must return a list when LLM modules absent"
+                monkeypatch.delitem(sys.modules, mod_name, raising=False)
+        if str(_SCRIPTS) not in sys.path:
+            monkeypatch.syspath_prepend(str(_SCRIPTS))
+        from email_signal_extractor import EmailSignalExtractor  # type: ignore[import]
+        ext = EmailSignalExtractor()
+        result = ext.extract([{
+            "id": "llm_block_e2e",
+            "subject": "Rent due December 31",
+            "from": "landlord@test.com",
+            "snippet": "Pay your rent of $2,400 by 2026-12-31.",
+        }])
+        assert isinstance(result, list), "extract() must return a list when LLM modules absent"

@@ -342,9 +342,9 @@ def test_feedback_review_uses_saved_inputs_and_class_correctness(world, tmp_path
     views.review_feedback(led, "ved", directory, fid, "correct", NOW)
     assert views.class_precision(led)[0]["review_status"] == "correct"
     assert views.review_feedback(led, "ved", directory, None, None, NOW) == []
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Review\ needs\ a\ feedback\ ID\ and\ a\ supported\ correctness\ label"):
         views.review_feedback(led, "ved", directory, None, "correct", NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"No\ accessible\ feedback\ matches\ that\ ID"):
         views.review_feedback(led, "ved", directory, "missing", None, NOW)
     next_id = views.feedback(led, "ved", obligation, "useful", "Helped", NOW)
     with pytest.raises(ValueError, match="bundle"):

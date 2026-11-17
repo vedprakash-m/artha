@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -278,11 +277,14 @@ def test_changed_fact_payload_without_updated_marker_is_not_decoded(led, monkeyp
                      ('"changed synthetic payload"', fid))
     monkeypatch.setattr(led, "_decode_value", lambda *_args: pytest.fail("unbound Fact value was decoded"))
 
-    with pytest.raises(lg.PermissionDenied, match="scope"):
+    def _attempt():
         if surface == "current":
             led.get_fact(fid, "ved")
         else:
             led.fact_history(fid, "ved")
+
+    with pytest.raises(lg.PermissionDenied, match="scope"):
+        _attempt()
 
 
 def test_fact_scope_swap_during_retrieval_never_decodes_value(led, monkeypatch):

@@ -195,25 +195,25 @@ def test_direct_runtime_cannot_bypass_configured_false_with_environment_opt_in(c
     config, _, keyring, build = configured
     config['cutover'] = False
     before = dict(keyring.store)
-    try:
+
+    def _attempt():
         deps = build(environ={'ARTHA_CUTOVER': '1'})
-    except PermissionDenied as exc:
-        assert 'cutover' in str(exc)
-    else:
         deps.ledger.close()
-        pytest.fail('kernel constructed authoritative dependencies while configured cutover was false')
+
+    with pytest.raises(PermissionDenied, match='cutover'):
+        _attempt()
     assert keyring.store == before
 
 
 def test_runtime_environment_opt_out_blocks_configured_authority(configured):
     _, _, _, build = configured
-    try:
+
+    def _attempt():
         deps = build(environ={'ARTHA_CUTOVER': '0'})
-    except PermissionDenied as exc:
-        assert 'cutover' in str(exc)
-    else:
         deps.ledger.close()
-        pytest.fail('runtime ignored the cutover opt-out')
+
+    with pytest.raises(PermissionDenied, match='cutover'):
+        _attempt()
 
 
 def test_read_only_inspection_and_local_safety_authority_survive_disabled_cutover(configured):
@@ -533,9 +533,12 @@ def test_authority_transfer_requires_quiescence_or_revocation_and_checkpoint_and
         require_dispatch_authority(executor.queue._conn, host='authority')
 
     # 2. Old host cannot open authoritative runtime deps even if its config still says 'authority'
-    with pytest.raises(PermissionDenied, match='authority generation 2 belongs to'):
+    def _open_old():
         old_deps = build()
         old_deps.ledger.close()
+
+    with pytest.raises(PermissionDenied, match='authority generation 2 belongs to'):
+        _open_old()
 
     # 3. Promoted host can inspect generation 2 while effects remain paused pending owner resume.
     monkeypatch.setenv('ARTHA_HOST', 'promoted')

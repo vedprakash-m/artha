@@ -8,19 +8,15 @@ Execution log coverage:
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 # Ensure scripts/ is on path
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 import lib.briefing_archive as _ba
 
@@ -312,9 +308,8 @@ class TestFlockConcurrency:
         """Two save() calls racing on the same file produce exactly 2 entries."""
         import threading
 
-        errors: list[str] = []
         results: list[dict] = []
-        lock = threading.Event()
+        threading.Event()
 
         def _writer(text: str, event: threading.Event | None = None) -> None:
             if event:
@@ -401,7 +396,6 @@ class TestSaveRuntimeField:
 class TestInjectionCheckFailClosed:
     def test_raises_on_import_error(self, monkeypatch):
         """_run_injection_check() raises RuntimeError when detector module is missing."""
-        import types
         monkeypatch.setitem(sys.modules, "lib.injection_detector", None)
 
         with pytest.raises(RuntimeError, match="Injection detector unavailable"):

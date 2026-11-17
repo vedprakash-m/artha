@@ -20,14 +20,9 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
-import sys
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 import lib.metrics_writer as metrics_writer_mod
 
@@ -176,7 +171,7 @@ def test_trace_record_has_query_hash(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_trace_record_ts_is_iso(tmp_path):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     trace_file = tmp_path / "trace.jsonl"
     metrics_writer_mod.write_invocation_trace(

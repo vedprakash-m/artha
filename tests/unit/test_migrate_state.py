@@ -8,16 +8,12 @@ Ref: specs/enhance.md §1.2
 """
 from __future__ import annotations
 
-import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 from migrate_state import (  # noqa: E402
     LATEST_SCHEMA_VERSION,
@@ -216,7 +212,7 @@ class TestMigrationPath:
         assert path == []
 
     def test_unknown_version_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Unknown\ version\ in\ chain:\ list\.index\(x\):\ x\ not\ in\ list"):
             _migration_path("0.0", "1.1")
 
 
@@ -277,7 +273,7 @@ class TestApplyMigrations:
         sf = _make_state_file(tmp_path, "finance.md", "last_updated: 2026-03-01\n")
         original = sf.read_text()
 
-        results = apply_migrations(
+        apply_migrations(
             state_dir=tmp_path,
             from_ver="1.0",
             to_ver="1.1",
@@ -287,7 +283,7 @@ class TestApplyMigrations:
 
     def test_returns_empty_when_already_current(self, tmp_path):
         # File already at target version — no ops needed
-        sf = _make_state_file(
+        _make_state_file(
             tmp_path, "goals.md",
             "meta:\n  schema_version: '1.1'\n  last_updated: 2026-03-01\n  review_needed: false\n"
         )
@@ -338,7 +334,6 @@ class TestMigrationRegistry:
 
     def test_version_chain_is_ordered(self):
         """VERSION_CHAIN must be monotonically increasing."""
-        from migrate_state import _parse_version_simple
         versions = [tuple(int(x) for x in v.split(".")) for v in _VERSION_CHAIN]
         assert versions == sorted(versions), "Version chain must be in ascending order"
 

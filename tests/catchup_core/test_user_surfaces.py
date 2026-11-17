@@ -14,7 +14,7 @@ import pytest
 from catchup_core.backup import apply_privacy_history, encrypted_snapshot, read_snapshot, restore_encrypted_snapshot
 from catchup_core import crypto, ids, ledger as lg, views
 from catchup_core.curated import records
-from catchup_core.session_lock import SessionBusy, session_lock
+from catchup_core.session_lock import session_lock
 from catchup_core.blobs import EncryptedBlobStore
 
 KEY = ids.HmacKey(1, b"i" * 32)
@@ -187,7 +187,7 @@ def test_feedback_is_reviewed_not_automatically_gold(store):
     views.feedback(store, "owner", "exam", "snooze", "already planned", now)
     assert store.get_alert("exam")["status"] == "snoozed"
     assert views.precision(store)[0]["review_status"] == "unreviewed"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"feedback\ needs\ a\ supported\ response\ and\ a\ reason"):
         views.feedback(store, "owner", "exam", "dismiss", "", now)
 
 
@@ -295,6 +295,6 @@ def test_feedback_becomes_an_encrypted_unreviewed_replay_case_that_forget_delete
 
 def test_replay_case_for_unknown_alert_is_refused(store, tmp_path):
     blobs = EncryptedBlobStore(tmp_path / "blobs", CIPHER, KEY)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"unknown\ Alert"):
         views.replay_case(store, blobs, "owner", "nope", "dismiss", "x", "fbk_1",
                           datetime(2026, 10, 12, tzinfo=timezone.utc), tmp_path / "replay")

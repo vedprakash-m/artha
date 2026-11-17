@@ -10,16 +10,12 @@ Exercises the fetch_single() function that work_loop.py calls to:
 """
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from pipeline import _ALLOWED_MODULES, fetch_single
 
@@ -130,7 +126,7 @@ class TestFetchSingleContract:
 
     def test_never_raises_on_none_cfg(self):
         """cfg=None is not a valid input but shouldn't cause unhandled crash."""
-        with pytest.raises(Exception):
+        with pytest.raises((AttributeError, TypeError)):
             # We expect SOME error — just not a silent data corruption
             fetch_single("nonexistent", cfg=None)  # type: ignore[arg-type]
 

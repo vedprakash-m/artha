@@ -12,16 +12,12 @@ from __future__ import annotations
 
 import ast
 import os
-import sys
 
-import pytest
 import yaml
 
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
 _CONFIG_DIR  = os.path.join(os.path.dirname(__file__), "..", "..", "config")
 
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 # Known valid action types (from action_composer._ALLOWED_ACTION_TYPES)
 _ALLOWED_ACTION_TYPES = {

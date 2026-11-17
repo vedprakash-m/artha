@@ -136,19 +136,19 @@ def test_source_missing_changed_or_linked_refused(source, tmp_path, kind):
             pytest.skip("host cannot create symlinks")
     else:
         path.write_text("changed\n")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"changed\ source|linked\ path\ refused|missing\ source"):
         runner._build_private_workspace(source, tmp_path / "isolated", manifest)
 
 
 def test_missing_private_file_refused_before_build(source):
     (source / runner.PRIVATE_WORK_FILES[0]).unlink()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"missing\ source"):
         runner._private_manifest(source)
 
 
 @pytest.mark.parametrize("rel", ["../outside.py", str(REPO / "absolute.py")])
 def test_unsafe_source_names_refused(source, rel):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"unsafe\ source\ path"):
         runner._source_hash(source, rel)
 
 
@@ -172,7 +172,7 @@ def test_unsafe_evidence_destinations_refused(source, tmp_path, kind):
         "suffix": tmp_path / "evidence.py",
     }
     paths["existing"].write_text("keep")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"destination\ inside\ checkout|missing\ evidence\ parent|unsafe\ evidence\ destination|unsafe\ local\ destination"):
         runner._evidence_path(paths[kind], source)
     assert paths["existing"].read_text() == "keep"
 
@@ -183,7 +183,7 @@ def test_symlink_evidence_parent_refused(source, tmp_path):
         link.symlink_to(tmp_path, target_is_directory=True)
     except OSError:
         pytest.skip("host cannot create symlinks")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"linked\ path\ refused"):
         runner._evidence_path(link / "evidence.json", source)
 
 
@@ -192,7 +192,7 @@ def test_evidence_under_known_sync_environment_root_refused(source, tmp_path, mo
     sync = tmp_path / "company-sync"
     sync.mkdir()
     monkeypatch.setenv(env_name, str(sync))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"synced\ evidence\ destination"):
         runner._evidence_path(sync / "record.json", source)
 
 
@@ -200,7 +200,7 @@ def test_evidence_under_known_sync_environment_root_refused(source, tmp_path, mo
 def test_evidence_under_sync_ancestor_refused(source, tmp_path, name):
     folder = tmp_path / name / "nested"
     folder.mkdir(parents=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"synced\ evidence\ destination"):
         runner._evidence_path(folder / "record.json", source)
 
 
@@ -238,7 +238,7 @@ def test_source_reparse_point_refused_even_when_not_reported_as_symlink(source, 
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "lstat", lstat)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"linked\ path\ refused"):
         runner._private_manifest(source)
 
 
@@ -267,7 +267,7 @@ def test_nonregular_source_refused(source):
     path = source / runner.PRIVATE_WORK_FILES[0]
     path.unlink()
     path.mkdir()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"missing\ source"):
         runner._private_manifest(source)
 
 
@@ -283,13 +283,13 @@ def test_non_directory_ancestor_refused(source, monkeypatch):
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "lstat", lstat)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"non\-directory\ ancestor"):
         runner._private_manifest(source)
 
 
 def test_relative_sync_environment_root_refused(source, tmp_path, monkeypatch):
     monkeypatch.setenv("OneDrive", "relative-sync")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"invalid\ sync\ root"):
         runner._evidence_path(tmp_path / "evidence.json", source)
 
 
@@ -530,7 +530,7 @@ def test_diagnostic_refuses_hardlinked_file(tmp_path):
         os.link(original, linked)
     except OSError:
         pytest.skip("host cannot create hardlinks")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"invalid\ private\ diagnostic"):
         runner._read_private_diagnostics(linked)
 
 
@@ -692,7 +692,7 @@ def test_new_source_during_copy_is_not_unfingerprinted(source, tmp_path, monkeyp
         return original(root, dest, synthetic_only=synthetic_only)
 
     monkeypatch.setattr(runner, "build_workspace", build)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"unfingerprinted\ copied\ source"):
         runner._build_private_workspace(source, tmp_path / "isolated", manifest)
 
 

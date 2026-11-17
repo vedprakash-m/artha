@@ -299,7 +299,6 @@ def test_append_score_enforces_fifo_cap(scorer, tmp_path, monkeypatch):
 
 def test_cli_json_flag_outputs_valid_json(scorer, golden_briefing_path, tmp_path, monkeypatch, capsys):
     """T-EV-5-10: CLI --json flag must produce valid JSON on stdout."""
-    import io
     scores_file = tmp_path / "briefing_scores.json"
     monkeypatch.setattr(scorer, "_BRIEFING_SCORES", scores_file)
 

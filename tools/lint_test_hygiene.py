@@ -61,6 +61,8 @@ def scan_hygiene(root: Path = ROOT, *, enforce_filenames: bool = True, enforce_s
     errors: list[str] = []
     for rel in tracked_test_files(root):
         path = root / rel
+        if not path.exists():
+            continue
         if enforce_filenames and Path(rel).name.startswith("test_") and BANNED_FILENAME_RE.search(Path(rel).name):
             errors.append(f"{rel}: ticket/wave/steal/sprint/debt/phase test filename is forbidden")
 

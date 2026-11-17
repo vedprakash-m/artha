@@ -1,7 +1,6 @@
 """RA-24: refused by code, not by a model's judgement."""
 from __future__ import annotations
 
-import sys
 import json
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,7 +9,6 @@ from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from lib import action_policy  # noqa: E402
 from lib.action_policy import check_policy  # noqa: E402
 from unit_helpers import create_evidence_case  # noqa: E402

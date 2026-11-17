@@ -105,7 +105,7 @@ def test_source_add_update_remove_preview_exact_change_and_preserve_release(conf
 ])
 def test_unknown_work_credential_and_unbounded_source_settings_refuse(config, changed):
     before = config.read_bytes()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Work/employer\ source\ enrollment\ into\ personal\ context\ is\ held|calendar\ kinds\ require\ a\ calendar\ connector|max_results\ requires\ an\ integer\ from\ 1\ to\ 1000|source\ class\ is\ not\ declared\ by\ the\ active\ Domain\ policy|source\ required\ must\ be\ a\ boolean|source\ requires\ a\ registered\ personal\ connector;\ Work\ sources\ remain\ separate|source\ subjects\ must\ be\ an\ explicit\ distinct\ list\ of\ resolved\ household\ identities|unknown\ source\ fields;\ identity,\ credentials,\ endpoints\ and\ commands\ are\ held|unknown\ source\ options;\ credentials,\ paths,\ endpoints\ and\ cursors\ are\ held"):
         preview(config, source(**changed))
     assert config.read_bytes() == before
 
@@ -226,7 +226,7 @@ def test_source_json_is_strict_and_bounded(config, value):
     {'calendar_ids': ['https://example.test']}, {'window_days': 367}])
 def test_source_option_validation_is_not_bypassed_by_review_context(config, options):
     calendar = 'calendar_ids' in options or 'window_days' in options
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"calendar\ selectors\ must\ be\ stable\ IDs\ or\ names,\ not\ URLs\ or\ paths|calendar\ selectors\ require\ a\ bounded\ distinct\ list|calendar_ids\ requires\ bounded\ text\ without\ URLs\ or\ control\ characters|query\ requires\ bounded\ text\ without\ URLs\ or\ control\ characters|sync_changes\ requires\ false;\ true\ is\ held\ until\ separately\ accepted\ provider\ parity|window_days\ requires\ an\ integer\ from\ 1\ to\ 366"):
         preview(config, source(connector='google_calendar' if calendar else 'gmail', kwargs=options))
 
 
@@ -317,7 +317,7 @@ def test_unsafe_config_shapes_refuse_without_altering_target(config, tmp_path, u
     else:
         config.write_text(config.read_text() + '\nanchor: &shared [kid]\ncopy: *shared\n')
     before = config.read_bytes()
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"configuration\ aliases,\ anchors\ and\ explicit\ tags\ are\ not\ supported|configuration\ has\ duplicate\ or\ non\-text\ keys|configuration\ must\ be\ an\ ordinary\ unlinked\ file|configuration\ paths\ must\ not\ contain\ links"):
         preview(target, source())
     assert config.read_bytes() == before
 

@@ -12,14 +12,10 @@ Verifies that pii_guard.py correctly flags:
 
 Spec: §15.7, §10.1
 """
-import pytest
-import sys
 from pathlib import Path
 
 # Ensure scripts/ is importable (conftest.py handles this, but be explicit)
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from pii_guard import scan, filter_text
 

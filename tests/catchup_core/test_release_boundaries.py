@@ -641,7 +641,7 @@ def test_completion_rejects_missing_or_malformed_identities(world, tmp_path, rec
     (tmp_path / 'state').mkdir()
     if record == 'responsibility:missing':
         (tmp_path / 'state' / 'responsibilities.md').write_text('', encoding='utf-8')
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"commitment\ identity\ is\ missing\ or\ ambiguous|use\ milestone:<goal>:<item>,\ responsibility:<id>,\ household:<id>\ or\ open_item:<id>"):
         commands.execute(Namespace(command='complete', record=record, apply=None), world[2](), tmp_path)
 
 
@@ -649,7 +649,7 @@ def test_completion_rejects_missing_or_malformed_identities(world, tmp_path, rec
 def test_completion_invalid_or_expired_preview_never_writes(world, tmp_path, apply):
     state = tmp_path / 'state'; state.mkdir()
     (state / 'responsibilities.md').write_text('responsibilities:\n- {id: R, owner: owner, outcome: Renew}\n')
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"commitment,\ evidence\ or\ permissions\ changed,\ or\ preview\ expired;\ review\ again|evidence\ locator\ must\ be\ non\-empty"):
         commands.execute(Namespace(command='complete', record='responsibility:R', apply=apply), world[2](), tmp_path)
     assert not world[0].conn.execute('SELECT 1 FROM facts').fetchone()
 
@@ -686,7 +686,7 @@ def test_completion_rejects_ambiguous_milestones(world, tmp_path, record):
     import yaml
     state = tmp_path / 'state'; state.mkdir()
     (state / 'goals.md').write_text(yaml.safe_dump({'goals': [record]}))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"milestone\ identity\ is\ missing\ or\ ambiguous|milestones\ need\ review"):
         commands.execute(Namespace(command='complete', record='milestone:G:a', apply=None), world[2](), tmp_path)
 
 

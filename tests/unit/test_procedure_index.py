@@ -25,11 +25,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 # conftest adds scripts/ to sys.path
 from procedure_index import (
-    ProcedureMatch,
     _decay_confidence,
     find_matching_procedures,
     format_procedures_for_context,

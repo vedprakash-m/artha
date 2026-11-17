@@ -138,7 +138,7 @@ def test_native_adjustment_failure_keeps_parent_token_unchanged(monkeypatch):
             return 0
 
         monkeypatch.setattr(native.security, "SetTokenInformation", refuse)
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match=r"SetTokenInformation\(TokenOwner\) refused"):
             with native.duplicate_for_tests(original):
                 pytest.fail("an unadjusted token was admitted")
         assert native.same_sid(before, native.information(original, 4))
@@ -181,7 +181,7 @@ def test_native_launch_uses_verified_duplicate_and_closes_process_handles(monkey
     elif failure == "exit":
         monkeypatch.setattr(native.kernel, "GetExitCodeProcess", lambda *args: 0)
     if failure:
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match="WinError|refused"):
             native.launch(args)
     else:
         assert native.launch(args) == 9
@@ -200,7 +200,7 @@ def test_native_token_and_process_api_refusals_do_not_launch_tests(monkeypatch, 
         return 0
 
     monkeypatch.setattr(native.security, operation, refuse)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=f"{operation}.*refused"):
         native.launch([sys.executable, "must-not-run"])
 
 
@@ -220,7 +220,7 @@ def test_native_token_verification_and_probe_fail_closed(monkeypatch):
 def test_native_failed_metadata_and_token_information_are_not_success(tmp_path, monkeypatch):
     native = launcher._Native()
     monkeypatch.setattr(native.security, "GetNamedSecurityInfoW", lambda *args: 5)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="WinError 5"):
         native.verify_owner(tmp_path, None)
     with native.process_token() as token:
         monkeypatch.setattr(native.security, "GetTokenInformation", lambda *args: 1)

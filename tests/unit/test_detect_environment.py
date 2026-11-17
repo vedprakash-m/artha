@@ -14,9 +14,8 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"

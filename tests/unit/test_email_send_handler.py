@@ -6,14 +6,11 @@ Gmail API is mocked throughout — no real network calls.
 
 Ref: specs/act.md §8.1
 """
-import sys
 import uuid
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 import actions.email_send as email_send_handler
 from actions.base import ActionProposal

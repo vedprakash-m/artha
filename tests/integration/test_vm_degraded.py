@@ -14,11 +14,8 @@ tmp_path fixtures — no actual Cowork VM is required to run them.
 
 from __future__ import annotations
 
-import json
-import os
 import textwrap
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -54,7 +51,6 @@ class TestDetectEnvironmentVm:
 
     def test_readonly_filesystem_triggers_cowork_vm(self, monkeypatch):
         import scripts.detect_environment as de
-        import platform as _platform
         monkeypatch.delenv(de._COWORK_ENV_VAR, raising=False)
 
         # Readonly FS only classifies as cowork_vm on Linux — mock platform accordingly
@@ -82,7 +78,6 @@ class TestDetectEnvironmentVm:
 
     def test_local_mac_classification(self, monkeypatch):
         import scripts.detect_environment as de
-        import platform
         monkeypatch.delenv(de._COWORK_ENV_VAR, raising=False)
 
         with patch.object(de, "_probe_cowork_marker", return_value=(False, "no marker")):
@@ -116,7 +111,6 @@ class TestPreflightAdvisoryExitsZero:
         assert "ADVISORY" in output.upper()
 
     def test_advisory_flag_parsed_from_args(self):
-        import scripts.preflight as pf
         import argparse
 
         # Simulate argparse processing of --advisory

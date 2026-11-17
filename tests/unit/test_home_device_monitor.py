@@ -10,24 +10,18 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import MagicMock, patch
+from typing import List
 
 import pytest
 
 # Ensure scripts/ is importable
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from skills.home_device_monitor import (
     HomeDeviceMonitorSkill,
     _OFFLINE_THRESHOLD_HOURS,
-    _SPA_TEMP_VARIANCE_F,
-    _SUPPLY_LOW_PCT,
     _classify_entity,
     _hours_offline,
     _is_offline,

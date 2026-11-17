@@ -12,17 +12,13 @@ Tests cover:
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 import yaml
 
 # Ensure the scripts package is importable
 _ARTHA_ROOT = Path(__file__).resolve().parents[2]
-if str(_ARTHA_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ARTHA_ROOT))
 
 import profile_loader as pl
 

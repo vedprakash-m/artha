@@ -1,7 +1,6 @@
 """WP-03 / RA-06, WP03.AC1: automatic personal-fact extraction is off unless deliberately enabled."""
 from __future__ import annotations
 
-import importlib
 import sys
 import types
 from pathlib import Path
@@ -9,8 +8,6 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from lib import memory_policy  # noqa: E402
 

@@ -1,5 +1,4 @@
 """Provider pagination and raw metadata failures cannot become green release evidence."""
-import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 

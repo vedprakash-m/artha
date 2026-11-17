@@ -37,22 +37,18 @@ Ref: specs/ext-agent-reloaded.md §EAR-2, R-10
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.agent_chainer import (
     AgentChainer,
     ChainDefinition,
     ChainResult,
     ChainStep,
-    ChainStepState,
     extract_key_assertions,
     load_chain,
     load_all_chains,

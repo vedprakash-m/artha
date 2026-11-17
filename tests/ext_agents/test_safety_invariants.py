@@ -12,7 +12,6 @@ Covers the five safety invariants that protect against regressions:
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -22,7 +21,7 @@ from lib.context_scrubber import ContextScrubber  # type: ignore
 from lib.knowledge_extractor import KnowledgeExtractor  # type: ignore
 from lib.agent_health import AgentHealthTracker  # type: ignore
 from lib.agent_registry import AgentRegistry  # type: ignore
-from .conftest import SAMPLE_AGENT_ENTRY, make_test_agent
+from .conftest import make_test_agent
 
 
 # ---------------------------------------------------------------------------

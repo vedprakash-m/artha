@@ -19,20 +19,6 @@ _PRODUCTION_SNAPSHOT = _isolation.ProtectedSnapshot.take(
 
 os.environ.setdefault("ARTHA_NO_REEXEC", "1")  # Prevent venv re-exec during tests
 import pytest
-import shutil
-import sys
-import tempfile
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Standalone scripts — exclude from pytest collection.
-# These use sys.exit() at module level and run directly as: python tests/<name>.py
-# Collecting them via pytest would trigger module-level code and crash collection.
-# ---------------------------------------------------------------------------
-collect_ignore = [
-    "test_career_search.py",
-    "test_career_content.py",
-]
 
 # ---------------------------------------------------------------------------
 # Ensure:
@@ -49,25 +35,21 @@ if _PROJECT_ROOT not in sys.path:
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-@pytest.fixture
-def temp_artha_dir():
-    """Create a temporary Artha-like directory structure for safe testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        (tmp_path / "scripts").mkdir()
-        (tmp_path / "state").mkdir()
-        (tmp_path / "config").mkdir()
-        (tmp_path / "prompts").mkdir()
-        (tmp_path / ".tokens").mkdir()
-        
-        # Add a dummy audit log
-        (tmp_path / "state" / "audit.md").write_text("# Audit Log\n")
-        
-        yield tmp_path
-
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: test may use the real network (guard lifted)")
+    config.addinivalue_line("markers", "slow: slow capacity, UAT, or multi-subprocess tests excluded from fast inner loop")
+    config.addinivalue_line("markers", "incumbent_only: legacy incumbent compatibility tests")
+    config.addinivalue_line("markers", "os_contract: platform-specific OS contract tests")
+
+    root = Path(__file__).resolve().parent.parent
+    allowed_roots: tuple[Path, ...] = (root,) if (root / _isolation.WORKSPACE_MARKER).exists() else ()
+    xml_targets = [root / "coverage.xml", root / "coverage-harness.xml"]
+    cov_reports = getattr(config.option, "cov_report", None) or {}
+    for target in (cov_reports.values() if isinstance(cov_reports, dict) else ()):
+        if isinstance(target, str) and target.endswith(".xml"):
+            xml_targets.append(Path(target) if Path(target).is_absolute() else root / target)
+    _isolation.install_write_audit_hook(allowed_roots=allowed_roots, allow_coverage_xml=tuple(xml_targets))
 
 
 def pytest_make_parametrize_id(val, argname):
@@ -131,6 +113,36 @@ def pytest_sessionfinish(session, exitstatus):
             for line in lines:
                 tr.write_line(line)
         session.exitstatus = 1
+
+
+@pytest.fixture(autouse=True)
+def _guard_sys_modules_and_cwd():
+    """Verify no test leaks working directory changes or mutates pre-existing sys.modules keys.
+
+    Note: permitting first-time lazy imports during a test keeps collection fast, so this guard
+    does not prove global import-order independence across unrelated modules.
+    """
+    before_cwd = os.getcwd()
+    before_modules = dict(sys.modules)
+    try:
+        yield
+    finally:
+        after_cwd = os.getcwd()
+        if after_cwd != before_cwd:
+            os.chdir(before_cwd)
+            pytest.fail(f"Test altered os.getcwd() from {before_cwd!r} to {after_cwd!r}", pytrace=False)
+        mutated = [
+            name for name, mod in before_modules.items()
+            if name not in sys.modules or sys.modules[name] is not mod
+        ]
+        if mutated:
+            for name in mutated:
+                sys.modules[name] = before_modules[name]
+            pytest.fail(
+                "Test mutated/deleted pre-existing sys.modules entries without restoring via monkeypatch: "
+                + ", ".join(sorted(mutated)[:10]),
+                pytrace=False,
+            )
 
 
 @pytest.fixture(autouse=True)

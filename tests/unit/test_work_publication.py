@@ -11,9 +11,8 @@ import pytest
 from _work_synthetic import reconcile_reviewed
 from catchup_core import work_privacy
 from catchup_core.session_lock import SessionBusy
-from catchup_core.work_privacy import for_installation
 from lib import work_publication as wp
-from unit_helpers import WORK_IDENTITY as IDENTITY, WorkBackend as Backend, enroll_work as enroll, never_legacy as never
+from unit_helpers import enroll_work as enroll, never_legacy as never
 
 
 def _capture(errors, action):
@@ -219,10 +218,13 @@ def test_batch_publishes_one_generation_with_staged_reads(work):
 
 def test_failed_batch_publishes_nothing(work):
     enroll(work)
-    with pytest.raises(RuntimeError, match='synthetic'):
+    def _fail_batch():
         with wp.batch():
             wp.publish_text(work['state'] / 'a.md', 'one', legacy=never)
             raise RuntimeError('synthetic failure')
+
+    with pytest.raises(RuntimeError, match='synthetic'):
+        _fail_batch()
     assert not (work['state'] / 'a.md').exists()
     assert work['make']().current()['generation'] == 1
 
@@ -336,7 +338,7 @@ def test_failed_batch_cannot_swallow_another_threads_write(work):
         wp.publish_text(work['state'] / 'theirs.md', 'kept', legacy=never)
     thread, errors = _thread(other)
     try:
-        with pytest.raises(RuntimeError, match='synthetic'):
+        def _fail_batch():
             with wp.batch():
                 wp.publish_text(work['state'] / 'mine.md', 'dropped', legacy=never)
                 a_inside.set()
@@ -344,6 +346,9 @@ def test_failed_batch_cannot_swallow_another_threads_write(work):
                 thread.join(0.5)
                 assert thread.is_alive(), 'bare write did not wait for the active batch'
                 raise RuntimeError('synthetic failure')
+
+        with pytest.raises(RuntimeError, match='synthetic'):
+            _fail_batch()
     finally:
         a_inside.set()
         thread.join(10)

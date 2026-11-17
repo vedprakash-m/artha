@@ -91,3 +91,11 @@ def admitted_personal_corpus_access(monkeypatch, admitted_personal_scope):
 @pytest.fixture
 def admitted_personal_corpus(admitted_personal_sources, admitted_personal_corpus_access):
     """Exercise corpus ingestion with synthetic source review and scope admission."""
+
+
+@pytest.fixture
+def stub_implementation_fingerprint(monkeypatch):
+    """Opt-in fixture stubbing ``runtime._implementation_fingerprint`` for non-fingerprint unit tests (D-FTS-1a)."""
+    from catchup_core import runtime
+
+    monkeypatch.setattr(runtime, "_implementation_fingerprint", lambda *_args, **_kw: "stub-implementation-fingerprint")

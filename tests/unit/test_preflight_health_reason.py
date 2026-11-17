@@ -9,23 +9,21 @@ from pathlib import Path
 import pytest
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import preflight.api_checks as api_checks  # noqa: E402
 
 
-def _load_cli():
+def _load_cli(monkeypatch):
     spec = importlib.util.spec_from_file_location("preflight_cli_reason_test", _SCRIPTS_DIR / "preflight.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    monkeypatch.setitem(sys.modules, spec.name, module)
     spec.loader.exec_module(module)
     return module
 
 
 @pytest.fixture(params=["package", "cli"])
-def checker(request):
-    return api_checks if request.param == "package" else _load_cli()
+def checker(request, monkeypatch):
+    return api_checks if request.param == "package" else _load_cli(monkeypatch)
 
 
 def _run_with(checker, monkeypatch, tmp_path, returncode, stdout, stderr):

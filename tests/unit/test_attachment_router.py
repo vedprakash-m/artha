@@ -17,9 +17,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
-from attachment_router import AttachmentRouter, AttachmentSignal
+from attachment_router import AttachmentRouter
 
 
 # ---------------------------------------------------------------------------

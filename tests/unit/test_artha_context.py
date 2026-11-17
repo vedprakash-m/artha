@@ -12,11 +12,9 @@ Coverage:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from unittest.mock import patch
 
-import pytest
 
 # conftest adds scripts/ to sys.path
 from artha_context import (

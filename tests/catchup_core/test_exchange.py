@@ -43,9 +43,9 @@ def test_parse_responses_accepts_both_shapes_and_rejects_the_rest():
     assert xc.parse_responses('{"responses": {"a": "x"}}') == {"a": "x"}
     assert xc.parse_responses('{"a": "x"}') == {"a": "x"}
     for bad in ("not json", "[1]", '{"a": 1}', '{"responses": {"a": {"nested": true}}}'):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"response\ 'a'\ must\ be\ a\ string\ \(the\ model's\ JSON\ text,\ verbatim\)|responses\ are\ not\ valid\ JSON|responses\ must\ be\ a\ JSON\ object"):
             xc.parse_responses(bad)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"too\ many\ responses"):
         xc.parse_responses(json.dumps({str(i): "x" for i in range(xc._MAX_RESPONSES + 1)}))
 
 

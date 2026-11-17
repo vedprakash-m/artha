@@ -111,7 +111,7 @@ def test_image_files_are_recognised_by_their_signature_and_other_bytes_are_refus
     assert documents.kind_of(b"\x89PNG\r\n\x1a\n....") == "image"
     assert documents.kind_of(b"\xff\xd8\xff\xe0....") == "image"
     assert documents.kind_of(b"%PDF-1.7") == "pdf"
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Provide\ a\ PDF,\ PNG\ or\ JPEG\ file\."):
         documents.kind_of(b"MZ\x90")
     assert json.dumps(documents.MAX_BYTES)
 

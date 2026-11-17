@@ -313,7 +313,7 @@ def test_registry_capture_refusals_precede_all_secret_access(host, monkeypatch, 
     elif defect == 'unreviewed':
         registry.declare('personal', 'client', 'custom-client', 'artha', 'legacy')
     elif defect == 'pending':
-        with pytest.raises(ValueError), registry.mutation('personal', 'client', 'custom-client', 'artha', '1'):
+        with pytest.raises(ValueError, match=r"synthetic\ interrupted\ publication"), registry.mutation('personal', 'client', 'custom-client', 'artha', '1'):
             raise ValueError('synthetic interrupted publication')
     else:
         document = json.loads(path.read_text())
@@ -842,7 +842,7 @@ def test_registry_rejects_changed_native_generation(host, kind):
 def test_pending_registry_preview_is_read_only_and_does_not_approve_capture(host, monkeypatch):
     from pathlib import Path
     from catchup_core import recovery_registry as registry
-    with pytest.raises(ValueError), registry.mutation('personal', 'client', 'custom-client', 'artha', '1'):
+    with pytest.raises(ValueError, match=r"synthetic\ interrupted\ writer"), registry.mutation('personal', 'client', 'custom-client', 'artha', '1'):
         raise ValueError('synthetic interrupted writer')
     path = Path.home() / '.artha-local/recovery-registry/personal.json'
     before = path.read_bytes()
@@ -856,7 +856,7 @@ def test_pending_registry_preview_is_read_only_and_does_not_approve_capture(host
 
 def test_profiles_keep_work_apart_and_reject_unknown(host):
     from pathlib import Path
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"profile\ must\ be\ 'personal'\ or\ 'work'"):
         cli.profile_layout("other")
     personal, exclude = cli.profile_layout("personal")
     work, _ = cli.profile_layout("work")
@@ -1088,7 +1088,8 @@ def test_recovery_inspection_pins_escrow_and_payload_to_one_input(host, monkeypa
                 try:
                     alternate.replace(checkpoint)
                 except PermissionError as exc:
-                    assert sys.platform == 'win32' and exc.winerror in (5, 32)
+                    if sys.platform != 'win32' or exc.winerror not in (5, 32):
+                        raise
                     rename_denied = True
             else:
                 checkpoint.write_bytes(alternate_bytes)
@@ -1280,7 +1281,7 @@ def test_first_work_creation_never_bypasses_registry_or_adopts_existing_keys(hos
     if defect == 'unreviewed':
         registry.declare('work', 'client', 'work.custom-client', 'artha', 'legacy')
     elif defect == 'pending':
-        with pytest.raises(ValueError), registry.mutation('work', 'key', 'artha-work-checkpoint', 'key.1', '1'):
+        with pytest.raises(ValueError, match=r"synthetic\ interrupted\ enrollment"), registry.mutation('work', 'key', 'artha-work-checkpoint', 'key.1', '1'):
             raise ValueError('synthetic interrupted enrollment')
     elif defect == 'orphan-key':
         host.backend.set_password('artha-work-checkpoint', 'key.1', 'orphan')
@@ -1339,6 +1340,7 @@ def test_work_restore_requires_the_original_current_work_identity(host, monkeypa
     assert not (host.tmp / 'restore').exists()
 
 
+@pytest.mark.slow
 def test_work_restore_keeps_all_members_encrypted_in_quarantine(host, monkeypatch):
     _enroll_synthetic_work(host, monkeypatch)
     code, output, error = host.run('create', '--profile', 'work', '--dest', str(host.tmp / 'work'))
@@ -1399,6 +1401,7 @@ def test_work_quarantine_commands_refuse_a_moved_sync_destination(host, monkeypa
     assert code == 20 and 'sync roots' in error
 
 
+@pytest.mark.slow
 def test_work_file_review_is_bound_to_the_exact_current_head(host, monkeypatch):
     (host.repo / 'state/work/briefing.md').write_text('Synthetic historical Work note.')
     protocol = _enroll_synthetic_work(host, monkeypatch)
@@ -1423,6 +1426,7 @@ def test_work_file_review_is_bound_to_the_exact_current_head(host, monkeypatch):
     assert not (destination / 'reviewed-exports' / 'briefing.md.ae1').exists()
 
 
+@pytest.mark.slow
 def test_work_file_review_releases_only_an_encrypted_export(host, monkeypatch):
     (host.repo / 'state/work/briefing.md').write_text('Synthetic historical Work note.')
     _enroll_synthetic_work(host, monkeypatch)
@@ -1451,6 +1455,7 @@ def test_work_file_review_releases_only_an_encrypted_export(host, monkeypatch):
     assert code == 0, error
 
 
+@pytest.mark.slow
 def test_work_cache_members_stay_review_denied_but_work_state_notes_remain_reviewable(host, monkeypatch):
     from pathlib import Path
 
@@ -1678,7 +1683,7 @@ def test_busy_reasons_cover_executing_and_unreadable_action_state(host):
 
 
 def test_escrow_fails_when_a_key_is_unreadable(host):
-    with pytest.raises(Exception):
+    with pytest.raises(ck.CheckpointBlocked, match=r"the\ shared\ age\ vault\ key\ is\ unavailable;\ checkpoint\ recovery\ would\ be\ incomplete"):
         cli.collect_escrow(FakeKeyring())
 
 
@@ -2044,10 +2049,8 @@ def test_escrow_replays_canonical_privacy_capsules_before_publication(host, monk
 def test_escrow_and_restore_keys_cover_recovery_credentials_bundles_and_privacy_heads(host):
     from pathlib import Path
     from catchup_core.bundles import enroll_producer
-    from catchup_core.crypto import EnvelopeCipher
     from catchup_core.ids import HmacKey
     from catchup_core.ledger import KeyringSealedStore, Ledger
-    from lib.credentials import CredentialStore
 
     ext_bundles = host.tmp / 'external_bundles'
     ext_bundles.mkdir()
@@ -3277,7 +3280,6 @@ def test_reconcile_review_cli_escapes_detail_and_sanitizes_errors(host, monkeypa
 
 
 def test_work_privacy_reconcile_and_recover_pending_are_explicit_cli_operations(host, monkeypatch):
-    from pathlib import Path
     from catchup_core import work_privacy
 
     protocol = _enroll_synthetic_work(host, monkeypatch)

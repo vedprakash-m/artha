@@ -16,22 +16,16 @@ Ref: specs/enhance.md §11 Phase 1a item 1.0h
 """
 from __future__ import annotations
 
-import hashlib
 import json
-import sys
 import textwrap
 from pathlib import Path
 from typing import Generator
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import patch
 
 import pytest
 
 _REPO = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS = _REPO / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +160,11 @@ class TestHappyPath:
 
     def test_pipeline_config_loads_correctly(self, workflow_dir):
         """Verify pipeline can load the connectors config."""
-        import importlib, types
+        import importlib
         # Patch the ARTHA_DIR so pipeline reads our test dir
         with patch.dict("os.environ", {}):
             import importlib.util
-            spec = importlib.util.spec_from_file_location(
+            importlib.util.spec_from_file_location(
                 "pipeline_test", _SCRIPTS / "pipeline.py"
             )
             # We just verify the config loading function works
@@ -542,15 +536,13 @@ class TestSafetyCriticalSkills:
     def test_safety_critical_skill_runs_even_if_domain_disabled(self, workflow_dir):
         """A safety_critical skill should run even when its domain is disabled."""
         # Immigration domain is disabled in this scenario
-        disabled_domains = {"immigration", "kids"}
-        enabled_domains = {"finance", "health"}
 
         safety_critical_skills = {"uscis_status"}  # maps to immigration domain
         skill_domain_map = {"uscis_status": "immigration"}
 
         skills_to_run = set()
         for skill_name in safety_critical_skills:
-            domain = skill_domain_map.get(skill_name)
+            skill_domain_map.get(skill_name)
             # Safety-critical: run regardless of domain enable status
             skills_to_run.add(skill_name)
 

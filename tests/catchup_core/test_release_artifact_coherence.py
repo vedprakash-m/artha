@@ -214,9 +214,12 @@ def test_approved_scorecard_from_a_different_runtime_cohort_cannot_enable_cutove
     result['cohort'] = {**result.get('cohort', {}), component: 'old-reviewed-generation'}
     path.write_text(json.dumps(result))
     record['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
-    with pytest.raises(PermissionDenied, match='cohort'):
+    def _build_and_close():
         deps = build()
         deps.ledger.close()
+
+    with pytest.raises(PermissionDenied, match='cohort'):
+        _build_and_close()
 
 
 def test_a_mixed_case_cohort_is_rejected_even_when_aggregate_bounds_pass(configured):
@@ -228,9 +231,12 @@ def test_a_mixed_case_cohort_is_rejected_even_when_aggregate_bounds_pass(configu
     result['evaluations'][0]['cohort'] = {'implementation': 'old'}
     path.write_text(json.dumps(result))
     record['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
-    with pytest.raises(PermissionDenied, match='cohort'):
+    def _build_and_close():
         deps = build()
         deps.ledger.close()
+
+    with pytest.raises(PermissionDenied, match='cohort'):
+        _build_and_close()
 
 
 @pytest.mark.parametrize('change', ['measurement', 'missing-catchup', 'anonymous-model'])
@@ -248,9 +254,12 @@ def test_release_cohort_requires_versioned_measurements_and_observed_model(confi
     path = Path(record['path'])
     path.write_text(json.dumps(result))
     record['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
-    with pytest.raises(PermissionDenied, match='cohort'):
+    def _build_and_close():
         deps = build()
         deps.ledger.close()
+
+    with pytest.raises(PermissionDenied, match='cohort'):
+        _build_and_close()
 
 
 def test_approving_evidence_or_enabling_cutover_does_not_change_the_evaluated_cohort(configured):

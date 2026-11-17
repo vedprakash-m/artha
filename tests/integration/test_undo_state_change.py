@@ -16,10 +16,10 @@ Validates: AFW-6 (Session Rewind / Undo)
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
-import pytest
+
+from _fixtures import PatchedDateTime
 
 # Ensure scripts/ and scripts/lib/ are importable
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
@@ -113,7 +113,7 @@ class TestUndoStateChange:
         result = restore_latest("nonexistent_domain", artha_dir=tmp_path)
         assert result is None
 
-    def test_multiple_writes_restore_most_recent_previous(self, tmp_path):
+    def test_multiple_writes_restore_most_recent_previous(self, tmp_path, monkeypatch):
         """With two sequential snapshots, undo returns the most recent (last-before-current).
 
         Timeline:
@@ -131,13 +131,13 @@ class TestUndoStateChange:
         state_dir.mkdir(parents=True, exist_ok=True)
         state_file = state_dir / "goals.md"
 
+        import lib.state_snapshot as state_snapshot_mod
+        monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
+
         # First write + snapshot (v1 → will be snapshot before v2 write)
         _write_state(state_file, V1)
         s1 = snapshot("goals", V1, artha_dir=tmp_path)
         assert s1 is not None
-
-        # Small delay to ensure distinct timestamps on filesystem
-        time.sleep(1.05)
 
         # Second write + snapshot (v2 → will be snapshot before v3 write)
         _write_state(state_file, V2)

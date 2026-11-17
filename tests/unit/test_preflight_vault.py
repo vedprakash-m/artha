@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
@@ -15,7 +14,6 @@ for _p in [str(_ARTHA_ROOT), str(_SCRIPTS_DIR)]:
         sys.path.insert(0, _p)
 
 import preflight as pf
-import preflight.vault_checks as vc
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +42,7 @@ class TestCheckKeyringBackend:
         assert result.severity == "P0"
 
     def test_keyring_calls_get_password(self):
-        with patch("keyring.get_password", return_value="dummy") as mock_get:
+        with patch("keyring.get_password", return_value="dummy"):
             result = pf.check_keyring_backend()
             assert isinstance(result, pf.CheckResult)
 

@@ -238,7 +238,8 @@ def test_hash_includes_nonempty_escrow_and_uses_the_authenticated_handle(tmp_pat
             try:
                 other.replace(path)
             except PermissionError as exc:
-                assert sys.platform == 'win32' and exc.winerror in (5, 32)
+                if sys.platform != 'win32' or exc.winerror not in (5, 32):
+                    raise
                 rename_denied = True
 
     scan_spy(monkeypatch, on_scan=substitute)

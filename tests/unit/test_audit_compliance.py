@@ -6,10 +6,8 @@ import json
 import textwrap
 from pathlib import Path
 
-import pytest
 
 from audit_compliance import (
-    ComplianceReport,
     audit_latest_briefing,
     _check_connector_health_block,
     _check_domain_sections_present,

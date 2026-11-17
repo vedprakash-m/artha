@@ -111,7 +111,7 @@ def test_household_binding_replaces_subjects_and_consent(tmp_path):
 
 
 def test_curated_reader_rejects_bad_names_and_parses_records(tmp_path):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"invalid\ State\ File\ name"):
         read_state(tmp_path, "../etc")
     assert read_state(tmp_path, "goals") == ""
     assert records("", "goals") == []

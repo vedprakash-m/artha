@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
-import textwrap
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,8 +28,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 # Marker: skip unless explicitly enabled
 _LIVE = os.environ.get("ARTHA_SLACK_INTEGRATION_TEST") == "1"

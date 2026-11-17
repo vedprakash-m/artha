@@ -52,6 +52,7 @@ def _copy_listed_scripts(original: Path, root: Path) -> None:
         shutil.copy2(source, target)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize('approval_mode', ['routine', 'task_only'])
 def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(
         configured, tmp_path, monkeypatch, approval_mode):

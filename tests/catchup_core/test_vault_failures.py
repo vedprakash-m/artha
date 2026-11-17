@@ -55,7 +55,7 @@ def test_failed_replace_leaves_no_temp_file_and_keeps_the_old_ciphertext(tmp_pat
     def refuse(_src, _dst):
         raise OSError("disk full")
     monkeypatch.setattr(vt.os, "replace", refuse)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"disk\ full"):
         v.write("kids", "---\ndomain: kids\n---\nx\n", previous="")
     leftovers = [p.name for p in (tmp_path / "state").iterdir() if p.name.endswith(".tmp")]
     assert leftovers == [] and (tmp_path / "state" / "kids.md.age").read_bytes() == b"cipher"

@@ -1,8 +1,7 @@
 """Goal leading indicators, Sprint calibrations and evidence-backed tradeoffs (re-artha RA-11)."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -11,15 +10,9 @@ from catchup_core import crypto, ids, ledger as lg
 from catchup_core.contracts import ProcessingState, Provenance
 from catchup_core.curated import completion_key, milestone_record
 from catchup_core.goals import (
-    AuthoredGoal,
-    GoalObservation,
-    calibrate_sprint,
-    goal_tradeoffs,
-    leading_indicators,
     observe_goals,
     tradeoff_lines,
 )
-from catchup_core.plans import MilestoneState
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_sources")
 
@@ -270,7 +263,7 @@ def test_competing_goals_tradeoff_proposals_with_calibrations(world: lg.Ledger):
 
     calibrations: dict[str, Any] = {}
     observed: dict[str, Any] = {}
-    lines = observe_goals(
+    observe_goals(
         world,
         [g1, g2],
         "owner",

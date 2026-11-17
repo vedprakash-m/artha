@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
@@ -68,10 +67,9 @@ class TestExistenceCheck:
         _make_env(tmp_path)
         monkeypatch.setattr(pf, "ARTHA_DIR", str(tmp_path))
         # Patch datetime.now() to return a time after 10 AM
-        import preflight as _pf_mod
         from unittest.mock import patch
-        fake_now = datetime.now().replace(hour=11, minute=0)
-        with patch("preflight.pathlib") as mock_pathlib:
+        datetime.now().replace(hour=11, minute=0)
+        with patch("preflight.pathlib"):
             # Manually call the function with direct path manipulation instead
             pass
 

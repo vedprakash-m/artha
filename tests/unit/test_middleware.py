@@ -15,13 +15,11 @@ Coverage:
 """
 from __future__ import annotations
 
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from middleware import StateMiddleware, _ComposedMiddleware, _PassthroughMiddleware, compose_middleware
+from middleware import StateMiddleware, _PassthroughMiddleware, compose_middleware
 from middleware.audit_middleware import AuditMiddleware
 from middleware.rate_limiter import RateLimiter, RateLimitExceeded
 from middleware.write_guard import WriteGuardMiddleware, count_yaml_fields
@@ -242,7 +240,7 @@ class TestWriteVerifyMiddleware:
         path.parent.mkdir()
         path.write_text(_make_valid_state("finance"))
 
-        verifier = WriteVerifyMiddleware(artha_dir=tmp_path)
+        WriteVerifyMiddleware(artha_dir=tmp_path)
         failures = verify_file("finance", path)
         assert failures == [], f"Valid file should pass all checks: {failures}"
 
@@ -401,7 +399,6 @@ class TestRateLimiter:
         assert bucket.check() is False
 
         # Simulate time passing by manipulating the deque directly
-        import time as time_mod
         bucket._window.clear()  # manually clear window to simulate time elapse
 
         assert bucket.check() is True

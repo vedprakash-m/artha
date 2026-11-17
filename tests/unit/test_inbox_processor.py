@@ -17,19 +17,15 @@ Tests cover:
 """
 from __future__ import annotations
 
-import email
 import hashlib
-import sys
 from email.mime.text import MIMEText
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import lib.inbox_processor as ip
 
@@ -280,7 +276,7 @@ class TestProcessAll:
             with patch.object(ip, "_save_inbox_state_atomic"):
                 with patch("pii_guard.scan", return_value=(False, {})):
                     kg = _make_kg()
-                    proc = _make_processor(tmp_path, kg, dry_run=True)
+                    _make_processor(tmp_path, kg, dry_run=True)
                     for path in inbox.iterdir():
                         if path.suffix in ip.SUPPORTED_EXTENSIONS:
                             processed.append(path.name)

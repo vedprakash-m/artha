@@ -6,14 +6,11 @@ and health-check.md read/write.
 
 Ref: specs/act.md §6
 """
-import sys
 import uuid
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from trust_enforcer import TrustEnforcer
 from actions.base import ActionProposal

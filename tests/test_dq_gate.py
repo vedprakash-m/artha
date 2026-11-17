@@ -27,7 +27,6 @@ from lib.knowledge_graph import (
     _DQ_GATE_PASS,
     _DQ_GATE_STALE_SERVE,
     _DQ_GATE_WARN,
-    _DQ_MIN_CONFIDENCE,
 )
 
 
@@ -660,10 +659,8 @@ class TestStalenessHeaderFallback:
         import sys
 
         # Temporarily block dq_gate import to simulate import failure
-        original = sys.modules.get("lib.dq_gate")
-        sys.modules["lib.dq_gate"] = None  # type: ignore[assignment]
-        try:
-            # Reload helpers to pick up blocked import
+        with monkeypatch.context() as scoped:
+            scoped.setitem(sys.modules, "lib.dq_gate", None)  # type: ignore[arg-type]
             if "work.helpers" in sys.modules:
                 importlib.reload(sys.modules["work.helpers"])
             from work.helpers import _quality_header
@@ -679,14 +676,8 @@ class TestStalenessHeaderFallback:
             # OR the fallback triggered and returns a staleness warning
             # Either way it must not raise
             assert isinstance(result, str)
-        finally:
-            # Always restore
-            if original is None:
-                sys.modules.pop("lib.dq_gate", None)
-            else:
-                sys.modules["lib.dq_gate"] = original
-            if "work.helpers" in sys.modules:
-                importlib.reload(sys.modules["work.helpers"])
+        if "work.helpers" in sys.modules:
+            importlib.reload(sys.modules["work.helpers"])
 
     def test_quality_header_fresh_file_returns_empty(self, tmp_path):
         """_quality_header() returns '' for a genuinely fresh file (PASS)."""

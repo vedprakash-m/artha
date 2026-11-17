@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.os_contract
+
 # Native assertion-style tests follow the project's pytest conventions.
 # ruff: noqa: S101
 from catchup_core.recovery_access import RecoveryAccess
@@ -795,7 +797,7 @@ def test_native_primitive_refuses_failure_or_missing_output_and_allows_retry(
 
         with monkeypatch.context() as fault:
             fault.setattr(dll, api, no_output)
-            with pytest.raises(QuarantineFilesystemError, match=message):
+            def _attempt():
                 if kind == 'sid':
                     native._sid_from_string(sid[0])
                 elif kind == 'descriptor':
@@ -804,6 +806,9 @@ def test_native_primitive_refuses_failure_or_missing_output_and_allows_retry(
                     native.current_user_sid()
                 else:
                     root.open_file('.lock')
+
+            with pytest.raises(QuarantineFilesystemError, match=message):
+                _attempt()
         assert calls == [True]
         assert native.current_user_sid() == sid
         assert root.list_files() == ['.lock']

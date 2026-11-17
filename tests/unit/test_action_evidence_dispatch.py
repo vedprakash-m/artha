@@ -138,7 +138,9 @@ def test_real_authority_prepares_bound_metadata_without_writes_or_decryption(aut
 @pytest.mark.parametrize('failure', [False, True])
 def test_real_authority_is_read_only_and_closes_on_exit(authority, failure):
     connection = None
-    try:
+
+    def _run():
+        nonlocal connection
         with evidence.authorized_ledger(authority.root) as (ledger, config, backend):
             connection = ledger.conn
             assert ledger._read_only
@@ -147,8 +149,12 @@ def test_real_authority_is_read_only_and_closes_on_exit(authority, failure):
                 connection.execute('DELETE FROM facts')
             if failure:
                 raise RuntimeError('synthetic caller failure')
-    except RuntimeError as error:
-        assert failure and str(error) == 'synthetic caller failure'
+
+    if failure:
+        with pytest.raises(RuntimeError, match='synthetic caller failure'):
+            _run()
+    else:
+        _run()
     assert connection is not None
     with pytest.raises(sqlite3.ProgrammingError, match='closed'):
         connection.execute('SELECT 1')
@@ -171,10 +177,13 @@ def test_real_authority_refuses_config_swaps(authority, monkeypatch, phase):
             return config
 
         monkeypatch.setattr(runtime, 'load_runtime_config', load_then_swap)
-    with pytest.raises(ClaimRefused, match='evidence policy changed'):
+    def _attempt():
         with evidence.authorized_ledger(authority.root):
             assert phase == 'exit'
             swap()
+
+    with pytest.raises(ClaimRefused, match='evidence policy changed'):
+        _attempt()
 
 
 @pytest.mark.parametrize('location', ['missing', 'inside_root'])
@@ -463,20 +472,16 @@ def test_queue_claim_validates_evidence_under_write_transaction(case, monkeypatc
 def test_real_process_rechecks_metadata_after_parent_preparation(case, tmp_path, mutation):
     """The child starts with a previously verified capability; mutation wins before its fresh read."""
     verify(case)
-    ready, go = tmp_path / 'ready', tmp_path / 'go'
     payload = {'proposal': asdict(case.proposal), 'context': case.context, 'pre': case.pre,
-               'root': str(case.root), 'queue': str(case.queue), 'ready': str(ready), 'go': str(go)}
+               'root': str(case.root), 'queue': str(case.queue)}
     script = '''
-import json,sqlite3,sys,time
+import json,sqlite3,sys
 from pathlib import Path
 from actions.base import ActionProposal
 from lib.action_evidence import verify_worker
-value=json.loads(sys.stdin.read())
-Path(value['ready']).touch()
-deadline=time.monotonic()+10
-while not Path(value['go']).exists():
-    if time.monotonic()>deadline: raise RuntimeError('test synchronization timed out')
-    time.sleep(.01)
+value=json.loads(sys.stdin.readline())
+print('ready',flush=True)
+sys.stdin.readline()
 try:
     with sqlite3.connect(value['queue']) as db:
         verify_worker(ActionProposal(**value['proposal']),Path(value['root']),value['pre'],value['context'],db,
@@ -490,19 +495,16 @@ else:
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / 'scripts'))
     child = subprocess.Popen([sys.executable, '-c', script], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True, env=env)
-    child.stdin.write(json.dumps(payload))
-    child.stdin.close()
-    deadline = time.monotonic() + 10
+    child.stdin.write(json.dumps(payload) + '\n')
+    child.stdin.flush()
     try:
-        while not ready.exists():
-            assert child.poll() is None, child.stderr.read()
-            assert time.monotonic() < deadline
-            time.sleep(.01)
+        assert child.stdout.readline().strip() == 'ready', child.stderr.read()
         if mutation == 'correction':
             case.ledger.put_fact(replace(case.fact, value='correction after parent check'), fact_id=case.fid)
         else:
             case.ledger.conn.execute('UPDATE consent SET revocation_version=revocation_version+1')
-        go.touch()
+        child.stdin.write('go\n')
+        child.stdin.close()
         assert child.wait(timeout=10) == 0, child.stderr.read()
         assert child.stdout.read().strip() == 'ClaimRefused'
     finally:

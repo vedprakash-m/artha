@@ -465,7 +465,6 @@ class TestGuardrailClassesRegistry:
 class TestGuardrailRegistry:
     def _registry_with_chain(self, guardrails: list, chain: str = "input") -> GuardrailRegistry:
         """Build a GuardrailRegistry with an injected chain, bypassing YAML loading."""
-        from middleware.guardrails import GuardrailMode, GuardrailOutput, TripwireResult
 
         registry = GuardrailRegistry.__new__(GuardrailRegistry)
         registry._input_chain = []

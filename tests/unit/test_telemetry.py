@@ -20,5 +20,5 @@ def test_chain_forks_before_the_reviewed_date_are_excused_and_later_ones_are_not
     tampered = {**first, "event": "changed"}
     log.write_text(json.dumps(tampered) + "\n", encoding="utf-8")
     import pytest  # noqa: PLC0415
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"entry\ hash\ mismatch\ in\ telemetry\ log"):
         telemetry.chain_breaks(log)

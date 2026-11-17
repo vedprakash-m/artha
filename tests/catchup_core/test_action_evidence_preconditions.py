@@ -171,13 +171,16 @@ def test_stored_evidence_cannot_change_without_new_review(evidence, tmp_path, bo
         claim = store.claim('p', ledger=ledger) if boundary == 'dispatch' else None
         changed = {**pre, 'fresh_until': '2026-10-24T12:30:00Z'}
         db.execute('UPDATE action_proposals SET preconditions_json=?', (json.dumps(changed),))
-        with pytest.raises(ActionError, match='review|binding'):
+        def _attempt():
             if boundary == 'approve':
                 store.approve('p', payload_hash=digest, approver='owner', nonce='n', ledger=ledger)
             elif boundary == 'claim':
                 store.claim('p', ledger=ledger)
             else:
                 store.mark_dispatched(claim, ledger=ledger)
+
+        with pytest.raises(ActionError, match='review|binding'):
+            _attempt()
 
 
 def test_exact_proposal_and_persisted_preconditions_must_agree(evidence, monkeypatch):

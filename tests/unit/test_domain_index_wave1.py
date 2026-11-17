@@ -19,7 +19,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import pytest
 
 # conftest adds scripts/ to sys.path
 from domain_index import build_domain_menu, load_domain_registry, should_load_domain

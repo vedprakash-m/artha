@@ -28,7 +28,6 @@ Ref: specs/ext-agent-reloaded.md §EAR-4
 from __future__ import annotations
 
 import json
-import sys
 import threading
 from pathlib import Path
 
@@ -36,8 +35,6 @@ import pytest
 import yaml
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.agent_registry import AgentRegistry
 from lib.tfidf_router import TFIDFRouter, _char_ngrams, _cosine

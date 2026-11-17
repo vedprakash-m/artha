@@ -15,7 +15,6 @@ Tests cover:
 from __future__ import annotations
 
 import os
-import sys
 import textwrap
 from pathlib import Path
 
@@ -27,8 +26,6 @@ import yaml
 
 # Ensure scripts/ is importable
 _ARTHA_ROOT = Path(__file__).resolve().parents[2]
-if str(_ARTHA_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ARTHA_ROOT))
 
 import migrate as mig
 

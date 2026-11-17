@@ -135,7 +135,7 @@ def test_readonly_cached_token_and_refresh_are_checked(monkeypatch, api, changed
 def test_readonly_unsupported_api_never_reads_credentials(monkeypatch, api):
     read = Mock()
     monkeypatch.setattr(google, "_load_token", read)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Google\ read\-only\ access\ supports\ only\ 'gmail'\ and\ 'calendar'\."):
         google.build_service(api, "v1", read_only=True)
     read.assert_not_called()
 

@@ -10,18 +10,15 @@ corresponding RD item was designed to enforce.
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +39,6 @@ class TestPreEnqueueGate:
         """propose_direct() must call _pre_enqueue_gate before enqueuing."""
         executor = self._make_executor(tmp_path)
         gate_called = []
-        original_gate = executor._pre_enqueue_gate  # noqa: SLF001
 
         def _spy_gate(proposal):
             gate_called.append(proposal)

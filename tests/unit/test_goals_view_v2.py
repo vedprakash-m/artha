@@ -14,16 +14,12 @@ Coverage:
 """
 from __future__ import annotations
 
-import sys
 import textwrap
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
 _ROOT = Path(__file__).resolve().parent.parent.parent
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from goals_view import _parse_goals_yaml, _parse_goals_index, _format_standard  # noqa: E402
 

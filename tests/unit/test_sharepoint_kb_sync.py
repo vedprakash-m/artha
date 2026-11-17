@@ -19,14 +19,12 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import sharepoint_kb_sync as sks
 
@@ -224,7 +222,7 @@ class TestSync:
     # ------------------------------------------------------------------
 
     def test_dry_run_suppresses_kb_writes(self, tmp_path, monkeypatch):
-        mock_sp = self._mock_sp_module()
+        self._mock_sp_module()
         mock_kg = self._mock_kgraph()
 
         monkeypatch.setattr(sks, "_load_sp_config", self._sp_cfg)
@@ -236,7 +234,7 @@ class TestSync:
                     with patch("sharepoint_kb_sync.DocumentExtractor") as mock_de:
                         mock_de.from_text.return_value.entities = []
                         with patch("sharepoint_kb_sync.write_markdown_stub") as mock_stub:
-                            stats = sks.sync(dry_run=True, verbose=False, artha_dir=tmp_path)
+                            sks.sync(dry_run=True, verbose=False, artha_dir=tmp_path)
 
         mock_kg.add_episode.assert_not_called()
         mock_stub.assert_not_called()
@@ -263,7 +261,7 @@ class TestSync:
                     with patch("sharepoint_kb_sync.DocumentExtractor") as mock_de_cls:
                         mock_de_cls.from_text.return_value = mock_extractor_instance
                         with patch("sharepoint_kb_sync.write_markdown_stub") as mock_stub:
-                            stats = sks.sync(dry_run=False, verbose=False, artha_dir=tmp_path)
+                            sks.sync(dry_run=False, verbose=False, artha_dir=tmp_path)
 
         mock_kg.add_episode.assert_called()
         mock_stub.assert_called()

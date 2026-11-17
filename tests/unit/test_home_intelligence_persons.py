@@ -1,10 +1,7 @@
 """Household identities come from the local profile, never from source."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from skills import home_intelligence as hi  # noqa: E402
 

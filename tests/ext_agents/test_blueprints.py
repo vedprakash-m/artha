@@ -23,7 +23,6 @@ Ref: specs/ext-agent-reloaded.md §EAR-7
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 import pytest
@@ -32,8 +31,6 @@ import yaml
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _BLUEPRINTS_DIR = _REPO_ROOT / "config" / "agents" / "blueprints"
 _SCRIPTS_DIR = str(_REPO_ROOT / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 BLUEPRINT_FILES = list(_BLUEPRINTS_DIR.glob("*.blueprint.yaml"))
 REQUIRED_BLUEPRINTS = [
@@ -92,7 +89,7 @@ def test_icm_triage_has_examples():
 
 def test_icm_triage_max_context_chars_absolute():
     data = _load("icm-triage.blueprint.yaml")
-    agent = data.get("agent", {})
+    data.get("agent", {})
     invocation = data.get("invocation", {})
     # Check either agent or invocation section
     absolute = invocation.get("max_context_chars_absolute")

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from scripts.actions.base import ActionProposal
 from scripts.actions.whatsapp_cloud_send import WhatsAppCloudHandler

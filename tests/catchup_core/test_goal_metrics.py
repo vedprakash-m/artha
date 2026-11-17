@@ -328,7 +328,7 @@ def test_habit_explicit_skips_are_verified_zero_and_other_goal_is_excluded(world
     ],
 )
 def test_invalid_outcome_definition_needs_review(world, change):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Goal\ quantity\ needs\ a\ finite\ bounded\ decimal|Goal\ window\ and\ freshness\ need\ review|Outcome\ baseline\ must\ define\ movement\ toward\ its\ target|Outcome\ unit\ and\ comparison\ need\ review"):
         goals.observe_goals(world[0], [metric(**change)], "owner", NOW)
 
 
@@ -428,7 +428,7 @@ def test_untrusted_goal_title_cannot_invent_a_resolving_citation(world,tmp_path)
 def test_canonical_metric_definition_rejects_incomplete_scopes(change):
     from catchup_core.goal_metrics import validate_definition
     row = metric(**change)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Goal\ domain\ needs\ a\ resolved\ identifier|Goal\ predicate\ needs\ a\ resolved\ identifier|Goal\ requires\ explicit\ source\ scopes|Goal\ subject\ needs\ a\ resolved\ identifier|Unsupported\ source\ metric\ kind"):
         validate_definition(row)
 
 

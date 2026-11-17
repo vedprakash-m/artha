@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import session_stop as ss  # noqa: E402
 import stale_banner as sb  # noqa: E402
 

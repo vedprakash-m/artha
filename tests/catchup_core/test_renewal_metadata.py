@@ -1,5 +1,4 @@
 """Purpose-limited authority inspection never opens a writable runtime or personal evidence."""
-import hashlib
 from datetime import UTC, datetime
 
 import pytest

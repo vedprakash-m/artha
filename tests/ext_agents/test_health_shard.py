@@ -15,15 +15,12 @@ Ref: specs/ext-agent-reloaded.md §R-6, R-14
 """
 from __future__ import annotations
 
-import sys
 import threading
 from pathlib import Path
 
 import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.health_shard import HealthShard
 

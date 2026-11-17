@@ -25,7 +25,6 @@ Validates: AFW-2 (Progressive Disclosure), A-9 (token budget experiment gate)
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -33,8 +32,6 @@ import yaml
 
 # Ensure scripts/ directory is importable
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 _ARTHA = Path(__file__).resolve().parent.parent.parent
 _REGISTRY_PATH = _ARTHA / "config" / "domain_registry.yaml"

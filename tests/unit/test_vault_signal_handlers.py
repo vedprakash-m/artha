@@ -12,17 +12,12 @@ from __future__ import annotations
 import atexit
 import os
 import signal
-import sys
-import types
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 # Ensure scripts/ is importable
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 
 class TestVaultSignalHandlers:

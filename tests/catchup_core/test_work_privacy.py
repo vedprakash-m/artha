@@ -277,11 +277,14 @@ def test_unavailable_native_creation_refuses_before_new_effects(protocol, monkey
     native = dict(protocol.backend.values)
     monkeypatch.setattr(module, '_native_creation_available', lambda: False)
 
-    with pytest.raises(WorkPrivacyBlocked, match='native write-once creation'):
+    def _attempt():
         if pending:
             protocol.recover_pending()
         else:
             protocol.publish({name: raw})
+
+    with pytest.raises(WorkPrivacyBlocked, match='native write-once creation'):
+        _attempt()
 
     assert not (protocol.roots['work_state'] / 'new.md').exists()
     assert {path.name: path.read_bytes() for path in protocol.authority_dir.iterdir()} == authority

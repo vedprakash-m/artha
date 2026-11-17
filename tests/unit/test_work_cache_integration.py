@@ -107,7 +107,7 @@ def test_health_receipt_links_and_oversized_files_refused(tmp_path):
     path = tmp_path / 'health.json'
     path.symlink_to(target)
     assert read_receipt(path, max_age=86400) is None
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"WorkIQ\ health\ receipt\ must\ not\ be\ a\ link"):
         write_receipt(path, available=True, auth_valid=True)
     assert target.read_bytes() == b'x' * 3000
 

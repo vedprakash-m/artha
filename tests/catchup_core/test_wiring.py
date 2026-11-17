@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import dataclasses
 from argparse import Namespace
-from datetime import datetime, timezone
 
 import pytest
 
@@ -152,7 +151,6 @@ def test_given_apply_when_retention_runs_then_deletion_stays_held(world, tmp_pat
 
 # ── weekly Goal lines: leading indicators, Sprint calibration (only with an authored tolerance), tradeoffs ───────────
 
-from decimal import Decimal  # noqa: E402
 
 from catchup_core import goals  # noqa: E402
 
@@ -248,7 +246,6 @@ def test_given_authored_competing_goals_one_ahead_and_one_behind_when_weekly_the
 
 def test_given_the_goals_weekly_command_when_a_sprint_has_a_tolerance_then_the_view_shows_calibration(gworld, tmp_path):
     import yaml
-    deps = world_deps = None
     state = tmp_path / "state"
     state.mkdir()
     text = yaml.safe_dump({"goals": [metric()], "sprints": [{**SPRINT, "tolerance": "0.05"}]})

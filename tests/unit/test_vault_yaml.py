@@ -41,7 +41,7 @@ def _fake_decrypt(privkey, infile, outfile):
     """
     content = infile.read_text()
     # Strip the fake age header to get back to YAML
-    lines = content.split("\n")
+    content.split("\n")
     # If it starts with age header, reconstruct original content
     # For YAML round-trip we store original alongside the fake header
     outfile.write_text(content)
@@ -49,23 +49,25 @@ def _fake_decrypt(privkey, infile, outfile):
 
 
 @pytest.fixture
-def mock_vault_env(temp_artha_dir, monkeypatch):
+def mock_vault_env(tmp_path, monkeypatch):
     """Patch vault module aliases and foundation._config for isolated testing."""
-    state_dir = temp_artha_dir / "state"
-    config_dir = temp_artha_dir / "config"
-    backup_dir = temp_artha_dir / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    for sub in ("scripts", "state", "config", "prompts", ".tokens", "backups"):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    state_dir = tmp_path / "state"
+    config_dir = tmp_path / "config"
+    backup_dir = tmp_path / "backups"
+    (state_dir / "audit.md").write_text("# Audit Log\n", encoding="utf-8")
 
-    monkeypatch.setattr(vault, "ARTHA_DIR",  temp_artha_dir)
+    monkeypatch.setattr(vault, "ARTHA_DIR",  tmp_path)
     monkeypatch.setattr(vault, "STATE_DIR",  state_dir)
     monkeypatch.setattr(vault, "CONFIG_DIR", config_dir)
-    monkeypatch.setattr(vault, "LOCK_FILE",  temp_artha_dir / ".artha-decrypted")
+    monkeypatch.setattr(vault, "LOCK_FILE",  tmp_path / ".artha-decrypted")
     monkeypatch.setattr(vault, "AUDIT_LOG",  state_dir / "audit.md")
 
-    monkeypatch.setitem(foundation._config, "ARTHA_DIR",       temp_artha_dir)
+    monkeypatch.setitem(foundation._config, "ARTHA_DIR",       tmp_path)
     monkeypatch.setitem(foundation._config, "STATE_DIR",       state_dir)
     monkeypatch.setitem(foundation._config, "CONFIG_DIR",      config_dir)
-    monkeypatch.setitem(foundation._config, "LOCK_FILE",       temp_artha_dir / ".artha-decrypted")
+    monkeypatch.setitem(foundation._config, "LOCK_FILE",       tmp_path / ".artha-decrypted")
     monkeypatch.setitem(foundation._config, "AUDIT_LOG",       state_dir / "audit.md")
     monkeypatch.setitem(foundation._config, "BACKUP_DIR",      backup_dir)
     monkeypatch.setitem(foundation._config, "BACKUP_MANIFEST", backup_dir / "manifest.json")
@@ -76,8 +78,7 @@ def mock_vault_env(temp_artha_dir, monkeypatch):
         ("gallery", ".yaml"),
     ])
 
-    config_dir.mkdir(parents=True, exist_ok=True)
-    return temp_artha_dir
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------

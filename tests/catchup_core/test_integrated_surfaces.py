@@ -13,14 +13,13 @@ from pathlib import Path
 import pytest
 
 from catchup_core import adapters, cli, commands, coordinator as co, domain_pack as dp, policy, runtime, views
-from catchup_core.contracts import CatchupRequest, ExecutionMode, FactStatus, RunStatus
+from catchup_core.contracts import CatchupRequest, ExecutionMode, RunStatus
 from catchup_core.legacy_state import LegacyStateAdapter
 from catchup_core.ledger import FactInput, Ledger, LedgerError, PermissionDenied, SignalInput
 from catchup_core.triage import CalendarEvent
 from core_helpers import (
     CORE_KEY as KEY,
     FakeKeyring,
-    Keyring,
     REGRESSION_CIPHER as CIPHER,
     build_preservation_checkpoint,
     synthetic_recovery_acceptance,
@@ -492,7 +491,7 @@ def test_forget_retries_failed_archive_deletion(app):
     def disk_full(_):
         raise OSError("disk unavailable")
     deps.ledger._artifact_deleter = disk_full
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"disk\ unavailable"):
         deps.ledger.forget("school_email", "family", "m1")
     deps.ledger._artifact_deleter = lambda cids: runtime._purge_archives(deps.ledger._path.parent, deps.ledger, cids)
     deps.ledger.resume_pending_forgets()

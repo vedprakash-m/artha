@@ -11,27 +11,19 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
-from datetime import datetime, timezone, timedelta
-from io import BytesIO
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
-import connectors.todoist as todoist_mod
 from connectors.todoist import (
     _load_token,
     _since_to_rfc3339,
     _build_record,
     _resolve_projects,
-    _resolve_sections,
     fetch,
     health_check,
 )

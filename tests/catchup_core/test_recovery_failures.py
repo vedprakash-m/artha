@@ -64,7 +64,7 @@ def test_disk_full_atomic_replace_preserves_old_ciphertext(tmp_path, monkeypatch
     def disk_full(*_):
         raise OSError("disk full")
     monkeypatch.setattr(backup.os, "replace", disk_full)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"disk\ full"):
         backup.atomic_bytes(path, b"new ciphertext")
     assert path.read_bytes() == b"old ciphertext" and not path.with_suffix(".ae1.tmp").exists()
     assert not list(tmp_path.glob(".snapshot.ae1.*.tmp"))

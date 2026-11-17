@@ -2,7 +2,6 @@
 """tests/ext_agents/test_context_classifier.py -- AR-9 ContextClassifier tests."""
 from __future__ import annotations
 
-import pytest
 from lib.context_classifier import (  # type: ignore
     ContextTier,
     ClassificationResult,

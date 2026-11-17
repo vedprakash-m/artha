@@ -9,7 +9,6 @@ Run:
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,14 +20,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
 
 import action_orchestrator as orch
 from action_orchestrator import (
-    _actions_enabled,
-    _audit_log,
-    _burn_in_mode,
     _deduplicate,
     _handler_health_check,
     _persist_signals,
@@ -624,7 +618,7 @@ def test_reject_existing_proposal(artha_dir):
 
     with patch("action_orchestrator._import_action_modules") as mock_imports:
         mock_imports.return_value = (MagicMock(), MagicMock(return_value=mock_executor), MagicMock())
-        from action_orchestrator import cmd_reject, _resolve_id
+        from action_orchestrator import cmd_reject
         with patch("action_orchestrator._resolve_id", return_value="full-uuid-here"):
             result = cmd_reject(artha_dir, "full-uuid-here", reason="wrong proposal")
 
@@ -650,7 +644,7 @@ def test_approve_all_low_only_approves_low(artha_dir, capsys):
     with patch("action_orchestrator._import_action_modules") as mock_imports:
         mock_imports.return_value = (MagicMock(), MagicMock(return_value=mock_executor), MagicMock())
         from action_orchestrator import cmd_approve_all_low
-        result = cmd_approve_all_low(artha_dir)
+        cmd_approve_all_low(artha_dir)
 
     # Only 2 low-friction proposals should have been approved
     assert mock_executor.approve.call_count == 2
@@ -966,15 +960,14 @@ def test_defer_preset_plus_offset():
 # T-U-33 — signal routing merge: YAML entries + fallback both present
 # ---------------------------------------------------------------------------
 
-def test_signal_routing_merge_yaml_over_fallback():
+def test_signal_routing_merge_yaml_over_fallback(monkeypatch):
     """YAML with 3 entries + fallback with 50+ → merged dict has all, YAML wins conflicts."""
-    import importlib
     import sys as _sys
 
-    # Remove cached module
+    # Remove cached module via monkeypatch so sys.modules restores on teardown
     for mod in list(_sys.modules):
         if "action_composer" in mod:
-            _sys.modules.pop(mod, None)
+            monkeypatch.delitem(_sys.modules, mod, raising=False)
 
     from action_composer import _load_signal_routing, _FALLBACK_SIGNAL_ROUTING
 

@@ -8,14 +8,12 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 
 def _get_logger(name: str, tmp_path: Path):
     """Import get_logger with a fresh module to avoid singleton cache bleed."""
-    import importlib
     # Clear the cache for fresh test isolation
     import lib.logger as lg_mod
     # Purge any cached entry for this name
@@ -211,7 +209,6 @@ def test_audit_middleware_emits_structured_on_oserror(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 def test_pipeline_log_event_format(tmp_path):
     """Verify the connector.fetch log event has the expected fields."""
-    import lib.logger as lg
 
     log = _get_logger("pipeline_test", tmp_path)
     # Simulate what pipeline.py emits after a successful connector fetch

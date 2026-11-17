@@ -18,7 +18,6 @@ scripts/middleware/guardrails.py (Todo 14).
 """
 from __future__ import annotations
 
-import pytest
 
 
 # ---------------------------------------------------------------------------

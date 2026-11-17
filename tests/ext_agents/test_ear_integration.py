@@ -29,21 +29,16 @@ Ref: specs/ext-agent-reloaded.md (all EAR-1 through EAR-12)
 from __future__ import annotations
 
 import json
-import sys
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS_DIR = str(_REPO_ROOT / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.tfidf_router import TFIDFRouter
-from lib.agent_router import RoutingMatch
 from lib.health_shard import HealthShard
 from lib.agent_heartbeat import AgentHeartbeat
 from lib.agent_memory import AgentMemory
@@ -51,8 +46,8 @@ from lib.correction_tracker import CorrectionTracker
 from lib.adaptive_context import compute_context_budget
 from lib.fan_out import FanOut
 from lib.agent_chainer import AgentChainer, extract_key_assertions
-from lib.evaluator_optimizer import EvaluatorOptimizer, _build_feedback_preamble
-from lib.soul_allowlist import filter_principles, SOUL_SAFE_PREFIXES
+from lib.evaluator_optimizer import EvaluatorOptimizer
+from lib.soul_allowlist import filter_principles
 from lib.knowledge_propagator import KnowledgePropagator
 import lib.metrics_writer as metrics_writer_mod
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import subprocess
 from datetime import datetime, timezone
 from types import SimpleNamespace
 

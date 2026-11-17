@@ -102,13 +102,16 @@ def test_hardlinked_cache_refuses_before_keys_or_migration_effects(tmp_path, ope
     artifact.parent.mkdir(parents=True)
     os.link(original, artifact)
     before = original.stat()
-    with pytest.raises(wc.WorkCacheBlocked, match='link'):
+    def _attempt():
         if operation == 'load':
             store.load()
         elif operation == 'plan':
             store.migration_plan()
         else:
             store.migrate(hashlib.sha256(original.read_bytes()).hexdigest(), writers_stopped=True)
+
+    with pytest.raises(wc.WorkCacheBlocked, match='link'):
+        _attempt()
     assert original.read_bytes() == b'synthetic private source'
     assert original.stat().st_mode == before.st_mode
     assert original.stat().st_nlink == 2
@@ -302,11 +305,11 @@ def test_local_paths_are_pure_and_reject_repo_and_known_sync_roots(tmp_path, mon
     assert work_cache_dir() == tmp_path / 'new-local/work/cache'
     assert not (tmp_path / 'new-local').exists()
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(Path(wc.__file__).resolve().parents[2] / 'tmp/local'))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Work\ cache\ must\ be\ machine\-local,\ outside\ the\ repository\ and\ known\ sync\ roots"):
         work_cache_dir()
     monkeypatch.setenv('OneDrive', str(tmp_path / 'sync'))
     monkeypatch.setenv('ARTHA_LOCAL_DIR', str(tmp_path / 'sync/local'))
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Work\ cache\ must\ be\ machine\-local,\ outside\ the\ repository\ and\ known\ sync\ roots"):
         work_cache_dir()
 
 

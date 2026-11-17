@@ -333,3 +333,92 @@ class ProtectedSnapshot:
             or (not now[p][2] and now[p][1] != before[p][1])
         )
         return {"modified": modified, "deleted": deleted, "added": added}
+
+
+_AUDIT_HOOK_INSTALLED = False
+
+
+def install_write_audit_hook(
+    allowed_roots: tuple[Path, ...] = (),
+    *,
+    allow_coverage_xml: tuple[Path, ...] = (),
+) -> None:
+    """Enforce in-process write containment via ``sys.addaudithook``.
+
+    Intercepts Python I/O (``open`` in write/append/create/update modes,
+    ``os.rename``/``os.replace``, ``os.mkdir``/``os.makedirs``) and raises
+    ``PermissionError`` if the resolved target escapes allowed temporary or
+    isolated workspace roots. Stdlib audit hooks do not confine arbitrary
+    native binaries or child interpreters that do not install the hook.
+    """
+    global _AUDIT_HOOK_INSTALLED
+    if _AUDIT_HOOK_INSTALLED:
+        return
+    _AUDIT_HOOK_INSTALLED = True
+
+    import sys
+
+    roots: list[Path] = []
+    for base in (
+        Path(tempfile.gettempdir()),
+        *(Path(os.environ[k]) for k in ("TMPDIR", "TMP", "TEMP") if os.environ.get(k)),
+        *allowed_roots,
+    ):
+        try:
+            resolved = base.resolve()
+        except OSError:
+            resolved = base
+        if resolved not in roots:
+            roots.append(resolved)
+
+    xml_targets = {p.resolve() for p in allow_coverage_xml}
+    _pathmod = os.path
+    _sep = os.sep
+    root_strs = [_pathmod.normcase(str(r)) for r in roots]
+    xml_strs = {_pathmod.normcase(str(p)) for p in xml_targets}
+
+    def _allowed_path(raw: object, cwd: str) -> bool:
+        if isinstance(raw, int):
+            return True
+        if not isinstance(raw, (str, bytes, os.PathLike)):
+            return True
+        try:
+            text = os.fsdecode(raw)
+        except (TypeError, ValueError):
+            return True
+        if not text or text.startswith("/dev/") or text.upper() in {"NUL", "CON", "PRN"}:
+            return True
+        joined = text if _pathmod.isabs(text) else _pathmod.join(cwd, text)
+        try:
+            resolved = _pathmod.normcase(_pathmod.realpath(joined))
+        except OSError:
+            resolved = _pathmod.normcase(_pathmod.abspath(joined))
+        if resolved in xml_strs or _pathmod.basename(resolved).startswith(".coverage"):
+            return True
+        parts = resolved.split(_sep)
+        if ".pytest_cache" in parts or "__pycache__" in parts:
+            return True
+        for root_s in root_strs:
+            prefix = root_s if root_s.endswith(_sep) else root_s + _sep
+            if resolved == root_s or resolved.startswith(prefix):
+                return True
+        return False
+
+    def _audit_hook(event: str, args: tuple) -> None:
+        cwd = os.getcwd()
+        if event == "open" and len(args) >= 2:
+            mode = str(args[1] or "")
+            if any(ch in mode for ch in ("w", "a", "x", "+")) and not _allowed_path(args[0], cwd):
+                raise PermissionError(f"Refusing write outside test workspace (open): {args[0]}")
+        elif event == "os.rename" and len(args) >= 2:
+            if len(args) >= 4 and (args[2] is not None or args[3] is not None):
+                if not (_allowed_path(args[0], cwd) and _allowed_path(args[1], cwd)):
+                    raise PermissionError(f"Refusing dir_fd rename outside test workspace: {args[:2]}")
+            if not _allowed_path(args[0], cwd) or not _allowed_path(args[1], cwd):
+                raise PermissionError(f"Refusing rename/replace outside test workspace: {args[:2]}")
+        elif event in ("os.mkdir", "os.makedirs") and len(args) >= 1:
+            if not _allowed_path(args[0], cwd):
+                raise PermissionError(f"Refusing mkdir outside test workspace: {args[0]}")
+
+    sys.addaudithook(_audit_hook)
+

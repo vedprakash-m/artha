@@ -196,3 +196,41 @@ def test_a_module_that_touches_a_production_path_fails_with_its_own_name(tmp_pat
                           env={**os.environ, "ARTHA_ALLOW_INPLACE_TESTS": "1"})
     assert done.returncode != 0
     assert "test_writer changed production paths" in done.stdout and "state/keep.md" in done.stdout
+
+
+def test_write_audit_hook_blocks_outside_writes_in_subprocess(tmp_path):
+    """Verify sys.addaudithook blocks open/rename/replace/mkdir targeting paths outside allowlisted roots."""
+    import sys
+
+    allowed = tmp_path / "allowed"
+    forbidden = tmp_path / "forbidden"
+    allowed.mkdir()
+    forbidden.mkdir()
+    code = (
+        "import os\n"
+        "from pathlib import Path\n"
+        "import _isolation as iso\n"
+        f"allowed, forbidden = Path({str(allowed)!r}), Path({str(forbidden)!r})\n"
+        "iso.install_write_audit_hook(allowed_roots=(allowed,))\n"
+        "for op in (\n"
+        "    lambda: (forbidden / 'x.txt').write_text('no'),\n"
+        "    lambda: os.mkdir(forbidden / 'sub'),\n"
+        "    lambda: ((allowed / 'tmp.txt').write_text('ok'), os.replace(allowed / 'tmp.txt', forbidden / 'moved.txt')),\n"
+        "):\n"
+        "    try:\n"
+        "        op()\n"
+        "    except PermissionError:\n"
+        "        continue\n"
+        "    raise AssertionError('write outside allowed root succeeded')\n"
+        "print('BLOCKED_OK')\n"
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+        "TMPDIR": str(allowed),
+        "TMP": str(allowed),
+        "TEMP": str(allowed),
+    }
+    res = subprocess.run([sys.executable, "-c", code], cwd=allowed, env=env, capture_output=True, text=True, timeout=30)
+    assert res.returncode == 0, res.stderr
+    assert "BLOCKED_OK" in res.stdout

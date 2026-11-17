@@ -4,7 +4,6 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
-import pytest
 
 from lib.agent_registry import AgentRegistry, _parse_agent  # type: ignore
 from .conftest import SAMPLE_AGENT_ENTRY, make_test_agent

@@ -11,11 +11,10 @@ Ref: specs/vm-hardening.md Phase 2.4, Appendix C
 from __future__ import annotations
 
 import json
-import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -233,7 +232,7 @@ class TestEnsureValidTokenTracking:
             patch.object(mso, "_keychain_read", return_value="fake-client-id"),
             patch.object(mso, "_acquire_token_silent", return_value=new_token),
         ):
-            result = mso.ensure_valid_token(warn_seconds=300)
+            mso.ensure_valid_token(warn_seconds=300)
 
         # Re-read the saved file
         saved = mso._credential_store().read("msgraph.personal")

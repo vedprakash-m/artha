@@ -92,7 +92,7 @@ def test_utf8_boundaries_and_trusted_text_digest(case):
     marker = ids.content_hmac(KEY, text)
     led.conn.execute("UPDATE signals SET content_hmac=? WHERE signal_id=?", (marker, binding.signal_id))
     review = FieldReviewStore(led, "owner", lambda: NOW, source_text=lambda _sid: text)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"field\ span\ must\ use\ UTF\-8\ byte\ boundaries"):
         review.preview(replace(binding, provenance_hmac=marker, span=(1, 3)))
     valid = replace(binding, provenance_hmac=marker, span=(0, 2))
     token = review.preview(valid)["apply_token"]
@@ -107,10 +107,10 @@ def test_expiry_future_wrong_actor_and_malformed_tokens(case):
     token = review.preview(binding)["apply_token"]
     for instant in (NOW - timedelta(seconds=1), NOW + timedelta(seconds=1801)):
         other = FieldReviewStore(led, "owner", lambda: instant, source_text=lambda _sid: TEXT)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"invalid\ or\ expired\ documentary\ field\ preview"):
             other.confirm(binding, token)
     for token in ("", "bad", "1:forged", None, True):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"invalid\ or\ expired\ documentary\ field\ preview"):
             review.confirm(binding, token)
     other = FieldReviewStore(led, "adult", lambda: NOW, source_text=lambda _sid: TEXT)
     with pytest.raises(lg.PermissionDenied):
@@ -123,7 +123,7 @@ def test_withdrawal_is_exact_and_does_not_resurrect_old_tokens(case):
     review.confirm(binding, token)
     review.withdraw(binding, review.preview(binding)["apply_token"])
     assert not review.verified(binding)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"documentary\ field\ or\ permissions\ changed;\ review\ again"):
         review.confirm(binding, token)
     review.confirm(binding, review.preview(binding)["apply_token"])
     assert review.verified(binding)
@@ -270,7 +270,7 @@ def test_invalid_span_and_clock_are_rejected(case):
     review = FieldReviewStore(led, "owner", lambda: datetime(2026, 10, 24), source_text=lambda _sid: TEXT)
     with pytest.raises(ValueError, match="explicit instant"):
         review.preview(binding)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Fact\ identity\ and\ version\ require\ bounded\ text"):
         replace(binding, fact_id=True, fact_version="v1")
 
 

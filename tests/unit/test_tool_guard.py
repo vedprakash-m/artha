@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import io
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import tool_guard as tg  # noqa: E402
 
 D = ("finance", "health")

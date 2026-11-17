@@ -122,7 +122,7 @@ def test_declare_review_and_registered_write(tmp_path):
 
 def test_failure_retry_and_deleted_dependency(tmp_path):
     enroll(tmp_path)
-    with pytest.raises(ValueError), registry.mutation(
+    with pytest.raises(ValueError, match=r"synthetic\ failure"), registry.mutation(
             "personal", "key", "synthetic", "version-1", "2", root=tmp_path):
         raise ValueError("synthetic failure")
     with pytest.raises(registry.RegistryError):
@@ -194,10 +194,13 @@ def test_has_pending_is_read_only_and_does_not_enroll(tmp_path, monkeypatch):
 
 def test_pending_intent_requires_matching_kind_and_generation(tmp_path):
     enroll(tmp_path)
-    with pytest.raises(ValueError):
+    def _attempt():
         with registry.mutation("personal", "client", "synthetic", "account", "1", root=tmp_path):
             assert registry.has_pending("personal", "client", "synthetic", "account", "1", root=tmp_path)
             raise ValueError("synthetic failure")
+
+    with pytest.raises(ValueError, match="synthetic failure"):
+        _attempt()
     before = registry.snapshot("personal", root=tmp_path, require_review=False)
     for kind, generation in (("bundle", "1"), ("client", "2")):
         with pytest.raises(registry.RegistryError):
@@ -215,7 +218,7 @@ def test_pending_intent_requires_matching_kind_and_generation(tmp_path):
 
 def test_explicit_replacement_after_failed_writer_may_publish_a_new_generation(tmp_path):
     enroll(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"failed\ publication"):
         with registry.mutation('personal', 'credential', 'synthetic', 'account', 'first', root=tmp_path):
             raise ValueError('failed publication')
     with registry.mutation('personal', 'credential', 'synthetic', 'account', 'replacement', root=tmp_path):
@@ -427,7 +430,7 @@ def test_rejects_links_before_write(target, link_kind, operation, tmp_path):
         path.symlink_to(destination, target_is_directory=destination.is_dir())
     else:
         os.link(destination, path)
-    with pytest.raises(registry.RegistryError):
+    def _attempt():
         if operation == "declare":
             registry.declare("personal", "key", "synthetic", "new", "1", root=root)
         elif operation == "has_pending":
@@ -435,6 +438,9 @@ def test_rejects_links_before_write(target, link_kind, operation, tmp_path):
         else:
             with registry.mutation("personal", "key", "synthetic", "new", "1", root=root):
                 pytest.fail("unsafe path entered caller")
+
+    with pytest.raises(registry.RegistryError):
+        _attempt()
     assert stat.S_IMODE(destination.stat().st_mode) == original_mode
 
 
@@ -452,7 +458,7 @@ def test_rejects_public_permissions(target, operation, tmp_path):
         path.write_text("synthetic")
     path.chmod(0o755 if path.is_dir() else 0o644)
     original_mode = stat.S_IMODE(path.stat().st_mode)
-    with pytest.raises(registry.RegistryError):
+    def _attempt():
         if operation == "declare":
             registry.declare("personal", "key", "synthetic", "new", "1", root=tmp_path)
         elif operation == "has_pending":
@@ -460,6 +466,9 @@ def test_rejects_public_permissions(target, operation, tmp_path):
         else:
             with registry.mutation("personal", "key", "synthetic", "new", "1", root=tmp_path):
                 pytest.fail("unsafe path entered caller")
+
+    with pytest.raises(registry.RegistryError):
+        _attempt()
     assert stat.S_IMODE(path.stat().st_mode) == original_mode
 
 
@@ -528,7 +537,7 @@ def test_new_lock_permission_failure_closes_descriptor(tmp_path, monkeypatch):
     with pytest.raises(registry.RegistryError):
         registry.declare("personal", "key", "synthetic", "account", "1", root=tmp_path)
     assert len(descriptors) == 1
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"\[Errno\ 9\]\ Bad\ file\ descriptor"):
         os.fstat(descriptors[0])
     assert not (tmp_path / "recovery-registry" / "personal.json").exists()
 
@@ -576,12 +585,15 @@ def test_unsafe_logical_lock_refused_before_metadata_or_native_write(tmp_path, u
             os.link(destination, lock)
         else:
             os.mkfifo(lock, 0o600)
-    with pytest.raises(registry.RegistryError):
+    def _attempt():
         if operation == "declare":
             registry.declare("personal", "key", "synthetic", "version-1", "1", root=tmp_path)
         else:
             with registry.mutation("personal", "key", "synthetic", "version-1", "1", root=tmp_path):
                 pytest.fail("unsafe logical lock reached native write")
+
+    with pytest.raises(registry.RegistryError):
+        _attempt()
     assert registry.snapshot("personal", root=tmp_path) == before
     if unsafe in ("symlink", "hardlink", "fifo"):
         assert destination.read_text() == "untouched"

@@ -9,13 +9,9 @@ Tests use monkey-patching to simulate a corrupt/unavailable SQLite store.
 from __future__ import annotations
 
 import os
-import sys
 
-import pytest
 
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 
 class TestIdempotencyDegraded:

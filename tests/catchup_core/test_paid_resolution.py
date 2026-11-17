@@ -15,7 +15,6 @@ from core_helpers import (
     COORDINATOR_CIPHER as CIPHER,
     CORE_KEY as KEY,
     CORE_NOW as NOW,
-    build_triage_pack as build_pack,
     triage_conn_of as conn_of,
     triage_fresh as fresh,
 )

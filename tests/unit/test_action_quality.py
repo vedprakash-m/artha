@@ -5,11 +5,9 @@ Ref: specs/action-convert.md §4.3–4.5
 from __future__ import annotations
 
 import sqlite3
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,8 +15,6 @@ import pytest
 # Path setup — allow importing from scripts/
 # ---------------------------------------------------------------------------
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
 
 # ---------------------------------------------------------------------------
 # Tests: _entity_is_viable (action_composer)
@@ -133,7 +129,7 @@ class TestUserContextGates:
 
         # With autopay_services containing xfinity, compose() should return None
         try:
-            result = composer.compose(sig)
+            composer.compose(sig)
             # If routing is unavailable, result may be None for other reasons — acceptable
         except Exception:
             pass  # routing config may not be available in test env
@@ -455,7 +451,7 @@ class TestAcceptanceRateWindowedDeferred:
         """A deferred action should count as an accepted decision in the 30d window."""
         from action_orchestrator import _acceptance_rate_windowed
         import sqlite3
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timezone
 
         db = tmp_path / "test.db"
         conn = sqlite3.connect(str(db))

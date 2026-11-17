@@ -57,8 +57,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +245,6 @@ class TestWorkiqBridgeCache:
 
 class TestWorkiqBridgeFetch:
     def test_fetch_unknown_mode_raises(self):
-        import sys
         from connectors.workiq_bridge import fetch
         with pytest.raises(ValueError, match="Unknown mode"):
             list(fetch(mode="bogus_mode", auth_context={}))
@@ -348,7 +345,7 @@ class TestWorkiqDisplayFetch:
         from connectors import workiq_bridge as bridge
 
         monkeypatch.setattr(bridge, "_ask_workiq", lambda _: raw)
-        with pytest.raises(ValueError) as error:
+        with pytest.raises(ValueError, match=r"WorkIQ\ display\ response\ is\ not\ valid\ JSON") as error:
             bridge.fetch_display(auth_context={}, mode="calendar")
         assert raw == "" or raw not in str(error.value)
 
@@ -362,7 +359,7 @@ class TestWorkiqDisplayFetch:
 
         raw = json.dumps(response)
         monkeypatch.setattr(bridge, "_ask_workiq", lambda _: raw)
-        with pytest.raises(ValueError) as error:
+        with pytest.raises(ValueError, match=r"WorkIQ\ display\ response\ has\ an\ invalid\ status|WorkIQ\ display\ response\ has\ no\ content|WorkIQ\ display\ response\ is\ not\ a\ JSON\ object") as error:
             bridge.fetch_display(auth_context={}, mode="calendar")
         assert "synthetic" not in str(error.value)
 
@@ -372,7 +369,7 @@ class TestWorkiqDisplayFetch:
 
         query = MagicMock()
         monkeypatch.setattr(bridge, "_ask_workiq", query)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"WorkIQ\ display\ mode\ is\ not\ an\ approved\ Work\ scope"):
             bridge.fetch_display(auth_context={}, mode=mode)
         query.assert_not_called()
 
@@ -452,9 +449,10 @@ class TestWorkiqQueryFailures:
         collector = CoverageCollector()
         times = [datetime.fromtimestamp(value, tz=timezone.utc) for value in (0, 301)]
         with collector.track("workiq") as tracker, patch.object(bridge, "datetime") as clock, \
-             patch.object(bridge, "_ask_workiq") as query, pytest.raises(RuntimeError):
+             patch.object(bridge, "_ask_workiq") as query:
             clock.now.side_effect = times
-            list(bridge.fetch(auth_context={}, mode="teams_ai", channels=["one"]))
+            with pytest.raises(RuntimeError):
+                list(bridge.fetch(auth_context={}, mode="teams_ai", channels=["one"]))
         query.assert_not_called()
         assert any(scope.status == "truncated" for scope in tracker.scopes)
         bridge._save_cache.assert_not_called()

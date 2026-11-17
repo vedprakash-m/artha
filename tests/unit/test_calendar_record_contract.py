@@ -8,14 +8,11 @@ is tested in both directions).  Re-artha §12.2 item 4, §11.7 "Contract chain".
 from __future__ import annotations
 
 import copy
-import sys
 from pathlib import Path
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from schemas.connector_record import validate_record  # noqa: E402
 

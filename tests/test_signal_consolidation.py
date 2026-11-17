@@ -7,14 +7,10 @@ of signal_routing.yaml as required by simplify.md §7.3.
 Ref: specs/simplify.md Phase 4, Initiative 6
 """
 import datetime
-import sys
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from actions.base import DomainSignal
 from email_signal_extractor import _CANONICAL_TYPE_MAP, _SIGNAL_PATTERNS

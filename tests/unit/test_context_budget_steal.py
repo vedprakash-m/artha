@@ -2,7 +2,6 @@
 test_context_budget_steal.py — Tests for S-30 check_budget() addition.
 specs/steal.md §15.2.1
 """
-import pytest
 
 from lib.context_budget import check_budget, CHARS_PER_TOKEN, estimate_token_count
 

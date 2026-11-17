@@ -274,7 +274,7 @@ def test_non_string_stream_owner_kind_is_refused_as_malformed_metadata(tmp_path)
         ck.verify(path, CIPHER)
 
 
-@pytest.mark.parametrize('surrogate', ['\ud800', '\udfff'])
+@pytest.mark.parametrize('surrogate', [chr(0xD800), chr(0xDFFF)])
 def test_v3_member_paths_must_be_valid_unicode(tmp_path, surrogate):
     path, _ = _checkpoint(tmp_path / 'bad.ack', streams=[],
                           member_path=f'work_state/synthetic-{surrogate}.txt')

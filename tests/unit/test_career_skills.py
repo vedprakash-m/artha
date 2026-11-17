@@ -25,8 +25,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -281,3 +279,160 @@ def test_career_trace_compiles():
     path = SCRIPTS_DIR / "lib" / "career_trace.py"
     assert path.exists(), "scripts/lib/career_trace.py missing"
     py_compile.compile(str(path), doraise=True)
+
+
+# ---------------------------------------------------------------------------
+# Migrated unit checks from standalone test_career_search.py & test_career_content.py
+# ---------------------------------------------------------------------------
+
+def test_career_state_deep_freeze_and_fingerprints():
+    from types import MappingProxyType
+    from lib.career_state import SCORED_STATUSES, cross_tracker_dedup_match, deep_freeze, fingerprint_posting
+
+    frozen = deep_freeze({"a": [1, 2, {"b": 3}], "c": "hello", "d": {1, 2}})
+    assert isinstance(frozen, MappingProxyType)
+    assert isinstance(frozen["a"], tuple)
+    assert isinstance(frozen["a"][2], MappingProxyType)
+    assert frozen["a"][2]["b"] == 3
+    with pytest.raises(TypeError):
+        frozen["new_key"] = "fail"  # type: ignore[index]
+
+    fp1 = fingerprint_posting("Acme Corp", "Senior AI Engineer", "Seattle, WA", "https://jobs.acme.com/123")
+    fp2 = fingerprint_posting("Acme Corp", "Senior AI Engineer", "Seattle, WA", "https://jobs.acme.com/123")
+    fp3 = fingerprint_posting("Acme Corp", "Senior AI Engineer", "Seattle, WA", "https://jobs.acme.com/456")
+    assert fp1 == fp2 != fp3
+
+    for excluded in ("SKIP", "Rejected", "Discarded"):
+        assert excluded not in SCORED_STATUSES
+    for included in ("Evaluated", "Applied", "Offer", "Interview"):
+        assert included in SCORED_STATUSES
+
+    existing = [
+        {"num": "001", "company": "Acme Corp", "role": "Senior AI Engineer", "notes": "Seattle"},
+        {"num": "002", "company": "Beta Inc", "role": "ML Platform Engineer", "notes": "Remote"},
+    ]
+    assert cross_tracker_dedup_match("Acme Corp", "Senior AI Engineer", "Seattle", existing) == "001"
+    assert cross_tracker_dedup_match("Other Corp", "Data Scientist", "NYC", existing) is None
+
+
+def test_career_story_bank_index_and_state_reconciliation(tmp_path):
+    import yaml
+    from lib.career_state import build_story_bank_index, is_campaign_active, parse_story_bank_index, reconcile_summary
+
+    body = "## Story Bank\n<!-- INDEX: 1:Scaling ML Pipeline(AI Platform / LLMOps), 2:Multi-Agent Orchestration(Agentic / Automation) -->\n"
+    parsed = parse_story_bank_index(body)
+    assert parsed[1] == ("Scaling ML Pipeline", "AI Platform / LLMOps")
+    assert 2 in parsed
+    assert parse_story_bank_index("## Story Bank\n<!-- INDEX: -->\n") == {}
+
+    import re
+    stories = {i: (f"Story {i}", "AI Platform / LLMOps") for i in range(1, 30)}
+    index_str = build_story_bank_index(stories, {1, 2, 3, 4, 5, 6})
+    ids = [int(n) for n in re.findall(r"(\d+):[^,>]+", index_str)]
+    assert len(ids) <= 20
+    assert sum(1 for n in (1, 2, 3, 4, 5, 6) if n in ids) <= 5
+
+    tpl = (REPO_ROOT / "state" / "templates" / "career_search.md").read_text(encoding="utf-8")
+    state_file = tmp_path / "career_search.md"
+    state_file.write_text(tpl, encoding="utf-8")
+    reconcile_summary(state_file)
+    fm = yaml.safe_load(state_file.read_text(encoding="utf-8").split("---", 2)[1])
+    assert {"total", "by_status", "average_score", "data_quality", "validation_errors"} <= set(fm["summary"])
+    assert isinstance(is_campaign_active(state_file), bool)
+
+
+def test_career_trace_events_and_pdf_normalization(tmp_path, monkeypatch):
+    from lib.career_trace import CareerTrace
+    from skills.career_pdf_generator import CareerPdfGenerator, _normalize_unicode, _slug
+
+    normalized = _normalize_unicode("Experience \u2014 built systems \u201cwith care\u201d and \u2018passion\u2019")
+    assert "\u2014" not in normalized and "\u201c" not in normalized and "\u201d" not in normalized
+    assert "\u2018" not in normalized and "built systems" in normalized
+
+    assert _slug("ACME Corp") == "acme-corp"
+    assert _slug("AnthropicAI!") == "anthropicai"
+    assert _slug("OpenAI, Inc.") == "openai-inc"
+    assert len(_slug("A" * 100)) <= 40
+
+    gen = CareerPdfGenerator(report_number="042")
+    assert (gen.report_number, gen.name, gen.priority, gen.status) == ("042", "career_pdf_generator", "P1", "idle")
+    assert len(gen.compare_fields) > 0
+    monkeypatch.setattr("skills.career_pdf_generator.is_campaign_active", lambda *_a: True)
+    with pytest.raises(ValueError, match="report_number is required"):
+        CareerPdfGenerator().pull()
+    monkeypatch.setattr("skills.career_pdf_generator.is_campaign_active", lambda *_a: False)
+    assert CareerPdfGenerator(report_number="001").pull()["status"] == "skipped"
+
+    trace = CareerTrace(trace_path=tmp_path / "trace.jsonl")
+    trace.write_guardrail_event(
+        guardrail="CareerJDInjectionGR", triggered=True, action="blocked",
+        detail="Suspected injection: <system> tag", report_number="001", jd_url="https://jobs.test.com/123",
+    )
+    trace.write_eval_entry(
+        report_number="001", company="Acme", role="Senior AI Engineer", archetype="AI Platform / LLMOps",
+        score=4.3, blocks_completed=["A", "B", "C", "D", "E", "F", "G"],
+        posting_fingerprint="acme+senior-ai-engineer+seattle+abc123", cv_content_hash="deadbeef",
+        block_d_source="gemini_cli", input_tokens_estimate=18000, output_tokens_estimate=14000,
+    )
+    entries = trace.read_all()
+    assert len(entries) == 2
+    assert entries[0]["event"] == "CAREER-GUARDRAIL" and entries[0]["triggered"] is True
+    assert entries[1]["event"] == "career_eval" and "input_tokens_estimate" in entries[1]
+    assert entries[1].get("input_tokens") is None and len(entries[1]["blocks_completed"]) == 7
+
+
+def test_career_apply_and_prep_helpers():
+    from career_apply import apply as apply_fn, _find_row_index, _update_tracker_row
+    from career_prep import _count_questions, _extract_section, _extract_story_titles, _tokens
+
+    assert callable(apply_fn)
+    sample_body = "| 999 | 2026-04-18 | TestCo | TPM | 4.5 | Evaluated | — | report | notes |\n"
+    assert _find_row_index(sample_body, "999") == 0
+    new_body, row = _update_tracker_row(sample_body, "999", "Applied", "applied 2026-04-18")
+    assert "| Applied |" in new_body and row["company"] == "TestCo"
+    with pytest.raises(ValueError, match=r"Report\ 999\ status\ is\ 'Applied',\ expected\ 'Evaluated'\.\ Apply\ can\ only\ transition\ Evaluated\ rows\."):
+        _update_tracker_row(new_body, "999", "Applied", "")
+
+    prep_body = (
+        "## F) Interview Prep\n\n### Recommended STAR Stories for This Role\n\n"
+        "| # | Story | Maps To | Status |\n|---|---|---|---|\n"
+        "| 1 | ProgramX Ramp | migration | Pinned |\n| 2 | DataOps build | DX | Pinned |\n\n"
+        '### Red-Flag Questions to Prepare For\n\n1. **"q1"**\n   -> A\n\n2. **"q2"**\n   -> B\n\n'
+        "## G) Posting Legitimacy\n\nOK"
+    )
+    sec = _extract_section(prep_body, "F")
+    assert "ProgramX Ramp" in sec and not sec.rstrip().endswith("---")
+    assert _extract_story_titles(sec)[0] == "ProgramX Ramp" and len(_extract_story_titles(sec)) == 2
+    assert _count_questions(sec) == 2
+    assert "relay" in _tokens("Amazon Relay Load Board — Middle Mile")
+
+
+def test_career_cover_letter_helpers_when_installed():
+    mod = pytest.importorskip("skills.career_cover_letter")
+    cover = mod.CareerCoverLetter(report_number="001")
+    assert "md_path" in cover.compare_fields and "pdf_path" in cover.compare_fields
+    fm = mod._extract_frontmatter("---\ncompany: Acme\nurl: https://a.com/b---c/d\nscore: 4.2\n---\nbody")
+    assert fm.get("company") == "Acme" and fm.get("score") == 4.2
+    letter = mod._compose_letter_md(
+        company="Acme", role="Sr TPM", archetype="AI Platform", contact="ved@example.com",
+        headline_phrases=["directly matches your roadmap"], cv_match_evidence=["- Req X -> evidence Y"],
+        proof_points=[], posture="I bring the right fit", keywords=["ml", "tpm"],
+    )
+    assert letter.count("\n\n") >= 4 and "()" not in letter
+
+
+def test_career_content_prompts_and_templates():
+    emp = (REPO_ROOT / "prompts" / "employment.md").read_text(encoding="utf-8")
+    assert all(k in emp for k in ("Career Search Mode", "career_search.md", "Non-compete", "Benefits continuity"))
+
+    cs_prompt = (REPO_ROOT / "prompts" / "career_search.md").read_text(encoding="utf-8")
+    for needle in ("schema_version", "Block A", "Block B", "Block C", "Block D", "Block E", "Block F", "Block G",
+                   "scoring_weights", "reconcile_summary", "write_state_atomic", "CareerJDInjectionGR"):
+        assert needle in cs_prompt
+
+    tpl = (REPO_ROOT / "state" / "templates" / "career_search.md").read_text(encoding="utf-8")
+    assert all(k in tpl for k in ("campaign:", "scoring_weights_fallback:", "summary:"))
+
+    cv_html = (REPO_ROOT / "templates" / "cv-template.html").read_text(encoding="utf-8")
+    assert all(k in cv_html for k in ("{{CV_CONTENT}}", "{{COMPANY}}", "{{ROLE}}", "Space Grotesk", "DM Sans", "local(", "ATS"))
+

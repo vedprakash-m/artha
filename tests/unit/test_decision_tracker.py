@@ -13,20 +13,19 @@ Coverage:
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import sys
 
-import pytest
 
-# decision_tracker imports fcntl for file locking; stub it on Windows
+# decision_tracker handles missing fcntl on Windows or imports cleanly under temporary patch
 if sys.platform == "win32" and "fcntl" not in sys.modules:
     from unittest.mock import MagicMock
-    sys.modules["fcntl"] = MagicMock()
-
-from decision_tracker import DecisionTracker
+    with patch.dict(sys.modules, {"fcntl": MagicMock()}):
+        from decision_tracker import DecisionTracker
+else:
+    from decision_tracker import DecisionTracker
 
 
 # ---------------------------------------------------------------------------

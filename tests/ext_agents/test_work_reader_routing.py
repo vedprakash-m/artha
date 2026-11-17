@@ -2,15 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
 # Ensure scripts/ is on path
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 # work_reader.py is gitignored (private work scripts) — skip entire module in CI
 _work_reader_available = importlib.util.find_spec("work_reader") is not None

@@ -21,10 +21,8 @@ import yaml
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 
-from pr_stage.domain import CardStatus, ContentCard, PlatformDraft, PlatformDraftStatus
+from pr_stage.domain import CardStatus, ContentCard
 from pr_stage.repository import (
     GalleryRepository,
     GalleryMemory,
@@ -144,7 +142,7 @@ class TestGalleryRepositoryLoad:
     def test_load_uses_cache(self, gallery_path: Path, repo: GalleryRepository):
         card = _make_card()
         _write_yaml_atomic(gallery_path, {"schema_version": "1.0", "cards": [card.to_dict()]})
-        cards1 = repo.load()
+        repo.load()
         # Overwrite file — should still return cached version
         _write_yaml_atomic(gallery_path, {"schema_version": "1.0", "cards": []})
         cards2 = repo.load()
@@ -281,7 +279,7 @@ class TestHardCap:
             cards.append(card)
         repo._enforce_hard_cap(cards)
         assert len(cards) <= GALLERY_HARD_CAP
-        remaining_ids = {c.id for c in cards}
+        {c.id for c in cards}
         # At least some dismissed should have been purged
         dismissed_remaining = sum(1 for c in cards if c.status == CardStatus.DISMISSED)
         assert dismissed_remaining < 10

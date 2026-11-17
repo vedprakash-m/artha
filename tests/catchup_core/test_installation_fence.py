@@ -97,7 +97,7 @@ def test_raw_capture_lock_still_blocks_a_new_writer(tmp_path):
 
 
 def test_exception_releases_ownership_and_kernel_lock(tmp_path):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="synthetic"):
         with installation_fence(tmp_path, exclusive=True):
             raise ValueError('synthetic')
     with session_lock(tmp_path / 'installation.lock'):

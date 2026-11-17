@@ -352,7 +352,6 @@ def test_real_process_death_during_retirement_keeps_a_recoverable_fence(host, ph
     import os
     import signal
 
-    kill_signal = signal.SIGTERM if os.name == 'nt' else signal.SIGKILL
     source = str(Path(protocol.__file__).parent.parent)
     code = '''
 import os,signal,sys

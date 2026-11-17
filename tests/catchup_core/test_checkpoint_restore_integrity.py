@@ -540,10 +540,13 @@ def test_table_comparison_refuses_checkpoint_replacement_after_verification(
     monkeypatch.setattr(ck, '_sqlite_table_diff', lambda body, _path: table_reads.append(body) or {})
     try:
         ck.diff(ack, CIPHER, {'work_artifact_1': root}, include_tables=True)
+        raised_exc = None
     except ck.CheckpointError as exc:
+        raised_exc = exc
+    if raised_exc is not None:
         expected = ('Work stream-aware comparison is not yet supported' if replacement_kind == 'work'
                     else 'checkpoint changed after authenticated preflight')
-        assert str(exc) == expected
+        assert str(raised_exc) == expected
         assert outcomes == ['written']
         assert table_reads == []
     else:

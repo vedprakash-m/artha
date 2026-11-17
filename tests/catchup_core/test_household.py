@@ -52,11 +52,11 @@ def test_aliases_use_first_name_and_nickname_and_ids_are_stable_keyed():
 def test_disabled_spouse_and_missing_primary_user():
     people = members(profile(spouse={"name": "Sam", "enabled": False}), KEY, "owner", TODAY)
     assert "Sam" not in {p.name for p in people}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"household\ profile\ needs\ its\ primary\ user"):
         members({"family": {}}, KEY, "owner", TODAY)
 
 
 def test_duplicate_identities_are_refused():
     twins = [{"name": "Twin", "dob": "2015-01-01"}, {"name": "Twin", "dob": "2015-01-01"}]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"household\ profile\ contains\ duplicate\ identities"):
         members(profile(children=twins), KEY, "owner", TODAY)

@@ -20,7 +20,6 @@ Covers:
 from __future__ import annotations
 
 import ast
-import os
 import sys
 from pathlib import Path
 
@@ -33,8 +32,6 @@ _CONFIG_DIR = _REPO_ROOT / "config"
 _PROMPTS_DIR = _REPO_ROOT / "prompts"
 
 # Make scripts importable
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +74,7 @@ class TestRD50CharsPerTokenNotDuplicated:
                 continue  # authoritative definition — skip
             src = py_file.read_text(encoding="utf-8")
             try:
-                tree = ast.parse(src)
+                ast.parse(src)
             except SyntaxError:
                 continue
 
@@ -279,7 +276,7 @@ class TestRD30WeakQueryTTL:
     def test_record_weak_query_writes_timestamp(self):
         """record_weak_query must write a timestamp entry."""
         import tempfile
-        from lib.agent_registry import AgentRegistry, ExternalAgent, AgentHealth
+        from lib.agent_registry import AgentRegistry
         from lib.agent_health import AgentHealthTracker
 
         # Use AgentRegistry constructor directly with a temp path

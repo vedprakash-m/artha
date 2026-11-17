@@ -67,11 +67,11 @@ def test_missing_key_version_is_unavailable_not_plaintext():
 
 
 def test_static_provider_validation():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"at\ least\ one\ key\ is\ required"):
         crypto.StaticKeyProvider({})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"data\ keys\ are\ 32\ bytes"):
         crypto.StaticKeyProvider({1: b"short"})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"current\ key\ version\ not\ present"):
         crypto.StaticKeyProvider({1: K1}, current=5)
 
 

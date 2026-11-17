@@ -1,17 +1,13 @@
 """WP-06 / §10.6: string helpers never fall back to plaintext or write key/plaintext files."""
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import action_queue as aq  # noqa: E402
 import foundation  # noqa: E402

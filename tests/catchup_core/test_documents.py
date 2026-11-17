@@ -213,11 +213,11 @@ def test_worker_caps_ocr_page_attempts_independent_of_results(monkeypatch, capsy
 
 
 def test_limits_and_worker_failure_do_not_claim_success():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Provide\ a\ PDF,\ PNG\ or\ JPEG\ file\."):
         documents.extract_pdf(b"not PDF")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Provide\ a\ PDF,\ PNG\ or\ JPEG\ smaller\ than\ 8\ MiB\."):
         documents.extract_pdf(b"%PDF-" + b"x" * documents.MAX_BYTES)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"PDF\ could\ not\ be\ interpreted\ safely;\ review\ the\ document\ manually\."):
         documents.extract_pdf(b"%PDF-x", runner=lambda *a, **k: SimpleNamespace(returncode=1, stdout=b""))
 
     def timeout(*a, **k):
@@ -241,7 +241,7 @@ def test_worker_reads_real_pages_and_rejects_encrypted_or_oversized_inputs(monke
     writer.encrypt("secret")
     out = io.BytesIO()
     writer.write(out)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Encrypted\ or\ oversized\ PDF\ needs\ manual\ review"):
         run(out.getvalue())
     monkeypatch.setattr(documents, "MAX_TEXT", 1)
     with pytest.raises(ValueError, match="text"):

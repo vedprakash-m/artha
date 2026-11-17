@@ -1,99 +1,15 @@
-import pytest
-import subprocess
+"""Unit tests for scripts/pii_guard.py Python API and built-in CLI self-test."""
+from __future__ import annotations
+
 import os
+import subprocess
+import sys
 from pathlib import Path
 
-# Paths relative to the project root
-PROJECT_ROOT = Path(__file__).parent.parent.parent
-PII_GUARD_SH = PROJECT_ROOT / "scripts" / "pii_guard.sh"
+import pytest
 
-def run_pii_guard(cmd, input_text):
-    """Helper to run pii_guard.sh and return (stdout, stderr, returncode)."""
-    if not PII_GUARD_SH.exists():
-        pytest.xfail("pii_guard.sh archived — shell-script tests preserved for reference, use Python API tests")
-    # Check if bash is available
-    import shutil
-    bash_path = shutil.which("bash")
-    if not bash_path:
-        pytest.xfail("bash not found — skipping pii_guard.sh test")
-
-    result = subprocess.run(
-        [bash_path, str(PII_GUARD_SH), cmd],
-        input=input_text,
-        capture_output=True,
-        text=True,
-        cwd=PROJECT_ROOT
-    )
-    return result.stdout, result.stderr, result.returncode
-
-@pytest.mark.xfail(strict=False, reason="pii_guard.sh deprecated — shell script archived; Python API tests cover same logic")
-@pytest.mark.parametrize("description, input_text, expected_token", [
-    ("SSN with dashes", "Your SSN is 123-45-6789", "[PII-FILTERED-SSN]"),
-    ("SSN in statement", "Social Security: 987-65-4321 on file", "[PII-FILTERED-SSN]"),
-    ("Visa (spaces)", "Card: 4111 1111 1111 1111 charged", "[PII-FILTERED-CC]"),
-    ("Visa (dashes)", "Card: 4111-1111-1111-1111 expired", "[PII-FILTERED-CC]"),
-    ("Mastercard", "Card: 5500 0000 0000 0004 approved", "[PII-FILTERED-CC]"),
-    ("Amex", "Card: 3714 496353 98431 active", "[PII-FILTERED-CC]"),
-    ("Discover", "Card: 6011 1111 1111 1117 active", "[PII-FILTERED-CC]"),
-    ("A-number", "Alien Registration: A123456789 filed", "[PII-FILTERED-ANUM]"),
-    ("ITIN", "ITIN: 912-78-1234 on record", "[PII-FILTERED-ITIN]"),
-    ("Bank routing", "routing number: 021000021 active", "[PII-FILTERED-ROUTING]"),
-    ("US Passport", "Passport number: A12345678 verified", "[PII-FILTERED-PASSPORT]"),
-    ("WA Driver License", "License: WDLMISH123AB issued", "[PII-FILTERED-DL]"),
-])
-def test_pii_guard_filter_positive(description, input_text, expected_token):
-    """Verify that pii_guard.sh correctly filters various PII types."""
-    stdout, stderr, rc = run_pii_guard("filter", input_text)
-    assert rc != 0, f"Expected non-zero exit code for {description}"
-    assert expected_token in stdout
-    # The script logs to stderr with a timestamp and "PII_FILTER"
-    assert "PII_FILTER" in stderr
-    assert "filtered" in stderr
-
-@pytest.mark.xfail(strict=False, reason="pii_guard.sh deprecated — shell script archived; Python API tests cover same logic")
-@pytest.mark.parametrize("description, input_text", [
-    ("USCIS IOE receipt", "Receipt: IOE0915220715 received"),
-    ("USCIS SRC receipt", "Case: SRC2190050001 pending"),
-    ("USCIS LIN receipt", "Receipt LIN2190050001 approved"),
-    ("Amazon order", "Order: 112-3456789-1234567 shipped"),
-    ("Masked account", "Account ****1234 charged 47.99"),
-    ("Clean text", "This is a clean email without any PII."),
-])
-def test_pii_guard_filter_negative(description, input_text):
-    """Verify that pii_guard.sh does NOT filter allowlisted patterns."""
-    stdout, stderr, rc = run_pii_guard("filter", input_text)
-    assert rc == 0, f"Expected zero exit code for {description}"
-    assert stdout == input_text
-    # Accept the deprecation warning emitted to stderr by pii_guard.sh, but
-    # reject any genuine PII detection output (PII_FOUND / PII_FILTER lines).
-    pii_lines = [l for l in stderr.splitlines()
-                 if "PII_FOUND" in l or "PII_FILTER" in l]
-    assert pii_lines == [], f"Unexpected PII detection in stderr: {pii_lines}"
-
-@pytest.mark.xfail(strict=False, reason="pii_guard.sh deprecated — shell script archived; Python API tests cover same logic")
-def test_pii_guard_scan_mode():
-    """Verify that scan mode detects PII without modifying output."""
-    input_text = "Your SSN is 123-45-6789"
-    stdout, stderr, rc = run_pii_guard("scan", input_text)
-    assert rc != 0
-    assert "PII_FILTER" in stderr
-    assert "scan_blocked" in stderr
-
-@pytest.mark.xfail(strict=False, reason="pii_guard.sh deprecated — shell script archived; Python API tests cover same logic")
-def test_pii_guard_built_in_test_suite():
-    """Run the shell script's own built-in test suite."""
-    stdout, stderr, rc = run_pii_guard("test", "")
-    assert rc == 0
-    assert "Results: 19 passed, 0 failed" in stdout
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Python API tests — exercise pii_guard.py scan() and filter_text() directly
-# ─────────────────────────────────────────────────────────────────────────────
-
-import sys
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-from pii_guard import scan as py_scan, filter_text as py_filter  # noqa: E402
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from pii_guard import filter_text as py_filter, scan as py_scan  # noqa: E402
 
 
 @pytest.mark.parametrize("description, input_text, expected_type", [

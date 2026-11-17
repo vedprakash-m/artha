@@ -1,21 +1,15 @@
 """tests/ext_agents/test_preflight_ext_agent.py — EA-11b: check_ext_agent_health tests."""
 from __future__ import annotations
 
-import sys
-import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 import yaml
 
 # Ensure scripts/ is on path
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from preflight.integration_checks import check_ext_agent_health  # type: ignore
-from lib.agent_registry import AgentRegistry  # type: ignore
 
 from .conftest import SAMPLE_AGENT_ENTRY
 

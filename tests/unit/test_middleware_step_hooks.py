@@ -11,7 +11,6 @@ Ref: specs/agent-fw.md §3.3 (AFW-3)
 """
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest

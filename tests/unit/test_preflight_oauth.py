@@ -5,9 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 _ARTHA_ROOT  = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"

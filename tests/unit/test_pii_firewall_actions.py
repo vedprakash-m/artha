@@ -6,23 +6,17 @@ the ActionExecutor blocks proposals containing PII in non-allowlisted fields.
 
 Ref: specs/act.md §7
 """
-import sys
 import uuid
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from actions.base import ActionProposal
 
-# Import pii_guard functions directly
-try:
-    from pii_guard import scan
-    _PII_GUARD_AVAILABLE = True
-except ImportError:
-    _PII_GUARD_AVAILABLE = False
+import importlib.util
+
+# Import pii_guard availability cleanly without an unused top-level symbol
+_PII_GUARD_AVAILABLE = importlib.util.find_spec("pii_guard") is not None
 
 
 # ---------------------------------------------------------------------------

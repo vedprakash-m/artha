@@ -1,14 +1,11 @@
 """WP-01 / 12.2 item 1: no script launches a permission-bypassing CLI (the channel bridge itself is gone)."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from lib import llm_cli_policy as policy  # noqa: E402
 

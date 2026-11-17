@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timezone
 
 import pytest
 
 from catchup_core import cli
 from catchup_core import goals as gl
-from catchup_core.contracts import CatchupRequest, CatchupResult, CoverageEntry, CoverageStatus, ExecutionMode, RunStatus
+from catchup_core.contracts import CatchupResult, CoverageEntry, CoverageStatus, RunStatus
 from catchup_core.ledger import FactView
 from catchup_core.scorecard import Case, score
 
@@ -51,7 +52,7 @@ def test_stale_evidence_is_unknown():
 
 
 def test_authored_goal_is_immutable():
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError, match=r"cannot\ assign\ to\ field\ 'target'"):
         GOAL.target = 99   # type: ignore[misc]
 
 
@@ -236,7 +237,7 @@ def test_invalid_metric_bounds_never_produce_progress(goal_world, field, value):
     metric = {'kind':'on_time_obligations','predicate':'exam_registration_deadline',
               'domain':'kids_school','target':2,'sources':['school_email']}
     metric[field] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Goal\ metric\ counts,\ freshness\ and\ source\ scopes\ need\ review|Goal\ source\ scopes\ need\ review"):
         gl.observe_goals(goal_world[0], [{'id':'G','metric':metric}], 'owner', NOW)
 
 

@@ -24,7 +24,6 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
 
 # Ensure scripts/ and scripts/lib/ are importable
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
@@ -56,7 +55,7 @@ def _run_pipeline_with_checkpoint(
 
     Returns the list of step numbers that actually executed.
     """
-    from checkpoint import clear_checkpoint, read_checkpoint, write_checkpoint
+    from checkpoint import write_checkpoint
 
     executed: list[int] = []
     start_step = (resume_from or 1)

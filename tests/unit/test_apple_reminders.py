@@ -11,18 +11,13 @@ Run: pytest tests/unit/test_apple_reminders.py -v
 """
 from __future__ import annotations
 
-import platform
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +86,12 @@ class TestGetEventStore:
         """If TCC denies access, _get_event_store should raise PermissionError."""
         import connectors.apple_reminders as ar
 
+        if not hasattr(ar, "_get_event_store"):
+            pytest.skip("macOS-only: _get_event_store not available on this platform")
+
         mock_store = MagicMock()
         mock_EventKit = MagicMock()
-        mock_EventKit.EKEventStore.return_value = mock_store
+        mock_EventKit.EKEventStore.alloc.return_value.init.return_value = mock_store
         mock_EventKit.EKEntityTypeReminder = 1
 
         # Simulate TCC denial: completionHandler called with granted=False
@@ -102,14 +100,12 @@ class TestGetEventStore:
 
         mock_store.requestAccessToEntityType_completion_ = _mock_request
 
-        # This is a macOS-only code path; only test if IS_MACOS or via mock
         with patch.object(ar, "_IS_MACOS", True):
             with patch.dict(sys.modules, {
                 "EventKit": mock_EventKit,
                 "Foundation": MagicMock(),
             }):
-                with pytest.raises((PermissionError, Exception)):
-                    # The function will attempt EventKit access and fail
+                with pytest.raises(PermissionError, match="Apple Reminders access denied"):
                     ar._get_event_store()
 
 

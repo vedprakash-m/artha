@@ -14,15 +14,12 @@ Coverage:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from session_summarizer import (
-    SUMMARIZE_AFTER_COMMANDS,
     SessionSummary,
-    _PYDANTIC_AVAILABLE,
     create_session_summary,
     estimate_context_pct,
     get_context_card,

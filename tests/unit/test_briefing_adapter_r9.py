@@ -62,14 +62,10 @@ def test_r9_returns_string_when_regressing(adapter, monkeypatch):
     fake_lib = types.ModuleType("lib")
     fake_lib.metric_store = types.ModuleType("lib.metric_store")  # type: ignore[attr-defined]
     fake_lib.metric_store.MetricStore = FakeMS  # type: ignore[attr-defined]
-    sys.modules["lib"] = fake_lib
-    sys.modules["lib.metric_store"] = fake_lib.metric_store  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lib", fake_lib)
+    monkeypatch.setitem(sys.modules, "lib.metric_store", fake_lib.metric_store)  # type: ignore[attr-defined]
 
-    try:
-        result = adapter._r9_quality_regression(runs=[{}] * 8, min_runs=7)
-    finally:
-        sys.modules.pop("lib", None)
-        sys.modules.pop("lib.metric_store", None)
+    result = adapter._r9_quality_regression(runs=[{}] * 8, min_runs=7)
 
     assert result is not None, "Expected R9 string, got None"
     assert "regressing" in result
@@ -86,14 +82,10 @@ def test_r9_returns_none_when_stable(adapter, monkeypatch):
     fake_lib = types.ModuleType("lib")
     fake_lib.metric_store = types.ModuleType("lib.metric_store")  # type: ignore[attr-defined]
     fake_lib.metric_store.MetricStore = FakeMS  # type: ignore[attr-defined]
-    sys.modules["lib"] = fake_lib
-    sys.modules["lib.metric_store"] = fake_lib.metric_store  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lib", fake_lib)
+    monkeypatch.setitem(sys.modules, "lib.metric_store", fake_lib.metric_store)  # type: ignore[attr-defined]
 
-    try:
-        result = adapter._r9_quality_regression(runs=[{}] * 10, min_runs=7)
-    finally:
-        sys.modules.pop("lib", None)
-        sys.modules.pop("lib.metric_store", None)
+    result = adapter._r9_quality_regression(runs=[{}] * 10, min_runs=7)
 
     assert result is None, f"Expected None for stable trend, got: {result}"
 
@@ -102,20 +94,16 @@ def test_r9_returns_none_when_stable(adapter, monkeypatch):
 # T-EV-13-03: run_count < min_runs=7 → returns None
 # ===========================================================================
 
-def test_r9_returns_none_when_insufficient_runs(adapter):
+def test_r9_returns_none_when_insufficient_runs(adapter, monkeypatch):
     """T-EV-13-03: Fewer than 7 runs must return None even if regressing."""
     FakeMS = _make_fake_metric_store("regressing", 4, 45.0)
     fake_lib = types.ModuleType("lib")
     fake_lib.metric_store = types.ModuleType("lib.metric_store")  # type: ignore[attr-defined]
     fake_lib.metric_store.MetricStore = FakeMS  # type: ignore[attr-defined]
-    sys.modules["lib"] = fake_lib
-    sys.modules["lib.metric_store"] = fake_lib.metric_store  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lib", fake_lib)
+    monkeypatch.setitem(sys.modules, "lib.metric_store", fake_lib.metric_store)  # type: ignore[attr-defined]
 
-    try:
-        result = adapter._r9_quality_regression(runs=[{}] * 4, min_runs=7)
-    finally:
-        sys.modules.pop("lib", None)
-        sys.modules.pop("lib.metric_store", None)
+    result = adapter._r9_quality_regression(runs=[{}] * 4, min_runs=7)
 
     assert result is None, f"Expected None for low run count, got: {result}"
 
@@ -124,7 +112,7 @@ def test_r9_returns_none_when_insufficient_runs(adapter):
 # T-EV-13-04: MetricStore raises exception → returns None
 # ===========================================================================
 
-def test_r9_returns_none_on_metric_store_exception(adapter):
+def test_r9_returns_none_on_metric_store_exception(adapter, monkeypatch):
     """T-EV-13-04: Exception in MetricStore must be caught and return None."""
 
     class BrokenMetricStore:
@@ -134,13 +122,9 @@ def test_r9_returns_none_on_metric_store_exception(adapter):
     fake_lib = types.ModuleType("lib")
     fake_lib.metric_store = types.ModuleType("lib.metric_store")  # type: ignore[attr-defined]
     fake_lib.metric_store.MetricStore = BrokenMetricStore  # type: ignore[attr-defined]
-    sys.modules["lib"] = fake_lib
-    sys.modules["lib.metric_store"] = fake_lib.metric_store  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "lib", fake_lib)
+    monkeypatch.setitem(sys.modules, "lib.metric_store", fake_lib.metric_store)  # type: ignore[attr-defined]
 
-    try:
-        result = adapter._r9_quality_regression(runs=[{}] * 8, min_runs=7)
-    finally:
-        sys.modules.pop("lib", None)
-        sys.modules.pop("lib.metric_store", None)
+    result = adapter._r9_quality_regression(runs=[{}] * 8, min_runs=7)
 
     assert result is None, f"Expected None for exception, got: {result}"

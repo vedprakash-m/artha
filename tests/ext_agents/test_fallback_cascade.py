@@ -1,15 +1,12 @@
 """tests/ext_agents/test_fallback_cascade.py — EA-5b fallback cascade tests."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.agent_invoker import (  # type: ignore
     AgentResult,

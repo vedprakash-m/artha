@@ -9,20 +9,6 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-
-# We need to mock FastMCP before importing mcp_server, because the import
-# instantiates the mcp object at module level.
-sys.modules.setdefault(
-    "mcp", MagicMock()
-)
-sys.modules.setdefault(
-    "mcp.server", MagicMock()
-)
-sys.modules.setdefault(
-    "mcp.server.fastmcp", MagicMock(FastMCP=MagicMock())
-)
 
 class _IdentityDecoratorFastMCP:
     def __init__(self, *_args, **_kwargs):
@@ -32,7 +18,31 @@ class _IdentityDecoratorFastMCP:
         return lambda function: function
 
 
-sys.modules["mcp.server.fastmcp"].FastMCP = _IdentityDecoratorFastMCP
+@pytest.fixture(scope="module", autouse=True)
+def _stub_fastmcp():
+    """Stub mcp packages only for this module and restore sys.modules afterward."""
+    fastmcp_mod = MagicMock(FastMCP=_IdentityDecoratorFastMCP)
+    stubs = {
+        "mcp": MagicMock(),
+        "mcp.server": MagicMock(),
+        "mcp.server.fastmcp": fastmcp_mod,
+    }
+    saved = {k: sys.modules.get(k) for k in (*stubs, "mcp_server")}
+    for k, v in stubs.items():
+        if k not in sys.modules:
+            sys.modules[k] = v
+    prev_fastmcp = getattr(sys.modules["mcp.server.fastmcp"], "FastMCP", None)
+    sys.modules["mcp.server.fastmcp"].FastMCP = _IdentityDecoratorFastMCP
+    try:
+        yield
+    finally:
+        if prev_fastmcp is not None:
+            sys.modules["mcp.server.fastmcp"].FastMCP = prev_fastmcp
+        for k, orig in saved.items():
+            if orig is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = orig
 
 
 # ── _require_approval ────────────────────────────────────────────────────────

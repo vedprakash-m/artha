@@ -217,7 +217,7 @@ def test_huge_numeric_logs_and_invalid_limits_are_bounded(tmp_path):
     (directory / '2026-10.jsonl').write_text(json.dumps({**run(1), 'total_seconds': 10 ** 400}))
     assert read_runs(directory) == []
     for limit in (-1, True, 1.5):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"metrics\ limit\ must\ be\ a\ nonnegative\ integer"):
             read_runs(directory, limit=limit)
     assert estimate_cost([run(1)], {'input_usd_per_million_tokens': 10 ** 400,
         'output_usd_per_million_tokens': 1, 'as_of': '2026-10-22'})['estimate'].startswith('unavailable')

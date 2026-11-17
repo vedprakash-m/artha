@@ -16,7 +16,6 @@ Coverage:
 """
 from __future__ import annotations
 
-import sys
 import unittest.mock
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,8 +23,6 @@ from pathlib import Path
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from action_composer import ActionComposer
 from actions.base import ActionProposal, DomainSignal
@@ -217,7 +214,7 @@ class TestComposeEdgeCases:
         assert result is None
 
     def test_empty_signal_type_raises_value_error(self, composer):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"DomainSignal\.signal_type\ must\ be\ a\ non\-empty\ string;\ got\ ''"):
             _make_signal(signal_type="")
 
     def test_reversible_and_undo_window_consistent(self, composer):

@@ -160,3 +160,10 @@ def test_severity_rank_and_coverage_quiet_rule():
     assert c.Severity.P1.rank < c.Severity.P3.rank
     assert c.CoverageStatus.COMPLETE.quiet_claim_allowed
     assert not c.CoverageStatus.NOTIFIED_NOT_FETCHED.quiet_claim_allowed
+
+
+def test_contract_version_is_semver():
+    import catchup_core
+
+    parts = catchup_core.CORE_CONTRACT_VERSION.split(".")
+    assert len(parts) == 3 and all(p.isdigit() for p in parts)

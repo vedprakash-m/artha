@@ -2,14 +2,10 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.metrics_writer import write_invocation_metric, write_routing_decision  # type: ignore
 

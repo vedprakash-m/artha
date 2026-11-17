@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -431,7 +431,7 @@ def test_blob_store_encrypts_and_sweeps(tmp_path):
     assert store.sweep([ref]) == [other]
     with pytest.raises(BlobMissing):
         store.get(other)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"not\ a\ blob\ ref:\ '\.\./etc/passwd'"):
         store.get("../etc/passwd")
     store.delete(ref)
     assert store.sweep([]) == []

@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-import pytest
 
 # Make scripts/ importable without running the full bootstrap
 _REPO = Path(__file__).resolve().parents[2]
-if str(_REPO / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO / "scripts"))
 
+import skill_runner
 from skill_runner import _enforce_cache_size_cap, _CACHE_MAX_BYTES
 
 
@@ -56,17 +53,18 @@ class TestCacheSizeCap:
         assert "new_skill" in result
         assert "old_skill" not in result
 
-    def test_1000_writes_stays_bounded(self):
-        """Simulate 1000 successive writes; result must always stay ≤ 1MB."""
+    def test_1000_writes_stays_bounded(self, monkeypatch):
+        """Simulate 1000 successive writes; result must always stay <= the cap."""
+        monkeypatch.setattr(skill_runner, "_CACHE_MAX_BYTES", 8192)
         cache: dict = {}
         for i in range(1000):
             cache[f"skill_{i:04d}"] = {
                 "last_run": f"2026-01-01T{i % 24:02d}:00:00+00:00",
-                "data": "z" * 2048,
+                "data": "z" * 128,
             }
             cache = _enforce_cache_size_cap(cache)
             size = len(json.dumps(cache, indent=2).encode())
-            assert size <= _CACHE_MAX_BYTES, f"Exceeded 1MB at iteration {i}: {size} bytes"
+            assert size <= 8192, f"Exceeded cap at iteration {i}: {size} bytes"
 
     def test_original_dict_not_mutated(self):
         """_enforce_cache_size_cap must not mutate its input."""

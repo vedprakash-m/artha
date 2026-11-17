@@ -144,6 +144,7 @@ def test_AR07_bad_remote_listing_refuses(repo, monkeypatch):
         Workspace(repo).remote_tip()
 
 
+@pytest.mark.slow
 def test_AR06_git_filter_cannot_substitute_ci_source_bytes(repo):
     workspace = Workspace(repo)
     source = workspace.source()

@@ -1,16 +1,12 @@
 """WP-01 / §6.11: background job definitions and installers are retired."""
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 RETIRED_FILES = [
     "scripts/service/artha-listener.service",

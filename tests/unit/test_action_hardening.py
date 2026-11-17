@@ -3,14 +3,11 @@ from __future__ import annotations
 
 import dataclasses
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import action_executor as ae  # noqa: E402
 import action_queue as aq  # noqa: E402
@@ -68,7 +65,7 @@ def test_unknown_may_resolve_to_failed_and_nothing_else(queue):
     _to_executing(queue)
     queue.transition("p-1", "unknown", actor="system:executor")
     for bad in ("approved", "executing", "pending", "cancelled"):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid\ transition\ 'unknown'\ →\ 'approved'\ by\ 'x'\.\ Allowed\ transitions\ from\ 'unknown':\ \['failed',\ 'succeeded'\]|Invalid\ transition\ 'unknown'\ →\ 'cancelled'\ by\ 'x'\.\ Allowed\ transitions\ from\ 'unknown':\ \['failed',\ 'succeeded'\]|Invalid\ transition\ 'unknown'\ →\ 'executing'\ by\ 'x'\.\ Allowed\ transitions\ from\ 'unknown':\ \['failed',\ 'succeeded'\]|Invalid\ transition\ 'unknown'\ →\ 'pending'\ by\ 'x'\.\ Allowed\ transitions\ from\ 'unknown':\ \['failed',\ 'succeeded'\]"):
             queue.transition("p-1", bad, actor="x")
     assert queue.transition("p-1", "failed", actor="system:reconciler") == "unknown"
 
@@ -135,10 +132,18 @@ def test_racing_transition_loses_instead_of_overwriting(queue, tmp_path):
 
 
 def test_timeout_is_unknown_and_makes_no_false_claim():
+    import threading
+
+    gate = threading.Event()
+
     class Slow:
         def execute(self, proposal):
-            time.sleep(2)
-    result = ae._execute_with_timeout(Slow(), proposal(), 0.05)
+            gate.wait(timeout=5)
+
+    try:
+        result = ae._execute_with_timeout(Slow(), proposal(), 0.05)
+    finally:
+        gate.set()
     assert result.status == "unknown" and result.data == {"timed_out": True}
     assert "may or may not" in result.message and "No changes were committed" not in result.message
 
@@ -232,7 +237,7 @@ def test_required_preview_cannot_be_invented_by_proposal_metadata(queue):
 
 def test_preview_receipt_requires_exact_rendered_payload(queue):
     queue.propose(proposal())
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"proposal\ changed\ before\ preview\ could\ be\ recorded"):
         queue.mark_preview_shown("p-1", "user", payload_hash="wrong")
     assert not queue.get_raw("p-1")["preview_payload_hash"]
 

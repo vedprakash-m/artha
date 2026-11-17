@@ -97,7 +97,7 @@ def test_native_lifetime_closes_parent_handle_on_every_exit(monkeypatch, outcome
     monkeypatch.setattr(action_process.time, "sleep", lambda seconds: calls.append(("sleep", (seconds,))))
     monkeypatch.setattr(action_process.os, "_exit", exit_process)
     if outcome == "open_error":
-        with pytest.raises(OSError):
+        with pytest.raises(OSError, match="WinError"):
             action_process._start_lifetime(9876, 1)
         assert calls == [("open", (0x00100000, False, 9876))]
         assert targets == []
@@ -307,7 +307,7 @@ def test_reconcile_runs_in_the_same_bounded_child_and_passes_the_approval_time(d
     assert result.status == "unknown" and seen["operation"] == "reconcile" and seen["since"] == "2026-10-20T10:00:00Z"
     assert set(seen["env"]) <= set(action_process._CHILD_ENV) | {"ARTHA_NO_REEXEC"}
     assert not any(k.endswith(("TOKEN", "SECRET", "KEY", "PASSWORD")) for k in seen["env"])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"unsupported\ action\ operation"):
         action_process.execute("actions.reminder_create", proposal(), 5, queue_path=dispatch, operation="delete")
 
 
@@ -495,7 +495,6 @@ def test_worker_installs_scope_before_handler_and_never_returns_secret_diagnosti
     import os
     import sqlite3
     import sys
-    import time
     import keyring
     from datetime import UTC, datetime, timedelta
     from catchup_core import crypto

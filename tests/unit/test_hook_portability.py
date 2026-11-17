@@ -112,7 +112,7 @@ def test_invalid_settings_are_left_byte_for_byte_unchanged(tmp_path):
     path.parent.mkdir()
     for content in ('[]', '{"hooks": []}', '{"hooks": {"PreToolUse": {}}}', '['):
         path.write_text(content)
-        with pytest.raises(ValueError):
+        with pytest.raises((json.JSONDecodeError, ValueError), match=r"Existing\ hook\ event\ must\ be\ a\ list;\ settings\ were\ not\ changed\.|Existing\ hooks\ must\ be\ a\ mapping;\ settings\ were\ not\ changed\.|Existing\ settings\ must\ be\ a\ mapping;\ settings\ were\ not\ changed\.|Expecting\ value"):
             hooks.install(tmp_path)
         assert path.read_text() == content
         assert not path.with_name('settings.pre-portable-hooks.json').exists()

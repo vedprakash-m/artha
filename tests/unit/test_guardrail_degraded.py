@@ -11,22 +11,18 @@ from __future__ import annotations
 
 import importlib
 import os
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 _SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 
 def _reload_registry() -> object:
     """Import/reload guardrail_registry with a clean module state."""
-    if "middleware.guardrail_registry" in sys.modules:
-        del sys.modules["middleware.guardrail_registry"]
     from middleware import guardrail_registry
+
+    importlib.reload(guardrail_registry)
     # A6: Reset module-level flag to prevent cross-test state leak
     guardrail_registry._GUARDRAILS_DEGRADED = False
     return guardrail_registry
@@ -34,6 +30,11 @@ def _reload_registry() -> object:
 
 class TestGuardrailDegraded:
     """A1–A6 from DEBT-004."""
+
+    @pytest.fixture(autouse=True)
+    def _no_retry_sleep(self, monkeypatch):
+        import time as _time
+        monkeypatch.setattr(_time, "sleep", lambda _s: None)
 
     def setup_method(self):
         """A6: Reset degraded flag before each test."""
@@ -65,7 +66,7 @@ class TestGuardrailDegraded:
         gr._GUARDRAILS_DEGRADED = False
 
         with patch("sys.stderr"):  # suppress CRITICAL output
-            registry = gr.GuardrailRegistry(config_path=missing_path)
+            gr.GuardrailRegistry(config_path=missing_path)
 
         assert gr._GUARDRAILS_DEGRADED is True, \
             "DEBT-004: _GUARDRAILS_DEGRADED not set when guardrails.yaml is missing"
@@ -78,7 +79,7 @@ class TestGuardrailDegraded:
         gr._GUARDRAILS_DEGRADED = False
 
         with patch("sys.stderr"):
-            registry = gr.GuardrailRegistry(config_path=bad_yaml)
+            gr.GuardrailRegistry(config_path=bad_yaml)
 
         assert gr._GUARDRAILS_DEGRADED is True, \
             "DEBT-004: _GUARDRAILS_DEGRADED not set on malformed YAML"
@@ -97,7 +98,7 @@ class TestGuardrailDegraded:
         gr = _reload_registry()
         gr._GUARDRAILS_DEGRADED = False
 
-        registry = gr.GuardrailRegistry(config_path=missing_path)
+        gr.GuardrailRegistry(config_path=missing_path)
 
         captured = capsys.readouterr()
         assert "CRITICAL" in captured.err, \

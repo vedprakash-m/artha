@@ -1,7 +1,6 @@
 """Unit tests for pipeline.fetch_single() — WS-1C."""
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -10,8 +9,6 @@ import pytest
 
 # Ensure scripts/ is importable (conftest also sets ARTHA_NO_REEXEC before this)
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 # ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
+from catchup_core.quarantine_review import ReviewBlocked
 
 NOW = datetime(2026, 10, 25, tzinfo=timezone.utc)
 
@@ -47,7 +48,7 @@ def test_view_exact_utf8_without_attestation_or_persistence(store, suffix, size)
                       'text': store.data.decode('utf-8')}
     assert result['text'].encode('utf-8') == store.data
     assert {str(path): path.read_bytes() for path in store.root.parent.rglob('*') if path.is_file()} == before
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"explicit\ owner\ clean\-content\ attestation\ required"):
         release(store, 'member-1', name, review['review_digest'], attest_clean=False, now=NOW)
 
 
@@ -240,7 +241,7 @@ def test_review_then_one_private_inactive_export(store):
     assert receipt['member_sha256'] == hashlib.sha256(store.data).hexdigest()
     assert receipt['attestation'] == 'human-review-not-lineage-proof'
     assert (store.root.parent / '.artha-restored.json').exists()
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"export\ already\ exists\ or\ aliases\ another\ export"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -279,7 +280,7 @@ def test_encryption_failure_or_authority_change_precedes_all_publication(store, 
             store.catalog['checkpoint_id'] = 'new-checkpoint'
         return envelope
     monkeypatch.setattr(store.cipher, 'encrypt', encrypt)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"quarantine\ review\ unavailable\ or\ unsafe|review\ authority\ or\ encrypted\ quarantine\ changed"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports').exists()
 
@@ -313,7 +314,7 @@ def test_binding_changes_refuse(store, change):
         store.catalog['checkpoint_id'] = 'other'
     else:
         store.cipher = EnvelopeCipher(StaticKeyProvider({1: b'z' * 32}))
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"current\ local\ owner\ and\ matching\ profile\ required|invalid\ authenticated\ review\ token|review\ does\ not\ match\ current\ authority\ and\ requested\ document"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports/notes.md.ae1').exists()
 
@@ -322,7 +323,7 @@ def test_binding_changes_refuse(store, change):
 def test_future_and_expired_review_refuse(store, minutes):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"future,\ expired\ or\ malformed\ review\ token"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True,
                 now=NOW + timedelta(minutes=minutes))
 
@@ -331,7 +332,7 @@ def test_future_and_expired_review_refuse(store, minutes):
                                   'https:notes.md', 'notes.json', 'notes.md ', 'a\x00.md'])
 def test_unsafe_output_refuses(store, name):
     from catchup_core.quarantine_review import preview
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"output\ requires\ a\ lowercase\ ASCII\ document\ basename\ of\ at\ most\ 120\ characters"):
         preview(store, 'member-1', name, now=NOW)
 
 
@@ -341,7 +342,7 @@ def test_unsafe_output_refuses(store, name):
 def test_forbidden_source_refuses(store, path):
     from catchup_core.quarantine_review import preview
     store.catalog['entries'][0]['path'] = path
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"member\ is\ not\ an\ eligible\ inert\ document"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -359,7 +360,7 @@ def test_blocked_and_missing_authority_refuse(store, change):
         store.context['privacy'] = {}
     else:
         (store.root.parent / '.artha-restored.json').unlink()
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"current\ privacy\ heads\ required|member\ is\ not\ an\ eligible\ inert\ document|restored\-installation\ fence\ required"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -367,7 +368,7 @@ def test_attestation_and_exact_output_required(store):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     for name, attest in [('notes.md', False), ('other.md', True), ('notes.md', 1)]:
-        with pytest.raises(ValueError):
+        with pytest.raises(ReviewBlocked, match=r"explicit\ owner\ clean\-content\ attestation\ required|review\ does\ not\ match\ current\ authority\ and\ requested\ document"):
             release(store, 'member-1', name, review['review_digest'], attest_clean=attest, now=NOW)
 
 
@@ -375,7 +376,7 @@ def test_midchunk_revocation_leaves_no_plaintext(store):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     store.on_chunk = lambda: store.context['privacy']['ledger'].update(permission_generation=3)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ authority\ or\ ciphertext\ changed\ during\ read"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports/notes.md.ae1').exists()
     assert all(store.data not in path.read_bytes() for path in store.root.parent.rglob('*') if path.is_file())
@@ -424,7 +425,7 @@ def test_actual_changed_ciphertext_or_blocked_member_refuses(tmp_path, mutation)
     else:
         chunk = actual.root / actual.inventory()[0]['chunks'][0]['name']
         _flip_last_byte(chunk)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"member\ is\ not\ an\ eligible\ inert\ document|quarantine\ review\ unavailable\ or\ unsafe"):
         release(actual, member_id, 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (actual.root.parent / 'reviewed-exports/notes.md.ae1').exists()
 
@@ -438,7 +439,7 @@ def test_sensitive_or_executable_content_stays_encrypted(store, data):
     store.data = data
     store.catalog['entries'][0].update(size=len(data), sha256=hashlib.sha256(data).hexdigest())
     review = preview(store, 'member-1', 'notes.md', now=NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"binary\ content\ is\ not\ a\ text\ document|content\ classification\ holds\ this\ document\ encrypted|executable\ content\ is\ not\ a\ clean\ document|text\ export\ must\ be\ UTF\-8"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports/notes.md.ae1').exists()
 
@@ -451,7 +452,7 @@ def test_postpublication_revocation_removes_only_own_export(store, monkeypatch):
         real_sync(descriptor)
         store.context['privacy']['ledger']['permission_generation'] += 1
     monkeypatch.setattr(module, '_sync_directory', revoke)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"privacy\ changed\ at\ publication"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports/notes.md.ae1').exists()
 
@@ -468,7 +469,7 @@ def test_postpublication_replacement_is_never_deleted(store, monkeypatch):
             output.write_bytes(b'Independent replacement')
         store.context['privacy']['ledger']['permission_generation'] += 1
     monkeypatch.setattr(module, '_sync_directory', replace)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"privacy\ changed\ at\ publication"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert output.read_bytes() == b'Independent replacement'
 
@@ -495,7 +496,7 @@ def test_output_link_and_overwrite_refuse(store, kind):
             if kind == 'plaintext-alias':
                 name = 'notes.md'
             (directory / name).write_bytes(b'Existing document')
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"export\ already\ exists\ or\ aliases\ another\ export|linked\ or\ unsafe\ review\ path"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -516,9 +517,9 @@ def test_separate_process_lock_blocks_preview_and_release(store):
     process.start()
     try:
         assert ready.wait(10)
-        with pytest.raises(ValueError):
+        with pytest.raises(ReviewBlocked, match=r"quarantine\ review\ unavailable\ or\ unsafe"):
             preview(store, 'member-1', 'notes.md', now=NOW)
-        with pytest.raises(ValueError):
+        with pytest.raises(ReviewBlocked, match=r"quarantine\ review\ unavailable\ or\ unsafe"):
             release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     finally:
         done.set()
@@ -549,7 +550,7 @@ def test_authenticated_malformed_token_refuses(store, change):
     else:
         payload['binding'] = []
     encrypted, _ = store.cipher.encrypt(json.dumps(payload).encode(), aad=module._AAD)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"future,\ expired\ or\ malformed\ review\ token|invalid\ review\ schema|review\ does\ not\ match\ current\ authority\ and\ requested\ document"):
         module.release(store, 'member-1', 'notes.md', base64.b64encode(encrypted).decode(),
                        attest_clean=True, now=NOW)
 
@@ -558,7 +559,7 @@ def test_authenticated_malformed_token_refuses(store, change):
 def test_export_size_limit_rejects_before_read(store, size):
     from catchup_core.quarantine_review import preview
     store.catalog['entries'][0]['size'] = size
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"member\ is\ not\ an\ eligible\ inert\ document"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -566,7 +567,7 @@ def test_different_member_bytes_never_publish(store):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     store.data = b'x' * len(store.data)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"member\ does\ not\ match\ its\ original\ size\ and\ hash"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -577,7 +578,7 @@ def test_different_member_bytes_never_publish(store):
 def test_invalid_catalog_refuses(store, field, value):
     from catchup_core.quarantine_review import preview
     store.catalog[field] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"invalid\ quarantine\ catalog|invalid\ quarantine\ entry|one\ exact\ quarantine\ member\ required"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -591,7 +592,7 @@ def test_invalid_catalog_refuses(store, field, value):
 def test_invalid_member_refuses(store, field, value):
     from catchup_core.quarantine_review import preview
     store.catalog['entries'][0][field] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"invalid\ document\ source\ path|member\ is\ not\ an\ eligible\ inert\ document"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -601,7 +602,7 @@ def test_invalid_member_refuses(store, field, value):
 def test_invalid_privacy_heads_refuse(store, field, value):
     from catchup_core.quarantine_review import preview
     store.context['privacy']['ledger'][field] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"invalid\ current\ privacy\ head"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -613,7 +614,7 @@ def test_invalid_restored_marker_refuses(store, value):
     from catchup_core.quarantine_review import preview
     (store.root.parent / '.artha-restored.json').write_text(
         value if value == 'malformed' else json.dumps(value))
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"contradictory\ restored\-installation\ fence|invalid\ restored\-installation\ fence|restored\ ingestion\ and\ effects\ must\ remain\ disabled"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -621,7 +622,7 @@ def test_invalid_restored_marker_refuses(store, value):
                                NOW.astimezone(timezone(timedelta(hours=1)))])
 def test_explicit_utc_clock_required(store, now):
     from catchup_core.quarantine_review import preview
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"an\ explicit\ trusted\ UTC\ clock\ is\ required"):
         preview(store, 'member-1', 'notes.md', now=now)
 
 
@@ -629,7 +630,7 @@ def test_explicit_utc_clock_required(store, now):
                          ids=['malformed', 'empty', 'oversized', 'none'])
 def test_invalid_review_token_refuses(store, token):
     from catchup_core.quarantine_review import release
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"invalid\ authenticated\ review\ token|invalid\ review\ token"):
         release(store, 'member-1', 'notes.md', token, attest_clean=True, now=NOW)
 
 
@@ -641,7 +642,7 @@ def test_csv_formula_cells_refuse(store, data):
     store.catalog['entries'][0].update(path='state/notes.csv', size=len(data),
                                       sha256=hashlib.sha256(data).hexdigest())
     review = preview(store, 'member-1', 'notes.csv', now=NOW)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"spreadsheet\ formula\ cells\ are\ not\ inert\ exports"):
         release(store, 'member-1', 'notes.csv', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -658,7 +659,7 @@ def test_pdf_content_policy(store, data, allowed):
     if allowed:
         release(store, 'member-1', 'notes.pdf', review['review_digest'], attest_clean=True, now=NOW)
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ReviewBlocked, match=r"content\ classification\ holds\ this\ document\ encrypted|invalid\ PDF\ document|opaque\ PDF\ content\ cannot\ be\ classified\ for\ clean\ export"):
             release(store, 'member-1', 'notes.pdf', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -668,10 +669,10 @@ def test_owner_policy_digest_and_extra_authority_fields_are_bound(store):
     store.context['family_approval'] = True
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     store.context['policy_digest'] = 'd' * 64
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ does\ not\ match\ current\ authority\ and\ requested\ document"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     store.context['actor'] = 'family'
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"current\ local\ owner\ and\ matching\ profile\ required"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -683,7 +684,7 @@ def test_catalog_changed_after_publication_is_not_success(store, monkeypatch):
         real_sync(descriptor)
         store.catalog['checkpoint_id'] = 'another-checkpoint'
     monkeypatch.setattr(module, '_sync_directory', change_catalog)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"quarantine\ changed\ at\ publication"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not (store.root.parent / 'reviewed-exports/notes.md.ae1').exists()
 
@@ -844,13 +845,13 @@ def test_publication_boundary_failures_never_succeed(store, monkeypatch, failure
             if output.exists() and not alias.exists():
                 os.link(output, alias)
         monkeypatch.setattr(module, '_sync_directory', add_link)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"export\ directory\ changed|export\ directory\ must\ be\ owner\-private|private\ descriptor\-relative\ publication\ is\ unavailable\ on\ this\ host|published\ export\ changed"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
 def test_exact_output_type_is_required(store):
     from catchup_core.quarantine_review import preview
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"export\ must\ retain\ the\ document\ type"):
         preview(store, 'member-1', 'notes.txt', now=NOW)
 
 
@@ -859,7 +860,7 @@ def test_stream_overflow_and_invalid_chunks_refuse(store, chunk):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     store.iter_member = lambda member_id: iter([chunk])
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"member\ exceeds\ its\ authenticated\ size\ or\ export\ limit"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -867,20 +868,20 @@ def test_catalog_swap_during_chunk_refuses(store):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW)
     store.on_chunk = lambda: store.catalog_path.write_bytes(b'other-catalog')
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ authority\ or\ ciphertext\ changed\ during\ read"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
 def test_unserializable_authority_refuses(store):
     from catchup_core.quarantine_review import preview
     store.context['invalid'] = object()
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"invalid\ review\ schema"):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
 def test_bounded_metadata_read_and_changed_input(store, monkeypatch):
     from catchup_core import quarantine_review as module
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ input\ exceeds\ its\ bounded\ size"):
         module._read(store.catalog_path, 1)
     original = module._ordinary
     def replace(path, **kwargs):
@@ -890,7 +891,7 @@ def test_bounded_metadata_read_and_changed_input(store, monkeypatch):
             path.write_bytes(b'new input')
         return before
     monkeypatch.setattr(module, '_ordinary', replace)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ input\ changed"):
         module._read(store.catalog_path, 1024)
 
 
@@ -898,7 +899,7 @@ def test_bounded_metadata_read_and_changed_input(store, monkeypatch):
 def test_foreign_owner_refuses(store, monkeypatch):
     from catchup_core import quarantine_review as module
     monkeypatch.setattr(module.os, 'getuid', lambda: -1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"quarantine\ review\ unavailable\ or\ unsafe"):
         module.preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -915,7 +916,7 @@ def test_output_ancestor_swap_cannot_write_to_external_directory(store, monkeypa
             directory.rmdir()
             directory.symlink_to(outside, target_is_directory=True)
     monkeypatch.setattr(module, '_ancestry', swap)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"quarantine\ review\ unavailable\ or\ unsafe"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not list(outside.iterdir())
 
@@ -924,7 +925,7 @@ def test_output_ancestor_swap_cannot_write_to_external_directory(store, monkeypa
 def test_direct_foreign_owner_metadata_is_refused(store, monkeypatch):
     from catchup_core import quarantine_review as module
     monkeypatch.setattr(module.os, 'getuid', lambda: -1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ path\ belongs\ to\ another\ local\ owner"):
         module._ordinary(store.catalog_path)
 
 
@@ -940,7 +941,7 @@ def test_input_identity_changed_during_read_refuses(store, monkeypatch):
             return os.stat_result(changed)
         return metadata
     monkeypatch.setattr(module.os, 'stat', changed_stat)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ input\ changed\ during\ read"):
         module._read(store.catalog_path, 1024)
 
 
@@ -952,7 +953,7 @@ def test_catalog_change_while_issuing_preview_refuses(store, monkeypatch):
         store.catalog['checkpoint_id'] = 'new-checkpoint'
         return encrypted
     monkeypatch.setattr(store.cipher, 'encrypt', change_catalog)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"review\ authority\ or\ encrypted\ quarantine\ changed"):
         module.preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -960,7 +961,7 @@ def test_catalog_change_while_issuing_preview_refuses(store, monkeypatch):
 def test_descriptor_support_missing_refuses(store, monkeypatch):
     from catchup_core import quarantine_review as module
     monkeypatch.setattr(module.os, 'supports_dir_fd', set())
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"secure\ descriptor\-relative\ review\ IO\ is\ unavailable"):
         module.preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -977,7 +978,7 @@ def test_inert_csv_exports_exact_bytes(store):
 def test_subsecond_future_review_refuses(store):
     from catchup_core.quarantine_review import preview, release
     review = preview(store, 'member-1', 'notes.md', now=NOW + timedelta(microseconds=1))
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"future,\ expired\ or\ malformed\ review\ token"):
         release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -995,7 +996,7 @@ def test_final_export_integrity_required_before_success(store, monkeypatch, tamp
             else:
                 _share(output)
     monkeypatch.setattr(module, '_sync_directory', corrupt)
-    with pytest.raises(ValueError):
+    with pytest.raises(ReviewBlocked, match=r"published\ encrypted\ export\ does\ not\ match\ the\ reviewed\ envelope|published\ export\ changed"):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not output.exists()
 

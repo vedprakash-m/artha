@@ -19,10 +19,8 @@ Coverage:
 """
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 # conftest adds scripts/ to sys.path
 from delegation import (

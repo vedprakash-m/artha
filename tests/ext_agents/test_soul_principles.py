@@ -19,14 +19,10 @@ Ref: specs/ext-agent-reloaded.md §EAR-9, R-8
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.soul_allowlist import scan_principle, filter_principles, SOUL_SAFE_PREFIXES
 

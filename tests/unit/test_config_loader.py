@@ -177,7 +177,7 @@ class TestRequiredConfig:
         import lib.config_loader as cl
         with pytest.raises(FileNotFoundError):
             cl.load_config("connectors", str(tmp_path), strict=True)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"unknown\ configuration\ name"):
             cl.load_config("unknown", str(tmp_path), strict=True)
 
     @pytest.mark.parametrize("failure", [PermissionError, UnicodeError])

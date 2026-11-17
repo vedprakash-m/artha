@@ -19,24 +19,20 @@ Run:
 from __future__ import annotations
 
 import json
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 
-if str(SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS_DIR))
 
 import action_orchestrator as orch
 from action_orchestrator import (
-    _actions_enabled,
     _persist_signals,
     run,
 )
@@ -304,7 +300,7 @@ def test_output_path_traversal_blocked(tmp_path):
     artha_dir = tmp_path
     (tmp_path / "tmp").mkdir()
 
-    traversal_path = tmp_path / "tmp" / ".." / ".." / "etc" / "passwd"
+    tmp_path / "tmp" / ".." / ".." / "etc" / "passwd"
     traversal_path_resolved = Path("/etc/passwd")
 
     with pytest.raises((ValueError, OSError, Exception)):
@@ -332,8 +328,6 @@ def test_output_path_must_be_in_tmp(tmp_path):
 
 def test_autonomy_floor_enforced_on_approve(artha_dir):
     """email_send with autonomy_floor: true → requires human approve()."""
-    from action_executor import ActionExecutor
-    from actions.base import ActionProposal
 
     # The autonomy floor check happens inside ActionExecutor.approve()
     # We verify the config declares autonomy_floor: true for email_send
@@ -351,7 +345,7 @@ def test_autonomy_floor_enforced_on_approve(artha_dir):
 
 def test_handler_not_in_allowlist_blocked():
     """action_type not in _ALLOWED_ACTION_TYPES → no proposal created."""
-    from action_composer import _ALLOWED_ACTION_TYPES, ActionComposer
+    from action_composer import _ALLOWED_ACTION_TYPES
 
     # Verify the composer's allowlist is enforced
     # The composer.compose() should return None for unknown types
@@ -443,7 +437,6 @@ def test_signals_file_excludes_metadata(tmp_path):
 def test_rate_limit_enforced(artha_dir):
     """Rate limiter blocks the 21st email_send when max_per_hour=20."""
     from action_executor import ActionExecutor
-    from actions.base import ActionProposal
 
     # Verify the config declares the rate limit
     import yaml

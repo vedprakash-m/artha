@@ -9,12 +9,10 @@ Unit tests for scripts introduced in the catch-up quality improvement plan:
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 _ARTHA_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
@@ -70,7 +68,7 @@ class TestEmailClassifier:
     def test_non_email_record_passes_through_unchanged(self):
         ec = self._import()
         rec = {"type": "calendar_event", "summary": "Weekly digest"}
-        original = dict(rec)
+        dict(rec)
         classify_records = ec.classify_records
         classify_records([rec])
         # Non-email record should not gain marketing field
@@ -210,12 +208,11 @@ class TestCalendarWriter:
         cal.write_text("---\ndomain: calendar\nlast_updated: \"\"\n---\n\n## Upcoming Events\n\n<!-- Events are appended here by calendar_writer.py -->\n\n## Past Events\n", encoding="utf-8")
 
         events = [self._make_event()]
-        import io
         from unittest.mock import patch as _patch
         with _patch.object(cw, "CALENDAR_FILE", cal), _patch.object(cw, "STATE_DIR", state_dir), _patch.object(cw, "TMP_DIR", tmp_path / "tmp"):
             # Write records directly via internal function
             content = cw._read_or_init_calendar()
-            existing = cw._existing_dedup_keys(content)
+            cw._existing_dedup_keys(content)
             entry = cw._format_event(events[0], "abc123deadbeef12")
             assert "Team Standup" in entry
             assert "dedup:abc123deadbeef12" in entry

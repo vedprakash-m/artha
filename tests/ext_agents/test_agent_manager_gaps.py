@@ -9,8 +9,6 @@ Covers the four previously-identified gaps:
 from __future__ import annotations
 
 import hashlib
-import io
-import sys
 import textwrap
 from pathlib import Path
 from unittest import mock
@@ -22,12 +20,10 @@ import yaml
 # Ensure scripts/ is importable
 # ---------------------------------------------------------------------------
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import agent_manager as am  # noqa: E402 — after sys.path setup
 
-from lib.agent_registry import AgentRegistry, _parse_agent  # noqa: E402
+from lib.agent_registry import AgentRegistry  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +256,7 @@ class TestArchivePreviousVersion:
             arc = archive_dir / f"gap-agent-{i:08x}.md"
             arc.write_text(f"version {i}", encoding="utf-8")
             # Touch with incrementing mtimes so sort is deterministic
-            import os, time
+            import os
             t = 1000000 + i
             os.utime(arc, (t, t))
 

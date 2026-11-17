@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from actions import reminder_create as rc  # noqa: E402
 
 SINCE = "2026-10-20T10:00:00Z"

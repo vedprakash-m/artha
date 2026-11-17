@@ -9,17 +9,13 @@ Coverage:
 """
 from __future__ import annotations
 
-import sys
 import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from io import BytesIO
 
-import pytest
 
 # ── Path setup ────────────────────────────────────────────────────────────────
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-sys.path.insert(0, str(_SCRIPTS))
 
 from connectors.reddit import _sanitize_title, fetch
 

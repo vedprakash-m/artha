@@ -24,6 +24,7 @@ from catchup_core.recovery_access import RecoveryAccess
 from catchup_core.recovery_quarantine import QuarantineError, QuarantineStore
 
 NOW = datetime(2026, 10, 25, tzinfo=UTC)
+pytestmark = pytest.mark.slow
 
 
 def write_restored_ledger(path, data):
@@ -155,6 +156,7 @@ def test_real_restore_encrypts_all_raw_notes_and_replays_without_sidecars(setup)
         list(store.iter_member(store.inventory()[0]['member_id']))
 
 
+@pytest.mark.slow
 def test_known_forget_removes_fact_and_blocks_exact_artifact_and_rerestore(setup):
     signal_id, _ = setup.ledger.upsert_signal(SignalInput(
         'school_email', 'test', 'message1', 'v1', NOW.isoformat(), 'content1', 'evd_test'))
@@ -195,6 +197,7 @@ def test_export_requires_current_self_granted_recovery_view_and_export(
         setup.access.open_store(setup.dest, export=True)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize('scope,audience', [('recovery', 'owner'), ('*', '*')])
 def test_export_current_self_consent_allows_in_memory_content_and_revocation_blocks_old_store(setup, scope, audience):
     consent_id = setup.ledger.grant_consent('adult', 'adult', scope, ['view', 'export'], audience)
@@ -518,12 +521,15 @@ def test_oversized_replay_output_refuses_before_writing(setup, monkeypatch):
     ledger = destination / 'catchup_core/ledger.db'
     original = database_bytes(setup.ledger._path)
     write_restored_ledger(ledger, original)
-    with pytest.raises(CheckpointBlocked, match='exceeds its bound'):
+    def _grow():
         with setup.access._database(destination, ledger, update=True) as db:
             db.execute('CREATE TABLE synthetic_growth(value BLOB)')
             db.execute('INSERT INTO synthetic_growth VALUES(?)', (bytes(8192),))
             assert len(db.serialize()) > len(original)
             monkeypatch.setattr(ck, '_MAX_SQLITE_BYTES', len(original))
+
+    with pytest.raises(CheckpointBlocked, match='exceeds its bound'):
+        _grow()
     assert ledger.read_bytes() == original
 
 
@@ -636,19 +642,26 @@ def test_file_mutation_during_memory_replay_refuses_publication(setup):
     ledger = destination / 'catchup_core/ledger.db'
     write_restored_ledger(ledger, database_bytes(setup.ledger._path))
     if os.name == 'nt':
-        with pytest.raises(CheckpointBlocked, match='changed during replay'):
+        def _mutate_locked():
             with setup.access._database(destination, ledger, update=True) as db:
                 db.execute('DELETE FROM deletion_checkpoint')
                 with pytest.raises(PermissionError):
                     ledger.write_bytes(b'competing replacement')
+
+        with pytest.raises(CheckpointBlocked, match='changed during replay'):
+            _mutate_locked()
         assert ledger.read_bytes() == b''
         ledger.write_bytes(b'competing replacement')
         assert ledger.read_bytes() == b'competing replacement'
         return
-    with pytest.raises(CheckpointBlocked, match='changed during replay'):
+
+    def _mutate():
         with setup.access._database(destination, ledger, update=True) as db:
             db.execute('DELETE FROM deletion_checkpoint')
             ledger.write_bytes(b'competing replacement')
+
+    with pytest.raises(CheckpointBlocked, match='changed during replay'):
+        _mutate()
     assert ledger.read_bytes() == b'competing replacement'
 
 
@@ -692,11 +705,14 @@ def test_oversized_native_replay_output_refuses_before_writing(setup, monkeypatc
     ledger = destination / 'catchup_core/ledger.db'
     original = database_bytes(setup.ledger._path)
     write_restored_ledger(ledger, original)
-    with pytest.raises(CheckpointBlocked, match='exceeds its bound'):
+    def _grow():
         with setup.access._database(destination, ledger, update=True) as db:
             db.execute('CREATE TABLE synthetic_growth(value BLOB)')
             db.execute('INSERT INTO synthetic_growth VALUES(?)', (bytes(8192),))
             monkeypatch.setattr(ck, '_MAX_SQLITE_BYTES', len(original))
+
+    with pytest.raises(CheckpointBlocked, match='exceeds its bound'):
+        _grow()
     assert ledger.read_bytes() == original
     ledger.rename(ledger.with_suffix('.released'))
 
@@ -802,6 +818,7 @@ def test_recovery_export_grant_must_exist_in_independently_current_history(setup
         setup.access.open_store(setup.dest, export=True)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize('expired', [False, True])
 def test_metadata_store_cannot_read_a_previously_authorized_export(setup, expired):
     from datetime import timedelta

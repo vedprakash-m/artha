@@ -20,6 +20,7 @@ from catchup_core import recovery_access
 from catchup_core.recovery_access import WorkRecoveryAccess
 from catchup_core.recovery_quarantine import QuarantineError
 from catchup_core.work_privacy import WorkPrivacy
+pytestmark = pytest.mark.slow
 from core_helpers import (
     STREAM_CIPHER as CIPHER,
     STREAM_GENERATION as GENERATION,
@@ -124,6 +125,7 @@ def test_endpointdlp_policy_survives_encrypted_quarantine_and_reopen(scenario):
         access._validate_catalog(legacy, legacy['recovery_affinity']['work_binding'])
 
 
+@pytest.mark.slow
 def test_ciphertext_capture_fragmentation_does_not_multiply_source_scans(scenario, monkeypatch):
     original = scenario.protocol._inventory
     scans = []
@@ -338,11 +340,14 @@ def test_work_marker_refuses_unsafe_input_without_path_read(scenario, monkeypatc
         return read_bytes(path)
 
     monkeypatch.setattr(Path, 'read_bytes', checked_read)
-    with pytest.raises(ck.CheckpointBlocked, match='fence|marker'):
+    def _attempt():
         if operation == 'fence':
             access._check_fence(scenario.dest, store, catalog)
         else:
             ck._verify_quarantine(store, scenario.manifest, replayed=True)
+
+    with pytest.raises(ck.CheckpointBlocked, match='fence|marker'):
+        _attempt()
 
 
 def test_work_fence_rejects_an_unreadable_directory(scenario, monkeypatch):

@@ -1,10 +1,6 @@
-import json
 import pytest
 import os
-import shutil
-import subprocess
 import time
-from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -37,38 +33,32 @@ def _fake_encrypt(pubkey, infile, outfile):
     return True
 
 @pytest.fixture
-def mock_vault_env(temp_artha_dir, monkeypatch):
-    """Set up a mock environment for vault.py (and backup.py via foundation._config).
-
-    vault.py functions use frozen module-level aliases (STATE_DIR, LOCK_FILE, …)
-    imported from foundation at module load time.  Those must be patched directly
-    on the vault namespace.  backup.py and _mark_backup_failure() use _config[…]
-    at call time, so the foundation._config dict must also be patched.
-    """
-    backup_dir = temp_artha_dir / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    state_dir  = temp_artha_dir / "state"
-    config_dir = temp_artha_dir / "config"
+def mock_vault_env(tmp_path, monkeypatch):
+    """Set up a mock environment for vault.py (and backup.py via foundation._config)."""
+    for sub in ("scripts", "state", "config", "prompts", ".tokens", "backups"):
+        (tmp_path / sub).mkdir(parents=True, exist_ok=True)
+    backup_dir = tmp_path / "backups"
+    state_dir  = tmp_path / "state"
+    config_dir = tmp_path / "config"
+    (state_dir / "audit.md").write_text("# Audit Log\n", encoding="utf-8")
 
     # --- vault module aliases: used directly by vault.py function bodies ---
-    monkeypatch.setattr(vault, "ARTHA_DIR",  temp_artha_dir)
+    monkeypatch.setattr(vault, "ARTHA_DIR",  tmp_path)
     monkeypatch.setattr(vault, "STATE_DIR",  state_dir)
     monkeypatch.setattr(vault, "CONFIG_DIR", config_dir)
-    monkeypatch.setattr(vault, "LOCK_FILE",  temp_artha_dir / ".artha-decrypted")
+    monkeypatch.setattr(vault, "LOCK_FILE",  tmp_path / ".artha-decrypted")
     monkeypatch.setattr(vault, "AUDIT_LOG",  state_dir / "audit.md")
 
     # --- foundation._config: used by backup.py (lazy-imported) and _config[…] ---
-    monkeypatch.setitem(foundation._config, "ARTHA_DIR",       temp_artha_dir)
+    monkeypatch.setitem(foundation._config, "ARTHA_DIR",       tmp_path)
     monkeypatch.setitem(foundation._config, "STATE_DIR",       state_dir)
     monkeypatch.setitem(foundation._config, "CONFIG_DIR",      config_dir)
-    monkeypatch.setitem(foundation._config, "LOCK_FILE",       temp_artha_dir / ".artha-decrypted")
+    monkeypatch.setitem(foundation._config, "LOCK_FILE",       tmp_path / ".artha-decrypted")
     monkeypatch.setitem(foundation._config, "AUDIT_LOG",       state_dir / "audit.md")
     monkeypatch.setitem(foundation._config, "BACKUP_DIR",      backup_dir)
     monkeypatch.setitem(foundation._config, "BACKUP_MANIFEST", backup_dir / "manifest.json")
 
-    config_dir.mkdir(parents=True, exist_ok=True)
-
-    return temp_artha_dir
+    return tmp_path
 
 def test_vault_status_inactive(mock_vault_env, capsys):
     """Verify status report when vault is inactive (encrypted)."""
@@ -786,7 +776,7 @@ class TestAdvisoryLock:
         def failing_func():
             raise ValueError("boom")
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="boom"):
             failing_func()
         assert vault._op_lock_fd is None  # released
 
@@ -984,7 +974,7 @@ class TestEncryptLockdown:
             with pytest.raises(SystemExit):
                 vault.do_encrypt()
 
-        out = capsys.readouterr()
+        capsys.readouterr()
         # Lock file should NOT be removed
         assert (mock_vault_env / ".artha-decrypted").exists()
 
@@ -1077,23 +1067,21 @@ class TestHealthKeyValidation:
 class TestVaultHookFallback:
     """DEBT-VAULT-001: Verify employment is in the static SENSITIVE_DOMAINS fallback."""
 
-    def test_employment_in_fallback(self):
+    def test_employment_in_fallback(self, monkeypatch):
         """vault_hook.SENSITIVE_DOMAINS must contain 'employment'."""
-        import importlib, sys
-        # Force reimport so we don't get a cached version
-        if "vault_hook" in sys.modules:
-            del sys.modules["vault_hook"]
+        import sys
+        # Force fresh import with automatic teardown restoration
+        monkeypatch.delitem(sys.modules, "vault_hook", raising=False)
         import vault_hook
         assert "employment" in vault_hook.SENSITIVE_DOMAINS, (
             "DEBT-VAULT-001: 'employment' must be in vault_hook.SENSITIVE_DOMAINS fallback. "
             "Salary, RSU, and comp data must be treated as sensitive at the hook level."
         )
 
-    def test_fallback_minimum_domains(self):
+    def test_fallback_minimum_domains(self, monkeypatch):
         """vault_hook.SENSITIVE_DOMAINS must include all 12 expected domains."""
         import sys
-        if "vault_hook" in sys.modules:
-            del sys.modules["vault_hook"]
+        monkeypatch.delitem(sys.modules, "vault_hook", raising=False)
         import vault_hook
         required = {
             "immigration", "finance", "insurance", "estate", "health",

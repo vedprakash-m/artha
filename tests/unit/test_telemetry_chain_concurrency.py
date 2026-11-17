@@ -15,8 +15,6 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 from lib import telemetry  # noqa: E402
 
@@ -25,7 +23,7 @@ def test_stale_in_memory_hash_does_not_break_the_chain(tmp_path):
     path = tmp_path / "t.jsonl"
     telemetry.emit("a.one", _path=path)
     # another process appended in the meantime:
-    other = tmp_path / "o.jsonl"
+    tmp_path / "o.jsonl"
     telemetry._prev_hash = "f" * 64            # this process now holds a stale hash
     telemetry.emit("a.two", _path=path)
     telemetry.emit("a.three", _path=path)

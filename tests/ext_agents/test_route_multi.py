@@ -15,16 +15,12 @@ Ref: specs/ext-agent-reloaded.md §BLOCKING-2
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.agent_registry import AgentRegistry
 from lib.agent_router import AgentRouter, RoutingMatch

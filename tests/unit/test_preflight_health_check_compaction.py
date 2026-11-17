@@ -9,8 +9,6 @@ import yaml
 
 _ARTHA_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _ARTHA_ROOT / "scripts"
-if str(_SCRIPTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from lib.state_schema import validate_frontmatter  # noqa: E402
 

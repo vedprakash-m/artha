@@ -17,7 +17,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from domain_index import (
     _domain_status,

@@ -202,7 +202,6 @@ def test_AR08_gate_timeout_and_recovery_source_check_are_bounded(monkeypatch, tm
 
 @pytest.fixture
 def adoption_cli(cli_world, monkeypatch, tmp_path):
-    from pathlib import Path
     from types import SimpleNamespace
     import yaml
     from catchup_core.renewal_authority import Authority

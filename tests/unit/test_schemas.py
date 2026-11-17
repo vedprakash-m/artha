@@ -226,12 +226,9 @@ class TestGracefulDegradation:
     """
 
     def test_validation_error_is_catchable(self):
-        try:
+        with pytest.raises(ValidationError) as exc_info:
             BriefingOutput(one_thing="")
-            assert False, "Should have raised ValidationError"
-        except ValidationError as exc:
-            # Error is inspectable — caller can log and proceed
-            assert len(exc.errors()) > 0
+        assert len(exc_info.value.errors()) > 0
 
     def test_partial_briefing_can_be_logged(self):
         """A failing validation should not prevent logging the briefing text."""

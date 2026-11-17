@@ -140,7 +140,7 @@ def test_no_bundle_ever_is_unavailable_not_quiet(tmp_path):
 
 
 def test_oversize_and_bad_keys_are_refused(tmp_path):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"producer\ keys\ are\ 32\ bytes"):
         ProducerKey("x", b"short")
     with pytest.raises(BundleError, match="size limit"):
         export_bundle(tmp_path, KEY, namespace="personal", recipient="mac", account_scope="school",
@@ -167,7 +167,7 @@ def test_enrollment_round_trips_through_the_credential_store_and_rejects_bad_sec
     other = Keyring()
     assert enroll_producer("win-host", other, secret) == secret                  # the other machine imports it
     assert load_producer_key("win-host", kr).secret == load_producer_key("win-host", other).secret
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"producer\ keys\ are\ 32\ bytes"):
         enroll_producer("win-host", Keyring(), "c2hvcnQ=")
     kr.store[("artha-bundle-win-host", "secret")] = "!!!"
     assert load_producer_key("win-host", kr) is None

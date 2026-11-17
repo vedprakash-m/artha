@@ -18,10 +18,7 @@ import pytest
 import yaml
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 
 from pr_stage.service import (
     ContentStage,

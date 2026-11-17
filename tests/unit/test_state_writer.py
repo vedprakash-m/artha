@@ -17,11 +17,8 @@ Coverage:
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 # conftest adds scripts/ and project root to sys.path
 from lib.state_writer import WriteResult, write, write_atomic

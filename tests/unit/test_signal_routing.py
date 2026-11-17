@@ -9,7 +9,6 @@ Ref: specs/pay-debt-reloaded.md §7 WS-7
 """
 from __future__ import annotations
 
-import importlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,12 +24,12 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 
 
 @pytest.fixture(autouse=True)
-def _clean_imports():
-    """Remove cached action_composer module between tests so each test gets fresh state."""
-    yield
+def _clean_imports(monkeypatch):
+    """Isolate action_composer and config_loader state per test without leaking sys.modules."""
     for mod in list(sys.modules.keys()):
         if "action_composer" in mod or "config_loader" in mod:
-            sys.modules.pop(mod, None)
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+    yield
 
 
 def _load_yaml_routing() -> dict[str, dict[str, Any]]:

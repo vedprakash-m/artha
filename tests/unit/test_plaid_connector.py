@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import urllib.error
-from datetime import datetime, timezone, timedelta, date
+from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -21,12 +20,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
-import connectors.plaid_connector as plaid_mod
 from connectors.plaid_connector import (
-    _plaid_post,
     _load_credentials,
     _aggregate_transactions,
     fetch,
@@ -262,7 +257,7 @@ class TestFetch:
         err_body = json.dumps({"error_code": "INVALID_ACCESS_TOKEN", "error_message": "bad token"}).encode()
         exc = urllib.error.HTTPError(url="", code=400, msg="Bad Request", hdrs=MagicMock(), fp=MagicMock(read=lambda: err_body))
         with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(Exception):
+            with pytest.raises(Exception, match=r"Plaid\ API\ error\ \[INVALID_ACCESS_TOKEN\]:\ bad\ token"):
                 list(fetch(auth_context=auth_ctx))
 
 

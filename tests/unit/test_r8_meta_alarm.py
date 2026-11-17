@@ -14,14 +14,11 @@ Ref: specs/skills-reloaded.md §3.7, §5 Risk R10
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 _ARTHA = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ARTHA / "scripts"))
 
 from briefing_adapter import BriefingAdapter, _r8_meta_regression_alarm
 

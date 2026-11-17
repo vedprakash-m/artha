@@ -10,19 +10,13 @@ Run: pytest tests/unit/test_setup_slack.py -v
 from __future__ import annotations
 
 import json
-import os
-import sys
 import textwrap
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch, call
-from io import StringIO
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from setup_slack import (
     _verify_bot_token,

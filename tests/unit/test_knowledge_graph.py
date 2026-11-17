@@ -6,7 +6,6 @@ Ref: specs/kb-graph-design.md §6, §11
 from __future__ import annotations
 
 import sqlite3 as _sqlite3
-import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
@@ -14,8 +13,6 @@ import pytest
 
 _ARTHA   = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS = _ARTHA / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 
 def _fts5_available() -> bool:
@@ -39,8 +36,6 @@ from lib.knowledge_graph import (  # noqa: E402
     NullKnowledgeGraph,
     KnowledgeEnricher,
     Entity,
-    Edge,
-    SearchResult,
     get_kb,
 )
 
@@ -181,7 +176,7 @@ class TestRelationships:
 
     def test_missing_entity_raises(self, tmp_path: Path) -> None:
         kg = _kg(tmp_path)
-        with pytest.raises(Exception):
+        with pytest.raises(_sqlite3.IntegrityError, match="FOREIGN KEY"):
             kg.add_relationship("NONEXIST_A", "NONEXIST_B", "related_to", source="test")
         kg.close()
 

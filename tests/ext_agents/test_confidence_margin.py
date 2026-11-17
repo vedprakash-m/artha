@@ -15,15 +15,10 @@ Ref: specs/ext-agent-reloaded.md §BLOCKING-3
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
 
-import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 import lib.metrics_writer as metrics_writer_mod
 

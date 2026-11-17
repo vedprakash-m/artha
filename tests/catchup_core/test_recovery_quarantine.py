@@ -260,11 +260,14 @@ def test_catalog_temporary_substitution_cannot_report_success(setup, monkeypatch
                 'import pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(b"AE1-substituted-ciphertext")',
                 str(store.root / name)], check=True)
     monkeypatch.setattr(store, '_write', substitute)
-    with pytest.raises(QuarantineError):
+    def _attempt():
         if operation == 'seal':
             store.seal()
         else:
             store.block_paths([entry['path']], 'known erasure')
+
+    with pytest.raises(QuarantineError):
+        _attempt()
 
 
 @pytest.mark.parametrize('field,value', [
@@ -344,11 +347,14 @@ def test_authority_changes_inside_cipher_refuse(setup, monkeypatch, operation):
         return result
 
     monkeypatch.setattr(store.cipher, operation, revoke)
-    with pytest.raises(QuarantineError):
+    def _attempt():
         if operation == 'decrypt':
             next(store.iter_member(catalog['entries'][0]['member_id']))
         else:
             store.write(b'data')
+
+    with pytest.raises(QuarantineError):
+        _attempt()
     assert operation == 'decrypt' or not (store.root / 'catalog.ae1').exists()
 
 
@@ -685,6 +691,8 @@ def test_second_pass_decrypt_mutation_refuses_before_yield(setup, monkeypatch, a
     assert context == trusted()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(300)
 def test_6500_tiny_members_seal_and_verify_schema_v1(setup):
     store, _ = setup
     entries = [entry_for(b'x', f'state/{index}.md') for index in range(6500)]

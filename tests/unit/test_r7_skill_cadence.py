@@ -14,14 +14,11 @@ Ref: specs/skills-reloaded.md §3.5, §3.9
 """
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import pytest
 
 _ARTHA = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ARTHA / "scripts"))
 
 from skill_runner import should_run
 

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-import pytest
 
 from scripts.skills.subscription_monitor import SubscriptionMonitorSkill
 

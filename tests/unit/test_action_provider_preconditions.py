@@ -121,7 +121,7 @@ os._exit(23)
                 child.communicate(timeout=5)
     assert results == ['claimed', 'refused']
     assert queue.get_raw(item.id)['status'] == 'executing'
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"Invalid\ transition\ 'executing'\ →\ 'executing'\ by\ 'executor'\.\ Allowed\ transitions\ from\ 'executing':\ \['failed',\ 'succeeded',\ 'unknown'\]"):
         queue.transition(item.id, 'executing', actor='executor',
                          expected_payload_hash=compute_payload_hash(item), operation_key='operation-replay')
     assert queue._conn.execute('SELECT count(*) FROM effect_operations WHERE action_id=?', (item.id,)).fetchone()[0] == 1

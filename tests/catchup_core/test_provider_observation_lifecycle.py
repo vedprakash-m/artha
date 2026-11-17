@@ -488,7 +488,6 @@ def chain(env, monkeypatch, tmp_path):
     from types import SimpleNamespace
 
     import lib.retry as retry
-    from catchup_core import runtime
     import connectors.google_calendar as gcal
 
     ledger, _, make, _ = env
@@ -760,7 +759,6 @@ def test_caldav_mixed_delta_failure_commits_explicit_cancellation_without_advanc
     from datetime import timedelta
     from types import SimpleNamespace
     from caldav.lib.error import NotFoundError
-    from catchup_core import runtime
     import connectors.caldav_calendar as caldav
 
     ledger, _, make, _ = env

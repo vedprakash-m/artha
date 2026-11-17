@@ -15,15 +15,12 @@ Ref: specs/skills-reloaded.md §3.2, §3.2.1
 """
 from __future__ import annotations
 
-import sys
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 _ARTHA = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ARTHA / "scripts"))
 
 
 # ---------------------------------------------------------------------------

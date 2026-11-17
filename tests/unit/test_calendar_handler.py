@@ -5,14 +5,11 @@ Gmail Calendar API is mocked throughout — no real network calls.
 
 Ref: specs/act.md §8.2
 """
-import sys
 import uuid
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 import actions.calendar_create as calendar_create_handler
 import actions.calendar_modify as calendar_modify_handler

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 import textwrap
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -203,7 +203,7 @@ def log_dir_with_errors(tmp_log_dir):
 @pytest.fixture
 def sample_facts():
     """A list of correction/threshold facts for filter tests."""
-    today = date.today().isoformat()
+    date.today().isoformat()
     future = "2099-12-31"
     past = "2020-01-01"
     return [

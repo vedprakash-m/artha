@@ -28,9 +28,7 @@ Ref: specs/enhance.md §11 Phase 1a item 1.0i
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -38,10 +36,6 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 _FIXTURES = _REPO / "tests" / "fixtures"
 _SCRIPTS = _REPO / "scripts"
 
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
-if str(_REPO) not in sys.path:
-    sys.path.insert(0, str(_REPO))
 
 # Domains that must have ≥5 fixture emails
 _REQUIRED_DOMAINS = ["finance", "health", "home", "kids", "immigration"]
@@ -254,7 +248,6 @@ class TestPromptRegressionWithAPI:
     def _extract_with_prompt(self, prompt_file: Path, emails: list[dict]) -> str:
         """Call Claude API to extract information from emails using domain prompt."""
         import subprocess
-        import json as _json
 
         prompt_text = prompt_file.read_text(encoding="utf-8") if prompt_file.exists() else ""
         email_text = "\n".join(

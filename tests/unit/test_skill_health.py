@@ -13,20 +13,15 @@ Ref: specs/skills-reloaded.md §3.3–3.8
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
 # Import guard
 # ---------------------------------------------------------------------------
 
-import sys
 _ARTHA = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ARTHA / "scripts"))
 
 from lib.skill_health import (
     is_zero_value,

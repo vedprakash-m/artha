@@ -12,11 +12,9 @@ Coverage:
 """
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from relationship_pulse_view import render_relationships
 

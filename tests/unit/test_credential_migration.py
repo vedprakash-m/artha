@@ -112,9 +112,12 @@ def test_all_ae1_garbage_cannot_report_authenticated_migration_success(legacy, w
         path.write_bytes(b'AE1garbage')
     (source / 'msgraph-client-creds.json').write_bytes(b'AE1garbage')
     originals = {path.name: path.read_bytes() for path in source.iterdir()}
-    with pytest.raises(RuntimeError):
+    def _attempt():
         preview = migration.plan(source, work=work)
         migration.apply(source, local, preview['review_hash'], backend=backend, work=work)
+
+    with pytest.raises(RuntimeError):
+        _attempt()
     assert {path.name: path.read_bytes() for path in source.iterdir()} == originals
     assert backend.values == {} and backend.events == []
     assert not list(local.rglob('*.ae1'))
@@ -209,7 +212,7 @@ def test_interrupted_sealing_reuses_verified_recovery_and_os_records(legacy, mon
             raise OSError('interrupted source publication')
         publish(path, data)
     monkeypatch.setattr(migration, 'atomic_bytes', interrupt)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match=r"interrupted\ source\ publication"):
         migration.apply(source, local, preview['review_hash'], backend=backend)
     backups = list((local / 'credential-recovery').glob('*.ae1'))
     assert len(backups) == 1 and not (source / 'gmail-oauth-token.json').read_bytes().startswith(b'AE1')
@@ -311,7 +314,7 @@ def test_recovery_mismatch_and_unverified_token_cannot_seal_sources(legacy, monk
             raise OSError('interrupted')
         publish(path, data)
     monkeypatch.setattr(migration, 'atomic_bytes', stop_before_seal)
-    with pytest.raises(OSError):
+    with pytest.raises(OSError, match="interrupted"):
         migration.apply(source, local, preview['review_hash'], backend=backend)
     real = migration.EnvelopeCipher
     class MismatchedRecovery:

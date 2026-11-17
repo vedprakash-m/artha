@@ -17,7 +17,6 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from coaching_engine import CoachingEngine, load_goals_content
 

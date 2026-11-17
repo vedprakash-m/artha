@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
-if str(_REPO / "scripts") not in sys.path:
-    sys.path.insert(0, str(_REPO / "scripts"))
 
 from lib.metrics_writer import write_routing_margin  # type: ignore[import]
 

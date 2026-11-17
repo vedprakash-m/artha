@@ -1,12 +1,9 @@
 """WP-02 / WP02.AC3: quality gates verify artifacts; they cannot pass unconditionally."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import pipeline  # noqa: E402
 from lib import connector_coverage as cc  # noqa: E402

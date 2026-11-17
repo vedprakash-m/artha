@@ -1,7 +1,6 @@
 """tests/ext_agents/test_agent_scorer.py — AR-9 AgentScorer tests."""
 from __future__ import annotations
 
-import pytest
 
 from lib.agent_scorer import score_agent_response  # type: ignore
 

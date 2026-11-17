@@ -12,7 +12,6 @@ from core_helpers import (
     CORE_KEY as KEY,
     CORE_NOW as NOW,
     triage_conn_of as conn_of,
-    triage_fresh as fresh,
 )
 
 SIGNUP = "signup_deadline"

@@ -14,16 +14,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
 import pytest
 
 # conftest adds scripts/ to sys.path
 from checkpoint import (
-    _CHECKPOINT_FILE,
     _MAX_AGE_HOURS,
     _stale_hours,
-    clear_checkpoint,
     read_checkpoint,
     write_checkpoint,
 )

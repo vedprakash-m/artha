@@ -1,14 +1,10 @@
 """tests/ext_agents/test_ext_agent_audit.py — EA-11a audit event writer tests."""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.ext_agent_audit import write_ext_agent_event  # type: ignore
 

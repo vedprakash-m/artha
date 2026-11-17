@@ -18,9 +18,6 @@ from __future__ import annotations
 import pytest
 from datetime import date, datetime, timezone
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 
 from pr_stage.domain import (
     CardStatus,
@@ -82,7 +79,7 @@ class TestCardIdHelpers:
             parse_card_id("INVALID-2026-001")
 
     def test_parse_card_id_too_short_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"Invalid\ card\ ID\ format:\ 'CARD\-2026\-01'\ \(expected\ CARD\-YYYY\-NNN\)"):
             parse_card_id("CARD-2026-01")   # only 2 digits in sequence
 
 

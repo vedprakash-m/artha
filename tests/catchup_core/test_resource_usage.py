@@ -61,7 +61,7 @@ def test_adopted_limits_are_the_defaults_and_month_and_pending_stay_explicit():
     for missing in BASE:
         with pytest.raises(ValueError, match='explicit'):
             ResourcePolicy.from_mapping({k: v for k, v in BASE.items() if k != missing})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"resource\ policy\ requires\ explicit\ max_requests_per_month\ and\ max_pending_signals\ and\ accepts\ only\ known\ limit\ fields"):
         ResourcePolicy.from_mapping({**BASE, 'unknown_limit': 1})
 
 
@@ -69,7 +69,7 @@ def test_adopted_limits_are_the_defaults_and_month_and_pending_stay_explicit():
                                        ('output_tokens_reserve', -1), ('max_tokens_per_month', True),
                                        ('bytes_per_token', 1.5)])
 def test_token_policy_fields_fail_closed(field, bad):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"bytes_per_token\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|max_tokens_per_month\ must\ be\ an\ integer\ between\ 1\ and\ 2147483647|output_tokens_reserve\ must\ be\ an\ integer\ between\ 0\ and\ 2147483647"):
         policy(**{field: bad})
 
 
@@ -126,7 +126,7 @@ def test_usage_receipts_are_immutable_idempotent_and_need_an_admission(world):
     with pytest.raises(ValueError, match='admission'):
         store.record_usage('c1', 'never-admitted', 1, 1, 'report', NOW)
     for bad in (-1, True, 1.5, 2**40):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"input_tokens\ must\ be\ an\ integer\ between\ 0\ and\ 2147483647"):
             store.record_usage('c1', 'k1', bad, 1, 'report', NOW)
     with pytest.raises(sqlite3.IntegrityError, match='immutable'), world.transaction() as db:
         db.execute('UPDATE resource_usage SET input_tokens=0')
@@ -444,11 +444,11 @@ def test_cached_output_must_be_text(world):
 
 def test_month_usage_and_usage_inputs_fail_closed(world):
     store = AdmissionStore(world, policy())
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"month\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters"):
         store.month_usage('')
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"catchup_id\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters"):
         store.uncertain_requests('')
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"catchup_id\ must\ be\ nonempty\ text\ of\ at\ most\ 512\ characters"):
         store.require_active(' ')
     assert store.month_usage('2026-10').counted_tokens == 0
 

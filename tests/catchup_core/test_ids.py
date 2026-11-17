@@ -85,24 +85,24 @@ def test_evidence_and_signal_namespaces_differ():
 
 
 def test_rejects_empty_members():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"signal\ identity\ members\ must\ be\ non\-empty"):
         ids.signal_id(KEY, "", "a", "u", "v")
 
 
 def test_rejects_short_key():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"HMAC\ key\ must\ be\ at\ least\ 16\ bytes"):
         ids.HmacKey(version=1, secret=b"short")
 
 
 def test_key_version_must_be_positive():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"key\ version\ must\ be\ >=\ 1"):
         ids.HmacKey(version=0, secret=b"k" * 32)
 
 
 def test_evidence_id_requires_locator_and_prefix_validated():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"evidence\ locator\ must\ be\ non\-empty"):
         ids.evidence_id(KEY, "")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"prefix\ must\ be\ alphanumeric"):
         ids.new_id("not ok")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"prefix\ must\ be\ alphanumeric"):
         ids.new_id("")

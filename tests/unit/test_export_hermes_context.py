@@ -15,7 +15,6 @@ Covers all test requirements from specs/h-int.md §16.5:
 from __future__ import annotations
 
 import json
-import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -28,13 +27,10 @@ import pytest
 # Path setup — import from scripts/ without installing the package
 # ---------------------------------------------------------------------------
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from export_hermes_context import (  # noqa: E402
     _BLOCKED_CALENDAR_SOURCES,
     _PERSONAL_CALENDAR_SOURCES,
-    _WORK_SIGNALS,
     _load_allowed_domains,
     _read_goals,
     _read_open_items,
@@ -548,7 +544,6 @@ class TestSensitiveDataAbsent:
 
     def test_no_account_numbers_in_payload(self, tmp_artha: Path) -> None:
         """Payload must not contain account numbers or policy numbers."""
-        import re as _re
 
         (tmp_artha / "state" / "open_items.md").write_text(
             _make_open_items_md([

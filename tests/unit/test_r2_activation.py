@@ -13,16 +13,13 @@ Ref: specs/skills-reloaded.md §3.1–3.2, §3.6
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 _ARTHA = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(_ARTHA / "scripts"))
 
-from briefing_adapter import BriefingAdapter, _r2_low_signal_noise, _load_catch_up_runs
+from briefing_adapter import BriefingAdapter, _r2_low_signal_noise
 
 
 # ---------------------------------------------------------------------------

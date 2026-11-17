@@ -13,18 +13,14 @@ Tests designed to ensure hard safety boundaries cannot be bypassed:
 
 Ref: specs/act.md §6.2 (autonomy floor), §13 (safety), §15 (observability)
 """
-import sys
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from action_queue import ActionQueue
-from actions.base import ActionProposal, ActionResult
+from actions.base import ActionProposal
 from trust_enforcer import TrustEnforcer
 
 
@@ -138,7 +134,7 @@ class TestStateMachineEnforcement:
         tmp_queue.transition(p.id, "rejected", actor="user")
         # Any further transition from rejected must fail
         for target in ("pending", "approved", "executing", "succeeded", "cancelled"):
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=r"is\ in\ terminal\ state\ 'rejected';\ no\ further\ transitions\ allowed"):
                 tmp_queue.transition(p.id, target, actor="attacker")
 
     def test_cannot_transition_from_succeeded(self, tmp_queue):
@@ -148,7 +144,7 @@ class TestStateMachineEnforcement:
         tmp_queue.transition(p.id, "executing", actor="executor")
         tmp_queue.transition(p.id, "succeeded", actor="executor")
         for target in ("pending", "approved", "executing", "rejected", "cancelled"):
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=r"is\ in\ terminal\ state\ 'succeeded';\ no\ further\ transitions\ allowed"):
                 tmp_queue.transition(p.id, target, actor="attacker")
 
     def test_cannot_approve_expired_action(self, tmp_queue):
@@ -159,7 +155,7 @@ class TestStateMachineEnforcement:
         tmp_queue.propose(p)
         tmp_queue.expire_stale()
         # Now expired — cannot be approved
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r"is\ in\ terminal\ state\ 'expired';\ no\ further\ transitions\ allowed"):
             tmp_queue.transition(p.id, "approved", actor="user")
 
 
@@ -272,10 +268,6 @@ class TestUndoWindowEnforcement:
         # This tests the undo_deadline enforcement contract
         # The undo_deadline is stored in result_data by ActionExecutor
         past_deadline = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-        result_data = {
-            "message_id": "msg123",
-            "undo_deadline": past_deadline,
-        }
         # ActionExecutor.undo() checks undo_deadline < now
         now = datetime.now(timezone.utc).replace(tzinfo=timezone.utc)
         deadline = datetime.fromisoformat(past_deadline.replace("Z", "+00:00"))

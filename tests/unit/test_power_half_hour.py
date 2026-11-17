@@ -16,7 +16,6 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from power_half_hour_view import render_power_session
 

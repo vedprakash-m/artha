@@ -19,7 +19,6 @@ Ref: specs/improve.md §9 I-13
 from __future__ import annotations
 
 import io
-import sys
 import zipfile
 from pathlib import Path
 
@@ -27,15 +26,12 @@ import pytest
 
 _CONNECTORS = Path(__file__).resolve().parent.parent.parent / "scripts" / "connectors"
 _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
-if str(_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_SCRIPTS))
 
 from connectors.apple_health import (
     fetch,
     health_check,
     _iso_to_str,
     _parse_since,
-    TRACKED_TYPES,
 )
 
 

@@ -9,8 +9,6 @@ from pathlib import Path
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
 
 import pipeline  # noqa: E402
 from lib import local_paths  # noqa: E402
@@ -54,9 +52,9 @@ def test_legacy_tmp_workspace_path_is_rejected(local, tmp_path):
 
 
 def test_traversal_out_of_local_dir_is_rejected(local, tmp_path):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"\-\-output\ must\ be\ inside\ the\ machine\-local\ directory"):
         pipeline._validate_output_path("../../etc/passwd", tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"\-\-output\ must\ be\ inside\ the\ machine\-local\ directory"):
         pipeline._validate_output_path("/etc/passwd", tmp_path)
 
 

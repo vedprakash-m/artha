@@ -22,26 +22,19 @@ Ref: specs/ext-agent-reloaded.md §EAR-3
 """
 from __future__ import annotations
 
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _SCRIPTS_DIR = str(_REPO_ROOT / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from agent_scheduler import (
     _cron_matches,
     _load_schedules,
-    _load_state,
-    _save_state,
     _tick,
     _status,
-    _count_runs_today,
     _MAX_RUNS_PER_DAY,
     _MAX_SCHEDULED_AGENTS,
     _FAIL_SUSPEND_THRESHOLD,
@@ -147,7 +140,6 @@ def test_daily_run_limit_skipped(tmp_path):
 
 def test_three_failures_suspends(tmp_path):
     """3 consecutive failures should suspend the agent."""
-    import subprocess
     state = {}
     schedules_content = (
         "schedules:\n"

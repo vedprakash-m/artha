@@ -4,7 +4,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
 
@@ -21,7 +20,6 @@ def _make_guard(tmp_path: Path) -> CostGuard:
     # Override the state path so tests never touch the real ~/.artha-local/
     guard._state_path = tmp_path / "cost_guard_state.json"  # monkey-patch for isolation
     # Patch _persist_state to write to our tmp file
-    real_persist = guard._persist_state.__func__
 
     def _patched_persist():
         import json as _json

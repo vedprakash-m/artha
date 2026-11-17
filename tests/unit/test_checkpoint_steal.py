@@ -8,11 +8,9 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
 import yaml
 
 # Ensure scripts/ is on path (mirrors existing checkpoint test setup)
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
 
 from checkpoint import write_session_recap, read_session_recap

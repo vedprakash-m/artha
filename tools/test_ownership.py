@@ -235,7 +235,11 @@ def _tracked_test_paths(root: Path) -> list[str]:
         if res.returncode == 0:
             return sorted(
                 p for p in res.stdout.decode("utf-8", "surrogateescape").split("\0")
-                if p and Path(p).name.startswith("test_") and Path(p).suffix == ".py" and "work" not in Path(p).parts
+                if p
+                and (root / p).exists()
+                and Path(p).name.startswith("test_")
+                and Path(p).suffix == ".py"
+                and "work" not in Path(p).parts
             )
     return sorted(
         p.relative_to(root).as_posix()

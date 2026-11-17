@@ -774,12 +774,12 @@ def test_gitleaks_config_error_is_reported_as_scanner_error_not_a_leak(tmp_path,
     assert "scanner error" in out(result)
 
 
-def test_household_first_names_are_denylisted_but_the_owner_handle_is_not(tmp_path):
+def test_household_first_names_are_denylisted_but_the_owner_handle_is_not(tmp_path, monkeypatch):
     """A first name alone identifies a spouse/child/sibling; the owner's own name is public by design."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("ps_under_test", HOOKS / "privacy_scan.py")
     ps = importlib.util.module_from_spec(spec)
-    sys.modules["ps_under_test"] = ps
+    monkeypatch.setitem(sys.modules, "ps_under_test", ps)
     spec.loader.exec_module(ps)
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "user_profile.yaml").write_text(

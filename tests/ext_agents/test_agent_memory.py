@@ -32,7 +32,6 @@ Ref: specs/ext-agent-reloaded.md §EAR-1
 """
 from __future__ import annotations
 
-import sys
 import threading
 from datetime import date, timedelta
 from pathlib import Path
@@ -40,8 +39,6 @@ from pathlib import Path
 import pytest
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
-if _SCRIPTS_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPTS_DIR)
 
 from lib.agent_memory import AgentMemory, _durability_score
 
@@ -217,6 +214,7 @@ def test_durability_score_rewards_diagnostics():
     generic = _durability_score("Something happened.")
     diagnostic = _durability_score("Service X consistently fails under high load.")
     # Generic short text shouldn't score higher than diagnostic patterns
+    assert generic <= diagnostic
     assert _durability_score("2023-01-01 event log") <= 1.0
 
 
