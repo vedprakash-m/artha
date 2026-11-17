@@ -3232,3 +3232,15 @@ delivery (exact task-approved candidates, amending V1's initially enrolled routi
 Catch-up interruption during mutable-checkout delivery and adopted the versioned renewal contract. Re-signing the
 release for the current cohort, approval of a concrete enrollment proposal, native enrollment and live adoption/UAT
 have not been performed.
+
+### Test-suite traceability, hermeticity and deterministic CI — 2026-11-16
+
+Every tracked public test module maps to one or more canonical product requirements (`FR-01..35` with re-artha §11.4
+dispositions, `TR-1..3`, `RA-01..25`, `INFRA-CI`) and the five engineering pillars (`pull_over_push`, `simple`,
+`secure`, `robust`, `evidence_over_eloquence`) in a generated register outside the core release fingerprint
+(`docs/test-ownership.yaml`). Tests execute in disposable workspaces without cross-test imports, unapproved
+`time.sleep` calls, ticket/wave filenames, `sys.modules` or working-directory leaks, or live external CLI/network
+calls. Push-to-`main` CI runs only deterministic D3-eligible gate jobs (`static-gates`, Ubuntu/macOS/Windows core and
+harness coverage, 4-shard Windows native contracts with disjoint shard-completeness proof, and per-file ≥95%
+changed-line coverage on security/custody/write modules), while order-randomized (`pytest-randomly`), full Windows
+`tests/unit` (`TR-3`), and mutation (`mutmut`) runs execute in a separate non-gating `nightly.yml` workflow.

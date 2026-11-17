@@ -1,4 +1,4 @@
-﻿# Artha — UX Specification
+# Artha — UX Specification
 
 ## Approved Windows Work metadata exception — 2026-11-12
 
@@ -4397,5 +4397,7 @@ action types as "held, not checked" rather than a warning, because they cannot r
 `tools/release_renewal.py deliver|status` prints one compact public line:
 `main <sha> pushed | CI <state> | renewal <renewed|unchanged|held> | <stage> | <status> | <detail>`.
 Held results name a fixed reason (`verification`, `inputs`, `authority`, `evidence`, `gates`, `ci`, `budget`,
-`journal`) and never include private journal content. "unchanged" appears only when the existing approval is still
+`journal`) and never include private journal content. Top-level CLI setup failures (`RenewalError`, `CredentialError`,
+`PermissionDenied`, `RuntimeConfigError`, `OSError`, `ValueError`) likewise print `delivery held: <bounded reason and next action>`
+to `stderr` without raw exception details. "unchanged" appears only when the existing approval is still
 valid. Not yet observed on a live host.
