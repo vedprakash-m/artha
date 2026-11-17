@@ -1,4 +1,52 @@
-# re-artha implementation status — 2026-11-05
+# re-artha implementation status — 2026-11-16
+
+## Test-suite overhaul, CI sharding and automatic release renewal — 2026-11-16
+
+Engineering for `specs/automatic-release-renewal.md` (`AR-01..AR-26`, 282 tests) and the
+full test-suite and CI/CD overhaul (`.archive/specs/fix-test-suite-2026-11-16.md`, Waves 0–4,
+commits `8928cc3..e0a3808`) is complete on `main`:
+
+- **Capability and boundary coverage (`RA-01..RA-25`):** All 25 capabilities in
+  `scripts/catchup_core/capabilities.py` have `code = present` and `tests = present`, and all
+  134 named boundary regressions (`BOUNDARY_CASES`) resolve and pass. Every tracked public test
+  module (`450` files after dissolving 43 redundant/ticket/wave/steal files) is mapped in
+  `docs/test-ownership.yaml` across `FR-01..35`, `TR-1..3`, `RA-01..25`, `INFRA-CI`, and the
+  five re-artha §1.4 pillars (`pull_over_push`, `simple`, `secure`, `robust`,
+  `evidence_over_eloquence`).
+- **Isolated suite, coverage and mutation validation:**
+  - `make static`: 0 Ruff, strict mypy (85 files), import, state-write ratchet (144/144),
+    AST hygiene (cross-test imports, sleeps, filenames), schema, or register issues.
+  - `make test-fast` (`-m "not slow" -n auto`): 10,924 passed, 501 skipped, 4 strict `xfail`
+    (connector `fetch_via_handler` contract bugs on `canvas_lms`, `onenote`, `reddit`, and
+    `apple_health._iso_to_str` native `-0700` offset), 0 failed.
+  - Slow selection (`-m "slow" -n auto`): 167 passed, 4 skipped, 0 failed.
+  - Local private Work suite (`make test-work`, `--local-work`): 1,712 passed, 3 skipped,
+    0 failed, with 0 Ruff errors across `tests/work/`.
+  - Core coverage (`make coverage PYTEST_ARGS="-n auto"`): 88.49% combined (≥85% line and
+    branch floors passed).
+  - Security harness coverage (`make coverage-harness PYTEST_ARGS="-n auto"`): 87.57%
+    combined (1,716 passed, 131 skipped).
+  - Mutation baseline (`tools/check_mutations.py`): 6,111 mutants evaluated, 4,912 killed
+    (80.38%) across `policy.py`, `coordinator.py`, and `triage.py`.
+  - Working-tree, staged, unpushed, and demo-fixture privacy scans passed with 0 findings.
+- **Remaining live and owner-operated gates (why `specs/re-artha.md`,
+  `specs/re-artha-full-completion.md`, and `specs/automatic-release-renewal.md` stay active):**
+  1. **Cohort re-sign (`re-sign 20`):** The 6-Domain reduced slice waiver and recovery rehearsal
+     bind implementation `595b0a15…` (re-sign 19), while the current tree fingerprints
+     `38609551af69b17207a14af4fdadd4a5eab3a80c85c266f2b4cfca7a275d300d` (`configuration`,
+     `contract`, `model`, `packs`, and `prompts` digests are unchanged, and `independent_copy`
+     is accessible on `Veds-MacBook-Pro-M3Max`).
+  2. **Personal ledger migration 20 (`0020_personal_scope.sql`):** The live authority ledger is
+     at `PRAGMA user_version = 19` vs 20 available migrations; `renewal_metadata.py` and
+     authoritative runs hold until the owner runs a reviewed migration.
+  3. **D3 enrollment and live UAT (`specs/automatic-release-renewal.md`):** Path A (exact
+     task-approved candidates), D1, and D2 are decided; the updated 21-job `ci.yml` D3 gate
+     inventory (`0edc9b61…`, 47 protected files, 147 release-fingerprinted files) passes
+     `Authority._check_policy`, awaiting green hosted CI, re-sign 20, ledger migration 20,
+     owner D3 approval, native `enroll`, and live UAT.
+  4. **Full-profile completion (`specs/re-artha-full-completion.md`):** Native Windows Work
+     recovery remains deferred by owner decision (2026-11-12); independent held-out labels,
+     live Work reconciliation/UAT, and the GitHub Support history purge remain open.
 
 ## Combined Mac engineering validation — 2026-11-15
 
