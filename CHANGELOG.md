@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Hosted CI follow-up on `fbdf763`, 2026-11-16
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Hosted run `44171726034` failed four gates. Fixes: move the Windows quarantine import in `privacy_history.py` to module level, which removes one `noqa` and brings the lint-debt ratchet back to its ceiling. Add changed-line coverage tests for the Windows capsule publish path, the Windows parent-process lookup and the oversized native-read refusal. Raise the cold benchmark bound to 90 s on Windows only; the hosted Windows runner measured 45 s, and POSIX keeps 30 s. Give the renewal real-Git delivery test (AR01) a 600 s timeout; the 120 s default stopped the xdist worker on Windows. | `scripts/catchup_core/privacy_history.py`, `tests/catchup_core/test_{benchmark,privacy_anchor_capacity,quarantine_review,renewal_e2e,renewal_runner}.py` | 303 targeted tests passed and 6 were skipped, including the lint-debt ratchet. Ruff reports no issues. Both AR01 variants passed locally through the Windows contract launcher. |
+
 ### Fixed — Windows CI contract failures, 2026-11-16
 
 | Change | Modified files | Validation |

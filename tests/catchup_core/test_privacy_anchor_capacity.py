@@ -50,6 +50,45 @@ def test_large_privacy_history_fits_bounded_windows_os_anchor_and_replays_exactl
     assert max(len(value.encode('utf-16-le')) for value in backend.store.values()) <= 5 * 512
 
 
+def test_windows_capsule_publication_uses_private_directory_and_write_once_publish(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from dataclasses import asdict
+    from types import SimpleNamespace
+
+    from catchup_core import privacy_history
+    calls = []
+
+    class Directory:
+        def __init__(self, path):
+            self.path = path
+
+        @contextmanager
+        def create_file(self, name):
+            target = self.path / name
+            yield SimpleNamespace(write_all=target.write_bytes, flush=lambda: calls.append('flush'),
+                                  identity=('pinned', name))
+
+        def publish_write_once(self, staging, name, *, expected_identity):
+            calls.append(('publish', staging, name, expected_identity))
+            (self.path / staging).rename(self.path / name)
+
+    @contextmanager
+    def open_directory(path):
+        yield Directory(path)
+
+    monkeypatch.setattr(privacy_history, 'sys', SimpleNamespace(platform='win32'))
+    monkeypatch.setattr(privacy_history, 'ensure_private_directory',
+                        lambda path: (calls.append(('private', path)), path.mkdir())[0])
+    monkeypatch.setattr(privacy_history, 'WindowsQuarantineDirectory', SimpleNamespace(open=open_directory))
+    data = history(1)
+    directory = tmp_path / 'capsules'
+    record = privacy_history.PrivacyCapsules(directory, 'synthetic', CIPHER).save(
+        privacy_history.checkpoint_data(asdict(checkpoint(data))), data)
+    name = record['capsule_sha256'] + '.ae1'
+    assert calls == [('private', directory), 'flush', ('publish', name + '.pending', name, ('pinned', name + '.pending'))]
+    assert [path.name for path in directory.iterdir()] == [name]
+
+
 def test_same_checkpoint_cannot_be_reinterpreted_as_a_different_privacy_history(tmp_path):
     sealed, _ = store(tmp_path)
     original = history(1)

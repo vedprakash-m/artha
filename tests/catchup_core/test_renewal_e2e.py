@@ -53,6 +53,8 @@ def _copy_listed_scripts(original: Path, root: Path) -> None:
 
 
 @pytest.mark.slow
+# Real Git delivery takes about 120 s per variant on Windows; the default 120 s timeout kills the xdist worker.
+@pytest.mark.timeout(600)
 @pytest.mark.parametrize('approval_mode', ['routine', 'task_only'])
 def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(
         configured, tmp_path, monkeypatch, approval_mode):

@@ -1,5 +1,15 @@
 # re-artha implementation status — 2026-11-16
 
+## Hosted CI follow-up — 2026-11-16
+
+Hosted run `44171726034` on `fbdf763` failed four gates. All four are now fixed:
+- **Lint-debt ratchet:** fixed by moving an import to module level.
+- **Ubuntu changed-line coverage:** tests added.
+- **Windows cold benchmark bound:** now 90 s on Windows only.
+- **AR01 worker loss:** the test now has a 600 s timeout.
+
+Because `privacy_history.py` changed again, the release re-sign cohort must include it.
+
 ## Windows CI contract fixes — 2026-11-16
 
 Hosted CI run `44035734820` failed on Windows. These fixes address it:

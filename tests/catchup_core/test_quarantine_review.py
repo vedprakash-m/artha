@@ -902,6 +902,27 @@ def test_bounded_metadata_read_and_changed_input(store, monkeypatch):
         module._read(store.catalog_path, 1024)
 
 
+def test_native_read_refuses_oversize_input_before_reading(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from catchup_core import quarantine_review as module
+    identity = SimpleNamespace(volume_serial=7, file_id=(9).to_bytes(16, 'big'))
+    reads = []
+
+    @contextmanager
+    def opened(_path):
+        yield SimpleNamespace(snapshot=lambda: SimpleNamespace(identity=identity, size=5),
+                              read=lambda size: reads.append(size))
+
+    monkeypatch.setattr(module, 'os', SimpleNamespace(name='nt'))
+    monkeypatch.setattr(module, '_ordinary', lambda _path: SimpleNamespace(st_dev=7, st_ino=9))
+    monkeypatch.setattr(module, 'open_owner_private_path', opened)
+    with pytest.raises(ReviewBlocked, match=r"review\ input\ exceeds\ its\ bounded\ size"):
+        module._read(tmp_path / 'catalog', 4)
+    assert reads == []
+
+
 @pytest.mark.skipif(os.name == 'nt', reason='POSIX uid simulation; native owner checks use real SIDs')
 def test_foreign_owner_refuses(store, monkeypatch):
     from catchup_core import quarantine_review as module

@@ -97,6 +97,13 @@ def test_windows_parent_lookup_accepts_only_the_venv_redirector_hop(monkeypatch)
         CloseHandle=Function())) is None
     monkeypatch.setattr(renewal_runner.ctypes, 'WinDLL', None, raising=False)
     assert renewal_runner._windows_parent_of(20) is None
+    loaded = []
+    empty = SimpleNamespace(CreateToolhelp32Snapshot=Function(0), Process32FirstW=Function(),
+                            Process32NextW=Function(), CloseHandle=Function())
+    monkeypatch.setattr(renewal_runner.ctypes, 'WinDLL',
+                        lambda name, **options: (loaded.append((name, options)), empty)[1], raising=False)
+    assert renewal_runner._windows_parent_of(20) is None
+    assert loaded == [('kernel32', {'use_last_error': True})]
     monkeypatch.setattr(renewal_runner.os, 'getppid', lambda: 20)
     monkeypatch.setattr(renewal_runner.os, 'name', 'nt')
     monkeypatch.setattr(renewal_runner, '_windows_parent_of', lambda pid: {20: 10}.get(pid))

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from catchup_core.crypto import EnvelopeCipher
+from catchup_core.quarantine_fs_windows import WindowsQuarantineDirectory, ensure_private_directory
 
 ANCHOR_SCHEMA = 'artha.privacy-anchor.v2'
 _HISTORY_SCHEMA = 'artha.privacy-history.v1'
@@ -115,10 +116,6 @@ class PrivacyCapsules:
         name = record['capsule_sha256'] + '.ae1'
         if sys.platform == 'win32':
             # Readers require explicit protected owner-private DACLs; plain mkdir/mkstemp inherit the parent's ACL.
-            from catchup_core.quarantine_fs_windows import (  # noqa: PLC0415
-                WindowsQuarantineDirectory,
-                ensure_private_directory,
-            )
             ensure_private_directory(self.directory)
             with WindowsQuarantineDirectory.open(self.directory) as directory:
                 staging = name + '.pending'
