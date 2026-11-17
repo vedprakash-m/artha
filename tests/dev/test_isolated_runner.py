@@ -535,3 +535,56 @@ def test_merge_windows_coverage_verifies_shards_and_normalizes_paths(tmp_path):
         merger.verify_shards([manifest, manifest2], [{"t1"}, {"t1", "t2"}], {"t1", "t2"}, commit="abc", run_id="10", run_attempt="1")
     with pytest.raises(ValueError, match="provenance"):
         merger.verify_shards([manifest], [{"t1"}], {"t1"}, commit="other", run_id="10", run_attempt="1")
+
+
+def test_merge_windows_coverage_report_matches_repo_changed_lines(tmp_path, monkeypatch):
+    import json
+    import shutil
+
+    pytest.importorskip("coverage")
+    pytest.importorskip("diff_cover")
+    merger = _load("merge_windows_coverage", REPO / "tools" / "merge_windows_coverage.py")
+    root = tmp_path / "checkout"
+    module = root / "scripts/catchup_core/quarantine_fs_windows.py"
+    test = root / "tests/test_probe.py"
+    module.parent.mkdir(parents=True)
+    test.parent.mkdir()
+    module.write_text("def probe():\n    return 0\n")
+    test.write_text(
+        "from scripts.catchup_core.quarantine_fs_windows import probe\n"
+        + "".join(f"def test_shard_{i}():\n    assert probe() == 1\n" for i in range(1, 5)))
+    env = _git_env()
+    env["PYTHONPATH"] = str(root)
+    env["COVERAGE_FILE"] = str(root / ".coverage")
+    env.pop("COVERAGE_PROCESS_START", None)
+    for args in (["init", "-q", "-b", "main"], ["add", "scripts", "tests"],
+                 ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false", "commit", "-qm", "base"]):
+        subprocess.run(["git", *args], cwd=root, env=env, check=True, capture_output=True)
+    module.write_text("def probe():\n    return 1\n")
+    subprocess.run([sys.executable, "-m", "coverage", "run", "--branch", "-m", "pytest", "-q", str(test)],
+                   cwd=root, env=env, check=True, capture_output=True, timeout=60)
+    shards = tmp_path / "shards"
+    for i in range(1, 5):
+        shard = shards / f"win-cov-abc-10-1-shard-{i}"
+        shard.mkdir(parents=True)
+        (shard / "manifest.json").write_text(json.dumps(
+            {"commit": "abc", "run_id": "10", "run_attempt": "1", "shard": i}))
+        (shard / f"shard-{i}.nodeids").write_text(f"tests/test_probe.py::test_shard_{i}\n")
+        shutil.copy(root / ".coverage", shard / f"shard-{i}.coverage")
+    monkeypatch.setattr(merger, "ROOT", root)
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    report = root / "coverage-windows.xml"
+    assert merger.main(["--shards-dir", str(shards), "--shards", "4", "--commit", "abc",
+                        "--run-id", "10", "--run-attempt", "1", "--output-xml", str(report),
+                        "--include-target", "scripts/catchup_core/quarantine_fs_windows.py",
+                        "tests/test_probe.py"]) == 0
+    result = subprocess.run(
+        [sys.executable, str(REPO / "tools/check_diff_coverage.py"), str(report),
+         "--compare-branch=HEAD", "--include=scripts/catchup_core/quarantine_fs_windows.py",
+         "--fail-under=100", "--per-file-include=scripts/catchup_core/quarantine_fs_windows.py",
+         "--per-file-fail-under=100"],
+        cwd=root, env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "scripts/catchup_core/quarantine_fs_windows.py" in result.stdout

@@ -24,7 +24,16 @@ from catchup_core.renewal_delivery import Delivery, public_receipt
 from catchup_core.renewal_github import collect
 from catchup_core.renewal_metadata import metadata_for
 from catchup_core.renewal_runner import run as session_run
-from catchup_core.renewal_store import MAX_BYTES, RenewalError, _chain, decoded, digest, encoded, private_directory
+from catchup_core.renewal_store import (
+    MAX_BYTES,
+    REASONS,
+    RenewalError,
+    _chain,
+    decoded,
+    digest,
+    encoded,
+    private_directory,
+)
 from catchup_core.renewal_workspace import Workspace, context, source_file
 from catchup_core.runtime import RuntimeConfigError, load_runtime_config
 from lib.credentials import CredentialError, CredentialStore
@@ -138,9 +147,20 @@ def main(argv: list[str] | None = None) -> int:
                    'repository': args.repository, 'profile': 'personal'}
         authority = Authority(args.local, binding, credentials=CredentialStore(local=args.local), checkout=root)
         return _execute(args, root, authority)
-    except (RenewalError, CredentialError, PermissionDenied, RuntimeConfigError, OSError, ValueError):
-        print('delivery held: source, native authority or required evidence unavailable', file=sys.stderr)
-        return 2
+    except RenewalError as error:
+        detail = REASONS[error.reason]
+    except CredentialError:
+        detail = REASONS['authority']
+    except PermissionDenied:
+        detail = 'approved release evidence is unavailable or invalid; review the baseline and its access'
+    except RuntimeConfigError:
+        detail = 'release configuration is unavailable or invalid; inspect the local release configuration'
+    except OSError:
+        detail = 'required local release input unavailable; check local access and retry'
+    except ValueError:
+        detail = 'release input is invalid; review the requested operation and approved evidence'
+    print(f'delivery held: {detail}', file=sys.stderr)
+    return 2
 
 
 def _execute(args: argparse.Namespace, root: Path, authority: Authority) -> int:

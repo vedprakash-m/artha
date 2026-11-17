@@ -538,6 +538,78 @@ def test_diff_gate_per_file_95_and_fail_closed_with_sibling_match(tmp_path):
     assert "90.00%" in fail_95.stderr
 
 
+@pytest.mark.parametrize("harness_hits", [0, 1])
+def test_ci_harness_diff_checks_only_its_measured_modules(tmp_path, harness_hits):
+    import yaml
+
+    pytest.importorskip("diff_cover")
+    scripts = tmp_path / "scripts"
+    lib = scripts / "lib"
+    core = scripts / "catchup_core"
+    lib.mkdir(parents=True)
+    core.mkdir()
+    (lib / "credentials.py").write_text("VALUE = 1\n")
+    (core / "renewal_authority.py").write_text("VALUE = 1\n")
+    (tmp_path / "tools").mkdir()
+    shutil.copy(REPO / "tools/check_diff_coverage.py", tmp_path / "tools/check_diff_coverage.py")
+    shutil.copy(MAKEFILE, tmp_path / "Makefile")
+    env = _env()
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
+               DIFF_BASE="origin/main")
+    for args in (["init", "-q", "-b", "main"], ["add", "."],
+                 ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+                 ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, env=env)
+    (lib / "credentials.py").write_text("VALUE = 2\n")
+    (core / "renewal_authority.py").write_text("VALUE = 2\n")
+    (tmp_path / "coverage-harness.xml").write_text(
+        f'<coverage><sources><source>{lib.resolve().as_posix()}</source></sources>'
+        '<packages><package name="lib"><classes><class filename="credentials.py" name="credentials"><lines>'
+        f'<line number="1" hits="{harness_hits}"/>'
+        '</lines></class></classes></package></packages></coverage>')
+    workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
+    step = next(step for step in workflow["jobs"]["core-harness"]["steps"]
+                if step.get("name", "").startswith("Changed-line harness coverage"))
+    script = step["run"].replace("python tools/check_diff_coverage.py",
+                                 f'"{Path(sys.executable).as_posix()}" tools/check_diff_coverage.py')
+    script = script.replace("PYTHON=python", f'PYTHON="{Path(sys.executable).as_posix()}"')
+    result = subprocess.run([BASH, "-e", "-c", script], cwd=tmp_path, env=env,
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+    output = result.stdout + result.stderr
+    assert (result.returncode == 0) == bool(harness_hits), output
+    assert "scripts/lib/credentials.py" in output
+    assert "No lines with coverage information" not in output
+
+
+@pytest.mark.parametrize("module", ["curated", "household", "retention"])
+def test_core_security_modules_require_95_percent_changed_lines(tree, module):
+    pytest.importorskip("diff_cover")
+    core = tree / "scripts/catchup_core"
+    core.mkdir()
+    path = core / f"{module}.py"
+    path.write_text("\n".join(f"V{i} = {i}" for i in range(10)) + "\n")
+    env = _env()
+    env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.invalid",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid")
+    for args in (["init", "-q", "-b", "main"], ["add", "."],
+                 ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+                 ["update-ref", "refs/remotes/origin/main", "HEAD"]):
+        subprocess.run(["git", *args], cwd=tree, check=True, capture_output=True, env=env)
+    path.write_text("\n".join(f"V{i} = {i + 100}" for i in range(10)) + "\n")
+    lines = "".join(f'<line number="{i}" hits="{int(i <= 9)}"/>' for i in range(1, 11))
+    (tree / "coverage.xml").write_text(
+        f'<coverage><sources><source>{core.resolve().as_posix()}</source></sources>'
+        f'<packages><package name="core"><classes><class filename="{module}.py" name="{module}"><lines>'
+        f'{lines}</lines></class></classes></package></packages></coverage>')
+    result = make(tree, "diff-coverage-check")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"scripts/catchup_core/{module}.py" in result.stderr
+    assert "below 95%" in result.stderr
+
+
 def test_hygiene_blocks_new_ticket_filenames_and_non_slow_sleeps(tmp_path):
     """AST hygiene rejects newly created wave/steal filenames and unapproved sleeps."""
     spec = importlib.util.spec_from_file_location("lint_hygiene", REPO / "tools" / "lint_test_hygiene.py")

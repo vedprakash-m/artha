@@ -166,6 +166,55 @@ def test_AR20_main_status_success_and_invalid_configuration_are_bounded(cli_worl
     assert 'PRIVATE_CANARY' not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(('failure', 'expected'), [
+    ('renewal', 'current native delegation is unavailable'),
+    ('credential', 'current native delegation is unavailable'),
+    ('evidence', 'approved release evidence'),
+    ('config', 'release configuration'),
+    ('io', 'required local release input'),
+    ('value', 'release input is invalid'),
+])
+def test_AR20_cli_failures_are_actionable_and_do_not_disclose_details(
+        cli_world, monkeypatch, capsys, failure, expected):
+    from catchup_core.ledger import PermissionDenied
+    from catchup_core.runtime import RuntimeConfigError
+    from lib.credentials import CredentialError
+
+    authority, _, _ = cli_world
+    monkeypatch.setattr(renewal_entry, 'load_runtime_config', lambda _: SimpleNamespace(viewer='owner'))
+    monkeypatch.setattr(renewal_entry, 'CredentialStore', lambda **_: authority.credentials)
+    failures = {
+        'renewal': RenewalError('PRIVATE_CANARY', reason='authority'),
+        'credential': CredentialError('PRIVATE_CANARY'),
+        'evidence': PermissionDenied('PRIVATE_CANARY'),
+        'config': RuntimeConfigError('PRIVATE_CANARY'),
+        'io': OSError('PRIVATE_CANARY'),
+        'value': ValueError('PRIVATE_CANARY'),
+    }
+
+    def fail(*_args):
+        raise failures[failure]
+
+    monkeypatch.setattr(renewal_entry, '_execute', fail)
+    arguments = ['status', '--checkout', authority.checkout, '--local', str(authority.local)]
+    assert renewal_entry.main(arguments) == 2
+    output = capsys.readouterr()
+    assert expected in output.err
+    assert 'PRIVATE_CANARY' not in output.out + output.err
+    assert any(action in output.err for action in ('review', 'inspect', 'check'))
+
+
+def test_AR20_status_names_missing_native_authority(cli_world, monkeypatch, capsys):
+    authority, _, _ = cli_world
+    monkeypatch.setattr(renewal_entry, 'load_runtime_config', lambda _: SimpleNamespace(viewer='owner'))
+    monkeypatch.setattr(renewal_entry, 'CredentialStore', lambda **_: authority.credentials)
+    monkeypatch.setattr(renewal_entry, 'Authority', lambda *_args, **_kwargs: authority)
+    monkeypatch.setattr(authority.credentials, 'read_versioned', lambda *_args: (None, ''))
+    arguments = ['status', '--checkout', authority.checkout, '--local', str(authority.local)]
+    assert renewal_entry.main(arguments) == 2
+    assert 'current native delegation is unavailable' in capsys.readouterr().err
+
+
 def test_AR20_missing_inventory_and_unreviewed_initial_enrollment_hold(cli_world):
     authority, _, args = cli_world
     args.command = 'enroll'

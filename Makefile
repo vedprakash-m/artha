@@ -15,7 +15,7 @@ export DEVELOPER_DIR ?= /Library/Developer/CommandLineTools
 endif
 endif
 
-.PHONY: test test-fast test-work test-noncore static lint ruff import-check lint-state-writes hygiene pii-scan validate preflight generate clean check help start install-fonts install-playwright coverage diff-coverage diff-coverage-check mypy privacy-history hooks
+.PHONY: test test-fast test-work test-noncore static lint ruff import-check lint-state-writes hygiene pii-scan validate preflight generate clean check help start install-fonts install-playwright coverage diff-coverage diff-coverage-check diff-coverage-harness-check mypy privacy-history hooks
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -143,14 +143,17 @@ CORE_PER_FILE_INCLUDES = \
 	--per-file-include='scripts/catchup_core/checkpoint*.py' \
 	--per-file-include='scripts/catchup_core/consent_cli.py' \
 	--per-file-include='scripts/catchup_core/crypto.py' \
+	--per-file-include='scripts/catchup_core/curated.py' \
 	--per-file-include='scripts/catchup_core/fact_access.py' \
 	--per-file-include='scripts/catchup_core/heldout.py' \
+	--per-file-include='scripts/catchup_core/household.py' \
 	--per-file-include='scripts/catchup_core/ledger.py' \
 	--per-file-include='scripts/catchup_core/policy.py' \
 	--per-file-include='scripts/catchup_core/privacy_history.py' \
 	--per-file-include='scripts/catchup_core/quarantine*.py' \
 	--per-file-include='scripts/catchup_core/recovery*.py' \
 	--per-file-include='scripts/catchup_core/renewal*.py' \
+	--per-file-include='scripts/catchup_core/retention.py' \
 	--per-file-include='scripts/catchup_core/rule_of_two.py' \
 	--per-file-include='scripts/catchup_core/session_lock.py' \
 	--per-file-include='scripts/catchup_core/storage_adoption.py' \
@@ -171,6 +174,13 @@ diff-coverage: diff-coverage-ready coverage ## Changed-line coverage; refuses un
 diff-coverage-check: diff-coverage-ready ## diff-coverage against an existing coverage.xml (CI runs coverage once, then this)
 	$(DIFF_COVERAGE_CHECK)
 
+diff-coverage-harness-check: ## Changed-line coverage for the modules measured by coverage-harness
+	@$(PYTHON) "$(MAKE_DIR)tools/check_diff_coverage.py" coverage-harness.xml --compare-branch="$(DIFF_BASE)" \
+		--diff-range-notation="$(DIFF_RANGE_NOTATION)" \
+		$(foreach m,$(HARNESS_RUN_MODULES),--include='scripts/$(subst .,/,$(m)).py') \
+		--fail-under=$(COV_MIN) --per-file-fail-under=95 \
+		$(foreach m,$(HARNESS_RUN_MODULES),--per-file-include='scripts/$(subst .,/,$(m)).py')
+
 mypy: ## Strict type check of the new core package
 	@$(PYTHON) -m mypy --explicit-package-bases $(CORE_PKG)
 	@$(PYTHON) -m mypy --strict --follow-imports=silent --explicit-package-bases scripts/lib/credentials.py scripts/lib/credential_migration.py scripts/lib/action_credentials.py
@@ -186,6 +196,7 @@ check: ## Full local CI-parity check (single core coverage pass + non-core tests
 	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) coverage PYTEST_ARGS="-n auto"
 	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) diff-coverage-check
 	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) coverage-harness PYTEST_ARGS="-n auto"
+	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) diff-coverage-harness-check
 	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) test-noncore
 	@$(MAKE) --no-print-directory -f $(MAKEFILE_LIST) pii-scan
 	@echo "✓ All checks passed"

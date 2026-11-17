@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -116,12 +117,13 @@ def main(argv: list[str]) -> int:
             dst = work / f".coverage.shard{i}"
             dst.write_bytes(src.read_bytes())
             normalize_coverage_db(dst, ROOT)
-        subprocess.run([sys.executable, "-m", "coverage", "combine"], cwd=str(work), check=True)
+        env = {**os.environ, "COVERAGE_FILE": str(work / ".coverage")}
+        subprocess.run([sys.executable, "-m", "coverage", "combine"], cwd=str(work), env=env, check=True)
         out_xml = Path(args.output_xml).resolve()
         xml_cmd = [sys.executable, "-m", "coverage", "xml", "-o", str(out_xml)]
         if args.include_target:
             xml_cmd.append("--include=" + ",".join(args.include_target))
-        subprocess.run(xml_cmd, cwd=str(work), check=True)
+        subprocess.run(xml_cmd, cwd=str(ROOT), env=env, check=True)
     return 0
 
 

@@ -83,7 +83,7 @@ class Authority:
         except InterruptedError:
             raise
         except (CredentialError, SessionBusy, OSError):
-            raise RenewalError('release native authority is unavailable or busy') from None
+            raise RenewalError('release native authority is unavailable or busy', reason='authority') from None
 
     def _state(self) -> tuple[dict[str, Any], str]:
         state, revision = self.credentials.read_versioned(self.name)
@@ -100,7 +100,7 @@ class Authority:
                 or any(not isinstance(value, str) or (value and not is_digest(value))
                        for value in (state['active'], state['pending'], state['attempt'], state['custody'],
                                      state['predecessor']))):
-            raise RenewalError('release native authority is missing or invalid')
+            raise RenewalError('release native authority is missing or invalid', reason='authority')
         _time(state['adopted_at'])
         if ((state['phase'] == 'prepared' and not state['pending'])
                 or (state['phase'] == 'ready' and state['pending'])

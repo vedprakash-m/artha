@@ -205,10 +205,8 @@ jobs:
             DIFF_BASE=$(git hash-object -t tree -w --stdin < /dev/null)
             DIFF_RANGE_NOTATION=..
           fi
-          python tools/check_diff_coverage.py coverage-harness.xml \
-            --compare-branch="$DIFF_BASE" --diff-range-notation="$DIFF_RANGE_NOTATION" \
-            --include='scripts/*' --fail-under=85 \
-            --per-file-include='scripts/*' --per-file-fail-under=95
+          make diff-coverage-harness-check PYTHON=python \
+            DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
 
   # ── Windows Core + Native Contract Shards (3 versions x 4 shards = 12) ─────
   core-windows:
