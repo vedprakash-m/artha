@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import sys
 
 import pytest
 
@@ -179,6 +180,9 @@ def test_failed_publication_never_erases_the_last_verified_history(tmp_path, mon
         raise OSError('synthetic disk-full')
     if failure == 'disk':
         monkeypatch.setattr(backup, 'atomic_bytes', fail_disk)
+        if sys.platform == 'win32':
+            from catchup_core import quarantine_fs_windows
+            monkeypatch.setattr(quarantine_fs_windows.WindowsQuarantineDirectory, 'create_file', fail_disk)
     else:
         monkeypatch.setattr(backend, 'set_password', fail_set)
     with pytest.raises(LedgerLocked):

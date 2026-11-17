@@ -484,7 +484,7 @@ def test_output_link_and_overwrite_refuse(store, kind):
     if kind == 'symlink-directory':
         directory.symlink_to(other, target_is_directory=True)
     else:
-        directory.mkdir(mode=0o700)
+        _private_directory(directory)
         target = other / 'original.md'
         target.write_bytes(b'Existing document')
         if kind == 'symlink-output':
@@ -495,8 +495,11 @@ def test_output_link_and_overwrite_refuse(store, kind):
             name = 'Notes.md.ae1' if kind == 'case-alias' else 'notes.md.ae1'
             if kind == 'plaintext-alias':
                 name = 'notes.md'
-            (directory / name).write_bytes(b'Existing document')
-    with pytest.raises(ReviewBlocked, match=r"export\ already\ exists\ or\ aliases\ another\ export|linked\ or\ unsafe\ review\ path"):
+            _private_file(directory / name, b'Existing document')
+    expected = r"export\ already\ exists\ or\ aliases\ another\ export|linked\ or\ unsafe\ review\ path"
+    if os.name == 'nt' and kind == 'symlink-directory':
+        expected += r"|export\ directory\ must\ be\ owner\-private\ and\ unlinked"
+    with pytest.raises(ReviewBlocked, match=expected):
         preview(store, 'member-1', 'notes.md', now=NOW)
 
 
@@ -845,7 +848,11 @@ def test_publication_boundary_failures_never_succeed(store, monkeypatch, failure
             if output.exists() and not alias.exists():
                 os.link(output, alias)
         monkeypatch.setattr(module, '_sync_directory', add_link)
-    with pytest.raises(ReviewBlocked, match=r"export\ directory\ changed|export\ directory\ must\ be\ owner\-private|private\ descriptor\-relative\ publication\ is\ unavailable\ on\ this\ host|published\ export\ changed"):
+    expected = (r"export\ directory\ changed|export\ directory\ must\ be\ owner\-private|"
+                r"private\ descriptor\-relative\ publication\ is\ unavailable\ on\ this\ host|published\ export\ changed")
+    if os.name == 'nt':
+        expected += r"|quarantine\ review\ unavailable\ or\ unsafe|private\ encrypted\ export\ publication\ was\ refused"
+    with pytest.raises(ReviewBlocked, match=expected):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
 
 
@@ -996,7 +1003,10 @@ def test_final_export_integrity_required_before_success(store, monkeypatch, tamp
             else:
                 _share(output)
     monkeypatch.setattr(module, '_sync_directory', corrupt)
-    with pytest.raises(ReviewBlocked, match=r"published\ encrypted\ export\ does\ not\ match\ the\ reviewed\ envelope|published\ export\ changed"):
+    expected = r"published\ encrypted\ export\ does\ not\ match\ the\ reviewed\ envelope|published\ export\ changed"
+    if os.name == 'nt':
+        expected += r"|private\ encrypted\ export\ publication\ was\ refused"
+    with pytest.raises(ReviewBlocked, match=expected):
         module.release(store, 'member-1', 'notes.md', review['review_digest'], attest_clean=True, now=NOW)
     assert not output.exists()
 

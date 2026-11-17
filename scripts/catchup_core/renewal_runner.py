@@ -117,8 +117,54 @@ def run(command: list[str], root: Path, *, timeout: int = 1800) -> None:
             child.stdout.close()
 
 
+class _ProcessEntry(ctypes.Structure):
+    _fields_ = [('size', ctypes.c_uint32), ('usage', ctypes.c_uint32), ('pid', ctypes.c_uint32),
+                ('heap', ctypes.c_size_t), ('module', ctypes.c_uint32), ('threads', ctypes.c_uint32),
+                ('parent', ctypes.c_uint32), ('priority', ctypes.c_long), ('flags', ctypes.c_uint32),
+                ('exe', ctypes.c_wchar * 260)]
+
+
+def _windows_parent_of(pid: int, api: Any = None) -> int | None:
+    # https://learn.microsoft.com/windows/win32/api/tlhelp32/nf-tlhelp32-createtoolhelp32snapshot
+    if api is None:
+        loader = getattr(ctypes, 'WinDLL', None)
+        if loader is None:
+            return None
+        api = loader('kernel32', use_last_error=True)
+    for name, args, result in (
+        ('CreateToolhelp32Snapshot', [ctypes.c_uint32, ctypes.c_uint32], ctypes.c_void_p),
+        ('Process32FirstW', [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+        ('Process32NextW', [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+        ('CloseHandle', [ctypes.c_void_p], ctypes.c_int),
+    ):
+        function = getattr(api, name)
+        function.argtypes, function.restype = args, result
+    snapshot = api.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:
+        return None
+    try:
+        entry = _ProcessEntry()
+        entry.size = ctypes.sizeof(entry)
+        found = api.Process32FirstW(snapshot, ctypes.byref(entry))
+        while found:
+            if entry.pid == pid:
+                return int(entry.parent)
+            found = api.Process32NextW(snapshot, ctypes.byref(entry))
+        return None
+    finally:
+        api.CloseHandle(snapshot)
+
+
+def _launched_by(parent: int) -> bool:
+    direct = os.getppid()
+    if direct == parent:
+        return True
+    # A Windows venv python.exe is a redirector that starts the base interpreter as its child.
+    return os.name == 'nt' and _windows_parent_of(direct) == parent
+
+
 def _worker(command: list[str], root: Path, timeout: int, parent: int) -> None:
-    if os.getppid() != parent:
+    if not _launched_by(parent):
         raise RenewalError('initiating session is no longer active')
     cleanup = _containment()
     def parent_closed() -> None:

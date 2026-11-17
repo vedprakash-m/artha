@@ -74,6 +74,38 @@ def test_windows_job_api_contract_refuses_unavailable_containment(failure):
         assert api.AssignProcessToJobObject.calls and api.CloseHandle.calls
 
 
+def test_windows_parent_lookup_accepts_only_the_venv_redirector_hop(monkeypatch):
+    from types import SimpleNamespace
+    processes = [(10, 1), (20, 10)]
+    def walk(index):
+        def step(_snapshot, entry):
+            if index[0] >= len(processes):
+                return 0
+            entry._obj.pid, entry._obj.parent = processes[index[0]]
+            index[0] += 1
+            return 1
+        return step
+    position = [0]
+    api = SimpleNamespace(CreateToolhelp32Snapshot=Function(7), Process32FirstW=walk(position),
+                          Process32NextW=walk(position), CloseHandle=Function())
+    assert renewal_runner._windows_parent_of(20, api) == 10
+    assert api.CloseHandle.calls == [(7,)]
+    position[0] = 0
+    assert renewal_runner._windows_parent_of(99, api) is None
+    assert renewal_runner._windows_parent_of(20, SimpleNamespace(
+        CreateToolhelp32Snapshot=Function(0), Process32FirstW=Function(), Process32NextW=Function(),
+        CloseHandle=Function())) is None
+    monkeypatch.setattr(renewal_runner.ctypes, 'WinDLL', None, raising=False)
+    assert renewal_runner._windows_parent_of(20) is None
+    monkeypatch.setattr(renewal_runner.os, 'getppid', lambda: 20)
+    monkeypatch.setattr(renewal_runner.os, 'name', 'nt')
+    monkeypatch.setattr(renewal_runner, '_windows_parent_of', lambda pid: {20: 10}.get(pid))
+    assert renewal_runner._launched_by(20) and renewal_runner._launched_by(10)
+    assert not renewal_runner._launched_by(1)
+    monkeypatch.setattr(renewal_runner.os, 'name', 'posix')
+    assert not renewal_runner._launched_by(10)
+
+
 def test_windows_loader_and_platform_cleanup_routes(monkeypatch):
     from types import SimpleNamespace
     api = SimpleNamespace(**{name: Function() for name in (

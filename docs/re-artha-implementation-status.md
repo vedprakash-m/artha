@@ -1,5 +1,16 @@
 # re-artha implementation status — 2026-11-16
 
+## Windows CI contract fixes — 2026-11-16
+
+Hosted CI run `44035734820` failed on Windows. These fixes address it:
+- Privacy capsules now use the native write-once private-file path, which fixes the AR-01 DACL inheritance.
+- Quarantine review rejects oversized input on Windows before reading it.
+- Test isolation now allows Windows device paths.
+- Windows test expectations are now portable.
+- The renewal gate worker now accepts a Windows venv launcher between itself and the initiating session. Before this fix, the worker refused every local gate run under a venv.
+
+Targeted and Windows-gated tests pass locally. The register check and the private Work verifier also pass. Gitleaks and the PII scan report 0 findings. Green hosted CI is not yet confirmed. The live gates listed below are unchanged.
+
 ## Test-suite overhaul, CI sharding and automatic release renewal — 2026-11-16
 
 Engineering for `specs/automatic-release-renewal.md` (`AR-01..AR-26`, 282 tests) and the

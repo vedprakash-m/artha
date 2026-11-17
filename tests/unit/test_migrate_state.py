@@ -212,7 +212,7 @@ class TestMigrationPath:
         assert path == []
 
     def test_unknown_version_raises(self):
-        with pytest.raises(ValueError, match=r"Unknown\ version\ in\ chain:\ list\.index\(x\):\ x\ not\ in\ list"):
+        with pytest.raises(ValueError, match=r"Unknown version in chain"):
             _migration_path("0.0", "1.1")
 
 

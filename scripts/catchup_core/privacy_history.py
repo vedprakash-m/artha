@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -111,7 +112,23 @@ class PrivacyCapsules:
             raise ValueError('privacy history exceeds its supported capsule limit')
         encrypted, _ = self._cipher.encrypt(plain, aad=self._aad)
         record = {**checkpoint, 'schema': ANCHOR_SCHEMA, 'capsule_sha256': hashlib.sha256(encrypted).hexdigest()}
-        atomic_bytes(self.directory / (record['capsule_sha256'] + '.ae1'), encrypted)
+        name = record['capsule_sha256'] + '.ae1'
+        if sys.platform == 'win32':
+            # Readers require explicit protected owner-private DACLs; plain mkdir/mkstemp inherit the parent's ACL.
+            from catchup_core.quarantine_fs_windows import (  # noqa: PLC0415
+                WindowsQuarantineDirectory,
+                ensure_private_directory,
+            )
+            ensure_private_directory(self.directory)
+            with WindowsQuarantineDirectory.open(self.directory) as directory:
+                staging = name + '.pending'
+                with directory.create_file(staging) as staged:
+                    staged.write_all(encrypted)
+                    staged.flush()
+                    pinned = staged.identity
+                directory.publish_write_once(staging, name, expected_identity=pinned)
+        else:
+            atomic_bytes(self.directory / name, encrypted)
         if self.load(record) != history:
             raise ValueError('privacy capsule publication could not be verified')
         return record

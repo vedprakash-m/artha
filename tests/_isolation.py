@@ -388,6 +388,10 @@ def install_write_audit_hook(
             return True
         if not text or text.startswith("/dev/") or text.upper() in {"NUL", "CON", "PRN"}:
             return True
+        # logging.FileHandler makes os.devnull absolute: "\\.\nul" on Windows.
+        device = text.replace("/", "\\").upper()
+        if device.startswith(("\\\\.\\", "\\\\?\\")) and device[4:] in {"NUL", "CON", "PRN"}:
+            return True
         joined = text if _pathmod.isabs(text) else _pathmod.join(cwd, text)
         try:
             resolved = _pathmod.normcase(_pathmod.realpath(joined))

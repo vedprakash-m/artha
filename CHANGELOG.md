@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Windows CI contract failures, 2026-11-16
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Write privacy capsules on Windows through the native write-once private-file path, so they no longer inherit the parent DACL (AR-01). Reject oversized quarantine review input on Windows before reading. Allow Windows device paths for `NUL`/`CON`/`PRN` in test isolation, and make the Windows test expectations portable. Let the renewal gate worker accept a Windows venv launcher (`python.exe` redirector) as the single process between itself and the initiating session; before this fix, every local gate run under a venv failed with `local delivery gates held`. | `scripts/catchup_core/{privacy_history,quarantine_review,renewal_runner}.py`, `tests/_isolation.py`, `tests/catchup_core/test_{privacy_anchor_capacity,quarantine_review,renewal_runner}.py`, `tests/unit/test_migrate_state.py`, `docs/spec-manifest.json` | Targeted Windows tests and Windows-gated files pass. The capability register check passes and the private Work verifier passes. Gitleaks and the PII scan report 0 findings. |
+
 ### Changed — Test-suite overhaul, CI sharding and renewal CLI diagnostics, 2026-11-16
 
 | Change | Modified files | Validation |

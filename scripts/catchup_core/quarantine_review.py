@@ -185,6 +185,8 @@ def _read(path: Path, limit: int) -> bytes:
                 if ((native_before.identity.volume_serial, int.from_bytes(native_before.identity.file_id, 'big'))
                         != (native_path.st_dev, native_path.st_ino)):
                     raise ReviewBlocked('review input changed')
+                if native_before.size > limit:
+                    raise ReviewBlocked('review input exceeds its bounded size')
                 data = native_file.read(limit + 1)
                 native_after = native_file.snapshot()
                 if (native_after != native_before
