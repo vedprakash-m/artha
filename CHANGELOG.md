@@ -9,6 +9,13 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Validated — Renewal delivery and career privacy, 2026-11-16
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Verify routine and task-approved renewal through synthetic real-Git delivery; exclude private renderers from the source inventory while retaining ordinary untracked code. Preserve the private Work runner's State File exclusion. | `tests/catchup_core/test_renewal_{e2e,workspace}.py`, `tools/run_tests_isolated.py` | The isolated public suite passed 11,506 tests, with 506 skipped and 20 expected failures. Changed core lines: 96% (1,629/1,683). The private Work synthetic selection passed with a resolved macOS temporary directory. |
+| Keep generated CVs in ignored `state/career/`, use a generic DOCX default, and render PDFs offline with document JavaScript disabled. Block forced adds of private career sources, renderers and legacy `output/` files. | `.gitignore`, `.githooks/privacy_scan.py`, `scripts/career_docx_generator.py`, `scripts/skills/career_pdf_generator.py`, setup, CI, templates and related tests | 110 privacy-gate tests passed. Synthetic DOCX generation and real Chromium PDF rendering passed; both PDF variants loaded their local fonts and reused cached output. |
+
 ### Added — Automatic release renewal engineering, 2026-11-16
 
 | Change | Modified files | Validation |
@@ -16,11 +23,11 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 | Opt-in renewal of the release approval after a validated `main` delivery. Bounded source/CI checks, native renewal authority with journal and recovery, read-only privacy metadata, staged delivery with a public receipt, runtime lease, and an owner CLI. Without a `release.renewal` pointer, behavior is unchanged. | `scripts/catchup_core/renewal_{inputs,ci,store,custody,authority,metadata,workspace,github,runner,delivery,runtime,entry}.py`, `scripts/catchup_core/{policy,runtime,privacy_history}.py`, `tools/release_renewal.py`, `docs/spec-manifest.json`, `tests/catchup_core/test_renewal_*.py` | 280 renewal tests cover AR-01..AR-26, including real-process concurrency. Core coverage suite 5,295 passed (88.50%; changed core lines 96%). Security harness 1,717 passed (87.57%). Mypy, Ruff, import, PII and validate gates passed. |
 | Hold one foreground delivery per installation so a concurrent second delivery cannot overwrite a pushed receipt (AR-10). | `scripts/catchup_core/renewal_delivery.py` | AR-10 real-process test failed before the fix and passes after it. |
 | Allow a task-only delegation (empty `routine` list) for the owner-chosen path A: routine delivery holds every change; exact `plan`/`approve` candidates still deliver. | `scripts/catchup_core/renewal_authority.py`, `tests/catchup_core/test_renewal_authority.py` | New test failed before the change; isolated renewal selection 280 passed. |
-| AR-01 end-to-end fixture copies only Git-listed `scripts/` files, so gitignored local-only files (such as `scripts/work/`) no longer enter the synthetic release and exceed the metadata size limit. Production `proposal` already reads only tracked files. | `tests/catchup_core/test_renewal_e2e.py` | AR-01 failed in a direct checkout run (`release metadata exceeds its bound`) and passes after the fix; renewal selection 280 passed both directly and in the isolated runner. |
+| AR-01 end-to-end fixture copies only Git-listed `scripts/` files, so gitignored local-only files (such as `scripts/work/`) no longer enter the synthetic release and exceed the metadata size limit. Production `proposal` fingerprints tracked and nonignored untracked source files. | `tests/catchup_core/test_renewal_e2e.py` | AR-01 failed in a direct checkout run (`release metadata exceeds its bound`) and passes after the fix; renewal selection 280 passed both directly and in the isolated runner. |
 
-The full public suite passed 11,468 cases; its failures came from separate uncommitted career work, or were
-cleared by regenerating the capability register. Owner decisions recorded 2026-11-16: first delivery uses exact
-task-approved candidates (path A), D1 accepted, D2 adopted. Re-signing the release, D3 enrollment approval, native
+The earlier public-suite attempt had 11,468 passes and seven failures; the subsequent candidate passed as recorded
+above. Owner decisions recorded 2026-11-16: first delivery uses exact task-approved candidates (path A), D1 accepted,
+D2 adopted. Re-signing the release, D3 enrollment approval, native
 enrollment and live adoption/UAT have not been performed, so automatic renewal is not yet available. The feature
 spec stays active until they are.
 

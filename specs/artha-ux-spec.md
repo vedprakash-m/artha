@@ -1052,7 +1052,7 @@ COMMAND          BEHAVIOR                                    RESPONSE TIME
                                          NEVER loaded during catch-up or briefing
                  /career tracker         Pipeline status view (from state/career_search.md)
                  /career pdf <NNN>       Generate ATS-optimized CV PDF via Playwright
-                                         Output: output/career/cv-{company}-{date}.pdf
+                                         Output: state/career/{company-slug}/cv-{company-slug}-{date}.pdf
                  /career stories         Story Bank review (20-story cap, 5 pinned)
                  /career scan            Portal scan — Greenhouse/Ashby/Lever
                  /career prep <NNN|co>   Interview prep packet from Block F + KB

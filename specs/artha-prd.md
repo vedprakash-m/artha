@@ -1212,7 +1212,7 @@ Examples: bill due dates, immigration deadlines, spending summaries, goal progre
 - Prompt: `prompts/career_search.md` (lazy-loaded on `/career` commands only)
 - State: `state/career_search.md` (YAML frontmatter + Markdown tracker)
 - Reports: `briefings/career/{NNN}-{company}-{date}.md`
-- PDF output: `output/career/cv-{company}-{date}.pdf`
+- PDF output: `state/career/{company-slug}/cv-{company-slug}-{date}.pdf`
 - Local cache: `~/.artha-local/career/` (fingerprints + scan history; outside repo)
 - Python helpers: `scripts/lib/career_state.py` (reconcile, score, fingerprint, story bank), `scripts/lib/career_trace.py` (JSONL audit trail, 90-day retention)
 - Skills: `scripts/skills/career_pdf_generator.py`, `scripts/skills/portal_scanner.py` (Phase 2)

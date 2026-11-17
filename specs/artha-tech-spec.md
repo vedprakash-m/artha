@@ -5929,6 +5929,7 @@ Lazy-loaded domain with deferred skill execution. Career evaluation (~20–32K t
 - `pull()`: activation guard (`campaign.status` check), reads `cv.md` + evaluation report + HTML template
 - `parse()`: HTML merge, keyword injection, Unicode normalization, delegates to `_render_pdf()`
 - `_render_pdf()`: isolated Playwright boundary — retries once on failure, HTML fallback on second failure
+- Chromium renders offline with document JavaScript disabled.
 - Fonts: Space Grotesk + DM Sans, self-hosted in `fonts/` (woff2), installed via `scripts/install_fonts.sh`
 - Preflight: FR-CS-3 — `scripts/preflight.py` checks Playwright + Chromium binary in ms-playwright cache
 
@@ -5963,13 +5964,12 @@ Auth wall detection runs BEFORE `CareerJDInjectionGR`. `cv.md` and `article-dige
 
 | File | Repo | Role |
 |------|------|------|
-| `state/career_search.md` | tracked | Live tracker + CV config + story bank |
+| `state/career_search.md` | gitignored (`state/*.md`) | Live tracker + CV config + story bank |
 | `state/career_audit.jsonl` | gitignored | JSONL audit trail (90-day retention) |
 | `~/.artha-local/career/` | local only | Dedup fingerprints + scan history (outside repo) |
 | `briefings/career/{NNN}-{company}-{date}.md` | gitignored | Archived evaluation reports |
-| `output/career/cv-{company}-{date}.pdf` | gitignored | Generated ATS-optimized PDFs |
-| `output/career/.gitkeep` | tracked | Directory marker |
-| `briefings/career/.gitkeep` | tracked | Directory marker |
+| `state/career/{company-slug}/cv-{company-slug}-{date}.pdf` | gitignored (`state/career/`) | Generated ATS-optimized PDFs |
+| `state/career/`, `briefings/career/` | created by setup and CI | Runtime output directories |
 
 ### 30.7 Signal Routing
 

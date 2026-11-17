@@ -1367,7 +1367,9 @@ Invokes `CareerPdfGenerator` skill for report number NNN.
 3. Read `templates/cv-template.html` for layout (Space Grotesk + DM Sans fonts)
 4. Inject JD keywords into CV sections (ATS optimization)
 5. Render HTML → PDF via Python Playwright (`page.pdf()`)
-6. Save to `output/career/cv-{company-slug}-{date}.pdf`
+6. Save to `state/career/{company-slug}/cv-{company-slug}-{date}.pdf`
+
+Rendering uses an offline Chromium context with document JavaScript disabled; local fonts remain available.
 
 **Prerequisite:** `playwright install chromium` (one-time; preflight check validates Chromium binary).
 
@@ -1388,7 +1390,7 @@ Invocation: `python3 scripts/career_apply.py <NNN> [--portal X] [--referrer "Nam
 
 ### `/career cover <NNN>` — Generate Cover Letter
 
-Authors a 1-page ATS-safe cover letter for report NNN using the Block E personalization plan + Block B CV-match evidence + proof points from `~/.artha-local/article-digest.md`. Output: `briefings/career/{NNN}-cover-letter.md` plus `output/career/cover-{slug}-{date}.pdf`. Hash-sidecar idempotent — same rendered HTML, no regen.
+Authors a 1-page ATS-safe cover letter for report NNN using the Block E personalization plan + Block B CV-match evidence + proof points from `~/.artha-local/article-digest.md`. Output: `briefings/career/{NNN}-cover-letter.md` plus `state/career/<company>/cover-{slug}-{date}.pdf`. Hash-sidecar idempotent — same rendered HTML, no regen.
 
 Invocation (skill):
 ```python
