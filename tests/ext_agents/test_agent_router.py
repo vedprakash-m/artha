@@ -134,3 +134,12 @@ class TestWeakAreaSkip:
         r = AgentRouter(registry=reg)
         result = r.route("deployment stuck SDP block")
         assert result.match is not None
+
+
+def test_agent_router_tfidf_uses_query_text_and_similarity():
+    import re
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "lib" / "agent_router.py").read_text(encoding="utf-8")
+    assert re.search(r"lexical\.query\(.*?query_text=", src, re.DOTALL)
+    assert re.search(r"lexical\.query\(.*?min_sim=", src, re.DOTALL)
+    assert "best_lex.similarity" in src
+    assert "(ImportError, Exception)" not in src

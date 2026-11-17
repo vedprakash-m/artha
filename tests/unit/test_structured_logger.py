@@ -220,3 +220,10 @@ def test_pipeline_log_event_format(tmp_path):
     assert obj["connector"] == "gmail"
     assert isinstance(obj["records"], int)
     assert isinstance(obj["ms"], (int, float))
+
+
+def test_is_trace_enabled_responds_to_env_var(monkeypatch):
+    from lib.observability import _is_trace_enabled  # noqa: PLC0415
+
+    monkeypatch.setenv("ARTHA_LLM_TRACE", "1")
+    assert _is_trace_enabled() is True

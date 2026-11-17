@@ -346,3 +346,26 @@ class TestDeriveCardStatus:
         card.drafts["whatsapp"] = PlatformDraft(status=PlatformDraftStatus.DRAFT)
         result = derive_card_status(card)
         assert result == CardStatus.STAGED
+
+
+class TestContentCardProperties:
+    def test_is_terminal(self):
+        assert _make_card(CardStatus.ARCHIVED).is_terminal is True
+        assert _make_card(CardStatus.DISMISSED).is_terminal is True
+        assert _make_card(CardStatus.SEED).is_terminal is False
+        assert _make_card(CardStatus.POSTED).is_terminal is False
+        assert _make_card(CardStatus.APPROVED).is_terminal is False
+
+    def test_is_archive_ready(self):
+        empty = _make_card()
+        assert empty.is_archive_ready is False
+
+        done = _make_card()
+        done.drafts["linkedin"] = PlatformDraft(status=PlatformDraftStatus.POSTED)
+        done.drafts["instagram"] = PlatformDraft(status=PlatformDraftStatus.SKIPPED)
+        assert done.is_archive_ready is True
+
+        wip = _make_card()
+        wip.drafts["linkedin"] = PlatformDraft(status=PlatformDraftStatus.POSTED)
+        wip.drafts["twitter"] = PlatformDraft(status=PlatformDraftStatus.DRAFT)
+        assert wip.is_archive_ready is False

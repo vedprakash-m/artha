@@ -45,3 +45,11 @@ def test_no_script_launches_a_model_cli_with_a_permission_bypass():
             if flag in text:
                 offenders.append(f"{rel}: {flag}")
     assert offenders == []
+
+
+def test_llm_unavailable_error_attributes():
+    from lib.exceptions import LLMUnavailableError
+
+    err = LLMUnavailableError(reason="test", last_exit_code=1)
+    assert err.reason == "test"
+    assert err.last_exit_code == 1

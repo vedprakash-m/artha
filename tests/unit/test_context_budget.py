@@ -1,7 +1,11 @@
 """
-test_context_budget_steal.py — Tests for S-30 check_budget() addition.
-specs/steal.md §15.2.1
+tests/unit/test_context_budget.py — Tests for lib.context_budget.
 """
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
 
 from lib.context_budget import check_budget, CHARS_PER_TOKEN, estimate_token_count
 
@@ -53,3 +57,35 @@ def test_check_budget_session_start_gate():
     g0_token_estimate = 37_625
     text = "a" * int(g0_token_estimate * CHARS_PER_TOKEN)
     assert check_budget(text, budget_tokens=35_000) is False
+
+
+@pytest.mark.parametrize("filename", ["context_offloader.py", "prompt_composer.py", "session_summarizer.py"])
+def test_no_hardcoded_chars_per_token_4_outside_budget(filename: str):
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    src = (scripts_dir / filename).read_text(encoding="utf-8")
+    assert "_CHARS_PER_TOKEN = 4" not in src
+    assert "CHARS_PER_TOKEN = 4" not in src
+
+
+def test_chars_per_token_only_defined_in_context_budget():
+    import ast
+
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    canonical = (scripts_dir / "lib" / "context_budget.py").resolve()
+    violations = []
+    for py_file in scripts_dir.rglob("*.py"):
+        if py_file.resolve() == canonical:
+            continue
+        src = py_file.read_text(encoding="utf-8")
+        if "context_budget" in src and "CHARS_PER_TOKEN" in src:
+            continue
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            targets = node.targets if isinstance(node, ast.Assign) else ([node.target] if isinstance(node, ast.AnnAssign) else [])
+            for target in targets:
+                if isinstance(target, ast.Name) and "CHARS_PER_TOKEN" in target.id:
+                    violations.append(f"{py_file.name}:{target.id}")
+    assert violations == []

@@ -72,3 +72,22 @@ class TestCacheSizeCap:
         original_keys = set(fat.keys())
         _enforce_cache_size_cap(fat)
         assert set(fat.keys()) == original_keys, "Input dict was mutated"
+
+    def test_cached_at_ttl_evicts_old_and_grandfathers_legacy(self):
+        from datetime import datetime, timedelta, timezone
+
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        fresh_ts = datetime.now(timezone.utc).isoformat()
+        cache = {
+            "old_skill": {"cached_at": old_ts, "last_run": old_ts, "data": "x"},
+            "fresh_skill": {"cached_at": fresh_ts, "last_run": fresh_ts, "data": "y"},
+            "legacy_skill": {"last_run": "2020-01-01T00:00:00+00:00", "data": "small"},
+        }
+        result = _enforce_cache_size_cap(cache)
+        assert "old_skill" not in result
+        assert "fresh_skill" in result
+        assert "legacy_skill" in result
+
+        runner_src = (_REPO / "scripts" / "skill_runner.py").read_text(encoding="utf-8")
+        for token in ("_SKILLS_CACHE_TTL_DAYS", "cached_at", "SKILLS_CACHE_TTL_EVICTION"):
+            assert token in runner_src

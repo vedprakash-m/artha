@@ -285,3 +285,10 @@ class TestLoadThresholdPct:
         with patch("session_summarizer.ARTHA_DIR", tmp_path):
             pct = load_threshold_pct()
         assert pct == 70.0
+
+
+def test_proactive_exits_nonzero_below_threshold():
+    import session_summarizer  # noqa: PLC0415
+
+    with patch.object(session_summarizer, "should_summarize_now", return_value=False):
+        assert session_summarizer.main(["--proactive"]) == 1

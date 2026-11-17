@@ -394,3 +394,41 @@ def test_persist_facts_is_gated_at_the_choke_point(tmp_path, monkeypatch):
     monkeypatch.setattr(memory_policy, "extraction_allowed", lambda *a, **k: False)
     assert fe.persist_facts([object()], tmp_path) == 0
     assert not (tmp_path / "state" / "memory.md").exists()
+
+
+class TestMemorySensitivityEnforcement:
+    """lib.memory_writer.add_fact() must block high-sensitivity domain facts."""
+
+    def test_high_sensitivity_domain_blocked_and_audited(self, tmp_path):
+        from lib.memory_writer import _HIGH_SENSITIVITY_DOMAINS, add_fact
+
+        memory_path = tmp_path / "memory.md"
+        audit_path = tmp_path / "audit.md"
+        for domain in _HIGH_SENSITIVITY_DOMAINS:
+            memory_path.write_text("---\nfacts: []\n---\n", encoding="utf-8")
+            result = add_fact(
+                {"text": f"sensitive fact for {domain}"},
+                memory_path,
+                domain=domain,
+                audit_path=audit_path,
+            )
+            assert result is False, f"Domain '{domain}' must be blocked"
+            assert f"sensitive fact for {domain}" not in memory_path.read_text(encoding="utf-8")
+
+        audit_text = audit_path.read_text(encoding="utf-8")
+        assert "MEMORY_FACT_SENSITIVITY_BLOCKED" in audit_text
+        assert "immigration" in audit_text
+
+    def test_general_domain_allowed(self, tmp_path):
+        from lib.memory_writer import add_fact
+
+        memory_path = tmp_path / "memory.md"
+        memory_path.write_text("---\nfacts: []\n---\n", encoding="utf-8")
+        result = add_fact(
+            {"text": "user prefers dark mode"},
+            memory_path,
+            domain="general",
+            audit_path=tmp_path / "audit.md",
+        )
+        assert result is True
+        assert "dark mode" in memory_path.read_text(encoding="utf-8")

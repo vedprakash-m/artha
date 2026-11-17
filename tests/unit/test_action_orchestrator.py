@@ -1146,3 +1146,9 @@ def test_run_with_timeout_fires_correctly(artha_dir):
     assert "ACTION_ORCHESTRATOR_TIMEOUT" in audit, (
         "Expected ACTION_ORCHESTRATOR_TIMEOUT in audit.md after timeout"
     )
+
+
+def test_approve_all_low_revalidates_idempotency_at_approval():
+    assert callable(getattr(orch, "cmd_approve_all_low", None))
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "action_orchestrator.py").read_text(encoding="utf-8")
+    assert "approve_all_low_ttl_boundary" in src

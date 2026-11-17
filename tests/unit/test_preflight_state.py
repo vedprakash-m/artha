@@ -284,3 +284,121 @@ def test_skill_inventory_warning_respects_current_host(
     result = script_preflight.check_skill_index()
     assert result.passed is passes
     assert index["enabled_missing_modules"] == ["example"]
+
+
+class TestPreflightBootstrapStub:
+    """preflight.state_checks: _is_bootstrap_stub() detects placeholder files."""
+
+    def test_stub_detection_real_and_missing(self, tmp_path):
+        stub = tmp_path / "stub.md"
+        stub.write_text("---\n# Content\nsome: value\n\n---\n", encoding="utf-8")
+        assert pf._is_bootstrap_stub(str(stub)) is True
+
+        real = tmp_path / "real.md"
+        real.write_text("---\nschema_version: '1.0'\nlast_updated: '2026-03-15'\n---\n\n# Real data\n", encoding="utf-8")
+        assert pf._is_bootstrap_stub(str(real)) is False
+        assert pf._is_bootstrap_stub(str(tmp_path / "nonexistent.md")) is False
+
+    def test_check_state_templates_detects_and_fixes_stubs(self, tmp_path, monkeypatch):
+        state_dir = tmp_path / "state"
+        templates_dir = state_dir / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "goals.md").write_text("---\ndomain: goals\nlast_updated: never\n---\n\n# Goals\n", encoding="utf-8")
+        goals = state_dir / "goals.md"
+        goals.write_text("---\n# Content\nsome: value\n---\n", encoding="utf-8")
+
+        monkeypatch.setattr(pf, "STATE_DIR", str(state_dir))
+        detect = pf.check_state_templates(auto_fix=False)
+        assert detect.passed is False
+        assert "bootstrap stub" in detect.message
+
+        fixed = pf.check_state_templates(auto_fix=True)
+        assert fixed.auto_fixed is True
+        content = goals.read_text(encoding="utf-8")
+        assert "# Content" not in content
+        assert "domain: goals" in content
+
+
+class TestVaultAndKeyringPreflightChecks:
+    """preflight.vault_checks: keyring, vault health, and decrypted lock state."""
+
+    def test_keyring_backend_and_missing_module(self, monkeypatch):
+        assert pf.check_keyring_backend().name == "keyring backend"
+        import builtins
+        orig_import = builtins.__import__
+
+        def fail_keyring(name, *args, **kwargs):
+            if name == "keyring":
+                raise ImportError("no module named keyring")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fail_keyring)
+        missing = pf.check_keyring_backend()
+        assert not missing.passed and missing.severity == "P0"
+
+    def test_vault_health_and_lock_states(self, tmp_path, monkeypatch):
+        import json
+        import os
+        import time
+        from unittest.mock import MagicMock, patch
+
+        monkeypatch.setattr(pf, "ARTHA_DIR", str(tmp_path))
+        assert isinstance(pf.check_vault_lock(auto_fix=False), pf.CheckResult)
+        (tmp_path / ".artha-decrypted").write_text(json.dumps({
+            "pid": os.getpid(), "started_at": time.time(), "purpose": "test",
+        }))
+        lock_res = pf.check_vault_lock(auto_fix=False)
+        assert "vault" in lock_res.name.lower() or "lock" in lock_res.name.lower()
+
+        monkeypatch.setattr(pf, "SCRIPTS_DIR", str(tmp_path / "scripts"))
+        assert not pf.check_vault_health().passed
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="", stderr="")):
+            assert isinstance(pf.check_vault_health(), pf.CheckResult)
+
+
+class TestWorkHostStateScoping:
+    """Work templates & staleness belong only on Windows hosts."""
+
+    def test_work_templates_scoped_to_windows(self, tmp_path, monkeypatch):
+        import preflight.state_checks as checks
+
+        state = tmp_path / "state"
+        (state / "templates").mkdir(parents=True)
+        for name in ("work-notes.md", "finance.md"):
+            (state / "templates" / name).write_text("---\nx: 1\n---\n")
+        monkeypatch.setattr(checks, "STATE_DIR", str(state))
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        mac_msg = checks.check_state_templates().message
+        assert "work-notes.md" not in mac_msg and "finance.md" in mac_msg
+
+        monkeypatch.setattr("platform.system", lambda: "Windows")
+        assert "work-notes.md" in checks.check_state_templates().message
+
+    def test_work_staleness_scoped_to_windows(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        spec = importlib.util.spec_from_file_location("preflight_cli_script_work", _SCRIPTS_DIR / "preflight.py")
+        script = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "preflight_cli_script_work", script)
+        spec.loader.exec_module(script)
+
+        (tmp_path / "config").mkdir()
+        (tmp_path / "state" / "work").mkdir(parents=True)
+        old = time.time() - 30 * 86400
+        for rel in ("state/work/work-people.md", "state/finance.md"):
+            p = tmp_path / rel
+            p.write_text("x")
+            os.utime(p, (old, old))
+        (tmp_path / "config" / "state_registry.yaml").write_text(
+            "state_files:\n  - path: state/work/work-people.md\n    max_staleness_hours: 24\n"
+            "  - path: state/finance.md\n    max_staleness_hours: 24\n"
+        )
+        monkeypatch.setattr(script, "ARTHA_DIR", str(tmp_path))
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        mac_msg = script.check_state_registry_staleness().message
+        assert "work-people" not in mac_msg and "finance" in mac_msg
+
+        monkeypatch.setattr("platform.system", lambda: "Windows")
+        assert "work-people" in script.check_state_registry_staleness().message

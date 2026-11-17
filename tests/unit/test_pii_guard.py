@@ -110,3 +110,45 @@ def test_py_builtin_test_suite():
     )
     assert result.returncode == 0, f"pii_guard.py test failed:\n{result.stdout}"
     assert "0 failed" in result.stdout
+
+
+def test_name_in_subject_pattern_hooks_defined():
+    import pii_guard  # noqa: PLC0415
+
+    assert callable(getattr(pii_guard, "_maybe_add_name_in_subject_pattern", None))
+    assert hasattr(pii_guard, "_NAME_IN_SUBJECT_LOADED")
+
+
+def test_core_pii_categories_action_payload_and_audit_log(tmp_path, monkeypatch):
+    import pii_guard  # noqa: PLC0415
+
+    # In-process builtin regression suite covers regex categories cleanly
+    with pytest.raises(SystemExit) as exc:
+        pii_guard.do_test()
+    assert exc.value.code == 0
+
+    # Verify scan_action_payload across text fields & non-string ignore + telemetry failure resilience
+    payload = {
+        "recipient": "bob@example.com",
+        "payee": "IRS",
+        "body": "SSN: 123-45-6789 and card 4111-1111-1111-1111",
+        "notes": "Routing # 021000021",
+        "amount": 500,  # non-string ignored
+        "extra_ignored_field": "SSN 999-99-9999",
+    }
+    labels = pii_guard.scan_action_payload(payload)
+    assert "SSN" in labels and "CC" in labels
+    assert pii_guard.scan_action_payload({"subject": "Hello", "body": ""}) == []
+
+    # Verify audit logging + pii-guard: ignore-file header directive (first 5 lines)
+    audit_file = tmp_path / "audit.md"
+    monkeypatch.setattr(pii_guard, "_AUDIT_LOG", audit_file)
+    pii_guard._log_to_audit("SSN,CC", "REDACTED")
+    assert "PII_FILTER | email_id:" in audit_file.read_text(encoding="utf-8")
+
+    ignored = tmp_path / "ignored.py"
+    ignored.write_text("# header\n# pii-guard: ignore-file\nx = 1\n", encoding="utf-8")
+    not_ignored = tmp_path / "normal.py"
+    not_ignored.write_text("\n" * 6 + "# pii-guard: ignore-file\n", encoding="utf-8")
+    assert pii_guard._is_ignored_file(ignored) is True
+    assert pii_guard._is_ignored_file(not_ignored) is False

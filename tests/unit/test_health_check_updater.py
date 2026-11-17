@@ -211,3 +211,9 @@ class TestSilentOsError:
             with patch.object(Path, "write_text", side_effect=OSError("disk full")):
                 # Must not raise — silent catch
                 health_check_updater.update_channel_health_md("gmail", True)
+
+
+def test_lib_common_deprecated_reexport():
+    from lib.common import update_channel_health_md
+
+    assert callable(update_channel_health_md)

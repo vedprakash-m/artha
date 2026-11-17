@@ -318,3 +318,68 @@ def test_ev3_14_stale_lock_removed_and_acquired(tmp_path, hcw):
         lock_file.unlink()
     except OSError:
         pass
+
+
+class TestHealthCheckWriterFrontmatter:
+    """health_check_writer.py: atomic frontmatter updater."""
+
+    def test_write_creates_file_from_template(self, tmp_path, hcw):
+        state_dir = tmp_path / "state"
+        templates_dir = state_dir / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "health-check.md").write_text(
+            "---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 0\n---\n\n## Connector Health\n",
+            encoding="utf-8",
+        )
+        with (
+            patch.object(hcw, "HEALTH_CHECK_FILE", state_dir / "health-check.md"),
+            patch.object(hcw, "STATE_DIR", state_dir),
+            patch.object(hcw, "TMP_DIR", tmp_path / "tmp"),
+            patch.object(hcw, "LOCK_FILE", tmp_path / ".artha-lock"),
+        ):
+            rc = hcw.write_health_check(
+                last_catch_up="2026-03-15T23:00:00Z",
+                email_count=21,
+                domains_processed=["finance", "kids"],
+                session_mode="normal",
+            )
+        assert rc == 0
+        content = (state_dir / "health-check.md").read_text(encoding="utf-8")
+        assert "2026-03-15T23:00:00Z" in content
+        assert "email_count: 21" in content
+        assert "catch_up_count: 1" in content
+
+    def test_increment_catch_up_count(self, tmp_path, hcw):
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        hc = state_dir / "health-check.md"
+        hc.write_text("---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 5\n---\n", encoding="utf-8")
+        with (
+            patch.object(hcw, "HEALTH_CHECK_FILE", hc),
+            patch.object(hcw, "STATE_DIR", state_dir),
+            patch.object(hcw, "TMP_DIR", tmp_path / "tmp"),
+            patch.object(hcw, "LOCK_FILE", tmp_path / ".artha-lock"),
+        ):
+            hcw.write_health_check(last_catch_up="2026-03-15T23:00:00Z")
+        assert "catch_up_count: 6" in hc.read_text(encoding="utf-8")
+
+    def test_bootstrap_stub_replaced(self, tmp_path, hcw):
+        state_dir = tmp_path / "state"
+        templates_dir = state_dir / "templates"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "health-check.md").write_text(
+            "---\nschema_version: '1.1'\nlast_catch_up: never\ncatch_up_count: 0\n---\n\n## Connector Health\n",
+            encoding="utf-8",
+        )
+        hc = state_dir / "health-check.md"
+        hc.write_text("---\n# Content\nsome: value\n---\n", encoding="utf-8")
+        with (
+            patch.object(hcw, "HEALTH_CHECK_FILE", hc),
+            patch.object(hcw, "STATE_DIR", state_dir),
+            patch.object(hcw, "TMP_DIR", tmp_path / "tmp"),
+            patch.object(hcw, "LOCK_FILE", tmp_path / ".artha-lock"),
+        ):
+            hcw.write_health_check(last_catch_up="2026-03-15T23:00:00Z")
+        content = hc.read_text(encoding="utf-8")
+        assert "# Content" not in content
+        assert "schema_version" in content

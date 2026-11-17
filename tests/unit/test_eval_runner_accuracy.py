@@ -176,3 +176,32 @@ def test_ev4_06_model_field_returned(tmp_path, metric_store_mod):
     runs = ms.load_runs()
     assert len(runs) == 1
     assert runs[0].get("model") == "claude-opus-4-5"
+
+
+def test_analyze_pipeline_conversion_rate_and_orphan_alert(tmp_path, monkeypatch):
+    import json as _json
+    import eval_runner  # noqa: PLC0415
+
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    monkeypatch.setattr(eval_runner, "__file__", str(scripts_dir / "eval_runner.py"))
+
+    (tmp_dir / "signal_metrics.json").write_text(_json.dumps({
+        "run_at": "2026-04-01T00:00:00",
+        "emails_processed": 10,
+        "signals_extracted": 5,
+        "signals_by_type": {"bill_due": 3, "renewal": 2},
+    }), encoding="utf-8")
+    (tmp_dir / "orchestrator_metrics.json").write_text(_json.dumps({
+        "run_at": "2026-04-01T00:00:00",
+        "signals_in": 5,
+        "proposals_composed": 4,
+        "proposals_suppressed_duplicates": 1,
+        "proposals_queued": 3,
+    }), encoding="utf-8")
+
+    result = eval_runner.analyze_pipeline()
+    assert result["conversion_rate"] == pytest.approx(3 / 5)
+    assert "orphan_alert" in result

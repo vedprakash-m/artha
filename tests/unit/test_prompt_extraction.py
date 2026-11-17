@@ -229,6 +229,27 @@ class TestSignalPresenceInRawEmails:
         )
 
 
+class TestDomainPromptSchemaVersion:
+    """All non-work domain prompts must declare schema_version in frontmatter."""
+
+    def test_domain_prompts_have_schema_version(self):
+        import yaml
+
+        missing = []
+        for p in sorted((_REPO / "prompts").glob("*.md")):
+            if p.stem.startswith("work-") or p.stem == "README":
+                continue
+            content = p.read_text(encoding="utf-8")
+            end = content.find("\n---", 3) if content.startswith("---") else -1
+            fm = (yaml.safe_load(content[3:end]) or {}) if end != -1 else {}
+            if not str(fm.get("schema_version", "")):
+                missing.append(p.name)
+        assert missing == []
+
+        linter_src = (_REPO / "scripts" / "tools" / "prompt_linter.py").read_text(encoding="utf-8")
+        assert "schema_version" in linter_src
+
+
 # ---------------------------------------------------------------------------
 # Prompt regression tests (marked @pytest.mark.prompt_regression — API required)
 # These are EXCLUDED from the default test suite.

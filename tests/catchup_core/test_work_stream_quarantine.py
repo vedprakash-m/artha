@@ -181,3 +181,213 @@ def test_stream_checkpoint_requires_authenticated_work_authority(tmp_path):
     access = WorkRecoveryAccess(tmp_path / 'repo', UntrustedAuthority(), CIPHER)
     with pytest.raises(CheckpointBlocked, match='history'):
         access.authorize_checkpoint(manifest)
+
+
+def _fragment_ordinary(path):
+    from core_helpers import stream_rewrite_frames as _rewrite_frames
+
+    def fragment(frames):
+        index = next(index for index, (kind, _) in enumerate(frames) if kind == 'd')
+        _, body = frames[index]
+        frames[index:index + 1] = [('d', bytes([byte])) for byte in body]
+
+    _rewrite_frames(path, fragment)
+
+
+class TestWorkStreamCapacity:
+    """Synthetic recoverability bounds for authenticated Work stream checkpoints."""
+
+    def test_fragmented_frames_and_exact_chunk_limit(self, tmp_path, monkeypatch):
+        from catchup_core import checkpoint as ck
+        from core_helpers import stream_rewrite_frames as _rewrite_frames
+
+        path, _ = _checkpoint(tmp_path / 'work.ack', streams=[])
+        _fragment_ordinary(path)
+        monkeypatch.setattr(quarantine, 'MAX_CHUNKS', len(ORDINARY) - 1)
+        destination = tmp_path / 'restored'
+        calls = []
+
+        with pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck.restore(path, destination, CIPHER, [], expected_profile='work',
+                       replay_privacy=lambda _dest: calls.append('replay'),
+                       quarantine_factory=lambda *_args: calls.append('factory'))
+        assert not destination.exists() and calls == []
+
+        path2, manifest = _checkpoint(tmp_path / 'exact.ack', streams=[])
+        _fragment_ordinary(path2)
+
+        def empty_frame(frames):
+            index = next(index for index, (kind, _) in enumerate(frames) if kind == 'd')
+            frames.insert(index, ('d', b''))
+
+        _rewrite_frames(path2, empty_frame)
+        monkeypatch.setattr(quarantine, 'MAX_CHUNKS', len(ORDINARY))
+        assert ck.verify(path2, CIPHER) == manifest
+        monkeypatch.setattr(quarantine, 'MAX_CHUNKS', len(ORDINARY) - 1)
+        with pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck.verify(path2, CIPHER)
+
+    @pytest.mark.parametrize(('limit', 'value'), [
+        ('MAX_ENTRIES', 1),
+        ('MAX_MEMBER_BYTES', len(ORDINARY) - 1),
+        ('MAX_TOTAL_BYTES', len(ORDINARY)),
+    ])
+    def test_quarantine_inventory_limits_are_checked_during_work_preflight(self, tmp_path, monkeypatch, limit, value):
+        from catchup_core import checkpoint as ck
+        from core_helpers import STREAM_OWNER as OWNER
+
+        path, _ = _checkpoint(tmp_path / 'work.ack', streams=[(_identity(OWNER, 'file', 'synthetic'), b'x')])
+        monkeypatch.setattr(quarantine, limit, value)
+        with pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck.verify(path, CIPHER)
+
+    def test_manifest_catalog_bound_and_legacy_checks(self, tmp_path, monkeypatch):
+        import json
+        from catchup_core import checkpoint as ck
+        from core_helpers import (
+            STREAM_OWNER as OWNER,
+            stream_rewrite_frames as _rewrite_frames,
+            work_stream_quarantine_authority as _cap_authority,
+        )
+
+        path, _ = _checkpoint(tmp_path / 'bound.ack', streams=[])
+
+        def enlarge_manifest(frames):
+            index = next(index for index, (kind, _) in enumerate(frames) if kind == 'm')
+            manifest = json.loads(frames[index][1])
+            manifest['padding'] = 'x' * quarantine.MAX_CATALOG_BYTES
+            data = json.dumps(manifest, separators=(',', ':')).encode()
+            frames[index:index + 1] = [('m', data[offset:offset + ck._CHUNK]) for offset in range(0, len(data), ck._CHUNK)]
+
+        _rewrite_frames(path, enlarge_manifest)
+        with pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck.verify(path, CIPHER)
+
+        body = b'synthetic stream'
+        identity = _identity(OWNER, 'file', 'synthetic')
+        path2, manifest = _checkpoint(tmp_path / 'cap.ack', streams=[(identity, body)])
+        store = QuarantineStore(tmp_path / 'quarantine', CIPHER, authority=_cap_authority)
+        store.begin(manifest, 'c' * 64)
+        for entry, content in zip([*manifest['entries'], *manifest['streams']], [ORDINARY, body], strict=True):
+            store.start(entry)
+            store.write(content)
+            store.finish()
+        store.set_recovery_affinity({'schema': 'artha.recovery-affinity.v1',
+                                     'work_binding': manifest['context']['work_binding']})
+        store.seal()
+        denial = 'current Work invalidation or unjournaled dependency'
+        store.block_paths([OWNER], denial)
+        store.block_streams([_key(identity)], denial)
+        actual_size = len(json.dumps(store.load_catalog(), sort_keys=True, separators=(',', ':'), allow_nan=False).encode())
+        monkeypatch.setattr(quarantine, 'MAX_AUTHORITY_BYTES', len(_cap_authority()['owner']))
+        monkeypatch.setattr(quarantine, 'MAX_CATALOG_BYTES', actual_size)
+        assert ck.verify(path2, CIPHER) == manifest
+        monkeypatch.setattr(quarantine, 'MAX_CATALOG_BYTES', actual_size - 1)
+        with pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck.verify(path2, CIPHER)
+
+    def test_v3_sqlite_denial_and_personal_legacy_verification(self, tmp_path, monkeypatch):
+        import json
+        from catchup_core import checkpoint as ck
+        from core_helpers import stream_rewrite_frames as _rewrite_frames
+
+        def edit_manifest(manifest):
+            manifest['roots'] = ['local']
+            manifest['entries'][0]['kind'] = 'sqlite'
+            manifest['context']['work_binding']['members'].clear()
+
+        path, _ = _checkpoint(tmp_path / 'sql.ack', streams=[],
+                              member_path='local/catchup_core/ledger.db', edit_manifest=edit_manifest)
+
+        def edit_header(frames):
+            index = next(index for index, (kind, _) in enumerate(frames) if kind == 'h')
+            header = json.loads(frames[index][1])
+            header['kind'] = 'sqlite'
+            frames[index] = ('h', json.dumps(header).encode())
+
+        _rewrite_frames(path, edit_header)
+        with pytest.raises(ck.CheckpointBlocked, match='ledger|quarantine'):
+            ck.verify(path, CIPHER)
+
+        p_path, p_manifest = _checkpoint(tmp_path / 'personal.ack', magic=b'ACK2',
+                                         schema='artha.checkpoint.v2', profile='personal', streams=[])
+        monkeypatch.setattr(quarantine, 'MAX_CHUNKS', 0)
+        monkeypatch.setattr(quarantine, 'MAX_MEMBER_BYTES', 0)
+        assert ck.verify(p_path, CIPHER) == p_manifest
+
+    @pytest.mark.parametrize('provide_manifest', [False, True])
+    def test_work_extraction_without_quarantine_never_writes_plaintext(self, tmp_path, provide_manifest):
+        from catchup_core import checkpoint as ck
+
+        path, manifest = _checkpoint(tmp_path / 'work.ack', streams=[])
+        destination = tmp_path / 'restored'
+        destination.mkdir()
+        with path.open('rb') as source, pytest.raises(ck.CheckpointBlocked, match='Work'):
+            ck._extract(source, CIPHER, destination, lambda _digest: None,
+                        manifest=manifest if provide_manifest else None)
+        assert list(destination.iterdir()) == []
+
+    def test_work_extraction_prechecks_swap_mutation_and_legacy_nonseekable(self, tmp_path, monkeypatch):
+        import io
+        from unittest.mock import Mock
+        from catchup_core import checkpoint as ck
+
+        path, manifest = _checkpoint(tmp_path / 'work.ack', streams=[])
+        store = Mock()
+        for bad in (None, {**manifest, 'schema': 'artha.checkpoint.v2'}):
+            with path.open('rb') as source, pytest.raises(ck.CheckpointBlocked, match='Work'):
+                ck._extract(source, CIPHER, tmp_path / 'r1', lambda _digest: None, quarantine=store, manifest=bad)
+
+        _fragment_ordinary(path)
+        monkeypatch.setattr(quarantine, 'MAX_CHUNKS', len(ORDINARY) - 1)
+        with path.open('rb') as source, pytest.raises(ck.CheckpointBlocked, match='quarantine'):
+            ck._extract(source, CIPHER, tmp_path / 'r2', lambda _digest: None, quarantine=store, manifest=manifest)
+        monkeypatch.undo()
+
+        p_mut, m_mut = _checkpoint(tmp_path / 'mut.ack', streams=[], edit_manifest=lambda v: v.update(synthetic_marker=1))
+        supplied = copy.deepcopy(m_mut)
+        supplied['synthetic_marker'] = True
+        with p_mut.open('rb') as source, pytest.raises(ck.CheckpointBlocked, match='manifest'):
+            ck._extract(source, CIPHER, tmp_path / 'r3', lambda _digest: None, quarantine=store, manifest=supplied)
+        assert store.mock_calls == []
+
+        first, f_man = _checkpoint(tmp_path / 'first.ack', streams=[])
+        repl, r_man = _checkpoint(tmp_path / 'repl.ack', streams=[])
+        assert r_man == f_man and repl.read_bytes() != first.read_bytes()
+
+        class SwapOnRewind(io.BytesIO):
+            swapped = False
+
+            def seek(self, offset, whence=0):
+                if not self.swapped and offset == 0 and whence == 0 and self.tell():
+                    self.swapped = True
+                    super().seek(0)
+                    super().truncate()
+                    super().write(repl.read_bytes())
+                return super().seek(offset, whence)
+
+        with SwapOnRewind(first.read_bytes()) as source, pytest.raises(ck.CheckpointError, match='changed'):
+            ck._extract(source, CIPHER, tmp_path / 'r4', lambda _digest: None, quarantine=store, manifest=f_man)
+        assert source.swapped and store.mock_calls == []
+
+        p_ok, m_ok = _checkpoint(tmp_path / 'ok.ack', streams=[])
+        expected = copy.deepcopy(m_ok['entries'][0])
+        with p_ok.open('rb') as source:
+            ck._extract(source, CIPHER, tmp_path / 'r5', lambda _d: m_ok['entries'][0].__setitem__('size', 1),
+                        quarantine=store, manifest=m_ok)
+        assert store.start.call_args.args[0] == expected
+
+        leg, m_leg = _checkpoint(tmp_path / 'leg.ack', magic=b'ACK2', schema='artha.checkpoint.v2', profile='personal', streams=[])
+        dest = tmp_path / 'restored_leg'
+        dest.mkdir()
+
+        class Nonseekable(io.BytesIO):
+            def seek(self, *_args):
+                raise io.UnsupportedOperation('not seekable')
+
+            def tell(self):
+                raise io.UnsupportedOperation('not seekable')
+
+        with Nonseekable(leg.read_bytes()) as source:
+            assert ck._extract(source, CIPHER, dest, lambda _digest: None) == m_leg
+        assert (dest / 'work_state' / 'note.txt').read_bytes() == ORDINARY

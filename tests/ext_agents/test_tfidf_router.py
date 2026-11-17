@@ -248,3 +248,31 @@ def test_min_sim_zero_returns_all(router, sample_reg):
     router.rebuild(sample_reg)
     result = router.query("anything at all", top_n=10, min_sim=0.0)
     assert isinstance(result, list)
+
+
+class TestTiebreakerAndMtimeInvalidation:
+    """Identical trigram scores resolve deterministically by weight then name."""
+
+    def test_identical_scores_deterministic_weight_then_alpha(self):
+        from lib.tfidf_router import TFIDFRouter, _text_to_vec
+
+        corpus_vec = _text_to_vec("kubernetes nodes not progressing cluster health")
+        r = TFIDFRouter(cache_file=None)
+        r._vectors = {"zebra_agent": corpus_vec, "alpha_agent": corpus_vec}
+        r._loaded = True
+        a = [m.agent_name for m in r.query("kubernetes nodes not progressing", min_sim=0.01)]
+        b = [m.agent_name for m in r.query("kubernetes nodes not progressing", min_sim=0.01)]
+        assert a == b == ["alpha_agent", "zebra_agent"]
+
+        r._vectors = {"low_weight_agent": corpus_vec, "high_weight_agent": corpus_vec}
+        matches = r.query(
+            "kubernetes nodes not progressing",
+            min_sim=0.01,
+            domain_weights={"high_weight_agent": 10, "low_weight_agent": 1},
+        )
+        assert matches[0].agent_name == "high_weight_agent"
+
+    def test_registry_mtime_invalidation_present(self):
+        src = (Path(__file__).resolve().parents[2] / "scripts" / "lib" / "tfidf_router.py").read_text(encoding="utf-8")
+        assert "mtime" in src
+        assert "cache_built_ts" in src or "registry_mtime" in src

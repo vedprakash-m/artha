@@ -227,3 +227,17 @@ class TestClassifyRecords:
         records = [_make_record()]
         result = classify_records(records)
         assert result is records
+
+
+def test_important_gov_bank_security_and_substack_domains():
+    newsletter = classify_email({"type": "email", "sender": "noreply@substack.com", "subject": "Weekly digest"})
+    assert newsletter["marketing"] is True
+    assert newsletter.get("marketing_category") in ("newsletter", "promotional")
+
+    for sender, subject in (
+        ("noreply@uscis.gov", "Weekly digest"),
+        ("security@paypal.com", "Unauthorized access attempt detected"),
+        ("alerts@hdfcbank.com", "Transaction alert"),
+    ):
+        rec = classify_email({"type": "email", "sender": sender, "subject": subject})
+        assert rec["marketing"] is False

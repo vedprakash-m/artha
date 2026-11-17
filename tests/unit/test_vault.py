@@ -1135,3 +1135,100 @@ class TestInMemoryWrite:
         with pytest.raises(SystemExit) as exc:
             vault.do_write("kids")
         assert exc.value.code == 1 and "Error writing kids" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("encrypt_side_effect", [None, SystemExit(1)])
+    def test_stale_lock_triggers_encrypt_and_unlinks(self, tmp_path, monkeypatch, encrypt_side_effect):
+        import json as _json
+        import time as _time
+
+        lock_file = tmp_path / ".artha-decrypted"
+        lock_file.write_text(_json.dumps({"pid": 0, "session": "test"}), encoding="utf-8")
+        old_mtime = _time.time() - 35 * 60
+        os.utime(str(lock_file), (old_mtime, old_mtime))
+
+        calls = []
+
+        def fake_encrypt():
+            calls.append(True)
+            if encrypt_side_effect is not None:
+                raise encrypt_side_effect
+
+        monkeypatch.setattr(vault, "LOCK_FILE", lock_file)
+        monkeypatch.setattr(vault, "do_encrypt", fake_encrypt)
+        assert vault.check_lock_state() == 1
+        assert calls == [True]
+        assert not lock_file.exists()
+
+
+class TestVaultPolicyAndHardening:
+    """Per-domain shrink thresholds, sync exclusion hooks, and multi-machine warning."""
+
+    def test_net_negative_write_guard_thresholds(self):
+        import yaml as _yaml
+
+        root = Path(__file__).resolve().parents[2]
+        gr = _yaml.safe_load((root / "config" / "guardrails.yaml").read_text(encoding="utf-8")) or {}
+        wr = gr["net_negative_write_guard"]
+        default_thresh = float(wr["default_threshold"])
+        assert 0 < default_thresh <= 1.0
+        domain_thresh = wr["domain_thresholds"]
+        assert all(isinstance(v, (int, float)) and 0 < v <= 1.0 for v in domain_thresh.values())
+        assert float(domain_thresh["finance"]) < default_thresh
+
+    def test_vault_sync_exclusion_and_concurrent_warning_hooks(self):
+        vault_src = (Path(__file__).resolve().parents[2] / "scripts" / "vault.py").read_text(encoding="utf-8")
+        for token in (
+            "domain_thresholds",
+            "_verify_sync_exclusion",
+            "_warn_if_sync_not_excluded",
+            "VAULT_SYNC_EXCLUSION_MISSING",
+            "com.microsoft.OneDrive",
+            "CONCURRENT_VAULT_WARNING",
+            "gethostname",
+        ):
+            assert token in vault_src, f"Missing expected vault hardening token: {token}"
+
+    def test_is_integrity_safe_thresholds_and_force_shrink(self, mock_vault_env, monkeypatch):
+        cfg_dir = mock_vault_env / "config"
+        cfg_dir.mkdir(exist_ok=True)
+        monkeypatch.setattr(vault, "CONFIG_DIR", cfg_dir)
+
+        plain = mock_vault_env / "state" / "finance.md"
+        age = mock_vault_env / "state" / "finance.md.age"
+
+        # 1. No baseline .age -> safe
+        plain.write_bytes(b"small")
+        assert vault.is_integrity_safe(plain, age) is True
+
+        # 2. Within threshold -> safe; sharp shrink -> blocked
+        age.write_bytes(b"x" * 1000)
+        plain.write_bytes(b"y" * 850)
+        assert vault.is_integrity_safe(plain, age) is True
+
+        plain.write_bytes(b"y" * 100)
+        (cfg_dir / "guardrails.yaml").write_text(
+            "net_negative_write_guard:\n  default_threshold: 0.8\n  domain_thresholds:\n    finance: 0.5\n",
+            encoding="utf-8",
+        )
+        assert vault.is_integrity_safe(plain, age) is False
+
+        # 3. Domain-specific lower threshold (0.5 vs default 0.8) permits 60% size
+        plain.write_bytes(b"y" * 600)
+        assert vault.is_integrity_safe(plain, age) is True
+
+        # 4. ARTHA_FORCE_SHRINK override pins .pre-shrink without overwriting existing
+        plain.write_bytes(b"y" * 100)
+        monkeypatch.setenv("ARTHA_FORCE_SHRINK", "finance")
+        assert vault.is_integrity_safe(plain, age) is True
+        pre_shrink = mock_vault_env / "state" / "finance.md.age.pre-shrink"
+        assert pre_shrink.read_bytes() == b"x" * 1000
+
+        pre_shrink.write_bytes(b"preserved-earlier-backup")
+        assert vault.is_integrity_safe(plain, age) is True
+        assert pre_shrink.read_bytes() == b"preserved-earlier-backup"
+
+        # 5. Unparseable guardrails.yaml falls back safely to 0.8 threshold
+        monkeypatch.delenv("ARTHA_FORCE_SHRINK", raising=False)
+        (cfg_dir / "guardrails.yaml").write_text("{{bad yaml", encoding="utf-8")
+        plain.write_bytes(b"y" * 600)
+        assert vault.is_integrity_safe(plain, age) is False

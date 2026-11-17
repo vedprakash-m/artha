@@ -20,14 +20,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+import yaml
 
 # conftest adds scripts/ to sys.path
 from checkpoint import (
     _CHECKPOINT_FILE,
     _MAX_AGE_HOURS,
+    _SESSION_RECAP_TTL_HOURS,
+    _stale_hours,
     clear_checkpoint,
     read_checkpoint,
+    read_session_recap,
     write_checkpoint,
+    write_session_recap,
 )
 
 
@@ -242,7 +248,6 @@ class TestCheckpointCycle:
 class TestSessionRecap:
     def test_write_session_recap_creates_yaml(self, tmp_path):
         """write_session_recap() creates tmp/_session_recap.yaml with correct fields."""
-        import yaml
         from checkpoint import write_session_recap
 
         result = write_session_recap(
@@ -260,7 +265,7 @@ class TestSessionRecap:
 
     def test_read_session_recap_returns_fresh(self, tmp_path):
         """read_session_recap() returns dict for a freshly written recap."""
-        from checkpoint import write_session_recap, read_session_recap
+        from checkpoint import read_session_recap
 
         write_session_recap(
             tmp_path,
@@ -276,9 +281,8 @@ class TestSessionRecap:
 
     def test_read_session_recap_stale_returns_none(self, tmp_path):
         """read_session_recap() returns None when recap is older than 48h."""
-        import yaml
         from datetime import datetime, timezone, timedelta
-        from checkpoint import read_session_recap, _SESSION_RECAP_TTL_HOURS
+        from checkpoint import read_session_recap
 
         stale_ts = (
             datetime.now(timezone.utc) - timedelta(hours=_SESSION_RECAP_TTL_HOURS + 1)
@@ -302,7 +306,6 @@ class TestSessionRecap:
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
         from context_budget import estimate_token_count
-        from checkpoint import write_session_recap
 
         path = write_session_recap(
             tmp_path,
@@ -321,7 +324,6 @@ class TestSessionRecap:
     def test_session_recap_no_pii(self, tmp_path):
         """Session recap must not contain raw email addresses or phone numbers."""
         import re
-        from checkpoint import write_session_recap
 
         path = write_session_recap(
             tmp_path,
@@ -335,3 +337,64 @@ class TestSessionRecap:
         phone_re = re.compile(r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b")
         assert not email_re.search(content), "Email address found in session recap"
         assert not phone_re.search(content), "Phone number found in session recap"
+
+    def test_read_session_recap_absent_returns_none(self, tmp_path):
+        assert read_session_recap(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Structured checkpoint fields & config-driven staleness (merged from checkpoint_wave1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def configured_artha_dir(tmp_path):
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "artha_config.yaml").write_text(
+        "harness:\n  agentic:\n    checkpoints:\n      enabled: true\n      stale_hours: 4\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+class TestStructuredCheckpointFields:
+    def test_phase_values_and_omission(self, configured_artha_dir):
+        for phase in ("preflight", "fetch", "process", "reason", "finalize"):
+            write_checkpoint(configured_artha_dir, 1, phase=phase)
+            assert read_checkpoint(configured_artha_dir)["phase"] == phase
+        write_checkpoint(configured_artha_dir, 1, phase=None)
+        data = read_checkpoint(configured_artha_dir)
+        assert data is not None and "phase" not in data
+
+    def test_connector_results_and_domain_signals(self, configured_artha_dir):
+        write_checkpoint(configured_artha_dir, 2)
+        plain = read_checkpoint(configured_artha_dir)
+        assert "connector_results" not in plain and "domain_signals" not in plain
+
+        cr = {"email": {"count": 5, "labels": ["inbox", "travel"]}}
+        ds = {"finance": ["tax_due"], "health": ["appointment_tomorrow"]}
+        write_checkpoint(
+            configured_artha_dir, 5, phase="process", connector_results=cr, domain_signals=ds,
+            email_count=42, domains=["finance"],
+        )
+        data = read_checkpoint(configured_artha_dir)
+        assert data["phase"] == "process"
+        assert data["connector_results"] == cr
+        assert data["domain_signals"] == ds
+        assert data["email_count"] == 42 and data["domains"] == ["finance"]
+
+    def test_stale_hours_config_override_and_fallback(self, tmp_path):
+        assert _stale_hours(tmp_path / "unconfigured") == float(_MAX_AGE_HOURS)
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "artha_config.yaml").write_text(
+            "harness:\n  agentic:\n    checkpoints:\n      enabled: true\n      stale_hours: 1\n",
+            encoding="utf-8",
+        )
+        assert _stale_hours(tmp_path) == 1.0
+        stale_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        _write_raw(tmp_path, json.dumps({"last_step": 5, "timestamp": stale_ts}))
+        assert read_checkpoint(tmp_path) is None
+        write_checkpoint(tmp_path, 5, phase="fetch")
+        assert read_checkpoint(tmp_path)["last_step"] == 5

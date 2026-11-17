@@ -604,3 +604,127 @@ def test_external_effect_cannot_opt_out_of_exact_preview(executor):
     assert result.status == 'failure' and 'preview' in result.message.lower()
     assert executor.queue.get_raw(proposal.id)['status'] == 'pending'
     provider.assert_not_called()
+
+
+def test_timeout_connection_loss_and_bridge_status_handling():
+    import threading
+    import action_executor as ae
+
+    gate = threading.Event()
+
+    class Slow:
+        def execute(self, prop):
+            gate.wait(timeout=5)
+
+    prop = _make_proposal()
+    try:
+        res_to = ae._execute_with_timeout(Slow(), prop, 0.05)
+    finally:
+        gate.set()
+    assert res_to.status == "unknown" and res_to.data == {"timed_out": True}
+    assert "may or may not" in res_to.message and "No changes were committed" not in res_to.message
+
+    class Lost:
+        def execute(self, prop):
+            raise ConnectionError("reset by peer")
+
+    class Bad:
+        def execute(self, prop):
+            raise ValueError("invalid recipient")
+
+    assert ae._execute_with_timeout(Lost(), prop, 5).status == "unknown"
+    r_bad = ae._execute_with_timeout(Bad(), prop, 5)
+    assert r_bad.status == "failure" and "ValueError" in r_bad.message
+    assert ae._bridge_final_status("success") == "succeeded"
+    assert ae._bridge_final_status("unknown") == "unknown"
+    assert ae._bridge_final_status("failure") == "failed"
+    assert ae._bridge_final_status("partial") == "unknown"
+
+
+def test_live_trial_hold_blocks_outbound_communication(tmp_path, monkeypatch):
+    import dataclasses
+    from pathlib import Path
+    import yaml
+    import action_executor as ae
+
+    (tmp_path / "config").mkdir()
+    assert ae._load_held_action_types(tmp_path) == frozenset({"*"})
+    (tmp_path / "config" / "actions.yaml").write_text("live_trial:\n  held: [email_send, slack_send]\nactions: {}\n")
+    assert ae._load_held_action_types(tmp_path) == {"email_send", "slack_send"}
+    (tmp_path / "config" / "actions.yaml").write_text("live_trial: not-a-mapping\nactions: {}\n")
+    assert ae._load_held_action_types(tmp_path) == frozenset({"*"})
+
+    repo_cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "actions.yaml").read_text())
+    held = set(repo_cfg["live_trial"]["held"])
+    assert "reminder_create" in repo_cfg["live_trial"]["trial"]
+    assert {"email_send", "email_reply", "whatsapp_send", "slack_send"} <= held
+    assert "reminder_create" not in held
+    assert repo_cfg["actions"]["reminder_create"]["autonomy_floor"] is True
+    assert all(t in repo_cfg["actions"] for t in held)
+
+    monkeypatch.setenv("ARTHA_LOCAL_DB", str(tmp_path / "actions.db"))
+    (tmp_path / "state").mkdir()
+    (tmp_path / "config" / "actions.yaml").write_text(
+        "schema_version: '2.0'\nlive_trial:\n  held: [email_send]\nactions:\n  email_send:\n"
+        "    handler: scripts/actions/email_send.py\n    enabled: true\n    min_trust: 1\n"
+    )
+    ex = ae.ActionExecutor(tmp_path)
+    try:
+        held_prop = dataclasses.replace(_make_proposal(action_type="email_send"), id="h-1", friction="low")
+        ex._queue.propose(held_prop)
+        result = ex.approve("h-1", approved_by="user:test")
+        assert result.status == "failure" and "held until promoted" in result.message
+        assert ex._queue.get_raw("h-1")["status"] == "pending"
+    finally:
+        ex.close()
+
+
+def test_composite_key_signal_type_scoped_to_instruction_sheet():
+    from lib.idempotency import CompositeKey
+
+    key_a = CompositeKey.compute("org_name", "renew_subscription", "instruction_sheet", signal_type="subscription_renewal")
+    key_b = CompositeKey.compute("org_name", "renew_subscription", "instruction_sheet", signal_type="form_deadline")
+    assert len(key_a) == 64
+    assert key_a != key_b
+
+    assert CompositeKey.compute("r", "intent", "instruction_sheet", signal_type="") == CompositeKey.compute(
+        "r", "intent", "instruction_sheet"
+    )
+    assert CompositeKey.compute("payee", "transfer", "financial", signal_type="some_signal") == CompositeKey.compute(
+        "payee", "transfer", "financial", signal_type=""
+    )
+
+
+def test_propose_direct_invokes_pre_enqueue_gate(executor):
+    from actions.base import ActionProposal
+    import uuid
+
+    calls = []
+
+    def spy_gate(prop):
+        calls.append(prop.id)
+        return (False, "test_gate_called")
+
+    executor._pre_enqueue_gate = spy_gate  # noqa: SLF001
+    proposal = ActionProposal(
+        id=str(uuid.uuid4()),
+        action_type="send_email",
+        domain="comms",
+        title="Test",
+        description="Gate spy",
+        parameters={"to": "x@y.com", "body": "hi"},
+        friction="low",
+        sensitivity="low",
+        min_trust=0,
+        reversible=True,
+        undo_window_sec=0,
+        expires_at=None,
+        source_step="test",
+        source_skill="test",
+        linked_oi=None,
+    )
+    try:
+        executor.propose_direct(proposal)
+    except Exception:
+        pass
+    assert calls == [proposal.id]

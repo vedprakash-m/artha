@@ -66,3 +66,11 @@ def test_encrypted_copies_and_other_domains_stay_quiet(tmp_path, monkeypatch, ca
     (tmp_path / "state" / "financial_plan.md").write_text("not a vaulted domain")
     vh.hook_session_start()
     assert capsys.readouterr().out == ""
+
+
+def test_write_sentinel_creates_failure_marker(tmp_path, monkeypatch):
+    sentinel = tmp_path / ".artha-decrypt-failed"
+    monkeypatch.setattr(vh, "_LOCAL_DIR", str(tmp_path))
+    monkeypatch.setattr(vh, "_DECRYPT_FAILED_SENTINEL", str(sentinel))
+    vh._write_sentinel("decrypt failed: no key")
+    assert sentinel.read_text(encoding="utf-8") == "decrypt failed: no key"

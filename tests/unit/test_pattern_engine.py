@@ -30,7 +30,7 @@ from pattern_engine import PatternEngine
 
 def _write_state(tmp_path: Path, domain: str, data: dict) -> Path:
     state_dir = tmp_path / "state"
-    state_dir.mkdir(exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True)
     path = state_dir / f"{domain}.md"
     block = yaml.dump(data, default_flow_style=False)
     path.write_text(f"---\n{block}---\n\n# Body\n", encoding="utf-8")
@@ -39,7 +39,7 @@ def _write_state(tmp_path: Path, domain: str, data: dict) -> Path:
 
 def _write_patterns(tmp_path: Path, patterns: list[dict]) -> Path:
     cfg_dir = tmp_path / "config"
-    cfg_dir.mkdir(exist_ok=True)
+    cfg_dir.mkdir(parents=True, exist_ok=True)
     path = cfg_dir / "patterns.yaml"
     payload = {"patterns": patterns}
     path.write_text(yaml.dump(payload, default_flow_style=False), encoding="utf-8")
@@ -216,3 +216,114 @@ class TestEdgeCases:
         engine = _make_engine(tmp_path, [])
         signals = engine.evaluate()
         assert signals == []
+
+
+# ---------------------------------------------------------------------------
+# PAT-003 / PAT-003b & is_null operator (merged from test_pattern_003_fix.py)
+# ---------------------------------------------------------------------------
+
+def _write_goals(tmp_path: Path, goals: list[dict]) -> None:
+    content = {
+        "schema_version": "2.0",
+        "domain": "goals",
+        "last_updated": str(date.today()),
+        "goals": goals,
+    }
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "goals.md").write_text("---\n" + yaml.dump(content) + "---\n", encoding="utf-8")
+
+
+def _pat003_yaml() -> dict:
+    return {
+        "id": "PAT-003",
+        "description": "Active goal overdue for progress update (>14 days)",
+        "enabled": True,
+        "cooldown_hours": 72,
+        "source_file": "state/goals.md",
+        "source_path": "goals",
+        "condition": {"all_of": [{"field": "status", "eq": "active"}, {"field": "last_progress", "stale_days": 14}]},
+        "output_signal": {"signal_type": "goal_stale", "domain": "goals", "urgency": 1, "impact": 2,
+                          "entity_field": "title", "metadata": {}},
+    }
+
+
+def _pat003b_yaml() -> dict:
+    return {
+        "id": "PAT-003b",
+        "description": "Active goal has no progress or next_action >30d — auto-park candidate",
+        "enabled": True,
+        "cooldown_hours": 168,
+        "source_file": "state/goals.md",
+        "source_path": "goals",
+        "condition": {
+            "all_of": [
+                {"field": "status", "eq": "active"},
+                {"field": "last_progress", "is_null": True},
+                {"field": "next_action", "is_null": True},
+                {"field": "created", "stale_days": 30},
+            ]
+        },
+        "output_signal": {"signal_type": "goal_autopark_candidate", "domain": "goals", "urgency": 2, "impact": 2,
+                          "entity_field": "title", "metadata": {}},
+    }
+
+
+class TestGoalStaleAndNullOperators:
+    def test_pat003_fires_only_for_stale_active_goals(self, tmp_path):
+        stale = str(date.today() - timedelta(days=20))
+        exact = str(date.today() - timedelta(days=15))
+        recent = str(date.today() - timedelta(days=5))
+        _write_goals(tmp_path, [
+            {"id": "G-001", "title": "Stale Active", "type": "milestone", "status": "active",
+             "last_progress": stale, "created": "2026-01-01"},
+        ])
+        assert any(s.signal_type == "goal_stale" for s in _make_engine(tmp_path, [_pat003_yaml()]).evaluate())
+
+        _write_goals(tmp_path / "parked", [
+            {"id": "G-003", "title": "Parked", "type": "milestone", "status": "parked",
+             "last_progress": stale, "created": "2026-01-01"},
+        ])
+        assert not any(s.signal_type == "goal_stale" for s in _make_engine(tmp_path / "parked", [_pat003_yaml()]).evaluate())
+
+        _write_goals(tmp_path / "exact", [
+            {"id": "G-001", "title": "Exact 15d", "type": "milestone", "status": "active",
+             "last_progress": exact, "created": "2026-01-01"},
+        ])
+        assert any(s.signal_type == "goal_stale" for s in _make_engine(tmp_path / "exact", [_pat003_yaml()]).evaluate())
+
+        _write_goals(tmp_path / "recent", [
+            {"id": "G-002", "title": "Recent", "type": "outcome", "status": "active",
+             "last_progress": recent, "created": "2026-01-01"},
+        ])
+        assert not any(s.signal_type == "goal_stale" for s in _make_engine(tmp_path / "recent", [_pat003_yaml()]).evaluate())
+
+    def test_pat003b_autopark_candidate_requires_no_progress_no_action_and_age(self, tmp_path):
+        old_date = str(date.today() - timedelta(days=40))
+        new_date = str(date.today() - timedelta(days=5))
+        _write_goals(tmp_path, [
+            {"id": "G-001", "title": "Abandoned", "type": "milestone", "status": "active",
+             "last_progress": None, "next_action": None, "created": old_date},
+        ])
+        assert any(s.signal_type == "goal_autopark_candidate" for s in _make_engine(tmp_path, [_pat003b_yaml()]).evaluate())
+
+        _write_goals(tmp_path / "act", [
+            {"id": "G-001", "title": "Has Action", "type": "milestone", "status": "active",
+             "last_progress": None, "next_action": "Act", "created": old_date},
+        ])
+        assert not any(s.signal_type == "goal_autopark_candidate" for s in _make_engine(tmp_path / "act", [_pat003b_yaml()]).evaluate())
+
+        _write_goals(tmp_path / "fresh", [
+            {"id": "G-001", "title": "Fresh", "type": "milestone", "status": "active",
+             "last_progress": None, "next_action": None, "created": new_date},
+        ])
+        assert not any(s.signal_type == "goal_autopark_candidate" for s in _make_engine(tmp_path / "fresh", [_pat003b_yaml()]).evaluate())
+
+    def test_is_null_operator(self):
+        from pattern_engine import _evaluate_operator
+        assert _evaluate_operator({"field": "k", "is_null": True}, {"k": None})
+        assert _evaluate_operator({"field": "k", "is_null": True}, {"k": ""})
+        assert _evaluate_operator({"field": "k", "is_null": True}, {"k": "null"})
+        assert not _evaluate_operator({"field": "k", "is_null": True}, {"k": "x"})
+        assert _evaluate_operator({"field": "k", "is_null": False}, {"k": "2026-03-15"})
+        assert not _evaluate_operator({"field": "k", "is_null": False}, {"k": None})

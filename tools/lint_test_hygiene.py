@@ -31,18 +31,7 @@ FILENAME_EXCEPTIONS = frozenset({
     "tests/dev/test_lint_debt_ratchet.py",
 })
 # Ratchet baseline of existing ticket-named files scheduled for Wave 2B dissolution (empty after Wave 2B).
-LEGACY_TICKET_FILENAMES = frozenset({
-    "tests/unit/test_checkpoint_steal.py",
-    "tests/unit/test_checkpoint_wave1.py",
-    "tests/unit/test_context_budget_steal.py",
-    "tests/unit/test_correction_tracker_steal.py",
-    "tests/unit/test_domain_index_wave1.py",
-    "tests/unit/test_re_debts_wave1.py",
-    "tests/unit/test_re_debts_wave2.py",
-    "tests/unit/test_re_debts_wave3.py",
-    "tests/unit/test_sprint1_debt.py",
-    "tests/unit/test_telemetry_steal.py",
-})
+LEGACY_TICKET_FILENAMES: frozenset[str] = frozenset()
 
 
 def tracked_test_files(root: Path = ROOT) -> list[str]:

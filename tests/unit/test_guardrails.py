@@ -622,3 +622,24 @@ class TestWave0HardMode:
         g = _ConcreteGuardrail()
         result = g._wave0_ok()
         assert result is False
+
+    def test_override_requires_matching_current_hour_confirm_dual_key(self, monkeypatch, capsys):
+        import datetime as _dt
+        import sys
+
+        monkeypatch.setattr(_gmod, "_WAVE0_MODE", "hard")
+        monkeypatch.setenv("ARTHA_WAVE0_OVERRIDE", "emergency")
+        monkeypatch.setenv("ARTHA_WAVE0_CONFIRM", "1999010100")
+
+        fake_mod = type(sys)("context_offloader")
+        fake_mod.load_harness_flag = lambda key: False
+        monkeypatch.setitem(sys.modules, "context_offloader", fake_mod)
+
+        g = _ConcreteGuardrail()
+        with pytest.raises(RuntimeError, match="wave0_gate=hard"):
+            g._wave0_ok()
+        assert "ARTHA_WAVE0_CONFIRM" in capsys.readouterr().err
+
+        current_hour = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d%H")
+        monkeypatch.setenv("ARTHA_WAVE0_CONFIRM", current_hour)
+        assert g._wave0_ok() is True

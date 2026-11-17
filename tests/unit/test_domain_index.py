@@ -22,7 +22,10 @@ from domain_index import (
     _domain_status,
     _parse_frontmatter,
     build_domain_index,
+    build_domain_menu,
     get_prompt_load_list,
+    load_domain_registry,
+    should_load_domain,
     should_load_prompt,
 )
 
@@ -302,3 +305,84 @@ class TestDomainStatus:
 
     def test_none_is_unknown(self):
         assert _domain_status(None) == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# Registry menu & domain routing (merged from test_domain_index_wave1.py)
+# ---------------------------------------------------------------------------
+
+def _minimal_registry() -> dict:
+    return {
+        "domains": {
+            "finance": {
+                "label": "Finance",
+                "description": "Bills and banking",
+                "always_load": True,
+                "enabled_by_default": True,
+                "routing_keywords": ["bill", "payment", "bank", "tax", "invoice"],
+            },
+            "immigration": {
+                "label": "Immigration",
+                "description": "USCIS filings and visa status",
+                "always_load": True,
+                "enabled_by_default": True,
+                "routing_keywords": ["USCIS", "I-485", "visa", "EAD", "green card"],
+            },
+            "learning": {
+                "label": "Learning",
+                "description": "Courses and certifications",
+                "always_load": False,
+                "enabled_by_default": True,
+                "routing_keywords": ["course", "certification", "study", "exam", "training"],
+            },
+            "pets": {
+                "label": "Pets",
+                "description": "Pet care and vet visits",
+                "always_load": False,
+                "enabled_by_default": False,
+                "routing_keywords": ["vet", "grooming", "flea"],
+            },
+        }
+    }
+
+
+class TestDomainMenuAndRouting:
+    def test_load_real_registry_and_missing_fallback(self, tmp_path):
+        assert load_domain_registry(artha_dir=tmp_path / "no_such_dir") == {}
+        registry = load_domain_registry()
+        domains = registry.get("domains", {})
+        assert "finance" in domains and "immigration" in domains
+        with_kw = [n for n, cfg in domains.items() if "routing_keywords" in cfg]
+        assert len(with_kw) >= len(domains) * 0.6
+        for core_domain in ("finance", "immigration", "health"):
+            assert "routing_keywords" in domains.get(core_domain, {})
+
+    def test_build_domain_menu_filtering_and_keyword_cap(self):
+        menu = build_domain_menu(_minimal_registry())
+        assert menu.startswith("Available domains")
+        assert "finance" in menu and "immigration" in menu and "learning" in menu
+        assert "pets" not in menu
+        assert "Bills and banking" in menu and "USCIS" in menu
+
+        capped = build_domain_menu({"domains": {"test_domain": {
+            "description": "Many", "enabled_by_default": True,
+            "routing_keywords": ["k1", "k2", "k3", "k4", "k5", "k6", "k7"],
+        }}})
+        assert "k5" in capped and "k6" not in capped and "k7" not in capped
+        assert len(build_domain_menu({}).strip().splitlines()) == 1
+        assert len(build_domain_menu({"domains": {}}).strip().splitlines()) == 1
+        nokw = build_domain_menu({"domains": {"nokw": {"description": "d", "enabled_by_default": True, "routing_keywords": []}}})
+        assert "nokw" in nokw and "keywords:" not in nokw
+        assert len(build_domain_menu(load_domain_registry()).splitlines()) >= 10
+
+    def test_should_load_domain_matching_and_fail_closed(self):
+        reg = _minimal_registry()
+        assert should_load_domain("finance", [], "", reg) is True
+        assert should_load_domain("learning", ["course completion"], "brief", reg) is True
+        assert should_load_domain("learning", [], "what's my study status", reg) is True
+        assert should_load_domain("learning", ["COURSE AVAILABLE"], "brief", reg) is True
+        assert should_load_domain("learning", ["new certification available"], "", reg) is True
+        assert should_load_domain("learning", ["email from boss"], "brief me", reg) is False
+        assert should_load_domain("nonexistent", ["anything"], "anything", reg) is False
+        assert should_load_domain("sparse", ["x"], "y", {"domains": {"sparse": {"enabled_by_default": True}}}) is False
+        assert should_load_domain("finance", ["bill"], "pay bill", {}) is False

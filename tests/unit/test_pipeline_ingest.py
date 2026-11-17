@@ -160,3 +160,85 @@ def test_ingest_noop_when_tmp_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(pl, "_REPO_ROOT", tmp_path)
 
     pl._ingest_pending_briefs()  # no exception
+
+
+# ---------------------------------------------------------------------------
+# Pipeline post-fetch & post-process quality gates (WP-02)
+# ---------------------------------------------------------------------------
+
+def _gate_run(name="google_calendar", records=3, rejected=0, error=None, scopes=()):
+    from lib import connector_coverage as cc
+    return cc.ConnectorRun(name, records, rejected, [], error, list(scopes), 1.0)
+
+
+def _failed_gates(checks):
+    return [c.__name__ for c in checks if not c()]
+
+
+def test_post_fetch_quality_gates():
+    import pipeline as pl
+
+    assert _failed_gates(pl._post_fetch_checks([_gate_run(), _gate_run("gmail", 40)], {}, error_count=0)) == []
+    assert _failed_gates(pl._post_fetch_checks([_gate_run(records=0)], {}, error_count=0)) == []
+    assert "no_degraded_or_unavailable_scope" in _failed_gates(pl._post_fetch_checks([_gate_run(records=0, rejected=9)], {}, error_count=0))
+
+    failed_auth = _failed_gates(pl._post_fetch_checks([_gate_run(records=0, error="invalid_grant")], {}, error_count=1))
+    assert "no_degraded_or_unavailable_scope" in failed_auth
+    assert "at_least_one_connector_succeeded" in failed_auth
+
+    chronic = pl._post_fetch_checks(
+        [_gate_run(records=0, error="x")], {"google_calendar": {"failing_since": "2026-08-30T00:00:00Z"}},
+        error_count=1, now="2026-10-11T00:00:00Z",
+    )
+    assert "no_chronic_connector_failure" in _failed_gates(chronic)
+    recent = pl._post_fetch_checks(
+        [_gate_run(records=0, error="x")], {"google_calendar": {"failing_since": "2026-10-10T00:00:00Z"}},
+        error_count=1, now="2026-10-11T00:00:00Z",
+    )
+    assert "no_chronic_connector_failure" not in _failed_gates(recent)
+
+
+def test_post_process_checks_and_gate_failure_message(tmp_path):
+    import pipeline as pl
+    from lib.quality_gate import evaluate_gate
+
+    assert "no_rejected_records" in _failed_gates(pl._post_process_checks([_gate_run(rejected=2)], total_records=5, output_path=None))
+    missing = tmp_path / "out.jsonl"
+    assert "output_snapshot_written" in _failed_gates(pl._post_process_checks([_gate_run()], total_records=5, output_path=missing))
+    missing.write_text('{"id": "1"}\n', encoding="utf-8")
+    assert _failed_gates(pl._post_process_checks([_gate_run()], total_records=5, output_path=missing)) == []
+    assert _failed_gates(pl._post_process_checks([_gate_run(records=0)], total_records=0, output_path=tmp_path / "x")) == []
+
+    checks = pl._post_fetch_checks([_gate_run(records=0, rejected=3)], {}, error_count=0)
+    msg = pl._gate_failure_message("post_fetch", evaluate_gate("post_fetch", checks, max_retries=0))
+    assert "no_degraded_or_unavailable_scope" in msg and "connectors failed" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Connector record schema validation
+# ---------------------------------------------------------------------------
+
+def test_connector_record_schema_validation_and_frozen():
+    import pytest
+    from schemas.connector_record import ConnectorRecord, validate_record
+
+    raw = {"id": "r1", "source": "gmail", "date_iso": "2026-04-14", "subject": "Test", "body": "Hello", "labels": ["inbox"]}
+    rec = validate_record(raw)
+    assert isinstance(rec, ConnectorRecord) and rec.raw == raw
+    with pytest.raises((AttributeError, TypeError)):
+        rec.id = "mutated"  # type: ignore[misc]
+
+    for bad, exc_t, match in [
+        ({"source": "gmail", "date_iso": "2026-04-14"}, ValueError, "missing required field 'id'"),
+        ({"id": "x", "date_iso": "2026-04-14"}, ValueError, "missing required field 'source'"),
+        ({"id": "x", "source": "gmail"}, ValueError, "missing required field 'date_iso'"),
+        ("not a dict", TypeError, "must be a dict"),
+        ({"id": "", "source": "gmail", "date_iso": "2026-04-14"}, ValueError, "non-empty string"),
+        ({"id": 123, "source": "gmail", "date_iso": "2026-04-14"}, ValueError, "must be str"),
+    ]:
+        with pytest.raises(exc_t, match=match):
+            validate_record(bad)
+
+    src = (_SCRIPTS_DIR / "pipeline.py").read_text(encoding="utf-8")
+    assert '"validation_errors"' in src or "'validation_errors'" in src
+    assert "_SCHEMA_VALIDATION_AVAILABLE" in src

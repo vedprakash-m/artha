@@ -1,18 +1,15 @@
-"""
-test_correction_tracker_steal.py — Tests for ST-02 weighted scoring additions.
-specs/steal.md §15.2.3
-"""
-import sys
+"""tests/unit/test_correction_tracker.py — Weighted correction scoring & precision gate tests."""
+from __future__ import annotations
+
+import json
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
-
-from correction_tracker import (
-    correction_score,
-    compute_quality_metrics,
+from lib.correction_tracker import (
     _CORRECTION_THRESHOLD,
+    compute_quality_metrics,
+    correction_score,
 )
 
 
@@ -83,8 +80,6 @@ def test_metrics_mixed():
 
 def test_precision_on_curated_corpus():
     """G-2 gate: precision on correction_corpus.jsonl must be ≥ 0.85."""
-    import json
-
     corpus_path = (
         Path(__file__).resolve().parent.parent / "fixtures" / "correction_corpus.jsonl"
     )

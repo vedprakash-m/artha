@@ -120,3 +120,13 @@ class TestScopeBoundary:
         assert all("id" in g for g in work_goals)
         assert all("status" in g for g in work_goals)
         assert all("type" in g for g in work_goals)
+
+
+def test_work_refresh_tools_allowlist_and_isolation():
+    root = Path(__file__).resolve().parents[2]
+    assert (root / "config" / "agents" / "work_refresh_tools.yaml").exists()
+    work_loop = root / "scripts" / "work_loop.py"
+    if work_loop.exists():
+        text = work_loop.read_text(encoding="utf-8")
+        assert "WORK_ISOLATION_VIOLATION" in text
+        assert "_isolation_violations" in text

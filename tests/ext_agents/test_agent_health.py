@@ -257,3 +257,26 @@ class TestHealthDiskPersistence:
         reloaded = AgentRegistry.load(tmp_registry_dir)
         agent = reloaded.get("test-agent")
         assert agent.health.cache_hits_by_cluster.get("SDP", 0) == 1
+
+
+def test_weak_query_timestamps_and_90_day_gc(tracker: AgentHealthTracker, registry: AgentRegistry):
+    from datetime import datetime, timedelta, timezone
+
+    agent = registry.get("test-agent")
+    old_ts = (datetime.now(timezone.utc) - timedelta(days=91)).isoformat()
+    agent.health.weak_queries = ["stale_pattern"]
+    agent.health.weak_query_timestamps = {"stale_pattern": old_ts}
+
+    tracker.record_weak_query("test-agent", "fresh_pattern")
+    assert "stale_pattern" not in agent.health.weak_queries
+    assert "fresh_pattern" in agent.health.weak_queries
+    assert agent.health.weak_query_timestamps.get("fresh_pattern")
+
+
+def test_keyword_miss_rate_documented_in_settings_when_present():
+    settings_path = Path(__file__).resolve().parents[2] / "config" / "settings.md"
+    if not settings_path.exists():
+        pytest.skip("config/settings.md is gitignored — not present in CI.")
+    content = settings_path.read_text(encoding="utf-8")
+    assert "keyword_miss_rate" in content
+    assert "ROUTER_UPGRADE_RECOMMENDED" in content

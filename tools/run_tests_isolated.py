@@ -498,7 +498,7 @@ _LOCAL_WORK_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".sql"}
 def _copy_local_work_overlay(root: Path, dest: Path) -> int:
     """Copy local-only Work scripts and tests into an isolated disposable workspace."""
     copied = 0
-    for rel_dir in ("scripts", "tests/lib", "tests/work"):
+    for rel_dir in ("config", "scripts", "tests/lib", "tests/work"):
         base = root / rel_dir
         if not base.is_dir() or base.is_symlink():
             continue

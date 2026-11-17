@@ -339,3 +339,45 @@ class TestMigrationRegistry:
 
     def test_latest_is_in_chain(self):
         assert LATEST_SCHEMA_VERSION in _VERSION_CHAIN
+
+
+class TestMigrateOI:
+    """migrate_oi.py: OI backfill migration."""
+
+    def test_dry_run_no_write(self, tmp_path):
+        import migrate_oi as moi
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "finance.md").write_text("- See OI-016 for debit card task\n- Also OI-023 pending\n", encoding="utf-8")
+        oi_file = state_dir / "open_items.md"
+        oi_file.write_text('---\ndomain: open_items\nlast_updated: ""\nschema_version: "1.0"\n---\n\n## Active\n', encoding="utf-8")
+        with patch.object(moi, "STATE_DIR", state_dir), patch.object(moi, "OPEN_ITEMS_FILE", oi_file):
+            rc = moi.run(dry_run=True)
+        assert rc == 0
+        assert "OI-016" not in oi_file.read_text(encoding="utf-8")
+
+    def test_backfills_missing_ids_and_skips_existing(self, tmp_path):
+        import migrate_oi as moi
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "finance.md").write_text("- See OI-016 for debit card task\n- OI-023 follow-up needed\n", encoding="utf-8")
+        oi_file = state_dir / "open_items.md"
+        oi_file.write_text('---\ndomain: open_items\nlast_updated: ""\nschema_version: "1.0"\n---\n\n## Active\n', encoding="utf-8")
+        with patch.object(moi, "STATE_DIR", state_dir), patch.object(moi, "OPEN_ITEMS_FILE", oi_file):
+            assert moi.run(dry_run=False) == 0
+        content = oi_file.read_text(encoding="utf-8")
+        assert "OI-016" in content
+        assert "OI-023" in content
+
+        oi_file.write_text('---\ndomain: open_items\nlast_updated: ""\n---\n\n## Active\n\n- id: OI-016\n  status: open\n', encoding="utf-8")
+        (state_dir / "finance.md").write_text("- OI-016 handled\n", encoding="utf-8")
+        with patch.object(moi, "STATE_DIR", state_dir), patch.object(moi, "OPEN_ITEMS_FILE", oi_file):
+            assert moi.run(dry_run=False) == 0
+        assert oi_file.read_text(encoding="utf-8").count("OI-016") == 1
+
+    def test_highest_oi_reported(self):
+        import migrate_oi as moi
+
+        assert moi._highest_oi_id({"OI-016", "OI-023", "OI-029"}) == 29

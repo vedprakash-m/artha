@@ -191,3 +191,9 @@ class TestRoutingTable:
         signals = extractor.extract([record], routing_table=routing_table)
         # Delivery is shopping/home domain — should still produce a signal
         assert isinstance(signals, list)
+
+
+def test_email_signal_extractor_pii_filters_entity():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2] / "scripts" / "email_signal_extractor.py").read_text(encoding="utf-8")
+    assert "pii_filter_entity" in src or "filter_text" in src

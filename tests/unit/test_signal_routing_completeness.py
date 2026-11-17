@@ -201,3 +201,31 @@ class TestRD01ExtractorSignalsAllRouted:
             f"RD-01: patterns.yaml signal types with no routing entry: {missing}. "
             f"Add them to config/signal_routing.yaml or mark as stub."
         )
+
+    def test_slack_after_hours_route_active_and_composer_merges(self):
+        routing = _load_routing()
+        entry = routing.get("slack_after_hours", {})
+        assert entry.get("status") == "active"
+        assert entry.get("action_type") == "instruction_sheet"
+
+        with open(os.path.join(_SCRIPTS_DIR, "action_composer.py"), encoding="utf-8") as fh:
+            composer_src = fh.read()
+        assert "_FALLBACK_SIGNAL_ROUTING" in composer_src
+        assert "base.update(yaml_routing)" in composer_src
+        assert "routing = dict(yaml_routing)" not in composer_src
+
+    def test_required_signal_routes_and_missing_assignment_stub(self):
+        routing = _load_routing()
+        for key in (
+            "decision_detected",
+            "content_moment_missed",
+            "content_staged_unreviewed",
+            "address_update_notification",
+        ):
+            assert isinstance(routing.get(key), dict), f"{key} must exist in signal_routing.yaml"
+            assert "action_type" in routing[key], f"{key} missing action_type"
+
+        raw_cfg = open(os.path.join(_CONFIG_DIR, "signal_routing.yaml"), encoding="utf-8").read()
+        assert "missing_assignment:" in raw_cfg
+        assert "status: stub" in raw_cfg
+        assert "RD-25" in raw_cfg

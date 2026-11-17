@@ -258,3 +258,81 @@ class TestWorkiqDisplayFetch:
         captured = capsys.readouterr()
         assert secret not in (error or "")
         assert secret not in captured.out + captured.err + caplog.text
+
+
+# ---------------------------------------------------------------------------
+# --archive-brief subcommand
+# ---------------------------------------------------------------------------
+
+def _run_archive_brief(raw_path: str, artha_dir: Path, monkeypatch) -> tuple[str, int]:
+    import builtins
+    import lib.briefing_archive as _ba
+    import pipeline as _pl
+
+    for sub in ("briefings", "tmp", "state"):
+        (artha_dir / sub).mkdir(exist_ok=True)
+    monkeypatch.setattr(_pl, "_REPO_ROOT", artha_dir)
+    monkeypatch.setattr(_ba, "_ARTHA_DIR", artha_dir)
+    monkeypatch.setattr(_ba, "_BRIEFINGS_DIR", artha_dir / "briefings")
+    monkeypatch.setattr(_ba, "_TMP_DIR", artha_dir / "tmp")
+    monkeypatch.setattr(_ba, "_DRAFT_PATH", artha_dir / "tmp" / "briefing_draft.md")
+    monkeypatch.setattr(_ba, "_STATE_DIR", artha_dir / "state")
+    monkeypatch.setattr(_ba, "_AUDIT_LOG", artha_dir / "state" / "audit.md")
+    monkeypatch.setattr(_ba, "_HEALTH_CHECK", artha_dir / "state" / "health-check.md")
+    monkeypatch.setattr(_ba, "_run_injection_check", lambda text: False)
+    monkeypatch.setattr(_ba, "_run_pii_warning", lambda text, source: None)
+
+    captured_output: list[str] = []
+    original_print = builtins.print
+    monkeypatch.setattr(
+        builtins, "print",
+        lambda *a, **kw: original_print(*a, **kw) if kw.get("file") else captured_output.append(" ".join(str(x) for x in a)),
+    )
+    rc = _pl._cmd_archive_brief(raw_path)
+    return (captured_output[-1] if captured_output else "{}"), rc
+
+
+class TestArchiveBriefSubcommand:
+    @pytest.mark.parametrize("bad_path", ["../state/secrets.md", "/etc/passwd", "tmp/../../state/malicious.md"])
+    def test_path_traversal_rejected(self, tmp_path, monkeypatch, bad_path):
+        import json
+
+        out, rc = _run_archive_brief(bad_path, tmp_path, monkeypatch)
+        data = json.loads(out)
+        assert rc == 2 and data["status"] == "failed"
+
+    def test_missing_draft_and_today_exists_skip(self, tmp_path, monkeypatch):
+        import json
+
+        out, rc = _run_archive_brief("tmp/briefing_draft.md", tmp_path, monkeypatch)
+        assert rc == 1 and json.loads(out)["status"] == "failed"
+
+        today = datetime.now().strftime("%Y-%m-%d")
+        (tmp_path / "briefings").mkdir(exist_ok=True)
+        (tmp_path / "briefings" / f"{today}.md").write_text("existing entry")
+        out2, rc2 = _run_archive_brief("tmp/briefing_draft.md", tmp_path, monkeypatch)
+        d2 = json.loads(out2)
+        assert rc2 == 0 and d2["status"] == "skipped" and d2["reason"] == "path_missing_but_today_exists"
+
+    def test_archive_success_dedup_and_no_pipeline_run(self, tmp_path, monkeypatch):
+        import json
+        import pipeline as _pl
+
+        called = []
+        monkeypatch.setattr(_pl, "run_pipeline", lambda *a, **k: called.append(True))
+
+        draft_file = tmp_path / "tmp" / "briefing_draft.md"
+        draft_file.parent.mkdir(exist_ok=True)
+        draft_file.write_text("Identical briefing content")
+        out1, rc1 = _run_archive_brief("tmp/briefing_draft.md", tmp_path, monkeypatch)
+        d1 = json.loads(out1)
+        assert rc1 == 0 and d1["status"] == "ok" and d1["bytes_written"] > 0
+        assert not draft_file.exists()
+        assert not called
+        today = datetime.now().strftime("%Y-%m-%d")
+        assert (tmp_path / "briefings" / f"{today}.md").exists()
+
+        draft_file.write_text("Identical briefing content")
+        out2, rc2 = _run_archive_brief("tmp/briefing_draft.md", tmp_path, monkeypatch)
+        d2 = json.loads(out2)
+        assert rc2 == 0 and d2["status"] == "skipped" and d2["reason"] == "duplicate"

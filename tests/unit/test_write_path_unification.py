@@ -321,3 +321,45 @@ class TestMiddlewareInvokedForStateWrites:
             write_atomic(target, '{}')
 
         mock_build.assert_not_called()
+
+
+class TestCalendarWriterHelpers:
+    """calendar_writer.py formatting, deduplication, and stub recovery."""
+
+    def test_writes_new_event_format(self, tmp_path):
+        import calendar_writer as cw
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        cal = state_dir / "calendar.md"
+        cal.write_text(
+            '---\ndomain: calendar\nlast_updated: ""\n---\n\n## Upcoming Events\n\n'
+            "<!-- Events are appended here by calendar_writer.py -->\n\n## Past Events\n",
+            encoding="utf-8",
+        )
+        event = {"type": "calendar_event", "source": "google_calendar", "title": "Team Standup", "date": "2026-03-20", "end": "2026-03-20"}
+        with patch.object(cw, "CALENDAR_FILE", cal), patch.object(cw, "STATE_DIR", state_dir), patch.object(cw, "TMP_DIR", tmp_path / "tmp"):
+            content = cw._read_or_init_calendar()
+            cw._existing_dedup_keys(content)
+            entry = cw._format_event(event, "abc123deadbeef12")
+            assert "Team Standup" in entry
+            assert "dedup:abc123deadbeef12" in entry
+
+    def test_dedup_key_and_record_predicate(self):
+        import calendar_writer as cw
+
+        assert cw._event_dedup_key({"title": "Dentist", "date": "2026-03-25"}) == cw._event_dedup_key({"title": "Dentist", "date": "2026-03-25"})
+        assert cw._event_dedup_key({"title": "Dentist", "date": "2026-03-25"}) != cw._event_dedup_key({"title": "Doctor", "date": "2026-03-25"})
+        assert cw._is_calendar_record({"source": "google_calendar"}) is True
+        assert cw._is_calendar_record({"type": "event"}) is True
+        assert cw._is_calendar_record({"type": "email", "source": "gmail"}) is False
+
+    def test_bootstrap_stub_replaced_on_read(self, tmp_path):
+        import calendar_writer as cw
+
+        cal = tmp_path / "calendar.md"
+        cal.write_text("---\n# Content\nsome: value\n---\n", encoding="utf-8")
+        with patch.object(cw, "CALENDAR_FILE", cal):
+            result = cw._read_or_init_calendar()
+        assert "# Content" not in result
+        assert "domain: calendar" in result

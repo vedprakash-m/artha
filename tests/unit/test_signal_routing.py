@@ -144,3 +144,40 @@ def test_yaml_action_types_are_valid():
     assert not invalid, (
         "signal_routing.yaml contains unknown action_type values:\n" + "\n".join(invalid)
     )
+
+
+def test_canonical_signal_consolidation_and_consumers():
+    from actions.base import DomainSignal
+    from action_composer import _load_signal_routing
+    from action_orchestrator import _COMM_SIGNAL_TYPES
+    from email_signal_extractor import _CANONICAL_TYPE_MAP, _SIGNAL_PATTERNS
+    from lib.config_loader import load_config
+
+    original_types = {
+        "event_rsvp_needed", "appointment_confirmed", "bill_due", "form_deadline",
+        "delivery_arriving", "security_alert", "subscription_renewal",
+        "school_action_needed", "financial_alert", "slack_action_item",
+    }
+    canonical_types = {"deadline", "confirmation", "security", "informational"}
+
+    pattern_types = {entry[1] for entry in _SIGNAL_PATTERNS}
+    routing = _load_signal_routing()
+    yaml_data = _load_yaml_routing()
+    loaded_cfg = load_config("signal_routing")
+
+    for orig in original_types:
+        assert _CANONICAL_TYPE_MAP[orig] in canonical_types
+        assert orig in pattern_types
+        if orig in routing:
+            sig = DomainSignal(
+                signal_type=_CANONICAL_TYPE_MAP[orig], domain="finance", entity="Test",
+                urgency=2, impact=2, source="test", metadata={},
+                detected_at="2026-01-01T00:00:00Z", subtype=orig,
+            )
+            assert (routing.get(sig.subtype) or routing.get(sig.signal_type)) is not None
+
+    for canonical in canonical_types:
+        assert canonical in routing
+        assert canonical in _COMM_SIGNAL_TYPES
+        assert canonical in yaml_data
+    assert "bill_due" in loaded_cfg and "deadline" in loaded_cfg

@@ -7,7 +7,12 @@ from pathlib import Path
 
 _SCRIPTS_DIR = str(Path(__file__).resolve().parent.parent.parent / "scripts")
 
-from lib.metrics_writer import write_invocation_metric, write_routing_decision  # type: ignore
+from lib.metrics_writer import (  # type: ignore
+    write_invocation_metric,
+    write_invocation_trace,
+    write_routing_decision,
+    write_routing_margin,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +143,43 @@ class TestWriteRoutingDecision:
         write_routing_decision("x", dispatched=False, metrics_file=mf)
         r = _read_records(mf)[0]
         assert r["dispatched"] is False
+
+
+class TestWriteRoutingMargin:
+    def test_routing_margin_fields_and_single_candidate(self, tmp_path):
+        mf = tmp_path / "metrics.jsonl"
+        write_routing_margin(
+            top1_agent="alpha", top1_confidence=0.87, top2_agent="beta", top2_confidence=0.60,
+            confidence_margin=0.27, routing_ms=12.0, metrics_file=mf,
+        )
+        write_routing_margin(
+            top1_agent="solo-agent", top1_confidence=0.99, top2_agent=None, top2_confidence=0.0,
+            confidence_margin=0.0, routing_ms=3.0, metrics_file=mf,
+        )
+        margins = [r for r in _read_records(mf) if r.get("record_type") == "routing_margin"]
+        assert len(margins) == 2
+        required = {"record_type", "timestamp", "top1_agent", "top1_confidence",
+                    "top2_agent", "top2_confidence", "confidence_margin", "routing_ms"}
+        assert not (required - set(margins[0]))
+        assert abs(margins[0]["confidence_margin"] - 0.27) < 0.001
+        assert margins[1]["confidence_margin"] == 0.0 and margins[1]["top2_agent"] is None
+
+
+class TestWriteInvocationTrace:
+    def test_invocation_trace_fields_and_iso_timestamp(self, tmp_path):
+        import uuid
+        from datetime import datetime
+
+        tf = tmp_path / "ext-agent-trace.jsonl"
+        inv_id = str(uuid.uuid4())
+        write_invocation_trace(
+            invocation_id=inv_id, agent_name="my-special-agent", query_hash="myhash99",
+            routing_confidence=0.85, quality_score=0.75, latency_ms=123.4, trace_file=tf,
+        )
+        rec = _read_records(tf)[-1]
+        assert rec["invocation_id"] == inv_id
+        assert rec["agent_name"] == "my-special-agent"
+        assert rec["query_hash"] == "myhash99"
+        ts_str = rec.get("timestamp", "") or rec.get("ts", "")
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        assert ts.tzinfo is not None

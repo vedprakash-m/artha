@@ -32,3 +32,16 @@ def test_a_failed_in_memory_read_is_a_policy_violation_with_no_plaintext_fallbac
         state_reader.StateReader._decrypt("finance", sealed)
     assert not Path(tmp_path / "finance.md").exists()
     assert subprocess  # imported for the monkeypatch target
+
+
+def test_read_raw_enforces_vault_policy(tmp_path, monkeypatch):
+    goals = tmp_path / "goals.md"
+    goals.write_text("# Goals\nAll good.\n", encoding="utf-8")
+    sealed = tmp_path / "finance.md.age"
+    sealed.write_text("encrypted-content", encoding="utf-8")
+
+    monkeypatch.setattr(state_reader, "_vault_required_paths", lambda: frozenset({str(sealed.resolve())}))
+    reader = state_reader.StateReader()
+    assert "All good." in reader.read_raw(goals)
+    with pytest.raises(state_reader.VaultPolicyViolation, match="vault-required"):
+        reader.read_raw(sealed)

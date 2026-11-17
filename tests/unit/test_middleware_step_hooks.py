@@ -206,3 +206,16 @@ class TestStateMiddlewareProtocolCompat:
         assert isinstance(instance, StateMiddleware), (
             f"{cls.__name__} is not instanceof StateMiddleware after AFW-3 no-ops"
         )
+
+
+class TestAuditMiddlewareAppend:
+    def test_oserror_prints_warning_and_does_not_raise(self, tmp_path, capsys):
+        am = AuditMiddleware(artha_dir=tmp_path / "nonexistent_dir")
+        am._append("test line\n")
+        assert "[WARN] audit write failed" in capsys.readouterr().err
+
+    def test_happy_path_appends_to_audit_md(self, tmp_path):
+        (tmp_path / "state").mkdir()
+        am = AuditMiddleware(artha_dir=tmp_path)
+        am._append("hello world\n")
+        assert (tmp_path / "state" / "audit.md").read_text(encoding="utf-8") == "hello world\n"

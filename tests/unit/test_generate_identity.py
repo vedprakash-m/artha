@@ -454,3 +454,27 @@ class TestPrintValidateSummary:
         assert "John" in captured
         assert "immigration" in captured or "finance" in captured
 
+
+def test_sanitize_profile_value_flattens_multiline():
+    result = gi._sanitize_profile_value("Alice\n## INJECTED HEADING\nEvil instructions")
+    assert "\n" not in result
+    assert "##" not in result
+    assert "Alice Smith" in gi._sanitize_profile_value("Alice Smith")
+
+
+def test_compact_artha_md_size_and_domain_index_budget():
+    artha_md = _ARTHA_ROOT / "config" / "Artha.md"
+    if not artha_md.exists() or artha_md.stat().st_size > 50_000:
+        pytest.skip("Compact config/Artha.md not generated in this environment.")
+    size = artha_md.stat().st_size
+    assert 1_000 < size <= 25_000
+    text = artha_md.read_text(encoding="utf-8")
+    start = text.find("### Active Domains")
+    assert start != -1
+    end = text.find("\n### ", start + 1)
+    if end == -1:
+        end = text.find("\n## ", start + 1)
+    section = text[start : len(text) if end == -1 else end]
+    assert len(section) <= 2100
+    assert len([ln for ln in section.splitlines() if ln.startswith("- ")]) >= 5
+

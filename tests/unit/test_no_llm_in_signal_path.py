@@ -31,6 +31,11 @@ _LLM_KEYWORDS = frozenset([
     "together",
     "cohere",
     "completions",
+    "google.generativeai",
+    "vertexai",
+    "bedrock",
+    "mistral",
+    "groq",
 ])
 
 

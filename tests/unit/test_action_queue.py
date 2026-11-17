@@ -7,12 +7,22 @@ deduplication, expiry, archival, and audit trail.
 Ref: specs/act.md §2, §3
 """
 from datetime import datetime, timedelta, timezone
+import dataclasses
+import sqlite3
+import subprocess
+import sys
 
 import pytest
 
 
-from action_queue import ActionQueue
-from actions.base import ActionProposal, ActionResult
+from action_queue import ActionQueue, compute_payload_hash
+from actions.base import (
+    TERMINAL_STATUSES,
+    VALID_RESULT_STATUSES,
+    VALID_STATUSES,
+    ActionProposal,
+    ActionResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -304,3 +314,166 @@ class TestAuditTrail:
         ).fetchall()
         assert len(rows) == 1
         assert rows[0]["actor"] == "test-actor"
+
+
+# ---------------------------------------------------------------------------
+# Uncertainty, racing transitions, idempotency & payload binding (RA-05)
+# ---------------------------------------------------------------------------
+
+def _hardened_proposal(pid: str = "p-1") -> ActionProposal:
+    return ActionProposal(
+        id=pid, action_type="reminder_create", domain="calendar", title=f"t-{pid}", description="d",
+        parameters={"text": pid}, friction="low", min_trust=0, sensitivity="standard", reversible=False,
+        undo_window_sec=None, expires_at="2999-01-01T00:00:00+00:00", idempotency_key=f"key-{pid}",
+    )
+
+
+@pytest.fixture
+def hardened_queue(tmp_path, monkeypatch):
+    monkeypatch.setenv("ARTHA_LOCAL_DB", str(tmp_path / "actions.db"))
+    (tmp_path / "state").mkdir()
+    (tmp_path / "config").mkdir()
+    q = ActionQueue(tmp_path)
+    yield q
+    q.close()
+
+
+def _to_executing(q: ActionQueue, pid: str = "p-1") -> None:
+    q.propose(_hardened_proposal(pid))
+    q.transition(pid, "approved", actor="user")
+    q.transition(pid, "executing", actor="system:executor")
+
+
+class TestQueueUncertaintyAndPayloadBinding:
+    def test_unknown_is_valid_nonterminal_status_and_result(self):
+        assert "unknown" in VALID_STATUSES and "unknown" not in TERMINAL_STATUSES
+        assert "unknown" in VALID_RESULT_STATUSES
+
+    def test_status_and_receipt_rollback_together(self, hardened_queue):
+        _to_executing(hardened_queue)
+        hardened_queue._conn.execute(
+            "CREATE TRIGGER fail_receipt BEFORE UPDATE OF result_status ON actions "
+            "BEGIN SELECT RAISE(ABORT, 'simulated full disk'); END"
+        )
+        hardened_queue._conn.commit()
+        with pytest.raises(sqlite3.DatabaseError):
+            hardened_queue.record_result(
+                "p-1", ActionResult(status="success", message="done", data={"id": "r"},
+                                    reversible=False, reverse_action=None),
+                "2026-10-12T00:00:00+00:00",
+            )
+        row = hardened_queue.get_raw("p-1")
+        assert row["status"] == "executing" and row["result_status"] is None
+
+    def test_unknown_reconciliation_and_allowed_transitions(self, hardened_queue):
+        _to_executing(hardened_queue, "p-ok")
+        assert hardened_queue.transition("p-ok", "unknown", actor="system:executor") == "executing"
+        assert hardened_queue.transition("p-ok", "succeeded", actor="system:reconciler") == "unknown"
+
+        _to_executing(hardened_queue, "p-bad")
+        hardened_queue.transition("p-bad", "unknown", actor="system:executor")
+        for bad in ("approved", "executing", "pending", "cancelled"):
+            with pytest.raises(ValueError, match=r"Invalid transition 'unknown'"):
+                hardened_queue.transition("p-bad", bad, actor="x")
+        assert hardened_queue.transition("p-bad", "failed", actor="system:reconciler") == "unknown"
+
+    def test_unknown_preserves_idempotency_while_failed_releases(self, hardened_queue):
+        _to_executing(hardened_queue, "p-1")
+        hardened_queue.record_result(
+            "p-1", ActionResult(status="unknown", message="timed out", data=None,
+                                reversible=False, reverse_action=None),
+            "2026-10-12T00:00:00+00:00",
+        )
+        raw = hardened_queue.get_raw("p-1")
+        assert raw["status"] == "unknown" and raw["result_status"] == "unknown"
+        assert raw["idempotency_expires_at"] in (None, "") or raw["idempotency_expires_at"] > "2026-10-12"
+        hardened_queue._conn.execute(
+            "UPDATE actions SET idempotency_expires_at='2000-01-01T00:00:00+00:00' WHERE id='p-1'"
+        )
+        hardened_queue._conn.commit()
+        assert hardened_queue.find_live_duplicate(_hardened_proposal("p-1")) is not None
+        hardened_queue.transition("p-1", "failed", actor="system:reconciler")
+        assert hardened_queue.get_raw("p-1")["idempotency_expires_at"] is not None
+
+    def test_racing_transition_loses_instead_of_overwriting(self, hardened_queue, tmp_path):
+        hardened_queue.propose(_hardened_proposal())
+        db = tmp_path / "actions.db"
+        state = {"raced": False}
+
+        class Conn:
+            def __init__(self, inner):
+                self._c = inner
+
+            def execute(self, sql, *a, **k):
+                if sql.strip() == "BEGIN IMMEDIATE" and not state["raced"]:
+                    state["raced"] = True
+                    subprocess.run(
+                        [sys.executable, "-c",
+                         "import sqlite3, sys; db = sqlite3.connect(sys.argv[1]); "
+                         "db.execute(\"UPDATE actions SET status='rejected' WHERE id='p-1'\"); "
+                         "db.commit(); db.close()", str(db)],
+                        check=True, capture_output=True, timeout=15,
+                    )
+                return self._c.execute(sql, *a, **k)
+
+            def __enter__(self):
+                return self._c.__enter__()
+
+            def __exit__(self, *exc):
+                return self._c.__exit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._c, name)
+
+        inner = hardened_queue._conn
+        hardened_queue._conn = Conn(inner)
+        try:
+            with pytest.raises(ValueError, match="terminal state 'rejected'"):
+                hardened_queue.transition("p-1", "approved", actor="user")
+        finally:
+            hardened_queue._conn = inner
+        assert inner.execute("SELECT status FROM actions WHERE id='p-1'").fetchone()[0] == "rejected"
+
+    def test_late_unknown_from_bridge_cannot_downgrade_terminal(self, hardened_queue):
+        _to_executing(hardened_queue)
+        hardened_queue.transition("p-1", "succeeded", actor="system:executor")
+        assert hardened_queue.apply_remote_result("p-1", "unknown", "late timeout report") is True
+        assert hardened_queue.get_raw("p-1")["status"] == "succeeded"
+
+    def test_payload_hash_binding_preview_and_approval(self, hardened_queue):
+        p = _hardened_proposal()
+        hardened_queue.propose(p)
+        stored = hardened_queue.get_raw("p-1")["payload_hash"]
+        assert stored == compute_payload_hash(p) and len(stored) == 64
+        assert compute_payload_hash(dataclasses.replace(p, parameters={"text": "p-1", "extra": 1})) != stored
+        assert hardened_queue.verify_payload_binding("p-1", p)[0] is True
+
+        hardened_queue._conn.execute("UPDATE actions SET parameters = ? WHERE id = 'p-1'", ('{"text": "SEND MONEY"}',))
+        hardened_queue._conn.commit()
+        ok, reason = hardened_queue.verify_payload_binding("p-1", hardened_queue.get("p-1"))
+        assert not ok and "changed after it was proposed" in reason
+
+        p2 = _hardened_proposal("p-2")
+        hardened_queue.propose(p2)
+        with pytest.raises(ValueError, match=r"proposal changed before preview could be recorded"):
+            hardened_queue.mark_preview_shown("p-2", "user", payload_hash="wrong")
+        hardened_queue.mark_preview_shown("p-2", "user", notified_channel="cli", payload_hash=compute_payload_hash(p2))
+        assert hardened_queue.verify_payload_binding("p-2", dataclasses.replace(p2, title="other"))[0] is False
+
+        p3 = dataclasses.replace(_hardened_proposal("p-3"), preview_required=True,
+                                 preview_shown_at="2026-10-21T00:00:00Z", preview_shown_by="system:direct_propose")
+        hardened_queue.propose(p3)
+        assert not hardened_queue.verify_payload_binding("p-3", p3)[0]
+
+        hardened_queue.propose(_hardened_proposal("p-4"))
+        hardened_queue.transition("p-4", "approved", actor="user")
+        raw = hardened_queue.get_raw("p-4")
+        assert raw["approved_payload_hash"] == raw["payload_hash"] and raw["approved_payload_hash"]
+
+        hardened_queue._conn.execute("UPDATE actions SET payload_hash = NULL WHERE id='p-4'")
+        hardened_queue._conn.commit()
+        assert hardened_queue.verify_payload_binding("p-4", _hardened_proposal("p-4"))[0] is False
+
+        p_remote = _hardened_proposal("r-1")
+        assert hardened_queue.ingest_remote(p_remote) is True
+        assert hardened_queue.get_raw("r-1")["payload_hash"] == compute_payload_hash(p_remote)

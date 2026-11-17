@@ -142,3 +142,86 @@ class TestHeldHandlersAreNotWarnings:
         result = pf.check_action_handlers()
         assert not result.passed and "apple_reminders_sync" in result.message
         assert "1 degraded" in result.message
+
+
+# ---------------------------------------------------------------------------
+# External-agent readiness contract (package + CLI surfaces)
+# ---------------------------------------------------------------------------
+
+def _readiness_surface(monkeypatch, tmp_path, kind: str):
+    import importlib.util
+
+    if kind == "package":
+        import preflight.integration_checks as module
+    else:
+        spec = importlib.util.spec_from_file_location("_preflight_agent_readiness_script", _SCRIPTS_DIR / "preflight.py")
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, module)
+        spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "ARTHA_DIR", str(tmp_path))
+    monkeypatch.setattr(module, "SCRIPTS_DIR", str(_SCRIPTS_DIR))
+    return module
+
+
+def _write_artha_cfg(tmp_path: Path, text: str) -> None:
+    cfg = tmp_path / "config" / "artha_config.yaml"
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize("kind", ["package", "script"])
+@pytest.mark.parametrize("check_name", ["check_ext_agent_discovery", "check_ext_agent_health"])
+def test_ext_agent_readiness_invalid_config_and_malformed_registry_fail_closed(
+    monkeypatch, tmp_path, kind, check_name
+):
+    from lib.agent_registry import AgentRegistry
+
+    mod = _readiness_surface(monkeypatch, tmp_path, kind)
+    fn = getattr(mod, check_name)
+
+    for i, cfg in enumerate((None, "", "[", "[]", "harness: []", "harness: {agentic: {external_agents: {enabled: 'false'}}}")):
+        sub = tmp_path / f"bad_{i}"
+        sub.mkdir()
+        monkeypatch.setattr(mod, "ARTHA_DIR", str(sub))
+        if cfg is not None:
+            _write_artha_cfg(sub, cfg)
+        res = fn()
+        assert res.severity == "P1" and not res.passed
+
+    dis_dir = tmp_path / "disabled"
+    dis_dir.mkdir()
+    monkeypatch.setattr(mod, "ARTHA_DIR", str(dis_dir))
+    _write_artha_cfg(dis_dir, "harness:\n  agentic:\n    external_agents:\n      enabled: false\n")
+    dis = fn()
+    assert dis.passed and "not enabled" in dis.message.lower()
+
+    en_dir = tmp_path / "enabled"
+    en_dir.mkdir()
+    monkeypatch.setattr(mod, "ARTHA_DIR", str(en_dir))
+    _write_artha_cfg(
+        en_dir,
+        "harness:\n  agentic:\n    external_agents:\n      enabled: true\n      discovery:\n        enabled: true\n",
+    )
+    assert fn().passed  # missing registry remains optional when disabled or absent
+    reg_file = en_dir / "config" / "agents" / "external-registry.yaml"
+    reg_file.parent.mkdir(parents=True, exist_ok=True)
+    for bad_reg in ("[", "[]", "{}", "agents: []", "agents: {bad-agent: []}"):
+        reg_file.write_text(bad_reg, encoding="utf-8")
+        bad = fn()
+        assert bad.severity == "P1" and not bad.passed and "registry" in bad.message.lower()
+
+    reg_file.write_text("schema_version: '1.0'\nagents: {}\n", encoding="utf-8")
+    assert fn().passed
+    with pytest.raises(FileNotFoundError):
+        AgentRegistry.load(tmp_path / "missing_strict_dir", strict=True)
+
+
+def test_explicitly_disabled_ext_agent_discovery_skips_cleanly(monkeypatch, tmp_path):
+    _write_artha_cfg(
+        tmp_path,
+        "harness:\n  agentic:\n    external_agents:\n      enabled: true\n      discovery:\n        enabled: false\n",
+    )
+    for kind in ("package", "script"):
+        mod = _readiness_surface(monkeypatch, tmp_path, kind)
+        res = mod.check_ext_agent_discovery()
+        assert res.passed and "discovery disabled" in res.message.lower()
