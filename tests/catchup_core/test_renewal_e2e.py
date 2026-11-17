@@ -20,7 +20,7 @@ from test_user_surfaces import KEY
 from catchup_core.renewal_authority import Authority
 from catchup_core.renewal_ci import Gate
 from catchup_core.renewal_delivery import Delivery
-from catchup_core.renewal_store import digest
+from catchup_core.renewal_store import RenewalError, digest
 from catchup_core.renewal_workspace import Workspace
 from lib.credentials import CredentialStore
 import test_cutover_fence as cutover_fixtures
@@ -45,7 +45,9 @@ def _copy_listed_scripts(original: Path, root: Path) -> None:
         shutil.copy2(source, target)
 
 
-def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(configured, tmp_path, monkeypatch):
+@pytest.mark.parametrize('approval_mode', ['routine', 'task_only'])
+def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(
+        configured, tmp_path, monkeypatch, approval_mode):
     monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
     monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
     config, request, keyring, _ = configured
@@ -92,7 +94,8 @@ def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(con
     source = workspace.source()
     routine = 'scripts/catchup_core/compose.py'
     protected = [entry['path'] for entry in source['files'] if entry['path'] != routine]
-    inventory = {'routine': [routine], 'protected': protected, 'dependencies': {'synthetic-reuse-rule': protected},
+    inventory = {'routine': [routine] if approval_mode == 'routine' else [], 'protected': protected,
+                 'dependencies': {'synthetic-reuse-rule': protected},
                  'gates': [{'workflow': '.github/workflows/ci.yml',
                             'definition_sha256': hashlib.sha256(workflow).hexdigest(), 'jobs': ['synthetic test']} ]}
     delegation = renewal_entry.proposal(root, inventory, authority)
@@ -106,7 +109,17 @@ def test_AR01_real_git_delivery_actual_release_reader_and_protected_negative(con
     git(root, 'add', '.')
     target = renewal_entry.current(root, delegation, authority)
     assert target['cohort']['implementation'] != delegation['base_cohort']['implementation']
-    approval = authority.routine(target)
+    if approval_mode == 'routine':
+        approval = authority.routine(target)
+    else:
+        with pytest.raises(RenewalError):
+            authority.routine(target)
+        document = local / 'synthetic-task.json'
+        renewal_entry._private_write(document, target, local)
+        reviewed = digest(renewal_entry._load(document))
+        with pytest.raises(RenewalError):
+            authority.approve(target, expected_digest='0' * 64, reviewed=True)
+        approval = authority.approve(target, expected_digest=reviewed, reviewed=True)
     calls = []
     def ci(commit, _policy, budget):
         created = authority.now().isoformat()

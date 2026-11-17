@@ -16,8 +16,8 @@ Architecture:
 
 Security:
   - cv.md is read only; never modified
-  - Output PDF path is validated as within the Artha output/ subdirectory
-  - No external URLs fetched during render (self-hosted fonts only)
+  - Output PDF path is built under the gitignored state/career/ directory
+  - Chromium renders offline with document JavaScript disabled
 
 Hallucination trap: All content merging is deterministic (regex + string substitution).
   No LLM calls in this module. LLM authored the report; this skill reads it.
@@ -69,7 +69,7 @@ _CV_CANDIDATES: list[Path] = [
     Path.home() / ".artha-local" / "cv.md",
     _REPO_ROOT / "cv.md",
 ]
-_OUTPUT_DIR = _REPO_ROOT / "output" / "career"
+_OUTPUT_DIR = _REPO_ROOT / "state" / "career"  # per-company subfolders: state/career/<slug>/
 _TMP_RENDER = _REPO_ROOT / "tmp" / "career_cv_render.html"
 
 # ATS unicode normalization table
@@ -298,10 +298,10 @@ class CareerPdfGenerator(BaseSkill):
         _TMP_RENDER.write_text(rendered_html, encoding="utf-8")
 
         # 11. Render PDF via Playwright
-        _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        (_OUTPUT_DIR / slug).mkdir(parents=True, exist_ok=True)
         variant_suffix = "-visual" if self.variant == "visual" else ""
         pdf_filename = f"cv-{slug}-{date_str}{variant_suffix}.pdf"
-        pdf_path = _OUTPUT_DIR / pdf_filename
+        pdf_path = _OUTPUT_DIR / slug / pdf_filename
 
         # 11a. Idempotency check — skip regen if inputs unchanged.
         # Hash spans the fully-rendered HTML (post-normalize, post-keyword-inject,
@@ -430,7 +430,9 @@ class CareerPdfGenerator(BaseSkill):
                     browser = p.chromium.launch(headless=True)
                     context = browser.new_context(
                         # Browser context namespacing (§9.2 AR-3)
-                        extra_http_headers={"X-Artha-Context": f"career-pdf-{self.report_number}"}
+                        extra_http_headers={"X-Artha-Context": f"career-pdf-{self.report_number}"},
+                        offline=True,
+                        java_script_enabled=False,
                     )
                     page = context.new_page()
                     page.goto(f"file://{html_path.resolve()}")

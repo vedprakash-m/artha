@@ -155,6 +155,9 @@ def test_exempt_fixture_path_allowed_unlisted_fixture_blocked(sandbox):
     ("briefings/nested/briefing.md", True),
     ("briefings/nested/briefing.txt", True),
     ("briefings/preview.json", True),
+    ("output/career/cv-synthetic.pdf", True),
+    ("output/career/nested/cv-synthetic.docx", True),
+    ("docs/output/example.txt", False),
     ("state/.gitkeep", False),
     ("state/templates/new-template.yaml", False),
     ("state/templates/nested/new-template.md", False),
@@ -177,10 +180,36 @@ def test_repository_gitignore_protects_token_json(sandbox, rel, ignored):
     assert result.returncode == int(not ignored), out(result)
 
 
+@pytest.mark.parametrize(("rel", "ignored"), [
+    ("scripts/render_example_cv.py", True),
+    ("scripts/career_docx_visual.py", True),
+    ("scripts/career_docx_visual_example.py", True),
+    ("scripts/skills/career_cover_letter.py", True),
+    ("cv.md", True),
+    ("cv-short.md", True),
+    ("article-digest.md", True),
+    ("scripts/render_general.py", False),
+])
+def test_repository_gitignore_protects_local_career_files(sandbox, rel, ignored):
+    shutil.copy(REPO / ".gitignore", sandbox.root / ".gitignore")
+    result = sandbox.git("check-ignore", "--no-index", "--", rel, check=False)
+    assert result.returncode == int(not ignored), out(result)
+
+
 @pytest.mark.parametrize(("rel", "blocked"), [
     ("state/new-domain/nested/state.md", True),
     ("briefings/nested/briefing.txt", True),
     ("private/token.json", True),
+    ("scripts/render_example_cv.py", True),
+    ("scripts/career_docx_visual.py", True),
+    ("scripts/career_docx_visual_example.py", True),
+    ("scripts/skills/career_cover_letter.py", True),
+    ("cv.md", True),
+    ("cv-short.md", True),
+    ("article-digest.md", True),
+    ("output/career/cv-synthetic.pdf", True),
+    ("output/career/nested/cv-synthetic.docx", True),
+    ("docs/output/example.txt", False),
     ("state/templates/nested/example.md", False),
     ("state/learned_procedures/example.md", False),
 ])

@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
 MARKER = ".artha-test-workspace"
-EMPTY_DIRS = ("state", "briefings", "summaries", "tmp", "backups", "output", "scratch")
+EMPTY_DIRS = ("state", "briefings", "summaries", "tmp", "backups", "scratch")
 # Never copied even when tracked: live data directories keep only their committed templates.
 _DATA_PREFIXES = ("briefings/", "summaries/", "tmp/", "backups/", "output/")
 _STATE_KEEP = ("state/templates/", "state/learned_procedures/", "state/.gitkeep")
@@ -442,9 +442,7 @@ def build_workspace(
         copied += 1
     for name in EMPTY_DIRS:
         (dest / name).mkdir(exist_ok=True)
-    # Same runtime directories the CI workflow creates before the suite.
-    for name in ("output/career", "briefings/career"):
-        (dest / name).mkdir(parents=True, exist_ok=True)
+    (dest / "briefings" / "career").mkdir(parents=True, exist_ok=True)
     (dest / MARKER).write_text("isolated test workspace — safe to delete\n")
     return copied
 
@@ -538,6 +536,7 @@ def main(argv: list[str]) -> int:
     dest = workspace / "checkout"
     try:
         copied = build_workspace(root, dest, synthetic_only=synthetic_only)
+        (dest / "state" / "career").mkdir(parents=True, exist_ok=True)
         mode = " synthetic-only" if synthetic_only else ""
         print(f"isolated{mode} workspace: {dest} ({copied} files)", file=sys.stderr)
         args = args or ["tests", "-q", "--tb=short"]

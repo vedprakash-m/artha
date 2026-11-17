@@ -4,7 +4,7 @@ AR-1 (P0 Phase 1 exit criterion): Verifies career skills are registered in
 _ALLOWED_SKILLS so they can be invoked via the Skill Runner.
 
 Also validates:
-- output/career/ directory exists (PDF output location — §9.1 FR-CS-3)
+- state/career/ directory exists (PDF output location — §9.1 FR-CS-3)
 - briefings/career/ directory exists (evaluation report archive — §7.3)
 - career skills registered in config/skills.yaml
 
@@ -12,8 +12,13 @@ Ref: specs/career-ops.md AR-1, §9.1, §3.1
 """
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
+from datetime import date
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,11 +63,11 @@ def test_allowed_skills_is_frozenset():
 # Directory existence (FR-CS-3, §7.3)
 # ---------------------------------------------------------------------------
 
-def test_output_career_directory_exists():
-    """output/career/ must exist — PDF generation target (FR-CS-3 §9.1)."""
-    output_career = REPO_ROOT / "output" / "career"
-    assert output_career.is_dir(), (
-        f"output/career/ directory missing — create it with: mkdir -p {output_career}"
+def test_state_career_directory_exists():
+    """state/career/ must exist — PDF generation target (FR-CS-3 §9.1)."""
+    state_career = REPO_ROOT / "state" / "career"
+    assert state_career.is_dir(), (
+        f"state/career/ directory missing — create it with: mkdir -p {state_career}"
     )
 
 
@@ -111,6 +116,148 @@ def test_career_pdf_generator_compiles():
     skill_path = SCRIPTS_DIR / "skills" / "career_pdf_generator.py"
     assert skill_path.exists(), "scripts/skills/career_pdf_generator.py missing"
     py_compile.compile(str(skill_path), doraise=True)
+
+
+def test_career_pdf_uses_company_directory_and_reuses_cached_output(tmp_path, monkeypatch):
+    from skills import career_pdf_generator as module
+
+    output = tmp_path / "state" / "career"
+    monkeypatch.setattr(module, "_OUTPUT_DIR", output)
+    monkeypatch.setattr(module, "_TMP_RENDER", tmp_path / "tmp" / "render.html")
+
+    class Trace:
+        def write_pdf_event(self, **kwargs):
+            pass
+
+    calls = []
+
+    def render(_self, _html, pdf):
+        calls.append(pdf)
+        pdf.write_bytes(b"synthetic pdf")
+        return {"success": True, "pdf_path": pdf}
+
+    monkeypatch.setattr(module, "CareerTrace", Trace)
+    monkeypatch.setattr(module.CareerPdfGenerator, "_render_pdf", render)
+    skill = module.CareerPdfGenerator(report_number="001")
+    raw = {
+        "cv_text": "# Synthetic Candidate\n\nExample experience",
+        "report_text": "---\ncompany: Example Company\nrole: Example Role\n---\n",
+        "template_html": "<html>{{CV_CONTENT}}</html>",
+        "report_path": tmp_path / "report.md",
+    }
+
+    first = skill.parse(raw)
+    second = skill.parse(raw)
+
+    path = Path(first["pdf_path"])
+    assert first["status"] == "success"
+    assert path.parent == output / "example-company"
+    assert path.name.startswith("cv-example-company-")
+    assert second["cached"] is True
+    assert calls == [path]
+
+
+def test_career_pdf_renders_without_network_or_document_scripts(tmp_path, monkeypatch):
+    from skills import career_pdf_generator as module
+
+    sync_playwright = MagicMock()
+    browser = sync_playwright.return_value.__enter__.return_value.chromium.launch.return_value
+    playwright = ModuleType("playwright")
+    playwright.__path__ = []
+    playwright_sync = ModuleType("playwright.sync_api")
+    playwright_sync.sync_playwright = sync_playwright
+    monkeypatch.setitem(sys.modules, "playwright", playwright)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", playwright_sync)
+    monkeypatch.setattr(module, "CareerTrace", lambda: None)
+    html = tmp_path / "synthetic.html"
+    html.write_text("<html>Synthetic CV</html>", encoding="utf-8")
+
+    result = module.CareerPdfGenerator(report_number="001")._render_pdf(html, tmp_path / "cv.pdf")
+
+    assert result["success"] is True
+    assert browser.new_context.call_args.kwargs["offline"] is True
+    assert browser.new_context.call_args.kwargs["java_script_enabled"] is False
+
+
+def test_career_pdf_offline_render_preserves_local_assets(tmp_path, monkeypatch):
+    pytest.importorskip("playwright.sync_api")
+    pypdf = pytest.importorskip("pypdf")
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from skills import career_pdf_generator as module
+
+    connections = []
+
+    class Server(ThreadingHTTPServer):
+        def get_request(self):
+            connections.append(True)
+            return super().get_request()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_args):
+            pass
+
+    server = Server(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        stylesheet = tmp_path / "local.css"
+        stylesheet.write_text('body::before { content: "LOCAL-CSS-LOADED"; }', encoding="utf-8")
+        remote = f"http://127.0.0.1:{server.server_port}"
+        html = tmp_path / "synthetic.html"
+        html.write_text(
+            f'<link rel="preconnect" href="{remote}"><link rel="stylesheet" href="{stylesheet.as_uri()}">'
+            f'<body>Synthetic<img src="{remote}/image">'
+            f'<script>document.write("SCRIPT-EXECUTED"); fetch("{remote}/script")</script></body>',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(module, "CareerTrace", lambda: None)
+        pdf = tmp_path / "synthetic.pdf"
+        result = module.CareerPdfGenerator(report_number="001")._render_pdf(html, pdf)
+        if not result["success"] and "Executable doesn't exist" in result.get("error", ""):
+            pytest.skip("Playwright Chromium is not installed")
+        assert result["success"], result.get("error")
+        text = "".join(page.extract_text() for page in pypdf.PdfReader(pdf).pages)
+        assert "LOCAL-CSS-LOADED" in text
+        assert "SCRIPT-EXECUTED" not in text
+        assert not connections
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_career_docx_default_is_generic_and_private(tmp_path):
+    docx = pytest.importorskip("docx")
+    root = tmp_path / "checkout"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    script = scripts / "career_docx_generator.py"
+    shutil.copyfile(SCRIPTS_DIR / script.name, script)
+    cv = root / "state" / "content" / "resumes" / "cv-short.md"
+    cv.parent.mkdir(parents=True)
+    cv.write_text("# Synthetic Candidate\n\nSynthetic contact\n", encoding="utf-8")
+
+    before = date.today()
+    result = subprocess.run([sys.executable, str(script)], cwd=root, capture_output=True, text=True, timeout=30)
+
+    assert result.returncode == 0, result.stderr
+    outputs = list((root / "state" / "career").glob("*.docx"))
+    assert len(outputs) == 1
+    output = outputs[0]
+    assert output.name in {f"cv-{day.isoformat()}.docx" for day in (before, date.today())}
+    assert docx.Document(output).paragraphs[0].text == "Synthetic Candidate"
+    assert not (root / "output").exists()
+
+    custom = root / "state" / "career" / "example" / "custom.docx"
+    result = subprocess.run([sys.executable, str(script), str(custom), str(cv)], cwd=root,
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert docx.Document(custom).paragraphs[0].text == "Synthetic Candidate"
 
 
 def test_career_state_compiles():

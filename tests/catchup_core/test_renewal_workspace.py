@@ -1,6 +1,8 @@
 """Real synthetic Git indexes/remotes; no host Git identity or credentials."""
 import os
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -52,6 +54,17 @@ def test_AR06_untracked_or_nonmain_candidates_refuse(repo):
     git(repo, 'checkout', '-b', 'synthetic-other')
     with pytest.raises(RenewalError):
         workspace.tree()
+
+
+def test_AR18_source_excludes_local_cv_renderer_but_includes_untracked_code(repo):
+    shutil.copyfile(Path(__file__).parents[2] / '.gitignore', repo / '.gitignore')
+    (repo / 'scripts/render_example_cv.py').write_text('PRIVATE_CANARY = True\n')
+    (repo / 'scripts/ordinary.py').write_text('VALUE = 2\n')
+
+    names = {entry['path'] for entry in Workspace(repo).source()['files']}
+
+    assert 'scripts/render_example_cv.py' not in names
+    assert 'scripts/ordinary.py' in names
 
 
 def test_AR13_linked_sources_refuse(repo):

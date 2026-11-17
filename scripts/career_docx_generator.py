@@ -4,9 +4,9 @@ Reads state/content/resumes/cv-short.md and produces a formatted, editable Word 
 The DOCX is intended for finishing touches before saving as PDF.
 
 Usage:
-    .venv-docx/bin/python scripts/career_docx_generator.py [output_path]
+    .venv-docx/bin/python scripts/career_docx_generator.py [output_path] [cv_source_path]
 
-Naming convention mirrors PDF generator: cv-{company}-{date}.docx
+The default output is state/career/cv-{date}.docx.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _CV_PATH = _REPO_ROOT / "state" / "content" / "resumes" / "cv-short.md"
-_OUTPUT_DIR = _REPO_ROOT / "output" / "career"
+_OUTPUT_DIR = _REPO_ROOT / "state" / "career"
 
 _NAVY = RGBColor(0x1A, 0x35, 0x5E)
 _DARK = RGBColor(0x22, 0x22, 0x22)
@@ -161,6 +161,6 @@ def generate(cv_path: Path, output_path: Path) -> None:
 if __name__ == "__main__":
     today = date.today().strftime("%Y-%m-%d")
     # Usage: generator.py [output_path] [cv_source_path]
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else _OUTPUT_DIR / f"cv-google-{today}.docx"
+    out = Path(sys.argv[1]) if len(sys.argv) > 1 else _OUTPUT_DIR / f"cv-{today}.docx"
     cv = Path(sys.argv[2]) if len(sys.argv) > 2 else _CV_PATH
     generate(cv, out)

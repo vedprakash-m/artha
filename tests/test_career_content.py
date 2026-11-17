@@ -92,7 +92,7 @@ check("Unicode normalization handled", "{{CV_CONTENT}}" in text)
 # Directories
 print("\n[6] Required directories created")
 check("briefings/career/ exists", (REPO / "briefings" / "career").is_dir())
-check("output/career/ exists", (REPO / "output" / "career").is_dir())
+check("state/career/ exists", (REPO / "state" / "career").is_dir())
 check("templates/ exists", (REPO / "templates").is_dir())
 
 print(f"\n{'=' * 55}")

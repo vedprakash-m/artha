@@ -106,7 +106,7 @@ pass "Dependencies installed"
 python tools/configure_agent_hooks.py
 
 # Career search output directories (FR-25 — created at setup so they're always present)
-mkdir -p output/career briefings/career
+mkdir -p state/career briefings/career
 pass "Career output directories ready"
 
 # Career feature: conditional Playwright Chromium install (specs/career-ops.md FR-CS-3)

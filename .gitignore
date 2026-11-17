@@ -283,7 +283,8 @@ fonts/*.ttf
 
 # --- Career Search generated outputs (personal data — never committed) ---
 # Entire directories are gitignored — CI creates them via mkdir -p
-output/career/
+# Deprecated: nothing should be written to output/ — career artifacts live in state/career/<company>/
+/output/
 briefings/career/
 # Career audit trace (JSONL — covered by *.jsonl above, but explicit for clarity)
 state/career_audit.jsonl
@@ -320,9 +321,8 @@ skills/
 !scripts/skills/
 
 # Personal CV content baked into a script — local only (re-artha WP-00 privacy audit)
-scripts/career_docx_visual_google.py
-scripts/career_docx_visual.py
-scripts/render_openai_cv.py
+/scripts/career_docx_visual*.py
+/scripts/render_*_cv.py
 agency.toml
 
 # Local tooling artifacts
