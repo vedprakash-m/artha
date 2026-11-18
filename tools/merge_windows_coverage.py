@@ -70,28 +70,23 @@ def verify_shards(
         )
 
 
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--shards-dir", required=True)
-    parser.add_argument("--shards", type=int, default=4)
-    parser.add_argument("--artifact-prefix", default="win-cov")
-    parser.add_argument("--commit", required=True)
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--run-attempt", required=True)
-    parser.add_argument("--output-xml", required=True)
-    parser.add_argument("--include-target", action="append", default=[])
-    parser.add_argument("--collect-arg", action="append", default=[])
-    parser.add_argument("--rcfile", default=None)
-    parser.add_argument("--fail-under", type=float, default=None)
-    parser.add_argument("targets", nargs="+")
-    args = parser.parse_args(argv)
-
-    shards_root = Path(args.shards_dir)
+def _load_and_verify_group(
+    shards_root: Path,
+    shards: int,
+    artifact_prefix: str,
+    *,
+    commit: str,
+    run_id: str,
+    run_attempt: str,
+    collect_args: list[str],
+    targets: list[str],
+) -> list[Path]:
+    """Load, prove disjoint+complete, and return `.coverage` paths for one shard group."""
     manifests: list[dict] = []
     shard_nodes: list[set[str]] = []
     cov_files: list[Path] = []
-    for idx in range(1, args.shards + 1):
-        sub = shards_root / f"{args.artifact_prefix}-{args.commit}-{args.run_id}-{args.run_attempt}-shard-{idx}"
+    for idx in range(1, shards + 1):
+        sub = shards_root / f"{artifact_prefix}-{commit}-{run_id}-{run_attempt}-shard-{idx}"
         manifest_path = sub / "manifest.json"
         nodes_path = sub / f"shard-{idx}.nodeids"
         cov_path = sub / f"shard-{idx}.coverage"
@@ -104,7 +99,7 @@ def main(argv: list[str]) -> int:
 
     collect = subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only", "-q",
-         *args.collect_arg, *args.targets],
+         *collect_args, *targets],
         cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
     )
     expected = {
@@ -113,8 +108,40 @@ def main(argv: list[str]) -> int:
     }
     verify_shards(
         manifests, shard_nodes, expected,
-        commit=args.commit, run_id=args.run_id, run_attempt=args.run_attempt,
+        commit=commit, run_id=run_id, run_attempt=run_attempt,
     )
+    return cov_files
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--shards-dir", required=True)
+    parser.add_argument("--shards", type=int, default=4)
+    parser.add_argument("--artifact-prefix", default="win-cov")
+    parser.add_argument("--extra-group", nargs=4, action="append", default=[],
+                        metavar=("PREFIX", "SHARDS", "DIR", "TARGETS_COMMA"))
+    parser.add_argument("--commit", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-attempt", required=True)
+    parser.add_argument("--output-xml", required=True)
+    parser.add_argument("--include-target", action="append", default=[])
+    parser.add_argument("--collect-arg", action="append", default=[])
+    parser.add_argument("--rcfile", default=None)
+    parser.add_argument("--fail-under", type=float, default=None)
+    parser.add_argument("targets", nargs="+")
+    args = parser.parse_args(argv)
+
+    cov_files = _load_and_verify_group(
+        Path(args.shards_dir), args.shards, args.artifact_prefix,
+        commit=args.commit, run_id=args.run_id, run_attempt=args.run_attempt,
+        collect_args=args.collect_arg, targets=args.targets,
+    )
+    for prefix, shards_str, sdir, targets_csv in args.extra_group:
+        cov_files.extend(_load_and_verify_group(
+            Path(sdir), int(shards_str), prefix,
+            commit=args.commit, run_id=args.run_id, run_attempt=args.run_attempt,
+            collect_args=args.collect_arg, targets=[t for t in targets_csv.split(",") if t],
+        ))
 
     with tempfile.TemporaryDirectory(prefix="artha-win-cov-") as tmp:
         work = Path(tmp)

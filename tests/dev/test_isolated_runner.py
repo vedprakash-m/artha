@@ -654,3 +654,50 @@ def test_merge_windows_coverage_supports_prefix_collect_arg_rcfile_and_fail_unde
             "tests/test_mod.py",
         ])
     assert exc_info.value.returncode == 2
+
+
+def test_merge_windows_coverage_combines_verified_extra_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import shutil
+    import tools.merge_windows_coverage as merger
+
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "tests").mkdir()
+    (root / "pkg" / "mod.py").write_text(
+        "def alpha():\n    return 1\n\ndef beta():\n    return 2\n"
+    )
+    (root / "tests" / "test_a.py").write_text("from pkg.mod import alpha\ndef test_a():\n    assert alpha() == 1\n")
+    (root / "tests" / "test_b.py").write_text("from pkg.mod import beta\ndef test_b():\n    assert beta() == 2\n")
+    rcfile = root / "custom-cov.toml"
+    rcfile.write_text('[run]\nbranch = true\nomit = ["tests/*"]\n')
+    shards = tmp_path / "shards"
+    for prefix, tfile, node in (("g1", "tests/test_a.py", "tests/test_a.py::test_a"),
+                                ("g2", "tests/test_b.py", "tests/test_b.py::test_b")):
+        env = {**os.environ, "PYTHONPATH": str(root), "COVERAGE_FILE": str(root / f".coverage.{prefix}")}
+        env.pop("COVERAGE_PROCESS_START", None)
+        subprocess.run(
+            [sys.executable, "-m", "coverage", "run", f"--rcfile={rcfile}", "-m", "pytest", "-q", str(root / tfile)],
+            cwd=root, env=env, check=True, capture_output=True, timeout=60,
+        )
+        sub = shards / f"{prefix}-abc-10-1-shard-1"
+        sub.mkdir(parents=True)
+        (sub / "manifest.json").write_text(json.dumps({"commit": "abc", "run_id": "10", "run_attempt": "1", "shard": 1}))
+        (sub / "shard-1.nodeids").write_text(f"{node}\n")
+        shutil.copy(root / f".coverage.{prefix}", sub / "shard-1.coverage")
+    monkeypatch.setattr(merger, "ROOT", root)
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    report = root / "combined.xml"
+    rc = merger.main([
+        "--shards-dir", str(shards), "--shards", "1", "--artifact-prefix", "g1",
+        "--extra-group", "g2", "1", str(shards), "tests/test_b.py",
+        "--commit", "abc", "--run-id", "10", "--run-attempt", "1",
+        "--output-xml", str(report), "--rcfile", str(rcfile),
+        "--include-target", "pkg/mod.py", "--fail-under", "100",
+        "tests/test_a.py",
+    ])
+    assert rc == 0 and report.is_file()

@@ -24,11 +24,13 @@ lists below, which are exact paths.
 from __future__ import annotations
 
 import fnmatch
+import importlib.util
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,10 +239,56 @@ def check_secrets(content: str) -> list[str]:
     return findings
 
 
+_PII_GUARD_LOCK = threading.Lock()
+_INPROCESS_PII_GUARD = None
+
+
+def _load_inprocess_pii_guard():
+    """Import ``scripts/pii_guard.py`` once and warm rule state for thread-safe scans."""
+    global _INPROCESS_PII_GUARD  # noqa: PLW0603
+    if _INPROCESS_PII_GUARD is not None:
+        return _INPROCESS_PII_GUARD
+    with _PII_GUARD_LOCK:
+        if _INPROCESS_PII_GUARD is not None:
+            return _INPROCESS_PII_GUARD
+        spec = importlib.util.spec_from_file_location("_artha_inprocess_pii_guard", PII_GUARD)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("cannot load pii_guard specification")
+        mod = importlib.util.module_from_spec(spec)
+        scripts_dir = str(PII_GUARD.parent)
+        added = scripts_dir not in sys.path
+        if added:
+            sys.path.insert(0, scripts_dir)
+        try:
+            spec.loader.exec_module(mod)
+            mod._maybe_add_name_in_subject_pattern()
+            mod._build_deva_name_pattern()
+        finally:
+            if added and sys.path and sys.path[0] == scripts_dir:
+                sys.path.remove(scripts_dir)
+        _INPROCESS_PII_GUARD = mod
+        return mod
+
+
 def check_pii_guard(content: str, guard: Path = PII_GUARD) -> str | None:
     """Layer 3.  Fails closed when the guard is missing or crashes."""
     if not guard.exists():
         return "scanner unavailable: scripts/pii_guard.py missing (fail closed)"
+    try:
+        use_inprocess = guard.resolve() == PII_GUARD.resolve()
+    except OSError:
+        use_inprocess = False
+    if use_inprocess:
+        try:
+            mod = _load_inprocess_pii_guard()
+            _, found = mod._apply_filter(content)
+            for noisy in mod._EMAIL_ONLY_RULES:
+                found.pop(noisy, None)
+        except Exception as exc:  # noqa: BLE001
+            return f"scanner unavailable: pii_guard failed to run ({type(exc).__name__}) (fail closed)"
+        if not found:
+            return None
+        return ",".join(sorted(found.keys())) or "PII detected"
     try:
         result = subprocess.run(
             [sys.executable, str(guard), "scan"], input=content, capture_output=True,

@@ -830,3 +830,8 @@ def test_tracked_shard_partitions_exhaustively_and_rejects_bad_spec(sandbox, mon
         privacy_scan._parse_shard("3/2")
     with pytest.raises(ValueError, match="shard spec"):
         privacy_scan._parse_shard("bad")
+
+
+def test_inprocess_pii_guard_matches_doc_scan_contract(privacy_scanner):
+    assert privacy_scanner.check_pii_guard("ITIN on file: 912-78-1234", privacy_scanner.PII_GUARD) == "ITIN"
+    assert privacy_scanner.check_pii_guard("Appointment for John Smith in documentation", privacy_scanner.PII_GUARD) is None

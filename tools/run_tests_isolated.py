@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
 
@@ -425,7 +426,7 @@ def build_workspace(
 ) -> int:
     env = env or _git_env()
     dest.mkdir(parents=True, exist_ok=True)
-    copied = 0
+    pairs: list[tuple[Path, Path]] = []
     for rel in _git_files(root, env):
         if not _wanted(rel, synthetic_only=synthetic_only):
             continue
@@ -436,15 +437,19 @@ def build_workspace(
                 continue
         elif not src.is_file():
             continue
-        target = dest / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, target)
-        copied += 1
+        pairs.append((src, dest / rel))
+    for parent in sorted({target.parent for _, target in pairs}):
+        parent.mkdir(parents=True, exist_ok=True)
+    if pairs:
+        workers = min(16, max(4, (os.cpu_count() or 2) * 2))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for _ in pool.map(lambda pair: shutil.copy2(pair[0], pair[1]), pairs):
+                pass
     for name in EMPTY_DIRS:
         (dest / name).mkdir(exist_ok=True)
     (dest / "briefings" / "career").mkdir(parents=True, exist_ok=True)
     (dest / MARKER).write_text("isolated test workspace — safe to delete\n")
-    return copied
+    return len(pairs)
 
 
 def _git_env() -> dict[str, str]:
