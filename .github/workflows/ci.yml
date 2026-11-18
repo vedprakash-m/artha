@@ -403,7 +403,7 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Windows Core + Native Contract Shards (3.12 x 5 balanced shards) ────────
+  # ── Windows Core + Native Contract Shards (3.12 x 4 balanced shards) ────────
   core-windows:
     name: Catch-up Windows contracts (3.12, shard ${{ matrix.shard }})
     runs-on: windows-latest
@@ -411,7 +411,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -460,7 +460,7 @@ jobs:
             tests/dev/test_windows_contract_launcher.py @winTests `
             -m "not slow and not scale" -q --tb=short --durations=25 -n auto `
             --cov=catchup_core.quarantine_fs_windows --cov=catchup_core.storage_adoption --cov-branch `
-            --splitting-algorithm least_duration --splits 5 --group ${{ matrix.shard }}
+            --splitting-algorithm least_duration --splits 4 --group ${{ matrix.shard }}
           $manifest = @{
             commit = "${{ github.sha }}"
             run_id = "${{ github.run_id }}"
@@ -509,7 +509,7 @@ jobs:
         run: |
           WIN_TESTS=$(make -s print-windows-contract-tests)
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/win-shards" --shards 5 \
+            --shards-dir "${{ runner.temp }}/win-shards" --shards 4 \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-windows.xml --rcfile pyproject.toml \
             --collect-arg=-m --collect-arg="not slow and not scale" \
