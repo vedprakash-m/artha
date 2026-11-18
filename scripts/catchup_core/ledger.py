@@ -21,7 +21,7 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Callable, Collection, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -627,6 +627,183 @@ class Ledger:
             content_hmac, row["scope"], row["provenance"], generation)
         return hmac.compare_digest(str(row["proof"]), expected)
 
+    # ── owner scope review (specs/personal-scope-review.md A-1) ─────────────
+    # A v2 proof also binds a digest of the rows that decide who may read the object, so a later change to
+    # subjects, viewers, evidence or source access invalidates the review.
+
+    _SCOPES = ("personal", "work", "mixed", "unknown")
+
+    @staticmethod
+    def _authz_inputs(db: sqlite3.Connection, object_type: str, object_id: str,
+                      object_version: str) -> dict[str, Any]:
+        if object_type == "signal":
+            row = db.execute("SELECT connector,account_scope FROM signals WHERE signal_id=?",
+                             (object_id,)).fetchone()
+            if row is None:
+                raise LedgerError("unknown object")
+            access = db.execute("SELECT subjects FROM signal_access WHERE signal_id=?", (object_id,)).fetchone()
+            source = db.execute("SELECT subjects FROM source_access WHERE connector=? AND account_scope=?",
+                                (row["connector"], row["account_scope"])).fetchone()
+            return {"subjects": sorted(json.loads(access[0])) if access else None,
+                    "source_subjects": sorted(json.loads(source[0])) if source else None}
+        fact = db.execute("SELECT primary_subject_id,domain FROM facts WHERE fact_id=?", (object_id,)).fetchone()
+        if fact is None or object_type not in ("fact", "fact_version"):
+            raise LedgerError("unknown object")
+        if object_type == "fact":
+            evidence = db.execute("SELECT signal_id FROM fact_evidence WHERE fact_id=?", (object_id,))
+        else:
+            evidence = db.execute("SELECT signal_id FROM fact_version_evidence WHERE fact_id=? AND recorded_at=?",
+                                  (object_id, object_version))
+        return {"primary_subject": fact["primary_subject_id"], "domain": fact["domain"],
+                "co_subjects": sorted([str(r[0]), str(r[1] or "")] for r in db.execute(
+                    "SELECT subject_id,role FROM fact_subjects WHERE fact_id=?", (object_id,))),
+                "viewers": sorted(str(r[0]) for r in db.execute(
+                    "SELECT viewer_id FROM fact_viewers WHERE fact_id=?", (object_id,))),
+                "evidence": sorted(str(r[0]) for r in evidence)}
+
+    @staticmethod
+    def _authz_digest(inputs: Mapping[str, Any]) -> str:
+        return hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    @staticmethod
+    def _reviewed_proof(key: ids.HmacKey, object_type: str, object_id: str, object_version: str, source_id: str,
+                        account_id: str, content_hmac: str, scope: str, permission_generation: int,
+                        authz_digest: str) -> str:
+        material = json.dumps({
+            "v": 2, "object_type": object_type, "object_id": object_id, "object_version": object_version,
+            "source_id": source_id, "account_id": account_id, "content_hmac": content_hmac, "scope": scope,
+            "provenance": "source_review", "permission_generation": permission_generation, "authz": authz_digest,
+        }, sort_keys=True, separators=(",", ":"))
+        return ids.content_hmac(key, material)
+
+    def _review_identity(self, db: sqlite3.Connection, object_type: str,
+                         object_id: str) -> tuple[str, str, str, str]:
+        """(version, source, account, content marker) of the object as currently stored."""
+        if object_type == "signal":
+            row = db.execute("SELECT connector,account_scope,upstream_id,upstream_version,content_hmac "
+                             "FROM signals WHERE signal_id=?", (object_id,)).fetchone()
+            if row is None or not self._signal_identity_matches(
+                    object_id, row["connector"], row["account_scope"], row["upstream_id"], row["upstream_version"]):
+                raise LedgerError("unknown or inconsistent Signal")
+            return (str(row["upstream_version"]), str(row["connector"]), str(row["account_scope"]),
+                    str(row["content_hmac"]))
+        if object_type == "fact":
+            row = db.execute("SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (object_id,)).fetchone()
+            if row is None or not row["scope_hmac"]:
+                raise LedgerError("unknown or unbound Fact")
+            return str(row["recorded_at"]), "ledger", self._owner, str(row["scope_hmac"])
+        raise ValueError("scope review covers Signals and Facts only")
+
+    def _has_reviewed_binding(self, object_type: str, object_id: str, object_version: str, source_id: str,
+                              account_id: str, content_hmac: str, *, generation: int | None = None,
+                              db: sqlite3.Connection | None = None) -> bool:
+        db = self.conn if db is None else db
+        generation = self._permission_generation() if generation is None else generation
+        rows = db.execute(
+            "SELECT scope,provenance,proof,source_id,account_id,content_hmac FROM scope_bindings "
+            "WHERE object_type=? AND object_id=? AND object_version=? AND permission_generation=?",
+            (object_type, object_id, object_version, generation)).fetchall()
+        if len(rows) != 1:
+            return False
+        row = rows[0]
+        if (row["scope"] != "personal" or row["provenance"] != "source_review" or row["source_id"] != source_id
+                or row["account_id"] != account_id or row["content_hmac"] != content_hmac):
+            return False
+        try:
+            inputs = self._authz_inputs(db, object_type, object_id, object_version)
+        except LedgerError:
+            return False
+        expected = self._reviewed_proof(self._id_key, object_type, object_id, object_version, source_id,
+                                        account_id, content_hmac, "personal", generation, self._authz_digest(inputs))
+        return hmac.compare_digest(str(row["proof"]), expected)
+
+    def _signal_reviewed(self, db: sqlite3.Connection, signal_id: str) -> bool:
+        row = db.execute("SELECT upstream_version,connector,account_scope,content_hmac FROM signals "
+                         "WHERE signal_id=?", (signal_id,)).fetchone()
+        return row is not None and self._has_reviewed_binding(
+            "signal", signal_id, str(row["upstream_version"]), str(row["connector"]), str(row["account_scope"]),
+            str(row["content_hmac"]), db=db)
+
+    def _fact_reviewed(self, db: sqlite3.Connection, fact_id: str) -> bool:
+        row = db.execute("SELECT recorded_at,scope_hmac FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
+        return row is not None and bool(row["scope_hmac"]) and self._has_reviewed_binding(
+            "fact", fact_id, str(row["recorded_at"]), "ledger", self._owner, str(row["scope_hmac"]), db=db)
+
+    def _write_reviewed_binding(self, db: sqlite3.Connection, object_type: str, object_id: str,
+                                object_version: str, source_id: str, account_id: str, content_hmac: str,
+                                scope: str) -> tuple[str, str | None]:
+        generation = self._permission_generation()
+        digest = self._authz_digest(self._authz_inputs(db, object_type, object_id, object_version))
+        old = db.execute("SELECT scope FROM scope_bindings WHERE object_type=? AND object_id=? AND object_version=? "
+                         "AND permission_generation=?", (object_type, object_id, object_version, generation)).fetchall()
+        old_scope = str(old[0][0]) if len(old) == 1 else ("conflict" if old else None)
+        db.execute("DELETE FROM scope_bindings WHERE object_type=? AND object_id=? AND object_version=? "
+                   "AND permission_generation=?", (object_type, object_id, object_version, generation))
+        proof = self._reviewed_proof(self._id_key, object_type, object_id, object_version, source_id, account_id,
+                                     content_hmac, scope, generation, digest)
+        db.execute(
+            "INSERT INTO scope_bindings(object_type,object_id,object_version,source_id,account_id,"
+            "content_hmac,scope,provenance,permission_generation,proof,created_at) "
+            "VALUES(?,?,?,?,?,?,?,'source_review',?,?,?)",
+            (object_type, object_id, object_version, source_id, account_id, content_hmac, scope, generation,
+             proof, self._clock()))
+        return digest, old_scope
+
+    def scope_review_item(self, object_type: str, object_id: str) -> dict[str, Any]:
+        """Metadata and authorization inputs for owner review; never reads or decrypts a payload."""
+        self._require_unlocked()
+        version, source, account, _content = self._review_identity(self.conn, object_type, object_id)
+        inputs = self._authz_inputs(self.conn, object_type, object_id, version)
+        reviewed = (self._signal_reviewed(self.conn, object_id) if object_type == "signal"
+                    else self._fact_reviewed(self.conn, object_id))
+        current = self.conn.execute(
+            "SELECT scope FROM scope_bindings WHERE object_type=? AND object_id=? AND object_version=? "
+            "AND permission_generation=? AND provenance='source_review'",
+            (object_type, object_id, version, self._permission_generation())).fetchall()
+        return {"object_type": object_type, "object_id": object_id, "object_version": version,
+                "source_id": source, "account_id": account, "authz": inputs,
+                "authz_digest": self._authz_digest(inputs),
+                "current_scope": "personal" if reviewed else (
+                    str(current[0][0]) if len(current) == 1 and current[0][0] != "personal" else None)}
+
+    def review_scope(self, object_type: str, object_id: str, scope: str, *, reviewer: str,
+                     expected_version: str, expected_authz: str) -> dict[str, Any]:
+        """Bind the owner's reviewed scope to the exact object and authorization inputs they saw."""
+        self._require_unlocked()
+        if scope not in self._SCOPES:
+            raise ValueError("scope must be personal, work, mixed or unknown")
+        if reviewer != self._owner:
+            raise PermissionDenied("only the owner can review personal scope")
+        with self.transaction() as db:
+            version, source, account, content = self._review_identity(db, object_type, object_id)
+            inputs = self._authz_inputs(db, object_type, object_id, version)
+            if (version != expected_version
+                    or not hmac.compare_digest(self._authz_digest(inputs), expected_authz)):
+                raise LedgerError("object changed since review")
+            written = [(object_type, *self._write_reviewed_binding(
+                db, object_type, object_id, version, source, account, content, scope))]
+            if object_type == "fact":
+                written.append(("fact_version", *self._write_reviewed_binding(
+                    db, "fact_version", object_id, version, source, account, content, scope)))
+            generation = self._permission_generation()
+            for kind, digest, old_scope in written:
+                db.execute("INSERT INTO scope_reviews(object_type,object_id,object_version,old_scope,new_scope,"
+                           "permission_generation,reviewer,reviewed_at,authz_digest) VALUES(?,?,?,?,?,?,?,?,?)",
+                           (kind, object_id, version, old_scope, scope, generation, reviewer, self._clock(), digest))
+        return {"object_type": object_type, "object_id": object_id, "object_version": version, "scope": scope}
+
+    def _carry_fact_review(self, db: sqlite3.Connection, fact_id: str, version: str, content_hmac: str,
+                           previous: Mapping[str, Any]) -> None:
+        """R-5: restate an owner review for a writer's new version when nothing that authorizes it changed."""
+        current = self._authz_inputs(db, "fact", fact_id, version)
+        if current is None or any(current[name] != previous[name]
+                                  for name in ("primary_subject", "domain", "co_subjects", "viewers")):
+            return
+        if not current["evidence"] or not all(self._signal_reviewed(db, sid) for sid in current["evidence"]):
+            return
+        for kind in ("fact", "fact_version"):
+            self._write_reviewed_binding(db, kind, fact_id, version, "ledger", self._owner, content_hmac, "personal")
+
     def _signal_identity_matches(
         self, signal_id: object, connector: object, account_scope: object,
         upstream_id: object, upstream_version: object,
@@ -677,6 +854,13 @@ class Ledger:
             counts[key] = counts.get(key, 0) + 1
         for binding in bindings:
             key = (str(binding["object_type"]), str(binding["object_id"]), str(binding["object_version"]))
+            if (counts[key] == 1 and self._has_reviewed_binding(
+                    *key, str(binding["source_id"]), str(binding["account_id"]), str(binding["content_hmac"]),
+                    generation=previous_generation, db=db)
+                    and self._scope_binding_matches_object(db, binding)):
+                self._write_reviewed_binding(db, *key, str(binding["source_id"]), str(binding["account_id"]),
+                                             str(binding["content_hmac"]), "personal")
+                continue
             if (counts[key] != 1 or binding["scope"] != "personal"
                     or binding["provenance"] not in ("source_review", "trusted_writer")
                     or type(binding["permission_generation"]) is not int):
@@ -694,7 +878,9 @@ class Ledger:
     def require_personal_signal(self, signal_id: str, *, allow_obsolete: bool = False) -> sqlite3.Row:
         """Validate source-side scope metadata without opening the evidence blob."""
         self._require_unlocked()
-        self.require_personal_signal_admission()
+        reviewed = self._signal_reviewed(self.conn, signal_id)
+        if not reviewed:
+            self.require_personal_signal_admission()
         row: sqlite3.Row | None = self.conn.execute(
             "SELECT signal_id,connector,account_scope,upstream_id,upstream_version,content_hmac "
             "FROM signals WHERE signal_id=?", (signal_id,)).fetchone()
@@ -703,9 +889,9 @@ class Ledger:
                 or (not allow_obsolete and self.source_is_obsolete(signal_id))
                 or self.is_tombstoned(row["connector"], row["account_scope"],
                                       row["upstream_id"], row["content_hmac"])
-                or not self._has_personal_binding(
+                or not (reviewed or self._has_personal_binding(
                     "signal", signal_id, row["upstream_version"], row["connector"],
-                    row["account_scope"], row["content_hmac"])):
+                    row["account_scope"], row["content_hmac"]))):
             raise PermissionDenied("personal scope unavailable")
         return row
 
@@ -727,10 +913,12 @@ class Ledger:
 
     def _require_personal_fact_version(self, fact_id: str, version: str, content_hmac: str,
                                        evidence_table: str) -> None:
-        self.require_personal_fact_admission()
-        if not self._has_personal_binding(
-                "fact_version" if evidence_table == "fact_version_evidence" else "fact",
-                fact_id, version, "ledger", self._owner, content_hmac):
+        object_type = "fact_version" if evidence_table == "fact_version_evidence" else "fact"
+        reviewed = self._has_reviewed_binding(object_type, fact_id, version, "ledger", self._owner, content_hmac)
+        if not reviewed:
+            self.require_personal_fact_admission()
+        if not (reviewed or self._has_personal_binding(
+                object_type, fact_id, version, "ledger", self._owner, content_hmac)):
             raise PermissionDenied("personal scope unavailable")
         if evidence_table not in ("fact_evidence", "fact_version_evidence"):
             raise LedgerError("invalid Fact evidence table")
@@ -820,7 +1008,7 @@ class Ledger:
                  expected_permission_generation: int | None = None) -> str:
         """Create a Fact, or add a new version of an existing one (history is append-only)."""
         self._require_unlocked()
-        if fact_id is not None:
+        if fact_id is not None and not self._fact_reviewed(self.conn, fact_id):
             self.require_personal_fact_admission()
         is_new = fact_id is None
         fid = fact_id or ids.new_id("fct")
@@ -833,6 +1021,8 @@ class Ledger:
             if expected_recorded_at is not None and previous != expected_recorded_at:
                 raise LedgerError('Fact changed since review')
             now = _after(previous, self._clock())
+            prior_review = (self._authz_inputs(c, "fact", fid, previous or "")
+                            if not is_new and self._fact_reviewed(c, fid) else None)
             if not is_new:
                 identity = c.execute("SELECT domain,predicate,primary_subject_id FROM facts WHERE fact_id=?",
                                      (fid,)).fetchone()
@@ -881,7 +1071,10 @@ class Ledger:
                 c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
                           (fid, now, signal_id, start, end))
             c.execute("UPDATE facts SET obligation_key=? WHERE fact_id=?", (fact.obligation_key, fid))
-            self._bind_fact_after_write(c, fid, now, scope_hmac, fact.provenance.value)
+            if prior_review is not None:
+                self._carry_fact_review(c, fid, now, scope_hmac, prior_review)
+            if not self._fact_reviewed(c, fid):
+                self._bind_fact_after_write(c, fid, now, scope_hmac, fact.provenance.value)
         return fid
 
     def set_document_method(self, signal_id: str, method: str) -> None:
@@ -1507,7 +1700,8 @@ class Ledger:
 
     def require_signal_operation(self, signal_id: str, viewer: str, operation: str = "view") -> None:
         """Authorize raw evidence and evaluations before disclosure, including legacy Fact provenance."""
-        self.require_personal_signal_admission()
+        if not self._signal_reviewed(self.conn, signal_id):
+            self.require_personal_signal_admission()
         from catchup_core.policy import authorize_source  # noqa: PLC0415
         source = self.signal_row(signal_id)
         if (source is None or source['exclusion_reason'] == 'forgotten'

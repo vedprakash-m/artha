@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Owner scope review, phase 1 (authorization-bound proofs), 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Owner-only scope review for existing ledger Signals and Facts (local spec `specs/personal-scope-review.md`, decisions R-1..R-6 and amendment A-1). A v2 `source_review` proof also binds a digest of each object's authorization inputs (Signal and source subjects; a Fact's primary subject, domain, co-subjects, viewers and evidence). Object reads, Signal operations and Fact updates admit only valid v2 reviews; v1 and `trusted_writer` bindings stay behind the existing hard stops. A new version carries a review forward only when its authorization inputs are unchanged and all its evidence is reviewed. The generation refresh re-proves v2 reviews and drops stale or purged ones. Migration 0021 adds an append-only `scope_reviews` audit table. Existing ledgers below schema 20 or 21 refuse writable opens until the owner approves the migration. Collection reads, the CLI verb and live adoption are phase 2. | `scripts/catchup_core/ledger.py`, `scripts/catchup_core/runtime.py`, `scripts/catchup_core/migrations/0021_scope_reviews.sql`, `tests/catchup_core/test_scope_review.py`, `docs/spec-manifest.json`, `docs/test-ownership.yaml` | 37 failing-first tests now pass; changed lines 122/122 covered. Ruff, mypy (82 files), import, hygiene, state-write, prompt, register and ownership gates pass. `test_process_death_keeps_schema_history_and_version_atomic[before]` fails intermittently on Windows (`disk I/O error`) on the unchanged baseline too (4 of 6 runs). |
+
 ### Changed — re-artha spec archived with owner dispositions, 2026-11-18
 
 | Change | Modified files | Validation |

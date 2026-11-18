@@ -588,8 +588,12 @@ def _access_subjects_for(config: RuntimeConfig, connector: str, text: str) -> li
     return [str(subject) for subject in config.sources.get(connector, {}).get("subjects", config.subjects)]
 
 
+_REVIEWED_MIGRATIONS = frozenset({20, 21})  # personal scope bindings; owner scope-review audit
+
+
 def _require_personal_scope_migration_review(ledger: Ledger) -> None:
-    if ledger.schema_version() < 20 <= max(n for n, _ in Ledger.available_migrations()):
+    current = ledger.schema_version()
+    if any(current < number for number, _ in Ledger.available_migrations() if number in _REVIEWED_MIGRATIONS):
         raise RuntimeConfigError("existing ledger requires a reviewed Personal scope migration")
 
 
