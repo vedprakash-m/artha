@@ -65,7 +65,7 @@ jobs:
           make mypy PYTHON=python
           python tools/run_tests_isolated.py tests/dev/test_credential_typing_gate.py -q --tb=short
 
-  # ── Sharded Core Coverage Export (Ubuntu 3.12 x 5 shards) ───────────────────
+  # ── Sharded Core Coverage Export (Ubuntu 3.12 x 4 shards on /dev/shm) ────────
   core-ubuntu:
     name: Core coverage shard ${{ matrix.shard }} (ubuntu, 3.12)
     runs-on: ubuntu-latest
@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -106,6 +106,9 @@ jobs:
         run: mkdir -p state/career briefings/career
       - name: Core coverage shard (isolated workspace)
         run: |
+          export TMPDIR="/dev/shm/artha-tmp-$$" TMP="/dev/shm/artha-tmp-$$" TEMP="/dev/shm/artha-tmp-$$"
+          mkdir -p "$TMPDIR" && chmod 0700 "$TMPDIR"
+          trap 'rm -rf "$TMPDIR"' EXIT
           out="$RUNNER_TEMP/ubuntu-cov"
           mkdir -p "$out"
           UNIT_COV_ARGS=$(make -s print-harness-unit-cov-args)
@@ -113,7 +116,7 @@ jobs:
             --export-coverage "$out/shard-${{ matrix.shard }}.coverage" \
             --export-nodeids "$out/shard-${{ matrix.shard }}.nodeids" \
             tests/catchup_core -m "not scale" -q -p no:cacheprovider --tb=short --durations=25 -n auto \
-            --splitting-algorithm least_duration --splits 5 --group "${{ matrix.shard }}" \
+            --splitting-algorithm least_duration --splits 4 --group "${{ matrix.shard }}" \
             --cov=scripts/catchup_core $UNIT_COV_ARGS --cov-branch
           printf '{"commit":"%s","run_id":"%s","run_attempt":"%s","shard":%s}\n' \
             "${{ github.sha }}" "${{ github.run_id }}" "${{ github.run_attempt }}" "${{ matrix.shard }}" \
@@ -158,7 +161,7 @@ jobs:
       - name: Combine shards & verify >= 85% combined, line and branch floors
         run: |
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/ubuntu-shards" --shards 5 --artifact-prefix ubuntu-cov \
+            --shards-dir "${{ runner.temp }}/ubuntu-shards" --shards 4 --artifact-prefix ubuntu-cov \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage.xml --rcfile pyproject.toml \
             --include-target "scripts/catchup_core/*" \
@@ -181,9 +184,10 @@ jobs:
           fi
           make diff-coverage-check PYTHON=python DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
 
-  # ── Full Non-Core Suite (including slow & dev tests, Ubuntu 3.12) ───────────
+  # ── Full Non-Core Suite (slow & dev tests on /dev/shm; backfills at +25s) ──
   noncore-ubuntu:
     name: Full non-core suite (ubuntu, 3.12, slow & dev)
+    needs: [core-harness-shard]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -218,6 +222,9 @@ jobs:
         run: mkdir -p state/career briefings/career
       - name: Full non-core suite (including slow & dev tests)
         run: |
+          export TMPDIR="/dev/shm/artha-tmp-$$" TMP="/dev/shm/artha-tmp-$$" TEMP="/dev/shm/artha-tmp-$$"
+          mkdir -p "$TMPDIR" && chmod 0700 "$TMPDIR"
+          trap 'rm -rf "$TMPDIR"' EXIT
           UNIT_IGNORES=$(for t in $(make -s print-harness-unit-tests); do printf -- '--ignore=%s ' "$t"; done)
           python tools/run_tests_isolated.py tests \
             -m "not scale" --ignore=tests/catchup_core --ignore=tests/work $UNIT_IGNORES \
@@ -261,6 +268,9 @@ jobs:
           "$bin/age" --version && "$bin/age-keygen" --version
       - name: Hook and policy unit coverage (isolated workspace)
         run: |
+          export TMPDIR="/dev/shm/artha-tmp-$$" TMP="/dev/shm/artha-tmp-$$" TEMP="/dev/shm/artha-tmp-$$"
+          mkdir -p "$TMPDIR" && chmod 0700 "$TMPDIR"
+          trap 'rm -rf "$TMPDIR"' EXIT
           out="$RUNNER_TEMP/harness-cov"
           mkdir -p "$out"
           UNIT_TESTS=$(make -s print-harness-unit-tests)
@@ -321,7 +331,7 @@ jobs:
           INCLUDES=$(make -s print-harness-include-args)
           python tools/merge_windows_coverage.py \
             --shards-dir "${{ runner.temp }}/harness-shards" --shards 1 --artifact-prefix harness-cov \
-            --extra-group ubuntu-cov 5 "${{ runner.temp }}/ubuntu-shards" tests/catchup_core \
+            --extra-group ubuntu-cov 4 "${{ runner.temp }}/ubuntu-shards" tests/catchup_core \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-harness.xml --rcfile tools/coverage-posix.toml \
             --collect-arg=-m --collect-arg="not scale" --fail-under 85 \
@@ -439,10 +449,13 @@ jobs:
       - name: Create required runtime directories
         run: mkdir -p state/career briefings/career
       - name: Run fast test suite (isolated workspace)
-        run: >-
-          python tools/run_tests_isolated.py tests -m "not slow and not scale"
-          -n auto --tb=short --durations=25 --ignore=tests/work
-          --splitting-algorithm least_duration --splits 2 --group ${{ matrix.shard }}
+        run: |
+          export TMPDIR="/dev/shm/artha-tmp-$$" TMP="/dev/shm/artha-tmp-$$" TEMP="/dev/shm/artha-tmp-$$"
+          mkdir -p "$TMPDIR" && chmod 0700 "$TMPDIR"
+          trap 'rm -rf "$TMPDIR"' EXIT
+          python tools/run_tests_isolated.py tests -m "not slow and not scale" \
+            -n auto --tb=short --durations=25 --ignore=tests/work \
+            --splitting-algorithm least_duration --splits 2 --group ${{ matrix.shard }}
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
@@ -488,15 +501,18 @@ jobs:
       - name: Create required runtime directories
         run: mkdir -p state/career briefings/career
       - name: Run fast test suite (isolated workspace)
-        run: >-
-          python tools/run_tests_isolated.py tests -m "not slow and not scale"
-          -n auto --tb=short --durations=25 --ignore=tests/work
-          --splitting-algorithm least_duration --splits 2 --group ${{ matrix.shard }}
+        run: |
+          export TMPDIR="/dev/shm/artha-tmp-$$" TMP="/dev/shm/artha-tmp-$$" TEMP="/dev/shm/artha-tmp-$$"
+          mkdir -p "$TMPDIR" && chmod 0700 "$TMPDIR"
+          trap 'rm -rf "$TMPDIR"' EXIT
+          python tools/run_tests_isolated.py tests -m "not slow and not scale" \
+            -n auto --tb=short --durations=25 --ignore=tests/work \
+            --splitting-algorithm least_duration --splits 2 --group ${{ matrix.shard }}
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Windows Core + Native Contract Shards (3.12 x 4 balanced shards) ────────
+  # ── Windows Core + Native Contract Shards (3.12 x 5 balanced shards) ────────
   core-windows:
     name: Catch-up Windows contracts (3.12, shard ${{ matrix.shard }})
     runs-on: windows-latest
@@ -504,7 +520,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -554,7 +570,7 @@ jobs:
             -m "not slow and not scale" -q --tb=short --durations=25 -n auto `
             --cov=catchup_core.quarantine_fs_windows --cov=catchup_core.storage_adoption --cov-branch `
             --durations-path tools/windows-test-durations.json `
-            --splitting-algorithm least_duration --splits 4 --group ${{ matrix.shard }}
+            --splitting-algorithm least_duration --splits 5 --group ${{ matrix.shard }}
           $manifest = @{
             commit = "${{ github.sha }}"
             run_id = "${{ github.run_id }}"
@@ -603,7 +619,7 @@ jobs:
         run: |
           WIN_TESTS=$(make -s print-windows-contract-tests)
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/win-shards" --shards 4 \
+            --shards-dir "${{ runner.temp }}/win-shards" --shards 5 \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-windows.xml --rcfile pyproject.toml \
             --collect-arg=-m --collect-arg="not slow and not scale" \

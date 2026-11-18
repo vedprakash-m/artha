@@ -185,9 +185,9 @@ def _worker(command: list[str], root: Path, timeout: int, parent: int) -> None:
 def _containment() -> Callable[[], None]:
     if sys.platform == 'win32':
         return _windows_job()
-    killpg = os.killpg
-    getpgrp = os.getpgrp
-    sigkill = signal.SIGKILL
+    killpg = getattr(os, 'killpg')  # noqa: B009
+    getpgrp = getattr(os, 'getpgrp')  # noqa: B009
+    sigkill = getattr(signal, 'SIGKILL')  # noqa: B009
     return lambda: killpg(getpgrp(), sigkill)
 
 
