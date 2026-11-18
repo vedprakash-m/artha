@@ -87,6 +87,9 @@ def _load_and_verify_group(
     cov_files: list[Path] = []
     for idx in range(1, shards + 1):
         sub = shards_root / f"{artifact_prefix}-{commit}-{run_id}-{run_attempt}-shard-{idx}"
+        flat_names = ("manifest.json", f"shard-{idx}.nodeids", f"shard-{idx}.coverage")
+        if shards == 1 and not sub.exists() and all((shards_root / name).is_file() for name in flat_names):
+            sub = shards_root
         manifest_path = sub / "manifest.json"
         nodes_path = sub / f"shard-{idx}.nodeids"
         cov_path = sub / f"shard-{idx}.coverage"

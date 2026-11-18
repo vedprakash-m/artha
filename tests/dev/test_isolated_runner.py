@@ -656,6 +656,34 @@ def test_merge_windows_coverage_supports_prefix_collect_arg_rcfile_and_fail_unde
     assert exc_info.value.returncode == 2
 
 
+def test_merge_windows_coverage_accepts_flat_single_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    import tools.merge_windows_coverage as merger
+
+    root = tmp_path / "artifacts"
+    root.mkdir()
+    (root / "manifest.json").write_text(json.dumps({
+        "commit": "abc", "run_id": "10", "run_attempt": "1", "shard": 1,
+    }))
+    (root / "shard-1.nodeids").write_text("tests/test_probe.py::test_probe\n")
+    coverage = root / "shard-1.coverage"
+    coverage.write_bytes(b"synthetic")
+    monkeypatch.setattr(
+        merger.subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="tests/test_probe.py::test_probe\n"),
+    )
+
+    assert merger._load_and_verify_group(
+        root, 1, "harness-cov",
+        commit="abc", run_id="10", run_attempt="1",
+        collect_args=[], targets=["tests/test_probe.py"],
+    ) == [coverage]
+
+
 def test_merge_windows_coverage_combines_verified_extra_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

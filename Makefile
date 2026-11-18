@@ -124,7 +124,7 @@ coverage-harness: ## Combined line+branch coverage floor on the hook and policy 
 		$(foreach m,$(HARNESS_RUN_MODULES),--cov=$(m)) --cov-config=$(HARNESS_COV_CONFIG) --cov-branch --cov-fail-under=$(COV_MIN) \
 		--cov-report=term-missing --cov-report=xml:"$(abspath coverage-harness.xml)"
 
-.PHONY: print-harness-tests print-harness-cov-args print-harness-unit-tests print-harness-unit-cov-args print-harness-include-args print-windows-contract-tests
+.PHONY: print-harness-tests print-harness-cov-args print-harness-unit-tests print-harness-unit-cov-args print-harness-include-args print-windows-contract-tests print-noncore-targets
 print-harness-tests: ## Print space-separated harness test paths for the current OS
 	@printf '%s\n' "$(HARNESS_RUN_TESTS)"
 
@@ -139,6 +139,11 @@ print-harness-unit-cov-args: ## Print --cov flags for non-catchup_core harness m
 
 print-harness-include-args: ## Print --include-target flags for all current OS harness files
 	@printf '%s\n' "$(foreach m,$(HARNESS_RUN_MODULES),--include-target scripts/$(subst .,/,$(m)).py)"
+
+NONCORE_TARGETS = tests/dev tests/eval tests/ext_agents tests/extraction tests/integration tests/lib tests/test_dq_gate.py tests/test_kb_lint.py tests/test_precompute.py tests/uat tests/unit
+
+print-noncore-targets: ## Print non-catchup_core public test targets
+	@printf '%s\n' "$(NONCORE_TARGETS)"
 
 WINDOWS_CONTRACT_TESTS = tests/catchup_core/test_quarantine_fs_windows.py tests/catchup_core/test_storage_adoption.py tests/catchup_core/test_work_member_mutations.py tests/catchup_core/test_work_stream_recovery.py tests/catchup_core/test_work_stream_checkpoint.py tests/catchup_core/test_work_stream_inventory.py tests/catchup_core/test_work_stream_quarantine.py tests/catchup_core/test_work_privacy.py tests/catchup_core/test_work_cache.py tests/catchup_core/test_work_inventory_retry.py tests/catchup_core/test_work_recovery_status.py tests/catchup_core/test_cloud_source_streams.py tests/catchup_core/test_stream_integrity_portable.py tests/catchup_core/test_quarantine_review.py tests/catchup_core/test_quarantine_restore.py tests/catchup_core/test_recovery_quarantine.py tests/catchup_core/test_recovery_registry.py tests/catchup_core/test_register_manifest.py tests/catchup_core/test_preservation_bounded.py tests/catchup_core/test_preservation_streaming.py tests/catchup_core/test_privacy_anchor_capacity.py tests/catchup_core/test_session_lock.py tests/catchup_core/test_installation_fence.py tests/catchup_core/test_checkpoint_restore_integrity.py tests/catchup_core/test_state_checkpoint.py tests/catchup_core/test_age_vault.py tests/catchup_core/test_recovery_failures.py tests/catchup_core/test_renewal_workspace.py tests/catchup_core/test_renewal_process.py tests/catchup_core/test_renewal_delivery.py tests/catchup_core/test_renewal_authority.py tests/catchup_core/test_renewal_runner.py tests/catchup_core/test_renewal_store.py tests/catchup_core/test_release_artifact_coherence.py tests/catchup_core/test_release_boundaries.py tests/catchup_core/test_user_config_sources.py tests/catchup_core/test_resource_usage.py tests/catchup_core/test_retention.py tests/catchup_core/test_core_open_items.py tests/catchup_core/test_legacy_writer_fence.py tests/catchup_core/test_vault_crash_scan.py tests/catchup_core/test_vault_failures.py tests/catchup_core/test_restore_quarantine.py tests/catchup_core/test_recovery_inventory.py tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py tests/unit/test_action_process.py tests/unit/test_action_quarantine.py tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
 

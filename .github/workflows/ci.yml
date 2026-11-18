@@ -97,13 +97,12 @@ jobs:
         run: |
           out="$RUNNER_TEMP/ubuntu-cov"
           mkdir -p "$out"
-          UNIT_COV_ARGS=$(make -s print-harness-unit-cov-args)
           python tools/run_tests_isolated.py \
             --export-coverage "$out/shard-${{ matrix.shard }}.coverage" \
             --export-nodeids "$out/shard-${{ matrix.shard }}.nodeids" \
             tests/catchup_core -m "not scale" -q -p no:cacheprovider --tb=short --durations=25 -n auto \
             --splitting-algorithm least_duration --splits 5 --group "${{ matrix.shard }}" \
-            --cov=scripts/catchup_core $UNIT_COV_ARGS --cov-branch
+            --cov=scripts/catchup_core --cov-branch
           printf '{"commit":"%s","run_id":"%s","run_attempt":"%s","shard":%s}\n' \
             "${{ github.sha }}" "${{ github.run_id }}" "${{ github.run_attempt }}" "${{ matrix.shard }}" \
             > "$out/manifest.json"
@@ -170,9 +169,9 @@ jobs:
           fi
           make diff-coverage-check PYTHON=python DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
 
-  # ── Full Non-Core Suite (including slow & dev tests, Ubuntu 3.12) ───────────
+  # ── Full Non-Core Suite + Harness Coverage Export (Ubuntu 3.12) ────────────
   noncore-ubuntu:
-    name: Full non-core suite (ubuntu, 3.12, slow & dev)
+    name: Full non-core suite & harness export (ubuntu, 3.12, slow & dev)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -194,47 +193,16 @@ jobs:
           command -v age age-keygen
       - name: Create required runtime directories
         run: mkdir -p state/career briefings/career
-      - name: Full non-core suite (including slow & dev tests)
-        run: >-
-          python tools/run_tests_isolated.py tests
-          -m "not scale" --ignore=tests/catchup_core --ignore=tests/work
-          -q --tb=short --durations=25 -n auto
-        env:
-          PYTHONPATH: scripts
-          ARTHA_NO_REEXEC: "1"
-
-  # ── POSIX Security Harness Unit Shard (reuses core-ubuntu for tests/catchup_core) ──
-  core-harness-shard:
-    name: Hook and policy coverage unit shard (ubuntu, 3.12)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            scripts/requirements.txt
-      - name: Install dependencies
-        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
-      - name: Install age (in-memory vault tests run for real, not skipped)
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq age
-          command -v age age-keygen
-      - name: Hook and policy unit coverage (isolated workspace)
+      - name: Full non-core suite + harness coverage export
         run: |
           out="$RUNNER_TEMP/harness-cov"
           mkdir -p "$out"
-          TESTS=$(make -s print-harness-unit-tests)
+          NONCORE_TESTS=$(make -s print-noncore-targets)
           COV_ARGS=$(make -s print-harness-cov-args)
           python tools/run_tests_isolated.py \
             --export-coverage "$out/shard-1.coverage" \
             --export-nodeids "$out/shard-1.nodeids" \
-            $TESTS -m "not scale" -q -p no:cacheprovider --tb=short --durations=25 -n auto \
+            $NONCORE_TESTS -m "not scale" -q --tb=short --durations=25 -n auto \
             $COV_ARGS --cov-config=tools/coverage-posix.toml --cov-branch
           printf '{"commit":"%s","run_id":"%s","run_attempt":"%s","shard":1}\n' \
             "${{ github.sha }}" "${{ github.run_id }}" "${{ github.run_attempt }}" \
@@ -253,7 +221,7 @@ jobs:
   # ── POSIX Security Harness Merge + >=95% Per-File Diff Gate ──────────────────
   core-harness:
     name: Hook and policy modules coverage
-    needs: [core-ubuntu, core-harness-shard]
+    needs: [core-ubuntu, noncore-ubuntu]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -279,11 +247,11 @@ jobs:
       - name: Download 3.12 harness unit artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: harness-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-*
-          path: ${{ runner.temp }}/harness-shards
+          name: harness-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-1
+          path: ${{ runner.temp }}/harness-shards/harness-cov-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}-shard-1
       - name: Combine harness and core shards (>= 85% combined)
         run: |
-          UNIT_TESTS=$(make -s print-harness-unit-tests)
+          NONCORE_TESTS=$(make -s print-noncore-targets)
           INCLUDES=$(make -s print-harness-include-args)
           python tools/merge_windows_coverage.py \
             --shards-dir "${{ runner.temp }}/harness-shards" --shards 1 --artifact-prefix harness-cov \
@@ -291,7 +259,7 @@ jobs:
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-harness.xml --rcfile tools/coverage-posix.toml \
             --collect-arg=-m --collect-arg="not scale" --fail-under 85 \
-            $INCLUDES $UNIT_TESTS
+            $INCLUDES $NONCORE_TESTS
         env:
           PYTHONPATH: scripts
       - name: Changed-line harness coverage (>= 95% per file)
@@ -319,11 +287,15 @@ jobs:
           - os: macos-latest
             python-version: "3.12"
             shard: 1
-            splits: 2
+            splits: 3
           - os: macos-latest
             python-version: "3.12"
             shard: 2
-            splits: 2
+            splits: 3
+          - os: macos-latest
+            python-version: "3.12"
+            shard: 3
+            splits: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -362,7 +334,7 @@ jobs:
 
   # ── Sharded Linux Cross-Python Fast Matrix (backfills static/PII slots) ─────
   tests-linux-py:
-    name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/2)
+    name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/3)
     needs: [static-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -370,7 +342,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.14"]
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -394,7 +366,7 @@ jobs:
         run: >-
           python tools/run_tests_isolated.py tests -m "not slow and not scale"
           -n auto --tb=short --durations=25 --ignore=tests/work
-          --splitting-algorithm least_duration --splits 2 --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration --splits 3 --group ${{ matrix.shard }}
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
@@ -535,7 +507,6 @@ jobs:
   # ── Windows Native & Renewal Contracts Across Python 3.11 and 3.14 ──────────
   core-windows-py:
     name: Windows native contracts (${{ matrix.python-version }})
-    needs: [static-gates]
     runs-on: windows-latest
     timeout-minutes: 8
     strategy:
