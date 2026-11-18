@@ -8,11 +8,13 @@ import os
 import sqlite3
 import struct
 import subprocess
+import tempfile
 from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import yaml
 from catchup_core import checkpoint as ck
@@ -322,8 +324,9 @@ CUTOVER_ESCROW = {
 }
 
 
-def release_scorecard(config=None):
-    cohort = policy.evaluation_cohort(config or {"model_identity": MODEL_IDENTITY}, ["kids_school"])
+def release_scorecard(config=None, *, cohort=None):
+    cohort = copy.deepcopy(cohort) if cohort is not None else policy.evaluation_cohort(
+        config or {"model_identity": MODEL_IDENTITY}, ["kids_school"])
     cases = [
         {"case_id": "live", "severity": "P1", "expected": ["a"], "surfaced": ["a"]},
         {"case_id": "p2", "severity": "P2", "expected": ["b"], "surfaced": ["b"]},
@@ -420,6 +423,11 @@ def release_scorecard(config=None):
     return result
 
 
+_PRESERVATION_CACHE: dict[tuple[Any, ...], tuple[str, bytes, str]] = {}
+_WORK_CHECKPOINT_CACHE: dict[tuple[Any, ...], tuple[str, bytes, str, dict[str, Any]]] = {}
+_COHORT_CACHE: dict[str, dict[str, Any]] = {}
+
+
 def build_preservation_checkpoint(
     tmp_path: Path,
     cipher: EnvelopeCipher,
@@ -428,68 +436,104 @@ def build_preservation_checkpoint(
     escrow: dict[str, bytes] | None = None,
     name_prefix: str = "ck",
 ) -> Path:
-    src = tmp_path / f"{name_prefix}_src"
-    repo_dir = src / "repo"
-    local_root = src / "local"
-    local_dir = local_root / "catchup_core"
-    state_dir = repo_dir / "state"
-    local_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name != "nt":
-        local_root.chmod(0o700)
-    local_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name != "nt":
-        local_dir.chmod(0o700)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    with Ledger(local_dir / "ledger.db", id_key=CORE_KEY, cipher=cipher) as ledger:
-        ledger.migrate()
-    if include_state:
-        (state_dir / "open_items.md").write_text("- id: OI-1\n  status: open\n  description: Synthetic\n")
-    (repo_dir / "config").mkdir()
-    (repo_dir / "config/catchup_core.yaml").write_text("cutover: false\n")
-    roots = {"local": local_root, "repo": repo_dir}
     version = cipher._provider.current_version()
-    return ck.create(
-        "personal",
-        roots,
-        tmp_path / f"{name_prefix}_out",
-        cipher,
-        {**CUTOVER_ESCROW, f"artha-ledger/key.{version}": cipher._provider.key(version), "artha-ledger-ids/key.1": CORE_KEY.secret}
+    ledger_key = cipher._provider.key(version)
+    escrow_items = (
+        {**CUTOVER_ESCROW, f"artha-ledger/key.{version}": ledger_key, "artha-ledger-ids/key.1": CORE_KEY.secret}
         if escrow is None
-        else escrow,
-        "synthetic-passphrase-1234",
-        now=CUTOVER_NOW,
-        lock_path=tmp_path / f"{name_prefix}.lock",
-        context={
-            "preservation": {
-                "schema": "artha.installation-preservation.v1",
-                "repository_root": "repo",
-                "runtime_root": "local",
-                "root_names": ["local", "repo"],
-                "inventory": "recursive-fail-closed",
-            }
-        },
+        else escrow
     )
+    cache_key = (version, ledger_key, include_state, tuple(sorted(escrow_items.items())))
+    cached = _PRESERVATION_CACHE.get(cache_key)
+    if cached is None:
+        with tempfile.TemporaryDirectory(prefix="artha-ck-tpl-") as tpl_dir:
+            tpl_root = Path(tpl_dir)
+            src = tpl_root / "src"
+            repo_dir = src / "repo"
+            local_root = src / "local"
+            local_dir = local_root / "catchup_core"
+            state_dir = repo_dir / "state"
+            local_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if os.name != "nt":
+                local_root.chmod(0o700)
+            local_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if os.name != "nt":
+                local_dir.chmod(0o700)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            with Ledger(local_dir / "ledger.db", id_key=CORE_KEY, cipher=cipher) as ledger:
+                ledger.migrate()
+            if include_state:
+                (state_dir / "open_items.md").write_text("- id: OI-1\n  status: open\n  description: Synthetic\n")
+            (repo_dir / "config").mkdir()
+            (repo_dir / "config/catchup_core.yaml").write_text("cutover: false\n")
+            created = ck.create(
+                "personal",
+                {"local": local_root, "repo": repo_dir},
+                tpl_root / "out",
+                cipher,
+                escrow_items,
+                "synthetic-passphrase-1234",
+                now=CUTOVER_NOW,
+                lock_path=tpl_root / "tpl.lock",
+                context={
+                    "preservation": {
+                        "schema": "artha.installation-preservation.v1",
+                        "repository_root": "repo",
+                        "runtime_root": "local",
+                        "root_names": ["local", "repo"],
+                        "inventory": "recursive-fail-closed",
+                    }
+                },
+            )
+            data = created.read_bytes()
+            generation = ck.verify(created, cipher)["generation"]
+            cached = (created.name, data, generation)
+            _PRESERVATION_CACHE[cache_key] = cached
+    filename, data, _ = cached
+    out_dir = tmp_path / f"{name_prefix}_out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / filename
+    target.write_bytes(data)
+    return target
 
 
 def synthetic_recovery_acceptance(tmp_path: Path, personal: Path, cipher: EnvelopeCipher, *, cohort=None):
-    work_root = tmp_path / "synthetic-work"
-    work_root.mkdir()
-    (work_root / "work-state.md").write_text("Synthetic Work state, never cloud-copied")
-    work_cipher = EnvelopeCipher(StaticKeyProvider({1: b"w" * 32}))
-    work = ck.create(
-        "work",
-        {"work": work_root},
-        tmp_path / "synthetic-work-checkpoints",
-        work_cipher,
-        {"age-key/artha": CUTOVER_ESCROW["age-key/artha"], "artha-work-checkpoint/key.1": b"w" * 32},
-        "separate-synthetic-work-passphrase",
-        now=CUTOVER_NOW,
-        lock_path=tmp_path / "synthetic-work.lock",
-    )
-    work_manifest = ck.verify(work, work_cipher)
-    personal_generation = ck.verify(personal, cipher)["generation"]
+    work_cached = _WORK_CHECKPOINT_CACHE.get(("work",))
+    if work_cached is None:
+        with tempfile.TemporaryDirectory(prefix="artha-work-ck-tpl-") as tpl_dir:
+            tpl_root = Path(tpl_dir)
+            work_root = tpl_root / "synthetic-work"
+            work_root.mkdir()
+            (work_root / "work-state.md").write_text("Synthetic Work state, never cloud-copied")
+            work_cipher = EnvelopeCipher(StaticKeyProvider({1: b"w" * 32}))
+            work_path = ck.create(
+                "work",
+                {"work": work_root},
+                tpl_root / "synthetic-work-checkpoints",
+                work_cipher,
+                {"age-key/artha": CUTOVER_ESCROW["age-key/artha"], "artha-work-checkpoint/key.1": b"w" * 32},
+                "separate-synthetic-work-passphrase",
+                now=CUTOVER_NOW,
+                lock_path=tpl_root / "synthetic-work.lock",
+            )
+            work_manifest = ck.verify(work_path, work_cipher)
+            work_bytes = work_path.read_bytes()
+            work_cached = (work_path.name, work_bytes, hashlib.sha256(work_bytes).hexdigest(), work_manifest)
+            _WORK_CHECKPOINT_CACHE[("work",)] = work_cached
+    work_name, work_bytes, work_digest, work_manifest = work_cached
+    work_dir = tmp_path / "synthetic-work-checkpoints"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    work = work_dir / work_name
+    work.write_bytes(work_bytes)
     personal_digest = hashlib.sha256(personal.read_bytes()).hexdigest()
-    work_digest = hashlib.sha256(work.read_bytes()).hexdigest()
+    ledger_key = cipher._provider.key(cipher._provider.current_version())
+    personal_generation = next(
+        (gen for (_v, lk, _inc, _esc), (_fn, data, gen) in _PRESERVATION_CACHE.items()
+         if lk == ledger_key and hashlib.sha256(data).hexdigest() == personal_digest),
+        None,
+    )
+    if personal_generation is None:
+        personal_generation = ck.verify(personal, cipher)["generation"]
     stamp = "2026-10-25T00:00:00+00:00"
 
     def observation(profile, digest_hex, generation, os_name=None):
@@ -569,7 +613,7 @@ def build_cutover_configured(tmp_path: Path, monkeypatch):
             "domains": ["kids_school"],
             "owner_approved_at": "reviewed",
             "stage1_clearance": artifact("clearance.json", {"passed": True, "owner_signed_at": "reviewed"}),
-            "scorecard": artifact("scorecard.json", release_scorecard()),
+            "scorecard": None,
             "rollback_snapshot": rollback_record,
             "independent_copy": {
                 **approved(independent),
@@ -580,10 +624,22 @@ def build_cutover_configured(tmp_path: Path, monkeypatch):
             "recovery_rehearsal": None,
         },
     }
-    config["release"]["scorecard"] = artifact("scorecard.json", release_scorecard(config))
+    def _cached_cohort(cfg: dict[str, Any]) -> dict[str, Any]:
+        policy_cfg = {k: v for k, v in cfg.items() if k not in {"release", "cutover"}}
+        key = json.dumps(policy_cfg, sort_keys=True)
+        cached = _COHORT_CACHE.get(key)
+        if cached is None:
+            cached = policy.evaluation_cohort(cfg, ["kids_school"], workspace=repo)
+            _COHORT_CACHE[key] = copy.deepcopy(cached)
+        return copy.deepcopy(cached)
+
+    cohort_val = _cached_cohort(config)
+    config["release"]["scorecard"] = artifact(
+        "scorecard.json", release_scorecard(config, cohort=cohort_val),
+    )
     config["release"]["recovery_rehearsal"] = artifact(
         "recovery_rehearsal.json",
-        synthetic_recovery_acceptance(tmp_path, rollback, cipher, cohort=policy.evaluation_cohort(config, ["kids_school"])),
+        synthetic_recovery_acceptance(tmp_path, rollback, cipher, cohort=cohort_val),
     )
     monkeypatch.setattr(policy.socket, "gethostname", lambda: "authority")
     request = CatchupRequest("cu_fenced", "owner", "cli", host="authority")

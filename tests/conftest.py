@@ -13,8 +13,10 @@ _isolation.install_credential_guard()
 # Native account APIs ignore fake HOME and bypass Python socket guards. Tests must inject explicit fakes.
 for _native_module in ("EventKit", "Contacts", "ScriptingBridge"):
     sys.modules[_native_module] = None
-_PRODUCTION_SNAPSHOT = _isolation.ProtectedSnapshot.take(
-    Path(__file__).resolve().parent.parent, _isolation.PROTECTED_ROOTS
+_BOOTSTRAP_ROOT = Path(__file__).resolve().parent.parent
+_PRODUCTION_SNAPSHOT = (
+    None if (_BOOTSTRAP_ROOT / _isolation.WORKSPACE_MARKER).exists()
+    else _isolation.ProtectedSnapshot.take(_BOOTSTRAP_ROOT, _isolation.PROTECTED_ROOTS)
 )
 
 os.environ.setdefault("ARTHA_NO_REEXEC", "1")  # Prevent venv re-exec during tests
@@ -104,7 +106,7 @@ def pytest_sessionfinish(session, exitstatus):
     root = Path(__file__).resolve().parent.parent
     if (root / _isolation.WORKSPACE_MARKER).exists():
         return  # throw-away workspace: writing to its data directories is harmless
-    changes = _PRODUCTION_SNAPSHOT.diff()
+    changes = _PRODUCTION_SNAPSHOT.diff() if _PRODUCTION_SNAPSHOT is not None else {}
     touched = [f"{kind}: {p}" for kind, paths in changes.items() for p in paths]
     if touched:
         tr = session.config.pluginmanager.get_plugin("terminalreporter")

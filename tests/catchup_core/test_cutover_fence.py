@@ -3,181 +3,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from dataclasses import replace
-
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
 
-from catchup_core import checkpoint, cli, commands, policy, runtime
+from catchup_core import cli, commands, policy
 from catchup_core.backup import encrypted_snapshot
 from catchup_core.contracts import CatchupRequest, ExecutionMode
-from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, StaticKeyProvider
+from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider
 from catchup_core.ledger import Ledger, PermissionDenied
-from core_helpers import CORE_KEY as KEY, FakeKeyring, MODEL_IDENTITY, release_scorecard
-
-NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
-ESCROW = {
-    "age-key/artha": b"AGE-SECRET-KEY-1SYNTHETIC",
-    "artha-ledger/key.1": b"k" * 32,
-    "artha-ledger-ids/key.1": b"i" * 32,
-}
-
-
-def build_preservation_checkpoint(
-    tmp_path: Path,
-    cipher: EnvelopeCipher,
-    *,
-    include_state: bool = True,
-    escrow: dict[str, bytes] | None = None,
-    name_prefix: str = "ck",
-) -> Path:
-    src = tmp_path / f"{name_prefix}_src"
-    repo_dir = src / "repo"
-    local_root = src / "local"
-    local_dir = local_root / "catchup_core"
-    state_dir = repo_dir / "state"
-    local_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name != "nt":
-        local_root.chmod(0o700)
-    local_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if os.name != "nt":
-        local_dir.chmod(0o700)
-    state_dir.mkdir(parents=True, exist_ok=True)
-    with Ledger(local_dir / "ledger.db", id_key=KEY, cipher=cipher) as ledger:
-        ledger.migrate()
-    if include_state:
-        (state_dir / "open_items.md").write_text("- id: OI-1\n  status: open\n  description: Synthetic\n")
-    (repo_dir / "config").mkdir()
-    (repo_dir / "config/catchup_core.yaml").write_text("cutover: false\n")
-    roots = {"local": local_root, "repo": repo_dir}
-    version = cipher._provider.current_version()
-    return checkpoint.create(
-        "personal",
-        roots,
-        tmp_path / f"{name_prefix}_out",
-        cipher,
-        {**ESCROW, f'artha-ledger/key.{version}': cipher._provider.key(version), 'artha-ledger-ids/key.1': KEY.secret}
-        if escrow is None else escrow,
-        "synthetic-passphrase-1234",
-        now=NOW,
-        lock_path=tmp_path / f"{name_prefix}.lock",
-        context={'preservation': {'schema': 'artha.installation-preservation.v1', 'repository_root': 'repo',
-                                 'runtime_root': 'local', 'root_names': ['local', 'repo'],
-                                 'inventory': 'recursive-fail-closed'}},
-    )
-
-
-def synthetic_recovery_acceptance(tmp_path, personal, cipher, *, cohort=None):
-    """Fabricated test observations only; no native acceptance or owner signature is claimed."""
-    work_root = tmp_path / 'synthetic-work'
-    work_root.mkdir()
-    (work_root / 'work-state.md').write_text('Synthetic Work state, never cloud-copied')
-    work_cipher = EnvelopeCipher(StaticKeyProvider({1: b'w' * 32}))
-    work = checkpoint.create('work', {'work': work_root}, tmp_path / 'synthetic-work-checkpoints', work_cipher,
-        {'age-key/artha': ESCROW['age-key/artha'], 'artha-work-checkpoint/key.1': b'w' * 32},
-        'separate-synthetic-work-passphrase', now=NOW, lock_path=tmp_path / 'synthetic-work.lock')
-    work_manifest = checkpoint.verify(work, work_cipher)
-    assert work_manifest['profile'] == 'work'
-    assert 'artha-ledger/key.1' not in work_manifest['escrow_items']
-    personal_generation = checkpoint.verify(personal, cipher)['generation']
-    personal_digest = hashlib.sha256(personal.read_bytes()).hexdigest()
-    work_digest = hashlib.sha256(work.read_bytes()).hexdigest()
-    stamp = '2026-10-25T00:00:00+00:00'
-
-    def observation(profile, digest, generation, os_name=None):
-        value = {'profile': profile, 'checkpoint_sha256': digest, 'checkpoint_generation': generation,
-                 'observed_at': stamp, 'owner_reviewed_at': stamp, 'outcome': 'success',
-                 'privacy': {'current_history_verified': True, 'replay_verified': True,
-                             'history_sha256': hashlib.sha256(f'synthetic-current-{profile}-privacy'.encode()).hexdigest()}}
-        value.update({'os': os_name, 'native': True} if os_name else
-                     {'source': 'onedrive_web', 'recovered_sha256': digest})
-        return value
-
-    return {'schema': 'artha.recovery-rehearsal.v2', 'passed': True, 'reconciled': True,
-            'owner_signed_at': stamp, 'checkpoint_sha256': personal_digest,
-            'checkpoint_generation': personal_generation, 'cohort': cohort or {'implementation': 'synthetic-only'},
-            'work_checkpoint': {'path': str(work), 'sha256': work_digest, 'profile': 'work',
-                                'generation': work_manifest['generation']},
-            'observations': {
-                'mac_personal': observation('personal', personal_digest, personal_generation, 'macos'),
-                'windows_work': observation('work', work_digest, work_manifest['generation'], 'windows'),
-                'personal_cloud_copy': observation('personal', personal_digest, personal_generation)}}
+from core_helpers import (
+    CORE_KEY as KEY,
+    build_cutover_configured,
+    build_preservation_checkpoint,
+    release_scorecard,
+)
 
 
 @pytest.fixture
 def configured(tmp_path, monkeypatch):
-    repo = tmp_path / 'repo'
-    (repo / 'state').mkdir(parents=True)
-    (repo / 'state' / 'open_items.md').write_text('- id: OI-1\n  status: open\n  description: Synthetic\n')
-    (repo / 'config').mkdir()
-    cohort = policy.evaluation_cohort
-    def fixture_cohort(config, domains, **kwargs):
-        kwargs.setdefault('workspace', repo)
-        return cohort(config, domains, **kwargs)
-    monkeypatch.setattr(policy, 'evaluation_cohort', fixture_cohort)
-    keyring = FakeKeyring()
-    cipher = EnvelopeCipher(KeyringKeyProvider('artha-ledger', backend=keyring))
-    rollback = build_preservation_checkpoint(tmp_path, cipher)
-    independent_dir = tmp_path / 'independent_copy'
-    independent_dir.mkdir()
-    independent = independent_dir / rollback.name
-    independent.write_bytes(rollback.read_bytes())
-
-    def artifact(name, value):
-        path = tmp_path / name
-        path.write_text(json.dumps(value))
-        return approved(path)
-
-    def approved(path):
-        return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-
-    rollback_record = approved(rollback)
-    config = {
-        'cutover': True,
-        'viewer': 'owner',
-        'subjects': ['kid1'],
-        'model_identity': MODEL_IDENTITY,
-        'sources': {
-            'school_email': {'connector': 'gmail', 'account_scope': 'personal'},
-            'calendar': {'connector': 'google_calendar', 'account_scope': 'family'},
-        },
-        'release': {
-            'authority_host': 'authority',
-            'domains': ['kids_school'],
-            'owner_approved_at': 'reviewed',
-            'stage1_clearance': artifact('clearance.json', {'passed': True, 'owner_signed_at': 'reviewed'}),
-            'scorecard': artifact('scorecard.json', release_scorecard()),
-            'rollback_snapshot': rollback_record,
-            'independent_copy': {**approved(independent), 'failure_domain': 'cloud',
-                                 'owner_verified_at': NOW.isoformat(), 'recovered_sha256': rollback_record['sha256']},
-            'recovery_rehearsal': None,
-        },
-    }
-    config['release']['scorecard'] = artifact('scorecard.json', release_scorecard(config))
-    config['release']['recovery_rehearsal'] = artifact('recovery_rehearsal.json',
-        synthetic_recovery_acceptance(tmp_path, rollback, cipher, cohort=policy.evaluation_cohort(config, ['kids_school'])))
-    monkeypatch.setattr(policy.socket, 'gethostname', lambda: 'authority')
-    request = CatchupRequest('cu_fenced', 'owner', 'cli', host='authority')
-
-    def build(*, inspection=False, mutation=False, safety_control=False, environ=None, req_override=None):
-        (repo / 'config' / 'catchup_core.yaml').write_text(yaml.safe_dump(config))
-        return runtime.build_deps(
-            req_override or request,
-            repo_root=repo,
-            environ={'ARTHA_LOCAL_DIR': str(tmp_path / 'private'), **(environ or {})},
-            keyring_backend=keyring,
-            handler_loader=lambda _: None,
-            auth_loader=lambda _: {},
-            inspection=inspection,
-            mutation=mutation,
-            safety_control=safety_control,
-        )
-
-    return config, request, keyring, build
+    return build_cutover_configured(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize('flag', [False, None, 'false', 'true', 0, 1])
