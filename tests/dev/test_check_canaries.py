@@ -60,7 +60,8 @@ def make(tree: Path, target: str, *, skip_coverage: bool = False,
     args += [f"{k}={v}" for k, v in variables.items()]
     env = _env()
     for name in tuple(env):
-        if name.startswith("COV_CORE_") or name == "COVERAGE_PROCESS_START":
+        if (name.startswith("COV_CORE_")
+                or name in {"COVERAGE_PROCESS_START", "DIFF_BASE", "DIFF_RANGE_NOTATION", "MAKEFLAGS", "MFLAGS"}):
             env.pop(name)
     env["COVERAGE_FILE"] = str(tree / ".coverage")
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
