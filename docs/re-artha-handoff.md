@@ -309,12 +309,16 @@ Do not count these as passes, run pytest against the live legacy suite, interrup
 
 ## Start here
 
-Continue the owner's existing completion effort against `specs/re-artha.md`; do not restart another broad review/fix
+`specs/re-artha.md` was archived on 2026-11-18 as `.archive/specs/re-artha-2026-11-18.md`. Its open items now live in
+`specs/automatic-release-renewal.md` (re-sign 21, D3), `specs/re-artha-full-completion.md` (native Work recovery) and
+`specs/personal-privacy-boundary.md` (classification-review workflow, live UAT).
+
+Continue the owner's existing completion effort against those specs; do not restart another broad review/fix
 cycle or call green tests full delivery. Read `AGENTS.md` and `.github/copilot-instructions.md`, their required operating
 instructions, then `docs/re-artha-implementation-status.md`. That checklist is authoritative for remaining engineering
 and external acceptance; generated `docs/traceability-register.md` supplies named fixtures.
 
-`specs/re-artha.md`, active `specs/features/` notes and private runtime configuration are local/ignored. Continue in this
+The re-artha archive, active `specs/features/` notes and private runtime configuration are local/ignored. Continue in this
 checkout or preserve those inputs securely before moving machines. Do not force-add ignored data, run git clean/reset,
 or assume a clone includes them. `docs/catchup-core.md` records implementation behavior and the cutover plan.
 

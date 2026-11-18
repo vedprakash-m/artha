@@ -1,4 +1,19 @@
-# re-artha implementation status — 2026-11-17
+# re-artha implementation status — 2026-11-18
+
+## Spec archived; open items handed off — 2026-11-18
+
+The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
+`.archive/specs/re-artha-2026-11-18.md`. This is not full-profile acceptance.
+
+- **Closed:** GitHub history purge. On 2026-11-18 the API returned 422 and the web `/commit/` and `.patch`
+  URLs returned 404 for both replaced commits. Third-party caches were not checked.
+- **Waived (not passed):** held-out labeling, under the signed D-6 waiver.
+- **Fixed:** the test write-audit hook allowed every `/dev/` path, so after CI moved temp to `/dev/shm`,
+  hosted run `44263745169` failed 3 Ubuntu jobs. The fix is `4421444`.
+- **Open, now owned elsewhere:**
+  - re-sign 21, a new D3 proposal and `enroll` → `specs/automatic-release-renewal.md`
+  - native Work recovery (fresh generation-12 proposal) → `specs/re-artha-full-completion.md`
+  - classification-review workflow and live UAT → `specs/personal-privacy-boundary.md`
 
 ## Repository completion audit — 2026-11-17
 

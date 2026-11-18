@@ -9,6 +9,24 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — re-artha spec archived with owner dispositions, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| The owner reviewed the eight remaining re-artha decisions. `specs/re-artha.md` moved to `.archive/specs/re-artha-2026-11-18.md`. Open items moved to their owning specs: re-sign 21 and D3 to `specs/automatic-release-renewal.md`, native Work recovery to `specs/re-artha-full-completion.md`, and the classification-review workflow and live UAT to `specs/personal-privacy-boundary.md`. Held-out labeling stays waived under D-6. The GitHub purge closed after the API returned 422 and the web returned 404 for both replaced commits. | `specs/artha-tech-spec.md`, `docs/re-artha-implementation-status.md`, `docs/re-artha-handoff.md`, `CHANGELOG.md` (local-only: the archived spec and the three owning specs) | The purge was checked by API and web requests. The privacy scan ran before commit. |
+
+### Fixed — Test write-audit hook allowed all `/dev/` paths, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| The isolation hook treated every path starting with `/dev/` as a device. After CI moved temp to `/dev/shm`, writes outside the allowed roots under `/dev/shm` passed, and hosted run `44263745169` failed 3 Ubuntu jobs. Only `/dev/null`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` and `/dev/fd/*` are now allowed. | `tests/_isolation.py` | Reproduced with the old hook (write allowed) and the new hook (blocked, `/dev/null` still allowed). The 33 isolation tests pass; hosted CI ran on `4421444`. |
+
+### Fixed — Renewal runner POSIX typing, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Use `cast(Any, ...)` attribute access instead of `getattr` for POSIX-only `os`/`signal` names. No behavior change. | `scripts/catchup_core/renewal_runner.py` | Ruff, mypy (82 files), and 21 renewal runner/process tests pass (6 skipped). |
+
 ### Fixed — Renewal runner containment binding, 2026-11-18
 
 | Change | Modified files | Validation |

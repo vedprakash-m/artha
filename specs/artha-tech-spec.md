@@ -8052,7 +8052,7 @@ Work writer fences, native migration, synced-history retirement and owner UAT re
 
 ### 2026-10-24 local takeover boundary amendments
 
-Scorecard artha.release.v4 requires exact cohort-bound held-out corpus and workload records, >=95% complete runs, and owner-approved document accuracy counters (>=99% for dates/amounts/names; <=0.5% false confirmations). Registry spend custody is namespace-scoped; actual usage receipts advance the external seal before acknowledgement. Personal authority retirement is mirrored in its queue database and marker. Work content checkpoints do not authorize personal promotion. See specs/re-artha.md and docs/catchup-core.md for the exact accepted contracts and remaining native gates.
+Scorecard artha.release.v4 requires exact cohort-bound held-out corpus and workload records, >=95% complete runs, and owner-approved document accuracy counters (>=99% for dates/amounts/names; <=0.5% false confirmations). Registry spend custody is namespace-scoped; actual usage receipts advance the external seal before acknowledgement. Personal authority retirement is mirrored in its queue database and marker. Work content checkpoints do not authorize personal promotion. See .archive/specs/re-artha-2026-11-18.md (archived 2026-11-18) and docs/catchup-core.md for the exact accepted contracts. Remaining native gates are owned by specs/automatic-release-renewal.md (re-sign and D3 enrollment), specs/re-artha-full-completion.md (native Work recovery) and specs/personal-privacy-boundary.md (classification-review workflow and live UAT). Held-out labeling remains waived under D-6. The GitHub history purge closed on 2026-11-18: the API and web views no longer serve the replaced commits.
 
 ### 2026-10-27 release and publication validation
 
