@@ -24,7 +24,7 @@ def repo(tmp_path, monkeypatch):
     root.mkdir()
     git(root, 'init', '-b', 'main')
     (root / 'scripts').mkdir()
-    (root / 'scripts/example.py').write_text('VALUE = 1\n')
+    (root / 'scripts/example.py').write_bytes(b'VALUE = 1\n')
     git(root, 'add', '.')
     git(root, 'commit', '-m', 'synthetic baseline')
     return root
@@ -102,7 +102,7 @@ def test_AR06_host_filemode_false_uses_git_index_mode(repo):
 
 
 def test_AR06_clean_filter_allows_checked_in_lf_for_crlf_worktree(repo):
-    (repo / '.gitattributes').write_text('*.py text eol=lf\n')
+    (repo / '.gitattributes').write_bytes(b'*.py text eol=lf\n')
     git(repo, 'add', '.gitattributes')
     git(repo, 'commit', '-m', 'add source line-ending policy')
     (repo / 'scripts/example.py').write_bytes(b'VALUE = 1\r\n')
