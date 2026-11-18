@@ -140,6 +140,7 @@ def test_AR06_context_and_ignored_extra_inputs_are_pinned(repo, monkeypatch):
     monkeypatch.setenv('ARTHA_CUTOVER', '0')
     assert context() != first
     git(repo, 'config', 'core.excludesFile', str(repo / '.git/info/exclude'))
+    (repo / '.git/info').mkdir(parents=True, exist_ok=True)
     (repo / '.git/info/exclude').write_text('private.input\n')
     (repo / 'private.input').write_bytes(b'SYNTHETIC_PRIVATE_CANARY')
     source = Workspace(repo).source(('private.input',))
