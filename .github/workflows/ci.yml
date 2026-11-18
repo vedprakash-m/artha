@@ -366,7 +366,7 @@ jobs:
 
   # ── Sharded Linux Cross-Python Fast Matrix (backfills static/PII slots) ─────
   tests-linux-py:
-    name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/3)
+    name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/4)
     needs: [static-gates]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -374,7 +374,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.14"]
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -398,7 +398,7 @@ jobs:
         run: >-
           python tools/run_tests_isolated.py tests -m "not slow and not scale"
           -n auto --tb=short --durations=25 --ignore=tests/work
-          --splitting-algorithm least_duration --splits 3 --group ${{ matrix.shard }}
+          --splitting-algorithm least_duration --splits 4 --group ${{ matrix.shard }}
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
@@ -539,6 +539,7 @@ jobs:
   # ── Windows Native & Renewal Contracts Across Python 3.11 and 3.14 ──────────
   core-windows-py:
     name: Windows native contracts (${{ matrix.python-version }})
+    needs: [static-gates]
     runs-on: windows-latest
     timeout-minutes: 8
     strategy:
