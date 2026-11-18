@@ -611,6 +611,9 @@ action_process._worker()
 
     def runner(argv, **kwargs):
         parent = None
+        if cause == 'deadline':
+            # Let the worker start before its one-second lifetime budget is observed on loaded Windows runners.
+            kwargs['timeout'] = max(kwargs['timeout'], 10)
         if cause == 'parent-loss' and os.name == 'nt':
             # A real disposable process stays alive until the worker consumes its claim, then exits.
             parent_code = '''
@@ -629,6 +632,9 @@ while True:
             envelope['credentials']['expires_at'] = envelope['credentials']['issued_at'] + 22
             kwargs['input'] = json.dumps(envelope)
             kwargs['timeout'] = 10
+        elif cause == 'deadline' and os.name == 'nt':
+            # Hosted Windows runners under xdist load can take >3 s just to cold-start python.exe.
+            kwargs['timeout'] = max(kwargs.get('timeout', 0), 15)
         try:
             child = subprocess.run([sys.executable, '-c', code,
                 str(Path(action_process.__file__).resolve().parents[1]), cause], **kwargs)

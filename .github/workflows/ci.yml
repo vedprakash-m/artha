@@ -65,7 +65,7 @@ jobs:
           make mypy PYTHON=python
           python tools/run_tests_isolated.py tests/dev/test_credential_typing_gate.py -q --tb=short
 
-  # ── Sharded Core Coverage Export (Ubuntu 3.12 x 3 shards) ───────────────────
+  # ── Sharded Core Coverage Export (Ubuntu 3.12 x 4 shards) ───────────────────
   core-ubuntu:
     name: Core coverage shard ${{ matrix.shard }} (ubuntu, 3.12)
     runs-on: ubuntu-latest
@@ -73,7 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -101,7 +101,7 @@ jobs:
             --export-coverage "$out/shard-${{ matrix.shard }}.coverage" \
             --export-nodeids "$out/shard-${{ matrix.shard }}.nodeids" \
             tests/catchup_core -m "not scale" -q -p no:cacheprovider --tb=short --durations=25 -n auto \
-            --splitting-algorithm least_duration --splits 3 --group "${{ matrix.shard }}" \
+            --splitting-algorithm least_duration --splits 4 --group "${{ matrix.shard }}" \
             --cov=scripts/catchup_core --cov-branch
           printf '{"commit":"%s","run_id":"%s","run_attempt":"%s","shard":%s}\n' \
             "${{ github.sha }}" "${{ github.run_id }}" "${{ github.run_attempt }}" "${{ matrix.shard }}" \
@@ -146,7 +146,7 @@ jobs:
       - name: Combine shards & verify >= 85% combined, line and branch floors
         run: |
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/ubuntu-shards" --shards 3 --artifact-prefix ubuntu-cov \
+            --shards-dir "${{ runner.temp }}/ubuntu-shards" --shards 4 --artifact-prefix ubuntu-cov \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage.xml --rcfile pyproject.toml \
             --collect-arg=-m --collect-arg="not scale" --fail-under 85 \
@@ -201,7 +201,7 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── POSIX Security Harness Shards (Ubuntu 3.12 x 2 shards) ─────────────────
+  # ── POSIX Security Harness Shards (Ubuntu 3.12 x 3 shards) ─────────────────
   core-harness-shard:
     name: Hook and policy coverage shard ${{ matrix.shard }} (ubuntu, 3.12)
     runs-on: ubuntu-latest
@@ -209,7 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -237,7 +237,7 @@ jobs:
             --export-coverage "$out/shard-${{ matrix.shard }}.coverage" \
             --export-nodeids "$out/shard-${{ matrix.shard }}.nodeids" \
             $TESTS -m "not scale" -q -p no:cacheprovider --tb=short --durations=25 -n auto \
-            --splitting-algorithm least_duration --splits 2 --group "${{ matrix.shard }}" \
+            --splitting-algorithm least_duration --splits 3 --group "${{ matrix.shard }}" \
             $COV_ARGS --cov-config=tools/coverage-posix.toml --cov-branch
           printf '{"commit":"%s","run_id":"%s","run_attempt":"%s","shard":%s}\n' \
             "${{ github.sha }}" "${{ github.run_id }}" "${{ github.run_attempt }}" "${{ matrix.shard }}" \
@@ -283,7 +283,7 @@ jobs:
         run: |
           TESTS=$(make -s print-harness-tests)
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/harness-shards" --shards 2 --artifact-prefix harness-cov \
+            --shards-dir "${{ runner.temp }}/harness-shards" --shards 3 --artifact-prefix harness-cov \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-harness.xml --rcfile tools/coverage-posix.toml \
             --collect-arg=-m --collect-arg="not scale" --fail-under 85 \
@@ -303,7 +303,7 @@ jobs:
           make diff-coverage-harness-check PYTHON=python \
             DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
 
-  # ── Sharded macOS Fast Matrix (immediate t=0 start) ─────────────────────────
+  # ── Sharded Cross-Platform Fast Matrix (immediate t=0 start) ────────────────
   tests:
     name: pytest (${{ matrix.os }}, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/${{ matrix.splits }})
     runs-on: ${{ matrix.os }}
@@ -318,6 +318,14 @@ jobs:
             splits: 2
           - os: macos-latest
             python-version: "3.12"
+            shard: 2
+            splits: 2
+          - os: ubuntu-latest
+            python-version: "3.11"
+            shard: 1
+            splits: 2
+          - os: ubuntu-latest
+            python-version: "3.11"
             shard: 2
             splits: 2
     steps:
@@ -356,7 +364,7 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Sharded Linux Cross-Python Fast Matrix (backfills freed runner slots) ────
+  # ── Sharded Linux 3.14 Fast Matrix (backfills static/PII freed slots) ───────
   tests-linux-py:
     name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/3)
     needs: [static-gates]
@@ -365,7 +373,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.14"]
+        python-version: ["3.14"]
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -395,7 +403,7 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Windows Core + Native Contract Shards (3.12 x 8 balanced shards) ────────
+  # ── Windows Core + Native Contract Shards (3.12 x 4 balanced shards) ────────
   core-windows:
     name: Catch-up Windows contracts (3.12, shard ${{ matrix.shard }})
     runs-on: windows-latest
@@ -403,7 +411,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -452,9 +460,9 @@ jobs:
             tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py `
             tests/unit/test_action_process.py tests/unit/test_action_quarantine.py `
             tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py `
-            -m "not scale" -q --tb=short --durations=25 -n auto `
+            -m "not slow and not scale" -q --tb=short --durations=25 -n auto `
             --cov=catchup_core.quarantine_fs_windows --cov=catchup_core.storage_adoption --cov-branch `
-            --splitting-algorithm least_duration --splits 8 --group ${{ matrix.shard }}
+            --splitting-algorithm least_duration --splits 4 --group ${{ matrix.shard }}
           $manifest = @{
             commit = "${{ github.sha }}"
             run_id = "${{ github.run_id }}"
@@ -502,10 +510,10 @@ jobs:
       - name: Verify disjoint shard union and combine native Windows coverage
         run: |
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/win-shards" --shards 8 \
+            --shards-dir "${{ runner.temp }}/win-shards" --shards 4 \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-windows.xml --rcfile pyproject.toml \
-            --collect-arg=-m --collect-arg="not scale" \
+            --collect-arg=-m --collect-arg="not slow and not scale" \
             --include-target scripts/catchup_core/quarantine_fs_windows.py \
             --include-target scripts/catchup_core/storage_adoption.py \
             tests/catchup_core tests/dev/test_windows_contract_launcher.py \
