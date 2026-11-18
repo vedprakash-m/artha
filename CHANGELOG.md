@@ -19,7 +19,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 | Change | Modified files | Validation |
 |---|---|---|
-| Record engineering completion and the remaining separately authorized live gates. Correct stale renewal test-count and hosted-CI statements: the current focused renewal suite collects 276 tests and passes; hosted CI run `44185685851` passes all 21 required jobs on main commit `c1ca407402405895f48a90708f62a01a76cc342b`. The live status command reports no native delegation; re-sign 20, ledger migration 20, D3 proposal approval, native enrollment and live UAT remain required. | `specs/automatic-release-renewal.md`, `docs/re-artha-implementation-status.md` | Static, privacy, 276 renewal tests, 11,119 public isolated tests, and the 21-job hosted CI gate passed. |
+| Record engineering completion and the remaining separately authorized live gates. Correct stale renewal test-count and hosted-CI statements: the current focused renewal suite collects 276 tests and passes; hosted CI run `44185685851` passes all 21 required jobs on main commit `c1ca407402405895f48a90708f62a01a76cc342b`. The live status command reports no native delegation; re-sign 20, ledger migration 20, D3 proposal approval, native enrollment and live UAT remain required. A re-sign 20 candidate was prepared and reverted after the independent checkpoint copy returned `EPERM`; no live re-sign is claimed. | `specs/automatic-release-renewal.md`, `docs/re-artha-implementation-status.md` | Static, privacy, 276 renewal tests, 11,119 public isolated tests, and the 21-job hosted CI gate passed. |
 
 ### Fixed — Hook-portability pwsh timeout under coverage, 2026-11-17
 

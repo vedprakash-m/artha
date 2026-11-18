@@ -74,7 +74,9 @@ commits `8928cc3..e0a3808`) is complete on `main`:
      bind implementation `595b0a15…` (re-sign 19), while the current tree fingerprints
      `38609551af69b17207a14af4fdadd4a5eab3a80c85c266f2b4cfca7a275d300d` (`configuration`,
      `contract`, `model`, `packs`, and `prompts` digests are unchanged, and `independent_copy`
-     is accessible on `Veds-MacBook-Pro-M3Max`).
+     is accessible on `Veds-MacBook-Pro-M3Max`). A 2026-11-17 re-sign candidate for implementation
+     `4bc7ff9f…` was prepared but could not be validated because this app session received `EPERM`
+     for the independent copy; the candidate was reverted and no re-sign 20 is recorded.
   2. **Personal ledger migration 20 (`0020_personal_scope.sql`):** The live authority ledger is
      at `PRAGMA user_version = 19` vs 20 available migrations; `renewal_metadata.py` and
      authoritative runs hold until the owner runs a reviewed migration.
