@@ -9,6 +9,18 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — re-artha public Ruff scope, 2026-11-17
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Keep ignored, local-only Work test artifacts out of the public Ruff gate. The exact four files already listed in `.gitignore` are excluded explicitly; tracked public tests remain in scope. Add a canary that prevents this local-only test list from drifting without a reviewed gate change. | `pyproject.toml`, `tests/dev/test_check_canaries.py` | The Ruff scope regression failed before the fix and passes after it. The exact Ruff command and all 46 canary tests pass; `make check` passes with 5,823 tests, 81 skips and 4 strict expected failures. |
+
+### Status — Automatic release renewal engineering, 2026-11-17
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Record engineering completion and the remaining separately authorized live gates. Correct stale renewal test-count and hosted-CI statements: the current focused renewal suite collects 276 tests and passes; hosted CI run `44185685851` passes all 21 required jobs on main commit `c1ca407402405895f48a90708f62a01a76cc342b`. The live status command reports no native delegation; re-sign 20, ledger migration 20, D3 proposal approval, native enrollment and live UAT remain required. | `specs/automatic-release-renewal.md`, `docs/re-artha-implementation-status.md` | Static, privacy, 276 renewal tests, 11,119 public isolated tests, and the 21-job hosted CI gate passed. |
+
 ### Fixed — Hook-portability pwsh timeout under coverage, 2026-11-17
 
 | Change | Modified files | Validation |
@@ -38,7 +50,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 | Change | Modified files | Validation |
 |---|---|---|
 | Overhaul test suite and CI/CD across Waves 0–4: eliminate all cross-test imports, 39 `sys.modules`/`cwd` leaks, 51 non-slow `time.sleep` calls, 20 obsolete archived `xfail`s, and 43 redundant/ticket/wave/steal test files (`-3,955` net LOC). Add AST hygiene gate (`tools/lint_test_hygiene.py`), AST-parsed requirement/pillar ownership generator (`tools/test_ownership.py`, `docs/test-ownership.yaml`), disposable-workspace mutation runner (`tools/check_mutations.py`), per-file ≥95% changed-line diff coverage (`tools/check_diff_coverage.py`, `diff-coverage-harness-check`), 4-shard Windows duration split (`.test_durations`, `tools/merge_windows_coverage.py`), deterministic 21-job `ci.yml` gate workflow, and separate `nightly.yml` workflow. Close coverage/contract gaps across `items_view`, `gmail_send`, `pipeline_audit`, `lib/metrics_*`, `pii_guard`, `vault`, `preflight_api`, connector `fetch_via_handler` contracts, `--health` CLIs, and UX command routing parity. | `.github/workflows/{ci,nightly,pii-check}.yml` (deleted `work-tests.yml`), `.githooks/privacy_scan.py`, `.gitleaks.toml`, `.test_durations`, `Makefile`, `pyproject.toml`, `scripts/catchup_core/{capabilities,renewal_authority,renewal_entry}.py`, `tools/{check_diff_coverage,check_mutations,lint_test_hygiene,merge_windows_coverage,run_tests_isolated,test_ownership}.py`, `docs/{spec-manifest.json,test-ownership.yaml,traceability-register.md}`, `tests/**`, `.archive/specs/fix-test-suite-2026-11-16.md` | `make static`: 0 Ruff/mypy/import/state-write/hygiene issues across 450 test files. `make test-fast`: 10,924 passed, 501 skipped, 4 strict `xfail` (connector contract bugs), 0 failed. Slow suite: 167 passed, 4 skipped, 0 failed. `make test-work`: 1,712 passed, 3 skipped, 0 failed. Core coverage: 88.49% (`>=85%` line & branch). Security harness coverage: 87.57% (1,716 passed). Mutation baseline (`mutmut`): 6,111 evaluated, 4,912 killed (80.38%). `make pii-scan` & `demo_catchup.py --verify`: 0 findings. |
-| Refine top-level `release_renewal.py` CLI error handling so missing/busy/invalid native authority and evidence/config/IO/value errors emit bounded action-oriented hold reasons without disclosing raw exception text (AR-20). Record updated 21-job D3 gate inventory and live bootstrap hold diagnostics (`re-sign` cohort drift + `ledger.db` migration 20 hold). | `scripts/catchup_core/{renewal_authority,renewal_entry}.py`, `tests/catchup_core/test_renewal_entry.py`, `config/workflow/development.md`, `specs/{automatic-release-renewal,artha-prd,artha-tech-spec,artha-ux-spec}.md` | 282 renewal tests pass, including new `test_AR20_cli_failures_are_actionable_and_do_not_disclose_details` and `test_AR20_status_names_missing_native_authority`. |
+| Refine top-level `release_renewal.py` CLI error handling so missing/busy/invalid native authority and evidence/config/IO/value errors emit bounded action-oriented hold reasons without disclosing raw exception text (AR-20). Record updated 21-job D3 gate inventory and live bootstrap hold diagnostics (`re-sign` cohort drift + `ledger.db` migration 20 hold). | `scripts/catchup_core/{renewal_authority,renewal_entry}.py`, `tests/catchup_core/test_renewal_entry.py`, `config/workflow/development.md`, `specs/{automatic-release-renewal,artha-prd,artha-tech-spec,artha-ux-spec}.md` | Renewal tests passed, including new `test_AR20_cli_failures_are_actionable_and_do_not_disclose_details` and `test_AR20_status_names_missing_native_authority`; the current focused suite is 276 tests. |
 
 ### Validated — Renewal delivery and career privacy, 2026-11-16
 

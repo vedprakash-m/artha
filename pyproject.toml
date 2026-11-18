@@ -110,7 +110,13 @@ packages = [
 target-version = "py311"
 line-length = 120
 src = ["scripts", "tests"]
-extend-exclude = ["tests/work"]
+extend-exclude = [
+    "tests/work",
+    "tests/lib/test_enghub_manager.py",
+    "tests/lib/test_mcp_formatter.py",
+    "tests/lib/test_work_connector_router.py",
+    "tests/lib/test_workiq_circuit_breaker.py",
+]
 
 [tool.ruff.lint]
 select = [

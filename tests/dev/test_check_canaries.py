@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,17 @@ def test_ruff_passes_on_clean_tree(tree):
 def test_ruff_fails_on_violation(tree):
     (tree / "scripts" / "dirty.py").write_text("import os\n")
     assert make(tree, "ruff").returncode != 0
+
+
+def test_public_ruff_excludes_local_work_test_artifacts():
+    config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    excluded = set(config["tool"]["ruff"]["extend-exclude"])
+    assert {
+        "tests/lib/test_enghub_manager.py",
+        "tests/lib/test_mcp_formatter.py",
+        "tests/lib/test_work_connector_router.py",
+        "tests/lib/test_workiq_circuit_breaker.py",
+    } <= excluded
 
 
 def test_ruff_fails_when_tool_missing(tree):

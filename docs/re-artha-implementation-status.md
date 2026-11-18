@@ -1,4 +1,18 @@
-# re-artha implementation status — 2026-11-16
+# re-artha implementation status — 2026-11-17
+
+## Repository completion audit — 2026-11-17
+
+The local audit found no demonstrated repo-local implementation gap in the 25
+capability entries or their named acceptance fixtures. The integrated surface,
+responsibility, Goal and Open Item selection passed 145 tests (1 skipped). Static
+gates passed; `make check` passed with 5,823 tests, 81 skips and 4 strict `xfail`s.
+The public Ruff scope was repaired to exclude four ignored local-only Work test
+artifacts; no private Work source or test file was edited.
+
+This is engineering evidence, not full re-artha acceptance. Native Windows Work
+recovery remains deferred, independent held-out quality and live Work reconciliation/UAT
+remain open, and release re-signing plus the live renewal gates remain separately
+authorized owner operations.
 
 ## Windows quarantine scale-test timeout — 2026-11-17
 
@@ -27,7 +41,7 @@ Targeted and Windows-gated tests pass locally. The register check and the privat
 
 ## Test-suite overhaul, CI sharding and automatic release renewal — 2026-11-16
 
-Engineering for `specs/automatic-release-renewal.md` (`AR-01..AR-26`, 282 tests) and the
+Engineering for `specs/automatic-release-renewal.md` (`AR-01..AR-26`, 276 tests in the current focused suite) and the
 full test-suite and CI/CD overhaul (`.archive/specs/fix-test-suite-2026-11-16.md`, Waves 0–4,
 commits `8928cc3..e0a3808`) is complete on `main`:
 
@@ -67,8 +81,9 @@ commits `8928cc3..e0a3808`) is complete on `main`:
   3. **D3 enrollment and live UAT (`specs/automatic-release-renewal.md`):** Path A (exact
      task-approved candidates), D1, and D2 are decided; the updated 21-job `ci.yml` D3 gate
      inventory (`0edc9b61…`, 47 protected files, 147 release-fingerprinted files) passes
-     `Authority._check_policy`, awaiting green hosted CI, re-sign 20, ledger migration 20,
-     owner D3 approval, native `enroll`, and live UAT.
+     `Authority._check_policy`. Hosted CI run `44185685851` is green on main commit
+     `c1ca407402405895f48a90708f62a01a76cc342b` (all 21 required jobs passed). Remaining
+     owner gates are re-sign 20, ledger migration 20, D3 approval, native `enroll`, and live UAT.
   4. **Full-profile completion (`specs/re-artha-full-completion.md`):** Native Windows Work
      recovery remains deferred by owner decision (2026-11-12); independent held-out labels,
      live Work reconciliation/UAT, and the GitHub Support history purge remain open.
