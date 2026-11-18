@@ -27,8 +27,9 @@ authorized owner operations.
   Their read surfaces were blocked by missing trusted personal scope bindings:
   `personal Fact scope unavailable`, `personal Signal scope unavailable`, or
   `personal scope unavailable`. This is a live access hold, not an owner UAT pass.
-- **Owner sign-off:** pending. Scratch evidence establishes synthetic behavior only;
-  live UAT requires separately reviewed personal scope bindings and a real
+- **Owner sign-off:** signed for synthetic evidence only on 2026-11-17.
+  Scratch evidence establishes synthetic behavior only; live UAT requires separately
+  reviewed personal scope bindings and a real
   acceptance run. No live case is counted as passed.
 
 ## Windows quarantine scale-test timeout — 2026-11-17

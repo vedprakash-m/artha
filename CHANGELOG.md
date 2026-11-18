@@ -13,7 +13,7 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 | Change | Modified files | Validation |
 |---|---|---|
-| Execute the re-artha UAT process. Eight scratch scenario reports pass and the isolated replay harness passes 8 slow UAT tests. The approved shadow-ledger migration 19→20 passed integrity with an encrypted pre-migration backup. Seven live read-only scripts remain held because live Facts/Signals lack trusted personal scope bindings; no live UAT pass is claimed. | `tools/uat/*`, `specs/features/re-artha-uat-sheets.md`, `docs/re-artha-implementation-status.md` | 8 direct scratch reports passed; 8 isolated replay tests passed; 7 live scripts returned scope unavailable, not passing evidence. |
+| Execute the re-artha UAT process. Eight scratch scenario reports pass and the isolated replay harness passes 8 slow UAT tests. The approved shadow-ledger migration 19→20 passed integrity with an encrypted pre-migration backup. Seven live read-only scripts remain held because live Facts/Signals lack trusted personal scope bindings; no live UAT pass is claimed. Owner sign-off was recorded for synthetic evidence only on 2026-11-17; live UAT remains deferred. | `tools/uat/*`, `specs/features/re-artha-uat-sheets.md`, `docs/re-artha-implementation-status.md` | 8 direct scratch reports passed; 8 isolated replay tests passed; 7 live scripts returned scope unavailable, not passing evidence. |
 
 ### Fixed — re-artha public Ruff scope, 2026-11-17
 

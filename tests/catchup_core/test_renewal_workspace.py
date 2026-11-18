@@ -67,6 +67,28 @@ def test_AR18_source_excludes_local_cv_renderer_but_includes_untracked_code(repo
     assert 'scripts/ordinary.py' in names
 
 
+def test_AR03_protected_gitleaks_config_is_in_source_manifest(repo):
+    (repo / '.gitleaks.toml').write_text('[allowlist]\npaths = [\".*synthetic.*\"]\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'add protected policy')
+
+    names = {entry['path'] for entry in Workspace(repo).source()['files']}
+
+    assert '.gitleaks.toml' in names
+
+
+def test_AR06_source_mode_matches_git_index(repo):
+    git(repo, 'update-index', '--chmod=+x', 'scripts/example.py')
+    (repo / 'scripts/example.py').chmod(0o755)
+    git(repo, 'commit', '-m', 'executable mode')
+    entry = next(file for file in Workspace(repo).source()['files'] if file['path'] == 'scripts/example.py')
+    assert entry['mode'] == '100755'
+
+    (repo / 'scripts/example.py').chmod(0o644)
+    with pytest.raises(RenewalError, match='source executable mode'):
+        Workspace(repo).source()
+
+
 def test_AR13_linked_sources_refuse(repo):
     target = repo / 'outside.py'
     target.write_text('PRIVATE_CANARY')
