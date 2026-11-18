@@ -386,7 +386,9 @@ def install_write_audit_hook(
             text = os.fsdecode(raw)
         except (TypeError, ValueError):
             return True
-        if not text or text.startswith("/dev/") or text.upper() in {"NUL", "CON", "PRN"}:
+        # Device nodes only: /dev/shm is a writable filesystem and may hold the temp root.
+        if (not text or text in {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
+                or text.startswith("/dev/fd/") or text.upper() in {"NUL", "CON", "PRN"}):
             return True
         # logging.FileHandler makes os.devnull absolute: "\\.\nul" on Windows.
         device = text.replace("/", "\\").upper()
