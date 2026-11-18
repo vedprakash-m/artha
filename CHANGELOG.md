@@ -22,6 +22,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 |---|---|---|
 | Keep ignored, local-only Work test artifacts out of the public Ruff gate. The exact four files already listed in `.gitignore` are excluded explicitly; tracked public tests remain in scope. Add a canary that prevents this local-only test list from drifting without a reviewed gate change. | `pyproject.toml`, `tests/dev/test_check_canaries.py` | The Ruff scope regression failed before the fix and passes after it. The exact Ruff command and all 46 canary tests pass; `make check` passes with 5,823 tests, 81 skips and 4 strict expected failures. |
 
+### Fixed — Windows renewal workspace contracts, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Make the renewal workspace mode and line-ending regressions portable to Windows: POSIX-only chmod drift is asserted only where executable bits are meaningful, and the CRLF clean-filter fixture is staged before tree verification. | `tests/catchup_core/test_renewal_workspace.py` | Both formerly failing Windows cases pass; the full renewal workspace suite passes 31 tests. |
+
 ### Status — Automatic release renewal engineering, 2026-11-17
 
 | Change | Modified files | Validation |

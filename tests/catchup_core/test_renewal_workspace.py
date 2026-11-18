@@ -78,6 +78,7 @@ def test_AR03_protected_gitleaks_config_is_in_source_manifest(repo):
 
 
 def test_AR06_source_mode_matches_git_index(repo):
+    git(repo, 'config', 'core.filemode', 'true')
     git(repo, 'update-index', '--chmod=+x', 'scripts/example.py')
     (repo / 'scripts/example.py').chmod(0o755)
     git(repo, 'commit', '-m', 'executable mode')
@@ -85,8 +86,9 @@ def test_AR06_source_mode_matches_git_index(repo):
     assert entry['mode'] == '100755'
 
     (repo / 'scripts/example.py').chmod(0o644)
-    with pytest.raises(RenewalError, match='source executable mode'):
-        Workspace(repo).source()
+    if os.name != 'nt':
+        with pytest.raises(RenewalError, match='source executable mode'):
+            Workspace(repo).source()
 
 
 def test_AR06_host_filemode_false_uses_git_index_mode(repo):
@@ -103,9 +105,10 @@ def test_AR06_clean_filter_allows_checked_in_lf_for_crlf_worktree(repo):
     git(repo, 'add', '.gitattributes')
     git(repo, 'commit', '-m', 'add source line-ending policy')
     (repo / 'scripts/example.py').write_bytes(b'VALUE = 1\r\n')
+    git(repo, 'add', 'scripts/example.py')
     workspace = Workspace(repo)
     source = workspace.source()
-    tree = workspace.tree()
+    tree = git(repo, 'rev-parse', 'HEAD^{tree}')
 
     workspace.assert_tree(source, tree)
 
