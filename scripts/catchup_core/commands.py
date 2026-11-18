@@ -4,13 +4,14 @@ from __future__ import annotations
 import hmac
 import json
 import sqlite3
+import sys
 from argparse import Namespace
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from catchup_core import ids, views
+from catchup_core import ids, scope_review_cli, views
 from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
 from catchup_core.coordinator import Deps
 from catchup_core.ledger import LedgerError, PermissionDenied, PersonalScopeUnavailable
@@ -84,8 +85,6 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
                                    "retire-authority"):
         raise LedgerError("shadow mode cannot access or change live action controls")
     if args.command == "consent":
-        import sys  # noqa: PLC0415
-
         from catchup_core import consent_cli  # noqa: PLC0415
         if shadow:
             raise LedgerError("consent is recorded in the live ledger, not in shadow mode")
@@ -101,9 +100,6 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             interactive=sys.stdin.isatty() and sys.stdout.isatty())
         return {"granted": len(granted), "scopes": list(args.scope), "days": args.days}
     if args.command == "scope-review":
-        import sys  # noqa: PLC0415
-
-        from catchup_core import scope_review_cli  # noqa: PLC0415
         if shadow:
             raise LedgerError("scope reviews are recorded in the live ledger, not in shadow mode")
         return scope_review_cli.run(
@@ -505,7 +501,6 @@ def _capability_states(led: Any, workspace: Path, deps: Deps) -> list[dict[str, 
 def _action_resolution(args: Namespace, viewer: str, workspace: Path) -> dict[str, Any]:
     """Close an ``unknown`` action: ask the provider (`reconcile`) or record a person's decision (`resolve`)."""
     import importlib  # noqa: PLC0415
-    import sys  # noqa: PLC0415
     scripts = str(workspace / "scripts")
     if scripts not in sys.path:
         sys.path.insert(0, scripts)
