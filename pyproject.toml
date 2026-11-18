@@ -69,6 +69,9 @@ dev = [
     "diff-cover==10.6.0",
     "ruff==0.17.5",
 ]
+randomly = [
+    "pytest-randomly==5.1.0",
+]
 nightly = [
     "mutmut==3.8.1",
     "pytest-randomly==5.1.0",
@@ -144,6 +147,7 @@ norecursedirs = ["tmp", ".venv", "__pycache__", "backups", "briefings", "state",
 timeout = 120
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "scale: marks multi-thousand capacity stress tests run nightly (deselect with '-m \"not scale\"')",
     "prompt_regression: marks tests as prompt regression tests",
     "incumbent_only: marks tests verifying incumbent compatibility",
     "os_contract: marks tests verifying OS native filesystem/token contracts",

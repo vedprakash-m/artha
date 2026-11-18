@@ -11,9 +11,9 @@ permissions:
 
 jobs:
   ubuntu-314-randomly:
-    name: Order-randomized test suite (ubuntu, 3.14)
+    name: Order-randomized full test suite (ubuntu, 3.14)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -25,8 +25,8 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             scripts/requirements.txt
-      - name: Install dependencies (dev + nightly)
-        run: uv pip install --system -r scripts/requirements.txt -e ".[dev,nightly]"
+      - name: Install dependencies (dev + randomly)
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev,randomly]"
       - name: Install age
         run: sudo apt-get update -qq && sudo apt-get install -y -qq age
       - name: Run full suite with run-id seeded order randomization
@@ -37,10 +37,45 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
+  macos-cross-version:
+    name: macOS cross-version matrix (3.11 & 3.14)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install age
+      - name: Create required runtime directories
+        run: mkdir -p state/career briefings/career
+      - name: Run fast suite (isolated workspace)
+        run: >-
+          python tools/run_tests_isolated.py tests -m "not slow and not scale"
+          -n auto --tb=short --durations=25 --ignore=tests/work
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
   windows-full-unit:
     name: Cross-platform full suite + .test_durations refresh (windows, 3.12)
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -54,20 +89,29 @@ jobs:
             scripts/requirements.txt
       - name: Install dependencies
         run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Cache age binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}\age-cache-v1.3.1
+          key: win-age-v1.3.1-c56e8ce2
       - name: Install age
         shell: pwsh
         run: |
-          $version = 'v1.3.1'
-          $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
-          $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
-          Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
-          if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
-          Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
-          $bin = Join-Path $env:RUNNER_TEMP 'age'
+          $cacheDir = Join-Path $env:RUNNER_TEMP 'age-cache-v1.3.1'
+          $bin = Join-Path $cacheDir 'age'
+          if (-not (Test-Path (Join-Path $bin 'age.exe'))) {
+            $version = 'v1.3.1'
+            $sha256 = 'c56e8ce22f7e80cb85ad946cc82d198767b056366201d3e1a2b93d865be38154'
+            $zip = Join-Path $env:RUNNER_TEMP 'age.zip'
+            Invoke-WebRequest -Uri "https://github.com/FiloSottile/age/releases/download/$version/age-$version-windows-amd64.zip" -OutFile $zip
+            if ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -ne $sha256) { throw 'age archive checksum mismatch' }
+            New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+            Expand-Archive -Path $zip -DestinationPath $cacheDir -Force
+          }
           Add-Content -Path $env:GITHUB_PATH -Value $bin
           $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
-      - name: Run full tracked Windows suite (TR-3 cross-platform verification)
+      - name: Run full tracked Windows suite (TR-3 cross-platform & scale verification)
         run: python tools/run_tests_isolated.py tests --ignore=tests/work -n auto --tb=short --durations=25
         env:
           PYTHONPATH: scripts
@@ -79,7 +123,7 @@ jobs:
           tests/unit/test_credentials_providers.py tests/unit/test_recovery_registry_writers.py
           tests/unit/test_action_process.py tests/unit/test_action_quarantine.py
           tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py
-          -q --tb=short --store-durations --durations-path .test_durations
+          -m "not scale" -n auto -q --tb=short --store-durations --durations-path .test_durations
         env:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
@@ -112,7 +156,7 @@ jobs:
       - name: Verify fast suite finishes within 180s CI budget
         run: |
           t0=$(date +%s)
-          python tools/run_tests_isolated.py tests -m "not slow" -n auto --tb=short --ignore=tests/work
+          python tools/run_tests_isolated.py tests -m "not slow and not scale" -n auto --tb=short --ignore=tests/work
           t1=$(date +%s)
           elapsed=$((t1 - t0))
           echo "Fast suite elapsed: ${elapsed}s"

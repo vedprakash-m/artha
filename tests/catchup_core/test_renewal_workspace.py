@@ -77,6 +77,7 @@ def test_AR03_protected_gitleaks_config_is_in_source_manifest(repo):
     assert '.gitleaks.toml' in names
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='NTFS disables POSIX S_IXUSR bit / core.filemode defaults to false')
 def test_AR06_source_mode_matches_git_index(repo):
     git(repo, 'config', 'core.filemode', 'true')
     git(repo, 'update-index', '--chmod=+x', 'scripts/example.py')

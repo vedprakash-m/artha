@@ -588,3 +588,69 @@ def test_merge_windows_coverage_report_matches_repo_changed_lines(tmp_path, monk
         cwd=root, env=env, capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "scripts/catchup_core/quarantine_fs_windows.py" in result.stdout
+
+
+def test_merge_windows_coverage_supports_prefix_collect_arg_rcfile_and_fail_under(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    import shutil
+    import tools.merge_windows_coverage as merger
+
+    root = tmp_path / "repo"
+    (root / "pkg").mkdir(parents=True)
+    (root / "tests").mkdir()
+    module = root / "pkg" / "mod.py"
+    module.write_text("def alpha():\n    return 1\n\ndef beta():\n    return 2\n")
+    test_file = root / "tests" / "test_mod.py"
+    test_file.write_text(
+        "import pytest\n"
+        "from pkg.mod import alpha, beta\n"
+        "def test_alpha():\n    assert alpha() == 1\n"
+        "@pytest.mark.scale\n"
+        "def test_beta():\n    assert beta() == 2\n"
+    )
+    rcfile = root / "custom-cov.toml"
+    rcfile.write_text('[run]\nbranch = true\nomit = ["tests/*"]\n')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root)
+    env["COVERAGE_FILE"] = str(root / ".coverage")
+    env.pop("COVERAGE_PROCESS_START", None)
+    subprocess.run(
+        [sys.executable, "-m", "coverage", "run", f"--rcfile={rcfile}", "-m", "pytest",
+         "-W", "ignore::pytest.PytestUnknownMarkWarning", "-m", "not scale", "-q", str(test_file)],
+        cwd=root, env=env, check=True, capture_output=True, timeout=60)
+    shards = tmp_path / "shards"
+    shard = shards / "ubuntu-cov-abc-10-1-shard-1"
+    shard.mkdir(parents=True)
+    (shard / "manifest.json").write_text(json.dumps(
+        {"commit": "abc", "run_id": "10", "run_attempt": "1", "shard": 1}))
+    (shard / "shard-1.nodeids").write_text("tests/test_mod.py::test_alpha\n")
+    shutil.copy(root / ".coverage", shard / "shard-1.coverage")
+    monkeypatch.setattr(merger, "ROOT", root)
+    monkeypatch.setenv("PYTHONPATH", str(root))
+    monkeypatch.delenv("COVERAGE_FILE", raising=False)
+    monkeypatch.delenv("COVERAGE_PROCESS_START", raising=False)
+    report = root / "coverage.xml"
+    rc = merger.main([
+        "--shards-dir", str(shards), "--shards", "1", "--artifact-prefix", "ubuntu-cov",
+        "--commit", "abc", "--run-id", "10", "--run-attempt", "1",
+        "--output-xml", str(report), "--rcfile", str(rcfile),
+        "--collect-arg=-m", "--collect-arg=not scale",
+        "--collect-arg=-W", "--collect-arg=ignore::pytest.PytestUnknownMarkWarning",
+        "--include-target", "pkg/mod.py", "--fail-under", "50",
+        "tests/test_mod.py",
+    ])
+    assert rc == 0
+    assert report.is_file()
+    with pytest.raises(subprocess.CalledProcessError) as exc_info:
+        merger.main([
+            "--shards-dir", str(shards), "--shards", "1", "--artifact-prefix", "ubuntu-cov",
+            "--commit", "abc", "--run-id", "10", "--run-attempt", "1",
+            "--output-xml", str(root / "coverage-high.xml"), "--rcfile", str(rcfile),
+            "--collect-arg=-m", "--collect-arg=not scale",
+            "--collect-arg=-W", "--collect-arg=ignore::pytest.PytestUnknownMarkWarning",
+            "--include-target", "pkg/mod.py", "--fail-under", "99",
+            "tests/test_mod.py",
+        ])
+    assert exc_info.value.returncode == 2

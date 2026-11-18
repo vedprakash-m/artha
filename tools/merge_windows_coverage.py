@@ -74,11 +74,15 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shards-dir", required=True)
     parser.add_argument("--shards", type=int, default=4)
+    parser.add_argument("--artifact-prefix", default="win-cov")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-attempt", required=True)
     parser.add_argument("--output-xml", required=True)
     parser.add_argument("--include-target", action="append", default=[])
+    parser.add_argument("--collect-arg", action="append", default=[])
+    parser.add_argument("--rcfile", default=None)
+    parser.add_argument("--fail-under", type=float, default=None)
     parser.add_argument("targets", nargs="+")
     args = parser.parse_args(argv)
 
@@ -87,19 +91,20 @@ def main(argv: list[str]) -> int:
     shard_nodes: list[set[str]] = []
     cov_files: list[Path] = []
     for idx in range(1, args.shards + 1):
-        sub = shards_root / f"win-cov-{args.commit}-{args.run_id}-{args.run_attempt}-shard-{idx}"
+        sub = shards_root / f"{args.artifact_prefix}-{args.commit}-{args.run_id}-{args.run_attempt}-shard-{idx}"
         manifest_path = sub / "manifest.json"
         nodes_path = sub / f"shard-{idx}.nodeids"
         cov_path = sub / f"shard-{idx}.coverage"
         for required in (manifest_path, nodes_path, cov_path):
             if not required.is_file():
-                raise FileNotFoundError(f"Missing Windows shard artifact file: {required}")
+                raise FileNotFoundError(f"Missing shard artifact file: {required}")
         manifests.append(json.loads(manifest_path.read_text(encoding="utf-8")))
         shard_nodes.append({line.strip() for line in nodes_path.read_text(encoding="utf-8").splitlines() if line.strip()})
         cov_files.append(cov_path)
 
     collect = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only", "-q", *args.targets],
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--collect-only", "-q",
+         *args.collect_arg, *args.targets],
         cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", check=True,
     )
     expected = {
@@ -118,9 +123,15 @@ def main(argv: list[str]) -> int:
             dst.write_bytes(src.read_bytes())
             normalize_coverage_db(dst, ROOT)
         env = {**os.environ, "COVERAGE_FILE": str(work / ".coverage")}
-        subprocess.run([sys.executable, "-m", "coverage", "combine"], cwd=str(work), env=env, check=True)
+        rc_args = [f"--rcfile={Path(args.rcfile).resolve()}"] if args.rcfile else []
+        subprocess.run([sys.executable, "-m", "coverage", "combine", *rc_args], cwd=str(work), env=env, check=True)
+        if args.fail_under is not None:
+            rep_cmd = [sys.executable, "-m", "coverage", "report", *rc_args, f"--fail-under={args.fail_under:g}"]
+            if args.include_target:
+                rep_cmd.append("--include=" + ",".join(args.include_target))
+            subprocess.run(rep_cmd, cwd=str(ROOT), env=env, check=True)
         out_xml = Path(args.output_xml).resolve()
-        xml_cmd = [sys.executable, "-m", "coverage", "xml", "-o", str(out_xml)]
+        xml_cmd = [sys.executable, "-m", "coverage", "xml", *rc_args, "-o", str(out_xml)]
         if args.include_target:
             xml_cmd.append("--include=" + ",".join(args.include_target))
         subprocess.run(xml_cmd, cwd=str(ROOT), env=env, check=True)

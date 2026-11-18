@@ -39,6 +39,7 @@ if _SCRIPTS_DIR not in sys.path:
 def pytest_configure(config):
     config.addinivalue_line("markers", "network: test may use the real network (guard lifted)")
     config.addinivalue_line("markers", "slow: slow capacity, UAT, or multi-subprocess tests excluded from fast inner loop")
+    config.addinivalue_line("markers", "scale: multi-thousand capacity stress tests run nightly")
     config.addinivalue_line("markers", "incumbent_only: legacy incumbent compatibility tests")
     config.addinivalue_line("markers", "os_contract: platform-specific OS contract tests")
 

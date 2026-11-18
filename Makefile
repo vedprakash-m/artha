@@ -124,6 +124,13 @@ coverage-harness: ## Combined line+branch coverage floor on the hook and policy 
 		$(foreach m,$(HARNESS_RUN_MODULES),--cov=$(m)) --cov-config=$(HARNESS_COV_CONFIG) --cov-branch --cov-fail-under=$(COV_MIN) \
 		--cov-report=term-missing --cov-report=xml:"$(abspath coverage-harness.xml)"
 
+.PHONY: print-harness-tests print-harness-cov-args
+print-harness-tests: ## Print space-separated harness test paths for the current OS
+	@printf '%s\n' "$(HARNESS_RUN_TESTS)"
+
+print-harness-cov-args: ## Print --cov module flags for the current OS harness modules
+	@printf '%s\n' "$(foreach m,$(HARNESS_RUN_MODULES),--cov=$(m))"
+
 bench: ## Synthetic workload benchmark of the Catch-up core (latency and scaling; no personal data)
 	@$(PYTHON) tools/benchmark_core.py
 

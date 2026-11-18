@@ -300,7 +300,7 @@ def test_first_main_push_changed_line_gate_uses_empty_tree(tmp_path, hits):
     assert "No lines with coverage information" not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("job", ["tests", "tests-ubuntu-312", "core-windows"])
+@pytest.mark.parametrize("job", ["tests", "core-ubuntu", "core-windows"])
 def test_ci_native_encryption_jobs_install_age_before_tests(job):
     import yaml
     workflow = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text())
@@ -313,7 +313,7 @@ def test_ci_native_encryption_jobs_install_age_before_tests(job):
     if job == "core-windows":
         assert any("FiloSottile/age/releases" in step["run"] and "Get-FileHash" in step["run"]
                    and "Get-Command age, age-keygen" in step["run"] for step in installs)
-    elif job == "tests-ubuntu-312":
+    elif job == "core-ubuntu":
         assert any("apt-get install" in step["run"] and "age" in step["run"] for step in installs)
     else:
         assert any("apt-get install" in step["run"] and "age" in step["run"]

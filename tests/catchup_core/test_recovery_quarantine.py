@@ -691,8 +691,25 @@ def test_second_pass_decrypt_mutation_refuses_before_yield(setup, monkeypatch, a
     assert context == trusted()
 
 
+def test_many_tiny_members_seal_and_verify_schema_v1(setup):
+    """Fast per-push multi-member seal and verify contract (<1 s on CI)."""
+    store, _ = setup
+    entries = [entry_for(b'x', f'state/{index}.md') for index in range(150)]
+    store.begin({'profile': 'personal', 'generation': 'ck_many_fast', 'entries': entries}, 'b' * 64)
+    for entry in entries:
+        store.start(entry)
+        store.write(b'x')
+        store.finish()
+    catalog = store.seal()
+    assert catalog['schema'] == 'artha.recovery-quarantine.v1'
+    assert len(catalog['entries']) == 150
+    reopened = QuarantineStore(store.root, store.cipher, authority=trusted)
+    assert reopened.verify() == {'members': 150, 'chunks': 150, 'bytes': 150, 'blocked': 0}
+
+
 @pytest.mark.slow
-# 6,500 durable member writes take about 490 s on Windows; 300 s killed the xdist worker in CI.
+@pytest.mark.scale
+# 6,500 durable member writes take about 490 s on Windows; run in nightly endurance checks.
 @pytest.mark.timeout(1200)
 def test_6500_tiny_members_seal_and_verify_schema_v1(setup):
     store, _ = setup
