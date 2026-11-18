@@ -113,7 +113,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
     for name in ("beliefs", "why", "forget", "feedback", "correct", "health", "history", "items",
                  "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve",
                  "ingest", "review", "complete", "transfer-authority", "retire-authority", "field-review", "retention",
-                 "cancel-extraction", "interchange", "emergency", "configure", "usage", "consent"):
+                 "cancel-extraction", "interchange", "emergency", "configure", "usage", "consent",
+                 "scope-review"):
         command = sub.add_parser(name)
         command.add_argument("--json", action="store_true")
         command.add_argument("--shadow", action="store_true")
@@ -142,6 +143,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
             command.add_argument("--scope", action="append", default=None,
                                  help="source:account, e.g. outlook_inbox:personal")
             command.add_argument("--days", type=int, default=90)
+        elif name == "scope-review":
+            command.add_argument("source", help="connector whose Signals to review, e.g. home_email")
         elif name == 'field-review':
             command.add_argument('fact_id')
             command.add_argument('--apply')
@@ -314,7 +317,7 @@ def _mutates(args: argparse.Namespace) -> bool:
     mutations = {"correct", "forget", "feedback", "capture", "ingest", "pause", "resume",
                  "reconcile", "resolve", "complete", "transfer-authority", "retire-authority", "field-review",
                  "cancel-extraction",
-                 "configure", "usage"}
+                 "configure", "usage", "scope-review"}
     return ((args.command in mutations
              and (args.command not in {"correct", "complete", "configure"} or args.apply is not None))
             or (args.command == "review" and args.label is not None)

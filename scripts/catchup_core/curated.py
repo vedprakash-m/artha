@@ -70,7 +70,6 @@ def has_completion_evidence(value: Any, key: str = "", verify: CompletionVerifie
 def completion_fact(ledger: Any, viewer: str, reference: Any, key: str) -> Any:
     """Resolve an exact current, permission-filtered explicit confirmation version."""
     from catchup_core.ledger import LedgerError  # noqa: PLC0415
-    ledger.require_personal_fact_admission()
     if isinstance(reference, str) and reference.startswith('fact:') and '@' in reference:
         fid, version = reference[5:].split('@', 1)
     else:

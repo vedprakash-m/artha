@@ -21,6 +21,7 @@ import json
 import os
 import sqlite3
 import time
+from collections import Counter
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -371,6 +372,7 @@ class Ledger:
         self._cipher = cipher
         self._sealed = sealed or MemorySealedStore()
         self._owner = owner_id
+        self.scope_withheld: Counter[str] = Counter()  # objects a collection read left out for scope
         # Adults other than the owner: restricted data about them needs their recorded consent
         # (RA-12 v0).  Minor children are governed by the household owner's authority.
         self._consent_subjects = frozenset(consent_subjects)
@@ -627,7 +629,7 @@ class Ledger:
             content_hmac, row["scope"], row["provenance"], generation)
         return hmac.compare_digest(str(row["proof"]), expected)
 
-    # ── owner scope review (specs/personal-scope-review.md A-1) ─────────────
+    # ── owner scope review (specs/refix-artha.md §B.1 A-1) ─────────────
     # A v2 proof also binds a digest of the rows that decide who may read the object, so a later change to
     # subjects, viewers, evidence or source access invalidates the review.
 
@@ -792,6 +794,18 @@ class Ledger:
                            (kind, object_id, version, old_scope, scope, generation, reviewer, self._clock(), digest))
         return {"object_type": object_type, "object_id": object_id, "object_version": version, "scope": scope}
 
+    def _prior_review(self, db: sqlite3.Connection, fact_id: str,
+                      previous: str | None) -> dict[str, Any] | None:
+        """Authorization inputs of the owner-reviewed version a write replaces; None when it was not reviewed."""
+        return self._authz_inputs(db, "fact", fact_id, previous or "") if self._fact_reviewed(db, fact_id) else None
+
+    def _rebind_fact_after_write(self, db: sqlite3.Connection, fact_id: str, version: str, content_hmac: str,
+                                 provenance: str, prior_review: Mapping[str, Any] | None) -> None:
+        if prior_review is not None:
+            self._carry_fact_review(db, fact_id, version, content_hmac, prior_review)
+        if not self._fact_reviewed(db, fact_id):
+            self._bind_fact_after_write(db, fact_id, version, content_hmac, provenance)
+
     def _carry_fact_review(self, db: sqlite3.Connection, fact_id: str, version: str, content_hmac: str,
                            previous: Mapping[str, Any]) -> None:
         """R-5: restate an owner review for a writer's new version when nothing that authorizes it changed."""
@@ -907,6 +921,23 @@ class Ledger:
         # Current Fact proofs do not authenticate the subjects and evidence used for authorization.
         raise PersonalScopeUnavailable("personal Fact scope unavailable")
 
+    def report_withheld(self, surface: str, withheld: int, returned: int, kind: str = "Fact") -> None:
+        """Count objects a collection read left out for scope; a read that kept nothing is unavailable, not empty."""
+        if withheld:
+            self.scope_withheld[surface] += withheld
+            if not returned:
+                raise PersonalScopeUnavailable(f"personal {kind} scope unavailable")
+
+    def _require_fact_admitted(self, fact_id: str) -> None:
+        """Per-object stop: only an owner-reviewed (v2) Fact passes the Fact hard stop."""
+        if not self._fact_reviewed(self.conn, fact_id):
+            self.require_personal_fact_admission()
+
+    def _require_signal_admitted(self, signal_id: str) -> None:
+        """Per-object stop: only an owner-reviewed (v2) Signal passes the Signal hard stop."""
+        if not self._signal_reviewed(self.conn, signal_id):
+            self.require_personal_signal_admission()
+
     def require_personal_calendar_admission(self) -> None:
         # Existing calendar projections lack authenticated dependency bindings.
         raise PersonalScopeUnavailable("personal calendar scope unavailable")
@@ -1021,8 +1052,7 @@ class Ledger:
             if expected_recorded_at is not None and previous != expected_recorded_at:
                 raise LedgerError('Fact changed since review')
             now = _after(previous, self._clock())
-            prior_review = (self._authz_inputs(c, "fact", fid, previous or "")
-                            if not is_new and self._fact_reviewed(c, fid) else None)
+            prior_review = None if is_new else self._prior_review(c, fid, previous)
             if not is_new:
                 identity = c.execute("SELECT domain,predicate,primary_subject_id FROM facts WHERE fact_id=?",
                                      (fid,)).fetchone()
@@ -1071,10 +1101,7 @@ class Ledger:
                 c.execute("INSERT OR IGNORE INTO fact_version_evidence VALUES(?,?,?,?,?)",
                           (fid, now, signal_id, start, end))
             c.execute("UPDATE facts SET obligation_key=? WHERE fact_id=?", (fact.obligation_key, fid))
-            if prior_review is not None:
-                self._carry_fact_review(c, fid, now, scope_hmac, prior_review)
-            if not self._fact_reviewed(c, fid):
-                self._bind_fact_after_write(c, fid, now, scope_hmac, fact.provenance.value)
+            self._rebind_fact_after_write(c, fid, now, scope_hmac, fact.provenance.value, prior_review)
         return fid
 
     def set_document_method(self, signal_id: str, method: str) -> None:
@@ -1256,23 +1283,26 @@ class Ledger:
 
     def facts_for(self, domain: str, predicate: str, viewer_id: str,
                   statuses: Sequence[FactStatus] = (FactStatus.CURRENT,)) -> list[FactView]:
-        self.require_personal_fact_admission()
         marks = ",".join("?" for _ in statuses)
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
             f"SELECT fact_id FROM facts WHERE domain=? AND predicate=? AND status IN ({marks}) "  # noqa: S608
             "ORDER BY recorded_at, fact_id", (domain, predicate, *[s.value for s in statuses])).fetchall()
         views: list[FactView] = []
+        withheld = 0
         for r in rows:
             try:
                 views.append(self.get_fact(r["fact_id"], viewer_id))
+            except PersonalScopeUnavailable:
+                withheld += 1
             except PermissionDenied:
                 continue
+        self.report_withheld("facts_for", withheld, len(views))
         return views
 
     def add_evidence(self, fact_id: str, signal_id: str, span_start: int, span_end: int) -> None:
         """Corroboration changes current knowledge, never a past version's evidence."""
         self._require_unlocked()
-        self.require_personal_fact_admission()
+        self._require_fact_admitted(fact_id)
         if self.conn.execute("SELECT 1 FROM fact_evidence WHERE fact_id=? AND signal_id=? "
                              "AND span_start=? AND span_end=?", (fact_id, signal_id, span_start, span_end)).fetchone():
             return
@@ -1280,7 +1310,9 @@ class Ledger:
             row = c.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
             if row is None:
                 raise LedgerError("unknown Fact")
-            now = _after(self._last_version(c, fact_id), self._clock())
+            previous = self._last_version(c, fact_id)
+            now = _after(previous, self._clock())
+            prior_review = self._prior_review(c, fact_id, previous)
             c.execute("INSERT OR REPLACE INTO fact_evidence(fact_id,signal_id,span_start,span_end) VALUES(?,?,?,?)",
                       (fact_id, signal_id, span_start, span_end))
             digest = hashlib.sha256("|".join(f"{r[0]}:{r[1]}:{r[2]}" for r in c.execute(
@@ -1294,19 +1326,21 @@ class Ledger:
             c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
                       "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
             c.execute("UPDATE facts SET recorded_at=? WHERE fact_id=?", (now, fact_id))
-            self._bind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""),
-                                        str(row["provenance_class"]))
+            self._rebind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""),
+                                          str(row["provenance_class"]), prior_review)
 
     def set_fact_status(self, fact_id: str, status: FactStatus, provenance: Provenance | None = None, *,
                         withdraw_signals: Sequence[str] = ()) -> None:
         """Change a Fact's lifecycle status; the previous state stays in ``fact_versions``."""
         self._require_unlocked()
-        self.require_personal_fact_admission()
+        self._require_fact_admitted(fact_id)
         with self.transaction() as c:
-            now = _after(self._last_version(c, fact_id), self._clock())
+            previous = self._last_version(c, fact_id)
+            now = _after(previous, self._clock())
             row = c.execute("SELECT * FROM facts WHERE fact_id=?", (fact_id,)).fetchone()
             if row is None:
                 raise LedgerError(f"unknown fact {fact_id}")
+            prior_review = self._prior_review(c, fact_id, previous)
             c.executemany("DELETE FROM fact_evidence WHERE fact_id=? AND signal_id=?",
                           ((fact_id, sid) for sid in withdraw_signals))
             prov = provenance.value if provenance else row["provenance_class"]
@@ -1326,7 +1360,7 @@ class Ledger:
                  row['observed_at'], row['occurred_at'], row["scope_hmac"]))
             c.execute("INSERT INTO fact_version_evidence SELECT fact_id,?,signal_id,span_start,span_end "
                       "FROM fact_evidence WHERE fact_id=?", (now, fact_id))
-            self._bind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""), prov)
+            self._rebind_fact_after_write(c, fact_id, now, str(row["scope_hmac"] or ""), prov, prior_review)
         self.correction_notice(fact_id, "Source belief changed; inspect the current evidence before acting.")
 
     def facts_matching(self, domain: str, predicate: str, subject_id: str,
@@ -1336,8 +1370,8 @@ class Ledger:
 
         The obligation filter is applied in SQL (``facts_obligation`` index) so only the matching Facts are decoded and
         decrypted; loading every Fact of the predicate made reconciliation quadratic in the number of obligations.
+        Each match passes the per-object scope gate in ``get_fact``; one unreviewed match fails the whole read.
         """
-        self.require_personal_fact_admission()
         marks = ",".join("?" for _ in statuses)
         extra, bound = ("", ()) if obligation_key is None else (" AND obligation_key=?", (obligation_key,))
         rows = self.conn.execute(  # `marks` is only "?" placeholders; values are bound
@@ -1532,9 +1566,21 @@ class Ledger:
 
     # ── pipeline working set ──────────────────────────────────────────────────
     def signals_in_state(self, state: ProcessingState) -> list[sqlite3.Row]:
-        self.require_personal_signal_admission()
+        # Gate on identity first: a full row names the evidence blob, so only admitted rows are read in full.
+        admitted: list[str] = []
+        withheld = 0
+        for (signal_id,) in self.conn.execute(
+                "SELECT signal_id FROM signals WHERE processing_state=? ORDER BY signal_id", (state.value,)).fetchall():
+            try:
+                self._require_signal_admitted(str(signal_id))
+            except PersonalScopeUnavailable:
+                withheld += 1
+                continue
+            admitted.append(str(signal_id))
+        self.report_withheld("signals_in_state", withheld, len(admitted), "Signal")
         return self.conn.execute(
-            "SELECT * FROM signals WHERE processing_state=? ORDER BY signal_id", (state.value,)).fetchall()
+            "SELECT * FROM signals WHERE processing_state=? AND signal_id IN (SELECT value FROM json_each(?)) "
+            "ORDER BY signal_id", (state.value, json.dumps(admitted))).fetchall()
 
     def signal_row(self, signal_id: str) -> sqlite3.Row | None:
         row: sqlite3.Row | None = self.conn.execute(
@@ -1554,7 +1600,7 @@ class Ledger:
                           (signal_id, idx, text, version))
 
     def candidates_for(self, signal_id: str) -> list[dict[str, Any]]:
-        self.require_personal_signal_admission()
+        self._require_signal_admitted(signal_id)
         if self._cipher is None:
             raise LedgerError("candidates are stored encrypted; no key available")
         out: list[dict[str, Any]] = []

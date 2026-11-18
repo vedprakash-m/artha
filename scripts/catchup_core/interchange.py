@@ -11,7 +11,7 @@ from typing import Any
 
 from catchup_core.backup import atomic_bytes
 from catchup_core.crypto import EnvelopeCipher
-from catchup_core.ledger import Ledger, LedgerError, PermissionDenied
+from catchup_core.ledger import Ledger, LedgerError, PermissionDenied, PersonalScopeUnavailable
 
 SCHEMA = "artha.interchange.v1"
 EXCLUDED = ("consent", "actions", "credentials", "keys")
@@ -20,15 +20,17 @@ _EMERGENCY_STATUSES = ("current", "disputed", "unknown")
 
 
 def build_interchange(ledger: Ledger, viewer: str) -> dict[str, Any]:
-    ledger.require_personal_fact_admission()
     facts: list[dict[str, Any]] = []
-    omitted = 0
+    omitted = withheld = 0
     for row in ledger.conn.execute("SELECT fact_id FROM facts ORDER BY fact_id").fetchall():
         fact_id = row[0]
         try:
             ledger.get_fact_metadata(fact_id, viewer, operation="export")
             fact = ledger.get_fact(fact_id, viewer)
             history = ledger.fact_history(fact_id, viewer)
+        except PersonalScopeUnavailable:
+            withheld += 1
+            continue
         except (PermissionDenied, LedgerError):
             omitted += 1
             continue
@@ -43,8 +45,9 @@ def build_interchange(ledger: Ledger, viewer: str) -> dict[str, Any]:
             "versions": [{"recorded_at": v["recorded_at"], "status": v["status"], "value": v["value"],
                           "provenance_class": v["provenance_class"], "observed_at": v["observed_at"]}
                          for v in history]})
+    ledger.report_withheld("interchange", withheld, len(facts))
     return {"schema": SCHEMA, "exported_by": viewer, "facts": facts, "omitted_facts": omitted,
-            "excluded": list(EXCLUDED), "dispatchable": False}
+            "scope_withheld": withheld, "excluded": list(EXCLUDED), "dispatchable": False}
 
 
 def write_interchange(path: Path, ledger: Ledger, viewer: str) -> dict[str, Any]:
@@ -54,7 +57,7 @@ def write_interchange(path: Path, ledger: Ledger, viewer: str) -> dict[str, Any]
     document = build_interchange(ledger, viewer)
     atomic_bytes(path, cipher.encrypt(json.dumps(document).encode(), aad=_AAD)[0])
     return {"exported_facts": len(document["facts"]), "omitted_facts": document["omitted_facts"],
-            "format": SCHEMA, "dispatchable": False}
+            "scope_withheld": document["scope_withheld"], "format": SCHEMA, "dispatchable": False}
 
 
 def read_interchange(path: Path, cipher: EnvelopeCipher) -> dict[str, Any]:
@@ -72,19 +75,23 @@ def read_interchange(path: Path, cipher: EnvelopeCipher) -> dict[str, Any]:
 def emergency_view(ledger: Ledger, viewer: str) -> dict[str, Any]:
     """Facts a designated custodian may see: each adult subject granted this person 'emergency' (and view) access
     for that Domain and its sources, and the person is a listed viewer. Anything else is simply absent."""
-    ledger.require_personal_fact_admission()
     marks = ",".join("?" for _ in _EMERGENCY_STATUSES)
     rows = ledger.conn.execute(  # `marks` is only "?" placeholders; values are bound
         f"SELECT fact_id FROM facts WHERE status IN ({marks}) ORDER BY domain,predicate,fact_id",  # noqa: S608
         _EMERGENCY_STATUSES).fetchall()
     facts: list[dict[str, Any]] = []
+    withheld = 0
     for row in rows:
         try:
             ledger.get_fact_metadata(row[0], viewer, operation="emergency")
             fact = ledger.get_fact(row[0], viewer)
+        except PersonalScopeUnavailable:
+            withheld += 1
+            continue
         except (PermissionDenied, LedgerError):
             continue
         facts.append({"fact_id": fact.fact_id, "domain": fact.domain, "subject": fact.primary_subject_id,
                       "predicate": fact.predicate, "value": fact.value, "status": fact.status,
                       "observed_at": fact.observed_at})
-    return {"facts": facts, "dispatchable": False}
+    ledger.report_withheld("emergency", withheld, len(facts))
+    return {"facts": facts, "scope_withheld": withheld, "dispatchable": False}

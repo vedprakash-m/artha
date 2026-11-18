@@ -1,4 +1,4 @@
-"""Owner scope review with authorization-bound (v2) proofs — specs/personal-scope-review.md A-1, R-1..R-6.
+"""Owner scope review with authorization-bound (v2) proofs — specs/refix-artha.md §B.1 A-1, R-1..R-6.
 
 These tests run without the synthetic admission fixture: they exercise the production hard stops.
 """
@@ -360,3 +360,220 @@ def test_refresh_drops_v2_review_with_changed_inputs(led):
                             (sid, generation)).fetchone()[0] == 0
     with pytest.raises(lg.PermissionDenied):
         led.require_personal_signal(sid)
+
+
+# ── phase 2: collection reads filter per object ───────────────────────────
+
+def reviewed_fact(led, upstream="m1", **kw):
+    sid = signal(led, upstream)
+    review(led, "signal", sid)
+    fid = led.put_fact(fact(led, [sid], **kw))
+    review(led, "fact", fid)
+    return sid, fid
+
+
+def unreviewed_fact(led, upstream="m9", **kw):
+    sid = signal(led, upstream)
+    return sid, led.put_fact(fact(led, [sid], **kw))
+
+
+def test_facts_for_returns_reviewed_facts_and_counts_the_rest(led):
+    _, keep = reviewed_fact(led)
+    unreviewed_fact(led)
+    before = led.scope_withheld["facts_for"]
+    views = led.facts_for("home", "hvac_service_due", OWNER)
+    assert [v.fact_id for v in views] == [keep]
+    assert led.scope_withheld["facts_for"] - before == 1
+
+
+def test_withheld_facts_are_never_decoded(led, monkeypatch):
+    unreviewed_fact(led)
+    decoded = []
+    monkeypatch.setattr(led, "_decode_value", lambda *a: decoded.append(a))
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        led.facts_for("home", "hvac_service_due", OWNER)
+    assert decoded == []
+
+
+def test_beliefs_lists_only_reviewed_facts(led):
+    from catchup_core import views
+    _, keep = reviewed_fact(led)
+    unreviewed_fact(led)
+    before = led.scope_withheld["beliefs"]
+    assert [b["fact_id"] for b in views.beliefs(led, OWNER)] == [keep]
+    assert led.scope_withheld["beliefs"] - before == 1
+
+
+def test_interchange_reports_scope_withheld_separately(led):
+    from catchup_core import interchange
+    _, keep = reviewed_fact(led)
+    unreviewed_fact(led)
+    document = interchange.build_interchange(led, OWNER)
+    assert [f["fact_id"] for f in document["facts"]] == [keep]
+    assert document["scope_withheld"] == 1
+
+
+def test_write_interchange_reports_scope_withheld(led, tmp_path):
+    from catchup_core import interchange
+    reviewed_fact(led)
+    unreviewed_fact(led)
+    result = interchange.write_interchange(tmp_path / "out.bin", led, OWNER)
+    assert (result["exported_facts"], result["scope_withheld"]) == (1, 1)
+
+
+def test_emergency_view_with_only_held_facts_is_unavailable_not_empty(led):
+    from catchup_core import interchange
+    unreviewed_fact(led)
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        interchange.emergency_view(led, "custodian")
+
+
+def test_emergency_view_reports_held_facts_beside_visible_ones(led):
+    from catchup_core import interchange
+    _, keep = reviewed_fact(led)
+    unreviewed_fact(led)
+    view = interchange.emergency_view(led, OWNER)
+    assert [f["fact_id"] for f in view["facts"]] == [keep] and view["scope_withheld"] == 1
+
+
+def test_signals_in_state_with_only_held_signals_is_unavailable(led):
+    sid = signal(led, "m1")
+    with pytest.raises(lg.PersonalScopeUnavailable, match="Signal"):
+        led.signals_in_state(lg.ProcessingState(led.signal_row(sid)["processing_state"]))
+
+
+def test_beliefs_command_shows_the_held_count_as_a_gap(led):
+    import argparse
+
+    from catchup_core import commands
+    reviewed_fact(led)
+    unreviewed_fact(led)
+
+    class Deps:
+        ledger, viewer = led, OWNER
+
+        def validate_inputs(self):
+            return None
+
+    result = commands.execute(argparse.Namespace(command="beliefs", domain=None, subject=None), Deps(),
+                              led._path.parent)
+    assert result["scope_withheld"] == 1 and "scope-review" in result["gaps"][0]
+
+
+def test_beliefs_domain_filter_does_not_count_held_facts_elsewhere(led):
+    from catchup_core import views
+    _, keep = reviewed_fact(led)
+    unreviewed_fact(led, domain="finance")
+    before = led.scope_withheld["beliefs"]
+    assert [b["fact_id"] for b in views.beliefs(led, OWNER, domain="home")] == [keep]
+    assert led.scope_withheld["beliefs"] == before
+
+
+def test_facts_matching_admits_when_every_match_is_reviewed(led):
+    _, fid = reviewed_fact(led)
+    assert [f.fact_id for f in led.facts_matching("home", "hvac_service_due", OWNER)] == [fid]
+
+
+def test_facts_matching_fails_closed_on_any_unreviewed_match(led):
+    reviewed_fact(led)
+    unreviewed_fact(led)
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        led.facts_matching("home", "hvac_service_due", OWNER)
+
+
+def test_signals_in_state_filters_unreviewed_signals(led):
+    keep = signal(led, "m1")
+    review(led, "signal", keep)
+    signal(led, "m2")
+    state = lg.ProcessingState(led.signal_row(keep)["processing_state"])
+    before = led.scope_withheld["signals_in_state"]
+    assert [r["signal_id"] for r in led.signals_in_state(state)] == [keep]
+    assert led.scope_withheld["signals_in_state"] - before == 1
+
+
+def test_candidates_need_a_reviewed_signal(led):
+    keep = signal(led, "m1")
+    review(led, "signal", keep)
+    held = signal(led, "m2")
+    led.put_candidates(keep, [{"x": 1}])
+    led.put_candidates(held, [{"x": 2}])
+    assert led.candidates_for(keep) == [{"x": 1}]
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        led.candidates_for(held)
+
+
+def test_completion_fact_reads_a_reviewed_confirmation(led):
+    from catchup_core import curated
+    key = "open_items:abc"
+    _, fid = reviewed_fact(led, predicate="commitment_completed", obligation_key=key,
+                           provenance=lg.Provenance.USER_CONFIRMED,
+                           value={"record_key": key, "completed": True})
+    assert curated.completion_fact(led, OWNER, None, key).fact_id == fid
+
+
+def test_completion_fact_stays_held_when_unreviewed(led):
+    from catchup_core import curated
+    key = "open_items:abc"
+    unreviewed_fact(led, predicate="commitment_completed", obligation_key=key,
+                    provenance=lg.Provenance.USER_CONFIRMED, value={"record_key": key, "completed": True})
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        curated.completion_fact(led, OWNER, None, key)
+
+
+def _inventory(led):
+    from types import SimpleNamespace
+
+    from catchup_core.retention import RetentionPlanner
+    planner = SimpleNamespace(ledger=led, max_rows=100000, max_bytes=10 ** 9, _describe=RetentionPlanner._describe)
+    return RetentionPlanner._tables(planner)
+
+
+def test_retention_inventory_stays_held_even_when_every_object_is_reviewed(led):
+    # The inventory reads whole tables (calendar, candidates, drafts) that A-1 keeps held.
+    reviewed_fact(led)
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        _inventory(led)
+
+
+def test_status_change_of_reviewed_fact_carries_review_forward(led):
+    _, fid = reviewed_fact(led)
+    led.set_fact_status(fid, lg.FactStatus.DISPUTED)
+    assert led.get_fact(fid, OWNER).status == "disputed"
+
+
+def test_added_reviewed_evidence_carries_review_forward(led):
+    _, fid = reviewed_fact(led)
+    extra = signal(led, "m2")
+    review(led, "signal", extra)
+    led.add_evidence(fid, extra, 0, 4)
+    assert len(led.get_fact(fid, OWNER).evidence) == 2
+
+
+def test_added_unreviewed_evidence_denies_the_new_version(led):
+    _, fid = reviewed_fact(led)
+    extra = signal(led, "m2")
+    led.add_evidence(fid, extra, 0, 4)
+    with pytest.raises(lg.PermissionDenied):
+        led.get_fact(fid, OWNER)
+
+
+@pytest.mark.parametrize("write", ["status", "evidence"])
+def test_writes_to_unreviewed_facts_stay_held(led, write):
+    sid, fid = unreviewed_fact(led)
+    if write == "status":
+        with pytest.raises(lg.PersonalScopeUnavailable):
+            led.set_fact_status(fid, lg.FactStatus.DISPUTED)
+    else:
+        with pytest.raises(lg.PersonalScopeUnavailable):
+            led.add_evidence(fid, sid, 1, 2)
+
+
+def test_ingest_paths_stay_held_after_review(led):
+    from catchup_core import heldout
+    sid, _ = reviewed_fact(led)
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        led.replace_source_support(sid)
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        led.cancel_calendar("home_email", "acct", "m1")
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        heldout._facts(led, sid, OWNER)

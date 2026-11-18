@@ -35,8 +35,8 @@ def test_interchange_contains_only_exportable_facts_and_counts_the_rest(store, t
     store.grant_consent("adult", "adult", "health", ["view"], "owner")
     target = tmp_path / "out.ae1"
     summary = interchange.write_interchange(target, store, "owner")
-    assert summary == {"exported_facts": 1, "omitted_facts": 2, "format": "artha.interchange.v1",
-                       "dispatchable": False}
+    assert summary == {"exported_facts": 1, "omitted_facts": 2, "scope_withheld": 0,
+                       "format": "artha.interchange.v1", "dispatchable": False}
     assert b"OPEN-VALUE" not in target.read_bytes()
     document = interchange.read_interchange(target, CIPHER)
     assert [f["fact_id"] for f in document["facts"]] == [open_fact]

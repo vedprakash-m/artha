@@ -501,6 +501,9 @@ def test_fact_lists_report_unavailable_instead_of_an_empty_success(runtime, surf
     from catchup_core import interchange, views
 
     led, _ = runtime
+    # Per-object scope review: a list holding an unreviewed Fact is unavailable, never an empty success.
+    led.put_fact(FactInput("kids_school", "exam_registration_deadline", "synthetic",
+                           "ved", NOW.isoformat(), provenance=Provenance.USER_CONFIRMED))
     def _attempt():
         if surface == "facts_for":
             led.facts_for("kids_school", "exam_registration_deadline", "ved")
@@ -520,6 +523,11 @@ def test_empty_fact_dependent_results_do_not_conceal_scope_hold(runtime, surface
     from catchup_core import heldout
 
     led, _ = runtime
+    # Per-object scope review: an unreviewed match is held, so the result is unavailable rather than empty.
+    led.put_fact(FactInput("kids_school", "exam_registration_deadline", "synthetic", "ved", NOW.isoformat(),
+                           provenance=Provenance.USER_CONFIRMED, obligation_key="synthetic"))
+    led.put_fact(FactInput("kids_school", "commitment_completed", {"record_key": "synthetic", "completed": True},
+                           "ved", NOW.isoformat(), provenance=Provenance.USER_CONFIRMED, obligation_key="synthetic"))
     def _attempt():
         if surface == "matching":
             led.facts_matching("kids_school", "exam_registration_deadline", "ved")

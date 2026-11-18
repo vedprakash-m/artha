@@ -15,12 +15,18 @@ from catchup_core.ledger import Ledger, PermissionDenied, PersonalScopeUnavailab
 
 def beliefs(ledger: Ledger, viewer: str, *, domain: str | None = None,
             subject: str | None = None) -> list[dict[str, Any]]:
-    ledger.require_personal_fact_admission()
     output: list[dict[str, Any]] = []
-    for row in ledger.conn.execute("SELECT fact_id FROM facts WHERE status IN ('current','disputed','unknown') "
-                                   "ORDER BY domain,predicate,recorded_at"):
+    withheld = 0
+    # Filter by Domain and subject before the per-Fact scope gate, so held Facts outside the request are not counted.
+    for row in ledger.conn.execute(
+            "SELECT fact_id FROM facts WHERE status IN ('current','disputed','unknown') "
+            "AND (? IS NULL OR domain=?) AND (? IS NULL OR primary_subject_id=?) "
+            "ORDER BY domain,predicate,recorded_at", (domain, domain, subject, subject)).fetchall():
         try:
             fact = ledger.get_fact(row[0], viewer)
+        except PersonalScopeUnavailable:
+            withheld += 1
+            continue
         except PermissionDenied:
             continue
         if (domain and fact.domain != domain) or (subject and fact.primary_subject_id != subject):
@@ -28,6 +34,7 @@ def beliefs(ledger: Ledger, viewer: str, *, domain: str | None = None,
         output.append({"fact_id": fact.fact_id, "domain": fact.domain, "subject": fact.primary_subject_id,
             "predicate": fact.predicate, "value": fact.value, "status": fact.status,
             "provenance": fact.provenance_class, "observed_at": fact.observed_at})
+    ledger.report_withheld("beliefs", withheld, len(output))
     return output
 
 

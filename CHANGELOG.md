@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Owner scope review, phase 2 (per-object collection reads and the `scope-review` verb), 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Collection reads gate each Fact or Signal instead of the whole operation: `facts_for`, `facts_matching`, `signals_in_state`, `candidates_for`, `beliefs`, interchange, the emergency view and completion lookup. Held objects are never decoded and are counted (`scope_withheld`, plus a `beliefs` gap line). A read that held something and kept nothing still raises `PersonalScopeUnavailable`. `signals_in_state` checks identities before reading full rows. `add_evidence` and `set_fact_status` gate per Fact and carry a review forward under R-5. New owner verb `cli.py scope-review <source>`: interactive terminal and owner only; metadata list, authorization inputs and a 400-character excerpt; one answer per Signal and per Fact; counts-only result; not offered over MCP. The retention inventory stays held, because it reads whole tables (calendar, candidates, drafts) that stay held. Ingest, calendar, documents, corpus and held-out paths are unchanged. | `scripts/catchup_core/ledger.py`, `scripts/catchup_core/views.py`, `scripts/catchup_core/interchange.py`, `scripts/catchup_core/curated.py`, `scripts/catchup_core/commands.py`, `scripts/catchup_core/cli.py`, `scripts/catchup_core/scope_review_cli.py`, `tests/catchup_core/test_scope_review.py`, `tests/catchup_core/test_scope_review_cli.py`, `tests/catchup_core/test_document_field_runtime.py`, `tests/catchup_core/test_commands_scoped.py`, `docs/catchup-core.md`, `docs/spec-manifest.json`, `docs/test-ownership.yaml` | Failing-first tests now pass; changed lines 150/150 covered. Three existing tests that expected "unavailable" from an empty ledger now insert a held Fact first, and the interchange summary gains `scope_withheld`. Static gates pass. Not live: migration 21, re-sign, the owner's review and live UAT are still to do. |
+
 ### Added — Owner scope review, phase 1 (authorization-bound proofs), 2026-11-18
 
 | Change | Modified files | Validation |

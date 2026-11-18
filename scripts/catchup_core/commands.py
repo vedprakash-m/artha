@@ -100,6 +100,15 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
             days=args.days, now=datetime.now(UTC), readline=input,
             interactive=sys.stdin.isatty() and sys.stdout.isatty())
         return {"granted": len(granted), "scopes": list(args.scope), "days": args.days}
+    if args.command == "scope-review":
+        import sys  # noqa: PLC0415
+
+        from catchup_core import scope_review_cli  # noqa: PLC0415
+        if shadow:
+            raise LedgerError("scope reviews are recorded in the live ledger, not in shadow mode")
+        return scope_review_cli.run(
+            led, viewer=viewer, connector=args.source, text_of=deps.blobs.get, readline=input,
+            write=sys.stdout.write, interactive=sys.stdin.isatty() and sys.stdout.isatty())
     if args.command == 'field-review':
         from catchup_core.field_confirmation import field_command  # noqa: PLC0415
         return field_command(args, deps)
@@ -170,7 +179,11 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
         return user_config.apply(config_path, args.key, args.value, args.apply, known_subjects=led._known_subjects,
                                  consent_subjects=led._consent_subjects, review_context=review_context)
     if args.command == "beliefs":
-        return {"beliefs": views.beliefs(led, viewer, domain=args.domain, subject=args.subject)}
+        before = led.scope_withheld["beliefs"]
+        rows = views.beliefs(led, viewer, domain=args.domain, subject=args.subject)
+        held = led.scope_withheld["beliefs"] - before
+        return {"beliefs": rows, "scope_withheld": held,
+                "gaps": [f"{held} Fact(s) held until you review their scope (scope-review)."] if held else []}
     if args.command == "why":
         return views.safe_projection(views.explain(led, deps.blobs, viewer, args.fact_id, as_of=args.as_of))
     if args.command == "forget":

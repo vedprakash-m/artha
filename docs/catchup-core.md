@@ -432,6 +432,21 @@ runtime paths remain unavailable until the proofs bind the required authorizatio
 inputs; the test-only admitted scope fixture is limited to synthetic tests and does
 not alter runtime policy.
 
+**Owner scope review.** The owner can admit existing Signals and Facts one at a time with
+`cli.py scope-review <source>` (for example `home_email`), run in their own interactive terminal. It refuses a
+pipe, shadow mode and anyone but the configured owner. It lists the source's unreviewed Signals by date, account
+and ID. For each selected Signal it shows its authorization inputs (subjects and source subjects) and a stripped
+400-character excerpt, then asks for a scope: personal, work, mixed or unknown. Each Fact from that Signal follows
+with its own question; its value is not shown. A review binds the exact version and a digest of the authorization
+inputs. Any later change to subjects, viewers, evidence or source access holds the object again until it is
+reviewed again. Every review is recorded in the append-only `scope_reviews` table (migration 21).
+
+Reviewed objects are readable through `beliefs`, interchange and the emergency view. Those lists leave out
+unreviewed Facts and say how many they held: `beliefs` adds a gap line, and interchange and emergency results carry
+`scope_withheld`. A list that held something and kept nothing reports "scope unavailable", never an empty result.
+Connector ingest, calendar projections, documents, the corpus, held-out evaluation and the retention inventory
+stay unavailable.
+
 `cli.py ingest <file.pdf> --subject <name> --shadow` and saved-document fetch are currently unavailable before file
 access because trusted personal source classification is not established. A subject label or `documents:manual`
 consent is not that classification. The bounded local document interpreter remains in the code, but its existence
