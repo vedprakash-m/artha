@@ -14,6 +14,23 @@ recovery remains deferred, independent held-out quality and live Work reconcilia
 remain open, and release re-signing plus the live renewal gates remain separately
 authorized owner operations.
 
+## UAT run — 2026-11-17
+
+- **Scratch UAT:** 8 direct scenario reports passed; the isolated replay harness passed
+  8 slow UAT tests. RA-21 correctly skipped OCR because no real scan/tesseract fixture
+  was supplied. No live data, provider, keyring mutation or external effect was used.
+- **Shadow-ledger migration:** the owner-approved shadow ledger moved from schema 19 to
+  schema 20, integrity checks passed, and
+  `~/.artha-local/catchup_core/shadow/ledger.pre-migration.20261118T004330Z.ae1`
+  is the encrypted pre-migration backup.
+- **Live UAT:** 7 live scenario scripts were rerun without `--allow-local-writes`.
+  Their read surfaces were blocked by missing trusted personal scope bindings:
+  `personal Fact scope unavailable`, `personal Signal scope unavailable`, or
+  `personal scope unavailable`. This is a live access hold, not an owner UAT pass.
+- **Owner sign-off:** pending. Scratch evidence establishes synthetic behavior only;
+  live UAT requires separately reviewed personal scope bindings and a real
+  acceptance run. No live case is counted as passed.
+
 ## Windows quarantine scale-test timeout — 2026-11-17
 
 On `53b14af`, hosted run `44176909472` failed Windows shard 2 on Python 3.12 and 3.14. The 300 s timeout stopped `test_6500_tiny_members_seal_and_verify_schema_v1`. The timeout is now 1,200 s; the spec's 6,500-member count is unchanged.
@@ -71,21 +88,19 @@ commits `8928cc3..e0a3808`) is complete on `main`:
 - **Remaining live and owner-operated gates (why `specs/re-artha.md`,
   `specs/re-artha-full-completion.md`, and `specs/automatic-release-renewal.md` stay active):**
   1. **Cohort re-sign (`re-sign 20`):** The 6-Domain reduced slice waiver and recovery rehearsal
-     bind implementation `595b0a15…` (re-sign 19), while the current tree fingerprints
-     `38609551af69b17207a14af4fdadd4a5eab3a80c85c266f2b4cfca7a275d300d` (`configuration`,
-     `contract`, `model`, `packs`, and `prompts` digests are unchanged, and `independent_copy`
-     is accessible on `Veds-MacBook-Pro-M3Max`). A 2026-11-17 re-sign candidate for implementation
-     `4bc7ff9f…` was prepared but could not be validated because this app session received `EPERM`
-     for the independent copy; the candidate was reverted and no re-sign 20 is recorded.
+     now bind implementation `2ee2cd4f…` after a protected-policy source gap was fixed and tested.
+     The independent copy is readable and hash-checked as
+     `43a49eb28eabf9b375723f362dc7df51a951b71066a08ec3a2eafef385a99796`; `_validate_release_evidence`
+     passes for re-sign 20.
   2. **Personal ledger migration 20 (`0020_personal_scope.sql`):** The live authority ledger is
-     at `PRAGMA user_version = 19` vs 20 available migrations; `renewal_metadata.py` and
-     authoritative runs hold until the owner runs a reviewed migration.
+     migrated 19 → 20, integrity is `ok`, and the encrypted pre-migration backup was verified.
+     The privacy authority is resealed at checkpoint 2.
   3. **D3 enrollment and live UAT (`specs/automatic-release-renewal.md`):** Path A (exact
      task-approved candidates), D1, and D2 are decided; the updated 21-job `ci.yml` D3 gate
      inventory (`0edc9b61…`, 47 protected files, 147 release-fingerprinted files) passes
      `Authority._check_policy`. Hosted CI run `44185685851` is green on main commit
-     `c1ca407402405895f48a90708f62a01a76cc342b` (all 21 required jobs passed). Remaining
-     owner gates are re-sign 20, ledger migration 20, D3 approval, native `enroll`, and live UAT.
+     `c1ca407402405895f48a90708f62a01a76cc342b` (all 21 required jobs passed). Owner approved
+     proposal digest `a2873601…d4d75d`; native `enroll` and live UAT remain.
   4. **Full-profile completion (`specs/re-artha-full-completion.md`):** Native Windows Work
      recovery remains deferred by owner decision (2026-11-12); independent held-out labels,
      live Work reconciliation/UAT, and the GitHub Support history purge remain open.
