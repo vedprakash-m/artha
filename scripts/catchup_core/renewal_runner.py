@@ -183,7 +183,12 @@ def _worker(command: list[str], root: Path, timeout: int, parent: int) -> None:
 
 
 def _containment() -> Callable[[], None]:
-    return _windows_job() if sys.platform == 'win32' else lambda: os.killpg(os.getpgrp(), signal.SIGKILL)
+    if sys.platform == 'win32':
+        return _windows_job()
+    killpg = os.killpg
+    getpgrp = os.getpgrp
+    sigkill = signal.SIGKILL
+    return lambda: killpg(getpgrp(), sigkill)
 
 
 if __name__ == '__main__':

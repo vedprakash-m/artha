@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Renewal runner containment binding, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Bind POSIX containment functions before returning the cleanup closure, so process-group termination no longer depends on mutable module attributes at cleanup time. | `scripts/catchup_core/renewal_runner.py` | 22 renewal-runner tests pass; static, strict typing, hygiene and privacy gates pass. |
+
 ### Fixed — Stable isolated coverage node IDs, 2026-11-18
 
 | Change | Modified files | Validation |
