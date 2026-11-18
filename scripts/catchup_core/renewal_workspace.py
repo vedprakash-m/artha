@@ -184,7 +184,7 @@ class Workspace:
         return value[0]
 
     def assert_tree(self, source: dict[str, Any], tree: str) -> None:
-        """CI's committed blobs must equal local source bytes, without Git filter normalization."""
+        """CI's committed blobs must equal validated source bytes, with only reviewed LF normalization."""
         manifest = SourceManifest.parse(json.dumps(source).encode())
         tracked = {}
         for record in self.git('ls-tree', '-r', '-z', tree).split('\0'):
@@ -194,10 +194,29 @@ class Workspace:
                 tracked[path] = (mode, kind, identity)
         selected = [entry for entry in manifest.files if entry.path in tracked]
         objects = []
+        expected_bodies = []
+        verify_modes = self.git('config', '--bool', 'core.filemode') != 'false'
         for entry in selected:
             mode, kind, identity = tracked[entry.path]
             if mode != entry.mode or kind != 'blob':
                 raise RenewalError('committed source type differs from the validated candidate')
+            file_path = self.root / entry.path
+            observed = source_file(file_path, entry.path, entry.mode, verify_mode=verify_modes)
+            with file_path.open('rb') as stream:
+                raw = stream.read(_MAX_FILE + 1)
+            if (observed.sha256 != entry.sha256 or len(raw) > _MAX_FILE
+                    or hashlib.sha256(raw).hexdigest() != entry.sha256):
+                raise RenewalError('committed source bytes differ from the validated candidate')
+            attrs = self.git('check-attr', '-z', 'text', 'eol', 'filter', 'ident',
+                             'working-tree-encoding', '--', entry.path).split('\0')
+            attributes = {attrs[index + 1]: attrs[index + 2]
+                          for index in range(0, len(attrs) - len(attrs) % 3, 3)
+                          if attrs[index] == entry.path}
+            if (attributes.get('text') in {'auto', 'set'} and attributes.get('eol') == 'lf'
+                    and all(attributes.get(name) == 'unspecified'
+                            for name in ('filter', 'ident', 'working-tree-encoding'))):
+                raw = raw.replace(b'\r\n', b'\n')
+            expected_bodies.append(raw)
             objects.append(identity)
         query = ''.join(value + '\n' for value in objects).encode('ascii')
         metadata = self._batch('--batch-check', query)
@@ -208,10 +227,10 @@ class Workspace:
                 raise ValueError
             bodies = self._batch('--batch', query)
             offset = 0
-            for entry, size in zip(selected, sizes, strict=True):
+            for expected, size in zip(expected_bodies, sizes, strict=True):
                 line = bodies.index(b'\n', offset)
                 body = bodies[line + 1:line + 1 + size]
-                if hashlib.sha256(body).hexdigest() != entry.sha256:
+                if body != expected:
                     raise RenewalError('committed source bytes differ from the validated candidate')
                 offset = line + size + 2
             if offset != len(bodies):

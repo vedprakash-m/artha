@@ -98,6 +98,18 @@ def test_AR06_host_filemode_false_uses_git_index_mode(repo):
     assert entry['mode'] == '100644'
 
 
+def test_AR06_clean_filter_allows_checked_in_lf_for_crlf_worktree(repo):
+    (repo / '.gitattributes').write_text('*.py text eol=lf\n')
+    git(repo, 'add', '.gitattributes')
+    git(repo, 'commit', '-m', 'add source line-ending policy')
+    (repo / 'scripts/example.py').write_bytes(b'VALUE = 1\r\n')
+    workspace = Workspace(repo)
+    source = workspace.source()
+    tree = workspace.tree()
+
+    workspace.assert_tree(source, tree)
+
+
 def test_AR13_linked_sources_refuse(repo):
     target = repo / 'outside.py'
     target.write_text('PRIVATE_CANARY')
