@@ -798,3 +798,35 @@ def test_household_first_names_are_denylisted_but_the_owner_handle_is_not(tmp_pa
     assert not hits("Zed wrote this")                       # owner first name is not household-private
     assert hits("Zed Ownerson")                             # full name still is
     assert not hits("Riverbend is a place")                 # a school's name is not a person
+
+
+def test_tracked_shard_partitions_exhaustively_and_rejects_bad_spec(sandbox, monkeypatch, privacy_scanner):
+    privacy_scan = privacy_scanner
+    monkeypatch.setattr(privacy_scan, "denylist_for", lambda repo: privacy_scan.Denylist())
+    monkeypatch.setenv("ARTHA_GITLEAKS", sandbox.extra_env["ARTHA_GITLEAKS"])
+    for idx in range(5):
+        sandbox.write(f"scripts/f{idx}.py", f"VALUE_{idx} = {idx}\n")
+    seen: list[bytes] = []
+    original = subprocess.run
+
+    def capture(args, **kwargs):
+        seen.append(kwargs["input"])
+        return subprocess.CompletedProcess(args, 0, b"[]", b"")
+
+    monkeypatch.setattr(privacy_scan.subprocess, "run", lambda args, **kwargs:
+                        capture(args, **kwargs) if args[0] == sandbox.extra_env["ARTHA_GITLEAKS"]
+                        else original(args, **kwargs))
+    all_expected = sorted((sandbox.root / rel).read_bytes()
+                          for rel in sandbox.git("ls-files", "-co", "--exclude-standard", "-z").stdout.split("\0")
+                          if rel and rel != "scripts/pii_guard.py")
+    assert privacy_scan.scan_tracked(sandbox.root, guard=sandbox.root / "scripts/pii_guard.py", shard=(1, 2)) == []
+    part1 = len(seen)
+    assert privacy_scan.scan_tracked(sandbox.root, guard=sandbox.root / "scripts/pii_guard.py", shard=(2, 2)) == []
+    assert part1 > 0 and len(seen) > part1
+    assert sorted(seen) == all_expected
+    with pytest.raises(ValueError, match="shard bounds"):
+        privacy_scan._parse_shard("0/2")
+    with pytest.raises(ValueError, match="shard bounds"):
+        privacy_scan._parse_shard("3/2")
+    with pytest.raises(ValueError, match="shard spec"):
+        privacy_scan._parse_shard("bad")

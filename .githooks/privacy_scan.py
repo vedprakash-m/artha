@@ -614,13 +614,27 @@ def scan_range(repo: Path, rev_args: list[str], guard: Path = PII_GUARD,
         return [Finding("(git)", f"scanner unavailable: {exc} (fail closed)")]
 
 
-def scan_tracked(repo: Path = ARTHA_DIR, guard: Path = PII_GUARD) -> list[Finding]:
+def _parse_shard(spec: str) -> tuple[int, int]:
+    parts = spec.split("/", 1)
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        raise ValueError(f"invalid --shard spec {spec!r}")
+    index, total = int(parts[0]), int(parts[1])
+    if total < 1 or not 1 <= index <= total:
+        raise ValueError(f"invalid --shard bounds {index}/{total}")
+    return index, total
+
+
+def scan_tracked(repo: Path = ARTHA_DIR, guard: Path = PII_GUARD,
+                 shard: tuple[int, int] | None = None) -> list[Finding]:
     from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
     try:
         config = _gitleaks_config(repo)
         deny = denylist_for(repo)
         items = list(tracked_items(repo))
+        if shard is not None:
+            index, total = shard
+            items = items[index - 1::total]
 
         def _scan_entry(item: tuple[str, bytes | None, str]) -> list[Finding]:
             rel, raw, where = item
@@ -664,7 +678,19 @@ def main(argv: list[str]) -> int:
     if mode == "--staged":
         return report(scan_staged(repo), "Pre-commit")
     if mode == "--tracked":
-        return report(scan_tracked(repo), "Working-tree scan (tracked + untracked nonignored)")
+        shard = None
+        if len(argv) == 3 and argv[1] == "--shard":
+            try:
+                shard = _parse_shard(argv[2])
+            except ValueError as exc:
+                print(exc)
+                return 30
+        elif len(argv) != 1:
+            print(f"unknown options for --tracked: {' '.join(argv[1:])}")
+            return 30
+        label = f"Working-tree scan shard {shard[0]}/{shard[1]}" if shard else "Working-tree scan (tracked + untracked nonignored)"
+        findings = scan_tracked(repo, shard=shard) if shard is not None else scan_tracked(repo)
+        return report(findings, label)
     if mode == "--unpushed":
         return report(scan_range(repo, ["HEAD", "--not", "--remotes"]), "Unpushed-commit scan")
     if mode == "--range":

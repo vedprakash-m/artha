@@ -11,9 +11,13 @@ permissions:
 
 jobs:
   privacy-gate:
-    name: Privacy gate (secrets, PII, forbidden files, owner identifiers)
+    name: Privacy gate (shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
 
     steps:
       - name: Checkout
@@ -47,10 +51,11 @@ jobs:
           echo "${BIN_DIR}" >> "$GITHUB_PATH"
           "${BIN_DIR}/gitleaks" version
 
-      - name: Scan every tracked file
-        run: python .githooks/privacy_scan.py --tracked
+      - name: Scan tracked files (shard ${{ matrix.shard }}/3)
+        run: python .githooks/privacy_scan.py --tracked --shard ${{ matrix.shard }}/3
 
       - name: Scan every commit in the pushed range
+        if: matrix.shard == 1
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             RANGE="origin/${{ github.base_ref }}..HEAD"
@@ -67,4 +72,5 @@ jobs:
           python .githooks/privacy_scan.py --range $RANGE
 
       - name: Verify demo fixtures contain no real PII
+        if: matrix.shard == 1
         run: python scripts/demo_catchup.py --verify

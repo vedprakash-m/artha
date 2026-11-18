@@ -303,7 +303,7 @@ jobs:
           make diff-coverage-harness-check PYTHON=python \
             DIFF_BASE="$DIFF_BASE" DIFF_RANGE_NOTATION="$DIFF_RANGE_NOTATION"
 
-  # ── Sharded Cross-Platform & Cross-Python Fast Matrix ───────────────────────
+  # ── Sharded macOS Fast Matrix (immediate t=0 start) ─────────────────────────
   tests:
     name: pytest (${{ matrix.os }}, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/${{ matrix.splits }})
     runs-on: ${{ matrix.os }}
@@ -312,34 +312,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            python-version: "3.11"
-            shard: 1
-            splits: 2
-          - os: ubuntu-latest
-            python-version: "3.11"
-            shard: 2
-            splits: 2
-          - os: ubuntu-latest
-            python-version: "3.14"
-            shard: 1
-            splits: 2
-          - os: ubuntu-latest
-            python-version: "3.14"
-            shard: 2
-            splits: 2
           - os: macos-latest
             python-version: "3.12"
             shard: 1
-            splits: 3
+            splits: 2
           - os: macos-latest
             python-version: "3.12"
             shard: 2
-            splits: 3
-          - os: macos-latest
-            python-version: "3.12"
-            shard: 3
-            splits: 3
+            splits: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -376,7 +356,46 @@ jobs:
           PYTHONPATH: scripts
           ARTHA_NO_REEXEC: "1"
 
-  # ── Windows Core + Native Contract Shards (3.12 x 5 balanced shards) ────────
+  # ── Sharded Linux Cross-Python Fast Matrix (backfills freed runner slots) ────
+  tests-linux-py:
+    name: pytest (ubuntu-latest, ${{ matrix.python-version }}, shard ${{ matrix.shard }}/3)
+    needs: [static-gates]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            scripts/requirements.txt
+      - name: Install dependencies
+        run: uv pip install --system -r scripts/requirements.txt -e ".[dev]"
+      - name: Install age (Linux native encryption tests)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          command -v age age-keygen
+      - name: Create required runtime directories
+        run: mkdir -p state/career briefings/career
+      - name: Run fast test suite (isolated workspace)
+        run: >-
+          python tools/run_tests_isolated.py tests -m "not slow and not scale"
+          -n auto --tb=short --durations=25 --ignore=tests/work
+          --splitting-algorithm least_duration --splits 3 --group ${{ matrix.shard }}
+        env:
+          PYTHONPATH: scripts
+          ARTHA_NO_REEXEC: "1"
+
+  # ── Windows Core + Native Contract Shards (3.12 x 8 balanced shards) ────────
   core-windows:
     name: Catch-up Windows contracts (3.12, shard ${{ matrix.shard }})
     runs-on: windows-latest
@@ -384,7 +403,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -435,7 +454,7 @@ jobs:
             tests/unit/test_action_queue_durability.py tests/unit/test_hook_portability.py `
             -m "not scale" -q --tb=short --durations=25 -n auto `
             --cov=catchup_core.quarantine_fs_windows --cov=catchup_core.storage_adoption --cov-branch `
-            --splitting-algorithm least_duration --splits 5 --group ${{ matrix.shard }}
+            --splitting-algorithm least_duration --splits 8 --group ${{ matrix.shard }}
           $manifest = @{
             commit = "${{ github.sha }}"
             run_id = "${{ github.run_id }}"
@@ -483,7 +502,7 @@ jobs:
       - name: Verify disjoint shard union and combine native Windows coverage
         run: |
           python tools/merge_windows_coverage.py \
-            --shards-dir "${{ runner.temp }}/win-shards" --shards 5 \
+            --shards-dir "${{ runner.temp }}/win-shards" --shards 8 \
             --commit "${{ github.sha }}" --run-id "${{ github.run_id }}" --run-attempt "${{ github.run_attempt }}" \
             --output-xml coverage-windows.xml --rcfile pyproject.toml \
             --collect-arg=-m --collect-arg="not scale" \
