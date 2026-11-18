@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Fixed — Stable isolated coverage node IDs, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Give the private-work unsafe-path regression stable parameter IDs so live-tree and isolated-workspace shard collections have the same node IDs. | `tests/dev/test_private_work_verification.py` | Both cases pass in isolation; live and isolated collection now produce matching `parent` and `absolute` node IDs. |
+
 ### UAT — re-artha live hold, 2026-11-17
 
 | Change | Modified files | Validation |

@@ -146,7 +146,11 @@ def test_missing_private_file_refused_before_build(source):
         runner._private_manifest(source)
 
 
-@pytest.mark.parametrize("rel", ["../outside.py", str(REPO / "absolute.py")])
+@pytest.mark.parametrize(
+    "rel",
+    ["../outside.py", str(REPO / "absolute.py")],
+    ids=["parent", "absolute"],
+)
 def test_unsafe_source_names_refused(source, rel):
     with pytest.raises(ValueError, match=r"unsafe\ source\ path"):
         runner._source_hash(source, rel)

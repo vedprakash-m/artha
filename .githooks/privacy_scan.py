@@ -682,7 +682,7 @@ def scan_tracked(repo: Path = ARTHA_DIR, guard: Path = PII_GUARD,
         items = list(tracked_items(repo))
         if shard is not None:
             index, total = shard
-            items.sort(key=lambda entry: (-(len(entry[1]) if entry[1] is not None else 0),
+            items.sort(key=lambda entry: (0 if entry[0] in GITLEAKS_PATH_EXEMPT or entry[1] is None else -len(entry[1]),
                                           entry[0]))
             items = items[index - 1::total]
 
