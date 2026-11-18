@@ -11,9 +11,9 @@ The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` 
 - **Fixed:** the test write-audit hook allowed every `/dev/` path, so after CI moved temp to `/dev/shm`,
   hosted run `44263745169` failed 3 Ubuntu jobs. The fix is `4421444`.
 - **Open, now owned elsewhere:**
-  - re-sign 21, a new D3 proposal and `enroll` → `specs/automatic-release-renewal.md`
-  - native Work recovery (fresh generation-12 proposal) → `specs/re-artha-full-completion.md`
-  - classification-review workflow and live UAT → `specs/personal-privacy-boundary.md`
+  - re-sign 21, a new D3 proposal and `enroll` → `specs/refix-artha.md §B.3`
+  - native Work recovery (fresh generation-12 proposal) → `specs/refix-artha.md §B.4`
+  - classification-review workflow and live UAT → `specs/refix-artha.md §B.2`
 
 ## Repository completion audit — 2026-11-17
 
@@ -74,7 +74,7 @@ Targeted and Windows-gated tests pass locally. The register check and the privat
 
 ## Test-suite overhaul, CI sharding and automatic release renewal — 2026-11-16
 
-Engineering for `specs/automatic-release-renewal.md` (`AR-01..AR-26`, 276 tests in the current focused suite) and the
+Engineering for `specs/refix-artha.md §B.3` (`AR-01..AR-26`, 276 tests in the current focused suite) and the
 full test-suite and CI/CD overhaul (`.archive/specs/fix-test-suite-2026-11-16.md`, Waves 0–4,
 commits `8928cc3..e0a3808`) is complete on `main`:
 
@@ -102,7 +102,7 @@ commits `8928cc3..e0a3808`) is complete on `main`:
     (80.38%) across `policy.py`, `coordinator.py`, and `triage.py`.
   - Working-tree, staged, unpushed, and demo-fixture privacy scans passed with 0 findings.
 - **Remaining live and owner-operated gates (why `specs/re-artha.md`,
-  `specs/re-artha-full-completion.md`, and `specs/automatic-release-renewal.md` stay active):**
+  `specs/refix-artha.md §B.4`, and `specs/refix-artha.md §B.3` stay active):**
   1. **Cohort re-sign (`re-sign 20`):** The 6-Domain reduced slice waiver and recovery rehearsal
      now bind implementation `2ee2cd4f…` after a protected-policy source gap was fixed and tested.
      The independent copy is readable and hash-checked as
@@ -111,13 +111,13 @@ commits `8928cc3..e0a3808`) is complete on `main`:
   2. **Personal ledger migration 20 (`0020_personal_scope.sql`):** The live authority ledger is
      migrated 19 → 20, integrity is `ok`, and the encrypted pre-migration backup was verified.
      The privacy authority is resealed at checkpoint 2.
-  3. **D3 enrollment and live UAT (`specs/automatic-release-renewal.md`):** Path A (exact
+  3. **D3 enrollment and live UAT (`specs/refix-artha.md §B.3`):** Path A (exact
      task-approved candidates), D1, and D2 are decided; the updated 21-job `ci.yml` D3 gate
      inventory (`0edc9b61…`, 47 protected files, 147 release-fingerprinted files) passes
      `Authority._check_policy`. Hosted CI run `44185685851` is green on main commit
      `c1ca407402405895f48a90708f62a01a76cc342b` (all 21 required jobs passed). Owner approved
      proposal digest `a2873601…d4d75d`; native `enroll` and live UAT remain.
-  4. **Full-profile completion (`specs/re-artha-full-completion.md`):** Native Windows Work
+  4. **Full-profile completion (`specs/refix-artha.md §B.4`):** Native Windows Work
      recovery remains deferred by owner decision (2026-11-12); independent held-out labels,
      live Work reconciliation/UAT, and the GitHub Support history purge remain open.
 
@@ -3995,7 +3995,7 @@ overflow date arithmetic. These repairs do not complete retention, permission-ru
 intervals, quantity/currency types or pack migration/rollback contracts; those RA-14 requirements remain open.
 
 Household member authentication is awaiting the account/device constraint described in
-`specs/features/household-identity-boundary.md`. Independent action/recovery/product work continues. No new owner UAT,
+`specs/features/household-identity-boundary.md` (archived 2026-11-18 as `.archive/specs/household-identity-boundary-2026-11-18.md`). Independent action/recovery/product work continues. No new owner UAT,
 provider call, ingestion, release/cutover, remote CI or push is claimed.
 
 

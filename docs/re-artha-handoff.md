@@ -310,8 +310,8 @@ Do not count these as passes, run pytest against the live legacy suite, interrup
 ## Start here
 
 `specs/re-artha.md` was archived on 2026-11-18 as `.archive/specs/re-artha-2026-11-18.md`. Its open items now live in
-`specs/automatic-release-renewal.md` (re-sign 21, D3), `specs/re-artha-full-completion.md` (native Work recovery) and
-`specs/personal-privacy-boundary.md` (classification-review workflow, live UAT).
+`specs/refix-artha.md §B.3` (re-sign 21, D3), `specs/refix-artha.md §B.4` (native Work recovery) and
+`specs/refix-artha.md §B.2` (classification-review workflow, live UAT).
 
 Continue the owner's existing completion effort against those specs; do not restart another broad review/fix
 cycle or call green tests full delivery. Read `AGENTS.md` and `.github/copilot-instructions.md`, their required operating

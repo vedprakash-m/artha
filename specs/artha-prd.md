@@ -3207,7 +3207,7 @@ Live adoption remains separately authorized; the workflow does not satisfy histo
 The approved reduced slice is complete: six Domains run authoritatively under owner re-sign 17, all twelve
 WP-10..WP-21 UAT sections are signed with their recorded exceptions, and the observation window was ended by owner
 decision. This is not full-v4 acceptance. The owner then reopened full-profile completion and approved
-`specs/re-artha-full-completion.md`; live acceptance, independent labels, Work
+`specs/re-artha-full-completion.md` (merged 2026-11-18 into `specs/refix-artha.md` §B.4); live acceptance, independent labels, Work
 policy handling, recovery/transfer observations and the provider history purge remain explicit gaps.
 
 The primary user explicitly accepted accountability for every personal Open Item. No per-item owner mapping or

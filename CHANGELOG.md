@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Changed — Open re-artha specs merged into `specs/refix-artha.md`, 2026-11-18
+
+| Change | Modified files | Validation |
+|---|---|---|
+| By owner decision, the seven open re-artha feature specs (scope review, privacy boundary, release renewal, full-profile completion, evidence assemblers, Work reconcile, Windows volatile stream) are merged verbatim into `specs/refix-artha.md` v0.4.0 as Part B, each keeping its own dated approval. Part A stays a draft, and the merge approves nothing new. Four closed specs (owner gates, UAT sheets, household identity, recovery-secret custody) are archived. Tracked pointers now name the Part B sections. | `docs/re-artha-implementation-status.md`, `docs/re-artha-handoff.md`, `specs/artha-tech-spec.md`, `specs/artha-prd.md`, code and test docstrings (local-only: `specs/refix-artha.md`, `.archive/specs/*-2026-11-18.md`) | Every non-blank line of the seven sources appears in Part B. All in-document anchors and relative links resolve. |
+
 ### Added — Owner scope review, phase 2 (per-object collection reads and the `scope-review` verb), 2026-11-18
 
 | Change | Modified files | Validation |
