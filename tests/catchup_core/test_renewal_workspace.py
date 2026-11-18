@@ -89,6 +89,15 @@ def test_AR06_source_mode_matches_git_index(repo):
         Workspace(repo).source()
 
 
+def test_AR06_host_filemode_false_uses_git_index_mode(repo):
+    git(repo, 'config', 'core.filemode', 'false')
+    (repo / 'scripts/example.py').chmod(0o755)
+
+    entry = next(file for file in Workspace(repo).source()['files'] if file['path'] == 'scripts/example.py')
+
+    assert entry['mode'] == '100644'
+
+
 def test_AR13_linked_sources_refuse(repo):
     target = repo / 'outside.py'
     target.write_text('PRIVATE_CANARY')

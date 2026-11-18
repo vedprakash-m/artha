@@ -66,7 +66,8 @@ def context(root: Path | None = None) -> str:
                                    or key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'DEVELOPER_DIR', 'SDKROOT')}})
 
 
-def source_file(path: Path, relative: str, index_mode: str | None = None) -> SourceFile:
+def source_file(path: Path, relative: str, index_mode: str | None = None, *,
+                verify_mode: bool = True) -> SourceFile:
     for parent in (path, *path.parents):
         info = parent.lstat()
         if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
@@ -93,7 +94,7 @@ def source_file(path: Path, relative: str, index_mode: str | None = None) -> Sou
             != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns)):
         raise RenewalError('source changed during inspection')
     mode = '100755' if before.st_mode & stat.S_IXUSR else '100644'
-    if index_mode is not None and mode != index_mode:
+    if index_mode is not None and verify_mode and mode != index_mode:
         raise RenewalError('source executable mode differs from the Git index')
     return SourceFile(relative, hashlib.sha256(raw).hexdigest(), index_mode or mode)
 
@@ -133,10 +134,12 @@ class Workspace:
                         mode, _oid, stage = header.split()
                         if stage == '0':
                             index_modes[name] = mode
+            verify_modes = self.git('config', '--bool', 'core.filemode') != 'false'
             if sum((self.root / name).lstat().st_size for name in names) > _MAX_SOURCE:
                 raise RenewalError('source closure exceeds its byte bound')
             manifest = SourceManifest(tuple(
-                source_file(self.root / name, name, index_modes.get(name)) for name in sorted(names)
+                source_file(self.root / name, name, index_modes.get(name), verify_mode=verify_modes)
+                for name in sorted(names)
             ))
             return cast(dict[str, Any], json.loads(manifest.encode()))
         except (OSError, ValueError):
