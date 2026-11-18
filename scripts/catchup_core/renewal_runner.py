@@ -15,7 +15,7 @@ import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # The directly executed worker imports only the preserved scripts beside itself.
 if __package__ in (None, ''):
@@ -185,9 +185,11 @@ def _worker(command: list[str], root: Path, timeout: int, parent: int) -> None:
 def _containment() -> Callable[[], None]:
     if sys.platform == 'win32':
         return _windows_job()
-    killpg = getattr(os, 'killpg')  # noqa: B009
-    getpgrp = getattr(os, 'getpgrp')  # noqa: B009
-    sigkill = getattr(signal, 'SIGKILL')  # noqa: B009
+    posix_os = cast(Any, os)
+    posix_signal = cast(Any, signal)
+    killpg = posix_os.killpg
+    getpgrp = posix_os.getpgrp
+    sigkill = posix_signal.SIGKILL
     return lambda: killpg(getpgrp(), sigkill)
 
 
