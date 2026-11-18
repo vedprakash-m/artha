@@ -24,6 +24,7 @@ def bench():
     return module
 
 
+@pytest.mark.slow
 def test_core_cost_scales_roughly_linearly_and_stays_far_inside_the_latency_gate(bench):
     rows = bench.benchmark([30, 240])
     assert all(r["cold"]["status"] == "complete" and r["warm"]["status"] == "complete" for r in rows)
