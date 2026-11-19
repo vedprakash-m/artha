@@ -31,6 +31,7 @@ from context_offloader import (
     compact_phase_output,
     sliding_window_compact,
 )
+from lib.context_budget import chars_for_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,16 @@ class TestCompactPhaseOutputEnabled:
         # Short text should not be mutated
         assert short_text in result
 
+    def test_process_phase_truncates_a_single_oversized_line(self):
+        result = compact_phase_output(
+            "process",
+            "x" * 10_000,
+            max_tokens=100,
+        )
+
+        assert result
+        assert len(result) <= chars_for_tokens(100)
+
     def test_unknown_phase_returns_raw(self):
         raw = "raw output for unknown phase"
         result = compact_phase_output("analyze", raw)
@@ -163,6 +174,60 @@ class TestCompactPhaseOutputEnabled:
             result = compact_phase_output("fetch", "email content here")
         # Should return something (not raise); raw or trimmed
         assert isinstance(result, str)
+
+    def test_fetch_phase_compacts_and_honors_token_budget(self):
+        from types import ModuleType
+
+        classifier = ModuleType("email_classifier")
+        classifier.classify_email_batch = lambda raw: [raw]
+        extractor = ModuleType("fact_extractor")
+        extractor.extract_facts = lambda records: ["x" * 10_000]
+        with patch.dict(
+            "sys.modules",
+            {"email_classifier": classifier, "fact_extractor": extractor},
+        ):
+            result = compact_phase_output("fetch", "email")
+
+        assert len(result) <= chars_for_tokens(2000)
+
+    @pytest.mark.parametrize("phase", ["fetch", "process"])
+    def test_compaction_failure_returns_bounded_hold_marker(self, phase, monkeypatch):
+        if phase == "fetch":
+            from types import ModuleType
+
+            classifier = ModuleType("email_classifier")
+
+            def fail(_raw):
+                raise RuntimeError("synthetic extractor failure")
+
+            classifier.classify_email_batch = fail
+            extractor = ModuleType("fact_extractor")
+            extractor.extract_facts = lambda records: records
+            monkeypatch.setitem(
+                __import__("sys").modules,
+                "email_classifier",
+                classifier,
+            )
+            monkeypatch.setitem(
+                __import__("sys").modules,
+                "fact_extractor",
+                extractor,
+            )
+        else:
+            monkeypatch.setattr(
+                "context_offloader.chars_for_tokens",
+                lambda _tokens: (_ for _ in ()).throw(
+                    RuntimeError("synthetic budget failure")
+                ),
+            )
+
+        raw = "unbounded raw output " * 10_000
+        result = compact_phase_output(phase, raw, max_tokens=100)
+
+        assert f"COMPACTION HELD: {phase}" in result
+        assert "RuntimeError" in result
+        assert raw not in result
+        assert len(result) <= chars_for_tokens(500)
 
 
 # ---------------------------------------------------------------------------

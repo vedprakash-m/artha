@@ -102,11 +102,12 @@ def _iso_to_str(raw: str) -> str:
     """
     if not raw:
         return raw
-    # Replace space separator with T for ISO-8601 compliance.
-    # Apple format: "YYYY-MM-DD HH:MM:SS ±HHMM" → "YYYY-MM-DDTHH:MM:SS±HHMM"
-    parts = raw.rsplit(" ", 1)
+    import re
+
+    parts = raw.strip().rsplit(" ", 1)
     if len(parts) == 2:
-        return f"{parts[0].replace(' ', 'T')}{parts[1]}"
+        offset = re.sub(r"^([+-]\d{2})(\d{2})$", r"\1:\2", parts[1])
+        return f"{parts[0].replace(' ', 'T')}{offset}"
     return raw.replace(" ", "T", 1)
 
 
@@ -133,7 +134,7 @@ def _parse_since(since: str) -> str:
 def fetch(
     *,
     since: str,
-    max_results: int,
+    max_results: int = 10000,
     auth_context: Dict[str, Any],
     source_tag: str = "apple_health",
     **kwargs: Any,
@@ -247,6 +248,9 @@ def _iterparse_health_xml(
                 continue
 
             start_date = elem.get("startDate", "")
+            if not start_date:
+                elem.clear()
+                continue
             if start_date < since_str[:10]:  # date prefix comparison (YYYY-MM-DD)
                 elem.clear()
                 continue
@@ -269,15 +273,18 @@ def _iterparse_health_xml(
                 .replace("HKCategoryTypeIdentifier", "")
             )
 
+            date_iso = _iso_to_str(start_date)
             yield {
                 "source": source_tag,
                 "type": record_type,
                 "type_short": type_short,
                 "value": numeric_value,
                 "unit": elem.get("unit", ""),
-                "date_iso": _iso_to_str(start_date),
+                "date_iso": date_iso,
                 "device": elem.get("sourceName", "unknown"),
                 "id": f"ah-{record_type}-{start_date}",
+                "subject": f"Apple Health {type_short}",
+                "body": f"{type_short}: {numeric_value} {elem.get('unit', '')}".strip(),
             }
             count += 1
 

@@ -8,16 +8,19 @@ writes no file.
 
     python3 tools/release_evidence.py measure --config config/catchup_core.yaml --metrics-dir DIR --plan PLAN.json --out M.json
     python3 tools/release_evidence.py assemble-release --config config/catchup_core.yaml --heldout H.json \
-        --bounds B.json --measurements M.json [M2.json ...] --owner-signed-at 2026-11-05T18:00:00-08:00 --out S.json
+        --bounds B.json --measurements M.json [M2.json ...] --owner-signed-at 2026-11-05T18:00:00-08:00 \
+        --owner-decision-ref <64-hex-digest> --out S.json
     python3 tools/release_evidence.py recovery-receipt --config config/catchup_core.yaml --work-checkpoint W.ack2 \
-        --observations O.json --owner-signed-at ... --out R.json
+        --observations O.json --owner-signed-at ... --owner-decision-ref <64-hex-digest> --out R.json
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -40,6 +43,7 @@ from catchup_core.session_lock import SessionBusy, session_lock  # noqa: E402
 from catchup_core.crypto import KeyUnavailableError  # noqa: E402
 
 NORMAL = ("normal_cold", "normal_warm")
+RELEASE_REPETITIONS = 30
 # Owner-attested scenario facts the gate reads; copied verbatim, never defaulted.
 ATTESTED = ("fair_progress", "incomplete_interpretation_safe", "verified_alerts_preserved",
             "coverage_degradation_reported", "query_verified", "restore_verified", "plaintext_fallback",
@@ -74,6 +78,20 @@ def _load_config(path: Path) -> tuple[dict[str, Any], Path]:
     return config, Path(path).resolve().parents[1]
 
 
+def _owner_decision_ref(config: Mapping[str, Any], value: Any) -> str:
+    release = config.get("release")
+    approved = release.get("owner_decision_sha256") if isinstance(release, Mapping) else None
+    if not isinstance(approved, str) or not re.fullmatch(r"[0-9a-f]{64}", approved):
+        raise EvidenceError(
+            "release owner_decision_sha256 must be the approved authenticated owner decision digest")
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise EvidenceError(
+            "owner_decision_ref must be the SHA-256 of the authenticated owner decision")
+    if value != approved:
+        raise EvidenceError("owner_decision_ref differs from the approved authenticated owner decision")
+    return value
+
+
 def _domains(config: dict[str, Any], requested: list[str] | None) -> list[str]:
     domains = requested or (config.get("release") or {}).get("domains")
     if not isinstance(domains, list) or not domains:
@@ -97,10 +115,58 @@ def _write(path: Path, value: Any) -> None:
 
 def _summary(runs: list[dict[str, Any]], label: str) -> dict[str, Any]:
     summary = metrics.summarize(runs)
-    if not summary.get("runs") or summary.get("p95_seconds") is None:
+    logical = metrics._logical_runs(runs)
+    completed = sum(run.get("status") == "complete" for run in logical)
+    if (summary.get("runs", 0) < RELEASE_REPETITIONS
+            or summary.get("p95_seconds") is None
+            or completed * 100 < len(logical) * int(metrics.COMPLETE_GOAL * 100)):
         raise EvidenceError(f"{label}: no complete single-version latency history "
+                            f"with {RELEASE_REPETITIONS} repetitions and the "
+                            f"{metrics.COMPLETE_GOAL:.0%} completion floor "
                             f"({summary.get('verdict', 'no runs')})")
     return summary
+
+
+def _cost_measurement(
+        config: Mapping[str, Any], plan: Mapping[str, Any], runs: list[dict[str, Any]]
+) -> dict[str, Any]:
+    pricing = plan.get("pricing", config.get("pricing"))
+    summary = metrics.estimate_cost(runs, pricing if isinstance(pricing, Mapping) else None)
+    if not summary.get("history_complete"):
+        raise EvidenceError("monthly_usd: metric receipt history is incomplete")
+    verified = summary.get("actual_projected_monthly_usd")
+    estimated = summary.get("projected_monthly_usd")
+    receipt_verified = bool(runs) and all(
+        run.get("actual_usage_verified") is True
+        and isinstance(run.get("actual_cost_usd"), int | float)
+        and not isinstance(run.get("actual_cost_usd"), bool)
+        and math.isfinite(float(run["actual_cost_usd"]))
+        and run["actual_cost_usd"] >= 0
+        and all(type(run.get(name)) is int and run[name] >= 0
+                for name in ("actual_prompt_tokens", "actual_completion_tokens"))
+        for run in runs
+    )
+    if (receipt_verified and summary.get("actual_usage_verified") is True
+            and isinstance(verified, int | float)):
+        monthly = float(verified)
+        basis = "verified_usage"
+    elif isinstance(estimated, int | float):
+        monthly = float(estimated)
+        basis = "estimated"
+    else:
+        raise EvidenceError("monthly_usd: metric receipts have no verified or estimated cost")
+    claimed = plan.get("monthly_usd")
+    if (isinstance(claimed, bool) or not isinstance(claimed, int | float)
+            or not math.isfinite(float(claimed)) or float(claimed) < 0
+            or round(float(claimed), 2) != round(monthly, 2)):
+        raise EvidenceError("plan monthly_usd differs from metric receipt cost evidence")
+    return {
+        "monthly_usd": round(monthly, 2),
+        "cost_basis": basis,
+        "verified_monthly_usd": float(verified) if receipt_verified and verified is not None else None,
+        "estimated_monthly_usd": float(estimated) if estimated is not None else None,
+        "invoiced_monthly_usd": None,
+    }
 
 
 def _load_retained_outcome(config_path: Path, catchup_id: str) -> dict[str, Any]:
@@ -170,15 +236,22 @@ def measure(config: dict[str, Any], workspace: Path, metrics_dir: Path, plan: di
     rows: dict[str, Any] = {}
     every: list[dict[str, Any]] = []
     normal: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
     for name in policy._RELEASE_WORKLOADS:
         entry = scenarios[name]
         ids = entry.get("catchup_ids")
         if not isinstance(ids, list) or not ids or len(set(ids)) != len(ids):
             raise EvidenceError(f"{name}: needs distinct catchup_ids of the measured runs")
+        reused = used_ids.intersection(ids)
+        if reused:
+            raise EvidenceError(f"{name}: reuses measured Catch-ups from another workload: {sorted(reused)}")
+        used_ids.update(ids)
         absent = [cid for cid in ids if cid not in by_id]
         if absent:
             raise EvidenceError(f"{name}: no metric record for {absent}")
         selected = [run for cid in ids for run in by_id[cid]]
+        if any(run.get("cohort") != cohort for run in selected):
+            raise EvidenceError(f"{name}: measured run cohort differs from the current release cohort")
         summary = _summary(selected, name)
         missing_flags = [flag for flag in ATTESTED if flag not in entry]
         if missing_flags:
@@ -192,15 +265,17 @@ def measure(config: dict[str, Any], workspace: Path, metrics_dir: Path, plan: di
         every += selected
         if name in NORMAL:
             normal += selected
-    overall = metrics.summarize(every)
-    total = overall["runs"] + overall.get("paused_runs", 0) + overall.get("unknown_runs", 0)
+    logical = metrics._logical_runs(every)
+    total = len(logical)
+    completed = sum(run.get("status") == "complete" for run in logical)
     for key in ("review_minutes", "monthly_usd", "source_age_hours", "workload"):
         if key not in plan:
             raise EvidenceError(f"plan needs measured {key}")
+    cost = _cost_measurement(config, plan, every)
     return {domain: {"cohort": cohort, "workload": plan["workload"], "review_minutes": plan["review_minutes"],
-                     "monthly_usd": plan["monthly_usd"], "source_age_hours": plan["source_age_hours"],
+                     **cost, "source_age_hours": plan["source_age_hours"],
                      "p95_seconds": _summary(normal, "normal workload")["p95_seconds"],
-                     "completed_runs": round(overall["complete_ratio"] * total), "total_runs": total,
+                     "completed_runs": completed, "total_runs": total,
                      "workloads": rows}}
 
 
@@ -215,16 +290,25 @@ def _gate(result: dict[str, Any], domains: list[str], cohort: dict[str, str], mi
     policy._validate_evaluation_cohort(result, cohort)
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def assemble_release(config: dict[str, Any], workspace: Path, heldout: dict[str, Any], bounds: dict[str, Any],
                      measurements: dict[str, Any], owner_signed_at: str, domains: list[str], *,
-                     outcome: dict[str, Any]) -> dict[str, Any]:
+                     outcome: dict[str, Any], owner_decision_ref: str | None = None) -> dict[str, Any]:
     if not isinstance(heldout, dict):
         raise EvidenceError("held-out assembly must be a mapping")
     for key in ("cohort", "evaluations", "corpus", "document_fields"):
         if key not in heldout:
             raise EvidenceError(f"held-out assembly lacks {key}; run the heldout assemble step first")
-    if not owner_signed_at.strip():
+    if not isinstance(owner_signed_at, str) or not owner_signed_at.strip():
         raise EvidenceError("owner_signed_at is required")
+    decision_ref = _owner_decision_ref(config, owner_decision_ref)
     filled: dict[str, Any] = {}
     for domain in domains:
         if domain not in bounds:
@@ -239,7 +323,9 @@ def assemble_release(config: dict[str, Any], workspace: Path, heldout: dict[str,
               "cases": score(policy._release_cases(evaluations)).cases, "live_cases": sum(c.get("consented_live") is True for c in evaluations),
               "owner_signed_at": owner_signed_at, "corpus": heldout["corpus"],
               "document_fields": heldout["document_fields"], "bounds": filled,
-              "measurements": {d: measurements[d] for d in domains}}
+              "measurements": {d: measurements[d] for d in domains},
+              "owner_decision_ref": decision_ref}
+    result["recorded_at"] = owner_signed_at
     cohort = policy.evaluation_cohort(config, domains, workspace=workspace)
     minimum = (config.get("release") or {}).get("minimum_precision", 0.8)
     _gate(result, domains, cohort, minimum)
@@ -247,13 +333,14 @@ def assemble_release(config: dict[str, Any], workspace: Path, heldout: dict[str,
 
 
 def recovery_receipt(config: dict[str, Any], work_checkpoint: Path, observations: dict[str, Any],
-                     owner_signed_at: str) -> dict[str, Any]:
+                     owner_signed_at: str, *, owner_decision_ref: str | None = None) -> dict[str, Any]:
     release = config.get("release")
     if not isinstance(release, dict) or not release.get("rollback_snapshot"):
         raise EvidenceError("release.rollback_snapshot must be approved before the recovery receipt")
+    decision_ref = _owner_decision_ref(config, owner_decision_ref)
     snapshot = release["rollback_snapshot"]
     head = policy.verify_preservation_checkpoint(Path(snapshot["path"]), expected_sha256=snapshot["sha256"])
-    work_sha = hashlib.sha256(Path(work_checkpoint).read_bytes()).hexdigest()
+    work_sha = _file_sha256(Path(work_checkpoint))
     work_head = policy.verify_preservation_checkpoint(Path(work_checkpoint), expected_sha256=work_sha)
     evidence = policy._evidence_field(release)
     if not release.get(evidence):
@@ -266,14 +353,20 @@ def recovery_receipt(config: dict[str, Any], work_checkpoint: Path, observations
         raise EvidenceError(f"observations must be exactly {sorted(bound)}")
     rows = {}
     for name, (profile, digest, generation) in bound.items():
-        rows[name] = {**observations[name], "profile": profile, "checkpoint_sha256": digest,
-                      "checkpoint_generation": generation}
+        observed = observations[name]
+        if not isinstance(observed, dict):
+            raise EvidenceError(f"{name}: recovery observation must be a mapping")
+        if (observed.get("profile") != profile or observed.get("checkpoint_sha256") != digest
+                or observed.get("checkpoint_generation") != generation):
+            raise EvidenceError(f"{name}: recovery observation checkpoint identity differs")
+        rows[name] = dict(observed)
     receipt = {"schema": "artha.recovery-rehearsal.v2", "passed": True, "reconciled": True,
                "owner_signed_at": owner_signed_at, "checkpoint_sha256": snapshot["sha256"],
                "checkpoint_generation": head["generation"], "cohort": cohort,
                "work_checkpoint": {"path": str(work_checkpoint), "sha256": work_sha, "profile": "work",
                                    "generation": work_head["generation"]},
-               "observations": rows}
+               "observations": rows, "owner_decision_ref": decision_ref}
+    receipt["recorded_at"] = owner_signed_at
     policy._validate_recovery_acceptance(receipt, release, head, str(head["generation"]))
     return receipt
 
@@ -288,7 +381,10 @@ def main(argv: list[str] | None = None) -> int:
         if name != "recovery-receipt":
             command.add_argument("--domains", nargs="+")
         if name != "measure":
-            command.add_argument("--owner-signed-at", required=True)
+            command.add_argument("--owner-signed-at", required=True,
+                                 help="non-authoritative recorded_at compatibility value")
+            command.add_argument("--owner-decision-ref", required=True,
+                                 help="authenticated owner decision reference")
     sub.choices["measure"].add_argument("--metrics-dir", type=Path, required=True)
     sub.choices["measure"].add_argument("--plan", type=Path, required=True)
     sub.choices["assemble-release"].add_argument("--heldout", type=Path, required=True)
@@ -320,10 +416,10 @@ def main(argv: list[str] | None = None) -> int:
             outcome = _load_retained_outcome(args.config, next(iter(catchup_ids)))
             value = assemble_release(config, workspace, heldout, _load_json(args.bounds),
                                      merged, args.owner_signed_at, _domains(config, args.domains),
-                                     outcome=outcome)
+                                     outcome=outcome, owner_decision_ref=args.owner_decision_ref)
         else:
             value = recovery_receipt(config, args.work_checkpoint, _load_json(args.observations),
-                                     args.owner_signed_at)
+                                     args.owner_signed_at, owner_decision_ref=args.owner_decision_ref)
     except (EvidenceError, PermissionDenied, corpus.CorpusError, RuntimeConfigError, LedgerError,
             KeyUnavailableError, SessionBusy, OSError) as exc:
         print(f"refused: {exc}", file=sys.stderr)

@@ -28,7 +28,8 @@ schema_version: "2.0"
 # ---------------------------------
 # While the hardened action lifecycle (unknown outcomes, compare-and-set claims,
 # payload-bound approval) is being proven, reminder_create is the only outbound
-# action type on trial: it affects only the owner's own list and is reversible.
+# action type on trial: it affects only the owner's own list and is not
+# advertised as reversible until a real reverse handler is registered.
 # Types under `held` may still be proposed and queued, but approve() refuses to
 # execute them.  Promote a type by deleting it from this list (a commit-visible,
 # one-line decision) after its predecessor has run clean in the audit trail.
@@ -38,10 +39,14 @@ live_trial:
   held:
     - calendar_create
     - calendar_modify
+    - todo_sync
+    - todoist_sync
+    - instruction_sheet
     - email_send
     - email_reply
     - whatsapp_send
     - slack_send
+    - apple_reminders_sync
 
 actions:
 
@@ -55,8 +60,8 @@ actions:
     sensitivity: standard
     timeout_sec: 30
     retry: false                 # no retry for sent emails
-    reversible: true
-    undo_window_sec: 30          # 30-second Gmail unsend window
+    reversible: false
+    undo_window_sec:
     rate_limit:
       max_per_hour: 20
       max_per_day: 100
@@ -82,8 +87,8 @@ actions:
     sensitivity: standard
     timeout_sec: 30
     retry: false
-    reversible: true
-    undo_window_sec: 30
+    reversible: false
+    undo_window_sec:
     rate_limit:
       max_per_hour: 20
       max_per_day: 100
@@ -112,12 +117,12 @@ actions:
     timeout_sec: 15
     retry: true
     retry_max: 2
-    reversible: true
-    undo_window_sec: 3600        # 1 hour to undo (delete created event)
+    reversible: false
+    undo_window_sec:
     rate_limit:
       max_per_hour: 30
       max_per_day: 100
-    pii_check: false             # calendar events rarely contain PII
+    pii_check: true
     preview_required: true
     l2_eligible: false
     provider_dedup_mode: search_before_create
@@ -135,12 +140,12 @@ actions:
     timeout_sec: 15
     retry: true
     retry_max: 2
-    reversible: true
-    undo_window_sec: 3600
+    reversible: false
+    undo_window_sec:
     rate_limit:
       max_per_hour: 20
       max_per_day: 50
-    pii_check: false
+    pii_check: true
     preview_required: true
     l2_eligible: false
     provider_dedup_mode: search_before_create
@@ -160,12 +165,12 @@ actions:
     timeout_sec: 15
     retry: true
     retry_max: 2
-    reversible: true
-    undo_window_sec: 86400       # 24 hours
+    reversible: false
+    undo_window_sec:
     rate_limit:
       max_per_hour: 30
       max_per_day: 200
-    pii_check: false
+    pii_check: true
     preview_required: true
     l2_eligible: false
     provider_dedup_mode: search_before_create
@@ -187,7 +192,7 @@ actions:
     rate_limit:
       max_per_hour: 10
       max_per_day: 50
-    pii_check: false
+    pii_check: true
     preview_required: true
     l2_eligible: false
     provider_dedup_mode: source_of_truth

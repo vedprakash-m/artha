@@ -17,9 +17,11 @@ there is no plaintext fallback.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,15 +30,16 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from catchup_core.session_lock import default_installation_dir, installation_fence
+from catchup_core.session_lock import publication_fence
+from lib.state_frontmatter import FrontmatterError, split_frontmatter
 
 __all__ = [
-    "AgeVault", "DestructiveWrite", "StructureReport", "VaultError", "VaultUnavailable", "check_write",
-    "find_age_bin", "record_ids", "split_monthly", "validate_structure",
+    "AgeVault", "DestructiveWrite", "StructureReport", "VaultConflict", "VaultError",
+    "VaultUnavailable", "check_write", "find_age_bin", "record_ids", "split_monthly",
+    "validate_structure",
 ]
 
 _RECORD_ID = re.compile(r"\b(?:OI|DEC|SCN|SIG|G|SPR|CON)-\d+\b")
-_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
 _KEEP_VERSIONS = 3
 
 
@@ -52,6 +55,10 @@ class DestructiveWrite(VaultError):
     """A write would remove records or change identity without approval."""
 
 
+class VaultConflict(VaultError):
+    """The ciphertext changed after its caller read the original revision."""
+
+
 # ── structural validation (replaces the size-shrink heuristic) ─────────────
 
 @dataclass(frozen=True)
@@ -62,23 +69,34 @@ class StructureReport:
 
 
 def _frontmatter(text: str) -> dict[str, str] | None:
-    m = _FRONTMATTER.match(text)
-    if not m:
+    try:
+        parts = split_frontmatter(text)
+    except FrontmatterError:
+        return None
+    if parts is None:
         return None
     fields: dict[str, str] = {}
-    for line in m.group(1).splitlines():
+    for line in parts.metadata.splitlines():
         if ":" in line and not line.startswith((" ", "-", "#")):
             key, _, value = line.partition(":")
-            fields[key.strip()] = value.strip().strip("\"'")
+            normalized = key.strip()
+            if normalized in fields:
+                raise FrontmatterError(f"duplicate frontmatter field: {normalized}")
+            fields[normalized] = value.strip().strip("\"'")
     return fields
 
 
 def validate_structure(text: str, expected_domain: str | None = None) -> StructureReport:
     problems: list[str] = []
-    fm = _frontmatter(text)
+    try:
+        fm = _frontmatter(text)
+    except FrontmatterError as exc:
+        problems.append(str(exc))
+        fm = None
     domain: str | None = None
     if fm is None:
-        problems.append("missing YAML frontmatter")
+        if not problems:
+            problems.append("missing YAML frontmatter")
     else:
         domain = fm.get("domain")
         if not domain:
@@ -103,7 +121,10 @@ def check_write(old: str | None, new: str, *, expected_domain: str | None = None
         raise DestructiveWrite("; ".join(report.problems))
     if old is None:
         return
-    old_fm, new_fm = _frontmatter(old) or {}, _frontmatter(new) or {}
+    try:
+        old_fm, new_fm = _frontmatter(old) or {}, _frontmatter(new) or {}
+    except FrontmatterError as exc:
+        raise DestructiveWrite(str(exc)) from exc
     if old_fm.get("domain") and old_fm.get("domain") != new_fm.get("domain"):
         raise DestructiveWrite("write changes the file's domain")
     missing = record_ids(old) - record_ids(new) - set(approved_removals)
@@ -176,12 +197,52 @@ class AgeVault:
     def exists(self, name: str) -> bool:
         return self.path_for(name).is_file()
 
+    @staticmethod
+    def _validate_ciphertext_path(path: Path, *, missing_ok: bool = False) -> bool:
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            if missing_ok:
+                return False
+            raise VaultError(f"{path.name}: no encrypted file") from None
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or path.is_symlink()
+            or getattr(metadata, "st_file_attributes", 0) & 0x400
+        ):
+            raise VaultError(f"{path.name}: encrypted path is not an ordinary unlinked file")
+        return True
+
+    @staticmethod
+    def _cipher_revision(path: Path) -> str:
+        if not AgeVault._validate_ciphertext_path(path, missing_ok=True):
+            return ""
+        digest = hashlib.sha256(os.path.normcase(str(path.absolute())).encode("utf-8") + b"\0")
+        digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    def revision_for(self, name: str) -> tuple[bool, str]:
+        path = self.path_for(name)
+        return path.is_file(), self._cipher_revision(path)
+
     # decrypt ---------------------------------------------------------------
     def read(self, name: str) -> str:
         path = self.path_for(name)
-        if not path.is_file():
-            raise VaultError(f"{name}: no encrypted file")
-        return self.read_artifact(path)
+        with publication_fence(path, shared=True):
+            self._validate_ciphertext_path(path)
+            return self.read_artifact(path)
+
+    def read_versioned(self, name: str) -> tuple[str, str]:
+        """Return plaintext with the exact ciphertext revision for a later write."""
+        path = self.path_for(name)
+        with publication_fence(path, shared=True):
+            self._validate_ciphertext_path(path)
+            revision = self._cipher_revision(path)
+            plaintext = self.read_artifact(path)
+            if self._cipher_revision(path) != revision:
+                raise VaultConflict(f"{name}: encrypted State File changed during read")
+            return plaintext, revision
 
     def read_artifact(self, path: Path) -> str:
         """Decrypt an age artifact into memory; callers enforce its schema and input bounds."""
@@ -225,16 +286,32 @@ class AgeVault:
         return proc.stdout
 
     def write(self, name: str, text: str, *, expected_domain: str | None = None,
-              approved_removals: Iterable[str] = (), previous: str | None = None) -> Path:
+              approved_removals: Iterable[str] = (), previous: str | None = None,
+              expected_revision: str | None = None) -> Path:
         """Validate, encrypt from memory, keep a recoverable version, replace atomically."""
-        with installation_fence(default_installation_dir()):  # excluded while a full-state checkpoint is captured
-            return self._write(name, text, expected_domain, approved_removals, previous)
+        path = self.path_for(name)
+        self._validate_ciphertext_path(path, missing_ok=True)
+        with publication_fence(path):
+            return self._write(
+                name, text, expected_domain, approved_removals, previous,
+                expected_revision,
+            )
 
     def _write(self, name: str, text: str, expected_domain: str | None, approved_removals: Iterable[str],
-               previous: str | None) -> Path:
+               previous: str | None, expected_revision: str | None) -> Path:
         path = self.path_for(name)
+        actual_revision = self._cipher_revision(path)
+        if expected_revision is not None:
+            if expected_revision != "" and (
+                len(expected_revision) != 64
+                or any(char not in "0123456789abcdef" for char in expected_revision)
+            ):
+                raise VaultConflict("encrypted State File revision token is invalid")
+            if expected_revision != actual_revision:
+                state = "created" if not expected_revision and actual_revision else "changed"
+                raise VaultConflict(f"{name}: encrypted State File {state} after its original read")
         if previous is None and path.is_file():
-            previous = self.read(name)
+            previous = self.read_artifact(path)
         check_write(previous, text, expected_domain=expected_domain or name,
                     approved_removals=approved_removals)
         blob = self._encrypt(text)
@@ -248,6 +325,8 @@ class AgeVault:
             if path.is_file():
                 self._rotate_versions(path)
             os.replace(tmp, path)
+            if path.read_bytes() != blob:
+                raise VaultError(f"{name}: encrypted publication verification failed")
         except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)

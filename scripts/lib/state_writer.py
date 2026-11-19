@@ -20,12 +20,11 @@ Architecture
 
 Thread-safety
 -------------
-Neither function implements per-file locking.  Callers MUST NOT invoke
-``write()`` for the same target path from concurrent threads.
-``tempfile → os.replace()`` ensures the file is never seen in a partially
-written state, but it does NOT prevent lost updates when two threads race
-on the same path.  Fan-out callers (``pipeline.py`` ThreadPoolExecutor)
-must target distinct files.
+``write()`` holds an installation fence and a machine-local target lock through
+comparison, staging and publication.  Read/modify/write callers bind the
+original ``read_versioned()`` token with ``expected_token``; the token is
+rechecked immediately before replacement.  ``write_atomic()`` remains a
+low-level no-lock utility for non-authoritative temporary data.
 
 Reference implementations
 --------------------------
@@ -38,9 +37,8 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import json
 import os
-import re
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -48,95 +46,139 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-
-# ---------------------------------------------------------------------------
-# OCC Exceptions
-# ---------------------------------------------------------------------------
-
-class OCCConflictError(RuntimeError):
-    """Raised when an Optimistic Concurrency Control version mismatch is detected.
-
-    Attributes:
-        path:             Path to the state file.
-        expected_version: The version the writer read before composing the update.
-        found_version:    The version encountered on the re-read verify step.
-        message:          Human-readable description.
-    """
-
-    def __init__(
-        self,
-        path: Path | str,
-        expected_version: int,
-        found_version: int,
-    ) -> None:
-        self.path = Path(path)
-        self.expected_version = expected_version
-        self.found_version = found_version
-        super().__init__(
-            f"OCC conflict on {self.path}: "
-            f"expected version {expected_version}, found {found_version}"
-        )
+try:
+    from .state_frontmatter import field_value, split_frontmatter, with_frontmatter_fields
+except ImportError:  # scripts/lib is imported directly by legacy callers
+    from state_frontmatter import field_value, split_frontmatter, with_frontmatter_fields
 
 
 # ---------------------------------------------------------------------------
-# OCC frontmatter helpers (private)
+# Conflict tokens
 # ---------------------------------------------------------------------------
 
-_OCC_VERSION_RE = re.compile(r"^version:\s*(\d+)\s*$", re.MULTILINE)
-_OCC_WRITER_RE = re.compile(r"^last_written_by:\s*(.+?)\s*$", re.MULTILINE)
-_OCC_AT_RE = re.compile(r"^last_written_at:\s*(.+?)\s*$", re.MULTILINE)
+@dataclass(frozen=True)
+class StateWriteToken:
+    """The target, native file generation and content read before a state update."""
 
+    target: str
+    revision: str
+    native_identity: tuple[int, int, int, int, int, int] = (0, 0, 0, 0, 0, 0)
+
+
+class StateWriteConflict(RuntimeError):
+    """The file no longer matches the original read or create-if-absent token."""
+
+
+# ---------------------------------------------------------------------------
+# Migration-compatible frontmatter helpers (private)
+# ---------------------------------------------------------------------------
 
 def _extract_occ_version(content: str) -> int:
-    """Extract ``version:`` integer from YAML frontmatter.  Returns 0 if absent."""
-    m = _OCC_VERSION_RE.search(content)
-    return int(m.group(1)) if m else 0
+    """Extract a frontmatter version; absent, empty and malformed values are 0."""
+    parts = split_frontmatter(content)
+    if parts is None:
+        return 0
+    value = field_value(parts.metadata, "version")
+    if not value:
+        return 0
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 def _inject_occ_fields(content: str, version: int, source: str) -> str:
-    """Inject or update OCC fields in YAML frontmatter.
-
-    Handles two cases:
-    1. File already has a YAML frontmatter block (starts with ``---``):
-       updates/inserts the three OCC fields inside the block.
-    2. No frontmatter: prepends a minimal frontmatter block with OCC fields.
-
-    OCC fields written:
-      - ``version: <int>``
-      - ``last_written_by: <source>``
-      - ``last_written_at: <ISO-8601 UTC>``
-    """
+    """Losslessly update the legacy migration metadata for ``migrate_occ``."""
     now_iso = datetime.now(timezone.utc).isoformat()
-
-    def _set_field(text: str, key: str, value: str, regex: re.Pattern) -> str:
-        """Replace or append a ``key: value`` line in YAML frontmatter text."""
-        replacement = f"{key}: {value}"
-        if regex.search(text):
-            return regex.sub(replacement, text, count=1)
-        # Append before closing ``---``
-        return text.rstrip() + f"\n{replacement}"
-
-    if content.startswith("---"):
-        # Find frontmatter end marker
-        end_match = re.search(r"\n---\s*\n", content[3:])
-        if end_match:
-            fm_end = end_match.end() + 3  # +3 for the leading '---'
-            fm = content[3:fm_end - end_match.end() + end_match.start() + 3]
-            # Update fields within fm block
-            fm = _set_field(fm, "version", str(version), _OCC_VERSION_RE)
-            fm = _set_field(fm, "last_written_by", source, _OCC_WRITER_RE)
-            fm = _set_field(fm, "last_written_at", now_iso, _OCC_AT_RE)
-            return "---" + fm + content[fm_end:]
-
-    # No frontmatter — prepend one
-    header = (
-        f"---\n"
-        f"version: {version}\n"
-        f"last_written_by: {source}\n"
-        f"last_written_at: {now_iso}\n"
-        f"---\n"
+    return with_frontmatter_fields(
+        content,
+        {
+            "version": str(version),
+            "last_written_by": source,
+            "last_written_at": now_iso,
+        },
     )
-    return header + content
+
+
+def _target_identity(path: Path) -> str:
+    return os.path.normcase(str(path.absolute()))
+
+
+def _native_file_identity(
+    metadata: os.stat_result | None,
+) -> tuple[int, int, int, int, int, int]:
+    if metadata is None:
+        return (0, 0, 0, 0, 0, 0)
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(getattr(metadata, "st_birthtime_ns", 0) or 0),
+        int(metadata.st_ctime_ns),
+        int(metadata.st_mtime_ns),
+        int(metadata.st_size),
+    )
+
+
+def _validate_state_target(path: Path, metadata: os.stat_result) -> None:
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise StateWriteConflict(f"State File target is not an ordinary unlinked file: {path}")
+    if path.is_symlink() or getattr(metadata, "st_file_attributes", 0) & 0x400:
+        raise StateWriteConflict(f"State File target is a link or reparse point: {path}")
+
+
+def _token_for_bytes(
+    path: Path,
+    data: bytes | None,
+    metadata: os.stat_result | None = None,
+) -> StateWriteToken:
+    if data is None:
+        revision = ""
+    else:
+        digest = hashlib.sha256(_target_identity(path).encode("utf-8") + b"\0" + data)
+        revision = digest.hexdigest()
+    return StateWriteToken(
+        _target_identity(path),
+        revision,
+        _native_file_identity(metadata),
+    )
+
+
+def _read_bytes_and_token(path: Path) -> tuple[bytes | None, StateWriteToken]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None, _token_for_bytes(path, None)
+    _validate_state_target(path, metadata)
+    data = path.read_bytes()
+    try:
+        finished = path.lstat()
+    except FileNotFoundError as exc:
+        raise StateWriteConflict(f"State File changed while it was read: {path}") from exc
+    _validate_state_target(path, finished)
+    if _native_file_identity(metadata) != _native_file_identity(finished):
+        raise StateWriteConflict(f"State File changed while it was read: {path}")
+    return data, _token_for_bytes(path, data, finished)
+
+
+def read_versioned(path: Path) -> tuple[str, StateWriteToken]:
+    """Read exact UTF-8 bytes and return the token required by a later write."""
+    path = Path(path)
+    data, token = _read_bytes_and_token(path)
+    if data is None:
+        raise FileNotFoundError(f"State File is absent; use create_if_absent_token(): {path}")
+    try:
+        return data.decode("utf-8"), token
+    except UnicodeDecodeError as exc:
+        raise StateWriteConflict(f"State File is not valid UTF-8: {path}") from exc
+
+
+def create_if_absent_token(path: Path) -> StateWriteToken:
+    """Return an explicit create token only while the target is absent."""
+    path = Path(path)
+    data, token = _read_bytes_and_token(path)
+    if data is not None:
+        raise StateWriteConflict(f"State File already exists; explicit create token unavailable: {path}")
+    return token
 
 
 @dataclass
@@ -147,6 +189,7 @@ class WriteResult:
     success: bool
     snapshot_path: Optional[Path] = None
     middleware_log: list[str] = field(default_factory=list)
+    uncertain: bool = False
 
 
 def _write_unfenced(
@@ -158,6 +201,7 @@ def _write_unfenced(
     snapshot: bool = True,
     pii_check: bool = True,
     ctx: Any | None = None,
+    expected_token: StateWriteToken | None = None,
 ) -> WriteResult:
     """Canonical state write.  ALL ``state/*.md`` mutations MUST use this.
 
@@ -171,18 +215,29 @@ def _write_unfenced(
             Used by middleware for audit logging and PII routing.
         source: Identifying label for the caller (e.g. ``"calendar_writer"``,
             ``"fact_extractor"``).  Stored in middleware log.
-        snapshot: If ``True`` and the file already exists, create a snapshot
-            in ``tmp/state_snapshots/`` before overwriting.  WriteGuard
-            middleware also creates its own snapshot as a safety net.
+        snapshot: If ``True`` and the file already exists, create one snapshot
+            in ``tmp/state_snapshots/`` before overwriting.
         pii_check: If ``True``, run the PII middleware in the stack.
             Set ``False`` only for content already confirmed PII-free.
         ctx: Optional ``ArthaContext`` instance forwarded to middleware.
+        expected_token: Exact ``read_versioned()`` token or create token.
 
     Returns:
         :class:`WriteResult` with ``success=True`` on success, ``False`` on
         middleware block or OS error.  ``snapshot_path`` is set when a
         pre-write snapshot was created.
     """
+    if expected_token is None:
+        raise TypeError(
+            "expected_token is required; use read_versioned() for updates "
+            "or create_if_absent_token() for creation"
+        )
+    if not isinstance(expected_token, StateWriteToken):
+        raise TypeError(
+            "expected_token must be returned by read_versioned() "
+            "or create_if_absent_token()"
+        )
+
     result = WriteResult(path=path, success=False)
     log = result.middleware_log
     log.append(f"write called: domain={domain} source={source} path={path}")
@@ -190,44 +245,83 @@ def _write_unfenced(
     # ------------------------------------------------------------------ #
     # 1. Build current content (empty string for new files)               #
     # ------------------------------------------------------------------ #
-    current_content = ""
-    if path.exists():
-        try:
-            current_content = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            log.append(f"WARN: could not read current content: {exc}")
+    try:
+        current_bytes, current_token = _read_bytes_and_token(path)
+        current_content = "" if current_bytes is None else current_bytes.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        log.append(f"ERROR reading current content: {exc}")
+        return result
 
-    # ------------------------------------------------------------------ #
-    # 2. Optional pre-write snapshot                                      #
-    # ------------------------------------------------------------------ #
-    if snapshot and current_content:
-        snap = _create_snapshot(path, current_content)
-        if snap:
-            result.snapshot_path = snap
-            log.append(f"snapshot created: {snap}")
+    if expected_token.target != current_token.target:
+        raise StateWriteConflict(f"State File token belongs to another target: {path}")
+    if (
+        expected_token.native_identity != current_token.native_identity
+        or expected_token.revision != current_token.revision
+    ):
+        state = "created" if not expected_token.revision and current_bytes is not None else "changed"
+        raise StateWriteConflict(f"State File {state} after its original read: {path}")
 
-    # ------------------------------------------------------------------ #
-    # 3. Compose and run middleware before_write                          #
-    # ------------------------------------------------------------------ #
-    stack = _build_middleware_stack(pii_check=pii_check)
+    try:
+        stack = _build_middleware_stack(pii_check=pii_check)
+    except Exception as exc:  # noqa: BLE001
+        log.append(f"BLOCKED: mandatory middleware unavailable: {exc}")
+        return result
     approved = stack.before_write(domain, current_content, content, ctx)
     if approved is None:
         log.append("BLOCKED by middleware before_write")
         return result  # success=False
 
+    if snapshot and current_content:
+        snap = _snapshot_current(path, domain, current_content)
+        if snap is None:
+            log.append("BLOCKED: pre-write snapshot failed")
+            return result
+        result.snapshot_path = snap
+        log.append(f"snapshot created: {snap}")
+
+    _assert_expected_token(path, expected_token)
+
     # ------------------------------------------------------------------ #
-    # 4. Atomic write: tempfile → os.replace()                           #
+    # 2. Atomic write: tempfile → os.replace()                            #
     # ------------------------------------------------------------------ #
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path_str = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}-", suffix=".tmp"
     )
+    published = False
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        proposed_bytes = approved.encode("utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(approved)
+            fh.flush()
+            os.fsync(fh.fileno())
+        staged_bytes, staged_token = _read_bytes_and_token(Path(tmp_path_str))
+        if staged_bytes != proposed_bytes:
+            raise OSError("staged State File bytes changed before publication")
+        staged_object_identity = staged_token.native_identity[:3]
+        _assert_expected_token(path, expected_token)
         os.replace(tmp_path_str, path)
+        published = True
+        _fsync_directory(path.parent)
+        published_bytes, published_token = _read_bytes_and_token(path)
+        if published_token.native_identity[:3] != staged_object_identity:
+            result.uncertain = True
+            log.append(
+                "ERROR: post-publication native identity did not match the staged object"
+            )
+            return result
+        if published_bytes != proposed_bytes:
+            result.uncertain = True
+            log.append("ERROR: post-publication readback did not match proposed bytes")
+            return result
     except Exception as exc:  # noqa: BLE001
-        log.append(f"ERROR during atomic write: {exc}")
+        if published:
+            result.uncertain = True
+            log.append(f"ERROR: publication outcome uncertain: {exc}")
+        else:
+            if isinstance(exc, StateWriteConflict):
+                raise
+            log.append(f"ERROR during atomic write: {exc}")
         try:
             os.unlink(tmp_path_str)
         except OSError:
@@ -238,7 +332,7 @@ def _write_unfenced(
     log.append("write succeeded")
 
     # ------------------------------------------------------------------ #
-    # 5. Run middleware after_write (non-fatal)                           #
+    # 3. Run middleware after_write (non-fatal)                           #
     # ------------------------------------------------------------------ #
     try:
         stack.after_write(domain, path)
@@ -252,8 +346,8 @@ def _write_unfenced(
 def write(path: Path, content: str, **kwargs: Any) -> WriteResult:
     """Fenced State File write: refused while a checkpoint is captured and in a restored installation."""
     _ensure_scripts_on_path()
-    from catchup_core.session_lock import writer_fence  # noqa: PLC0415
-    with writer_fence(Path(path)):
+    from catchup_core.session_lock import publication_fence  # noqa: PLC0415
+    with publication_fence(Path(path)):
         return _write_unfenced(path, content, **kwargs)
 
 
@@ -291,101 +385,6 @@ def write_atomic(path: Path, content: str, **_kwargs: Any) -> WriteResult:
     return result
 
 
-def write_occ(
-    path: Path,
-    content: str,
-    *,
-    domain: str = "unknown",
-    source: str = "system",
-    snapshot: bool = True,
-    pii_check: bool = True,
-    ctx: Any | None = None,
-) -> WriteResult:
-    """Canonical OCC-protected state write.  Like ``write()`` but adds
-    Optimistic Concurrency Control (OCC) version management.
-
-    Protocol:
-      1. Read current ``version: N`` from YAML frontmatter (0 if absent).
-      2. Inject/update OCC fields in new content: ``version: N+1``,
-         ``last_written_by: <source>``, ``last_written_at: <ISO-8601 UTC>``.
-      3. Delegate to ``write()`` — full middleware stack + atomic write.
-      4. Re-read the written file and assert ``version == N+1``.
-         If mismatch: emit telemetry, raise ``OCCConflictError``.
-
-    This provides a best-effort conflict detector.  It is NOT a distributed
-    lock — concurrent writers on different machines may still race.
-    Artha is single-writer by design (one CLI session at a time), so OCC is
-    a safety net for crash-recovery and manual edits, not a real-time guard.
-
-    Args:
-        path:      Absolute path to the target state file.
-        content:   Full new file content (UTF-8 string).  OCC fields will be
-                   injected/updated automatically — do NOT set them manually.
-        domain:    Artha domain name (forwarded to middleware + telemetry).
-        source:    Identifying label for the caller (stored as
-                   ``last_written_by``).
-        snapshot:  Pre-write snapshot (forwarded to ``write()``).
-        pii_check: PII middleware flag (forwarded to ``write()``).
-        ctx:       Optional ArthaContext (forwarded to ``write()``).
-
-    Returns:
-        :class:`WriteResult` with ``success=True`` on success.
-
-    Raises:
-        :class:`OCCConflictError`: If the re-read version does not equal N+1.
-    """
-    # Step 1: read current version
-    current_content = ""
-    if path.exists():
-        try:
-            current_content = path.read_text(encoding="utf-8")
-        except OSError:
-            pass
-    current_version = _extract_occ_version(current_content)
-    next_version = current_version + 1
-
-    # Step 2: inject OCC fields into new content
-    enriched = _inject_occ_fields(content, next_version, source)
-
-    # Step 3: delegate to write() — atomic + middleware
-    result = write(
-        path,
-        enriched,
-        domain=domain,
-        source=source,
-        snapshot=snapshot,
-        pii_check=pii_check,
-        ctx=ctx,
-    )
-
-    if not result.success:
-        return result
-
-    # Step 4: verify
-    try:
-        written_content = path.read_text(encoding="utf-8")
-        written_version = _extract_occ_version(written_content)
-    except OSError:
-        # Cannot verify — treat as success (file may be on slow FS)
-        return result
-
-    if written_version != next_version:
-        # Emit telemetry (non-fatal import — if telemetry not yet on path)
-        try:
-            import sys as _sys
-            from pathlib import Path as _Path
-            _lib = str(_Path(__file__).parent)
-            if _lib not in _sys.path:
-                _sys.path.insert(0, _lib)
-            from telemetry import emit_occ_conflict  # noqa: PLC0415
-            emit_occ_conflict(str(path), next_version, written_version)
-        except Exception:  # noqa: BLE001
-            pass
-        raise OCCConflictError(path, next_version, written_version)
-
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -410,17 +409,9 @@ def _build_middleware_stack(*, pii_check: bool = True):
             from middleware.pii_middleware import PIIMiddleware  # noqa: PLC0415
             middlewares.insert(0, PIIMiddleware())
 
-        return compose_middleware(middlewares)
-    except Exception as exc:  # noqa: BLE001
-        # Middleware import failed — degrade safely to passthrough
-        import warnings
-        warnings.warn(
-            f"[state_writer] middleware stack unavailable, using passthrough: {exc}",
-            RuntimeWarning,
-            stacklevel=3,
-        )
-        from middleware import _PassthroughMiddleware  # noqa: PLC0415
-        return _PassthroughMiddleware()
+        return compose_middleware(middlewares, mandatory=True)
+    except Exception:
+        raise RuntimeError("required write middleware could not be loaded") from None
 
 
 def _ensure_scripts_on_path() -> None:
@@ -432,26 +423,31 @@ def _ensure_scripts_on_path() -> None:
         sys.path.insert(0, scripts_dir)
 
 
-def _create_snapshot(path: Path, content: str) -> Path | None:
-    """Write a pre-write snapshot to ``tmp/state_snapshots/``.
+def _snapshot_current(path: Path, domain: str, content: str) -> Path | None:
+    from lib.state_snapshot import snapshot
 
-    Returns the snapshot path on success, ``None`` on failure.
-    The snapshot directory is determined relative to the Artha project root
-    (two levels above ``scripts/lib/``).
-    """
+    repository = Path(__file__).resolve().parents[2]
     try:
-        # Project root: scripts/lib/ → scripts/ → project root
-        artha_dir = Path(__file__).resolve().parent.parent.parent
-        snap_dir = artha_dir / "tmp" / "state_snapshots"
-        snap_dir.mkdir(parents=True, exist_ok=True)
+        path.resolve().relative_to(repository)
+    except ValueError:
+        root = path.parent
+    else:
+        root = repository
+    return snapshot(domain, content, artha_dir=root)
 
-        import time
-        ts = int(time.time())
-        safe_name = path.name.replace("/", "_").replace("\\", "_")
-        snap_path = snap_dir / f"{safe_name}.{ts}.bak"
 
-        with open(snap_path, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        return snap_path
-    except Exception:  # noqa: BLE001
-        return None
+def _assert_expected_token(path: Path, expected: StateWriteToken) -> None:
+    _, current = _read_bytes_and_token(path)
+    if current != expected:
+        state = "created" if not expected.revision and current.revision else "changed"
+        raise StateWriteConflict(f"State File {state} after its original read: {path}")
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)

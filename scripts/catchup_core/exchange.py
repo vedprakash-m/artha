@@ -58,6 +58,9 @@ class ResponseDocument:
     responses: Mapping[str, str]
     model_identity: Mapping[str, str] | None = None
     cohort: Mapping[str, str] | None = None
+    protocol: str | None = None
+    catchup_id: str | None = None
+    operation: str | None = None
 
 
 class ExtractionPending(Exception):
@@ -98,7 +101,7 @@ def parse_responses(text: str) -> dict[str, str]:
     return dict(parse_response_document(text).responses)
 
 
-def parse_response_document(text: str) -> ResponseDocument:
+def parse_response_document(text: str) -> ResponseDocument:  # noqa: PLR0912 - strict protocol envelope variants
     """Read bounded untrusted answers and separately reported model identity; old shadow documents remain valid."""
     if len(text.encode('utf-8')) > _MAX_DOCUMENT_BYTES:
         raise ValueError('responses exceed the document size limit')
@@ -106,9 +109,18 @@ def parse_response_document(text: str) -> ResponseDocument:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"responses are not valid JSON: {exc.msg}") from exc
-    identity = cohort = None
+    identity = cohort = protocol = catchup_id = operation = None
     if isinstance(data, dict) and isinstance(data.get("responses"), dict):
         identity, cohort = data.get('model_identity'), data.get('cohort')
+        protocol, catchup_id, operation = (
+            data.get('protocol'), data.get('catchup_id'), data.get('operation'))
+        for field, value in (('protocol', protocol), ('catchup_id', catchup_id), ('operation', operation)):
+            if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 512):
+                raise ValueError(f'responses {field} must be bounded nonempty text')
+        if protocol is not None and protocol != PROTOCOL:
+            raise ValueError('responses protocol differs from the extraction operation')
+        if operation is not None and operation != 'extract':
+            raise ValueError('responses operation differs from the extraction operation')
         for metadata in (identity, cohort):
             if metadata is not None and (not isinstance(metadata, dict) or len(metadata) > 32
                     or any(not isinstance(v, str) or len(v) > 1024 for v in metadata.values())):
@@ -123,11 +135,18 @@ def parse_response_document(text: str) -> ResponseDocument:
         if not isinstance(value, str):
             raise ValueError(f"response {key!r} must be a string (the model's JSON text, verbatim)")
         out[str(key)] = value
-    return ResponseDocument(out, identity, cohort)
+    return ResponseDocument(out, identity, cohort, protocol, catchup_id, operation)
 
 
-def verify_response_identity(document: ResponseDocument, expected: Mapping[str, str], *, required: bool) -> bool:
+def verify_response_identity(document: ResponseDocument, expected: Mapping[str, str], *, required: bool,
+                             catchup_id: str | None = None) -> bool:
     """Match the host's report, not an independent attestation of provider behavior or tool isolation."""
+    if document.protocol is not None and document.protocol != PROTOCOL:
+        raise ValueError('responses protocol differs from the extraction operation')
+    if document.operation is not None and document.operation != 'extract':
+        raise ValueError('responses operation differs from the extraction operation')
+    if catchup_id is not None and document.catchup_id is not None and document.catchup_id != catchup_id:
+        raise ValueError('responses belong to another Catch-up')
     if document.model_identity is None or document.cohort is None:
         if required:
             raise ValueError('responses need the pinned model identity and evaluation cohort')
@@ -142,7 +161,7 @@ def verify_response_identity(document: ResponseDocument, expected: Mapping[str, 
 def render_bundle(catchup_id: str, requests: Sequence[PendingRequest],
                   cohort: Mapping[str, str] | None = None) -> str:
     return json.dumps({
-        "protocol": PROTOCOL, "catchup_id": catchup_id, "instructions": _INSTRUCTIONS,
+        "protocol": PROTOCOL, "operation": "extract", "catchup_id": catchup_id, "instructions": _INSTRUCTIONS,
         'cohort': dict(cohort or {}),
         "requests": [{"request_id": r.request_id, "prompt": r.prompt} for r in requests],
     }, ensure_ascii=False)

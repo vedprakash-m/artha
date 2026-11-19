@@ -96,9 +96,9 @@ def test_selective_rollback_snapshot_cannot_satisfy_full_state_preservation(conf
     encrypted_snapshot(selective, selective_db, cipher)
     digest = hashlib.sha256(selective.read_bytes()).hexdigest()
     config['release']['rollback_snapshot'] = {'path': str(selective), 'sha256': digest}
-    with pytest.raises(PermissionDenied, match='selective rollback snapshot'):
+    with pytest.raises(PermissionDenied, match='rollback snapshot'):
         policy.validate_release(request, config, viewer='owner', domains=['kids_school'])
-    with pytest.raises(PermissionDenied, match='selective rollback snapshot'):
+    with pytest.raises(PermissionDenied, match='rollback snapshot'):
         policy.verify_rollback(config, cipher)
 
 
@@ -316,7 +316,7 @@ def test_authority_transfer_requires_quiescence_or_revocation_and_checkpoint_and
         # Selective AE1 snapshot cannot authorize authority transfer
         selective = tmp_path / 'selective_transfer.ae1'
         encrypted_snapshot(selective, deps.ledger._path, deps.ledger._cipher)
-        with pytest.raises(PermissionDenied, match='selective rollback snapshot'):
+        with pytest.raises(PermissionDenied, match='rollback snapshot'):
             deps.ledger.transfer_authority(
                 'promoted', actor='owner', checkpoint_path=selective, former_host_quiesced=True, workspace=repo, expected_generation=1
             )

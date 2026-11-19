@@ -33,6 +33,7 @@ pytestmark = pytest.mark.skipif(
 
 from lib.knowledge_graph import (  # noqa: E402
     KnowledgeGraph,
+    KnowledgeGraphReadScope,
     NullKnowledgeGraph,
     KnowledgeEnricher,
     Entity,
@@ -258,6 +259,118 @@ class TestSearch:
         kg.close()
         assert len(results) <= 5
 
+    def test_search_filters_terminal_lifecycle_before_limit(self, tmp_path: Path) -> None:
+        kg = _kg(tmp_path)
+        for index, lifecycle in enumerate(("cancelled", "archived", "superseded")):
+            kg.upsert_entity(
+                {
+                    "id": f"terminal-{index}",
+                    "name": f"Shared lifecycle target {index}",
+                    "type": "system",
+                    "domain": "d",
+                    "lifecycle_stage": lifecycle,
+                },
+                source="test",
+            )
+        kg.upsert_entity(
+            {
+                "id": "visible",
+                "name": "Shared lifecycle target visible",
+                "type": "system",
+                "domain": "d",
+                "lifecycle_stage": "active",
+            },
+            source="test",
+        )
+
+        results = kg.search("shared lifecycle target", limit=1)
+        kg.close()
+
+        assert [result.entity_id for result in results] == ["visible"]
+
+    def test_search_applies_subject_and_permission_before_limit(
+        self, tmp_path: Path
+    ) -> None:
+        def permission(record: dict) -> bool:
+            return (
+                record["profile"] == "synthetic-work"
+                and record["entity_id"] != "permission-denied"
+            )
+
+        scope = KnowledgeGraphReadScope(
+            profile="synthetic-work",
+            subjects=frozenset({"allowed"}),
+            root=tmp_path,
+            permission=permission,
+        )
+        kg = KnowledgeGraph(
+            db_path=tmp_path / "scoped-kb.sqlite",
+            read_scope=scope,
+        )
+        for index in range(4):
+            kg.upsert_entity(
+                {
+                    "id": f"wrong-subject-{index}",
+                    "name": f"Scoped result target {index}",
+                    "type": "system",
+                    "domain": "other",
+                },
+                source="test",
+            )
+        kg.upsert_entity(
+            {
+                "id": "permission-denied",
+                "name": "Scoped result target denied",
+                "type": "system",
+                "domain": "allowed",
+            },
+            source="test",
+        )
+        kg.upsert_entity(
+            {
+                "id": "visible",
+                "name": "Scoped result target visible",
+                "type": "system",
+                "domain": "allowed",
+            },
+            source="test",
+        )
+
+        results = kg.search("scoped result target", limit=1)
+        all_results = kg.search("scoped result target", limit=10)
+        kg.close()
+
+        assert [result.entity_id for result in results] == ["visible"]
+        assert [result.entity_id for result in all_results] == ["visible"]
+        assert all_results.denied_count == 5
+
+    def test_search_refuses_wrong_root_before_read(self, tmp_path: Path) -> None:
+        scope = KnowledgeGraphReadScope(
+            profile="synthetic-work",
+            root=tmp_path / "approved-root",
+        )
+        kg = KnowledgeGraph(
+            db_path=tmp_path / "outside-root" / "kb.sqlite",
+            read_scope=scope,
+        )
+        kg.upsert_entity(
+            {
+                "id": "hidden",
+                "name": "Root protected target",
+                "type": "system",
+                "domain": "d",
+            },
+            source="test",
+        )
+
+        results = kg.search("root protected target")
+        context = kg.context_for("hidden")
+        kg.close()
+
+        assert results == []
+        assert results.complete is False
+        assert context is None
+
 
 # ---------------------------------------------------------------------------
 # TestContextFor
@@ -292,6 +405,152 @@ class TestContextFor:
         # Both should return (not error), large may have more content
         assert ctx_small is not None
         assert ctx_large is not None
+
+    def test_prep_keeps_bootstrap_relationship_vocabulary(
+        self, tmp_path: Path
+    ) -> None:
+        kg = _kg(tmp_path)
+        kg.upsert_entity(
+            {"id": "root", "name": "Root", "type": "system", "domain": "d"},
+            source="test",
+        )
+        rel_types = ("owned_by", "depends_on", "component_of", "related_to")
+        for index, rel_type in enumerate(rel_types):
+            neighbor_id = f"neighbor-{index}"
+            kg.upsert_entity(
+                {
+                    "id": neighbor_id,
+                    "name": f"Neighbor {index}",
+                    "type": "person",
+                    "domain": "d",
+                },
+                source="test",
+            )
+            kg.add_relationship(
+                "root",
+                neighbor_id,
+                rel_type,
+                confidence=0.9,
+                source="test",
+            )
+
+        ctx = kg.context_for("root", intent="prep", depth=1)
+        kg.close()
+
+        assert ctx is not None
+        assert {edge.rel_type for edge in ctx.edges} == set(rel_types)
+
+    def test_context_counts_omitted_neighbors_without_serializing_them(
+        self, tmp_path: Path
+    ) -> None:
+        def permission(record: dict) -> bool:
+            return record["entity_id"] != "denied"
+
+        scope = KnowledgeGraphReadScope(
+            profile="synthetic-work",
+            root=tmp_path,
+            permission=permission,
+        )
+        kg = KnowledgeGraph(
+            db_path=tmp_path / "neighbor-kb.sqlite",
+            read_scope=scope,
+        )
+        for entity_id, confidence, lifecycle in (
+            ("root", 0.9, "active"),
+            ("allowed", 0.9, "active"),
+            ("low-confidence", 0.4, "active"),
+            ("uncertain-edge", 0.9, "active"),
+            ("denied", 0.9, "active"),
+            ("terminal", 0.9, "archived"),
+        ):
+            kg.upsert_entity(
+                {
+                    "id": entity_id,
+                    "name": entity_id,
+                    "type": "system",
+                    "domain": "d",
+                    "confidence": confidence,
+                    "lifecycle_stage": lifecycle,
+                },
+                source="test",
+            )
+        for neighbor_id in (
+            "allowed", "low-confidence", "uncertain-edge", "denied", "terminal"
+        ):
+            kg.add_relationship(
+                "root",
+                neighbor_id,
+                "related_to",
+                confidence=0.4 if neighbor_id == "uncertain-edge" else 0.9,
+                source="test",
+            )
+
+        ctx = kg.context_for("root", depth=1, token_budget=500)
+        kg.close()
+
+        assert ctx is not None
+        assert [entity.id for entity in ctx.neighborhood] == ["allowed"]
+        assert [edge.to_entity for edge in ctx.edges] == ["allowed"]
+        assert ctx.denied_neighbor_count == 2
+        assert ctx.low_confidence_neighbor_count == 2
+
+    def test_neighbor_serialization_is_bounded_by_token_budget(
+        self, tmp_path: Path
+    ) -> None:
+        kg = _kg(tmp_path)
+        for entity_id in ("root", "neighbor"):
+            kg.upsert_entity(
+                {"id": entity_id, "name": entity_id, "type": "system", "domain": "d"},
+                source="test",
+            )
+        kg.add_relationship(
+            "root", "neighbor", "related_to", confidence=0.9, source="test"
+        )
+
+        ctx = kg.context_for("root", depth=1, token_budget=200)
+        kg.close()
+
+        assert ctx is not None
+        assert ctx.edges == []
+        assert ctx.neighborhood == []
+        assert ctx.token_estimate <= 200
+        assert ctx.budget_omitted_neighbor_count == 1
+
+    def test_neighbor_scan_reports_bounded_partial_counts(self, tmp_path: Path) -> None:
+        kg = _kg(tmp_path)
+        kg.upsert_entity(
+            {"id": "root", "name": "root", "type": "system", "domain": "d"},
+            source="test",
+        )
+        for index in range(12):
+            neighbor_id = f"neighbor-{index}"
+            kg.upsert_entity(
+                {
+                    "id": neighbor_id,
+                    "name": neighbor_id,
+                    "type": "system",
+                    "domain": "d",
+                },
+                source="test",
+            )
+            kg.add_relationship(
+                "root",
+                neighbor_id,
+                "related_to",
+                confidence=0.9,
+                source="test",
+            )
+
+        ctx = kg.context_for(
+            "root", depth=1, token_budget=2000, neighbor_scan_limit=5
+        )
+        kg.close()
+
+        assert ctx is not None
+        assert ctx.neighbor_scan_count == 5
+        assert ctx.neighbor_scan_exhausted is True
+        assert len(ctx.neighborhood) == 5
+        assert "Neighbor scan truncated" in " ".join(ctx.quality_caveats)
 
 
 # ---------------------------------------------------------------------------

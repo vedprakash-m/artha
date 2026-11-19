@@ -134,6 +134,16 @@ def test_derive_status():
     assert c.CatchupResult.derive_status((_cov(c.CoverageStatus.ANOMALY, required=False),), ()) is c.RunStatus.COMPLETE
 
 
+def test_coverage_result_state_is_additive_and_bounded():
+    entry = c.CoverageEntry(
+        "home_email", "personal", c.CoverageStatus.DEGRADED,
+        result_state="held", record_count=3)
+    assert entry.result_state == "held" and entry.record_count == 3
+    with pytest.raises(c.ContractError):
+        c.CoverageEntry("home_email", "personal", c.CoverageStatus.COMPLETE,
+                        result_state="missing")
+
+
 def test_result_json_round_trip():
     r = c.CatchupResult("cu_1", c.ExecutionMode.AUTHORITATIVE, c.RunStatus.DEGRADED,
                         coverage=(_cov(c.CoverageStatus.DEGRADED),), briefing_id="b1", briefing_version=2,

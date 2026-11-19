@@ -89,7 +89,11 @@ import sys
 _lib_dir = str(Path(__file__).resolve().parent / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
-from state_writer import write as _state_write  # noqa: PLC0415
+from state_writer import (  # noqa: PLC0415
+    create_if_absent_token,
+    read_versioned,
+    write as _state_write,
+)
 
 # ---------------------------------------------------------------------------
 # PII patterns — strip from fact statements before persistence
@@ -758,9 +762,10 @@ def persist_facts(
 
     memory_path = artha_dir / "state" / "memory.md"
     if memory_path.exists():
-        content = memory_path.read_text(encoding="utf-8")
+        content, expected_token = read_versioned(memory_path)
         fm = _parse_frontmatter(content)
     else:
+        expected_token = create_if_absent_token(memory_path)
         content = textwrap.dedent("""\
             ---
             domain: memory
@@ -788,6 +793,7 @@ def persist_facts(
         domain="memory",
         source="fact_extractor",
         pii_check=False,  # facts are already sanitized during extraction
+        expected_token=expected_token,
     )
 
     return len(unique_new)

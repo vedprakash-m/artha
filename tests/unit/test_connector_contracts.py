@@ -92,11 +92,13 @@ def _make_whatsapp_env(tmp_path: Path, monkeypatch) -> dict:
 
 
 def _make_rss_env(tmp_path: Path, monkeypatch) -> dict:
+    pub_date = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     rss_xml = (
         '<?xml version="1.0"?><rss version="2.0"><channel>'
         "<title>Synthetic Feed</title>"
         "<item><title>Update 1</title><guid>rss-item-1</guid>"
         "<link>https://example.invalid/1</link>"
+        f"<pubDate>{pub_date}</pubDate>"
         "<description>Summary body</description></item>"
         "</channel></rss>"
     )
@@ -157,26 +159,27 @@ def test_active_connector_emits_valid_connector_records_via_adapter(tmp_path, mo
         assert rec.upstream_id.startswith(spec["expected_prefix"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="canvas_lms.py:235-245 yields student summary missing id/date_iso and catches exceptions with print+return",
-)
 def test_canvas_lms_fetch_via_handler_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(connector_coverage, "default_path", lambda: tmp_path / "cov" / "cov.json")
     monkeypatch.setattr(canvas_lms, "_build_canvas_config", lambda: ("https://canvas.example.invalid", {"Alex": {"key": "k"}}))
     monkeypatch.setattr(
         canvas_lms,
         "_fetch_student_data",
-        lambda url, student, tok: {"student": student, "courses": [], "missing_assignments": []},
+        lambda url, student, tok: {
+            "id": "canvas-user-1",
+            "student": student,
+            "fetched_at": "2026-10-10T00:00:00Z",
+            "courses": [],
+            "upcoming_assignments": [],
+        },
     )
     res = fetch_via_handler("canvas_lms", "personal", canvas_lms.fetch, since="7d", auth_context={"tokens": {"Alex": "t"}})
     assert res.error is None and len(res.records) == 1
+    assert res.records[0].upstream_id == "canvas-user-1"
+    assert "Alex" in res.records[0].text
+    assert res.records[0].occurred_at == "2026-10-10T00:00:00Z"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="onenote.py:213-260 yields page dict missing id/date_iso and suppresses exceptions via print+continue",
-)
 def test_onenote_fetch_via_handler_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(connector_coverage, "default_path", lambda: tmp_path / "cov" / "cov.json")
     monkeypatch.setattr(onenote, "_list_notebooks", lambda tok, include_personal=False: [{"id": "nb1", "displayName": "Home"}])
@@ -190,12 +193,11 @@ def test_onenote_fetch_via_handler_contract(tmp_path, monkeypatch):
 
     res = fetch_via_handler("onenote", "personal", onenote.fetch, since="7d", auth_context={"access_token": "tok"})
     assert res.error is None and len(res.records) == 1
+    assert res.records[0].upstream_id == "p1"
+    assert res.records[0].occurred_at == "2026-10-10T00:00:00Z"
+    assert "synthetic page body" in res.records[0].text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="reddit.py:196-206,248-253 emits created_utc instead of date_iso and suppresses _fetch_top exceptions",
-)
 def test_reddit_fetch_via_handler_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(connector_coverage, "default_path", lambda: tmp_path / "cov" / "cov.json")
     with patch.object(reddit, "_load_blocked_patterns", return_value=[]), patch.object(
@@ -204,16 +206,15 @@ def test_reddit_fetch_via_handler_contract(tmp_path, monkeypatch):
         return_value=[{"name": "t3_1", "title": "Synthetic post", "score": 50, "num_comments": 2, "created_utc": 1760000000}],
     ):
         res = fetch_via_handler(
-            "reddit", "personal", reddit.fetch, since="7d",
+            "reddit", "personal", reddit.fetch, since="2025-01-01",
             auth_context={"subreddits": [{"name": "LocalLLaMA", "tag": "reddit_localllama"}]},
         )
     assert res.error is None and len(res.records) == 1
+    assert res.records[0].upstream_id == "reddit_t3_1"
+    assert res.records[0].occurred_at == "2025-10-09T08:53:20Z"
+    assert "Synthetic post" in res.records[0].text
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="apple_health.py:107-109 emits offset -0700 without colon, rejected by schemas/connector_record.py:_DATE_RE",
-)
 def test_apple_health_native_apple_offset_contract(tmp_path, monkeypatch):
     monkeypatch.setattr(connector_coverage, "default_path", lambda: tmp_path / "cov" / "cov.json")
     xml_path = tmp_path / "export.xml"
@@ -227,3 +228,4 @@ def test_apple_health_native_apple_offset_contract(tmp_path, monkeypatch):
     )
     res = fetch_via_handler("apple_health", "personal", apple_health.fetch, since="30d", auth_context={"file": str(xml_path)})
     assert res.error is None and len(res.records) == 1
+    assert res.records[0].occurred_at.endswith("-07:00")

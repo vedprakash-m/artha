@@ -23,10 +23,18 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from actions.base import ActionProposal, ActionResult  # type: ignore[import]
+from actions.base import (  # type: ignore[import]
+    ActionProposal,
+    ActionResult,
+    is_definite_provider_refusal,
+)
 
 _API_BASE = "https://api.todoist.com/rest/v2"
 _DEFAULT_CREDENTIAL_KEY = "artha-todoist-token"
+
+
+class _TodoistRejected(RuntimeError):
+    pass
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -81,8 +89,9 @@ def _create_task(
         with urllib.request.urlopen(req, timeout=20) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode()[:200] if hasattr(exc, "read") else str(exc)
-        raise RuntimeError(f"Todoist API error {exc.code}: {body}") from exc
+        if is_definite_provider_refusal(exc):
+            raise _TodoistRejected(f"Todoist refused the task (HTTP {exc.code})") from exc
+        raise
 
 
 def _resolve_project_id(token: str, project_name: str) -> str | None:
@@ -159,7 +168,7 @@ def dry_run(proposal: ActionProposal) -> ActionResult:
         status="success",
         message="[DRY RUN] Task not created — preview only",
         data={"preview": "\n".join(preview_lines), "content": content},
-        reversible=True,
+        reversible=False,
         reverse_action=None,
         undo_deadline=None,
     )
@@ -217,7 +226,7 @@ def execute(proposal: ActionProposal) -> ActionResult:
             priority=priority,
             due_string=due_string,
         )
-    except RuntimeError as exc:
+    except _TodoistRejected as exc:
         return ActionResult(
             status="failure",
             message=str(exc)[:300],
@@ -226,15 +235,33 @@ def execute(proposal: ActionProposal) -> ActionResult:
             reverse_action=None,
             undo_deadline=None,
         )
+    except Exception as exc:
+        return ActionResult(
+            status="unknown",
+            message="Todoist did not return a verified task receipt; reconcile before retrying.",
+            data={"exception": type(exc).__name__},
+            reversible=False,
+            reverse_action=None,
+            undo_deadline=None,
+        )
 
-    task_id = task.get("id", "unknown") if task else "unknown"
+    task_id = task.get("id") if isinstance(task, dict) else None
+    if not isinstance(task_id, str) or not task_id:
+        return ActionResult(
+            status="unknown",
+            message="Todoist returned no verified task receipt; reconcile before retrying.",
+            data={},
+            reversible=False,
+            reverse_action=None,
+            undo_deadline=None,
+        )
     task_url = task.get("url", "") if task else ""
 
     return ActionResult(
         status="success",
         message=f"Task created in Todoist: {content[:60]}",
         data={"task_id": task_id, "task_url": task_url, "linked_oi": linked_oi},
-        reversible=True,
+        reversible=False,
         reverse_action=None,
         undo_deadline=None,
     )

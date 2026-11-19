@@ -18,6 +18,7 @@ import os
 import shutil
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -157,6 +158,7 @@ def restore_snapshot(manifest_path: Path, target_ledger: Path, *, curated_target
     target_ledger.parent.mkdir(parents=True, exist_ok=True)
     staged = target_ledger.with_suffix(target_ledger.suffix + ".restoring")
     shutil.copy2(folder / manifest.ledger_file, staged)
+    _invalidate_restored_admission(staged)
     for suffix in ("-wal", "-shm"):
         Path(str(target_ledger) + suffix).unlink(missing_ok=True)      # stale WAL must not outlive the restore
     os.replace(staged, target_ledger)
@@ -164,3 +166,14 @@ def restore_snapshot(manifest_path: Path, target_ledger: Path, *, curated_target
         if name in manifest.curated:
             shutil.copy2(folder / f"curated-{manifest.generation}-{name}", target)
     return manifest
+
+
+def _invalidate_restored_admission(path: Path) -> None:
+    """A restored ledger must never revive a later-withdrawn owner review or enrollment."""
+    with closing(sqlite3.connect(path)) as db:
+        from catchup_core.ledger import invalidate_restored_scope_admission  # noqa: PLC0415
+        db.execute("PRAGMA foreign_keys=ON")
+        invalidate_restored_scope_admission(db)
+        db.commit()
+        if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise SnapshotError("restored ledger failed integrity after admission invalidation")

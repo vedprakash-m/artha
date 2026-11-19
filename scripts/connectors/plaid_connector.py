@@ -57,6 +57,8 @@ _DEFAULT_ENV = "sandbox"
 _REQUEST_TIMEOUT = 30
 _RETRY_MAX = 3
 _RETRY_BASE_DELAY = 1.5
+_MAX_SYNC_PAGES = 20
+_REQUEST_DEADLINE_SECONDS = 90
 
 # Plaid Link local callback server settings
 _LINK_SERVER_HOST = "127.0.0.1"
@@ -90,24 +92,34 @@ def _plaid_post(
         headers={"Content-Type": "application/json", "User-Agent": "Artha/1.0"},
         method="POST",
     )
-    for attempt in range(_RETRY_MAX):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
-                return json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            if exc.code == 400:
-                # Client error — read body for Plaid error codes
-                body = exc.read().decode()
-                err = json.loads(body) if body else {}
-                raise RuntimeError(
-                    f"Plaid API error [{err.get('error_code', exc.code)}]: {err.get('error_message', body)}"
-                ) from exc
-            if exc.code >= 500 and attempt < _RETRY_MAX - 1:
-                delay = _RETRY_BASE_DELAY * (2 ** attempt)
-                time.sleep(delay)
-                continue
-            raise
-    raise RuntimeError(f"Plaid POST {endpoint} failed after {_RETRY_MAX} attempts")
+    from lib.retry import with_retry  # type: ignore[import]
+
+    def request_once() -> dict[str, Any]:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+
+    try:
+        return with_retry(
+            request_once,
+            max_retries=_RETRY_MAX - 1,
+            base_delay=_RETRY_BASE_DELAY,
+            max_delay=30,
+            deadline=time.monotonic() + _REQUEST_DEADLINE_SECONDS,
+            context=f"plaid.{endpoint}",
+        )
+    except urllib.error.HTTPError as exc:
+        code = f"HTTP {exc.code}"
+        if exc.code == 400:
+            try:
+                body = exc.read(4096)
+                err = json.loads(body.decode()) if body else {}
+                code = str(err.get("error_code") or code)
+            except (UnicodeError, json.JSONDecodeError):
+                pass
+        add_note = getattr(exc, "add_note", None)
+        if add_note is not None:
+            add_note(f"plaid error classification={code}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +191,9 @@ def _aggregate_transactions(raw_tx: list[dict[str, Any]]) -> list[dict[str, Any]
         merchant_parts = merchant_name.split()[:2]
         merchant_group = " ".join(p[:20] for p in merchant_parts) or "Other"
         tx_date_str = tx.get("date", "")
-        if tx_date_str and len(tx_date_str) >= 7:
-            month = tx_date_str[:7]  # YYYY-MM
-        else:
-            month = datetime.now(timezone.utc).strftime("%Y-%m")
+        if not isinstance(tx_date_str, str) or len(tx_date_str) < 7:
+            continue
+        month = tx_date_str[:7]  # YYYY-MM
 
         key = (category, merchant_group, month, currency)
         groups[key]["transaction_count"] += 1
@@ -208,7 +219,7 @@ def _aggregate_transactions(raw_tx: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def fetch(
     *,
-    since: datetime | None = None,
+    since: str | date | datetime | None = None,
     max_results: int = 500,
     auth_context: dict[str, Any] | None = None,
     source_tag: str = "plaid",
@@ -232,13 +243,25 @@ def fetch(
         raise RuntimeError(
             "Plaid credentials not configured. Run 'python scripts/setup_plaid.py'."
         )
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+        raise ValueError("max_results must be a positive integer")
 
     base_url = _PLAID_URLS.get(environment, _PLAID_URLS["sandbox"])
 
     # Determine date range
     end_date = date.today()
-    if since:
-        start_date = since.date() if isinstance(since, datetime) else since
+    if isinstance(since, datetime):
+        start_date = since.date()
+    elif isinstance(since, date):
+        start_date = since
+    elif isinstance(since, str):
+        try:
+            start_date = datetime.fromisoformat(since.replace("Z", "+00:00")).date()
+        except ValueError:
+            try:
+                start_date = date.fromisoformat(since)
+            except ValueError:
+                raise ValueError("since must be an ISO-8601 date or datetime") from None
     else:
         start_date = end_date - timedelta(days=30)
 
@@ -249,7 +272,11 @@ def fetch(
     all_added: list[dict[str, Any]] = []
     fetched_count = 0
 
+    seen_cursors: set[str] = set()
+    pages = 0
     while has_more and fetched_count < max_results:
+        if pages >= _MAX_SYNC_PAGES:
+            raise RuntimeError("Plaid transaction pagination limit reached")
         payload: dict[str, Any] = {
             "access_token": access_token,
             "count": min(500, max_results - fetched_count),
@@ -263,7 +290,16 @@ def fetch(
         fetched_count += len(added)
         has_more = response.get("has_more", False)
         cursor = response.get("next_cursor")
+        pages += 1
 
+        if not added and has_more:
+            raise RuntimeError("Plaid transaction pagination returned an empty page")
+        if not cursor and has_more:
+            raise RuntimeError("Plaid transaction continuation cursor is missing")
+        if isinstance(cursor, str) and cursor in seen_cursors and has_more:
+            raise RuntimeError("Plaid transaction pagination repeated a cursor")
+        if isinstance(cursor, str):
+            seen_cursors.add(cursor)
         if not added:
             break
 
@@ -278,7 +314,19 @@ def fetch(
     # Aggregate and yield — PRIVACY: no raw data leaves
     aggregated = _aggregate_transactions(filtered)
     for record in aggregated:
+        identity = hashlib.sha256(
+            f"{record['category']}\0{record['merchant_group']}\0"
+            f"{record['month']}\0{record['currency']}".encode()
+        ).hexdigest()[:16]
+        record["id"] = f"plaid-{identity}"
+        record["date_iso"] = f"{record['month']}-01"
+        record["source"] = source_tag or "plaid"
         record["source_tag"] = source_tag
+        record["subject"] = f"{record['category']}: {record['merchant_group']}"
+        record["body"] = (
+            f"{record['transaction_count']} transactions; "
+            f"{record['currency']} {record['total_amount']:.2f}"
+        )
         yield record
 
 

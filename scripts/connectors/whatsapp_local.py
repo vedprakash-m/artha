@@ -147,8 +147,8 @@ def _fetch_windows_idb(
         import ccl_chromium_reader.ccl_chromium_indexeddb as idb_mod
     except ImportError:
         logger.warning(
-            "ccl_chromium_reader not installed — run: "
-            "pip install git+https://github.com/cclgroupltd/ccl_chromium_reader.git"
+            "ccl_chromium_reader not installed — install optional extra: "
+            "pip install 'artha[messaging]'"
         )
         return
 
@@ -217,6 +217,8 @@ def _fetch_windows_idb(
                 "date_iso": msg_dt.isoformat(),
                 "direction": "sent" if is_from_me else "received",
                 "snippet": f"[{msg_type}]",  # body encrypted; type is best we have
+                "subject": f"WhatsApp message from {contact_name}",
+                "body": f"[{msg_type}]",
                 "source": source_tag,
                 "group_name": group_name,
                 "is_group": is_group,
@@ -293,6 +295,8 @@ def _fetch_macos_sqlite(
                 "date_iso": msg_dt.isoformat(),
                 "direction": "sent" if is_from_me else "received",
                 "snippet": (snippet or "").strip()[:snippet_max_chars],
+                "subject": f"WhatsApp message from {partner_name or phone or 'Unknown'}",
+                "body": (snippet or "").strip()[:snippet_max_chars],
                 "source": source_tag,
                 "group_name": partner_name if is_group else "",
                 "is_group": is_group,
@@ -353,5 +357,12 @@ def health_check(auth_context: Dict[str, Any] | None = None) -> bool:
     if system == "Darwin":
         return _MACOS_DB.exists()
     if system == "Windows":
-        return _WIN_IDB_DIR is not None
+        if _WIN_IDB_DIR is None:
+            return False
+        try:
+            import ccl_chromium_reader.ccl_chromium_indexeddb  # noqa: F401
+            return True
+        except ImportError:
+            logger.warning("WhatsApp Windows reader optional dependency is unavailable")
+            return False
     return False

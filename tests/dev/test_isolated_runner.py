@@ -81,7 +81,7 @@ def test_workspace_has_working_tree_content_but_no_ignored_files(checkout, tmp_p
         assert (dest / name).is_dir()
 
 
-def test_synthetic_only_workspace_excludes_every_state_file(checkout, tmp_path):
+def test_synthetic_only_workspace_excludes_live_state_files(checkout, tmp_path):
     procedure = checkout / "state" / "learned_procedures" / "synthetic.md"
     procedure.parent.mkdir(parents=True)
     procedure.write_text("SYNTHETIC_PROCEDURE_CANARY\n")
@@ -93,7 +93,9 @@ def test_synthetic_only_workspace_excludes_every_state_file(checkout, tmp_path):
     runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
 
     assert (dest / "state").is_dir()
-    assert not [path for path in (dest / "state").rglob("*") if path.is_file()]
+    assert (dest / "state" / "templates" / "t.md").read_text() == "template\n"
+    assert not (dest / "state" / "learned_procedures" / "synthetic.md").exists()
+    assert not (dest / "state" / "nested").exists()
     assert (dest / "scripts" / "tracked.py").read_text() == "X = 99\n"
 
 

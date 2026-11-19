@@ -180,6 +180,13 @@ def test_terminal_health_preserves_degraded_read_surfaces():
     assert '"last_verified": null' in text
 
 
+@pytest.mark.parametrize("state", ["none", "unavailable", "held", "stale"])
+def test_terminal_health_renders_each_result_state_without_reassurance(state):
+    result = {"coverage": [{"connector": "calendar", "status": "complete", "result_state": state}]}
+    text = views.render("health", result)
+    assert f'"result_state": "{state}"' in text
+
+
 def test_feedback_is_reviewed_not_automatically_gold(store):
     fid = fact(store)
     store.upsert_alert("exam", domain="kids_school", primary_subject_id="kid1", severity="P1", fact_ids=[fid])
@@ -196,6 +203,14 @@ def test_open_items_are_read_without_losing_active_commitments():
            "- id: OI-002\n  description: Resolved\n  status: done\n"
     assert [r["id"] for r in records(text, "open_items")] == ["OI-001"]
     assert records('---\ngoals:\n  - id: G-1\n    owner: owner\n---\n', "goals")[0]["id"] == "G-1"
+
+
+def test_terminal_commands_round_trip_quoted_unicode_and_long_deadlines():
+    text = views.render("items", {"items": [
+        {"id": "OI-901", "description": 'Call "Zoë — 東京"', "status": "open",
+         "deadline": "2027-05-18"}]})
+    assert 'Call "Zoë — 東京"' in text
+    assert "May 18, 2027" in text
 
 
 def test_separate_process_cannot_take_a_live_session_lock(tmp_path):

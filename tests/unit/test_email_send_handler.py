@@ -107,21 +107,14 @@ class TestValidate:
 # ---------------------------------------------------------------------------
 
 class TestDryRun:
-    def test_dry_run_draft_first_creates_draft(self):
+    def test_dry_run_is_local_and_never_creates_a_draft(self):
         p = _make_proposal()
-        mock_service = MagicMock()
-        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
-            "emailAddress": "sender@example.com"
-        }
-        mock_service.users.return_value.drafts.return_value.create.return_value.execute.return_value = {
-            "id": "draft123",
-        }
-
-        with patch("actions.email_send.build_service", return_value=mock_service):
+        with patch("actions.email_send.build_service", side_effect=AssertionError("provider touched")):
             result = email_send_handler.dry_run(p)
 
         assert result.status == "success"
-        assert "draft123" in (result.data.get("draft_id") or "")
+        assert result.data.get("preview_mode") is True
+        assert "draft_id" not in result.data
 
     def test_dry_run_no_draft_first_returns_preview(self):
         p = _make_proposal(parameters={
@@ -134,12 +127,31 @@ class TestDryRun:
         assert result.status == "success"
         assert result.data.get("preview_mode") is True
 
-    def test_dry_run_gmail_error_returns_failure(self):
-        p = _make_proposal()
-        with patch("actions.email_send.build_service", side_effect=Exception("auth error")):
-            result = email_send_handler.dry_run(p)
-        assert result.status == "failure"
-        assert "auth error" in result.message
+    def test_reply_dry_run_is_local_and_never_creates_a_draft(self):
+        from actions import email_reply
+        p = email_reply.ActionProposal(
+            id="reply-preview",
+            action_type="email_reply",
+            domain="comms",
+            title="Reply",
+            description="",
+            parameters={"thread_id": "thread-1", "body": "Synthetic reply"},
+            friction="standard",
+            min_trust=1,
+            sensitivity="standard",
+            reversible=False,
+            undo_window_sec=None,
+            expires_at=None,
+        )
+        with patch("actions.email_reply._extract_reply_headers", side_effect=AssertionError("provider read")):
+            result = email_reply.dry_run(p)
+        assert result.status == "success"
+        assert result.data == {
+            "preview_mode": True,
+            "thread_id": "thread-1",
+            "body_length": len("Synthetic reply"),
+            "reply_all": False,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +209,47 @@ class TestExecute:
         with patch("actions.email_send.build_service", side_effect=Exception("quota exceeded")):
             result = email_send_handler.execute(p)
         assert result.status == "failure"
-        assert "quota" in result.message
+        assert "could not start" in result.message
+
+    def test_execute_timeout_after_dispatch_returns_unknown(self):
+        p = _make_proposal(parameters={
+            "to": "a@b.com",
+            "subject": "Hi",
+            "body": "Hello",
+            "draft_first": False,
+        })
+        mock_service = MagicMock()
+        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+            "emailAddress": "sender@example.com"
+        }
+        mock_service.users.return_value.messages.return_value.send.return_value.execute.side_effect = TimeoutError(
+            "synthetic timeout"
+        )
+
+        with patch("actions.email_send.build_service", return_value=mock_service):
+            result = email_send_handler.execute(p)
+
+        assert result.status == "unknown"
+        assert "reconcile" in result.message.lower()
+        assert "synthetic timeout" not in result.message
+
+    def test_execute_missing_provider_receipt_returns_unknown(self):
+        p = _make_proposal(parameters={
+            "to": "a@b.com",
+            "subject": "Hi",
+            "body": "Hello",
+            "draft_first": False,
+        })
+        mock_service = MagicMock()
+        mock_service.users.return_value.getProfile.return_value.execute.return_value = {
+            "emailAddress": "sender@example.com"
+        }
+        mock_service.users.return_value.messages.return_value.send.return_value.execute.return_value = {}
+
+        with patch("actions.email_send.build_service", return_value=mock_service):
+            result = email_send_handler.execute(p)
+
+        assert result.status == "unknown"
 
 
 # ---------------------------------------------------------------------------

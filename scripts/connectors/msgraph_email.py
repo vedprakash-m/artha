@@ -298,6 +298,8 @@ def fetch(
     next_url: Optional[str] = None
     failed = False
     dropped = False
+    pages = 0
+    seen_pages: set[str] = set()
 
     while len(all_msgs) < max_results:
         try:
@@ -316,13 +318,21 @@ def fetch(
             failed = True
             break
 
+        pages += 1
         page = resp.get("value", [])
+        if not isinstance(page, list):
+            failed = True
+            break
         remaining = max_results - len(all_msgs)
         dropped = dropped or len(page) > remaining
         all_msgs.extend(page[:remaining])
         next_url = resp.get("@odata.nextLink")
         if not next_url or not page:
             break
+        if not isinstance(next_url, str) or next_url in seen_pages or pages >= MAX_PAGES:
+            dropped = True
+            break
+        seen_pages.add(next_url)
 
     for msg in all_msgs:
         record = _parse_message(msg, folder=folder_canonical)

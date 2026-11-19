@@ -554,3 +554,31 @@ def test_usage_seal_failure_is_repaired_by_exact_receipt_retry(world):
     seal.failing = False
     store.record_usage('c1', 'r1', 90, 10, 'receipt', NOW)
     assert seal.read().tokens == 100
+
+
+def test_usage_receipt_source_and_amount_are_immutable(world):
+    store = AdmissionStore(world, policy())
+    sid = signal(world, 'a')
+    store.admit('c1', sid, 'r1', 4, NOW)
+    store.record_usage('c1', 'r1', 3, 4, 'provider-report', NOW)
+    with pytest.raises(ValueError, match='different'):
+        store.record_usage('c1', 'r1', 3, 4, 'other-report', NOW)
+
+
+def test_corrupt_usage_receipt_blocks_accounting(world):
+    store = AdmissionStore(world, policy())
+    sid = signal(world, 'a')
+    store.admit('c1', sid, 'r1', 4, NOW)
+    store.record_usage('c1', 'r1', 3, 4, 'provider-report', NOW)
+    world.conn.execute('DROP TRIGGER resource_usage_immutable')
+    world.conn.execute('PRAGMA ignore_check_constraints=ON')
+    world.conn.execute("UPDATE resource_usage SET input_tokens=-1")
+    world.conn.commit()
+    with pytest.raises(ResourceLimit, match='corrupt'):
+        store.month_usage('2026-10')
+
+
+@pytest.mark.parametrize('month', ['2026-00', '2026-13', '2026-1', '2026x10'])
+def test_month_usage_rejects_malformed_calendar_month(world, month):
+    with pytest.raises(ValueError, match='UTC month'):
+        AdmissionStore(world, policy()).month_usage(month)

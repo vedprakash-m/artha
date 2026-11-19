@@ -12,15 +12,185 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import sys
 import os
 import re
+import subprocess
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, Iterator, Optional
 
 _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
+
+_ADMISSION_MAX_PAGES = 20
+_ADMISSION_MAX_RAW_BYTES = 16 * 1024 * 1024
+GMAIL_REQUEST_TIMEOUT_SECONDS = 15.0
+GMAIL_ADMISSION_TIMEOUT_SECONDS = 90.0
+_REQUEST_WORKER_FLAG = "--bounded-request-worker"
+_REQUEST_OUTPUT_LIMIT = 32 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class MessageIdListing:
+    message_ids: list[str]
+    cursor: str | None
+    complete: bool
+    truncation_reason: str | None = None
+
+    def __iter__(self):
+        yield self.message_ids
+        yield self.cursor
+
+
+def _admission_deadline(deadline: float | None) -> float:
+    if deadline is None:
+        return time.monotonic() + GMAIL_ADMISSION_TIMEOUT_SECONDS
+    if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline)):
+        raise ValueError("Gmail admission deadline must be a monotonic timestamp")
+    return float(deadline)
+
+
+def _set_request_timeout(request: Any, timeout: float) -> None:
+    transport = getattr(request, "http", None)
+    if transport is None:
+        return
+    for candidate in (transport, getattr(transport, "http", None)):
+        if candidate is not None:
+            try:
+                setattr(candidate, "timeout", timeout)
+            except (AttributeError, TypeError):
+                pass
+
+
+def _request_worker_command() -> list[str]:
+    return [sys.executable, os.path.abspath(__file__), _REQUEST_WORKER_FLAG]
+
+
+def _provider_request(service: Any, operation: str, arguments: dict[str, Any]) -> Any:
+    if operation == "getProfile":
+        return service.users().getProfile(**arguments)
+    if operation == "messages.list":
+        return service.users().messages().list(**arguments)
+    if operation == "messages.get":
+        return service.users().messages().get(**arguments)
+    if operation == "history.list":
+        return service.users().history().list(**arguments)
+    raise ValueError("Gmail request operation is not supported")
+
+
+def _injected_service() -> Any | None:
+    """Return a synthetic preloaded provider service for isolated unit tests."""
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        return None
+    module = sys.modules.get("google_auth")
+    factory = getattr(module, "build_service", None)
+    if (module is None or not callable(factory) or getattr(module, "__file__", None)
+            or getattr(factory, "__module__", None) == "google_auth"):
+        return None
+    return factory("gmail", "v1")
+
+
+class _GmailProviderError(Exception):
+    def __init__(self, status: int | None) -> None:
+        super().__init__("Gmail provider request failed")
+        if status is not None:
+            self.resp = SimpleNamespace(status=status)
+
+
+def _execute_request(
+        operation: str, arguments: dict[str, Any], *, deadline: float,
+        context: str) -> Any:
+    if not isinstance(operation, str) or not isinstance(arguments, dict):
+        raise ValueError("Gmail request description is invalid")
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Gmail admission deadline exhausted")
+    timeout = min(GMAIL_REQUEST_TIMEOUT_SECONDS, remaining)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise TimeoutError("Gmail admission request timeout is unavailable")
+    service = _injected_service()
+    if service is not None:
+        request = _provider_request(service, operation, arguments)
+        _set_request_timeout(request, timeout)
+        return request.execute()
+
+    from lib.bounded_process import run_bounded  # type: ignore[import]
+    request_data = json.dumps(
+        {"operation": operation, "arguments": arguments},
+        separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    try:
+        completed = run_bounded(
+            _request_worker_command(),
+            timeout=timeout,
+            cleanup_grace=1.0,
+            input=request_data,
+            stdout_limit=_REQUEST_OUTPUT_LIMIT,
+            stderr_limit=128 * 1024,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"Gmail admission request timed out: {context}") from exc
+    if completed.returncode != 0 or completed.stdout_truncated or completed.stderr_truncated:
+        raise RuntimeError("Gmail admission request worker failed")
+    try:
+        response = json.loads(completed.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Gmail admission request worker returned an invalid response") from exc
+    if not isinstance(response, dict) or set(response) not in ({"ok", "result"}, {"ok", "error"}):
+        raise RuntimeError("Gmail admission request worker returned an invalid envelope")
+    if response["ok"] is True and set(response) == {"ok", "result"}:
+        return response["result"]
+    error = response["error"] if set(response) == {"ok", "error"} else None
+    if response["ok"] is not False or not isinstance(error, dict):
+        raise RuntimeError("Gmail admission request worker returned an invalid envelope")
+    status = error.get("status")
+    if isinstance(status, bool) or (status is not None and not isinstance(status, int)):
+        raise RuntimeError("Gmail admission request worker returned an invalid status")
+    raise _GmailProviderError(status)
+
+
+def _request_with_retry(
+        operation: str, arguments: dict[str, Any], *,
+        deadline: float, context: str) -> Any:
+    from lib.retry import with_retry  # type: ignore[import]
+    return with_retry(
+        lambda: _execute_request(
+            operation, arguments, deadline=deadline, context=context),
+        context=context, deadline=deadline)
+
+
+def _request_worker_main() -> int:
+    try:
+        raw = sys.stdin.buffer.read(128 * 1024 + 1)
+        if len(raw) > 128 * 1024:
+            raise ValueError("Gmail request description is too large")
+        envelope = json.loads(raw.decode("utf-8"))
+        if not isinstance(envelope, dict) or set(envelope) != {"operation", "arguments"}:
+            raise ValueError("Gmail request description is invalid")
+        operation = envelope["operation"]
+        arguments = envelope["arguments"]
+        if not isinstance(operation, str) or not isinstance(arguments, dict):
+            raise ValueError("Gmail request description is invalid")
+        from google_auth import build_service  # type: ignore[import]
+        service = build_service("gmail", "v1")
+        request = _provider_request(service, operation, arguments)
+        _set_request_timeout(request, GMAIL_REQUEST_TIMEOUT_SECONDS)
+        result = request.execute()
+        response = {"ok": True, "result": result}
+    except BaseException as exc:
+        response = {"ok": False, "error": {"status": _http_status(exc)}}
+    encoded = json.dumps(
+        response, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    sys.stdout.buffer.write(encoded)
+    sys.stdout.buffer.flush()
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +286,151 @@ def _parse_message(msg: dict) -> dict:
     }
 
 
+def account_identity(
+        auth_context: Dict[str, Any], *, deadline: float | None = None) -> str:
+    """Return the authenticated mailbox identity without reading message content."""
+    del auth_context  # credentials are owned by the existing Google auth adapter
+    deadline = _admission_deadline(deadline)
+    profile = _request_with_retry(
+        "getProfile", {"userId": "me"},
+        deadline=deadline, context="gmail.admission.identity")
+    identity = profile.get("emailAddress")
+    if not isinstance(identity, str) or "@" not in identity:
+        raise ValueError("Gmail profile did not provide an authenticated mailbox identity")
+    return identity.casefold()
+
+
+def list_message_ids(
+        auth_context: Dict[str, Any], *, query: str, since: str,
+        max_results: int, deadline: float | None = None) -> MessageIdListing:
+    """List IDs for an enrolled bounded query; this path never requests bodies."""
+    del auth_context
+    if type(max_results) is not int or not 1 <= max_results <= 1000:
+        raise ValueError("Gmail max_results is outside its bound")
+    deadline = _admission_deadline(deadline)
+    full_query = f"{_since_to_query(since)} ({query})"
+    ids_: list[str] = []
+    token: str | None = None
+    seen_tokens: set[str] = set()
+    truncation_reason: str | None = None
+    pages = 0
+    while pages < _ADMISSION_MAX_PAGES:
+        arguments: dict[str, Any] = {
+            "userId": "me", "q": full_query, "maxResults": min(100, max_results - len(ids_)),
+            "includeSpamTrash": False,
+        }
+        if token:
+            arguments["pageToken"] = token
+        response = _request_with_retry(
+            "messages.list", arguments,
+            deadline=deadline, context="gmail.admission.list")
+        pages += 1
+        messages = response.get("messages", [])
+        if not isinstance(messages, list):
+            raise ValueError("Gmail message listing must be a list")
+        for item in messages:
+            message_id = item.get("id") if isinstance(item, dict) else None
+            if isinstance(message_id, str) and message_id and message_id not in ids_:
+                ids_.append(message_id)
+        next_token = response.get("nextPageToken")
+        if not next_token:
+            token = None
+            break
+        if not isinstance(next_token, str) or len(next_token) > 4096 \
+                or next_token in seen_tokens:
+            raise ValueError("Gmail continuation token is invalid")
+        seen_tokens.add(next_token)
+        token = next_token
+        if len(ids_) >= max_results:
+            truncation_reason = "max_results"
+            break
+        if pages >= _ADMISSION_MAX_PAGES:
+            truncation_reason = "page_limit"
+    if pages >= _ADMISSION_MAX_PAGES and token and truncation_reason is None:
+        truncation_reason = "page_limit"
+    if len(ids_) > max_results and truncation_reason is None:
+        truncation_reason = "max_results"
+    complete = truncation_reason is None
+    if not complete:
+        from lib.connector_coverage import report_scope  # type: ignore[import]
+        report_scope("gmail:admission-list", "truncated", records=len(ids_),
+                     reason=truncation_reason or "listing incomplete")
+    cursor = None
+    if complete:
+        try:
+            profile = _request_with_retry(
+                "getProfile", {"userId": "me"},
+                deadline=deadline, context="gmail.admission.profile")
+            history_id = profile.get("historyId")
+            if isinstance(history_id, str) and history_id.isdigit():
+                cursor = history_id
+        except Exception:
+            cursor = None
+    return MessageIdListing(ids_[:max_results], cursor, complete, truncation_reason)
+
+
+def message_metadata(
+        auth_context: Dict[str, Any], message_id: str, *,
+        deadline: float | None = None) -> dict[str, Any]:
+    """Fetch only the immutable identity/classification metadata needed before raw bytes."""
+    del auth_context
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", message_id):
+        raise ValueError("Gmail message ID is invalid")
+    deadline = _admission_deadline(deadline)
+    message = _request_with_retry(
+        "messages.get", {
+            "userId": "me", "id": message_id, "format": "metadata",
+            "metadataHeaders": ["From", "To", "Cc", "Bcc", "Delivered-To", "Date"],
+        },
+        context=f"gmail.admission.metadata.{message_id[:8]}", deadline=deadline)
+    payload = message.get("payload") or {}
+    headers = payload.get("headers") if isinstance(payload, dict) else []
+    headers = headers if isinstance(headers, list) else []
+    labels = message.get("labelIds")
+    if message.get("id") != message_id:
+        raise ValueError("Gmail metadata response identity changed")
+    size = int(message.get("sizeEstimate") or 0)
+    if size < 0:
+        raise ValueError("Gmail message size is outside its bound")
+    return {
+        "id": str(message.get("id") or ""),
+        "thread_id": str(message.get("threadId") or ""),
+        "from": _get_header(headers, "From"),
+        "to": _get_header(headers, "To"),
+        "cc": _get_header(headers, "Cc"),
+        "bcc": _get_header(headers, "Bcc"),
+        "delivered_to": _get_header(headers, "Delivered-To"),
+        "date": _get_header(headers, "Date"),
+        "labels": list(labels) if isinstance(labels, list) else [],
+        "size": size,
+        "history_id": str(message.get("historyId") or ""),
+    }
+
+
+def raw_message(
+        auth_context: Dict[str, Any], message_id: str, *,
+        deadline: float | None = None) -> bytes:
+    """Fetch raw MIME only after metadata classification has succeeded."""
+    del auth_context
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", message_id):
+        raise ValueError("Gmail message ID is invalid")
+    deadline = _admission_deadline(deadline)
+    message = _request_with_retry(
+        "messages.get", {"userId": "me", "id": message_id, "format": "raw"},
+        context=f"gmail.admission.raw.{message_id[:8]}", deadline=deadline)
+    raw = message.get("raw")
+    if message.get("id") != message_id:
+        raise ValueError("Gmail raw response identity changed")
+    if not isinstance(raw, str):
+        raise ValueError("Gmail raw message is missing")
+    if len(raw) > 4 * ((_ADMISSION_MAX_RAW_BYTES + 2) // 3):
+        raise ValueError("Gmail raw message is outside its bound")
+    decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    if len(decoded) > _ADMISSION_MAX_RAW_BYTES:
+        raise ValueError("Gmail raw message is outside its bound")
+    return decoded
+
+
 def _since_to_query(since_iso: str) -> str:
     """Convert ISO 8601 timestamp to Gmail 'after:EPOCH' query fragment."""
     try:
@@ -169,8 +484,8 @@ def _load_cursor(raw: str) -> str:
     return str(data["history_id"])
 
 
-def _fetch_history(service: Any, with_retry: Any, cursor: str, max_results: int,
-                   source_tag: str) -> Iterator[Dict[str, Any]]:
+def _fetch_history(cursor: str, max_results: int, source_tag: str,
+                   deadline: float) -> Iterator[Dict[str, Any]]:
     """New messages since a stored history id.  Deleted, trashed or relabelled mail is ignored, never a signal."""
     from lib.connector_coverage import (  # type: ignore[import]  # noqa: PLC0415
         report_cursor,
@@ -192,11 +507,12 @@ def _fetch_history(service: Any, with_retry: Any, cursor: str, max_results: int,
     while True:
         extra = {"pageToken": page_token} if page_token else {}
         try:
-            resp = with_retry(
-                lambda e=extra: service.users().history().list(
-                    userId="me", startHistoryId=start, historyTypes=["messageAdded"], maxResults=500, **e).execute(),
-                context="gmail.history",
-            )
+            resp = _request_with_retry(
+                "history.list", {
+                    "userId": "me", "startHistoryId": start,
+                    "historyTypes": ["messageAdded"], "maxResults": 500, **extra,
+                },
+                context="gmail.history", deadline=deadline)
             records = resp.get("history", [])
             if not isinstance(records, list):
                 raise ValueError("history page must contain a list")
@@ -225,10 +541,11 @@ def _fetch_history(service: Any, with_retry: Any, cursor: str, max_results: int,
     failures = fetched = 0
     for message_id in ids[:max_results]:
         try:
-            msg = with_retry(
-                lambda mid=message_id: service.users().messages().get(userId="me", id=mid, format="full").execute(),
-                context=f"gmail.get.{message_id[:8]}",
-            )
+            msg = _request_with_retry(
+                "messages.get", {
+                    "userId": "me", "id": message_id, "format": "full",
+                },
+                context=f"gmail.get.{message_id[:8]}", deadline=deadline)
         except Exception as exc:
             if _http_status(exc) != 404:        # gone before we read it: deletion is not a signal
                 failures += 1
@@ -266,8 +583,6 @@ def fetch(
     **kwargs: Any,
 ) -> Iterator[Dict[str, Any]]:
     """Yield Gmail messages since *since* timestamp (or since a stored history id when ``sync_changes``)."""
-    from google_auth import build_service  # type: ignore[import]
-    from lib.retry import with_retry  # type: ignore[import]
     from lib.connector_coverage import report_cursor, report_scope
 
     if type(sync_changes) is not bool:
@@ -276,14 +591,16 @@ def fetch(
         raise ValueError("sync_cursor must be a native cursor for a sync source")
     # history.list cannot express a query, a time bound or a label name: such a source stays windowed.
     use_history = sync_changes and not (query or before or label_filter)
-    service = build_service("gmail", "v1")
+    deadline = _admission_deadline(None)
     if use_history and sync_cursor is not None:
-        yield from _fetch_history(service, with_retry, sync_cursor, max_results, source_tag)
+        yield from _fetch_history(sync_cursor, max_results, source_tag, deadline)
         return
     baseline: Any = None
     if use_history:
         try:     # taken BEFORE listing, so mail arriving during the listing is read by the next history call
-            baseline = service.users().getProfile(userId="me").execute().get("historyId")
+            baseline = _request_with_retry(
+                "getProfile", {"userId": "me"},
+                context="gmail.profile", deadline=deadline).get("historyId")
         except Exception:
             baseline = None
     extra_query = query
@@ -316,10 +633,9 @@ def fetch(
         if page_token:
             kw["pageToken"] = page_token
         try:
-            resp = with_retry(
-                lambda k=kw: service.users().messages().list(**k).execute(),
-                context="gmail.list",
-            )
+            resp = _request_with_retry(
+                "messages.list", kw,
+                context="gmail.list", deadline=deadline)
             refs = resp.get("messages", [])
             if not isinstance(refs, list):
                 raise ValueError("message page must contain a list")
@@ -341,12 +657,11 @@ def fetch(
     fetched = 0
     for ref in all_refs[:max_results]:
         try:
-            msg = with_retry(
-                lambda mid=ref["id"]: service.users().messages().get(
-                    userId="me", id=mid, format="full"
-                ).execute(),
-                context=f"gmail.get.{ref['id'][:8]}",
-            )
+            msg = _request_with_retry(
+                "messages.get", {
+                    "userId": "me", "id": ref["id"], "format": "full",
+                },
+                context=f"gmail.get.{ref['id'][:8]}", deadline=deadline)
             record = _parse_message(msg)
             if source_tag:
                 record["source"] = source_tag
@@ -375,3 +690,7 @@ def health_check(auth_context: Dict[str, Any]) -> bool:
     except Exception as exc:
         print(f"[google_email] health_check failed: {exc}", file=sys.stderr)
         return False
+
+
+if __name__ == "__main__" and sys.argv[1:] == [_REQUEST_WORKER_FLAG]:
+    raise SystemExit(_request_worker_main())

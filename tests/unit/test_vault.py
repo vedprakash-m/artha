@@ -180,6 +180,8 @@ def test_stale_lock_handling(mock_vault_env, capsys):
 
     with patch("vault.check_age_installed", return_value=True), \
          patch("keyring.get_password", return_value="mock-key"), \
+         patch("vault.get_public_key", return_value="age1mock"), \
+         patch("vault.age_encrypt", side_effect=_fake_encrypt), \
          patch("vault.age_decrypt", side_effect=side_effect_decrypt):
         
         # do_decrypt should clear stale lock and proceed
@@ -187,7 +189,7 @@ def test_stale_lock_handling(mock_vault_env, capsys):
         assert lock_file.exists() # It was removed and re-created
         captured = capsys.readouterr()
         assert "Stale lock file detected" in captured.out
-        assert "Auto-clearing" in captured.out
+        assert "Attempting verified recovery" in captured.out
 
 def test_integrity_write_guard(mock_vault_env, capsys):
     """Verify that Net-Negative Write Guard blocks encryption on significant data loss."""
@@ -1022,6 +1024,69 @@ class TestDeferredDeletion:
         assert (mock_vault_env / "state" / "immigration.md").exists()
         assert (mock_vault_env / "state" / "contacts.md").exists()
 
+    def test_partial_encrypt_does_not_replace_any_old_ciphertext(self, mock_vault_env):
+        immigration = mock_vault_env / "state" / "immigration.md"
+        immigration_age = mock_vault_env / "state" / "immigration.md.age"
+        contacts = mock_vault_env / "state" / "contacts.md"
+        contacts_age = mock_vault_env / "state" / "contacts.md.age"
+        immigration.write_text("---\ndomain: immigration\n---\n" + "x " * 300)
+        immigration_age.write_bytes(b"old-immigration-ciphertext")
+        contacts.write_text("---\ndomain: contacts\n---\n" + "y " * 300)
+        contacts_age.write_bytes(b"old-contacts-ciphertext")
+        (mock_vault_env / ".artha-decrypted").touch()
+        (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
+
+        def partial_encrypt(pubkey, infile, outfile):
+            if "contacts" in str(infile):
+                return False
+            return _fake_encrypt(pubkey, infile, outfile)
+
+        with patch("vault.check_age_installed", return_value=True), \
+             patch("vault.get_public_key", return_value="age1mock"), \
+             patch("vault.age_encrypt", side_effect=partial_encrypt):
+            with pytest.raises(SystemExit):
+                vault.do_encrypt()
+
+        assert immigration_age.read_bytes() == b"old-immigration-ciphertext"
+        assert contacts_age.read_bytes() == b"old-contacts-ciphertext"
+        assert immigration.exists() and contacts.exists()
+        assert list((mock_vault_env / "state").glob("*.age.tmp")) == []
+
+    def test_publication_failure_rolls_back_already_published_ciphertext(
+        self, mock_vault_env, monkeypatch
+    ):
+        immigration = mock_vault_env / "state" / "immigration.md"
+        immigration_age = mock_vault_env / "state" / "immigration.md.age"
+        contacts = mock_vault_env / "state" / "contacts.md"
+        contacts_age = mock_vault_env / "state" / "contacts.md.age"
+        immigration.write_text("---\ndomain: immigration\n---\n" + "x " * 300)
+        immigration_age.write_bytes(b"old-immigration-ciphertext")
+        contacts.write_text("---\ndomain: contacts\n---\n" + "y " * 300)
+        contacts_age.write_bytes(b"old-contacts-ciphertext")
+        (mock_vault_env / ".artha-decrypted").touch()
+        (mock_vault_env / "state" / "audit.md").unlink(missing_ok=True)
+        original_replace = os.replace
+        failed = False
+
+        def fail_contacts_once(source, destination):
+            nonlocal failed
+            if Path(destination).name == "contacts.md.age" and not failed:
+                failed = True
+                raise OSError("synthetic publication failure")
+            return original_replace(source, destination)
+
+        monkeypatch.setattr(vault.os, "replace", fail_contacts_once)
+        with patch("vault.check_age_installed", return_value=True), \
+             patch("vault.get_public_key", return_value="age1mock"), \
+             patch("vault.age_encrypt", side_effect=_fake_encrypt):
+            with pytest.raises(SystemExit):
+                vault.do_encrypt()
+
+        assert immigration_age.read_bytes() == b"old-immigration-ciphertext"
+        assert contacts_age.read_bytes() == b"old-contacts-ciphertext"
+        assert immigration.exists() and contacts.exists()
+        assert (mock_vault_env / ".artha-decrypted").exists()
+
 
 # ---------------------------------------------------------------------------
 # Health check key format validation (#3)
@@ -1137,7 +1202,9 @@ class TestInMemoryWrite:
         assert exc.value.code == 1 and "Error writing kids" in capsys.readouterr().err
 
     @pytest.mark.parametrize("encrypt_side_effect", [None, SystemExit(1)])
-    def test_stale_lock_triggers_encrypt_and_unlinks(self, tmp_path, monkeypatch, encrypt_side_effect):
+    def test_stale_lock_reentry_preserves_lock_on_failed_reencrypt(
+        self, tmp_path, monkeypatch, encrypt_side_effect
+    ):
         import json as _json
         import time as _time
 
@@ -1152,12 +1219,93 @@ class TestInMemoryWrite:
             calls.append(True)
             if encrypt_side_effect is not None:
                 raise encrypt_side_effect
+            lock_file.unlink()
 
         monkeypatch.setattr(vault, "LOCK_FILE", lock_file)
         monkeypatch.setattr(vault, "do_encrypt", fake_encrypt)
-        assert vault.check_lock_state() == 1
+        expected = 2 if encrypt_side_effect is not None else 1
+        assert vault.check_lock_state() == expected
         assert calls == [True]
-        assert not lock_file.exists()
+        assert lock_file.exists() is (encrypt_side_effect is not None)
+
+    def test_watchdog_stale_lock_helper_uses_existing_lock_recovery(self, monkeypatch):
+        monkeypatch.setattr(vault, "check_lock_state", lambda: 2)
+        assert vault._check_stale_lock() == 2
+
+
+class TestVaultOperationLockReentry:
+    def test_same_thread_reenters_operation_lock_without_losing_outer_owner(self, mock_vault_env):
+        @vault._with_op_lock
+        def outer():
+            @vault._with_op_lock
+            def inner():
+                return "ok"
+
+            assert inner() == "ok"
+            assert vault._op_fence is not None
+        outer()
+        assert vault._op_lock_fd is None
+        assert vault._op_fence is None
+
+
+class TestVaultPublicationRecovery:
+    @staticmethod
+    def _write_intent(root, *, phase):
+        import hashlib
+        import json
+
+        state = root / "state"
+        target = state / "immigration.md.age"
+        backup = state / "immigration.md.age.publication-previous"
+        previous = b"old-encrypted-state"
+        target.write_bytes(b"new-encrypted-state")
+        backup.write_bytes(previous)
+        manifest = {
+            "schema": 1,
+            "phase": phase,
+            "entries": [{
+                "target": target.name,
+                "previous": backup.name,
+                "had_previous": True,
+                "previous_sha256": hashlib.sha256(previous).hexdigest(),
+                "published_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            }],
+        }
+        (state / ".vault-publication.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        return target, backup
+
+    def test_precommit_recovery_restores_exact_old_ciphertext(self, mock_vault_env):
+        target, backup = self._write_intent(mock_vault_env, phase="prepared")
+        assert vault._recover_pending_publication() is True
+        assert target.read_bytes() == b"old-encrypted-state"
+        assert not backup.exists()
+        assert not (mock_vault_env / "state" / ".vault-publication.json").exists()
+
+    def test_committed_recovery_preserves_published_ciphertext(self, mock_vault_env):
+        target, backup = self._write_intent(mock_vault_env, phase="committed")
+        assert vault._recover_pending_publication() is True
+        assert target.read_bytes() == b"new-encrypted-state"
+        assert not backup.exists()
+
+    def test_corrupt_recovery_evidence_blocks_without_replacing_target(
+        self, mock_vault_env
+    ):
+        target, backup = self._write_intent(mock_vault_env, phase="prepared")
+        backup.write_bytes(b"corrupt")
+        with pytest.raises(SystemExit):
+            vault._recover_pending_publication()
+        assert target.read_bytes() == b"new-encrypted-state"
+        assert (mock_vault_env / "state" / ".vault-publication.json").exists()
+
+    def test_conflicting_target_blocks_recovery_without_overwrite(self, mock_vault_env):
+        target, backup = self._write_intent(mock_vault_env, phase="prepared")
+        target.write_bytes(b"unrelated-current-ciphertext")
+        with pytest.raises(SystemExit):
+            vault._recover_pending_publication()
+        assert target.read_bytes() == b"unrelated-current-ciphertext"
+        assert backup.exists()
 
 
 class TestVaultPolicyAndHardening:

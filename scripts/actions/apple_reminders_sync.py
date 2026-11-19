@@ -86,7 +86,7 @@ def dry_run(proposal: ActionProposal) -> ActionResult:
         status="success",
         message="[DRY RUN] Reminder not created — preview only",
         data={"preview": "\n".join(preview_lines), "title": title},
-        reversible=True,
+        reversible=False,
         reverse_action=None,
         undo_deadline=None,
     )
@@ -199,7 +199,17 @@ def execute(proposal: ActionProposal) -> ActionResult:
 
     # Save to store
     error_ptr = Foundation.NSError.errorWithDomain_code_userInfo_(None, 0, None)
-    saved = store.saveReminder_commit_error_(reminder, True, None)
+    try:
+        saved = store.saveReminder_commit_error_(reminder, True, None)
+    except Exception as exc:
+        return ActionResult(
+            status="unknown",
+            message="Apple Reminders did not return a verified save receipt; reconcile before retrying.",
+            data={"exception": type(exc).__name__},
+            reversible=False,
+            reverse_action=None,
+            undo_deadline=None,
+        )
     if not saved:
         return ActionResult(
             status="failure",
@@ -210,12 +220,21 @@ def execute(proposal: ActionProposal) -> ActionResult:
             undo_deadline=None,
         )
 
-    reminder_id = str(reminder.calendarItemIdentifier())
+    reminder_id = str(reminder.calendarItemIdentifier() or "")
+    if not reminder_id:
+        return ActionResult(
+            status="unknown",
+            message="Apple Reminders returned no verified save receipt; reconcile before retrying.",
+            data={},
+            reversible=False,
+            reverse_action=None,
+            undo_deadline=None,
+        )
     return ActionResult(
         status="success",
         message=f"Reminder created: {title[:60]}",
         data={"reminder_id": reminder_id, "list_name": list_name, "linked_oi": linked_oi},
-        reversible=True,
+        reversible=False,
         reverse_action=None,
         undo_deadline=None,
     )

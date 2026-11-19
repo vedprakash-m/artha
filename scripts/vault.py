@@ -38,12 +38,15 @@ from _bootstrap import reexec_in_venv
 reexec_in_venv()
 
 import atexit
+import hashlib
 import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -177,26 +180,28 @@ def check_lock_state() -> int:
     if hard_stale or soft_stale or legacy_stale:
         reason = "hard TTL" if hard_stale else ("PID not running" if soft_stale else "legacy lock")
         print(f"  ⚠ Stale lock file detected (age: {lock_age_m}m, reason: {reason}).")
-        print("  Previous session exited uncleanly. Auto-clearing lock and proceeding.")
+        print("  Previous session exited uncleanly. Attempting verified recovery.")
         if pid:
             print(f"  (locking PID was {pid})")
-        # RD-40: Attempt re-encryption BEFORE clearing the lock — ensures plaintext
-        # is not left exposed when a session terminates uncleanly (SIGKILL, OOM, etc.).
-        # do_encrypt() is safe to call multiple times (re-entrancy guard in place).
-        # Catch BaseException (including SystemExit) so failures never block lock cleanup.
-        _watchdog_encrypt_attempted = False
+        # Re-encrypt before recovery, but never discard the lock or old ciphertext
+        # if the same-operation recovery cannot be verified.
         try:
             print("  Attempting re-encryption of any plaintext domain files before clearing lock...")
             do_encrypt()
-            _watchdog_encrypt_attempted = True
-            print("  Re-encryption complete.")
-        except BaseException as _enc_exc:  # noqa: BLE001 — best-effort; must not block lock cleanup
-            print(f"  ⚠ Re-encryption failed: {_enc_exc} — clearing lock anyway.")
-        LOCK_FILE.unlink(missing_ok=True)
-        log(
-            f"STALE_LOCK_CLEARED | age: {lock_age_m}m | reason: {reason} | pid: {pid} "
-            f"| reencrypt: {'ok' if _watchdog_encrypt_attempted else 'failed'} | action: auto-cleared"
-        )
+            if LOCK_FILE.exists():
+                raise RuntimeError("re-encryption did not complete lock publication")
+            print("  Re-encryption complete; lock removed by the verified encrypt path.")
+        except BaseException as _enc_exc:  # noqa: BLE001 — preserve the lock on every failure
+            print(
+                f"  ⛔ Re-encryption failed: {_enc_exc} — preserving lock, plaintext and old ciphertext.",
+                file=sys.stderr,
+            )
+            log(
+                f"STALE_LOCK_RECOVERY_FAILED | age: {lock_age_m}m | reason: {reason} "
+                f"| pid: {pid} | action: preserved"
+            )
+            return 2
+        log(f"STALE_LOCK_RECOVERED | age: {lock_age_m}m | reason: {reason} | pid: {pid}")
         return 1
 
     # Active lock
@@ -306,9 +311,13 @@ def _restore_bak(plain_file: Path, domain: str, reason: str) -> bool:
         print(f"  WARNING: Backup for {domain}.md is empty — skipping restore", file=sys.stderr)
         return False
     try:
-        with open(bak, encoding="utf-8", errors="replace") as f:
-            first_line = f.readline()
-        if domain != "audit" and not first_line.startswith("---"):
+        backup_text = bak.read_text(encoding="utf-8", errors="replace")
+        from lib.state_frontmatter import FrontmatterError, split_frontmatter
+        try:
+            parts = split_frontmatter(backup_text)
+        except FrontmatterError:
+            parts = None
+        if domain != "audit" and parts is None:
             log(f"INTEGRITY_RESTORE_FAILED | file: {domain}.md | reason: {reason} | detail: backup_invalid_yaml")
             print(f"  WARNING: Backup for {domain}.md has invalid YAML — skipping restore", file=sys.stderr)
             return False
@@ -392,6 +401,7 @@ from foundation import is_valid_age_file as _is_valid_age_file
 
 _op_lock_fd = None
 _op_fence = None
+_op_lock_owner = threading.local()
 
 
 def _acquire_op_lock() -> bool:
@@ -402,6 +412,10 @@ def _acquire_op_lock() -> bool:
     (including on process exit or crash).
     """
     global _op_lock_fd, _op_fence
+    depth = getattr(_op_lock_owner, "depth", 0)
+    if depth:
+        _op_lock_owner.depth = depth + 1
+        return True
     lock_path = _config["ARTHA_DIR"] / ".artha-op-lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     # Share the installation fence so a full-state checkpoint never captures a half-encrypted State File set.
@@ -424,9 +438,11 @@ def _acquire_op_lock() -> bool:
             # No advisory lock support — proceed without lock
             fd.close()
             _op_fence = fence
+            _op_lock_owner.depth = 1
             return True
         _op_lock_fd = fd
         _op_fence = fence
+        _op_lock_owner.depth = 1
         return True
     except (IOError, OSError):
         try:
@@ -440,6 +456,12 @@ def _acquire_op_lock() -> bool:
 def _release_op_lock() -> None:
     """Release the advisory file lock."""
     global _op_lock_fd, _op_fence
+    depth = getattr(_op_lock_owner, "depth", 0)
+    if depth > 1:
+        _op_lock_owner.depth = depth - 1
+        return
+    if depth == 1:
+        _op_lock_owner.depth = 0
     if _op_lock_fd is not None:
         try:
             _op_lock_fd.close()
@@ -465,6 +487,11 @@ def _with_op_lock(func):
     wrapper.__name__ = func.__name__
     wrapper.__doc__ = func.__doc__
     return wrapper
+
+
+def _check_stale_lock() -> int:
+    """Watchdog entry point; preserves active locks and uses verified stale recovery."""
+    return check_lock_state()
 
 
 # ---------------------------------------------------------------------------
@@ -717,9 +744,13 @@ def do_decrypt() -> None:
                 # .md files start with '---'; .yaml files start with '#' or a YAML key.
                 # For .yaml files we just check non-empty (already checked above).
                 if ext == ".md" and domain != "audit":
-                    with open(tmp_plain, encoding="utf-8", errors="replace") as f:
-                        first_line = f.readline()
-                    if not first_line.startswith("---"):
+                    decrypted_text = tmp_plain.read_text(encoding="utf-8", errors="replace")
+                    from lib.state_frontmatter import FrontmatterError, split_frontmatter
+                    try:
+                        parts = split_frontmatter(decrypted_text)
+                    except FrontmatterError:
+                        parts = None
+                    if parts is None:
                         print(f"  ERROR: Decrypted {filename} missing YAML frontmatter — restoring backup",
                               file=sys.stderr)
                         tmp_plain.unlink(missing_ok=True)
@@ -864,6 +895,125 @@ def _mark_backup_failure() -> None:
         pass  # non-fatal
 
 
+def _publication_manifest() -> Path:
+    return _config["STATE_DIR"] / ".vault-publication.json"
+
+
+def _atomic_json_write(path: Path, payload: dict) -> None:
+    fd, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_bytes_write(path: Path, content: bytes) -> None:
+    fd, temporary = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _recover_pending_publication() -> bool:
+    """Roll back an interrupted pre-commit publish or finish a committed one."""
+    manifest_path = _publication_manifest()
+    if not manifest_path.exists():
+        return False
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("schema") != 1 or manifest.get("phase") not in {"prepared", "committed"}:
+            raise ValueError("unknown publication manifest")
+        entries = manifest["entries"]
+        if not isinstance(entries, list):
+            raise ValueError("invalid publication entries")
+        state_dir = _config["STATE_DIR"]
+        parsed = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("invalid publication entry")
+            target = state_dir / entry["target"]
+            if target.parent != state_dir or not target.name.endswith(".age"):
+                raise ValueError("unsafe publication target")
+            backup = state_dir / entry["previous"]
+            if (
+                backup.parent != state_dir
+                or not backup.name.endswith((".previous", ".publication-previous"))
+            ):
+                raise ValueError("unsafe publication backup")
+            parsed.append((entry, target, backup))
+        if manifest["phase"] == "prepared":
+            for entry, _target, backup in parsed:
+                if entry["had_previous"] and (
+                    not backup.is_file()
+                    or hashlib.sha256(backup.read_bytes()).hexdigest() != entry["previous_sha256"]
+                ):
+                    raise ValueError("publication backup is unavailable")
+            for entry, target, _backup in parsed:
+                current = (
+                    hashlib.sha256(target.read_bytes()).hexdigest()
+                    if target.is_file()
+                    else None
+                )
+                permitted = {entry["published_sha256"]}
+                if entry["had_previous"]:
+                    permitted.add(entry["previous_sha256"])
+                else:
+                    permitted.add(None)
+                if current not in permitted:
+                    raise ValueError("publication target conflicts with recovery intent")
+            for entry, target, backup in parsed:
+                if entry["had_previous"]:
+                    _atomic_bytes_write(target, backup.read_bytes())
+                else:
+                    target.unlink(missing_ok=True)
+        else:
+            for entry, target, _backup in parsed:
+                current = (
+                    hashlib.sha256(target.read_bytes()).hexdigest()
+                    if target.is_file()
+                    else None
+                )
+                if current != entry["published_sha256"]:
+                    raise ValueError("committed publication no longer matches its receipt")
+        for entry, _target, backup in parsed:
+            backup.unlink(missing_ok=True)
+        manifest_path.unlink()
+        log(
+            "VAULT_PUBLICATION_RECOVERED | phase: "
+            f"{manifest['phase']} | files: {len(parsed)}"
+        )
+        return True
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        print(
+            f"[VAULT] Publication recovery is unresolved: {type(exc).__name__}. "
+            "Lock and ciphertext were preserved.",
+            file=sys.stderr,
+        )
+        die("Cannot continue with an unresolved encrypted publication")
+
+
 # ---------------------------------------------------------------------------
 # Encrypt
 # ---------------------------------------------------------------------------
@@ -879,6 +1029,7 @@ def do_encrypt() -> None:
       - RD-14: Machine conflict detection — warns if another machine holds the lock
     """
     _ensure_encryption_ready()  # transparent first-run setup (Part VII)
+    _recover_pending_publication()
     if not check_age_installed():
         die("'age' encryption tool not found. Install it:\n"
             "  macOS: brew install age\n"
@@ -921,7 +1072,7 @@ def do_encrypt() -> None:
 
     errors = 0
     encrypted_count = 0
-    encrypted_files: list[tuple[str, str, Path, Path]] = []  # deferred cleanup list (#1)
+    staged_files: list[tuple[str, str, Path, Path, Path]] = []
 
     for domain, ext, plain_file, age_file in _iter_sensitive_files():
         filename = f"{domain}{ext}"
@@ -952,24 +1103,80 @@ def do_encrypt() -> None:
                     errors += 1
                     continue
 
-                shutil.move(str(tmp_file), str(age_file))
-                encrypted_files.append((domain, ext, plain_file, age_file))
-                encrypted_count += 1
-                log(f"ENCRYPT_OK | file: {filename}")
+                staged_files.append((domain, ext, plain_file, age_file, tmp_file))
             else:
                 tmp_file.unlink(missing_ok=True)
                 print(f"  ERROR: Failed to encrypt {filename}", file=sys.stderr)
                 errors += 1
 
     if errors > 0:
+        for _domain, _ext, _plain, _age, staged in staged_files:
+            staged.unlink(missing_ok=True)
         _lockdown_plaintext()
         die(f"{errors} file(s) failed to encrypt. CRITICAL: plaintext may remain on disk.")
 
-    # Deferred cleanup: remove plaintext + .bak only after ALL encrypts verified (#1)
-    for domain, ext, plain_file, age_file in encrypted_files:
+    publication_entries: list[dict] = []
+    try:
+        for _domain, _ext, _plain, age_file, staged in staged_files:
+            previous = age_file.read_bytes() if age_file.exists() else None
+            backup = age_file.with_name(age_file.name + ".publication-previous")
+            if previous is not None:
+                _atomic_bytes_write(backup, previous)
+                previous_sha256 = hashlib.sha256(previous).hexdigest()
+            else:
+                backup.unlink(missing_ok=True)
+                previous_sha256 = None
+            publication_entries.append({
+                "target": age_file.name,
+                "previous": backup.name,
+                "had_previous": previous is not None,
+                "previous_sha256": previous_sha256,
+                "published_sha256": hashlib.sha256(staged.read_bytes()).hexdigest(),
+            })
+        _atomic_json_write(
+            _publication_manifest(),
+            {"schema": 1, "phase": "prepared", "entries": publication_entries},
+        )
+    except OSError as exc:
+        for entry in publication_entries:
+            (_config["STATE_DIR"] / entry["previous"]).unlink(missing_ok=True)
+        for _domain, _ext, _plain, _age, staged in staged_files:
+            staged.unlink(missing_ok=True)
+        _lockdown_plaintext()
+        die(f"Could not prepare encrypted publication: {exc.__class__.__name__}")
+
+    try:
+        for domain, ext, plain_file, age_file, staged in staged_files:
+            staged_ciphertext = staged.read_bytes()
+            os.replace(staged, age_file)
+            if age_file.read_bytes() != staged_ciphertext:
+                raise OSError(f"{age_file.name} publication verification failed")
+            encrypted_count += 1
+            log(f"ENCRYPT_OK | file: {domain}{ext}")
+    except BaseException:
+        try:
+            _recover_pending_publication()
+            rollback_errors = 0
+        except SystemExit:
+            rollback_errors = 1
+        for _domain, _ext, _plain, _age, staged in staged_files:
+            staged.unlink(missing_ok=True)
+        _lockdown_plaintext()
+        detail = f"; {rollback_errors} rollback(s) incomplete" if rollback_errors else ""
+        die(f"Encrypted State File publication failed{detail}. Plaintext and lock retained.")
+
+    _atomic_json_write(
+        _publication_manifest(),
+        {"schema": 1, "phase": "committed", "entries": publication_entries},
+    )
+
+    # Deferred cleanup: remove plaintext + .bak only after ALL publications verified (#1)
+    for domain, ext, plain_file, age_file, staged in staged_files:
         plain_file.unlink(missing_ok=True)
         bak = Path(str(plain_file) + ".bak")
         bak.unlink(missing_ok=True)
+
+    _recover_pending_publication()
 
     # Clean up orphaned plaintext stubs leftover from interrupted encrypt cycles.
     for domain, ext, plain_file, age_file in _iter_sensitive_files():
@@ -1243,13 +1450,13 @@ def _print_usage(exit_code: int = 1) -> None:
     sys.exit(exit_code)
 
 
-def do_read(domain: str) -> None:
+def do_read(domain: str, *, state_dir: Path | None = None) -> None:
     """Read and decrypt one domain in-memory via AgeVault (never touches disk)."""
     try:
         from catchup_core.vault import AgeVault
         key = get_private_key()
         pub = get_public_key()
-        vault = AgeVault(STATE_DIR, identity=lambda: key, recipient=pub)
+        vault = AgeVault(state_dir or STATE_DIR, identity=lambda: key, recipient=pub)
         content = vault.read(domain)
         sys.stdout.write(content)
     except Exception as exc:
@@ -1300,7 +1507,14 @@ def main() -> None:
         if len(sys.argv) < 3:
             print("Usage: vault.py read <domain>", file=sys.stderr)
             sys.exit(1)
-        do_read(sys.argv[2])
+        selected_state_dir = None
+        args = sys.argv[3:]
+        if args:
+            if len(args) != 2 or args[0] != "--state-dir":
+                print("Usage: vault.py read <domain> [--state-dir PATH]", file=sys.stderr)
+                sys.exit(1)
+            selected_state_dir = Path(args[1])
+        do_read(sys.argv[2], state_dir=selected_state_dir)
     elif cmd in ("store-key", "store_key"):
         if len(sys.argv) < 3:
             print("Usage: vault.py store-key <keyfile>", file=sys.stderr)
@@ -1378,7 +1592,7 @@ def main() -> None:
         # is no longer running. This bounds post-crash plaintext exposure to ≤5 min.
         result = _check_stale_lock()
         if result == 1:
-            # Stale lock was found and cleared; _check_stale_lock already called do_encrypt()
+            # Stale lock was recovered by a verified encryption publication.
             log("VAULT_WATCHDOG_ENCRYPT | trigger: stale_lock_cleared")
             sys.exit(0)
         elif result == 0:

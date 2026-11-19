@@ -258,45 +258,13 @@ def _ask_workiq(question: str) -> str:
         )
     cmd = [npx, "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}", "ask", "-q", question]
 
-    if platform.system() == "Windows":
-        # On Windows, subprocess.run(timeout=...) kills the direct process (npx)
-        # but its grandchildren (node.js) inherit pipe handles and keep them open,
-        # causing communicate() to deadlock after the timeout fires.
-        # Fix: use Popen + taskkill /F /T to kill the entire process tree.
-        # CREATE_NO_WINDOW prevents the npx/node.js grandchild processes from
-        # inheriting the pipeline's stdout/stderr pipe handles. Without this,
-        # grandchildren can hold the pipe open after npx exits, causing
-        # proc.communicate() to block indefinitely (CLASSIFY hang root cause).
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        try:
-            stdout_bytes, stderr_bytes = proc.communicate(timeout=SUBPROCESS_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=5,
-                )
-            except Exception:
-                proc.kill()
-            try:
-                proc.communicate(timeout=5)
-            except Exception:
-                pass
-            raise subprocess.TimeoutExpired(cmd, SUBPROCESS_TIMEOUT)
-        rc = proc.returncode
-        stdout_text = stdout_bytes.decode("utf-8", errors="replace")
-        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
-    else:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT)
-        rc = result.returncode
-        stdout_text = result.stdout
-        stderr_text = result.stderr
+    from lib.bounded_process import run_bounded  # noqa: PLC0415
+    result = run_bounded(cmd, timeout=SUBPROCESS_TIMEOUT)
+    if result.stdout_truncated or result.stderr_truncated:
+        raise RuntimeError("[workiq_bridge] WorkIQ output exceeded its bound")
+    rc = result.returncode
+    stdout_text = result.stdout.decode("utf-8", errors="replace")
+    stderr_text = result.stderr.decode("utf-8", errors="replace")
 
     if rc != 0:
         stderr_snippet = stderr_text.strip()[:200]
@@ -306,8 +274,7 @@ def _ask_workiq(question: str) -> str:
                 "Run: npx workiq logout  then  npx workiq login"
             )
         raise RuntimeError(
-            f"[workiq_bridge] WorkIQ returned non-zero exit ({rc}): "
-            f"{stderr_snippet}"
+            f"[workiq_bridge] WorkIQ returned non-zero exit ({rc})"
         )
     return stdout_text
 
@@ -734,8 +701,11 @@ def fetch(
                 if mcp_result is not None:
                     return mcp_result
             return _ask_workiq(question)
-        except subprocess.TimeoutExpired:
-            raise RuntimeError(f"WorkIQ query timed out ({mode})") from None
+        except subprocess.TimeoutExpired as exc:
+            add_note = getattr(exc, "add_note", None)
+            if add_note is not None:
+                add_note(f"workiq mode={mode}")
+            raise
 
     # Build query from template
     if mode == "teams_ai":
@@ -900,18 +870,25 @@ def health_check(auth_context: dict) -> bool:
         return False
 
     try:
-        result = subprocess.run(
+        from lib.bounded_process import run_bounded  # noqa: PLC0415
+        result = run_bounded(
             [npx, "-y", f"@microsoft/workiq@{WORKIQ_VERSION_PIN}",
              "ask", "-q", "What is my name?"],
-            capture_output=True, text=True, timeout=30,
+            timeout=30,
         )
-        ok = result.returncode == 0 and len(result.stdout.strip()) > 5
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        ok = (
+            result.returncode == 0
+            and not result.stdout_truncated
+            and not result.stderr_truncated
+            and len(stdout.strip()) > 5
+        )
         if not ok:
             print(
-                f"[workiq_bridge] health_check failed: {result.stderr.strip()[:120]}",
+                f"[workiq_bridge] health_check failed (exit {result.returncode})",
                 file=sys.stderr,
             )
         return ok
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+    except Exception as exc:
         print(f"[workiq_bridge] health_check error: {exc}", file=sys.stderr)
         return False

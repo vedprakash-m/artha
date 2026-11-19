@@ -35,11 +35,18 @@ if not _IS_MACOS:
         "apple_reminders: macOS only — gracefully disabled on %s", platform.system()
     )
 
-    def fetch(**_: Any) -> Iterator[dict]:  # type: ignore[misc]
+    def fetch(  # type: ignore[misc]
+        *,
+        since: str | None = None,
+        max_results: int = 500,
+        auth_context: dict | None = None,
+        source_tag: str = "apple_reminders",
+        **kwargs: Any,
+    ) -> Iterator[dict]:
         """No-op on non-macOS platforms."""
         return iter([])
 
-    def health_check(_: Any = None) -> bool:  # type: ignore[misc]
+    def health_check(auth_context: dict | None = None) -> bool:  # type: ignore[misc]
         """Always False on non-macOS platforms."""
         return False
 
@@ -222,13 +229,16 @@ else:
         for rec in records:
             if not sync_completed and rec["is_completed"]:
                 continue
+            observed_at = rec.get("completed_date") or rec.get("due_date")
+            if not observed_at:
+                continue
             yield {
                 **rec,
                 "source": source_tag,
                 # Artha pipeline compatibility
                 "title": rec["title"],
                 "body": rec["notes"],
-                "date_iso": rec.get("due_date", "") or datetime.now(timezone.utc).isoformat(),
+                "date_iso": observed_at,
             }
 
     def health_check(auth_context: dict | None = None) -> bool:  # type: ignore[misc]

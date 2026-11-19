@@ -3,14 +3,15 @@
 """
 scripts/context_offloader.py — Context offloading for Artha catch-up workflow.
 
-Writes large intermediate artifacts to tmp/ files and returns a compact
+Writes large intermediate artifacts to a machine-local directory and returns a compact
 summary card suitable for inclusion in the AI's context window.
 
 Phase 1 of the Deep Agents Architecture adoption (specs/deep-agents.md §5 Phase 1).
 
-When a data artifact exceeds the configured token threshold, it is written to
-tmp/{name}.json (or .jsonl for lists of dicts) and replaced in the AI context
-with a compact summary card containing key stats and a preview.
+When a data artifact exceeds the configured token threshold, production callers
+write it below ``~/.artha-local/context-offload`` (or an explicit
+``<artha_dir>/tmp`` test root). It is replaced in the AI context with a compact
+summary card containing key stats and a preview.
 
 Usage:
     from context_offloader import offload_artifact
@@ -30,19 +31,23 @@ Ref: specs/deep-agents.md Phase 1
 from __future__ import annotations
 
 import json
+import os
+import re
+import stat
+import tempfile
 from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Any, Callable
 
-from lib.common import ARTHA_DIR
+from lib.context_budget import (
+    CHARS_PER_TOKEN as _CHARS_PER_TOKEN,
+    chars_for_tokens,
+    estimate_token_count,
+)
 
-# RD-50: Import from single source of truth (context_budget.py).
-# RD-21: Corrected estimate is 3.5 chars/token (was 4).
-try:
-    from lib.context_budget import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
-except ImportError:
-    _CHARS_PER_TOKEN = 3.5  # fallback if lib not on path
 _MAX_CARD_TOKENS = 500  # summary card must never exceed this
+_MAX_NAME_LENGTH = 80
+_SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 # ---------------------------------------------------------------------------
 # Tiered eviction — Phase 2 (specs/agentic-improve.md)
@@ -96,8 +101,98 @@ OFFLOADED_GLOB_PATTERNS: list[str] = [
 
 
 def _estimate_tokens(text: str) -> int:
-    """Estimate token count using the 1 token ≈ 4 chars heuristic."""
-    return len(text) // _CHARS_PER_TOKEN
+    """Estimate token count with the canonical context-budget helper."""
+    return estimate_token_count(text)
+
+
+def _validate_artifact_name(name: str) -> None:
+    """Require a plain filename stem so an artifact cannot escape its owner."""
+    if (
+        not isinstance(name, str)
+        or not 1 <= len(name) <= _MAX_NAME_LENGTH
+        or not _SAFE_ARTIFACT_NAME.fullmatch(name)
+    ):
+        raise ValueError(
+            "artifact name must be 1-80 letters, digits, underscores or hyphens "
+            "and cannot contain path separators"
+        )
+
+
+def _bounded_text(text: str, token_budget: int) -> str:
+    """Truncate text to a conservative character budget without float slices."""
+    maximum = chars_for_tokens(max(0, int(token_budget)))
+    if len(text) <= maximum:
+        return text
+    if maximum == 0:
+        return ""
+    return text[: maximum - 1] + "…"
+
+
+def _offload_directory(artha_dir: Path | None) -> Path:
+    """Place test overrides in <root>/tmp; production data stays machine-local."""
+    if artha_dir is not None:
+        return Path(artha_dir) / "tmp"
+    from lib.local_paths import local_dir  # noqa: PLC0415
+
+    return local_dir() / "context-offload"
+
+
+def _hold_card(name: str, estimated_tokens: int, detail: str) -> str:
+    """Return an explicit, bounded refusal when offload publication cannot finish."""
+    card = (
+        f"⚠️ OFFLOAD HELD: {name}\n"
+        f"   Size: ~{estimated_tokens:,} tokens\n"
+        f"   Reason: {detail}\n"
+        "   The artifact was not published; retry the owning operation."
+    )
+    return _bounded_text(card, _MAX_CARD_TOKENS)
+
+
+def _atomic_publish(out_path: Path, serialized: str) -> None:
+    """Create one exact offload artifact without leaving a partially written file."""
+    existing = None
+    if out_path.exists() or out_path.is_symlink():
+        metadata = out_path.lstat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or getattr(metadata, "st_file_attributes", 0) & 0x400
+        ):
+            raise OSError(f"offload target is not a safe regular file: {out_path}")
+        existing = out_path.read_text(encoding="utf-8")
+    if existing is not None:
+        if existing == serialized:
+            return
+        raise FileExistsError(f"offload target already exists with different content: {out_path}")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=out_path.parent,
+        prefix=f".{out_path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    published = False
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
+        os.replace(temporary, out_path)
+        published = True
+        if out_path.read_text(encoding="utf-8") != serialized:
+            raise OSError(f"offload readback mismatch: {out_path}")
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        if published:
+            try:
+                out_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
 
 
 def load_harness_flag(feature_path: str, default: bool = True) -> bool:
@@ -187,7 +282,7 @@ def _build_card(
         ]
         card = "\n".join(minimal)
 
-    return card
+    return _bounded_text(card, _MAX_CARD_TOKENS)
 
 
 def offload_artifact(
@@ -200,15 +295,15 @@ def offload_artifact(
     artha_dir: Path | None = None,
     tier: EvictionTier | None = None,
 ) -> str:
-    """Write data to tmp/{name}.json; return summary card if data > tier-adjusted threshold.
+    """Offload large data; return a bounded card when the tier threshold is exceeded.
 
     If the serialized data is at or below the effective threshold, returns the
     serialized text directly — no file is written.
 
     If the data exceeds the threshold (and the feature flag is enabled in
-    ``config/artha_config.yaml``), writes it to ``tmp/{name}{ext}`` and
-    returns a compact summary card containing the file path, key stats from
-    ``summary_fn``, and a configurable-length preview of the raw content.
+    ``config/artha_config.yaml``), writes it to the machine-local offload
+    directory and returns a compact summary card. Passing ``artha_dir`` uses
+    ``<artha_dir>/tmp`` for an isolated test.
 
     Args:
         name: Artifact name used as the stem of the output filename.
@@ -232,6 +327,20 @@ def offload_artifact(
         str: Serialized data (if below threshold) or a compact summary card
             string (if offloaded).
     """
+    _validate_artifact_name(name)
+    if (
+        isinstance(threshold_tokens, bool)
+        or not isinstance(threshold_tokens, int)
+        or threshold_tokens < 0
+    ):
+        raise ValueError("threshold_tokens must be a nonnegative integer")
+    if (
+        isinstance(preview_lines, bool)
+        or not isinstance(preview_lines, int)
+        or preview_lines < 0
+    ):
+        raise ValueError("preview_lines must be a nonnegative integer")
+
     if not load_harness_flag("context_offloading.enabled"):
         # Feature disabled — return serialized data, no file written
         serialized, _ = _serialize(data)
@@ -260,14 +369,28 @@ def offload_artifact(
         # Below threshold — return inline, no file written
         return serialized
 
-    # Above threshold — write to tmp/
-    base_dir = artha_dir if artha_dir is not None else ARTHA_DIR
-    tmp_dir = base_dir / "tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    # Above threshold — write to a safe offload directory.
+    tmp_dir = _offload_directory(artha_dir)
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        metadata = tmp_dir.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or getattr(metadata, "st_file_attributes", 0) & 0x400
+        ):
+            raise OSError("offload directory is not a safe ordinary directory")
+    except OSError as exc:
+        return _hold_card(name, estimated_tokens, f"{type(exc).__name__}: directory unavailable")
     out_path = tmp_dir / f"{name}{ext}"
-    out_path.write_text(serialized, encoding="utf-8")
 
-    stats = summary_fn(data)
+    try:
+        stats = " ".join(str(summary_fn(data)).split())
+        from catchup_core.session_lock import publication_fence  # noqa: PLC0415
+
+        with publication_fence(out_path):
+            _atomic_publish(out_path, serialized)
+    except Exception as exc:  # noqa: BLE001 — return an explicit bounded hold
+        return _hold_card(name, estimated_tokens, type(exc).__name__)
     return _build_card(name, out_path, serialized, stats, estimated_tokens, preview_lines)
 
 
@@ -356,6 +479,17 @@ def _assert_not_frozen(artifact_name: str) -> None:
         )
 
 
+def _compaction_hold_marker(phase: str, error: Exception) -> str:
+    """Return a fixed, bounded marker instead of failed compaction output."""
+    marker = (
+        f"⚠️ COMPACTION HELD: {phase}\n"
+        f"   Reason: {type(error).__name__}\n"
+        "   No complete raw output was emitted; retry the owning operation."
+    )
+    maximum = 500
+    return marker if len(marker) <= maximum else marker[: maximum - 1] + "…"
+
+
 def compact_phase_output(
     phase: str,
     raw_output: str,
@@ -379,7 +513,8 @@ def compact_phase_output(
             ``CompactionPolicyError`` immediately, before any compaction.
 
     Returns:
-        Compacted string (or ``raw_output`` when gated / phase=reason).
+        Compacted string, ``raw_output`` when gated / phase=reason, or a bounded
+        hold marker when enabled compaction fails.
 
     Raises:
         CompactionPolicyError: When ``artifact_name`` denotes a FROZEN artifact.
@@ -394,7 +529,7 @@ def compact_phase_output(
 
     if phase == "fetch":
         # Delegate to existing signal-extraction pipeline (avoids fork).
-        # Import lazily to avoid circular deps; gracefully degrade on import error.
+        # Import lazily to avoid circular deps.
         try:
             from email_classifier import classify_email_batch  # type: ignore[import]  # noqa: PLC0415
             from fact_extractor import extract_facts  # type: ignore[import]  # noqa: PLC0415
@@ -406,29 +541,32 @@ def compact_phase_output(
             if _estimate_tokens(compacted) <= max_tokens:
                 return compacted
             # Truncate to max_tokens (character-based approximation)
-            max_chars = max_tokens * _CHARS_PER_TOKEN
-            return compacted[:max_chars]
-        except Exception:  # noqa: BLE001
-            # Gracefully degrade: return raw_output if pipeline unavailable
-            return raw_output
+            return _bounded_text(compacted, max_tokens)
+        except Exception as exc:  # noqa: BLE001 — never return unbounded raw output
+            return _compaction_hold_marker("fetch", exc)
 
     elif phase == "process":
-        # Domain-extraction summarisation: keep only the first max_tokens worth
-        # of content.  Full summarisation template is applied in pipeline.py; here
-        # we apply a conservative truncation so stale raw content is not kept.
-        max_chars = max_tokens * _CHARS_PER_TOKEN
-        if len(raw_output) <= max_chars:
-            return raw_output
-        # Preserve structure: keep leading lines up to the char budget
-        lines = raw_output.splitlines(keepends=True)
-        result: list[str] = []
-        remaining = max_chars
-        for line in lines:
-            if len(line) > remaining:
-                break
-            result.append(line)
-            remaining -= len(line)
-        return "".join(result)
+        try:
+            # Domain-extraction summarisation: keep only the first max_tokens worth
+            # of content.  Full summarisation template is applied in pipeline.py; here
+            # we apply a conservative truncation so stale raw content is not kept.
+            max_chars = chars_for_tokens(max(0, int(max_tokens)))
+            if len(raw_output) <= max_chars:
+                return raw_output
+            # Preserve structure: keep leading lines up to the char budget
+            lines = raw_output.splitlines(keepends=True)
+            result: list[str] = []
+            remaining = max_chars
+            for line in lines:
+                if len(line) > remaining:
+                    if not result and remaining > 0:
+                        result.append(line[:remaining])
+                    break
+                result.append(line)
+                remaining -= len(line)
+            return "".join(result)
+        except Exception as exc:  # noqa: BLE001 — never return unbounded raw output
+            return _compaction_hold_marker("process", exc)
 
     elif phase == "reason":
         # Reason phase = final user-facing briefing; never compact.

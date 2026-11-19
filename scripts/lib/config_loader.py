@@ -1,4 +1,4 @@
-"""Centralized YAML config loader with process-lifetime cache.
+"""Centralized YAML config loader with isolated, revision-aware caching.
 
 Usage:
     from lib.config_loader import load_config
@@ -6,10 +6,10 @@ Usage:
 
 All canonical config file names are listed in ``_CONFIG_FILES`` below.
 
-**Cache contract:** ``load_config()`` returns a shallow copy of the cached
-dict on every call, so callers may mutate their copy without corrupting the
-cache.  Returns empty dict on error (logged, never raises).  Cache lifetime
-equals the process lifetime — one CLI invocation.
+**Cache contract:** ``load_config()`` returns a deep copy of the cached
+dict on every call. Parsed values are keyed by the exact file bytes, so
+process-lifetime tools observe a relevant configuration revision without
+sharing mutable nested values. Returns empty dict on error (logged, never raises).
 ``strict=True`` propagates read/parse errors and rejects non-mapping roots for
 health checks that must distinguish unreadable configuration from disabled features.
 Strict and best-effort reads use separate cache entries; exceptions are not cached.
@@ -27,6 +27,7 @@ Ref: specs/pay-debt-reloaded.md §4 WS-2
 """
 from __future__ import annotations
 
+import copy
 import logging
 from functools import lru_cache
 from pathlib import Path
@@ -56,7 +57,7 @@ _CONFIG_FILES: dict[str, str] = {
 
 @lru_cache(maxsize=16)
 def _load_config_cached(
-    name: str, _config_dir: str | None = None, strict: bool = False,
+    name: str, _config_dir: str | None, strict: bool, source: bytes | None,
 ) -> dict[str, Any]:
     """Internal: load YAML and cache the result dict.
 
@@ -71,14 +72,13 @@ def _load_config_cached(
         return {}
     config_dir = _config_dir or str(get_config()["CONFIG_DIR"])
     path = Path(config_dir) / filename
-    if not path.exists():
+    if source is None:
         if strict:
             raise FileNotFoundError(path)
         log.debug("config_loader: config file not found: %s", path)
         return {}
     try:
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+        data = yaml.safe_load(source.decode("utf-8"))
         if strict and not isinstance(data, dict):
             raise ValueError("configuration root must be a mapping")
         return dict(data) if isinstance(data, dict) else {}
@@ -94,19 +94,35 @@ def load_config(
 ) -> dict[str, Any]:
     """Load and cache a config file by canonical name.
 
-    Returns a shallow copy of the cached dict on each call, so callers
-    may mutate their copy without corrupting the cache.  Returns empty
+    Returns a deep copy of the cached dict on each call, so callers
+    may mutate nested values without corrupting the cache. Returns empty
     dict on error (logged, never raises).  Config is cached for the
     lifetime of the process.
     With ``strict=True``, read/parse errors propagate and non-mapping roots raise
     ``ValueError``. Successful strict reads retain caching and shallow-copy behavior.
 
-    ``_config_dir`` is exposed as a cache-key parameter so that test
+    Exact source bytes participate in the cache key, so a relevant file
+    revision is parsed automatically. ``_config_dir`` is also a cache key so test
     fixtures pointing at a temporary directory produce a distinct cache
     entry instead of silently returning stale data from the default
     ``CONFIG_DIR``.  Production callers should omit it.
     """
-    return dict(_load_config_cached(name, _config_dir, strict))
+    filename = _CONFIG_FILES.get(name)
+    if filename is None:
+        return copy.deepcopy(_load_config_cached(name, _config_dir, strict, None))
+    config_dir = _config_dir or str(get_config()["CONFIG_DIR"])
+    path = Path(config_dir) / filename
+    try:
+        with open(path, "rb") as stream:
+            source = stream.read()
+    except FileNotFoundError:
+        source = None
+    except Exception:
+        if strict:
+            raise
+        log.warning("config_loader: failed to read %s", path)
+        return {}
+    return copy.deepcopy(_load_config_cached(name, _config_dir, strict, source))
 
 
 def invalidate(name: str | None = None) -> None:

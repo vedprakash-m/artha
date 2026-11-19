@@ -15,11 +15,18 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-__all__ = ["Broker", "CallDeclaration", "RuleOfTwoViolation", "lint_configs"]
+__all__ = [
+    "Broker", "CallDeclaration", "RuleOfTwoViolation", "ToolCapabilityUnavailable",
+    "lint_configs",
+]
 
 
 class RuleOfTwoViolation(RuntimeError):
     """All three of U, P and C hold for one model call."""
+
+
+class ToolCapabilityUnavailable(RuntimeError):
+    """A requested tool has no trusted effect/read-only capability registration."""
 
 
 @dataclass(frozen=True)
@@ -59,8 +66,14 @@ def lint_configs(declarations: Iterable[CallDeclaration]) -> list[str]:
 class Broker:
     """Runtime check of the *actual* tool list and data attached to each call."""
 
-    def __init__(self, declarations: Mapping[str, CallDeclaration] | None = None):
+    def __init__(
+        self,
+        declarations: Mapping[str, CallDeclaration] | None = None,
+        *,
+        tool_capabilities: Mapping[str, bool] | None = None,
+    ):
         self._declared = dict(declarations or {})
+        self._tool_capabilities = dict(tool_capabilities or {})
 
     def check(
         self,
@@ -72,11 +85,22 @@ class Broker:
     ) -> CallDeclaration:
         """Validate one call; returns the effective declaration or raises."""
         declared = self._declared.get(name)
+        unknown = [
+            tool for tool in tools
+            if tool not in EFFECT_TOOLS and tool not in self._tool_capabilities
+        ]
+        if unknown:
+            raise ToolCapabilityUnavailable(
+                f"{name}: tool capability is unavailable for {sorted(set(unknown))}"
+            )
         effective = CallDeclaration(
             name=name,
             untrusted=untrusted_data or bool(declared and declared.untrusted),
             private=private_data or bool(declared and declared.private),
-            effect=any(t in EFFECT_TOOLS for t in tools) or bool(declared and declared.effect),
+            effect=any(
+                t in EFFECT_TOOLS or self._tool_capabilities.get(t, False)
+                for t in tools
+            ) or bool(declared and declared.effect),
         )
         if effective.violates:
             raise RuleOfTwoViolation(

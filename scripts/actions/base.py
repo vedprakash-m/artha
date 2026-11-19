@@ -452,6 +452,7 @@ VALID_SENSITIVITY = frozenset({"standard", "high", "critical"})
 
 # Valid result statuses
 VALID_RESULT_STATUSES = frozenset({"success", "failure", "partial", "unknown"})
+DEFINITE_REFUSAL_STATUSES = frozenset({400, 401, 403, 404, 409, 412, 422, 429})
 
 # Maximum title length (enforced at proposal creation)
 MAX_TITLE_LENGTH = 120
@@ -511,6 +512,15 @@ def validate_proposal_fields(proposal: ActionProposal) -> tuple[bool, str]:
     return True, ""
 
 
+def is_definite_provider_refusal(error: BaseException) -> bool:
+    """Return True only for a provider response that proves the write was refused."""
+    response = getattr(error, "resp", None)
+    status = getattr(response, "status", None)
+    if status is None:
+        status = getattr(error, "code", None)
+    return isinstance(status, int) and status in DEFINITE_REFUSAL_STATUSES
+
+
 __all__ = [
     "DomainSignal",
     "ActionProposal",
@@ -525,4 +535,5 @@ __all__ = [
     "MAX_RESULT_MESSAGE_LENGTH",
     "_ACTION_REQUIRED_FIELDS",
     "validate_proposal_fields",
+    "is_definite_provider_refusal",
 ]

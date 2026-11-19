@@ -2,12 +2,21 @@
 from __future__ import annotations
 
 import sys
+import math
 from pathlib import Path
 
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts" / "lib"))
 
-from cost_guard import BudgetConfig, CostGuard
+import cost_guard
+from cost_guard import BudgetConfig, CostGuard, CostGuardStorageError
+
+
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(cost_guard, "_STATE_FILE", tmp_path / "cost_guard_state.json")
+    monkeypatch.setattr(cost_guard, "_STATE_DIR", tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -179,3 +188,52 @@ class TestMonthlyRollover:
             "avg_cost_per_call_7d", "recent_call_count",
         }
         assert required_keys.issubset(set(summary.keys()))
+
+
+class TestAccountingBoundaries:
+    @pytest.mark.parametrize("value", [-0.01, math.nan, math.inf, -math.inf])
+    def test_invalid_amounts_are_rejected_without_state_changes(self, value):
+        guard = CostGuard()
+        guard.set_budget("agent1", BudgetConfig(1.0, 2.0))
+        assert guard.check("agent1", value) is False
+        with pytest.raises(ValueError, match="finite nonnegative"):
+            guard.record("agent1", "bad", value)
+        assert guard.agent_summary("agent1")["monthly_spent_usd"] == 0.0
+
+    def test_duplicate_task_receipt_is_idempotent(self):
+        guard = CostGuard()
+        guard.set_budget("agent1", BudgetConfig(10.0, 20.0))
+        guard.record("agent1", "same", 0.25)
+        guard.record("agent1", "same", 0.25)
+        assert guard.agent_summary("agent1")["monthly_spent_usd"] == 0.25
+        with pytest.raises(ValueError, match="immutable"):
+            guard.record("agent1", "same", 0.50)
+
+    def test_duplicate_receipt_survives_reopen(self):
+        guard = CostGuard()
+        guard.record("agent1", "same", 0.25)
+        reopened = CostGuard()
+        reopened.record("agent1", "same", 0.25)
+        assert reopened.agent_summary("agent1")["monthly_spent_usd"] == 0.25
+
+    def test_corrupt_persisted_accounting_blocks_instead_of_resetting(self):
+        cost_guard._STATE_FILE.write_text('{"agent1":{"daily_spent":"not-money"}}', encoding="utf-8")
+        with pytest.raises(CostGuardStorageError, match="unavailable"):
+            CostGuard()
+
+    def test_corrupt_reset_month_cannot_refund_spend(self):
+        cost_guard._STATE_FILE.write_text(
+            '{"agent1":{"daily_spent":1.0,"monthly_spent":1.0,"last_reset_day":"not-a-date",'
+            '"last_reset_month":"not-a-month","recent_calls":[],"receipts":{"same":1.0}}}',
+            encoding="utf-8",
+        )
+        with pytest.raises(CostGuardStorageError, match="unavailable"):
+            CostGuard()
+
+    def test_persistence_failure_is_not_reported_as_a_recorded_receipt(self, monkeypatch):
+        guard = CostGuard()
+        monkeypatch.setattr(cost_guard.os, "replace", lambda *_args: (_ for _ in ()).throw(
+            OSError("synthetic disk full")))
+        with pytest.raises(CostGuardStorageError, match="persist"):
+            guard.record("agent1", "task", 0.1)
+        assert guard.agent_summary("agent1")["monthly_spent_usd"] == 0.0

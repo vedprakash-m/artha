@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import subprocess
 import sys
 import types
 
@@ -38,6 +39,31 @@ from preflight.integration_checks import (
     check_dep_freshness, check_action_handlers,
     check_ext_agent_discovery, check_ext_agent_health,
 )
+from preflight.runtime_checks import (
+    _clear_stale_pipeline_checkpoint,
+    _compact_health_check,
+    _detect_conflict_files,
+    _write_device_context,
+    check_briefing_quality_index,
+    check_cleanup_partials,
+    check_connector_registry,
+    check_enghub_health,
+    check_eval_alerts,
+    check_eval_p1_alerts,
+    check_evidence_lake_ttl,
+    check_guardrails_rings,
+    check_guardrails_yaml,
+    check_heartbeat_zero_records,
+    check_hermes_context_staleness,
+    check_mcp_discovery,
+    check_onedrive_conflicts,
+    check_skill_index,
+    check_slo_burn_rate,
+    check_state_registry_staleness,
+    check_telemetry_integrity,
+    check_vault_policy_enforcement,
+    check_work_health_kusto_auth,
+)
 
 __all__ = [
     "CheckResult",
@@ -45,6 +71,8 @@ __all__ = [
     "format_results",
     "main",
 ]
+
+_READ_ONLY = False
 
 # ---------------------------------------------------------------------------
 # Module attribute propagation for backward-compatible monkeypatching.
@@ -54,10 +82,11 @@ __all__ = [
 
 _PROPAGATE_ATTRS = frozenset({
     "ARTHA_DIR", "SCRIPTS_DIR", "STATE_DIR", "TOKEN_DIR", "LOCK_FILE", "WORKIQ_CACHE_FILE",
+    "_READ_ONLY",
 })
 _SUBMODULE_NAMES = (
     "vault_checks", "oauth_checks", "api_checks",
-    "state_checks", "integration_checks", "_types",
+    "state_checks", "integration_checks", "runtime_checks", "_types",
 )
 
 
@@ -74,18 +103,31 @@ class _PrefightModule(types.ModuleType):
 sys.modules[__name__].__class__ = _PrefightModule
 
 
-def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResult]:
+def run_preflight(
+    auto_fix: bool = False,
+    quiet: bool = False,
+    force_no_guardrails: bool = False,
+    read_only: bool | None = None,
+) -> list[CheckResult]:
     """Run all preflight checks. Returns list of CheckResult objects."""
+    if read_only is not None:
+        globals()["_READ_ONLY"] = bool(read_only)
+        _PROPAGATE_READ_ONLY = sys.modules[__name__]
+        setattr(_PROPAGATE_READ_ONLY, "_READ_ONLY", bool(read_only))
+    auto_fix = auto_fix and not _READ_ONLY
     checks: list[CheckResult] = []
 
     # ── P0 — Hard blocks ──────────────────────────────────────────────────
     checks.append(check_keyring_backend())
     checks.append(check_vault_health())
     checks.append(check_vault_lock(auto_fix=auto_fix))
-    checks.append(check_state_backup())
-    checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json"))
-    checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json"))
+    checks.append(check_state_backup(read_only=_READ_ONLY))
     checks.append(check_pii_guard())
+    checks.append(check_guardrails_yaml(force_no_guardrails=force_no_guardrails))
+    checks.append(check_eval_alerts())
+    p1_alert_result = check_eval_p1_alerts()
+    if p1_alert_result is not None:
+        checks.append(p1_alert_result)
     # Global API live connection via unified pipeline.py (skip if --quiet to reduce latency)
     if not quiet:
         try:
@@ -105,11 +147,15 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
                 fix_hint="Check network connectivity and OAuth credentials",
             ))
     checks.append(check_state_directory())
+    checks.append(check_vault_policy_enforcement())
 
     # ── P1 — State file population from templates (first-run) ─────────────
     checks.append(check_state_templates(auto_fix=auto_fix))
+    checks.append(check_onedrive_conflicts())
 
     # ── P1 — Warnings only ────────────────────────────────────────────────
+    checks.append(check_oauth_token("Gmail", "gmail-oauth-token.json", severity="P1"))
+    checks.append(check_oauth_token("Calendar", "gcal-oauth-token.json", severity="P1"))
     checks.append(check_token_freshness("Gmail", "gmail-oauth-token.json"))
     checks.append(check_token_freshness("Calendar", "gcal-oauth-token.json"))
     checks.append(check_open_items(auto_fix=auto_fix))
@@ -125,6 +171,7 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — Profile completeness (vm-hardening.md Phase 2.2) ─────────────
     checks.append(check_profile_completeness())
+    checks.append(check_hermes_context_staleness())
 
     # ── P2 — Prompt size ceiling (RD-38: compact Artha.md ≤ 25KB) ─────────
     checks.append(check_prompt_size())
@@ -135,6 +182,8 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
 
     # ── P1 — WorkIQ Calendar (v2.2 — Windows-only, non-blocking) ─────────
     checks.append(check_workiq())
+    checks.append(check_work_health_kusto_auth())
+    checks.append(check_enghub_health())
 
     # ── P1 — Bridge health (dual-setup.md — non-blocking; skipped if disabled) ──
     checks.append(check_bridge_health())
@@ -151,6 +200,8 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
     # ── P1 — External agent discovery + health (AR-9, non-blocking) ──────
     checks.append(check_ext_agent_discovery())
     checks.append(check_ext_agent_health())
+    checks.append(check_state_registry_staleness())
+    checks.append(check_heartbeat_zero_records())
 
     # ── P1 — Skill dependencies ───────────────────────────────────────────
     try:
@@ -244,6 +295,16 @@ def run_preflight(auto_fix: bool = False, quiet: bool = False) -> list[CheckResu
         checks.append(check_script_health(
             "pipeline.py", ["--health", "--source", "canvas_lms"], severity="P1"
         ))
+
+    checks.append(check_telemetry_integrity())
+    checks.append(check_briefing_quality_index())
+    checks.append(check_cleanup_partials())
+    checks.append(check_evidence_lake_ttl())
+    checks.append(check_slo_burn_rate())
+    checks.append(check_guardrails_rings())
+    checks.append(check_connector_registry())
+    checks.append(check_mcp_discovery())
+    checks.append(check_skill_index())
 
     return checks
 
@@ -365,6 +426,7 @@ def format_results(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
+        prog="preflight.py",
         description=(
             "Artha pre-catch-up health gate. "
             "Exits 0 if all P0 checks pass, 1 if any P0 check fails."
@@ -390,7 +452,7 @@ def main() -> None:
         action="store_true",
         help=(
             "First-run / setup-checklist mode: OAuth and connector failures are shown as "
-            "'not yet configured' (\u25cb) rather than hard blocks (⛔). "
+            "'not yet configured' rather than hard blocks. "
             "Exits 0 when only expected setup steps remain."
         ),
     )
@@ -404,8 +466,24 @@ def main() -> None:
             "NEVER use on local machines."
         ),
     )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Report health without writes, queue expiry, enrollment, or credential refresh.",
+    )
+    parser.add_argument(
+        "--force-no-guardrails",
+        action="store_true",
+        help=(
+            "Override the guardrails P0 check and write an audit event. "
+            "Unavailable in --read-only mode. Expert use only."
+        ),
+    )
 
     args = parser.parse_args()
+    global _READ_ONLY
+    _READ_ONLY = bool(args.read_only)
+    setattr(sys.modules[__name__], "_READ_ONLY", _READ_ONLY)
 
     # Cold-start detection: exit 3 if user_profile.yaml is missing (first run)
     profile_path = pathlib.Path(ARTHA_DIR) / "config" / "user_profile.yaml"
@@ -418,13 +496,19 @@ def main() -> None:
         sys.exit(3)
 
     advisory = getattr(args, "advisory", False)
-    checks   = run_preflight(auto_fix=args.fix, quiet=args.quiet)
+    checks = run_preflight(
+        auto_fix=args.fix,
+        quiet=args.quiet,
+        force_no_guardrails=args.force_no_guardrails,
+        read_only=args.read_only,
+    )
     all_ok   = advisory or all(c.passed for c in checks if c.severity == "P0")
 
     if args.json:
         output = {
             "pre_flight_ok":  all_ok,
             "advisory_mode":  advisory,
+            "read_only":      _READ_ONLY,
             "degradation_list": [
                 c.name for c in checks if c.severity == "P0" and not c.passed
             ] if advisory else [],
@@ -450,6 +534,10 @@ def main() -> None:
         if args.first_run:
             all_ok = first_run_ok
 
+    if not _READ_ONLY:
+        _clear_stale_pipeline_checkpoint()
+        _compact_health_check()
+        _write_device_context()
     sys.exit(0 if all_ok else 1)
 
 

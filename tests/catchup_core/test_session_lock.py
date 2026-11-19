@@ -5,7 +5,12 @@ from contextlib import contextmanager
 
 import pytest
 
-from catchup_core.session_lock import SessionBusy, session_lock, session_lock_reader
+from catchup_core.session_lock import (
+    SessionBusy,
+    publication_fence,
+    session_lock,
+    session_lock_reader,
+)
 
 
 @pytest.mark.skipif(sys.platform != 'win32', reason='native protected DACL publication')
@@ -34,6 +39,18 @@ def _holder(path, shared, connection, legacy=False):
         connection.close()
 
 
+def _publication_holder(path, connection):
+    try:
+        with publication_fence(path):
+            connection.send("held")
+            if connection.poll(30):
+                connection.recv()
+    except SessionBusy:
+        connection.send("busy")
+    finally:
+        connection.close()
+
+
 @contextmanager
 def _legacy_lock(path):
     import msvcrt
@@ -51,6 +68,27 @@ def held_process(path, shared, *, legacy=False):
     context = multiprocessing.get_context("spawn")
     parent, connection = context.Pipe()
     child = context.Process(target=_holder, args=(path, shared, connection, legacy))
+    child.start()
+    try:
+        connection.close()
+        assert parent.poll(15)
+        assert parent.recv() == "held"
+        yield child
+    finally:
+        if child.is_alive():
+            parent.send("release")
+        child.join(10)
+        if child.is_alive():
+            child.kill()
+            child.join(10)
+        parent.close()
+
+
+@contextmanager
+def held_publication(path):
+    context = multiprocessing.get_context("spawn")
+    parent, connection = context.Pipe()
+    child = context.Process(target=_publication_holder, args=(path, connection))
     child.start()
     try:
         connection.close()
@@ -127,6 +165,15 @@ def test_nested_shared_handles_remain_registered_until_the_last_release(tmp_path
             pass
     with session_lock(path):
         pass
+
+
+def test_publication_fence_serializes_the_same_target_across_processes(tmp_path):
+    target = tmp_path / "state.md"
+    with held_publication(target):
+        with pytest.raises(SessionBusy), publication_fence(target):
+            pytest.fail("same-target publication should be excluded")
+    with publication_fence(target):
+        target.write_text("complete", encoding="utf-8")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows legacy byte lock interoperability")

@@ -312,6 +312,12 @@ Do not count these as passes, run pytest against the live legacy suite, interrup
 `specs/re-artha.md` was archived on 2026-11-18 as `.archive/specs/re-artha-2026-11-18.md`. Its open items now live in
 `specs/refix-artha.md §B.3` (re-sign 21, D3), `specs/refix-artha.md §B.4` (native Work recovery) and
 `specs/refix-artha.md §B.2` (classification-review workflow, live UAT).
+`specs/refix-artha.md` is an owner-local, ignored specification in this checkout; a clean checkout does not contain
+it (D-09 remains open). The tracked status and canonical specs must remain sufficient for release decisions.
+Its E0 B.2 close-out now records the `tools/uat` step matrix and the catchup-core Connector disposition:
+`home_email` is supported only as a still-Held E1 path; other configured Personal sources remain Held,
+`outlook_inbox` is retired from the E0 candidate and `school_portal` remains not configured. Track L, D-05 and
+D-08 stay Held on their named owner steps. This is synthetic documentation, not operational acceptance or release.
 
 Continue the owner's existing completion effort against those specs; do not restart another broad review/fix
 cycle or call green tests full delivery. Read `AGENTS.md` and `.github/copilot-instructions.md`, their required operating

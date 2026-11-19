@@ -12,18 +12,25 @@ from pathlib import Path
 from typing import Any
 
 from catchup_core import ids, scope_review_cli, views
-from catchup_core.backup import atomic_bytes, database_bytes, encrypted_snapshot
+from catchup_core.backup import SnapshotArtifact, atomic_bytes, database_bytes, encrypted_snapshot
 from catchup_core.coordinator import Deps
-from catchup_core.ledger import LedgerError, PermissionDenied, PersonalScopeUnavailable
+from catchup_core.ledger import (
+    LedgerError,
+    PermissionDenied,
+    PersonalScopeUnavailable,
+    require_approved_source_enrollment,
+)
 
 _CODE_ROOT = Path(__file__).resolve().parents[2]      # where the capability code lives, not the user workspace
+_MAX_AUTHORIZATION_ENVELOPE_BYTES = 32 << 20
 
 
 def _require_personal_snapshot_admission() -> None:
     raise PermissionDenied("personal snapshot unavailable: dependency classification is not established")
 
 
-def _authorize_export_artifact(deps: Deps, name: str, data: bytes) -> None:
+def _authorize_export_artifact(  # noqa: PLR0912 - each artifact class has a distinct provenance contract
+        deps: Deps, name: str, data: bytes | SnapshotArtifact) -> None:
     from catchup_core.policy import authorize_source  # noqa: PLC0415
     led = deps.ledger
     relative = Path(name)
@@ -35,6 +42,14 @@ def _authorize_export_artifact(deps: Deps, name: str, data: bytes) -> None:
         return
     if led._cipher is None:
         raise PermissionDenied("artifact export requires its encryption key")
+    if relative.parent.name == "replay" and led.conn.execute(
+            "SELECT 1 FROM replay_cases WHERE feedback_id=?", (relative.stem,)).fetchone():
+        return  # These inputs are retained Signals and Facts, already checked above.
+    if isinstance(data, SnapshotArtifact):
+        try:
+            data = data.read_bounded(_MAX_AUTHORIZATION_ENVELOPE_BYTES)
+        except LedgerError:
+            raise PermissionDenied("artifact export exceeds the bounded authorization envelope") from None
     if relative.parent.name == "documents":
         payload = json.loads(led._cipher.decrypt(data, aad=relative.stem.encode()))
         subject = payload.get("subject")
@@ -51,9 +66,6 @@ def _authorize_export_artifact(deps: Deps, name: str, data: bytes) -> None:
         authorize_source(led, tuple(led._consent_subjects), led._consent_subjects,
                          f"capture:{deps.viewer}", deps.viewer, operations=("export",))
         return
-    if relative.parent.name == "replay" and led.conn.execute(
-            "SELECT 1 FROM replay_cases WHERE feedback_id=?", (relative.stem,)).fetchone():
-        return  # These inputs are retained Signals and Facts, already checked above.
     if relative.parent.name == "corpus":
         payload = json.loads(led._cipher.decrypt(data, aad=relative.stem.encode()))
         if payload.get('case_id') != relative.stem or not isinstance(payload.get('signal_id'), str):
@@ -102,8 +114,45 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "scope-review":
         if shadow:
             raise LedgerError("scope reviews are recorded in the live ledger, not in shadow mode")
+        if getattr(args, "enrollments", False):
+            return {"enrollments": led.source_enrollments(args.source)}
+        if getattr(args, "revoke", False):
+            if viewer != led._owner or not (sys.stdin.isatty() and sys.stdout.isatty()):
+                raise PermissionDenied("source revocation requires the owner's own terminal")
+            answer = input("Revoke this source enrollment and hold its objects? [yes/N]: ").strip().casefold()
+            if answer not in ("yes", "y"):
+                return {"revoked": False}
+            return {
+                "revoked": True,
+                "enrollment_id": led.revoke_source(args.source, reviewer=viewer)["enrollment_id"],
+            }
+        if getattr(args, "enroll", False):
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                raise PermissionDenied("source enrollment requires the owner's own terminal")
+            require_approved_source_enrollment(args.source)
+            from catchup_core.runtime import _default_loaders, load_runtime_config  # noqa: PLC0415
+            config = load_runtime_config(workspace / "config" / "catchup_core.yaml")
+            source = config.sources.get(args.source)
+            if source is None:
+                raise LedgerError("source is not configured")
+            connector = str(source["connector"])
+            query = str((source.get("kwargs") or {}).get("query", ""))
+            policy = source.get("admission")
+            if not query or not isinstance(policy, dict):
+                raise LedgerError("source lacks the exact query and admission policy required for enrollment")
+            handler_loader, auth_loader = _default_loaders()
+            provider_account = handler_loader(connector).account_identity(auth_loader(connector))
+            subjects = [viewer if str(subject) == "owner" else str(subject)
+                        for subject in source.get("subjects", config.subjects)]
+            return scope_review_cli.enroll(
+                led, viewer=viewer, definition={
+                    "source_name": args.source, "connector": connector,
+                    "provider_account": provider_account, "account_scope": str(source["account_scope"]),
+                    "query": query, "subjects": subjects, "policy": dict(policy),
+                }, readline=input, write=sys.stdout.write, interactive=True)
         return scope_review_cli.run(
-            led, viewer=viewer, connector=args.source, text_of=deps.blobs.get, readline=input,
+            led, viewer=viewer, connector=args.source, object_id=getattr(args, "object", None),
+            text_of=lambda ref: deps.blobs.get_bounded(ref, 1_000_000), readline=input,
             write=sys.stdout.write, interactive=sys.stdin.isatty() and sys.stdout.isatty())
     if args.command == 'field-review':
         from catchup_core.field_confirmation import field_command  # noqa: PLC0415
@@ -221,12 +270,44 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     if args.command == "complete":
         return _confirm_completion(args, deps, workspace)
     if args.command == "health":
+        coverage = []
+        now = deps.now()
+        sources = {source.connector: source for source in deps.pack.sources}
+        for row in led.visible_coverage(viewer):
+            if deps.expected_scopes and deps.expected_scopes.get(row["connector"]) != row["account_scope"]:
+                continue
+            pack_source = sources.get(row["connector"])
+            status = str(row["status"])
+            try:
+                record_count = int(row["record_count"])
+            except (IndexError, KeyError, TypeError, ValueError):
+                record_count = None
+            held = bool(led.coverage_holds(str(row["connector"]), state="held"))
+            result_state = None
+            if held:
+                result_state = "held"
+            elif status in {"unavailable", "notified_not_fetched", "degraded", "anomaly"}:
+                result_state = "unavailable"
+            elif status == "complete" and record_count == 0:
+                result_state = "none"
+            elif status == "complete" and pack_source and row["completed_at"]:
+                try:
+                    verified = datetime.fromisoformat(str(row["completed_at"]).replace("Z", "+00:00"))
+                    if verified.tzinfo is None or verified.utcoffset() is None:
+                        raise ValueError("coverage timestamp needs an explicit timezone")
+                    if now - verified > timedelta(hours=pack_source.freshness_hours):
+                        result_state = "stale"
+                except (TypeError, ValueError):
+                    result_state = "stale"
+            coverage.append({
+                "connector": row["connector"], "status": status,
+                "last_verified": row["completed_at"], "result_state": result_state,
+                "record_count": record_count,
+            })
         return {"integrity": led.integrity_check(), "schema": led.schema_version(),
             "capabilities": _capability_states(led, workspace, deps),
             "performance": _performance(led, workspace, implementation_version=deps.input_version),
-            "coverage": [{"connector": r["connector"], "status": r["status"],
-                          "last_verified": r["completed_at"]} for r in led.visible_coverage(viewer)
-                         if not deps.expected_scopes or deps.expected_scopes.get(r['connector']) == r['account_scope']],
+            "coverage": coverage,
             "uninterpreted_signals": sum(_signal_visible(led, sid, viewer) for sid in led.unresolved_signals()),
             "feedback": views.precision(led, viewer),
             "reviewed_alert_classes": views.class_precision(led, viewer)}
@@ -286,7 +367,6 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
                 "next": "Page evidence will be reviewed at the next Catch-up; unread pages remain unverified."}
     if args.command in ("items", "goals"):
         from catchup_core.curated import goal_open_items, read_authorized_state, records  # noqa: PLC0415
-        from catchup_core.ledger import PermissionDenied  # noqa: PLC0415
         generation = led._permission_generation()
         name = "open_items" if args.command == "items" else "goals"
         text = read_authorized_state(workspace / 'state', name, led, viewer, deps.subjects)

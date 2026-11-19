@@ -12,10 +12,13 @@ _SCRIPTS = Path(__file__).resolve().parent.parent.parent / "scripts"
 
 class _IdentityDecoratorFastMCP:
     def __init__(self, *_args, **_kwargs):
-        pass
+        self.registered_tools: set[str] = set()
 
     def tool(self):
-        return lambda function: function
+        def register(function):
+            self.registered_tools.add(function.__name__)
+            return function
+        return register
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -43,26 +46,6 @@ def _stub_fastmcp():
                 sys.modules.pop(k, None)
             else:
                 sys.modules[k] = orig
-
-
-# ── _require_approval ────────────────────────────────────────────────────────
-
-class TestRequireApproval:
-    @pytest.fixture(autouse=True)
-    def _import(self):
-        import mcp_server
-        self.mod = mcp_server
-
-    def test_rejected_when_not_approved(self):
-        with patch.object(self.mod, "_audit"):
-            result = self.mod._require_approval(False, "artha_write_state", {"domain": "goals"})
-        assert result is not None
-        data = json.loads(result)
-        assert data["error"] == "Write operation requires approved=True."
-
-    def test_passes_when_approved(self):
-        result = self.mod._require_approval(True, "artha_write_state", {"domain": "goals"})
-        assert result is None
 
 
 # ── _known_domains ───────────────────────────────────────────────────────────
@@ -176,6 +159,92 @@ class TestPersonalReadBoundary:
              patch.object(mcp_server, "_write_state_file", side_effect=AssertionError):
             assert json.loads(mcp_server.artha_write_state("goals", "# synthetic", approved=True)) == {
                 "error": "personal State classification unavailable"}
+
+    def test_legacy_effect_tools_are_inert_previews_or_fixed_denials(self):
+        import mcp_server
+
+        with patch.object(mcp_server, "_audit"), \
+             patch("builtins.__import__", side_effect=AssertionError("an effect module was imported")):
+            email = json.loads(mcp_server.artha_send_email(
+                "synthetic@example.invalid", "Subject", "Body", approved=True, archive=True
+            ))
+            todo = json.loads(mcp_server.artha_todo_sync(approved=True, dry_run=False))
+            skills = json.loads(mcp_server.artha_run_skills("synthetic-skill"))
+
+        assert email == {
+            "status": "preview",
+            "action_type": "email_send",
+            "effect": "none",
+            "payload": {
+                "to": "synthetic@example.invalid",
+                "subject": "Subject",
+                "body": "Body",
+                "archive": True,
+            },
+            "to_apply": "Use the ActionQueue CLI review path; MCP never enqueues or executes this effect.",
+        }
+        assert todo == {
+            "status": "preview",
+            "action_type": "todo_sync",
+            "effect": "none",
+            "payload": {"dry_run": False},
+            "to_apply": "Use the ActionQueue CLI review path; MCP never enqueues or executes this effect.",
+        }
+        assert skills == {"error": "skill execution is held"}
+
+    def test_kb_reads_fail_closed_before_private_graph_access(self):
+        import mcp_server
+
+        calls = (
+            lambda: mcp_server.artha_kb_query("entity"),
+            lambda: mcp_server.artha_kb_context("name"),
+            lambda: mcp_server.artha_kb_search("query"),
+            lambda: mcp_server.artha_kb_recent_changes(),
+            lambda: mcp_server.artha_kb_stale(),
+            lambda: mcp_server.artha_kb_global("question"),
+            lambda: mcp_server.artha_kb_episodes(),
+        )
+        with patch.object(mcp_server, "_audit"), \
+             patch.object(mcp_server, "_check_rate_limit", side_effect=AssertionError), \
+             patch("lib.knowledge_graph.get_kb", side_effect=AssertionError):
+            for call in calls:
+                assert json.loads(call()) == {
+                    "error": "knowledge graph read authorization unavailable"
+                }
+
+    def test_state_write_is_not_advertised_as_an_mcp_tool(self):
+        import mcp_server
+        assert "artha_write_state" not in mcp_server.mcp.registered_tools
+        assert {"artha_send_email", "artha_todo_sync", "artha_run_skills"} <= mcp_server.mcp.registered_tools
+
+    def test_discovery_obeys_rate_limiter_denial(self):
+        import mcp_server
+
+        denied = json.dumps({"error": "Rate limit exceeded. Try again shortly.", "tool": "artha_list_connectors"})
+        with patch.object(mcp_server, "_check_rate_limit", return_value=denied), \
+             patch("pipeline.load_connectors_config", side_effect=AssertionError):
+            assert mcp_server.artha_list_connectors() == denied
+
+    @pytest.mark.parametrize("call,tool", [
+        (lambda mod: mod.artha_health_check(), "artha_health_check"),
+        (lambda mod: mod.artha_pii_scan("synthetic"), "artha_pii_scan"),
+        (lambda mod: mod.artha_preflight(), "artha_preflight"),
+    ])
+    def test_all_legacy_read_tools_obey_limiter_denial(self, call, tool):
+        import mcp_server
+        denied = json.dumps({"error": "Rate limit exceeded. Try again shortly.", "tool": tool})
+        with patch.object(mcp_server, "_check_rate_limit", return_value=denied), \
+             patch.object(mcp_server, "_audit", side_effect=AssertionError):
+            assert call(mcp_server) == denied
+
+    def test_error_surfaces_do_not_echo_provider_exceptions(self):
+        import mcp_server
+        with patch.object(mcp_server, "_check_rate_limit", return_value=None), \
+             patch("pipeline.load_connectors_config", side_effect=RuntimeError("synthetic-secret-canary")), \
+             patch.object(mcp_server, "_audit"):
+            assert json.loads(mcp_server.artha_health_check()) == {
+                "error": "connector health checks unavailable"
+            }
 
     def test_core_mcp_oversize_and_exception_results_are_fixed(self):
         from catchup_core import mcp as core_mcp

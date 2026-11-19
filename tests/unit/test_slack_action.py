@@ -170,13 +170,14 @@ class TestExecute:
         assert result.status == "failure"
         assert "channel_not_found" in result.message
 
-    def test_network_error_returns_failure(self):
+    def test_network_error_returns_unknown(self):
         import urllib.error
         with patch("actions.slack_send._load_token", return_value="xoxb-test"):
             with patch("actions.slack_send.urllib.request.urlopen",
                        side_effect=urllib.error.URLError("timeout")):
                 result = slack_send.execute(_make_proposal())
-        assert result.status == "failure"
+        assert result.status == "unknown"
+        assert "reconcile" in result.message.lower()
 
     def test_blocks_sent_when_provided(self):
         blocks = '[{"type":"section","text":{"type":"mrkdwn","text":"hi"}}]'

@@ -10,7 +10,7 @@ SAFETY:
   - dry_run: calls todo_sync in --dry-run mode, returning a diff summary.
   - execute: calls todo_sync in the requested mode.
   - Not reversible: sync operations are idempotent; undo is not meaningful.
-  - autonomy_floor: false — can be auto-executed at Trust Level 2.
+  - Held: explicit enablement and human review are required before dispatch.
 
 Ref: specs/act.md §8.5
 """

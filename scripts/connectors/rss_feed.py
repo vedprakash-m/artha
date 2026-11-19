@@ -134,6 +134,8 @@ def _parse_rss_channel(root: ET.Element, feed_url: str, max_results: int, since_
         body = _strip_html(content_encoded or description)[:2000]
 
         date_iso = _parse_rfc2822_date(pub_date_raw)
+        if not date_iso:
+            continue
 
         # Respect `since` filter
         if since_dt and date_iso:
@@ -150,7 +152,7 @@ def _parse_rss_channel(root: ET.Element, feed_url: str, max_results: int, since_
             "id": guid,
             "subject": title,
             "from": f"{feed_title} <{feed_url}>",
-            "date_iso": date_iso or datetime.now(timezone.utc).isoformat(),
+            "date_iso": date_iso,
             "body": body,
             "source": "rss",
             "feed_url": feed_url,
@@ -182,6 +184,8 @@ def _parse_atom_feed(root: ET.Element, feed_url: str, max_results: int, since_dt
         updated_el = entry.find(f"{{{_ATOM_NS}}}updated")
         updated_raw = (updated_el.text or "") if updated_el is not None else ""
         date_iso = _parse_iso_date(updated_raw)
+        if not date_iso:
+            continue
 
         content_el = entry.find(f"{{{_ATOM_NS}}}content")
         summary_el = entry.find(f"{{{_ATOM_NS}}}summary")
@@ -204,7 +208,7 @@ def _parse_atom_feed(root: ET.Element, feed_url: str, max_results: int, since_dt
             "id": guid,
             "subject": title,
             "from": f"{feed_title} <{feed_url}>",
-            "date_iso": date_iso or datetime.now(timezone.utc).isoformat(),
+            "date_iso": date_iso,
             "body": body,
             "source": "rss",
             "feed_url": feed_url,
@@ -296,8 +300,9 @@ def fetch(
         try:
             xml_text = _fetch_feed_text(url, timeout=timeout_seconds)
             items = _parse_feed(xml_text, url, per_feed_limit, since_dt)
-        except (urllib.error.URLError, urllib.error.HTTPError, ValueError, Exception):
-            # Non-blocking: skip failed feed, continue with others
+        except Exception as exc:
+            from lib.connector_coverage import report_scope  # type: ignore[import]
+            report_scope(f"rss:{feed_tag}", "failed", reason=type(exc).__name__)
             continue
 
         for item in items:

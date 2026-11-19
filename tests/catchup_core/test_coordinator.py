@@ -107,6 +107,33 @@ def test_default_coverage_header_states_when_no_required_scopes_are_configured(w
     assert 'Coverage: no required source scopes configured.' in result.briefing_text
 
 
+@pytest.mark.parametrize(
+    ("status", "listing_complete", "expected_cursor"),
+    [
+        (CoverageStatus.COMPLETE, False, None),
+        (CoverageStatus.DEGRADED, True, "next"),
+        (CoverageStatus.DEGRADED, False, None),
+        (CoverageStatus.DEGRADED, None, None),
+    ],
+)
+def test_cursor_commit_requires_an_acknowledged_complete_listing(
+        world, status, listing_complete, expected_cursor):
+    ledger, _, make, _ = world
+    hold = co.ConnectorHold(
+        source_name="school_email", connector="school_email", account_scope="acct",
+        provider_account_id="owner", upstream_id="held", upstream_version="held",
+        reason="metadata_unavailable",
+    )
+    fetched = lambda: co.ConnectorFetch(
+        "school_email", "acct", status=status, cursor="next", holds=(hold,),
+        listing_complete=listing_complete,
+    )
+
+    co.run_catchup(req(), make({"school_email": fetched, "calendar": cal()}))
+
+    assert ledger.get_cursor("school_email", "acct") == expected_cursor
+
+
 def test_frozen_outcome_records_only_provider_fetch_provenance(world, monkeypatch):
     from catchup_core import corpus
 
@@ -325,6 +352,41 @@ def test_connector_exception_degrades_only_that_scope(world):
     result = co.run_catchup(req(), make({"school_email": email(), "calendar": boom}))
     assert result.status is RunStatus.DEGRADED and FailureClass.PROVIDER in result.failures
     assert result.artifact_ids
+
+
+def test_coverage_hold_cap_spans_generations_and_preserves_admitted_records(world):
+    ledger, _b, make, _p = world
+    hold_args = dict(
+        source_name="school_email", connector="school_email", account_scope="acct",
+        provider_account_id="acct-hmac", detail="metadata unavailable",
+    )
+    for index in range(1000):
+        ledger.record_coverage_hold(
+            upstream_id=f"old-{index}", upstream_version="v1", **hold_args)
+    consent = ledger.grant_consent("kid2", "kid2", "school_email:acct", ("view",), "ved")
+    ledger.revoke_consent(consent)
+
+    overflow = co.ConnectorHold(
+        "school_email", "school_email", "acct", "acct-hmac",
+        "overflow", "v1", "metadata unavailable")
+    fetch = lambda: co.ConnectorFetch(
+        "school_email", "acct", (co.ConnectorRecord("admitted", MSG),),
+        CoverageStatus.DEGRADED, cursor="next-page", holds=(overflow,),
+        listing_complete=True)
+    result = co.run_catchup(req("cu_hold_cap"), make({"school_email": fetch, "calendar": cal()}))
+
+    assert result.status is RunStatus.DEGRADED
+    assert ledger.conn.execute(
+        "SELECT COUNT(*) FROM coverage_holds WHERE source_name='school_email' AND state='held'"
+    ).fetchone()[0] == 1000
+    coverage = ledger.get_coverage("school_email", "acct")
+    assert coverage is not None and coverage["cursor_generation"] is None
+    assert any("coverage_hold_limit" in spot for spot in json.loads(coverage["blind_spots"]))
+    assert next(entry for entry in result.coverage if entry.connector == "school_email").result_state == "held"
+    assert next(entry for entry in result.coverage if entry.connector == "calendar").status is CoverageStatus.COMPLETE
+    assert ledger.conn.execute(
+        "SELECT COUNT(*) FROM signals WHERE upstream_id='admitted'"
+    ).fetchone()[0] == 1
 
 
 def test_poison_signal_is_isolated_and_blocks_a_quiet_claim(world):
@@ -630,7 +692,8 @@ def test_deep_lists_every_record_and_flash_is_short(world):
     assert "FROM YOUR RECORDS (not re-verified; 1)" in deep and "finance: from your records" in deep
     flash = _run_format(world, BriefingFormat.FLASH)
     assert "ONE THING" in flash and "GOALS" not in flash and "Calendar:" not in flash
-    assert "OPEN ITEMS (2, 1 overdue) — `items` lists them" in flash and "OI-2:" not in flash
+    assert "OPEN ITEMS (2, 1 overdue) — say `show everything` to list them." in flash
+    assert "OI-2:" not in flash
     assert len(flash.splitlines()) < len(deep.splitlines())
 
 

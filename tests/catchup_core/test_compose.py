@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from catchup_core import compose as cp
-from catchup_core.contracts import Severity
+from catchup_core.contracts import BriefingFormat, Severity
 from catchup_core.triage import AlertDraft, CrossDomainFinding, TriageResult
 
 NOW = datetime(2026, 10, 12, 16, 0, tzinfo=timezone.utc)
@@ -150,3 +150,87 @@ def test_household_section_shows_in_standard_only():
     kw = dict(evidence_for={}, coverage_line="Coverage: ok.", coordination_lines=["H1: RSVP — waiting"])
     assert "HOUSEHOLD" in cp.compose(now, empty, **kw).text
     assert "HOUSEHOLD" not in cp.compose(now, empty, fmt=BriefingFormat.FLASH, **kw).text
+
+
+def appointment(key="health:owner:doctor", sev=Severity.P2, days=0, stamp="2026-10-12T15:30:00-07:00"):
+    from zoneinfo import ZoneInfo
+    when = datetime.fromisoformat(stamp).astimezone(ZoneInfo("America/Los_Angeles"))
+    return AlertDraft(
+        key, "health", "owner", "doctor appointment", "fct_appointment", sev,
+        when.date(), when.date(), days, "actionable", starts_at=when)
+
+
+@pytest.mark.parametrize("fmt", [BriefingFormat.FLASH, BriefingFormat.DIGEST])
+def test_short_formats_show_appointment_local_time_zone_and_evidence(fmt):
+    event = appointment()
+    evidence = {event.obligation_key: [("evidence:appt", "calendar", "2026-10-12T08:00Z", "personal")]}
+    briefing = cp.compose(
+        NOW, result([event], nxt=date(2026, 10, 10), check_now=True),
+        evidence_for=evidence, coverage_line=COV, fmt=fmt)
+
+    assert "Mon Oct 12, 3:30 PM PDT (UTC-07:00)" in briefing.text
+    assert "[1]" in briefing.text
+    assert not briefing.quiet
+
+
+def test_flash_keeps_an_unscored_appointment_from_the_horizon():
+    event = appointment(sev=None, days=6, stamp="2026-10-18T09:00:00-07:00")
+    briefing = cp.compose(
+        NOW, result([], horizon=[event]),
+        evidence_for={event.obligation_key: EV["kids_school:kid1:exam"]},
+        coverage_line=COV, fmt=BriefingFormat.FLASH)
+
+    assert "ONE THING" in briefing.text
+    assert "doctor appointment" in briefing.text
+    assert not briefing.quiet
+
+
+@pytest.mark.parametrize("fmt", [BriefingFormat.FLASH, BriefingFormat.DIGEST])
+def test_short_format_overflow_counts_omissions_and_names_show_everything(fmt):
+    events = [appointment(f"health:owner:appt:{index}", days=index) for index in range(5)]
+    evidence = {
+        event.obligation_key: [(f"evidence:{index}", "calendar", "2026-10-12", "")]
+        for index, event in enumerate(events)
+    }
+    briefing = cp.compose(
+        NOW, result(events, horizon=events), evidence_for=evidence,
+        coverage_line=COV, fmt=fmt)
+
+    omitted = len(events) - (3 if fmt is BriefingFormat.FLASH else 4)
+    assert f"{omitted} more" in briefing.text
+    assert "show everything" in briefing.text
+    deep = cp.compose(
+        NOW, result(events, horizon=events), evidence_for=evidence,
+        coverage_line=COV, fmt=BriefingFormat.DEEP)
+    assert deep.text.count("• [P2]") == len(events)
+
+
+@pytest.mark.parametrize("fmt", [BriefingFormat.FLASH, BriefingFormat.DIGEST])
+def test_short_open_item_summary_names_show_everything(fmt):
+    items = [
+        cp.OpenItemLine("Renew “Zoë — 東京” registration", date(2027, 2, 1)),
+        cp.OpenItemLine("Review school form", date(2027, 4, 1)),
+    ]
+    briefing = cp.compose(NOW, result(), evidence_for={}, coverage_line=COV, fmt=fmt, open_items=items)
+    assert "OPEN ITEMS (2)" in briefing.text
+    assert "show everything" in briefing.text
+
+
+@pytest.mark.parametrize("state,note", [
+    ("actionable", "calendar confirmation is current"),
+    ("disputed", "sources disagree; confirm the time"),
+    ("unknown_stale", "latest calendar evidence is 72h old"),
+    ("no_deadline", "no trusted timezone was provided"),
+])
+def test_four_appointment_qualification_states_remain_visible(state, note):
+    event = appointment(sev=None)
+    event = AlertDraft(
+        event.obligation_key, event.domain, event.subject_id, event.predicate, event.fact_id,
+        event.severity, event.deadline, event.latest_useful_action, event.days_until,
+        state, note, starts_at=event.starts_at if state != "no_deadline" else None)
+    briefing = cp.compose(
+        NOW, result([event]), evidence_for={
+            event.obligation_key: EV["kids_school:kid1:exam"]},
+        coverage_line=COV)
+    assert state == "no_deadline" or "Mon Oct 12, 3:30 PM PDT" in briefing.text
+    assert note.split(";")[0] in briefing.text

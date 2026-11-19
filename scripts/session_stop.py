@@ -6,7 +6,8 @@ re-artha §6.6.6 / §6.15.  A hook cannot make an agent follow instructions, so 
 what a Catch-up must leave behind and records any omission in a minimal local fallback
 file that ``stale_banner.py`` shows (once) at the next session open.
 
-1. If ``tmp/briefing_draft_claude.md`` exists, archive it (``auto_archive_briefs``).
+1. If ``tmp/briefing_incoming_claude.md`` exists, archive it through the
+   canonical ``briefing_archive`` owner.
 2. If a draft existed (a Catch-up ran) and ``state/health-check.md`` ``last_catch_up`` is
    still older than ``--max-age-hours`` (default 6), record that the health record was not written.
 
@@ -38,16 +39,62 @@ def record(message: str, local: Path | None = None, now: datetime | None = None)
         fh.write(f"{stamp} {message}\n")
 
 
+def archive_staged_briefing(
+    root: Path,
+    draft: Path,
+    expected_bytes: bytes,
+) -> None:
+    """Publish one bound staged draft through the canonical briefing owner."""
+    from lib import briefing_archive  # noqa: PLC0415
+
+    expected = (root / "tmp" / "briefing_incoming_claude.md").resolve()
+    if draft.resolve() != expected:
+        raise RuntimeError("unexpected briefing draft")
+    if not draft.exists() or draft.read_bytes() != expected_bytes:
+        raise RuntimeError("briefing draft changed before archive")
+    result = briefing_archive.save(
+        expected_bytes.decode("utf-8"),
+        source="interactive_cli",
+        runtime="claude",
+    )
+    if result.get("status") not in ("ok", "skipped"):
+        raise RuntimeError(f"briefing archive rejected draft: {result.get('error', 'unknown')}")
+    if not draft.exists() or draft.read_bytes() != expected_bytes:
+        raise RuntimeError("briefing draft changed after archive")
+    draft.unlink()
+
+
 def check(root: Path = ROOT, *, local: Path | None = None, now: datetime | None = None,
           max_age_hours: float = 6.0, archive=None) -> list[str]:
     """Run the once-only checks; return the problems recorded."""
     now = now or datetime.now(timezone.utc)
-    draft = root / "tmp" / "briefing_draft_claude.md"
-    ran = draft.exists()
+    draft = root / "tmp" / "briefing_incoming_claude.md"
+    legacy = root / "tmp" / "briefing_draft_claude.md"
+    draft_unreadable = False
+    try:
+        draft_bytes = draft.read_bytes() if draft.exists() else None
+    except OSError:
+        draft_bytes = None
+        draft_unreadable = draft.exists()
+    ran = draft_bytes is not None or draft_unreadable or legacy.exists()
     problems: list[str] = []
-    if ran:
+    if draft_unreadable:
+        problems.append("Briefing draft could not be read; publication is held")
+    if legacy.exists():
+        problems.append(
+            "Legacy briefing draft is held: "
+            "stage it as tmp/briefing_incoming_claude.md"
+        )
+    if draft_bytes is not None:
         try:
-            (archive or _archive)()
+            from catchup_core.session_lock import publication_fence  # noqa: PLC0415
+            with publication_fence(draft):
+                if not draft.exists() or draft.read_bytes() != draft_bytes:
+                    raise RuntimeError("briefing draft changed before archive")
+                if archive is None:
+                    archive_staged_briefing(root, draft, draft_bytes)
+                else:
+                    archive()
         except Exception as exc:  # noqa: BLE001
             problems.append(f"Briefing archive failed: {type(exc).__name__}")
         if draft.exists():
@@ -63,11 +110,6 @@ def check(root: Path = ROOT, *, local: Path | None = None, now: datetime | None 
     for problem in problems:
         record(problem, local, now)
     return problems
-
-
-def _archive() -> None:
-    import auto_archive_briefs  # noqa: PLC0415
-    auto_archive_briefs.main()
 
 
 def main() -> int:

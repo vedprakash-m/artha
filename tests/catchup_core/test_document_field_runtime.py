@@ -1036,8 +1036,7 @@ def test_scheduler_scope_hold_propagates_through_coordinator(runtime, monkeypatc
 
     def pass_stage_gate_once():
         gate_calls.append("admission")
-        if len(gate_calls) > 1:
-            original()
+        original()
 
     def observe_selection(*args, **kwargs):
         selection.append("entered")
@@ -1056,7 +1055,7 @@ def test_scheduler_scope_hold_propagates_through_coordinator(runtime, monkeypatc
 
     result = co.run_catchup(req("cu_scheduler_hold"), deps)
 
-    assert gate_calls == ["admission", "admission"]
+    assert gate_calls == ["admission"]
     assert selection == ["entered", "blocked"]
     assert result.status is RunStatus.BLOCKED
     assert result.failures == (FailureClass.PERMISSION,)
@@ -1147,8 +1146,8 @@ def test_unselected_connector_remains_uninvoked(runtime, mode):
     result = co.run_catchup(req("cu_unselected_connector", mode=mode, connector_scopes=("calendar",)), deps)
 
     assert calls == []
-    assert result.status is RunStatus.BLOCKED
-    assert result.reason_unpublished == "personal Signal scope unavailable"
+    assert result.status is RunStatus.DEGRADED
+    assert "calendar unavailable" in result.briefing_text
     assert led.conn.execute(
         "SELECT 1 FROM stage_journal WHERE catchup_id=? AND stage=?",
         ("cu_unselected_connector", Stage.FETCH.value)).fetchone()

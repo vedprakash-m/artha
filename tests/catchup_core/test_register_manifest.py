@@ -35,9 +35,10 @@ def test_manifest_maps_acceptance_ids_and_pins_implementation_bytes(tmp_path):
     assert json.dumps(first)                                            # serializable
     fake = tmp_path
     (fake / "specs").mkdir()
-    (fake / "specs" / "re-artha.md").write_text("spec")
+    (fake / "specs" / "refix-artha.md").write_text("spec")
     with_spec = manifest(fake)
     assert len(with_spec["spec_sha256"]) == 64
+    assert with_spec["spec"] == "specs/refix-artha.md" and with_spec["spec_owner_local"] is True
     without = manifest(tmp_path / "nowhere", {"spec_sha256": "kept"})
     assert without["spec_sha256"] == "kept"                             # CI has no spec: the recorded digest is kept
 
@@ -55,7 +56,8 @@ def test_named_boundary_cases_resolve_to_real_fixtures_and_never_claim_live_evid
     data = manifest(REPO)
     for case, _ in BOUNDARY_CASES:
         path, fixture = data['boundary_cases'][case]['fixture'].split('::')
-        names = {node.name for node in ast.parse((REPO / path).read_text()).body if isinstance(node, ast.FunctionDef)}
+        names = {node.name for node in ast.parse(
+            (REPO / path).read_text(encoding="utf-8")).body if isinstance(node, ast.FunctionDef)}
         assert fixture in names
         assert data['boundary_cases'][case]['evidence_type'] == 'synthetic'
 

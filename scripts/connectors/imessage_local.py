@@ -189,6 +189,8 @@ def fetch(
                 "date_iso": msg_dt.isoformat(),
                 "direction": "sent" if is_from_me else "received",
                 "snippet": snippet,
+                "subject": f"Message from {display_name or _resolve_contact_name(contact)}",
+                "body": snippet,
                 "source": source_tag,
                 "group_name": display_name if is_group else "",
                 "is_group": is_group,

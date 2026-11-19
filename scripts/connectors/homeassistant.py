@@ -309,8 +309,6 @@ def fetch(
 
     # ── Process and yield entities ────────────────────────────────────────
     records: list[dict] = []
-    now_iso = datetime.now(timezone.utc).isoformat()
-
     for entity in entities:
         if len(records) >= limit:
             break
@@ -326,7 +324,9 @@ def fetch(
 
         raw_state: str = str(entity.get("state", "unavailable"))
         raw_attrs: dict = entity.get("attributes", {}) or {}
-        last_changed: str = entity.get("last_changed", now_iso)
+        last_changed = entity.get("last_changed")
+        if not isinstance(last_changed, str) or not last_changed:
+            continue
 
         # Privacy: sanitize device_tracker states
         if domain == "device_tracker":
@@ -346,6 +346,8 @@ def fetch(
             "date_iso": last_changed,
             "domain": domain,
             "source": source_tag,
+            "subject": entity_id,
+            "body": f"{entity_id} = {state}",
         }
         records.append(record)
         yield record

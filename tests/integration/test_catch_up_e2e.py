@@ -338,7 +338,9 @@ class TestRetryJitter:
             nonlocal call_count
             call_count += 1
             if call_count <= 3:
-                raise Exception("429 Too Many Requests")
+                error = Exception("provider unavailable")
+                error.status = 429
+                raise error
             return "ok"
 
         with patch("time.sleep", side_effect=lambda s: wait_times.append(s)):

@@ -168,8 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     path = _default_path()
     if "--path" in argv:
         path = Path(argv[argv.index("--path") + 1])
+    from lib.state_writer import read_versioned
     try:
-        text = path.read_text(encoding="utf-8")
+        text, expected_token = read_versioned(path)
     except OSError as exc:
         print(f"cannot read {path}: {exc}", file=sys.stderr)
         return 2
@@ -182,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
         try:
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
             from lib.state_writer import write  # noqa: PLC0415
-            result = write(path, fixed, domain="open_items", source="open_items_lint", pii_check=False)
+            result = write(path, fixed, domain="open_items", source="open_items_lint", pii_check=False,
+                           snapshot=path.resolve().is_relative_to(
+                               Path(__file__).resolve().parents[2]
+                           ),
+                           expected_token=expected_token)
             ok = bool(result.success)
         except Exception as exc:  # noqa: BLE001
             print(f"state writer unavailable ({exc}); not writing", file=sys.stderr)

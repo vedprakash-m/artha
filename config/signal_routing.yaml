@@ -68,8 +68,8 @@ medical_bill_high:
   action_type: email_send
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -80,8 +80,8 @@ calendar_conflict:
   action_type: calendar_modify
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 300
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -90,8 +90,8 @@ appointment_needed:
   action_type: email_send
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: active
   allowed_sources: [deterministic]
 
@@ -101,8 +101,8 @@ email_needs_reply:
   action_type: email_reply
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -135,8 +135,8 @@ life_event_detected:
   action_type: email_send
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -151,8 +151,8 @@ missing_assignment:
   action_type: email_send
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   # RD-25: no dedicated producer; school_action_needed covers this case.
@@ -164,8 +164,8 @@ school_event_rsvp:
   action_type: email_reply
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -176,8 +176,8 @@ immigration_deadline:
   action_type: email_send
   friction: high
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD (priority P0 — implement immigration_monitor.py skill)
@@ -243,8 +243,8 @@ event_invitation:
   action_type: calendar_create
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 300
+  reversible: false
+  undo_window_sec: null
   status: stub
   allowed_sources: [deterministic]
   producer: TBD
@@ -348,8 +348,8 @@ event_rsvp_needed:
   action_type: email_reply
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: active
   allowed_sources: [deterministic]
 
@@ -357,8 +357,8 @@ appointment_confirmed:
   action_type: calendar_create
   friction: low
   min_trust: 1
-  reversible: true
-  undo_window_sec: 300
+  reversible: false
+  undo_window_sec: null
   status: active
   allowed_sources: [deterministic]
 
@@ -692,8 +692,8 @@ address_update_notification:
   action_type: email_send
   friction: standard
   min_trust: 1
-  reversible: true
-  undo_window_sec: 30
+  reversible: false
+  undo_window_sec: null
   status: active
   allowed_sources: [deterministic]
   producer: scripts/action_composer.py _workflow_address_change()

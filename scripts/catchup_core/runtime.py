@@ -45,14 +45,23 @@ from typing import Any
 import yaml
 
 from catchup_core import core_items, ids, reminders, yaml_cache
-from catchup_core.backup import atomic_bytes, database_bytes
+from catchup_core.backup import atomic_bytes, database_bytes, sweep_snapshot_stage
 from catchup_core.blobs import EncryptedBlobStore
 from catchup_core.contracts import CatchupRequest, CoverageStatus, ExecutionMode, FailureClass
 from catchup_core.coordinator import ConnectorFetch, ContextLines, Deps
 from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, system_keyring
 from catchup_core.domain_pack import DomainPack, PackError, composite_pack, load_pack_file
 from catchup_core.exchange import ExchangeExtractor
-from catchup_core.ledger import FactView, KeyringSealedStore, Ledger, LedgerError, PermissionDenied
+from catchup_core.ledger import (
+    APPROVED_SOURCE_ENROLLMENT_NAMES,
+    FactView,
+    KeyringSealedStore,
+    Ledger,
+    LedgerError,
+    PermissionDenied,
+    PersonalScopeUnavailable,
+    require_approved_source_enrollment,
+)
 from catchup_core.policy import (
     ReleaseEvidenceGuard,
     authorize_source,
@@ -157,6 +166,14 @@ def _validate_runtime_sources(sources: Mapping[str, Any]) -> None:
             raise RuntimeConfigError(f"source {name!r} needs 'connector' and 'account_scope'")
         if not isinstance(spec.get('kwargs', {}), dict):
             raise RuntimeConfigError('source kwargs must be a mapping')
+        admission = spec.get("admission")
+        if admission is not None and (
+                not isinstance(admission, dict)
+                or not isinstance(admission.get("allowed_sender_domains"), list)
+                or not isinstance(admission.get("work_label_ids"), list)
+                or not isinstance(admission.get("work_recipient_domains"), list)
+                or admission.get("unknown_metadata") != "hold"):
+            raise RuntimeConfigError("source admission requires bounded Gmail classification policy fields")
         if 'required' in spec and type(spec['required']) is not bool:
             raise RuntimeConfigError('source required must be a boolean')
         source_subjects = spec.get('subjects')
@@ -225,14 +242,77 @@ def build_fetchers(
     required: Mapping[str, bool],
     ledger: Ledger | None = None,
 ) -> dict[str, Callable[[], ConnectorFetch]]:
-    """Keep sources unavailable until a source-side personal-scope binding is configured."""
+    """Keep ordinary sources held; use the owner-enrolled metadata-first path for admitted Gmail."""
+    from catchup_core.admitted_ingest import fetch_gmail  # noqa: PLC0415
     fetchers: dict[str, Callable[[], ConnectorFetch]] = {}
     for pack_name, spec in config.sources.items():
         account_scope = str(spec.get("account_scope", "unclassified"))
-        def unavailable(name: str = pack_name, scope: str = account_scope) -> ConnectorFetch:
+        def unavailable(
+                name: str = pack_name, scope: str = account_scope,
+                detail: str = "personal source classification unavailable") -> ConnectorFetch:
             return ConnectorFetch(name, scope, (), CoverageStatus.UNAVAILABLE, FailureClass.PERMISSION,
-                                  ("personal source classification unavailable",), required.get(name, True))
-        fetchers[pack_name] = unavailable
+                                  (detail,), required.get(name, True))
+        admission = spec.get("admission")
+        if spec.get("connector") == "gmail" and isinstance(admission, Mapping):
+            try:
+                require_approved_source_enrollment(pack_name)
+            except PermissionDenied as exc:
+                def refused(
+                        name: str = pack_name, scope: str = account_scope,
+                        detail: str = str(exc)) -> ConnectorFetch:
+                    return unavailable(name, scope, detail)
+                fetchers[pack_name] = refused
+                continue
+        if (ledger is None or handler_loader is None or auth_loader is None
+                or spec.get("connector") != "gmail" or not isinstance(admission, Mapping)):
+            fetchers[pack_name] = unavailable
+            continue
+
+        def run(
+                name: str = pack_name, source: Mapping[str, Any] = spec,
+                scope: str = account_scope,
+        ) -> ConnectorFetch:
+            if ledger is None or handler_loader is None or auth_loader is None:
+                return unavailable(name, scope)
+            connector = str(source["connector"])
+            module = handler_loader(connector)
+            auth = dict(auth_loader(connector))
+            try:
+                provider_account = str(module.account_identity(auth))
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise PersonalScopeUnavailable("Gmail account identity is unavailable") from exc
+            raw_subjects = tuple(source.get("subjects", config.subjects))
+            subjects = tuple(config.viewer if subject == "owner" else subject for subject in raw_subjects)
+            query = str(source.get("query") or (source.get("kwargs") or {}).get("query", ""))
+            policy = dict(source["admission"])
+            try:
+                authorize_source(
+                    ledger, subjects, ledger._consent_subjects,
+                    f"{name}:{scope}", config.viewer, operations=("view",))
+                generation = ledger._permission_generation()
+                enrollment = ledger.require_source_enrollment(
+                    source_name=name, connector=connector, provider_account=provider_account,
+                    account_scope=scope, query=query, subjects=subjects, policy=policy)
+                result = fetch_gmail(
+                    ledger, ledger._id_key, module, auth,
+                    source={
+                        "source_name": name, "connector": connector, "account_scope": scope,
+                        "query": query, "subjects": list(subjects), "admission": policy,
+                    },
+                    enrollment=enrollment, since=since,
+                    max_results=int((source.get("kwargs") or {}).get("max_results", 200)))
+            except PermissionDenied:
+                return ConnectorFetch(
+                    name, scope, (), CoverageStatus.UNAVAILABLE, FailureClass.PERMISSION,
+                    ("personal source consent unavailable",), required.get(name, True))
+            except PersonalScopeUnavailable as exc:
+                return ConnectorFetch(
+                    name, scope, (), CoverageStatus.UNAVAILABLE, FailureClass.PERMISSION,
+                    (str(exc),), required.get(name, True))
+            return _bind_provider_generation(result, ledger, config, name, source, generation)
+
+        run.__artha_enrolled_source__ = True  # type: ignore[attr-defined]
+        fetchers[pack_name] = run
     return fetchers
 
 
@@ -243,7 +323,9 @@ def _bind_provider_generation(fetched: ConnectorFetch, ledger: Ledger | None, co
     if permission_generation is None or ledger is None:
         return fetched
     try:
-        authorize_source(ledger, spec.get("subjects", config.subjects), config.consent_required,
+        subjects = tuple(config.viewer if subject == "owner" else subject
+                         for subject in spec.get("subjects", config.subjects))
+        authorize_source(ledger, subjects, config.consent_required,
                          f"{pack_name}:{spec['account_scope']}", config.viewer)
     except PermissionDenied:
         return fetched
@@ -343,6 +425,8 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
         local = local / "shadow"
 
     domains = request.pilot_domains or config.domains or ("kids_school",)
+    if not inspection:
+        sweep_snapshot_stage(local / "ledger.db")
     pack = _load_packs(domains)
     ext_cmd = env.get('ARTHA_EXTRACTOR_CMD') or config.extractor_cmd
     cohort = evaluation_cohort(config.policy, domains, extractor_command=ext_cmd, workspace=root)
@@ -470,6 +554,7 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
                 root / "state", reader=curated_reader, today=now_fn().date(),
                 viewer=config.viewer, primary=config.viewer, ledger=ledger),
             input_version=frozen_inputs,
+            cohort=cohort,
             evaluation_cohort=cohort,
             extractor_identity_matched=bool(ext_cmd),
             validate_inputs=validate_inputs,
@@ -597,6 +682,23 @@ def _require_personal_scope_migration_review(ledger: Ledger) -> None:
         raise RuntimeConfigError("existing ledger requires a reviewed Personal scope migration")
 
 
+def _load_source_enrollment_expectations(ledger: Ledger, config: RuntimeConfig) -> None:
+    for source_name, source_spec in config.sources.items():
+        admission = source_spec.get("admission")
+        if source_name not in APPROVED_SOURCE_ENROLLMENT_NAMES or not isinstance(admission, Mapping):
+            continue
+        source_subjects = tuple(
+            config.viewer if subject == "owner" else subject
+            for subject in source_spec.get("subjects", config.subjects))
+        provider_account = source_spec.get("provider_account")
+        ledger.expect_source_enrollment(
+            source_name=source_name, connector=str(source_spec["connector"]),
+            account_scope=str(source_spec["account_scope"]),
+            query=str(source_spec.get("query") or (source_spec.get("kwargs") or {}).get("query", "")),
+            subjects=source_subjects, policy=dict(admission),
+            provider_account=str(provider_account) if provider_account is not None else None)
+
+
 def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, cipher: EnvelopeCipher,
                  id_key: ids.HmacKey, keyring_backend: Any, *,
                  read_only: bool = False) -> tuple[Ledger, EncryptedBlobStore]:
@@ -607,6 +709,7 @@ def _open_ledger(local: Path, config: RuntimeConfig, request: CatchupRequest, ci
                         consent_subjects=config.consent_required,
                         known_subjects=frozenset((*config.subjects, config.viewer)),
                         sealed=KeyringSealedStore(keyring_backend, request.mode.value, cipher=cipher))
+        _load_source_enrollment_expectations(ledger, config)
         if not is_new and not read_only:
             ledger.open(read_only=True)
             try:

@@ -40,7 +40,9 @@ When running in a read-only or sandboxed environment (detected via `python3 scri
 
 1. **Detect:** Run `python3 scripts/detect_environment.py` BEFORE `preflight.py`.
    Parse the JSON output. If `capabilities.filesystem_writable: false`, enter read-only mode.
-2. **Gate:** Run `python3 -m preflight --advisory` instead of strict preflight.
+2. **Gate:** Run `python scripts/preflight.py --read-only --advisory` instead of strict preflight.
+   `--read-only` suppresses writes, enrollment and credential refresh;
+   `--advisory` only downgrades P0 presentation/exit status. Mandatory runtime controls still run.
    Log all advisory results in the **briefing header** (not footer).
 3. **Label:** Begin briefing with:
    `⚠️ READ-ONLY MODE — no state files updated this session`
@@ -198,7 +200,7 @@ Exit 40 means extraction is paused: answer each request's prompt (JSON only) and
 (see `docs/catchup-core.md`). A shadow run never publishes, archives or writes State Files. A separate authoritative run
 requires the designated authority host and a valid release; the approved slice uses its signed waiver instead of the
 full-v4 scorecard and retains its other gates. Follow the Open Items ownership fence in `config/workflow/catchup.md`.
-"show everything" / `brief everything` re-runs the shadow comparison with `--format deep` (every Open Item and State File listed).
+`show everything` / `brief:everything` runs the deep Briefing and retains overflowed Open Items and State entries.
 
 > **Composable modules:** For customization and phase-level documentation,
 > see `config/workflow/README.md`. The workflow is organized into 5 phases:
@@ -206,20 +208,15 @@ full-v4 scorecard and retains its other gates. Follow the Open Items ownership f
 
 ## §R — Command Router
 
-Bare words are the primary commands. Load the listed workflow files in order before executing.
+Bare words are primary; colon syntax selects a sub-command. Slash forms are deprecated compatibility aliases.
+`config/commands.md` is the single command matrix. Use it for aliases, scopes and detailed execution.
 A code/specification request is development work; do not ingest household data or produce a Briefing for it.
 
-| Command | Workflow files in order | Execution |
-|---|---|---|
-| brief, catch me up, morning briefing, SITREP | workflow/preflight.md → workflow/fetch.md → workflow/process.md → workflow/reason.md → workflow/finalize.md → workflow/catchup.md | Follow the incumbent Catch-up and isolated core shadow comparison in catchup.md; authoritative core publication is separate and release-gated. |
-| work, work briefing | none | Read state/work under Work authority; use config/commands.md. |
-| items, what's open, what's overdue | none | Read canonical state/open_items.md through its authorized reader. |
-| goals, goal progress, sprint | none | Read canonical state/goals.md; label authored versus derived observations. |
-| domain X, X status | none | Read prompts/X.md and authorized state/X; show evidence age and gaps. |
-| content, draft a post | none | Read state/pr_manager.md and state/gallery.yaml. Publication needs explicit approval. |
-| guide, show commands | none | Explain these commands with bare-word examples. |
-| health, system status | workflow/preflight.md | Run scripts/preflight.py; distinguish unavailable checks from failures. |
-| specification audit, implement, fix, test, coding request | workflow/development.md | Follow the authorized engineering scope and isolated validation. |
+- Catch-up commands load `workflow/preflight.md` through `workflow/catchup.md` in order and retain the incumbent/shadow release boundary.
+- `health` runs `python scripts/preflight.py --read-only`; unavailable checks remain unavailable, not successful skips.
+- Development commands load `workflow/development.md`.
+- `scope-review` is owner-terminal-only and uses the existing scope-review verb.
+- `show everything` routes to deep Catch-up with no visibility loss from Flash/Digest overflow.
 
 ## §3 Domain Routing Table
 

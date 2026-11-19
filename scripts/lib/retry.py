@@ -1,58 +1,106 @@
 # pii-guard: ignore-file — shared infrastructure; no personal data
-"""
-scripts/lib/retry.py — Configurable retry with exponential backoff.
-
-Replaces ~50 lines of copy-pasted retry logic in each of the 6 fetch scripts.
-Drop-in decorator that handles HTTP 429, 500-504, rate-limit, and quota errors.
-
-Usage:
-    from scripts.lib.retry import with_retry
-
-    @with_retry(max_retries=3, context="gmail list")
-    def fetch_page():
-        return service.users().messages().list(...).execute()
-
-    # Or direct call form (for lambdas):
-    result = with_retry(lambda: api.call(), max_retries=3, context="calendar")
-
-Ref: remediation.md §6.4, standardization.md §7.5.1
-"""
+"""Small retry helper for idempotent provider reads."""
 from __future__ import annotations
 
 import random
-import time
 import sys
+import time
+import math
+from email.utils import parsedate_to_datetime
 from functools import wraps
+from numbers import Real
 from typing import Any, Callable, Optional, Set, TypeVar
+from urllib.error import URLError
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
-# HTTP status codes that warrant a retry (rate-limit + server errors)
 RETRYABLE_CODES: Set[int] = {429, 500, 502, 503, 504}
 
-# Substring patterns in exception messages that indicate a retryable error
-RETRYABLE_PHRASES = (
-    "rate limit",
-    "quota",
-    "throttl",
-    "temporarily unavailable",
-    "service unavailable",
-    "too many requests",
-    "backend error",
-)
-
-_DEFAULT_MAX_RETRIES  = 3
-_DEFAULT_BASE_DELAY   = 1.0    # seconds before first retry
-_DEFAULT_BACKOFF_MULT = 2.0    # multiply delay on each retry
-_DEFAULT_MAX_DELAY    = 30.0   # cap per-wait at 30 seconds
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_BASE_DELAY = 1.0
+_DEFAULT_BACKOFF_MULT = 2.0
+_DEFAULT_MAX_DELAY = 30.0
+_DEFAULT_MAX_ELAPSED = 120.0
 
 
-def _is_retryable(exc: Exception) -> bool:
-    """Return True if *exc* is an HTTP / quota error that warrants a retry."""
-    exc_str = str(exc).lower()
-    if any(str(code) in exc_str for code in RETRYABLE_CODES):
+def _http_status(exc: BaseException) -> int | None:
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            return None
+        for owner in (current, getattr(current, "response", None), getattr(current, "resp", None)):
+            if owner is None:
+                continue
+            for attribute in ("status_code", "status", "code"):
+                value = getattr(owner, attribute, None)
+                if type(value) is int:
+                    return value
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _is_retryable(
+    exc: Exception,
+    codes: set[int],
+    retryable_exceptions: tuple[type[Exception], ...] = (),
+) -> bool:
+    status = _http_status(exc)
+    if status is not None:
+        return status in codes
+    if isinstance(exc, retryable_exceptions):
         return True
-    return any(phrase in exc_str for phrase in RETRYABLE_PHRASES)
+    if isinstance(exc, (TimeoutError, ConnectionError, URLError)):
+        return True
+    request_name = type(exc).__name__
+    request_module = type(exc).__module__
+    return request_module.startswith("requests.") and request_name in {
+        "ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout", "ProxyError",
+        "ChunkedEncodingError",
+    }
+
+
+def _response_headers(exc: BaseException) -> Any:
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            return None
+        for owner in (current, getattr(current, "response", None), getattr(current, "resp", None)):
+            headers = getattr(owner, "headers", None)
+            if headers is not None:
+                return headers
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _retry_after_seconds(exc: BaseException, now: float) -> float | None:
+    headers = _response_headers(exc)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        pass
+    try:
+        retry_at = parsedate_to_datetime(str(raw))
+        return max(0.0, retry_at.timestamp() - time.time()) if now >= 0 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _add_note(exc: BaseException, context: str, attempt: int) -> None:
+    add_note = getattr(exc, "add_note", None)
+    if add_note is None or not context:
+        return
+    try:
+        add_note(f"retry context={context[:120]} attempts={attempt}")
+    except (AttributeError, TypeError):
+        pass
 
 
 def with_retry(
@@ -65,81 +113,97 @@ def with_retry(
     context: str = "",
     retryable_codes: Optional[Set[int]] = None,
     label: str = "",
+    deadline: float | None = None,
+    max_elapsed: float | None = None,
+    idempotent: bool = True,
+    retryable_exceptions: tuple[type[Exception], ...] = (),
 ) -> Any:
-    """Retry *fn* with exponential back-off on transient API errors.
+    """Call an idempotent operation with bounded structured-error retries.
 
-    Can be used as a decorator or as a direct call:
-
-        # Decorator
-        @with_retry(max_retries=3, context="gmail list")
-        def my_call(): ...
-
-        # Direct call
-        result = with_retry(lambda: api.call(), context="calendar fetch")
-
-    Args:
-        fn:             Zero-argument callable to retry. When used as a
-                        decorator factory, omit this arg.
-        max_retries:    Maximum number of *re-tries* after the first attempt.
-        base_delay:     Initial wait in seconds between attempts.
-        backoff_mult:   Multiplier applied to delay after each failure.
-        max_delay:      Hard cap on per-attempt wait time (seconds).
-        context:        Label shown in stderr log messages.
-        retryable_codes: Override default RETRYABLE_CODES set.
-        label:          Script prefix for log messages (e.g. "gmail_fetch").
-
-    Returns:
-        The return value of fn() on success.
-
-    Raises:
-        The original exception after all retries are exhausted, with retry
-        context prepended to the message.
+    ``deadline`` is an absolute :func:`time.monotonic` value. ``max_elapsed`` is
+    a convenience relative limit. The original exception object is always
+    reraised; retry metadata is attached with ``Exception.add_note``.
     """
-    effective_codes = retryable_codes if retryable_codes is not None else RETRYABLE_CODES
-    ctx = context or ""
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+        raise ValueError("max_retries must be a nonnegative integer")
+    if (
+        not all(isinstance(value, Real) and not isinstance(value, bool) for value
+                in (base_delay, backoff_mult, max_delay))
+        or not all(math.isfinite(float(value)) for value in (base_delay, backoff_mult, max_delay))
+        or base_delay < 0
+        or backoff_mult < 1
+        or max_delay < 0
+    ):
+        raise ValueError("retry delay values must be bounded and nonnegative")
+    if deadline is not None and (
+        isinstance(deadline, bool)
+        or not isinstance(deadline, Real)
+        or not math.isfinite(float(deadline))
+    ):
+        raise ValueError("deadline must be a monotonic timestamp")
+    if max_elapsed is not None and (
+        isinstance(max_elapsed, bool)
+        or not isinstance(max_elapsed, Real)
+        or not math.isfinite(float(max_elapsed))
+        or max_elapsed < 0
+    ):
+        raise ValueError("max_elapsed must be nonnegative")
+
+    effective_codes = set(retryable_codes if retryable_codes is not None else RETRYABLE_CODES)
+    if any(isinstance(code, bool) or not isinstance(code, int) or not 100 <= code <= 599
+           for code in effective_codes):
+        raise ValueError("retryable_codes must contain HTTP status integers")
     pfx = f"[{label}]" if label else ""
 
     def _execute(callable_fn: Callable) -> Any:
-        delay = base_delay
-        last_exc: Optional[Exception] = None
+        started = time.monotonic()
+        expires = float(deadline) if deadline is not None else float("inf")
+        if max_elapsed is not None:
+            expires = min(expires, started + float(max_elapsed))
+        elif deadline is None:
+            expires = started + _DEFAULT_MAX_ELAPSED
+        delay = min(float(base_delay), float(max_delay))
         for attempt in range(max_retries + 1):
             try:
                 return callable_fn()
             except Exception as exc:
-                exc_str = str(exc).lower()
-                is_retry = (
-                    any(str(c) in exc_str for c in effective_codes)
-                    or any(p in exc_str for p in RETRYABLE_PHRASES)
-                )
-                if not is_retry or attempt == max_retries:
-                    ctx_str = f" [{ctx}]" if ctx else ""
-                    raise type(exc)(
-                        f"{pfx}{ctx_str} failed after {attempt + 1} attempt(s): {exc}"
-                    ) from exc
-                jitter = random.uniform(0, delay * 0.25)
-                wait = min(delay + jitter, max_delay)
+                _add_note(exc, context, attempt + 1)
+                if (
+                    not idempotent
+                    or not _is_retryable(exc, effective_codes, retryable_exceptions)
+                    or attempt == max_retries
+                ):
+                    raise
+                now = time.monotonic()
+                remaining = expires - now
+                if remaining <= 0:
+                    raise
+                retry_after = _retry_after_seconds(exc, now)
+                wait = max(delay, retry_after or 0.0)
+                wait = min(wait, float(max_delay), remaining)
+                jitter = random.uniform(0.0, min(delay * 0.25, max(0.0, remaining - wait)))
+                wait = min(wait + jitter, float(max_delay), remaining)
                 print(
-                    f"{pfx} ⚠ Rate-limited or server error"
-                    f"{(' (' + ctx + ')') if ctx else ''}"
-                    f" attempt {attempt + 1}/{max_retries + 1}."
-                    f" Retrying in {wait:.1f}s ...",
+                    f"{pfx} provider request retry"
+                    f"{(' (' + context + ')') if context else ''}"
+                    f" attempt {attempt + 1}/{max_retries + 1}. Retrying in {wait:.1f}s.",
                     file=sys.stderr,
                 )
-                time.sleep(wait)
-                delay = min(delay * backoff_mult, max_delay)
-                last_exc = exc
-        raise last_exc  # unreachable — satisfies type checkers
+                if wait > 0:
+                    time.sleep(wait)
+                if time.monotonic() >= expires:
+                    raise
+                delay = min(delay * float(backoff_mult), float(max_delay))
+        raise AssertionError("unreachable")
 
-    # Support both: direct call with fn, and decorator factory without fn
     if fn is not None:
-        # Direct call: with_retry(lambda: ..., context="...")
         return _execute(fn)
 
-    # Decorator factory: @with_retry(max_retries=3)
     def decorator(func: _F) -> _F:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             return _execute(lambda: func(*args, **kwargs))
+
         return wrapper  # type: ignore[return-value]
 
     return decorator

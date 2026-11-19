@@ -124,6 +124,8 @@ def test_installer_creates_only_settings_and_never_state(tmp_path):
     assert not hooks.install(tmp_path)
 
 
-def test_malformed_copilot_arguments_do_not_crash_the_hook():
-    assert tool_guard.decide({'toolName': 'read_file', 'toolArgs': '{invalid'}) is None
-    assert tool_guard.decide({'toolName': 'read_file', 'toolArgs': '[]'}) is None
+def test_malformed_copilot_arguments_fail_closed():
+    with pytest.raises(tool_guard.GuardInputError):
+        tool_guard.decide({'toolName': 'read_file', 'toolArgs': '{invalid'})
+    with pytest.raises(tool_guard.GuardInputError):
+        tool_guard.decide({'toolName': 'read_file', 'toolArgs': '[]'})

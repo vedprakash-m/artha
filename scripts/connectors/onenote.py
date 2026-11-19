@@ -28,6 +28,8 @@ _MAX_PAGE_CHARS = 3_000
 _PAGE_LIST_SIZE = 100
 _SKIP_NOTEBOOKS = {"personal notebook"}
 _CONTENT_WORKERS = 5   # parallel page-content fetches (Graph API throttle-safe)
+_MAX_PAGES = 20
+_MAX_DISCOVERY_ITEMS = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -100,17 +102,15 @@ def _onenote_html_to_text(html_content: str, max_chars: int = _MAX_PAGE_CHARS) -
 # ---------------------------------------------------------------------------
 
 def _list_notebooks(access_token: str, include_personal: bool = False) -> list[dict]:
-    from lib.msgraph import _graph_get  # type: ignore[import]
+    from lib.msgraph import _graph_get, _graph_get_full_url  # type: ignore[import]
     from lib.retry import with_retry  # type: ignore[import]
-    data = with_retry(
-        lambda: _graph_get(
-            access_token, "/me/onenote/notebooks",
-            {"$select": "id,displayName,lastModifiedDateTime",
-             "$orderby": "lastModifiedDateTime desc"},
-        ),
-        context="onenote.list-notebooks",
+    notebooks = _graph_collect(
+        access_token, _graph_get, _graph_get_full_url, with_retry,
+        "/me/onenote/notebooks",
+        {"$select": "id,displayName,lastModifiedDateTime",
+         "$orderby": "lastModifiedDateTime desc"},
+        "onenote.list-notebooks",
     )
-    notebooks = data.get("value", [])
     if not include_personal:
         notebooks = [nb for nb in notebooks
                      if nb.get("displayName", "").lower() not in _SKIP_NOTEBOOKS]
@@ -118,21 +118,19 @@ def _list_notebooks(access_token: str, include_personal: bool = False) -> list[d
 
 
 def _list_sections(access_token: str, notebook_id: str) -> list[dict]:
-    from lib.msgraph import _graph_get  # type: ignore[import]
+    from lib.msgraph import _graph_get, _graph_get_full_url  # type: ignore[import]
     from lib.retry import with_retry  # type: ignore[import]
-    data = with_retry(
-        lambda: _graph_get(
-            access_token,
-            f"/me/onenote/notebooks/{notebook_id}/sections",
-            {"$select": "id,displayName,lastModifiedDateTime"},
-        ),
-        context=f"onenote.sections:{notebook_id[:12]}",
+    return _graph_collect(
+        access_token, _graph_get, _graph_get_full_url, with_retry,
+        f"/me/onenote/notebooks/{notebook_id}/sections",
+        {"$select": "id,displayName,lastModifiedDateTime"},
+        f"onenote.sections:{notebook_id[:12]}",
     )
-    return data.get("value", [])
 
 
 def _list_pages(access_token: str, section_id: str, modified_since: Optional[str] = None) -> list[dict]:
-    from lib.msgraph import _graph_get_paginated  # type: ignore[import]
+    from lib.msgraph import _graph_get, _graph_get_full_url  # type: ignore[import]
+    from lib.retry import with_retry  # type: ignore[import]
     params: dict = {
         "$select": "id,title,lastModifiedDateTime",
         "$orderby": "lastModifiedDateTime desc",
@@ -140,11 +138,36 @@ def _list_pages(access_token: str, section_id: str, modified_since: Optional[str
     }
     if modified_since:
         params["$filter"] = f"lastModifiedDateTime ge {modified_since}"
-    return _graph_get_paginated(
-        access_token,
+    return _graph_collect(
+        access_token, _graph_get, _graph_get_full_url, with_retry,
         f"/me/onenote/sections/{section_id}/pages",
         params,
+        f"onenote.pages:{section_id[:12]}",
     )
+
+
+def _graph_collect(access_token, first_get, next_get, with_retry, path, params, context):
+    items: list[dict] = []
+    next_link: str | None = None
+    seen: set[str] = set()
+    for _ in range(_MAX_PAGES):
+        data = with_retry(
+            lambda link=next_link: next_get(access_token, link) if link else first_get(access_token, path, params),
+            context=context,
+        )
+        page = data.get("value")
+        if not isinstance(page, list):
+            raise ValueError("OneNote page did not contain a value list")
+        items.extend(item for item in page if isinstance(item, dict))
+        if len(items) > _MAX_DISCOVERY_ITEMS:
+            raise RuntimeError("OneNote discovery result bound reached")
+        next_link = data.get("@odata.nextLink")
+        if not next_link:
+            return items
+        if not isinstance(next_link, str) or next_link in seen:
+            raise RuntimeError("OneNote pagination is invalid or repeated")
+        seen.add(next_link)
+    raise RuntimeError("OneNote pagination limit reached")
 
 
 def _fetch_page_content(access_token: str, page_id: str) -> str:
@@ -182,14 +205,22 @@ def fetch(
     access_token = auth_context.get("access_token", "")
     if not access_token:
         raise RuntimeError("[onenote] auth_context missing access_token")
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+        raise ValueError("max_results must be a positive integer")
 
     # Normalize modified_since to ISO 8601 UTC
     modified_since: Optional[str] = None
     try:
         dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
         modified_since = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        pass
+    except ValueError:
+        import re
+        from datetime import timedelta
+        relative = re.fullmatch(r"(\d+)([dh])", since.lower())
+        if relative:
+            amount, unit = int(relative[1]), relative[2]
+            delta = timedelta(hours=amount) if unit == "h" else timedelta(days=amount)
+            modified_since = (datetime.now(timezone.utc) - delta).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     print(f"[onenote] modified_since={modified_since} notebook_filter={notebook_filter}",
           file=sys.stderr)
@@ -213,6 +244,8 @@ def fetch(
             try:
                 sections = fut.result()
             except Exception as exc:
+                from lib.connector_coverage import report_scope  # type: ignore[import]
+                report_scope(f"onenote:notebook:{nb.get('id', '')}", "failed", reason=type(exc).__name__)
                 print(f"[onenote] WARN: skipping notebook '{nb_name}': {exc}", file=sys.stderr)
                 continue
             if section_filter:
@@ -234,11 +267,16 @@ def fetch(
             try:
                 pages = fut.result()
             except Exception as exc:
+                from lib.connector_coverage import report_scope  # type: ignore[import]
+                report_scope(f"onenote:section:{sec.get('id', '')}", "failed", reason=type(exc).__name__)
                 print(f"[onenote] WARN: skipping section '{sec_name}': {exc}", file=sys.stderr)
                 continue
             pages_to_fetch.extend((nb, sec, page) for page in pages)
 
     # Respect max_results cap before spawning content threads
+    if len(pages_to_fetch) > max_results:
+        from lib.connector_coverage import report_scope  # type: ignore[import]
+        report_scope("onenote:pages", "truncated", records=max_results, reason="max_results reached")
     pages_to_fetch = pages_to_fetch[:max_results]
     if not pages_to_fetch:
         return
@@ -250,11 +288,18 @@ def fetch(
     def _fetch_one(nb: dict, sec: dict, page: dict) -> Dict[str, Any]:
         raw_html = _fetch_page_content(access_token, page["id"])
         content_text = _onenote_html_to_text(raw_html)
+        if not content_text.strip():
+            raise ValueError("OneNote page content is unavailable")
+        modified = page.get("lastModifiedDateTime", "")
         return {
+            "id": page["id"],
+            "date_iso": modified,
+            "subject": page.get("title", "(no title)"),
+            "body": content_text,
             "notebook": nb.get("displayName", "Unknown"),
             "section": sec.get("displayName", "Unknown"),
             "page_title": page.get("title", "(no title)"),
-            "last_modified": page.get("lastModifiedDateTime", ""),
+            "last_modified": modified,
             "content_text": content_text,
             "source": source_tag,
         }
@@ -269,6 +314,8 @@ def fetch(
             try:
                 records.append(fut.result())
             except Exception as exc:
+                from lib.connector_coverage import report_scope  # type: ignore[import]
+                report_scope(f"onenote:page:{page.get('id', '')}", "failed", reason=type(exc).__name__)
                 print(f"[onenote] WARN: skipping page '{page_title}': {exc}", file=sys.stderr)
 
     yield from records

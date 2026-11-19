@@ -44,6 +44,25 @@ def test_benchmark_data_is_synthetic_and_deterministic(bench):
     assert bench.scaling([{"cold_ms_per_signal": 1}])["ratio"] is None
 
 
+def test_benchmark_reports_reserved_but_unreported_model_usage(bench):
+    row = bench.benchmark([3])[0]
+    assert row["cold"]["model_requests"] == 3
+    assert row["cold"]["unknown_model_requests"] == 3
+    assert row["cold"]["counted_model_tokens"] > 0
+    assert row["warm"]["model_requests"] == 0
+    assert not list(bench.ROOT.glob(".artha-benchmark-core-*"))
+
+
+def test_benchmark_refusal_is_not_useful_throughput(bench, monkeypatch):
+    monkeypatch.setattr(bench, "run_once", lambda *_args, **_kwargs: {
+        "seconds": 0.001, "stages": {"FETCH": 0.001}, "status": "blocked",
+        "alerts": 0, "model_requests": 0,
+    })
+    with pytest.raises(bench.BenchmarkError):
+        bench.benchmark([1])
+    assert not list(bench.ROOT.glob(".artha-benchmark-core-*"))
+
+
 def test_facts_matching_filters_by_obligation_in_the_database(tmp_path):
     key = ids.HmacKey(1, b"k" * 32)
     cipher = crypto.EnvelopeCipher(crypto.StaticKeyProvider({1: b"\x05" * 32}))

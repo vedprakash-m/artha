@@ -12,24 +12,29 @@ from preflight._types import (
     _SUBPROCESS_ENV, CheckResult,
 )
 
-def check_oauth_token(service_name: str, token_filename: str) -> CheckResult:
+_READ_ONLY = False
+
+
+def check_oauth_token(
+    service_name: str, token_filename: str, severity: str = "P0",
+) -> CheckResult:
     """Verify a Google OAuth token file exists and has required fields."""
     check_name = f"{service_name} OAuth token"
     try:
         from google_auth import load_stored_token
         token_data = load_stored_token(token_filename.removesuffix('.json'))
-    except (OSError, ValueError, RuntimeError):
-        return CheckResult(check_name, "P0", False, "OS credential token unavailable or invalid",
+    except (ImportError, OSError, ValueError, RuntimeError):
+        return CheckResult(check_name, severity, False, "OS credential token unavailable or invalid",
                            fix_hint="Migrate legacy credentials or run setup_google_oauth.py")
     if token_data is None:
-        return CheckResult(check_name, "P0", False, "OS credential token missing",
+        return CheckResult(check_name, severity, False, "OS credential token missing",
                            fix_hint="Migrate legacy credentials or run setup_google_oauth.py")
     required = ["refresh_token", "token_uri", "client_id", "client_secret"]
     missing = [field for field in required if not token_data.get(field)]
     if missing:
-        return CheckResult(check_name, "P0", False, f"OS credential token missing fields: {missing}",
+        return CheckResult(check_name, severity, False, f"OS credential token missing fields: {missing}",
                            fix_hint="Re-authenticate: python scripts/setup_google_oauth.py")
-    return CheckResult(check_name, "P0", True, "OS credential token structure valid")
+    return CheckResult(check_name, severity, True, "OS credential token structure valid")
 
 
 def check_token_freshness(service_name: str, token_filename: str) -> CheckResult:
@@ -46,9 +51,9 @@ def check_token_freshness(service_name: str, token_filename: str) -> CheckResult
         result = validate_token_freshness(
             token_service=token_service,
             warn_seconds=TOKEN_EXPIRY_WARN_SECONDS,
-            proactive_refresh=True,
+            proactive_refresh=not _READ_ONLY,
         )
-    except Exception as exc:
+    except Exception:
         return CheckResult(check_name, "P1", False, "Token freshness could not be verified",
                            fix_hint="Unlock the OS credential store or re-authenticate")
 
@@ -119,6 +124,12 @@ def check_msgraph_token() -> CheckResult:
     # Previously this branch was skipped when secs_left < 0 causing expired tokens
     # to fall straight to the error path without attempting auto-recovery.
     if secs_left is None or secs_left < TOKEN_EXPIRY_WARN_SECONDS:
+        if _READ_ONLY:
+            return CheckResult(
+                "Microsoft Graph token", "P1", False,
+                "Token refresh needed; credential refresh suppressed in --read-only mode",
+                fix_hint="Run python scripts/setup_msgraph_oauth.py --reauth without --read-only",
+            )
         try:
             scripts_dir = os.path.dirname(os.path.abspath(__file__))
             if scripts_dir not in sys.path:

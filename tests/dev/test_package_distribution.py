@@ -38,3 +38,46 @@ def test_core_runtime_resources_are_included():
     assert resources
     missing = [name for name in resources if not any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)]
     assert not missing, f"Missing core package data: {missing}"
+
+
+def test_chromium_reader_is_pinned_to_an_immutable_commit():
+    import re
+
+    dependency = next(
+        item for item in CONFIG["project"]["optional-dependencies"]["messaging"]
+        if item.startswith("ccl_chromium_reader @ ")
+    )
+    assert re.search(r"\.git@[0-9a-f]{40}$", dependency), dependency
+
+
+def test_whatsapp_connector_imports_without_optional_chromium_reader():
+    import builtins
+
+    blocked = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name.startswith("ccl_chromium_reader"):
+            raise ImportError("optional dependency unavailable")
+        return blocked(name, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+        from connectors import whatsapp_local
+
+        assert list(
+            whatsapp_local._fetch_windows_idb(
+                since_dt=whatsapp_local.datetime.now(whatsapp_local.timezone.utc),
+                max_results=1,
+                source_tag="whatsapp",
+                include_groups=True,
+            )
+        ) == []
+
+
+def test_whatsapp_health_degrades_without_optional_chromium_reader(monkeypatch):
+    from connectors import whatsapp_local
+
+    monkeypatch.setattr(whatsapp_local.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(whatsapp_local, "_WIN_IDB_DIR", Path("synthetic-indexeddb"))
+    monkeypatch.setitem(__import__("sys").modules, "ccl_chromium_reader", None)
+    assert whatsapp_local.health_check({}) is False

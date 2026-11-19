@@ -51,6 +51,7 @@ class AlertDraft:
     high_stakes: bool = False
     evidence_connectors: tuple[str, ...] = ()
     starts_at: datetime | None = None
+    ends_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -73,14 +74,28 @@ class TriageResult:
     supporting: tuple[AlertDraft, ...] = ()
 
 
-def _deadline_of(fact: FactView) -> date | None:
+def _fact_value(fact: FactView) -> Any:
     value: Any = fact.value
     if isinstance(value, dict) and "value" in value:
         value = value["value"]
+    return value
+
+
+def _deadline_of(fact: FactView) -> date | None:
+    value = _fact_value(fact)
     try:
         return date.fromisoformat(str(value)[:10])
-    except ValueError:
+    except (TypeError, ValueError):
         return None
+
+
+def _aware_datetime(value: Any) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("datetime must be an ISO-8601 string")
+    stamp = datetime.fromisoformat(value)
+    if stamp.tzinfo is None or stamp.utcoffset() is None:
+        raise ValueError("datetime needs an explicit timezone")
+    return stamp
 
 
 def next_check_by(horizon: Sequence[AlertDraft], today: date) -> date | None:
@@ -119,8 +134,10 @@ def _previous_open_day(pack: DomainPack, day: date, calendar: Sequence[CalendarE
     return day
 
 
-def _cross_domain(pack: DomainPack, horizon: Sequence[AlertDraft], calendar: Sequence[CalendarEvent],
-                  appointments: Sequence[AlertDraft]) -> list[CrossDomainFinding]:
+def _cross_domain(
+    pack: DomainPack, horizon: Sequence[AlertDraft], calendar: Sequence[CalendarEvent],
+    appointments: Sequence[AlertDraft], now: datetime,
+) -> list[CrossDomainFinding]:
     findings: list[CrossDomainFinding] = []
     cases = set(pack.cross_domain_cases)
     if "deadline_vs_calendar_conflict" in cases:
@@ -138,14 +155,17 @@ def _cross_domain(pack: DomainPack, horizon: Sequence[AlertDraft], calendar: Seq
                                      and _calendar_blocks(component, ev, item.latest_useful_action))))
     if "appointment_vs_school_schedule" in cases:
         for appt in appointments:
-            if appt.deadline is None:
+            if (appt.deadline is None or appt.starts_at is None or appt.state != "actionable"
+                    or (appt.starts_at < now and (appt.ends_at is None or appt.ends_at <= now))):
                 continue
             for ev in calendar:
                 if ev.kind != "school" or ev.all_day:
                     continue
                 ev_start = ev.start if isinstance(ev.start, datetime) else None
                 ev_end = ev.end if isinstance(ev.end, datetime) else None
-                if (ev_start is not None and ev_end is not None and appt.starts_at is not None
+                if (ev_start is not None and ev_end is not None
+                        and ev_start.tzinfo is not None and ev_end.tzinfo is not None
+                        and ev_start.utcoffset() is not None and ev_end.utcoffset() is not None
                         and ev_start <= appt.starts_at < ev_end):
                     findings.append(CrossDomainFinding(
                         "appointment_vs_school_schedule", appt.obligation_key,
@@ -157,6 +177,8 @@ def _cross_domain(pack: DomainPack, horizon: Sequence[AlertDraft], calendar: Seq
 
 def _in_horizon(a: AlertDraft, states: Mapping[str, str], horizon_days: int) -> bool:
     if a.days_until is None:
+        return False
+    if a.starts_at is not None and a.days_until < 0:
         return False
     if 0 <= a.days_until <= horizon_days:
         return True
@@ -252,10 +274,15 @@ def _suppressed(ledger: Ledger, fact: FactView, key: str,
     if states.get(key) == "resolved":
         return True
     saved = ledger.get_alert(key)
-    if not saved or saved["deadline"] != str(fact.value):
+    if not saved:
         return False
-    if saved.get("evidence_version") and saved["evidence_version"] != fact.recorded_at:
-        return False
+    if saved.get("evidence_version"):
+        if saved["evidence_version"] != fact.recorded_at:
+            return False
+    else:
+        deadline = _deadline_of(fact)
+        if saved["deadline"] not in {str(_fact_value(fact)), deadline.isoformat() if deadline else ""}:
+            return False
     if saved["status"] == "resolved":
         return True
     return bool(saved["status"] == "snoozed" and saved["suppressed_until"]
@@ -267,6 +294,94 @@ def _rank_key(a: AlertDraft, relevance: Mapping[str, float], goal_domains: Colle
     weight = relevance.get(a.obligation_key, 0.0) + (1.0 if a.domain in goal_domains else 0.0)
     return (a.severity.rank if a.severity else 9, a.latest_useful_action or a.deadline or date.max,
             0 if a.state == "actionable" else 1, -weight, a.obligation_key)
+
+
+_DRAFT_APPOINTMENT_P2_DAYS = {
+    # D-08 remains open: this is the fixture's proposed window, not a settled live policy.
+    "doctor_appointment": 2,
+}
+
+
+def _evaluate_datetime_fact(  # noqa: PLR0912 - preserves explicit qualification states
+    pack: DomainPack, pred: Predicate, fact: FactView, key: str, connectors: tuple[str, ...],
+    now: datetime, freshness: Mapping[str, datetime], states: Mapping[str, str],
+    source_class_of: Any, connector_of: Any,
+) -> tuple[AlertDraft, bool]:
+    component = pack.for_predicate(pred.name)
+    limits = {s.connector: s.freshness_hours for s in component.sources}
+    stale_reason = _stale_reason(
+        fact, connectors, now, freshness, limits, connector_of, source_class_of, pred.authority)
+    try:
+        start = _aware_datetime(_fact_value(fact)).astimezone(component.timezone)
+    except (TypeError, ValueError) as exc:
+        return AlertDraft(
+            key, fact.domain, fact.primary_subject_id, pred.name, fact.fact_id, None, None, None, None,
+            "no_deadline", f"appointment time is invalid or ambiguous: {exc}",
+            pred.high_stakes, connectors), True
+
+    end: datetime | None = None
+    end_note = ""
+    if isinstance(fact.valid_to, str) and "T" in fact.valid_to:
+        try:
+            end = _aware_datetime(fact.valid_to).astimezone(component.timezone)
+        except (TypeError, ValueError) as exc:
+            end_note = f"appointment end time is invalid or ambiguous: {exc}"
+        else:
+            if end < start:
+                end_note = "appointment end precedes its start"
+                end = None
+
+    deadline = start.date()
+    days = component.days_until(start, now)
+    latest = component.latest_useful_action(pred.name, deadline)
+    evaluated = component.evaluate(pred.name, {
+        "days_until": days, "value": start, "obligation_state": states.get(key, "outstanding"),
+        "fact_status": fact.status, "source_class": (
+            source_class_of(fact.evidence[0][0]) if source_class_of and fact.evidence else None),
+        "now": now,
+    })
+    severity = evaluated.severity
+    draft_window = _DRAFT_APPOINTMENT_P2_DAYS.get(pred.name)
+    if severity is None and draft_window is not None and 0 <= days <= draft_window:
+        severity = Severity.P2
+
+    if fact.status == FactStatus.DISPUTED.value:
+        state = "disputed"
+        severity = None
+        note = "sources disagree; confirm the appointment before acting"
+    elif fact.status == FactStatus.UNKNOWN.value:
+        state = "unknown_stale"
+        severity = None
+        note = "source authority is unverified"
+    elif fact.provenance_class == "legacy_unverified":
+        state = "legacy"
+        note = "from your records; not re-verified from a source"
+    elif stale_reason or end_note:
+        state = "unknown_stale"
+        note = end_note or stale_reason
+    else:
+        state = "actionable"
+        note = ""
+    if evaluated.uncertain:
+        note = (note + "; " if note else "") + "a rule input is unknown"
+    if end_note and stale_reason and end_note not in note:
+        note += f"; {end_note}" if note else end_note
+
+    ongoing = start <= now < end if end is not None else False
+    future = start > now or ongoing
+    if not future:
+        if key in states and states[key] == "outstanding":
+            return AlertDraft(
+                key, fact.domain, fact.primary_subject_id, pred.name, fact.fact_id, None, deadline, latest,
+                days, "unknown_stale",
+                "appointment start has passed; its follow-up remains outstanding",
+                pred.high_stakes, connectors, starts_at=start, ends_at=end), True
+        return AlertDraft(
+            key, fact.domain, fact.primary_subject_id, pred.name, fact.fact_id, severity, deadline, latest,
+            days, state, note, pred.high_stakes, connectors, starts_at=start, ends_at=end), False
+    return AlertDraft(
+        key, fact.domain, fact.primary_subject_id, pred.name, fact.fact_id, severity, deadline, latest,
+        days, state, note, pred.high_stakes, connectors, starts_at=start, ends_at=end), True
 
 
 def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares one ranked result
@@ -294,6 +409,7 @@ def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares
     drafts: list[AlertDraft] = []
     appointment_drafts: list[AlertDraft] = []
     uncertain: list[str] = []
+    today = now.astimezone(pack.timezone).date()
 
     for predicate, pred in pack.predicates.items():
         component = pack.for_predicate(predicate)
@@ -317,12 +433,23 @@ def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares
 
             stale = _stale_reason(fact, connectors, now, freshness, limits,
                                  connector_of, source_class_of, pred.authority)
-            if stale and pred.type != "date":
+            if stale and pred.type not in ("date", "datetime"):
                 scored = pack.evaluate(predicate, {"value": fact.value, "fact_status": fact.status,
                     "obligation_state": states.get(key, "outstanding"), "now": now}).severity
                 drafts.append(AlertDraft(key, domain, fact.primary_subject_id, predicate, fact.fact_id,
                     scored, None, None, None, "unknown_stale", stale, pred.high_stakes, connectors))
                 uncertain.append(key)
+                continue
+
+            if pred.type == "datetime":
+                appointment, visible = _evaluate_datetime_fact(
+                    pack, pred, fact, key, connectors, now, freshness, states,
+                    source_class_of, connector_of)
+                appointment_drafts.append(appointment)
+                if visible:
+                    drafts.append(appointment)
+                if appointment.state != "actionable" or appointment.uncertainty:
+                    uncertain.append(key)
                 continue
 
             if fact.status == FactStatus.UNKNOWN.value:
@@ -332,23 +459,6 @@ def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares
                 uncertain.append(key)
                 continue
 
-            if pred.type == "datetime":
-                if fact.status == FactStatus.DISPUTED.value:
-                    drafts.append(AlertDraft(
-                        key, domain, fact.primary_subject_id, predicate, fact.fact_id, None,
-                        _deadline_of(fact), None, None, "disputed",
-                        "sources disagree; confirm the appointment before acting", pred.high_stakes, connectors))
-                    uncertain.append(key)
-                    continue
-                try:
-                    stamp = datetime.fromisoformat(str(fact.value)[:25])
-                except ValueError:
-                    continue
-                appointment_drafts.append(AlertDraft(
-                    key, domain, fact.primary_subject_id, predicate, fact.fact_id, None,
-                    stamp.date(), None, None, "actionable", high_stakes=pred.high_stakes,
-                    evidence_connectors=connectors, starts_at=stamp))
-                continue
             if pred.type != "date":
                 evaluated = pack.evaluate(predicate, {"value": fact.value, "fact_status": fact.status,
                     "obligation_state": states.get(key, "outstanding"), "now": now})
@@ -391,7 +501,7 @@ def triage(  # noqa: PLR0912, PLR0915 - per-type deterministic evaluation shares
     horizon = tuple(sorted(
         (a for a in drafts if a.days_until is not None and _in_horizon(a, states, horizon_days)),
         key=lambda a: (a.latest_useful_action or date.max, a.obligation_key)))
-    findings = tuple(_cross_domain(pack, horizon, calendar, appointment_drafts))
+    findings = tuple(_cross_domain(pack, horizon, calendar, appointment_drafts, now))
     nxt = next_check_by(horizon, today)
     return TriageResult(alerts, horizon, findings, nxt, check_now=nxt is not None and nxt <= today,
                         uncertain=tuple(sorted(set(uncertain))), supporting=tuple(appointment_drafts))

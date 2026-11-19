@@ -29,7 +29,8 @@ Ref: specs/debts.md DEBT-ARCH-001, DEBT-VAULT-003
 """
 from __future__ import annotations
 
-import os
+import copy
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -60,13 +61,12 @@ class VaultPolicyViolation(RuntimeError):
 # ---------------------------------------------------------------------------
 
 _REGISTRY_CACHE: dict | None = None
+_REGISTRY_REVISION: str | None = None
 
 
 def _load_registry() -> dict:
-    """Load config/domain_registry.yaml (cached)."""
-    global _REGISTRY_CACHE  # noqa: PLW0603
-    if _REGISTRY_CACHE is not None:
-        return _REGISTRY_CACHE
+    """Load the current registry revision and isolate nested mutable values."""
+    global _REGISTRY_CACHE, _REGISTRY_REVISION  # noqa: PLW0603
     try:
         import yaml  # type: ignore[import]
     except ImportError as exc:
@@ -77,10 +77,13 @@ def _load_registry() -> dict:
         raise FileNotFoundError(
             f"domain_registry.yaml not found at {_REGISTRY_PATH}"
         )
-    with _REGISTRY_PATH.open(encoding="utf-8") as fh:
-        reg = yaml.safe_load(fh) or {}
-    _REGISTRY_CACHE = reg
-    return reg
+    source = _REGISTRY_PATH.read_bytes()
+    revision = hashlib.sha256(source).hexdigest()
+    if _REGISTRY_CACHE is None or _REGISTRY_REVISION != revision:
+        reg = yaml.safe_load(source.decode("utf-8")) or {}
+        _REGISTRY_CACHE = reg if isinstance(reg, dict) else {}
+        _REGISTRY_REVISION = revision
+    return copy.deepcopy(_REGISTRY_CACHE)
 
 
 def _domain_cfg(domain_name: str) -> dict:
@@ -92,7 +95,7 @@ def _domain_cfg(domain_name: str) -> dict:
             f"Domain '{domain_name}' not found in domain_registry.yaml. "
             f"Available domains: {sorted(domains.keys())}"
         )
-    return domains[domain_name] or {}
+    return copy.deepcopy(domains[domain_name] or {})
 
 
 def _vault_required_paths() -> frozenset[str]:
@@ -106,8 +109,10 @@ def _vault_required_paths() -> frozenset[str]:
         if cfg.get("requires_vault"):
             sf = cfg.get("state_file", "")
             if sf:
-                abs_path = str((_ARTHA_DIR / sf).resolve())
-                paths.add(abs_path)
+                sealed = (_ARTHA_DIR / sf).resolve()
+                paths.add(str(sealed))
+                if sealed.name.endswith(".age"):
+                    paths.add(str(Path(str(sealed)[:-len(".age")]).resolve()))
     return frozenset(paths)
 
 
@@ -218,8 +223,11 @@ class StateReader:
                 f"Run: git status — the vault script may be untracked."
             )
         try:
+            argv = [sys.executable, str(vault_script), "read", _domain_file_name(abs_path)]
+            if abs_path.parent.name == "work":
+                argv.extend(["--state-dir", str(abs_path.parent)])
             result = subprocess.run(  # noqa: S603
-                [sys.executable, str(vault_script), "read", _domain_file_name(abs_path)],
+                argv,
                 capture_output=True,
                 text=True,
                 timeout=15,

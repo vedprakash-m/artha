@@ -47,7 +47,11 @@ _ROOT_DIR = _SCRIPTS_DIR.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from .base import ActionProposal, ActionResult  # type: ignore[import]
+from .base import (  # type: ignore[import]
+    ActionProposal,
+    ActionResult,
+    is_definite_provider_refusal,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -272,16 +276,24 @@ class WhatsAppCloudHandler:
         }
 
         # Execute HTTP POST
+        dispatched = False
         try:
             import json
             import urllib.request
 
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            dispatched = True
             with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
                 resp_data = json.loads(resp.read().decode("utf-8"))
 
-            message_id = resp_data.get("messages", [{}])[0].get("id", "unknown")
+            messages = resp_data.get("messages")
+            message_id = messages[0].get("id") if isinstance(messages, list) and messages else None
+            if not isinstance(message_id, str) or not message_id:
+                result.status = "unknown"
+                result.message = "WhatsApp returned no verified send receipt; reconcile before retrying."
+                result.data = {}
+                return result
 
             result.status = "success"
             result.message = f"WhatsApp message sent: template={template_id}"
@@ -293,9 +305,14 @@ class WhatsAppCloudHandler:
             }
 
         except Exception as exc:  # noqa: BLE001
-            result.status = "failure"
-            result.message = f"WhatsApp API error: {str(exc)[:200]}"
-            result.data = {"error": str(exc)[:200]}
+            uncertain = dispatched and not is_definite_provider_refusal(exc)
+            result.status = "unknown" if uncertain else "failure"
+            result.message = (
+                "WhatsApp did not return a verified send receipt; reconcile before retrying."
+                if uncertain else
+                "WhatsApp refused or could not start the send; no provider effect was verified."
+            )
+            result.data = {"exception": type(exc).__name__} if uncertain else {}
 
         return result
 

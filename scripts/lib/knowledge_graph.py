@@ -33,7 +33,7 @@ from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from lib.local_paths import audit_log_path
 
 _log = logging.getLogger(__name__)
@@ -608,6 +608,13 @@ _DQ_DOMAIN_WEIGHTS = {
 # Entities below this threshold are dropped to preserve accuracy.
 _DQ_MIN_CONFIDENCE      = 0.5
 
+# Read operations must make bounded progress without letting a denied prefix hide
+# later eligible rows.
+_MAX_SEARCH_RESULTS = 100
+_DEFAULT_SEARCH_SCAN_LIMIT = 1_000
+_DEFAULT_NEIGHBOR_SCAN_LIMIT = 256
+_MAX_NEIGHBOR_SCAN_LIMIT = 1_000
+
 # Quality gate thresholds (composite Q score)
 _DQ_GATE_PASS           = 0.7   # Serve directly
 _DQ_GATE_WARN           = 0.5   # Serve with staleness caveat
@@ -634,6 +641,7 @@ class Entity:
     staleness_ttl_days: int
     effective_staleness: str  # computed: 'fresh' | 'aging' | 'stale' | 'expired'
     source_type: str = ""            # provenance tier (e.g. 'workiq', 'manual')
+    source: str | None = None        # existing provenance field; may be a local reference
     corroborating_sources: int = 0   # distinct source count for accuracy scoring
     lifecycle_stage: str = "unknown" # active | inactive | cancelled | archived | superseded
     excerpt_hash: str | None = None  # SHA-256 of source excerpt for change detection
@@ -673,6 +681,11 @@ class EntityContext:
     quality_score: float = 0.0                    # composite Q score (domain-aware)
     quality_caveats: tuple = ()                   # caveat strings for WARN/STALE/REFUSE
     has_conflicts: bool = False                   # True if any entity has provenance conflicts
+    denied_neighbor_count: int = 0
+    low_confidence_neighbor_count: int = 0
+    budget_omitted_neighbor_count: int = 0
+    neighbor_scan_count: int = 0
+    neighbor_scan_exhausted: bool = False
 
 
 @dataclass(frozen=True)
@@ -684,6 +697,50 @@ class SearchResult:
     relevance_score: float
     domain: str | None = None
     summary: str | None = None
+
+
+class SearchResults(list[SearchResult]):
+    """List-compatible search page with bounded-scan accounting."""
+
+    def __init__(
+        self,
+        values: list[SearchResult] | None = None,
+        *,
+        complete: bool = True,
+        scanned_count: int = 0,
+        denied_count: int = 0,
+    ) -> None:
+        super().__init__(values or [])
+        self.complete = complete
+        self.scanned_count = scanned_count
+        self.denied_count = denied_count
+
+
+@dataclass(frozen=True)
+class KnowledgeGraphReadScope:
+    """Trusted read authority bound to a KnowledgeGraph instance.
+
+    ``subjects`` uses the existing entity identifiers and domains.  ``root``
+    binds the local database path; it is not a user-supplied retrieval root.
+    """
+
+    profile: str
+    subjects: frozenset[str] | None = None
+    root: Path | None = None
+    permission: Callable[[dict[str, Any]], bool] | None = None
+    scan_limit: int = _DEFAULT_SEARCH_SCAN_LIMIT
+
+    def __post_init__(self) -> None:
+        if not self.profile or not self.profile.strip():
+            raise ValueError("read scope profile is required")
+        if self.subjects is not None and (
+            not all(isinstance(subject, str) and subject for subject in self.subjects)
+        ):
+            raise ValueError("read scope subjects must be non-empty strings")
+        if isinstance(self.scan_limit, bool) or not isinstance(self.scan_limit, int):
+            raise ValueError("read scope scan_limit must be an integer")
+        if self.scan_limit <= 0:
+            raise ValueError("read scope scan_limit must be positive")
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +829,7 @@ def _row_to_entity(row: sqlite3.Row) -> Entity:
             r.get("updated_at", ""),
         ),
         source_type=r.get("source_type") or "",
+        source=r.get("source"),
         corroborating_sources=int(r.get("corroborating_sources") or 0),
         lifecycle_stage=r.get("lifecycle_stage") or "unknown",
         excerpt_hash=r.get("excerpt_hash"),
@@ -826,7 +884,8 @@ class NullKnowledgeGraph:
     def get_entity(self, id: str) -> None:                         return None
     def resolve_entity(self, name: str) -> None:                   return None
     def resolve_entity_candidates(self, name: str, limit: int = 5) -> list: return []
-    def search(self, query: str, **kwargs) -> list:                return []
+    def search(self, query: str, **kwargs) -> SearchResults:
+        return SearchResults(complete=False)
     def traverse(self, *args, **kwargs) -> list:                   return []
     def find_path(self, *args, **kwargs) -> None:                  return None
     def context_for(self, entity_id: str, **kwargs) -> None:       return None
@@ -869,10 +928,19 @@ class KnowledgeGraph:
     propagates the original exception.
     """
 
-    def __init__(self, artha_dir: Path | None = None, db_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        artha_dir: Path | None = None,
+        db_path: Path | None = None,
+        read_scope: KnowledgeGraphReadScope | None = None,
+    ) -> None:
         self._artha_dir = artha_dir or self._default_artha_dir()
         self._db_path = db_path or self._resolve_db_path(self._artha_dir)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._read_scope = read_scope or KnowledgeGraphReadScope(
+            profile="local-work",
+            root=self._db_path.parent,
+        )
         self._conn = _open_kb(self._db_path)
         self._ensure_schema()
 
@@ -1103,6 +1171,71 @@ class KnowledgeGraph:
     def _strength_rank(self, strength: str) -> int:
         return {"strong": 0, "moderate": 1, "weak": 2, "historical": 3}.get(strength, 4)
 
+    @staticmethod
+    def _terminal_lifecycle(stage: str | None) -> bool:
+        return (stage or "unknown").lower() in {
+            "cancelled", "archived", "superseded"
+        }
+
+    def _root_read_allowed(self) -> bool:
+        root = self._read_scope.root
+        if root is None:
+            return False
+        try:
+            return self._db_path.resolve().is_relative_to(Path(root).resolve())
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
+
+    def _scope_allows(
+        self,
+        record: dict[str, Any],
+        *,
+        subject_values: tuple[str, ...] = (),
+    ) -> bool:
+        if not self._root_read_allowed():
+            return False
+        if self._read_scope.subjects is not None and not (
+            set(subject_values) & self._read_scope.subjects
+        ):
+            return False
+        permission = self._read_scope.permission
+        if permission is None:
+            return True
+        try:
+            return bool(permission({
+                **record,
+                "profile": self._read_scope.profile,
+            }))
+        except Exception:
+            _log.warning("KG: read permission check failed; denying record")
+            return False
+
+    def _entity_read_allowed(
+        self,
+        row: sqlite3.Row,
+        *,
+        enforce_confidence: bool = False,
+    ) -> bool:
+        entity = _row_to_entity(row)
+        if self._terminal_lifecycle(entity.lifecycle_stage):
+            return False
+        if enforce_confidence and entity.confidence < _DQ_MIN_CONFIDENCE:
+            return False
+        subjects = (entity.id, *entity.domains)
+        if entity.domain:
+            subjects = (*subjects, entity.domain)
+        return self._scope_allows(
+            {
+                "kind": "entity",
+                "entity_id": entity.id,
+                "entity_type": entity.type,
+                "domain": entity.domain,
+                "domains": tuple(entity.domains),
+                "entity": entity,
+            },
+            subject_values=subjects,
+        )
+
     # ------------------------------------------------------------------
     # Read — core
     # ------------------------------------------------------------------
@@ -1111,7 +1244,9 @@ class KnowledgeGraph:
         row = self._conn.execute(
             "SELECT * FROM entities WHERE id=?", (id,)
         ).fetchone()
-        return _row_to_entity(row) if row else None
+        if row is None or not self._entity_read_allowed(row):
+            return None
+        return _row_to_entity(row)
 
     def resolve_entity(self, name: str) -> Entity | None:
         """Return the best-match entity for *name*, or None."""
@@ -1126,6 +1261,15 @@ class KnowledgeGraph:
         match_reason: 'exact_id' | 'alias' | 'fts_title' | 'fts_content'
         Handles ambiguity — callers can present multiple candidates to the user.
         """
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _MAX_SEARCH_RESULTS
+        ):
+            raise ValueError(
+                "resolve_entity_candidates: limit must be between 1 and "
+                f"{_MAX_SEARCH_RESULTS}"
+            )
         results: list[tuple[Entity, float, str]] = []
         seen: set[str] = set()
         norm = name.strip().lower()
@@ -1134,7 +1278,7 @@ class KnowledgeGraph:
         row = self._conn.execute(
             "SELECT * FROM entities WHERE id=?", (norm,)
         ).fetchone()
-        if row:
+        if row and self._entity_read_allowed(row, enforce_confidence=True):
             e = _row_to_entity(row)
             results.append((e, 1.0, "exact_id"))
             seen.add(e.id)
@@ -1148,14 +1292,14 @@ class KnowledgeGraph:
                 row = self._conn.execute(
                     "SELECT * FROM entities WHERE id=?", (alias_row["entity_id"],)
                 ).fetchone()
-                if row:
+                if row and self._entity_read_allowed(row, enforce_confidence=True):
                     e = _row_to_entity(row)
                     results.append((e, 0.95, "alias"))
                     seen.add(e.id)
 
         # 3. FTS search across entities
         if len(results) < limit:
-            fts = self.search(name, limit=limit * 2)
+            fts = self.search(name, limit=min(limit * 2, _MAX_SEARCH_RESULTS))
             for sr in fts:
                 if sr.entity_id in seen:
                     continue
@@ -1164,7 +1308,7 @@ class KnowledgeGraph:
                 row = self._conn.execute(
                     "SELECT * FROM entities WHERE id=?", (sr.entity_id,)
                 ).fetchone()
-                if row:
+                if row and self._entity_read_allowed(row, enforce_confidence=True):
                     e = _row_to_entity(row)
                     in_title = norm in e.name.lower()
                     reason = "fts_title" if in_title else "fts_content"
@@ -1181,67 +1325,131 @@ class KnowledgeGraph:
         query: str,
         domain: str | None = None,
         limit: int = 10,
-    ) -> list[SearchResult]:
-        """FTS5 full-text search across all indexed content."""
+    ) -> SearchResults:
+        """FTS5 search with eligibility applied before the visible result limit."""
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("search limit must be an integer")
+        if limit <= 0 or limit > _MAX_SEARCH_RESULTS:
+            raise ValueError(
+                f"search limit must be between 1 and {_MAX_SEARCH_RESULTS}"
+            )
         if not query or not query.strip():
-            return []
+            return SearchResults()
+        if not self._root_read_allowed():
+            return SearchResults(complete=False)
         # Sanitize for FTS5: strip special chars so multi-word queries become
         # implicit AND (the FTS5 default), not a phrase search.  Phrase search
         # ("term1 term2") requires adjacent tokens; AND search finds documents
         # that contain all terms anywhere in the content.
         tokens = " ".join(w for w in query.split() if w.replace('-', '').replace('_', '').isalnum())
         if not tokens:
-            return []
-        try:
-            if domain:
-                rows = self._conn.execute(
-                    "SELECT entity_id, content, domain, source_type, rank"
-                    " FROM kb_search"
-                    " WHERE kb_search MATCH ? AND domain=?"
-                    " ORDER BY rank LIMIT ?",
-                    (tokens, domain, limit),
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT entity_id, content, domain, source_type, rank"
-                    " FROM kb_search"
-                    " WHERE kb_search MATCH ?"
-                    " ORDER BY rank LIMIT ?",
-                    (tokens, limit),
-                ).fetchall()
-        except sqlite3.OperationalError:
-            return []
+            return SearchResults()
 
-        results = []
-        for row in rows:
-            content = row["content"] or ""
-            snippet = content[:200].strip()
-            # FTS5 rank is negative (more negative = better match)
-            raw_rank = row["rank"] or 0.0
-            score = max(0.0, min(1.0, 1.0 + raw_rank / 10.0))
-            # Enrich with entity name and summary if available
-            entity_name = row["entity_id"]
-            entity_summary: str | None = None
-            ent_row = self._conn.execute(
-                "SELECT name, summary, lifecycle_stage FROM entities WHERE id=?",
-                (row["entity_id"],),
-            ).fetchone()
-            if ent_row:
-                ls = ent_row["lifecycle_stage"] or "unknown"
-                if ls in ("cancelled", "archived", "superseded"):
-                    continue
-                entity_name = ent_row["name"]
-                entity_summary = ent_row["summary"]
-            results.append(SearchResult(
-                entity_id=row["entity_id"],
-                name=entity_name,
-                snippet=snippet,
-                source_type=row["source_type"] or "",
-                relevance_score=score,
-                domain=row["domain"] if row["domain"] else None,
-                summary=entity_summary,
-            ))
-        return results
+        results: list[SearchResult] = []
+        scanned = 0
+        denied = 0
+        offset = 0
+        complete = False
+        scan_limit = self._read_scope.scan_limit
+        page_size = min(64, max(limit, 1))
+        while scanned < scan_limit and len(results) < limit:
+            fetch_count = min(page_size, scan_limit - scanned)
+            domain_sql = " AND ks.domain=?" if domain else ""
+            args: list[Any] = [tokens]
+            if domain:
+                args.append(domain)
+            args.extend((fetch_count, offset))
+            try:
+                rows = self._conn.execute(
+                    "SELECT ks.entity_id, ks.content, ks.domain, ks.source_type,"
+                    "       ks.rank"
+                    " FROM kb_search ks"
+                    " WHERE kb_search MATCH ?"
+                    + domain_sql
+                    + " AND (ks.source_type <> 'entity' OR EXISTS ("
+                    "       SELECT 1 FROM entities e"
+                    "       WHERE e.id=ks.entity_id"
+                    "         AND e.lifecycle_stage NOT IN"
+                    "             ('cancelled', 'archived', 'superseded')))"
+                    " ORDER BY ks.rank, ks.rowid LIMIT ? OFFSET ?",
+                    args,
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return SearchResults(
+                    results,
+                    complete=False,
+                    scanned_count=scanned,
+                    denied_count=denied,
+                )
+            if not rows:
+                complete = True
+                break
+
+            for row in rows:
+                scanned += 1
+                content = row["content"] or ""
+                entity_name = row["entity_id"]
+                entity_summary: str | None = None
+                ent_row = None
+                if row["source_type"] == "entity":
+                    ent_row = self._conn.execute(
+                        "SELECT * FROM entities WHERE id=?",
+                        (row["entity_id"],),
+                    ).fetchone()
+                    if ent_row is None or not self._entity_read_allowed(
+                        ent_row, enforce_confidence=True
+                    ):
+                        denied += 1
+                        continue
+                    entity = _row_to_entity(ent_row)
+                    entity_name = entity.name
+                    entity_summary = entity.summary
+                else:
+                    row_domain = row["domain"] or None
+                    if not self._scope_allows(
+                        {
+                            "kind": "search_result",
+                            "entity_id": row["entity_id"],
+                            "source_type": row["source_type"] or "",
+                            "domain": row_domain,
+                        },
+                        subject_values=(
+                            (row_domain,) if row_domain else ()
+                        ),
+                    ):
+                        denied += 1
+                        continue
+
+                raw_rank = row["rank"] or 0.0
+                score = max(0.0, min(1.0, 1.0 + raw_rank / 10.0))
+                results.append(SearchResult(
+                    entity_id=row["entity_id"],
+                    name=entity_name,
+                    snippet=content[:200].strip(),
+                    source_type=row["source_type"] or "",
+                    relevance_score=score,
+                    domain=row["domain"] if row["domain"] else None,
+                    summary=entity_summary,
+                ))
+                if len(results) >= limit:
+                    break
+
+            offset += len(rows)
+            if len(rows) < fetch_count:
+                complete = True
+                break
+            if scanned >= scan_limit:
+                complete = False
+                break
+
+        if complete is False and len(results) < limit and scanned < scan_limit:
+            complete = True
+        return SearchResults(
+            results,
+            complete=complete,
+            scanned_count=scanned,
+            denied_count=denied,
+        )
 
     def traverse(
         self,
@@ -1250,21 +1458,44 @@ class KnowledgeGraph:
         direction: str = "both",
         depth: int = 1,
         include_historical: bool = False,
+        scan_limit: int = _DEFAULT_NEIGHBOR_SCAN_LIMIT,
     ) -> list[Edge]:
         """Return edges at depth=1 (or up to depth via BFS)."""
+        if isinstance(depth, bool) or not isinstance(depth, int) or not 1 <= depth <= 4:
+            raise ValueError("traverse depth must be an integer between 1 and 4")
+        if (
+            isinstance(scan_limit, bool)
+            or not isinstance(scan_limit, int)
+            or not 0 < scan_limit <= _MAX_NEIGHBOR_SCAN_LIMIT
+        ):
+            raise ValueError(
+                f"traverse scan_limit must be between 1 and {_MAX_NEIGHBOR_SCAN_LIMIT}"
+            )
+        if not self._root_read_allowed() or self.get_entity(entity_id) is None:
+            return []
         if depth == 1:
-            return self._traverse_one_hop(entity_id, rel_types, direction, include_historical)
+            return self._traverse_one_hop(
+                entity_id, rel_types, direction, include_historical, limit=scan_limit
+            )
 
         # BFS for depth > 1
         visited_ids = {entity_id}
         frontier = [entity_id]
         all_edges: list[Edge] = []
         seen_rel_ids: set[tuple] = set()
+        scanned = 0
 
         for _ in range(depth):
             next_frontier: list[str] = []
             for eid in frontier:
-                hop_edges = self._traverse_one_hop(eid, rel_types, direction, include_historical)
+                remaining = scan_limit - scanned
+                if remaining <= 0:
+                    break
+                hop_rows = self._relationship_rows_one_hop(
+                    eid, rel_types, direction, include_historical, limit=remaining
+                )
+                scanned += len(hop_rows)
+                hop_edges = self._eligible_edges(hop_rows)
                 for edge in hop_edges:
                     sig = (edge.from_entity, edge.to_entity, edge.rel_type)
                     if sig not in seen_rel_ids:
@@ -1275,7 +1506,7 @@ class KnowledgeGraph:
                         visited_ids.add(other)
                         next_frontier.append(other)
             frontier = next_frontier
-            if not frontier:
+            if not frontier or scanned >= scan_limit:
                 break
 
         return all_edges
@@ -1286,7 +1517,21 @@ class KnowledgeGraph:
         rel_types: list[str] | None,
         direction: str,
         include_historical: bool,
+        limit: int | None = None,
     ) -> list[Edge]:
+        rows = self._relationship_rows_one_hop(
+            entity_id, rel_types, direction, include_historical, limit=limit
+        )
+        return self._eligible_edges(rows)
+
+    def _relationship_rows_one_hop(
+        self,
+        entity_id: str,
+        rel_types: list[str] | None,
+        direction: str,
+        include_historical: bool,
+        limit: int | None = None,
+    ) -> list[sqlite3.Row]:
         active_filter = "" if include_historical else "AND r.valid_to IS NULL"
         type_filter = ""
         params: list[Any] = []
@@ -1311,14 +1556,55 @@ class KnowledgeGraph:
             FROM relationships r
             LEFT JOIN episodes e ON r.source_episode_id = e.id
             WHERE {where}
+            ORDER BY r.confidence DESC, r.id
         """
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         rows = self._conn.execute(sql, params).fetchall()
-        return [_row_to_edge(row) for row in rows]
+        return rows
+
+    def _entity_for_read(
+        self, entity_id: str, *, enforce_confidence: bool = True
+    ) -> Entity | None:
+        row = self._conn.execute(
+            "SELECT * FROM entities WHERE id=?", (entity_id,)
+        ).fetchone()
+        if row is None or not self._entity_read_allowed(
+            row, enforce_confidence=enforce_confidence
+        ):
+            return None
+        return _row_to_entity(row)
+
+    def _eligible_edges(self, rows: list[sqlite3.Row]) -> list[Edge]:
+        if not self._root_read_allowed():
+            return []
+        edges: list[Edge] = []
+        for row in rows:
+            if float(row["confidence"] or 0.5) < _DQ_MIN_CONFIDENCE:
+                continue
+            if (
+                self._entity_for_read(row["from_entity"]) is None
+                or self._entity_for_read(row["to_entity"]) is None
+            ):
+                continue
+            edges.append(_row_to_edge(row))
+        return edges
 
     def find_path(
         self, from_id: str, to_id: str, max_depth: int = 4
     ) -> list[Edge] | None:
         """BFS shortest path from from_id to to_id."""
+        if (
+            isinstance(max_depth, bool)
+            or not isinstance(max_depth, int)
+            or not 1 <= max_depth <= 8
+        ):
+            raise ValueError("find_path max_depth must be an integer between 1 and 8")
+        if self._entity_for_read(from_id) is None:
+            return None
+        if self._entity_for_read(to_id) is None:
+            return None
         if from_id == to_id:
             return []
 
@@ -1350,6 +1636,7 @@ class KnowledgeGraph:
         include_historical: bool = False,
         session_focus: list[str] | None = None,
         intent: str = "deep",
+        neighbor_scan_limit: int = _DEFAULT_NEIGHBOR_SCAN_LIMIT,
     ) -> EntityContext | None:
         """One call → complete context bundle with neighbourhood walk.
 
@@ -1361,17 +1648,39 @@ class KnowledgeGraph:
           "prep"   → keep people/decision/open_question; prune historical timeline
           "deep"   → no pruning (default — fully backward-compatible)
 
-        Returns NullEntityContext if entity not found.
+        Denied and low-confidence neighbors are counted only while they are
+        within the bounded scan. ``neighbor_scan_exhausted`` prevents callers
+        from treating those partial counts as a graph-wide total.
+
+        Returns None if the entity is not found or is not eligible for the
+        bound read scope.
         """
-        if token_budget > 2000:
+        if isinstance(token_budget, bool) or not isinstance(token_budget, int):
+            raise ValueError("context_for: token_budget must be an integer")
+        if not _TOK_ENTITY_SUMMARY <= token_budget <= 2000:
             raise ValueError(
-                f"context_for: token_budget {token_budget} exceeds safe limit of 2000"
+                "context_for: token_budget must be between "
+                f"{_TOK_ENTITY_SUMMARY} and 2000"
+            )
+        if isinstance(depth, bool) or not isinstance(depth, int) or not 1 <= depth <= 4:
+            raise ValueError("context_for: depth must be an integer between 1 and 4")
+        if (
+            isinstance(neighbor_scan_limit, bool)
+            or not isinstance(neighbor_scan_limit, int)
+            or not 0 < neighbor_scan_limit <= _MAX_NEIGHBOR_SCAN_LIMIT
+        ):
+            raise ValueError(
+                "context_for: neighbor_scan_limit must be between 1 and "
+                f"{_MAX_NEIGHBOR_SCAN_LIMIT}"
             )
 
         # ── §4.11b intent-based pruning sets ─────────────────────────────────
         _STATUS_KEEP = {"milestone", "ownership", "blocker"}
         _STATUS_PRUNE = {"meeting", "comms"}
-        _PREP_KEEP = {"people", "decision", "open_question"}
+        _PREP_KEEP = {
+            "people", "decision", "open_question",
+            "owned_by", "depends_on", "component_of", "related_to",
+        }
 
         def _keep_edge(edge: "Edge") -> bool:
             rt = (edge.rel_type or "").lower()
@@ -1397,80 +1706,112 @@ class KnowledgeGraph:
         gaps: list[Entity] = []
         shadow_refs: list[str] = []
         seen_ids: set[str] = {entity_id}
+        edge_signatures: set[tuple[str, str, str]] = set()
+        denied_ids: set[str] = set()
+        low_confidence_ids: set[str] = set()
+        budget_omitted_ids: set[str] = set()
+        scanned_neighbors = 0
+        neighbor_scan_exhausted = False
 
-        # --- Hop 1: direct edges ---
-        hop1_edges = self._traverse_one_hop(
-            entity_id, None, "both", include_historical
-        )
-        hop1_edges.sort(key=lambda e: (
-            -e.confidence,
-            self._strength_rank(e.effective_strength),
-        ))
-        for edge in hop1_edges:
-            if used_tokens + _TOK_EDGE > token_budget:
-                break
+        def _candidate_rows(current_id: str) -> list[sqlite3.Row]:
+            nonlocal scanned_neighbors, neighbor_scan_exhausted
+            remaining = neighbor_scan_limit - scanned_neighbors
+            if remaining <= 0:
+                neighbor_scan_exhausted = True
+                return []
+            rows = self._relationship_rows_one_hop(
+                current_id,
+                None,
+                "both",
+                include_historical,
+                limit=remaining + 1,
+            )
+            if len(rows) > remaining:
+                neighbor_scan_exhausted = True
+            bounded = rows[:remaining]
+            scanned_neighbors += len(bounded)
+            return bounded
+
+        def _process_candidate(
+            current_id: str,
+            row: sqlite3.Row,
+            *,
+            second_hop: bool,
+        ) -> str | None:
+            nonlocal used_tokens
+            edge = _row_to_edge(row)
             if not _keep_edge(edge):
-                continue
+                return None
+            if not include_historical and edge.effective_strength == "historical":
+                return None
+            other_id = (
+                edge.to_entity if edge.from_entity == current_id
+                else edge.from_entity
+            )
+            if other_id == entity_id or (second_hop and other_id in seen_ids):
+                return None
+            if edge.confidence < _DQ_MIN_CONFIDENCE:
+                low_confidence_ids.add(other_id)
+                return None
+
+            other_row = self._conn.execute(
+                "SELECT * FROM entities WHERE id=?", (other_id,)
+            ).fetchone()
+            if other_row is None or not self._entity_read_allowed(other_row):
+                denied_ids.add(other_id)
+                return None
+            other_ent = _row_to_entity(other_row)
+            if other_ent.confidence < _DQ_MIN_CONFIDENCE:
+                low_confidence_ids.add(other_id)
+                return None
+            if second_hop:
+                conf_bonus = 0.2 if other_id in focus_set else 0.0
+                same_domain = other_ent.domain == entity.domain
+                if not same_domain and edge.confidence + conf_bonus < 0.6:
+                    low_confidence_ids.add(other_id)
+                    return None
+
+            signature = (edge.from_entity, edge.to_entity, edge.rel_type)
+            if signature in edge_signatures:
+                return other_id
+            neighbor_already = other_id in seen_ids
+            if other_ent.type == "gap" or (
+                other_ent.type == "shadow" and other_ent.source
+            ):
+                neighbor_cost = _TOK_GAP
+            else:
+                neighbor_cost = _TOK_ENTITY_SUMMARY
+            cost = _TOK_EDGE + (0 if neighbor_already else neighbor_cost)
+            if used_tokens + cost > token_budget:
+                budget_omitted_ids.add(other_id)
+                return None
+
             edges_to_include.append(edge)
+            edge_signatures.add(signature)
             used_tokens += _TOK_EDGE
-            other = edge.to_entity if edge.from_entity == entity_id else edge.from_entity
-            hop1_ids.add(other)
+            if not neighbor_already:
+                seen_ids.add(other_id)
+                used_tokens += neighbor_cost
+                if other_ent.type == "shadow":
+                    if other_ent.source:
+                        shadow_refs.append(other_ent.source)
+                elif other_ent.type == "gap":
+                    gaps.append(other_ent)
+                else:
+                    neighborhood.append(other_ent)
+            return other_id
 
-        # --- Hop 1: classify neighbours ---
-        for h1_id in hop1_ids:
-            if h1_id in seen_ids:
-                continue
-            seen_ids.add(h1_id)
-            h1_ent = self.get_entity(h1_id)
-            if h1_ent is None:
-                continue
-            if h1_ent.type == "shadow":
-                if h1_ent.source:
-                    shadow_refs.append(h1_ent.source)
-                continue
-            if h1_ent.type == "gap":
-                gaps.append(h1_ent)
-                used_tokens += _TOK_GAP
-                continue
-            neighborhood.append(h1_ent)
+        for row in _candidate_rows(entity_id):
+            neighbor_id = _process_candidate(entity_id, row, second_hop=False)
+            if neighbor_id is not None:
+                hop1_ids.add(neighbor_id)
 
-        # --- Hop 2: edges from hop-1 nodes ---
-        if depth >= 2:
+        if depth >= 2 and not neighbor_scan_exhausted:
             for h1_id in list(hop1_ids):
-                h2_edges = self._traverse_one_hop(h1_id, None, "both", include_historical)
-                for edge in h2_edges:
-                    if used_tokens + _TOK_EDGE > token_budget:
-                        break
-                    if not _keep_edge(edge):
-                        continue
-                    other = edge.to_entity if edge.from_entity == h1_id else edge.from_entity
-                    if other in seen_ids:
-                        continue
-                    # Confidence gate: same domain OR conf >= 0.6 (with focus bonus)
-                    conf_bonus = 0.2 if other in focus_set else 0.0
-                    effective_conf = edge.confidence + conf_bonus
-                    other_ent = self.get_entity(other)
-                    same_domain = other_ent and other_ent.domain == entity.domain
-                    if not same_domain and effective_conf < 0.6:
-                        continue
-                    if not include_historical and edge.effective_strength == "historical":
-                        continue
-                    sig = (edge.from_entity, edge.to_entity, edge.rel_type)
-                    already = any(
-                        (e.from_entity, e.to_entity, e.rel_type) == sig
-                        for e in edges_to_include
-                    )
-                    if not already:
-                        edges_to_include.append(edge)
-                        used_tokens += _TOK_EDGE
-                    if other_ent and other_ent not in neighborhood:
-                        seen_ids.add(other)
-                        if other_ent.type == "shadow" and other_ent.source:
-                            shadow_refs.append(other_ent.source)
-                        elif other_ent.type == "gap":
-                            gaps.append(other_ent)
-                        else:
-                            neighborhood.append(other_ent)
+                for row in _candidate_rows(h1_id):
+                    _process_candidate(h1_id, row, second_hop=True)
+                if neighbor_scan_exhausted:
+                    break
 
         # --- Decisions ---
         decisions_raw: list[dict] = []
@@ -1568,6 +1909,13 @@ class KnowledgeGraph:
             _quality_caveats = ()
             _has_conflicts = False
 
+        if neighbor_scan_exhausted:
+            _quality_caveats = (
+                *_quality_caveats,
+                f"Neighbor scan truncated after {scanned_neighbors} candidates; "
+                "omitted neighbor counts cover scanned candidates only.",
+            )
+
         return EntityContext(
             entity=entity,
             edges=edges_to_include,
@@ -1585,6 +1933,11 @@ class KnowledgeGraph:
             quality_score=_quality_score,
             quality_caveats=_quality_caveats,
             has_conflicts=_has_conflicts,
+            denied_neighbor_count=len(denied_ids),
+            low_confidence_neighbor_count=len(low_confidence_ids),
+            budget_omitted_neighbor_count=len(budget_omitted_ids),
+            neighbor_scan_count=scanned_neighbors,
+            neighbor_scan_exhausted=neighbor_scan_exhausted,
         )
 
     def get_context_as_of(
@@ -1596,6 +1949,15 @@ class KnowledgeGraph:
         Includes only edges where valid_from <= timestamp AND
         (valid_to IS NULL OR valid_to > timestamp).
         """
+        if (
+            isinstance(token_budget, bool)
+            or not isinstance(token_budget, int)
+            or not _TOK_ENTITY_SUMMARY <= token_budget <= 4000
+        ):
+            raise ValueError(
+                "get_context_as_of: token_budget must be between "
+                f"{_TOK_ENTITY_SUMMARY} and 4000"
+            )
         entity = self.get_entity(entity_id)
         if entity is None:
             return self._empty_ctx()
@@ -1630,12 +1992,19 @@ class KnowledgeGraph:
                  AND (r.valid_to IS NULL OR r.valid_to > ?)""",
             (entity_id, entity_id, timestamp, timestamp),
         ).fetchall()
-        historical_edges = [_row_to_edge(row) for row in rows]
+        historical_edges = self._eligible_edges(rows)
+        used = _TOK_ENTITY_SUMMARY
+        bounded_edges: list[Edge] = []
+        for edge in historical_edges:
+            if len(bounded_edges) >= 20 or used + _TOK_EDGE > token_budget:
+                break
+            bounded_edges.append(edge)
+            used += _TOK_EDGE
 
         # Thin context for point-in-time (no BFS at this depth)
         return EntityContext(
             entity=historical_entity,
-            edges=historical_edges[:20],
+            edges=bounded_edges[:20],
             neighborhood=[],
             decisions=[],
             artifacts=[],
@@ -1646,7 +2015,7 @@ class KnowledgeGraph:
             recent_episodes=[],
             community_context=None,
             suggested_followups=[],
-            token_estimate=_TOK_ENTITY_SUMMARY + len(historical_edges[:20]) * _TOK_EDGE,
+            token_estimate=used,
         )
 
     def global_context_for(self, question: str, max_tokens: int = 800) -> str:
@@ -1655,6 +2024,14 @@ class KnowledgeGraph:
         Uses FTS5 on community_summaries. Falls back to top-N summaries
         if FTS5 unavailable. Enables holistic portfolio questions.
         """
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or not 1 <= max_tokens <= 2000
+        ):
+            raise ValueError("global_context_for: max_tokens must be between 1 and 2000")
+        if not self._root_read_allowed():
+            return ""
         rows_sql: list[sqlite3.Row] = []
         try:
             safe_q = question.replace('"', '""')
@@ -1662,16 +2039,19 @@ class KnowledgeGraph:
                 "SELECT entity_ids, theme, summary FROM community_summaries"
                 " WHERE community_id IN ("
                 "   SELECT entity_id FROM kb_search WHERE kb_search MATCH ?"
-                "   AND source_type='community' ORDER BY rank LIMIT 5"
+                "   AND source_type='community' ORDER BY rank"
+                "   LIMIT ?"
                 ")",
-                (f'"{safe_q}"',),
+                (f'"{safe_q}"', self._read_scope.scan_limit),
             ).fetchall()
         except sqlite3.OperationalError:
             pass
 
         if not rows_sql:
             rows_sql = self._conn.execute(
-                "SELECT entity_ids, theme, summary FROM community_summaries ORDER BY generated_at DESC LIMIT 5"
+                "SELECT entity_ids, theme, summary FROM community_summaries"
+                " ORDER BY generated_at DESC LIMIT ?",
+                (self._read_scope.scan_limit,),
             ).fetchall()
 
         if not rows_sql:
@@ -1680,6 +2060,8 @@ class KnowledgeGraph:
         parts: list[str] = []
         used = 0
         for row in rows_sql:
+            if not self._community_read_allowed(row):
+                continue
             text = f"**{row['theme'] or 'Portfolio Context'}:** {row['summary']}"
             cost = _token_estimate(text)
             if used + cost > max_tokens:
@@ -1688,6 +2070,29 @@ class KnowledgeGraph:
             used += cost
 
         return "\n\n".join(parts)
+
+    def _community_read_allowed(self, row: sqlite3.Row) -> bool:
+        try:
+            entity_ids = json.loads(row["entity_ids"])
+        except (json.JSONDecodeError, TypeError):
+            return False
+        if not isinstance(entity_ids, list) or not entity_ids:
+            return False
+        subject_values: list[str] = []
+        for entity_id in entity_ids:
+            if not isinstance(entity_id, str):
+                return False
+            entity = self._entity_for_read(entity_id)
+            if entity is None:
+                return False
+            subject_values.append(entity.id)
+            if entity.domain:
+                subject_values.append(entity.domain)
+            subject_values.extend(entity.domains)
+        return self._scope_allows(
+            {"kind": "community", "entity_ids": tuple(entity_ids)},
+            subject_values=tuple(subject_values),
+        )
 
     def recent_episodes(
         self,
@@ -1703,9 +2108,28 @@ class KnowledgeGraph:
         days: alias for since_days (convenience parameter).
         Enables UC-13: 'When was IcM-XXXXXX last discussed?'
         """
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _MAX_SEARCH_RESULTS
+        ):
+            raise ValueError(
+                f"recent_episodes: limit must be between 1 and {_MAX_SEARCH_RESULTS}"
+            )
         effective_days = days if days is not None else since_days
+        if isinstance(effective_days, bool) or not isinstance(effective_days, int):
+            raise ValueError("recent_episodes: days must be an integer")
+        if effective_days <= 0:
+            raise ValueError("recent_episodes: days must be positive")
+        if not self._root_read_allowed():
+            return []
 
         if entity_mentions is None:
+            if (
+                self._read_scope.subjects is not None
+                or self._read_scope.permission is not None
+            ):
+                return []
             # Return all recent episodes — no entity filter
             rows = self._conn.execute(
                 """SELECT id, episode_key, source_type, ingested_at, raw_content
@@ -1725,6 +2149,13 @@ class KnowledgeGraph:
                 for row in rows
             ]
 
+        if not entity_mentions:
+            return []
+        entity_mentions = [
+            entity_id
+            for entity_id in entity_mentions
+            if self._entity_for_read(entity_id) is not None
+        ]
         if not entity_mentions:
             return []
 
@@ -1755,17 +2186,17 @@ class KnowledgeGraph:
         """Return the community summary for the entity's community, if any."""
         # Use community_members junction table (O(1) index lookup) instead of LIKE scan.
         rows = self._conn.execute(
-            """SELECT cs.theme, cs.summary
+            """SELECT cs.entity_ids, cs.theme, cs.summary
                FROM community_members cm
                JOIN community_summaries cs ON cs.community_id = cm.community_id
                WHERE cm.entity_id = ?
-               ORDER BY cs.generated_at DESC LIMIT 1""",
-            (entity_id,),
+               ORDER BY cs.generated_at DESC LIMIT ?""",
+            (entity_id, self._read_scope.scan_limit),
         ).fetchall()
-        if not rows:
-            return None
-        row = rows[0]
-        return f"{row['theme'] or 'Community'}: {row['summary']}"
+        for row in rows:
+            if self._community_read_allowed(row):
+                return f"{row['theme'] or 'Community'}: {row['summary']}"
+        return None
 
     def _suggest_followups(
         self,
@@ -1796,6 +2227,8 @@ class KnowledgeGraph:
 
     def stale_entities(self, domain: str | None = None) -> list[Entity]:
         """Return entities past their staleness TTL."""
+        if not self._root_read_allowed():
+            return []
         if domain:
             rows = self._conn.execute(
                 """SELECT * FROM entities
@@ -1814,10 +2247,16 @@ class KnowledgeGraph:
                    ORDER BY
                        julianday('now') - julianday(COALESCE(last_validated, updated_at)) DESC"""
             ).fetchall()
-        return [_row_to_entity(row) for row in rows]
+        return [
+            _row_to_entity(row)
+            for row in rows
+            if self._entity_read_allowed(row, enforce_confidence=True)
+        ]
 
     def recent_changes(self, domain: str | None = None, days: int = 30) -> list[dict]:
         """Return entity changes in the last *days* days."""
+        if not self._root_read_allowed():
+            return []
         if domain:
             rows = self._conn.execute(
                 """SELECT eh.entity_id, e.name, e.domain, eh.field,
@@ -1839,7 +2278,12 @@ class KnowledgeGraph:
                    ORDER BY eh.changed_at DESC""",
                 (f"-{int(days)}",),
             ).fetchall()
-        return [dict(row) for row in rows]
+        visible: list[dict] = []
+        for row in rows:
+            entity = self._entity_for_read(row["entity_id"])
+            if entity is not None:
+                visible.append(dict(row))
+        return visible
 
     # ------------------------------------------------------------------
     # Write
@@ -2296,6 +2740,16 @@ class KnowledgeGraph:
         Useful for identifying god-nodes that should be split or filtered from
         context windows to avoid token budget bloat.
         """
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, int)
+            or not 1 <= limit <= _MAX_SEARCH_RESULTS
+        ):
+            raise ValueError(
+                f"god_nodes: limit must be between 1 and {_MAX_SEARCH_RESULTS}"
+            )
+        if not self._root_read_allowed():
+            return []
         rows = self._conn.execute(
             """SELECT e.id, e.name, e.type, e.domain, e.confidence,
                       COUNT(r.id) AS degree
@@ -2307,11 +2761,25 @@ class KnowledgeGraph:
                       OR e.lifecycle_stage IS NULL)
                GROUP BY e.id
                HAVING degree >= ?
-               ORDER BY degree DESC
+               ORDER BY degree DESC, e.id
                LIMIT ?""",
-            (degree_threshold, limit),
+            (degree_threshold, self._read_scope.scan_limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        visible = []
+        for row in rows:
+            entity_row = self._conn.execute(
+                "SELECT * FROM entities WHERE id=?", (row["id"],)
+            ).fetchone()
+            if (
+                entity_row is not None
+                and self._entity_read_allowed(
+                    entity_row, enforce_confidence=True
+                )
+            ):
+                visible.append(dict(row))
+            if len(visible) >= limit:
+                break
+        return visible
 
     def rebuild_communities(self) -> int:
         """Re-cluster entities via Leiden algorithm (graspologic) with Union-Find fallback.
@@ -2683,6 +3151,7 @@ class KnowledgeGraph:
 def get_kb(
     artha_dir: Path | None = None,
     db_path: Path | None = None,
+    read_scope: KnowledgeGraphReadScope | None = None,
 ) -> KnowledgeGraph | NullKnowledgeGraph:
     """Safe factory for KnowledgeGraph.
 
@@ -2691,7 +3160,11 @@ def get_kb(
     so that KB failures never crash the work briefing.
     """
     try:
-        return KnowledgeGraph(artha_dir=artha_dir, db_path=db_path)
+        return KnowledgeGraph(
+            artha_dir=artha_dir,
+            db_path=db_path,
+            read_scope=read_scope,
+        )
     except sqlite3.DatabaseError as exc:
         _log.error("KB corrupted — returning NullKnowledgeGraph: %s", exc)
         _write_audit_log(artha_dir, f"[KB_CORRUPTED] {exc}")
@@ -2833,7 +3306,7 @@ class KnowledgeEnricher:
         rel_parts: list[str] = []
         for edge in ctx.edges[:5]:
             other_id = edge.to_entity if edge.from_entity == e.id else edge.from_entity
-            other_ent = self.get_entity(other_id)
+            other_ent = self.kg.get_entity(other_id)
             other_name = other_ent.name if other_ent else other_id
             rel_parts.append(f"{edge.rel_type}: {other_name}")
         rel_tail = " → " + "; ".join(rel_parts) if rel_parts else ""

@@ -468,35 +468,11 @@ def _build_identity_block(profile: dict, *, today: date | None = None) -> str:
 # Assembly (compact + legacy modes)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# §R — Command Router Table (injected into compact Artha.md)
-# Tells the AI which workflow files to load for each command.
-_COMMAND_ROUTER_TABLE = """\
-## §R — Command Router
+def _command_router_table() -> str:
+    """Generate the compact router from the canonical command matrix."""
+    from command_manifest import render_router_table  # noqa: PLC0415
 
-Load ONLY the files listed for the current command. Do NOT load all workflow
-files for light commands that don't invoke the catch-up workflow.
-
-| Command | Load These Files (in order) | State Files |
-|---------|-----------------------------|----|
-| `/catch-up`, `/catch-up flash`, `/catch-up deep`, `catch me up` | `config/workflow/preflight.md` → `fetch.md` → `process.md` → `reason.md` → `finalize.md` | Per tiered loading in fetch.md |
-| `/catch-up standard` | Same as `/catch-up` | Same |
-| `/status` | — | `state/health-check.md` |
-| `/items` | — | `state/open_items.md` |
-| `/items quick` | — | `state/open_items.md`, `state/memory.md` |
-| `/goals` | — | `state/goals.md`, `prompts/goals.md` |
-| `/domain <X>` | `config/workflow/process.md`, `config/workflow/reason.md` | `state/<X>.md`, `prompts/<X>.md` |
-| `/dashboard` | — | `state/dashboard.md` |
-| `/bootstrap` | `config/bootstrap-interview.md` | Various |
-| `/diff` | — | `state/` (git diff) |
-| `/scorecard` | — | All state frontmatter |
-| `/health` | — | `state/health-check.md` |
-| `/power` | — | `state/open_items.md`, `state/goals.md` |
-
-**CRITICAL for `/catch-up`:**
-Load each workflow file BEFORE executing that phase.
-Do NOT skip any workflow file.
-If a file fails to load, halt and report: "⛔ Cannot load config/workflow/<file>.md — catch-up aborted."
-"""
+    return render_router_table()
 
 
 def _extract_sections(core_text: str) -> dict[str, str]:
@@ -602,7 +578,7 @@ def _assemble_artha_md(identity_block: str, compact: bool = True) -> None:
         else:
             compact_body = "\n\n".join(filter(None, [
                 sections.get("behavior", ""),
-                sections.get("router", _COMMAND_ROUTER_TABLE),
+                _command_router_table(),
                 sections.get("privacy", ""),
                 sections.get("commands", ""),
                 sections.get("routing_table", ""),

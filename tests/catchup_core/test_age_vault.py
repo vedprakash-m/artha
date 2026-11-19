@@ -47,6 +47,13 @@ def test_validate_structure():
     assert "no 'domain'" in vt.validate_structure("---\nfoo: 1\n---\nx").problems[0]
     assert "expected" in vt.validate_structure(DOC, "finance").problems[0]
     assert not vt.validate_structure(DOC + "\x00").ok
+    crlf = "---\r\ndomain: kids\r\n---\r\n# Kids\r\n- OI-001\r\n"
+    assert vt.validate_structure(crlf, "kids").ok
+    eof_delimiter = "---\ndomain: kids\n---"
+    assert vt.validate_structure(eof_delimiter, "kids").ok
+    duplicate = "---\ndomain: kids\ndomain: finance\n---\nbody\n"
+    report = vt.validate_structure(duplicate, "kids")
+    assert not report.ok and any("duplicate" in problem for problem in report.problems)
 
 
 def test_record_ids():
@@ -156,6 +163,78 @@ def test_missing_age_binary_fails_closed(tmp_path):
     (tmp_path / "kids.md.age").write_bytes(b"x")
     with pytest.raises(vt.VaultUnavailable):
         v.read("kids")
+
+
+@pytest.mark.parametrize("kind", ["hardlink", "directory"])
+def test_ciphertext_path_link_or_nonfile_is_refused(tmp_path, kind):
+    v = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+        age_bin="/bin/true",
+    )
+    path = tmp_path / "kids.md.age"
+    if kind == "hardlink":
+        original = tmp_path / "original"
+        original.write_bytes(b"unchanged")
+        path.hardlink_to(original)
+    else:
+        path.mkdir()
+    with pytest.raises(vt.VaultError, match="ordinary unlinked"):
+        v.read("kids")
+    if kind == "hardlink":
+        assert original.read_bytes() == b"unchanged"
+    else:
+        assert path.is_dir()
+
+
+def test_original_ciphertext_revision_rejects_stale_write(monkeypatch, tmp_path):
+    v = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+        age_bin="/bin/true",
+    )
+    path = tmp_path / "kids.md.age"
+    path.write_bytes(b"first")
+    _, revision = v.revision_for("kids")
+    path.write_bytes(b"second")
+    with pytest.raises(vt.VaultConflict, match="changed"):
+        v.write(
+            "kids",
+            DOC,
+            expected_revision=revision,
+            previous=DOC,
+        )
+    assert path.read_bytes() == b"second"
+
+
+def test_explicit_create_revision_refuses_existing_ciphertext(tmp_path):
+    v = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+        age_bin="/bin/true",
+    )
+    path = tmp_path / "kids.md.age"
+    path.write_bytes(b"existing")
+    with pytest.raises(vt.VaultConflict, match="created"):
+        v.write("kids", DOC, expected_revision="", previous=DOC)
+    assert path.read_bytes() == b"existing"
+
+
+def test_revision_token_is_bound_to_target(tmp_path):
+    v = vt.AgeVault(
+        tmp_path,
+        identity=lambda: "unused",
+        recipient="age1unused",
+        age_bin="/bin/true",
+    )
+    (tmp_path / "kids.md.age").write_bytes(b"same")
+    (tmp_path / "goals.md.age").write_bytes(b"same")
+    _, kids_revision = v.revision_for("kids")
+    _, goals_revision = v.revision_for("goals")
+    assert kids_revision != goals_revision
 
 @pytest.mark.parametrize("name", ["", r"..\escape", r"folder\finance", r"C:\finance", "finance:stream"])
 def test_vault_rejects_nonportable_state_names_before_io(tmp_path, name):

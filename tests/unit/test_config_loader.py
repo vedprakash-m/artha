@@ -85,6 +85,17 @@ class TestCacheShallowCopyContract:
         assert first == second          # equal values
         assert first is not second      # distinct objects — shallow copy contract
 
+    def test_cache_returns_deeply_isolated_values(self, tmp_path):
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(
+            tmp_path, "artha_config.yaml", {"nested": {"providers": ["one"]}}
+        )
+        first = cl.load_config("artha_config", str(cfg_dir))
+        first["nested"]["providers"].append("two")
+        assert cl.load_config("artha_config", str(cfg_dir)) == {
+            "nested": {"providers": ["one"]}
+        }
+
 
 class TestInvalidateClearsCache:
     def test_invalidate_clears_cache(self, tmp_path):
@@ -104,6 +115,13 @@ class TestInvalidateClearsCache:
 
         second = cl.load_config("channels", str(cfg_dir))
         assert second["v"] == 99
+
+    def test_relevant_file_revision_invalidates_cached_parse_automatically(self, tmp_path):
+        import lib.config_loader as cl
+        cfg_dir = _make_config_dir(tmp_path, "channels.yaml", {"revision": 1})
+        assert cl.load_config("channels", str(cfg_dir))["revision"] == 1
+        (cfg_dir / "channels.yaml").write_text("revision: 2\n", encoding="utf-8")
+        assert cl.load_config("channels", str(cfg_dir))["revision"] == 2
 
 
 class TestInvalidateAll:
@@ -195,14 +213,12 @@ class TestRequiredConfig:
             cl.load_config("connectors", str(cfg_dir), strict=True)
         assert "synthetic-private-marker" not in caplog.text
 
-    def test_successful_strict_reads_keep_cache_copy_and_invalidation(self, tmp_path):
+    def test_successful_strict_reads_keep_cache_copy_and_observe_revision(self, tmp_path):
         import lib.config_loader as cl
         cfg_dir = _make_config_dir(tmp_path, "connectors.yaml", {"version": 1})
         first = cl.load_config("connectors", str(cfg_dir), strict=True)
         first["version"] = 20
         (cfg_dir / "connectors.yaml").write_text("version: 2\n", encoding="utf-8")
-        assert cl.load_config("connectors", str(cfg_dir), strict=True) == {"version": 1}
-        cl.invalidate()
         assert cl.load_config("connectors", str(cfg_dir), strict=True) == {"version": 2}
 
     def test_failed_strict_read_is_not_cached(self, tmp_path):

@@ -236,15 +236,22 @@ def mirror_gfs(dest: Path | None = None) -> tuple[int, str]:
         return 1, "🔴 no backups/ catalog to mirror"
     dest.mkdir(parents=True, exist_ok=True)
     os.chmod(dest, 0o700)
-    copied = 0
+    copied = kept = 0
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     for p in src.rglob("*"):
         if p.is_file() and not p.name.endswith((".lock", ".tmp")):
             target = dest / p.relative_to(src)
-            if not target.exists():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(p, target)
-                copied += 1
-    return 0, f"gfs mirror: {copied} new files copied to {dest}"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                if target.stat().st_size == p.stat().st_size and _sha256(target) == _sha256(p):
+                    continue
+                # Same name, new content (today's daily zip is rewritten each run): keep the old copy too.
+                target = target.with_name(f"{target.stem}.{stamp}{target.suffix}")
+                kept += 1
+            shutil.copy2(p, target)
+            copied += 1
+    extra = f" ({kept} changed files kept as timestamped copies)" if kept else ""
+    return 0, f"gfs mirror: {copied} new files copied to {dest}{extra}"
 
 
 def check(state_dir: Path = STATE_DIR, *, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,

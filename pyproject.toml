@@ -40,7 +40,7 @@ skills = [
     "beautifulsoup4>=4.12.0",
 ]
 messaging = [
-    "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chromium_reader.git",
+    "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chromium_reader.git@7a01b07dc5205a9c12004f2c9eabce0bb4697860",
 ]
 channels = [
     # websockets>=12.0 is required for Slack Socket Mode and Discord Gateway.

@@ -9,6 +9,20 @@ sources:
     account_scope: personal
     kwargs:
       query: "label:school"
+  home_email:
+    connector: gmail
+    account_scope: personal
+    # B.8 enrollment is approved for home_email only. It is authoritative only
+    # after the owner runs `scope-review home_email --enroll`.
+    admission:
+      allowed_sender_domains:
+        - example.com
+      work_label_ids:
+        - Work
+      work_recipient_domains: []
+      unknown_metadata: hold
+    kwargs:
+      query: "from:example.com"
   calendar:
     connector: google_calendar
     account_scope: family

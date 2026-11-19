@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from lib.local_paths import audit_log_path
+from lib.state_frontmatter import FrontmatterError, split_frontmatter
 
 _MIN_SIZE_BYTES = 100
 
@@ -57,14 +58,16 @@ def _check_file(domain: str, file_path: Path) -> list[str]:
         failures.append(f"unreadable: {exc}")
         return failures
 
-    # Check 2: valid YAML frontmatter delimiter
-    if not content.startswith("---"):
+    # Check 2: structurally valid leading YAML frontmatter
+    try:
+        parts = split_frontmatter(content)
+    except FrontmatterError:
+        parts = None
+    if parts is None:
         failures.append("missing_frontmatter_delimiter")
         return failures  # Subsequent checks require frontmatter
 
-    # Extract frontmatter
-    end = content.find("\n---", 3)
-    frontmatter = content[3:end].strip() if end != -1 else content[3:].strip()
+    frontmatter = parts.metadata
 
     # Check 3: domain: field present
     if not re.search(r"^\s*domain\s*:", frontmatter, re.MULTILINE):

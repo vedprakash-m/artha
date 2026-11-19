@@ -11,7 +11,8 @@ directories, and runs pytest there.
 
 Usage: python tools/run_tests_isolated.py [--synthetic-only] [pytest args...]
 
-The synthetic-only mode copies no files under ``state/``.
+The synthetic-only mode copies no live State Files; committed templates under
+``state/templates/`` remain available as test inputs.
 
 Local-only private Work evidence (not shared CI or release authority):
     python tools/run_tests_isolated.py --private-work --evidence ABSOLUTE_NEW_JSON
@@ -42,6 +43,7 @@ EMPTY_DIRS = ("state", "briefings", "summaries", "tmp", "backups", "scratch")
 # Never copied even when tracked: live data directories keep only their committed templates.
 _DATA_PREFIXES = ("briefings/", "summaries/", "tmp/", "backups/", "output/")
 _STATE_KEEP = ("state/templates/", "state/learned_procedures/", "state/.gitkeep")
+_SYNTHETIC_STATE_KEEP = ("state/templates/", "state/.gitkeep")
 PRIVATE_WORK_TEST = "tests/work/test_work_publication_producers.py"
 # Reviewed same-package imports of the synthetic producer selection. No directory copy.
 PRIVATE_WORK_FILES = (
@@ -412,7 +414,12 @@ def _synthetic_path_parts(rel: str) -> tuple[str, ...] | None:
 def _wanted(rel: str, *, synthetic_only: bool = False) -> bool:
     if synthetic_only:
         parts = _synthetic_path_parts(rel)
-        if parts is None or (parts and parts[0] == "state"):
+        normalized = "/".join(parts) if parts is not None else None
+        allowed_state = normalized is not None and any(
+            normalized == prefix.rstrip("/") or normalized.startswith(prefix)
+            for prefix in _SYNTHETIC_STATE_KEEP
+        )
+        if parts is None or (parts and parts[0] == "state" and not allowed_state):
             return False
     if rel.startswith(_DATA_PREFIXES):
         return rel.endswith(".gitkeep")

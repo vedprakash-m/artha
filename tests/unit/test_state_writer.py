@@ -17,11 +17,52 @@ Coverage:
 """
 from __future__ import annotations
 
+import base64
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 # conftest adds scripts/ and project root to sys.path
-from lib.state_writer import WriteResult, write, write_atomic
+from lib.state_writer import (
+    StateWriteConflict,
+    WriteResult,
+    create_if_absent_token,
+    read_versioned,
+    write as _raw_write,
+    write_atomic,
+)
+
+
+def write(path, content, **kwargs):
+    if "expected_token" not in kwargs:
+        token = read_versioned(path)[1] if path.exists() else create_if_absent_token(path)
+        kwargs["expected_token"] = token
+    return _raw_write(path, content, **kwargs)
+
+
+class _FakeSnapshotVault:
+    def encrypt_artifact(self, text):
+        return b"sealed:" + base64.b64encode(text.encode("utf-8"))
+
+    def read_artifact(self, path):
+        raw = path.read_bytes()
+        return base64.b64decode(raw[len(b"sealed:"):]).decode("utf-8")
+
+
+@pytest.fixture(autouse=True)
+def encrypted_snapshot_storage(tmp_path, monkeypatch):
+    from lib import state_snapshot
+
+    monkeypatch.setenv(
+        "ARTHA_LOCAL_DIR", str(tmp_path.parent / f"{tmp_path.name}-local")
+    )
+    monkeypatch.setattr(
+        state_snapshot,
+        "_vault_for_snapshots",
+        lambda _directory: _FakeSnapshotVault(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +196,7 @@ class TestWriteSnapshot:
         assert result.success is True
         assert result.snapshot_path is not None
         assert result.snapshot_path.exists()
-        assert result.snapshot_path.read_text(encoding="utf-8") == "original"
+        assert _FakeSnapshotVault().read_artifact(result.snapshot_path) == "original"
 
     def test_no_snapshot_for_new_file(self, tmp_path):
         target = tmp_path / "new_state.md"
@@ -267,6 +308,223 @@ class TestWriteErrorHandling:
                     target, "content", domain="test", source="test", snapshot=False
                 )
         assert any("ERROR" in entry for entry in result.middleware_log)
+
+
+class TestConflictAwarePublication:
+    def test_omitted_token_refuses_existing_target_without_minting(self, tmp_path):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+
+        with _passthrough_middleware(), pytest.raises(TypeError, match="expected_token"):
+            _raw_write(target, "proposed", domain="test", source="test", snapshot=False)
+
+        assert target.read_text(encoding="utf-8") == "original"
+
+    def test_omitted_token_refuses_create_without_minting(self, tmp_path):
+        target = tmp_path / "state.md"
+        with _passthrough_middleware(), pytest.raises(TypeError, match="expected_token"):
+            _raw_write(target, "proposed", domain="test", source="test", snapshot=False)
+        assert not target.exists()
+
+    def test_read_versioned_requires_existing_target(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            read_versioned(tmp_path / "missing.md")
+
+    def test_stale_original_token_refuses_overwrite(self, tmp_path):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        original, token = read_versioned(target)
+        target.write_text("another writer", encoding="utf-8")
+
+        with _passthrough_middleware(), pytest.raises(StateWriteConflict, match="changed"):
+            write(
+                target,
+                original + " proposed",
+                expected_token=token,
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+
+        assert target.read_text(encoding="utf-8") == "another writer"
+
+    def test_replacing_target_with_identical_bytes_refuses_stale_token(self, tmp_path):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        _, token = read_versioned(target)
+        replacement = tmp_path / "replacement.md"
+        replacement.write_text("original", encoding="utf-8")
+        replacement.replace(target)
+
+        with _passthrough_middleware(), pytest.raises(StateWriteConflict, match="changed"):
+            write(
+                target,
+                "proposed",
+                expected_token=token,
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+
+        assert target.read_text(encoding="utf-8") == "original"
+
+    def test_identical_bytes_substitution_after_replace_is_uncertain(
+        self, tmp_path, monkeypatch
+    ):
+        import os
+
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        replacement = tmp_path / "replacement.md"
+        real_replace = os.replace
+
+        def replace_then_substitute(source, destination):
+            real_replace(source, destination)
+            if Path(destination) == target:
+                replacement.write_bytes(target.read_bytes())
+                real_replace(replacement, target)
+
+        monkeypatch.setattr(os, "replace", replace_then_substitute)
+        with _passthrough_middleware():
+            result = write(
+                target,
+                "proposed",
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+
+        assert result.success is False
+        assert result.uncertain is True
+        assert target.read_bytes() == b"proposed"
+        assert any("identity" in entry for entry in result.middleware_log)
+
+    def test_mutated_staged_object_after_replace_is_uncertain(
+        self, tmp_path, monkeypatch
+    ):
+        import os
+
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        real_replace = os.replace
+
+        def replace_then_mutate(source, destination):
+            real_replace(source, destination)
+            if Path(destination) == target:
+                target.write_bytes(b"substituted")
+
+        monkeypatch.setattr(os, "replace", replace_then_mutate)
+        with _passthrough_middleware():
+            result = write(
+                target,
+                "proposed",
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+
+        assert result.success is False
+        assert result.uncertain is True
+        assert target.read_bytes() == b"substituted"
+        assert any("readback" in entry for entry in result.middleware_log)
+
+    def test_create_token_refuses_target_created_after_read(self, tmp_path):
+        target = tmp_path / "state.md"
+        token = create_if_absent_token(target)
+        target.write_text("created elsewhere", encoding="utf-8")
+
+        with _passthrough_middleware(), pytest.raises(StateWriteConflict, match="created"):
+            write(
+                target,
+                "proposed",
+                expected_token=token,
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+
+        assert target.read_text(encoding="utf-8") == "created elsewhere"
+
+    def test_change_during_middleware_is_refused_before_replace(self, tmp_path):
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        _, token = read_versioned(target)
+        middleware = _make_mock_middleware(return_value="proposed")
+
+        def before_write(*_args, **_kwargs):
+            target.write_text("concurrent", encoding="utf-8")
+            return "proposed"
+
+        middleware.before_write.side_effect = before_write
+        with _mock_middleware(middleware), pytest.raises(StateWriteConflict, match="changed"):
+            write(
+                target,
+                "proposed",
+                expected_token=token,
+                domain="test",
+                source="test",
+                snapshot=False,
+            )
+        assert target.read_text(encoding="utf-8") == "concurrent"
+
+    def test_snapshot_failure_blocks_publication(self, tmp_path, monkeypatch):
+        from lib import state_snapshot
+
+        target = tmp_path / "state.md"
+        target.write_text("original", encoding="utf-8")
+        monkeypatch.setattr(state_snapshot, "snapshot", lambda *_args, **_kwargs: None)
+        with _passthrough_middleware():
+            result = write(
+                target,
+                "proposed",
+                domain="test",
+                source="test",
+                snapshot=True,
+            )
+        assert result.success is False
+        assert target.read_text(encoding="utf-8") == "original"
+
+
+class TestStructuralFrontmatter:
+    def test_retired_occ_write_entry_point_is_absent(self):
+        from lib import state_writer
+
+        assert not hasattr(state_writer, "write_occ")
+
+    def test_frontmatter_injection_preserves_crlf_body_and_delimiter_like_text(self):
+        from lib.state_writer import _inject_occ_fields
+
+        body = "# Heading\r\n---\r\nThis body delimiter is not frontmatter.\r\n"
+        source = "---\r\n# retained\r\ndomain: finance\r\n---\r\n" + body
+        with patch("lib.state_writer.datetime") as clock:
+            clock.now.return_value.isoformat.return_value = "2026-11-18T00:00:00+00:00"
+            changed = _inject_occ_fields(source, 2, "test")
+
+        assert changed.endswith(body)
+        assert changed.count("domain: finance") == 1
+        assert "# retained\r\n" in changed
+        assert "\r\nlast_written_at: 2026-11-18T00:00:00+00:00\r\n" in changed
+        assert changed.startswith("---\r\n# retained\r\ndomain: finance\r\nversion: 2\r\n")
+
+    def test_version_lookup_is_limited_to_frontmatter(self):
+        from lib.state_writer import _extract_occ_version
+
+        text = "---\ndomain: finance\n---\nversion: 99\nbody\n"
+        assert _extract_occ_version(text) == 0
+
+    def test_closing_delimiter_at_eof_round_trips(self):
+        from lib.state_writer import _inject_occ_fields
+
+        changed = _inject_occ_fields("---\ndomain: finance\n---", 1, "test")
+        assert changed.startswith("---\ndomain: finance\nversion: 1\n")
+        assert changed.endswith("---")
+
+    def test_duplicate_occ_field_is_rejected(self):
+        from lib.state_writer import _inject_occ_fields
+
+        text = "---\ndomain: finance\nversion: 1\nversion: 2\n---\nbody\n"
+        with pytest.raises(ValueError, match="duplicate"):
+            _inject_occ_fields(text, 3, "test")
 
 
 # ---------------------------------------------------------------------------

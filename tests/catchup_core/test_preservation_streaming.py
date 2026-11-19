@@ -13,7 +13,7 @@ import pytest
 from catchup_core import checkpoint, policy
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.ledger import PermissionDenied
-from core_helpers import synthetic_recovery_acceptance
+from core_helpers import OWNER_DECISION_SHA256, synthetic_recovery_acceptance
 
 CIPHER = EnvelopeCipher(StaticKeyProvider({1: b'p' * 32}))
 SCOPE = {'schema': 'artha.installation-preservation.v1', 'repository_root': 'repo', 'runtime_root': 'local',
@@ -160,7 +160,8 @@ def test_distinct_same_disk_copy_needs_explicit_cloud_recovery_evidence(tmp_path
     second.write_bytes(cp.read_bytes())
     rehearsal = tmp_path / 'rehearsal.json'
     rehearsal.write_text(json.dumps(synthetic_recovery_acceptance(tmp_path, cp, CIPHER)))
-    release = {'rollback_snapshot': approved(cp), 'independent_copy': approved(second),
+    release = {'owner_decision_sha256': OWNER_DECISION_SHA256,
+               'rollback_snapshot': approved(cp), 'independent_copy': approved(second),
                'recovery_rehearsal': approved(rehearsal)}
     with pytest.raises(PermissionDenied, match='independent'):
         policy._validate_preservation_evidence(release)
@@ -181,8 +182,10 @@ def test_hardlinked_copy_is_not_independent_even_with_cloud_declaration(tmp_path
     record = {**approved(second), 'failure_domain': 'cloud', 'owner_verified_at': '2026-10-24T12:00:00Z',
               'recovered_sha256': approved(cp)['sha256']}
     with pytest.raises(PermissionDenied, match='independent'):
-        policy._validate_preservation_evidence({'rollback_snapshot': approved(cp), 'independent_copy': record,
-                                                'recovery_rehearsal': approved(rehearsal)})
+        policy._validate_preservation_evidence(
+            {'owner_decision_sha256': OWNER_DECISION_SHA256,
+             'rollback_snapshot': approved(cp), 'independent_copy': record,
+             'recovery_rehearsal': approved(rehearsal)})
 
 
 def _spill_files(tmp_path):

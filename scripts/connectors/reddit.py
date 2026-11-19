@@ -159,6 +159,7 @@ def _build_record(
     *,
     subreddit: str,
     source_tag: str,
+    feed_tag: str = "",
     blocked: list[str],
     min_score: int,
 ) -> dict | None:
@@ -174,7 +175,9 @@ def _build_record(
     if not raw_title:
         return None
 
-    post_id = post.get("name", post.get("id", ""))  # e.g. "t3_abc123"
+    post_id = post.get("name", post.get("id", ""))
+    if not post_id:
+        return None  # e.g. "t3_abc123"
     sanitized_title = _sanitize_title(raw_title, blocked, subreddit=subreddit, post_id=post_id)
     if sanitized_title is None:
         return None
@@ -186,23 +189,26 @@ def _build_record(
     else:
         url = post.get("url", "")
 
-    created_ts = post.get("created_utc", 0.0)
-    created_iso = (
-        datetime.fromtimestamp(float(created_ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if created_ts
-        else datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    )
+    try:
+        created_iso = datetime.fromtimestamp(
+            float(post["created_utc"]), tz=timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return None
 
     return {
-        "id":           f"reddit_{post_id}" if post_id else f"reddit_{subreddit}_{created_iso}",
-        "source":       "reddit",
+        "id":           f"reddit_{post_id}",
+        "source":       source_tag or "reddit",
         "subreddit":    subreddit,
+        "subject":      sanitized_title,
         "title":        sanitized_title,
+        "body":         sanitized_title,
         "score":        score,
         "num_comments": int(post.get("num_comments", 0)),
         "url":          url,
         "created_utc":  created_iso,
-        "source_tag":   source_tag,
+        "date_iso":     created_iso,
+        "source_tag":   feed_tag,
     }
 
 
@@ -210,11 +216,14 @@ def _build_record(
 
 def fetch(
     *,
+    since: str = "",
+    max_results: int = 100,
     subreddits: list[dict] | None = None,
     max_per_sub: int = 10,
     min_score: int = 20,
     delay_sec: float = 2.0,
     auth_context: Dict[str, Any] | None = None,
+    source_tag: str = "reddit",
     **kwargs: Any,
 ) -> Iterator[Dict[str, Any]]:
     """Yield top Reddit posts from configured subreddits.
@@ -232,12 +241,38 @@ def fetch(
 
     if not subreddits:
         return
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+        raise ValueError("max_results must be a positive integer")
 
     blocked = _load_blocked_patterns()
+    yielded = 0
+    since_dt = None
+    if since:
+        import re
+        relative = re.fullmatch(r"(\d+)([dhm])", since.lower())
+        if relative:
+            from datetime import timedelta
+            amount, unit = int(relative[1]), relative[2]
+            since_dt = datetime.now(timezone.utc) - {
+                "d": timedelta(days=amount),
+                "h": timedelta(hours=amount),
+                "m": timedelta(minutes=amount),
+            }[unit]
+        else:
+            try:
+                since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+                if since_dt.tzinfo is None:
+                    since_dt = since_dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                from lib.connector_coverage import report_scope  # type: ignore[import]
+                report_scope("reddit:query", "failed", reason="since is invalid")
+                return
 
     for idx, sub_cfg in enumerate(subreddits):
+        if yielded >= max_results:
+            break
         sub_name   = sub_cfg.get("name", "")
-        source_tag = sub_cfg.get("tag", f"reddit_{sub_name.lower()}")
+        feed_tag = sub_cfg.get("tag", f"reddit_{sub_name.lower()}")
         if not sub_name:
             continue
 
@@ -246,9 +281,10 @@ def fetch(
             time.sleep(delay_sec)
 
         try:
-            posts = _fetch_top(sub_name, limit=max_per_sub)
+            posts = _fetch_top(sub_name, limit=min(max_per_sub, max_results - yielded))
         except Exception as exc:
-            # Log and continue to next subreddit — single failure must not abort run
+            from lib.connector_coverage import report_scope  # type: ignore[import]
+            report_scope(f"reddit:{sub_name}", "failed", reason=type(exc).__name__)
             sys.stderr.write(f"[reddit] r/{sub_name} fetch error: {exc}\n")
             continue
 
@@ -257,8 +293,16 @@ def fetch(
                 post,
                 subreddit=sub_name,
                 source_tag=source_tag,
+                feed_tag=feed_tag,
                 blocked=blocked,
                 min_score=min_score,
             )
             if record is not None:
+                if since_dt is not None and datetime.fromisoformat(
+                    record["date_iso"].replace("Z", "+00:00")
+                ) < since_dt:
+                    continue
                 yield record
+                yielded += 1
+                if yielded >= max_results:
+                    break

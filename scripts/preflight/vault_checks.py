@@ -12,6 +12,7 @@ from preflight._types import (
 )
 
 STALE_LOCK_SECONDS = 1800   # 30 minutes
+_READ_ONLY = False
 
 def check_keyring_backend() -> CheckResult:
     """P0: Verify keyring has a working backend before any credential operations.
@@ -110,6 +111,12 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
     is_stale = lock_age > STALE_LOCK_SECONDS or (pid > 0 and not _pid_alive(pid))
 
     if is_stale:
+        if _READ_ONLY:
+            return CheckResult(
+                "vault lock state", "P0", False,
+                f"Stale lock detected ({lock_age_m}m); removal suppressed in --read-only mode",
+                fix_hint="Re-run without --read-only to clear the stale lock",
+            )
         # Auto-clear unconditionally — stale = previous crash, not live session
         try:
             os.remove(LOCK_FILE)
@@ -129,6 +136,12 @@ def check_vault_lock(auto_fix: bool = False) -> CheckResult:
     # Active lock (PID alive, age < 30m)
     msg = f"Active session lock (age: {lock_age_m}m) — another catch-up may be running"
     if auto_fix:
+        if _READ_ONLY:
+            return CheckResult(
+                "vault lock state", "P0", False,
+                "Active lock cannot be cleared in --read-only mode",
+                fix_hint="Wait for the active session or re-run without --read-only and with --fix",
+            )
         try:
             os.remove(LOCK_FILE)
             return CheckResult(

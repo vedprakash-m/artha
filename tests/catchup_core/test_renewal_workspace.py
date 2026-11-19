@@ -77,6 +77,26 @@ def test_AR03_protected_gitleaks_config_is_in_source_manifest(repo):
     assert '.gitleaks.toml' in names
 
 
+def test_runtime_source_config_participates_in_the_renewal_manifest(repo):
+    config = repo / 'config'
+    config.mkdir()
+    (config / 'catchup_core.yaml').write_text('sources: {}\n')
+    names = {entry['path'] for entry in Workspace(repo).source()['files']}
+    assert 'config/catchup_core.yaml' in names
+
+
+def test_release_renewal_pointer_does_not_change_the_source_cohort(repo):
+    config = repo / 'config'
+    config.mkdir()
+    path = config / 'catchup_core.yaml'
+    path.write_text('release: {domains: [kids_school]}\nviewer: owner\n')
+    before = Workspace(repo).source()
+    path.write_text(
+        'release:\n  domains: [kids_school]\n  renewal: {schema: artha.release.renewal.v1}\nviewer: owner\n')
+    after = Workspace(repo).source()
+    assert before == after
+
+
 @pytest.mark.skipif(os.name == 'nt', reason='NTFS disables POSIX S_IXUSR bit / core.filemode defaults to false')
 def test_AR06_source_mode_matches_git_index(repo):
     git(repo, 'config', 'core.filemode', 'true')

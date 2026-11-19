@@ -1,34 +1,23 @@
 #!/usr/bin/env python3
-"""
-auto_archive_briefs.py — Stop hook: archive tmp/briefing_draft_claude.md
-if present. Always exits 0 so it never blocks session exit.
-"""
+"""Compatibility Stop helper for the canonical staged Claude briefing."""
 import sys
-import shutil
-from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DRAFT = ROOT / "tmp" / "briefing_draft_claude.md"
-BRIEFINGS = ROOT / "briefings"
+DRAFT = ROOT / "tmp" / "briefing_incoming_claude.md"
 
 
 def main():
     if not DRAFT.exists():
         return  # Nothing to archive
 
-    BRIEFINGS.mkdir(exist_ok=True)
+    from catchup_core.session_lock import publication_fence  # noqa: PLC0415
+    from session_stop import archive_staged_briefing  # noqa: PLC0415
 
-    today = date.today().isoformat()
-    dest = BRIEFINGS / f"{today}.md"
-
-    # If today's file already exists and has real content, use a suffix
-    if dest.exists() and dest.stat().st_size > 50:
-        dest = BRIEFINGS / f"{today}-claude.md"
-
-    shutil.copy2(DRAFT, dest)
-    DRAFT.unlink()
-    print(f"[auto_archive_briefs] archived → briefings/{dest.name}")
+    expected = DRAFT.read_bytes()
+    with publication_fence(DRAFT):
+        archive_staged_briefing(ROOT, DRAFT, expected)
+    print("[auto_archive_briefs] archived staged Claude briefing")
 
 
 if __name__ == "__main__":

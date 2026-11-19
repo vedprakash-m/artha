@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -42,6 +43,22 @@ def _bounded_integer(value: object, name: str, minimum: int = 1) -> int:
 def _identifier(value: str, name: str) -> str:
     if not isinstance(value, str) or not value.strip() or len(value) > 512:
         raise ValueError(f'{name} must be nonempty text of at most 512 characters')
+    return value
+
+
+def _month_utc(value: object) -> str:
+    if not isinstance(value, str) or not value.strip() or len(value) > 512:
+        raise ValueError('month must be nonempty text of at most 512 characters')
+    if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', value):
+        raise ValueError('month must be a valid UTC month in YYYY-MM form')
+    if int(value[:4]) == 0:
+        raise ValueError('month must be a valid UTC month in YYYY-MM form')
+    return value
+
+
+def _accounting_integer(value: object, name: str) -> int:
+    if type(value) is not int or not 0 <= value <= 2**63 - 1:
+        raise ResourceLimit(f'corrupt resource accounting: {name} is invalid')
     return value
 
 
@@ -132,6 +149,15 @@ class SpendRecord:
     tokens: int
     keys: frozenset[str]
 
+    def __post_init__(self) -> None:
+        _bounded_integer(self.serial, 'serial', 0)
+        _month_utc(self.month)
+        _bounded_integer(self.requests, 'requests', 0)
+        _bounded_integer(self.tokens, 'tokens', 0)
+        if (not isinstance(self.keys, frozenset) or len(self.keys) > 1_000_000
+                or any(not isinstance(key, str) or not key or len(key) > 512 for key in self.keys)):
+            raise ValueError('spend seal keys must be bounded strings')
+
 
 def _merge(existing: SpendRecord | None, record: SpendRecord) -> SpendRecord | None:
     """The record to store, or None when the stored one already covers it. Spend only grows."""
@@ -197,8 +223,7 @@ class FileSpendSeal:
             record = SpendRecord(_bounded_integer(data['serial'], 'serial', 0), str(data['month']),
                                  _bounded_integer(data['requests'], 'requests', 0),
                                  _bounded_integer(data['tokens'], 'tokens', 0), frozenset(keys))
-            if len(record.month) != 7:
-                raise ValueError
+            _month_utc(record.month)
             return record
         except (ValueError, KeyError, TypeError) as exc:
             raise SpendSealError('spend seal is malformed') from exc
@@ -274,6 +299,24 @@ class AdmissionStore:
 
     @staticmethod
     def _totals(db: sqlite3.Connection, month: str) -> MonthUsage:
+        _month_utc(month)
+        corrupt = db.execute(
+            "SELECT 1 FROM resource_admissions WHERE typeof(prompt_bytes)!='integer' "
+            "OR prompt_bytes<0 OR prompt_bytes>2147483647 OR typeof(estimated_tokens)!='integer' "
+            "OR estimated_tokens<0 OR estimated_tokens>2147483647 OR typeof(month_utc)!='text' "
+            "OR length(month_utc)!=7 OR month_utc NOT GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' "
+            "UNION ALL SELECT 1 FROM resource_usage WHERE typeof(input_tokens)!='integer' "
+            "OR input_tokens<0 OR input_tokens>2147483647 OR typeof(output_tokens)!='integer' "
+            "OR output_tokens<0 OR output_tokens>2147483647 "
+            "OR NOT EXISTS(SELECT 1 FROM resource_admissions a WHERE a.catchup_id=resource_usage.catchup_id "
+            "AND a.request_key=resource_usage.request_key) "
+            "UNION ALL SELECT 1 FROM resource_uncertain_spend WHERE typeof(requests)!='integer' "
+            "OR requests<0 OR typeof(tokens)!='integer' OR tokens<0 OR typeof(month_utc)!='text' "
+            "OR length(month_utc)!=7 "
+            "UNION ALL SELECT 1 FROM resource_state WHERE typeof(serial)!='integer' OR serial<0 "
+            "OR singleton!=1 LIMIT 1").fetchone()
+        if corrupt is not None:
+            raise ResourceLimit('corrupt resource accounting: stored counts or token amounts are invalid')
         admitted = db.execute(
             'SELECT count(*),count(u.catchup_id),'
             'coalesce(sum(CASE WHEN u.catchup_id IS NULL THEN a.estimated_tokens ELSE 0 END),0),'
@@ -283,12 +326,20 @@ class AdmissionStore:
             (month,)).fetchone()
         lost = db.execute('SELECT coalesce(sum(requests),0),coalesce(sum(tokens),0) '
                           'FROM resource_uncertain_spend WHERE month_utc=?', (month,)).fetchone()
-        return MonthUsage(month, admitted[0] + lost[0], admitted[1], admitted[0] - admitted[1] + lost[0],
-                          admitted[3], admitted[2], lost[0], lost[1])
+        values = tuple(_accounting_integer(value, name) for value, name in zip(
+            (*admitted, *lost), ('admissions', 'reported requests', 'estimated tokens', 'actual tokens',
+                                 'uncertain requests', 'uncertain tokens'), strict=True))
+        if values[1] > values[0]:
+            raise ResourceLimit('corrupt resource accounting: reported requests exceed admissions')
+        requests = values[0] + values[4]
+        if requests > 2**63 - 1:
+            raise ResourceLimit('corrupt resource accounting: request total is out of bounds')
+        return MonthUsage(month, requests, values[1], values[0] - values[1] + values[4],
+                          values[3], values[2], values[4], values[5])
 
     def month_usage(self, month: str) -> MonthUsage:
         """Counted usage for a UTC month (YYYY-MM). Unreported requests are unknown, counted at their estimate."""
-        _identifier(month, 'month')
+        _month_utc(month)
         self.ledger._require_unlocked()
         self._reconcile_restore(_stamp(datetime.now(UTC)))
         return self._totals(self.ledger.conn, month)
@@ -343,6 +394,7 @@ class AdmissionStore:
         stamp = _stamp(now)
         if zero_reason is not None:
             source = f'{source} (zero tokens: {_identifier(zero_reason, "zero_reason")})'
+            _identifier(source, 'source')
         self._reconcile_restore(stamp)
         with self.ledger.transaction() as db:
             self._claim(db)
@@ -351,10 +403,10 @@ class AdmissionStore:
                                    (catchup_id, request_key)).fetchone()
             if admission is None:
                 raise ValueError('usage requires an exact admission')
-            prior = db.execute('SELECT input_tokens,output_tokens FROM resource_usage '
+            prior = db.execute('SELECT input_tokens,output_tokens,source FROM resource_usage '
                                'WHERE catchup_id=? AND request_key=?', (catchup_id, request_key)).fetchone()
             if prior is not None:
-                if tuple(prior) != (input_tokens, output_tokens):
+                if tuple(prior) != (input_tokens, output_tokens, source):
                     raise ValueError('a different usage receipt already exists for this request')
             else:
                 if input_tokens + output_tokens == 0 and zero_reason is None:

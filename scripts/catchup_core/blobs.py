@@ -103,6 +103,17 @@ class EncryptedBlobStore:
             raise BlobMissing(ref) from exc
         return self._cipher.decrypt(data, aad=ref.encode()).decode("utf-8")
 
+    def get_bounded(self, ref: str, maximum_bytes: int = 1_000_000) -> str:
+        if type(maximum_bytes) is not int or maximum_bytes <= 0:
+            raise ValueError("maximum_bytes must be a positive integer")
+        path = self._path(ref)
+        try:
+            if path.stat().st_size > maximum_bytes:
+                raise ValueError("evidence ciphertext exceeds the excerpt limit")
+        except FileNotFoundError as exc:
+            raise BlobMissing(ref) from exc
+        return self.get(ref)
+
     def delete(self, ref: str) -> None:
         self._path(ref).unlink(missing_ok=True)
 

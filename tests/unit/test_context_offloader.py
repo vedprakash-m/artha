@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
+
 
 # conftest adds scripts/ to sys.path
 from context_offloader import (
@@ -32,7 +34,9 @@ from context_offloader import (
     EvictionTier,
     _ARTIFACT_TIERS,
     _TIER_THRESHOLDS,
+    _bounded_text,
 )
+from lib.context_budget import chars_for_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +84,12 @@ class TestEstimateTokens:
         text = "ñ" * 100
         import pytest as _pt
         assert _estimate_tokens(text) == _pt.approx(100 / 3.5, abs=1.0)
+
+    def test_returns_integer_budget_estimate(self):
+        assert isinstance(_estimate_tokens("a" * 400), int)
+
+    def test_zero_budget_returns_empty_bounded_text(self):
+        assert _bounded_text("content", 0) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +269,18 @@ class TestSummaryCardSize:
         assert card_tokens <= _MAX_CARD_TOKENS, (
             f"Card is {card_tokens} tokens — must be ≤ {_MAX_CARD_TOKENS}"
         )
+
+    def test_oversized_stats_cannot_overflow_card_budget(self, tmp_path):
+        card = offload_artifact(
+            name="huge_stats",
+            data={"content": "a" * 10_000},
+            summary_fn=lambda _data: "stats " * 10_000,
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert len(card) <= chars_for_tokens(_MAX_CARD_TOKENS)
+        assert card.startswith("📦 OFFLOADED: huge_stats")
 
 
 # ---------------------------------------------------------------------------
@@ -540,3 +562,195 @@ class TestUnknownArtifactDefaultsTier:
 class TestCheckpointInOffloadedFiles:
     def test_checkpoint_file_in_manifest(self):
         assert ".checkpoint.json" in OFFLOADED_FILES
+
+
+class TestSafeOffloadPlacement:
+    @pytest.mark.parametrize(
+        "name",
+        ["../escape", "nested/path", r"nested\path", ".", "..", ""],
+    )
+    def test_artifact_name_must_be_a_safe_stem(self, tmp_path, name):
+        with pytest.raises(ValueError, match="artifact name"):
+            offload_artifact(
+                name=name,
+                data={"content": "x" * 100},
+                summary_fn=lambda _data: "stats",
+                threshold_tokens=1,
+                artha_dir=tmp_path,
+            )
+
+        assert list(tmp_path.rglob("*")) == []
+
+    def test_default_placement_uses_machine_local_directory(
+        self, tmp_path, monkeypatch,
+    ):
+        machine_local = tmp_path / "owner-local"
+        monkeypatch.setattr("lib.local_paths.local_dir", lambda: machine_local)
+        monkeypatch.setattr("catchup_core.session_lock.default_installation_dir", lambda: machine_local)
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="private_artifact",
+                data={"content": "x" * 10_000},
+                summary_fn=lambda _data: "stats",
+                threshold_tokens=1,
+            )
+
+        output = machine_local / "context-offload" / "private_artifact.json"
+        assert output.exists()
+        assert str(output) in result
+        assert not (tmp_path / "private_artifact.json").exists()
+
+    def test_conflicting_existing_artifact_is_held_without_overwrite(self, tmp_path):
+        output = tmp_path / "tmp" / "private_artifact.json"
+        output.parent.mkdir()
+        output.write_text("existing", encoding="utf-8")
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            result = offload_artifact(
+                name="private_artifact",
+                data={"content": "replacement"},
+                summary_fn=lambda _data: "stats",
+                threshold_tokens=1,
+                artha_dir=tmp_path,
+            )
+
+        assert "OFFLOAD HELD: private_artifact" in result
+        assert output.read_text(encoding="utf-8") == "existing"
+
+    def test_failed_publication_returns_bounded_hold(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("context_offloader.os.replace", lambda *_args: (_ for _ in ()).throw(OSError("disk full")))
+
+        result = offload_artifact(
+            name="held_artifact",
+            data={"content": "x" * 10_000},
+            summary_fn=lambda _data: "stats",
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert "OFFLOAD HELD: held_artifact" in result
+        assert _estimate_tokens(result) <= _MAX_CARD_TOKENS
+        assert not (tmp_path / "tmp" / "held_artifact.json").exists()
+        assert not list((tmp_path / "tmp").glob(".*held_artifact*.tmp"))
+
+    @pytest.mark.parametrize(
+        ("argument", "value"),
+        [
+            ("threshold_tokens", -1),
+            ("threshold_tokens", True),
+            ("preview_lines", -1),
+            ("preview_lines", True),
+        ],
+    )
+    def test_invalid_budgets_are_rejected(self, tmp_path, argument, value):
+        kwargs = {
+            "name": "invalid_budget",
+            "data": {"content": "x"},
+            "summary_fn": lambda _data: "stats",
+            "artha_dir": tmp_path,
+            argument: value,
+        }
+
+        with pytest.raises(ValueError, match="must be a nonnegative integer"):
+            offload_artifact(**kwargs)
+
+    def test_readback_mismatch_removes_uncertain_publication(
+        self, tmp_path, monkeypatch,
+    ):
+        real_replace = __import__("os").replace
+
+        def replace_and_corrupt(source, destination):
+            real_replace(source, destination)
+            destination.write_text("corrupt", encoding="utf-8")
+
+        monkeypatch.setattr("context_offloader.os.replace", replace_and_corrupt)
+        result = offload_artifact(
+            name="readback_artifact",
+            data={"content": "x" * 10_000},
+            summary_fn=lambda _data: "stats",
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert "OFFLOAD HELD: readback_artifact" in result
+        assert not (tmp_path / "tmp" / "readback_artifact.json").exists()
+
+    def test_identical_existing_artifact_is_reused(self, tmp_path):
+        data = {"content": "x" * 10_000}
+        kwargs = {
+            "name": "same_artifact",
+            "data": data,
+            "summary_fn": lambda _data: "stats",
+            "threshold_tokens": 1,
+            "artha_dir": tmp_path,
+        }
+
+        with patch("context_offloader.load_harness_flag", return_value=True):
+            first = offload_artifact(**kwargs)
+            second = offload_artifact(**kwargs)
+
+        assert "OFFLOADED: same_artifact" in first
+        assert second == first
+
+    def test_non_file_output_target_is_held(self, tmp_path):
+        output = tmp_path / "tmp" / "directory_target.json"
+        output.mkdir(parents=True)
+
+        result = offload_artifact(
+            name="directory_target",
+            data={"content": "x" * 10_000},
+            summary_fn=lambda _data: "stats",
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert "OFFLOAD HELD: directory_target" in result
+        assert output.is_dir()
+
+    def test_unsafe_output_directory_is_held(self, tmp_path, monkeypatch):
+        import stat
+        from types import SimpleNamespace
+
+        tmp_dir = tmp_path / "tmp"
+        original = type(tmp_dir).lstat
+
+        def lstat(path):
+            if path == tmp_dir:
+                return SimpleNamespace(
+                    st_mode=stat.S_IFREG,
+                    st_nlink=1,
+                    st_file_attributes=0,
+                )
+            return original(path)
+
+        monkeypatch.setattr(type(tmp_dir), "lstat", lstat)
+
+        result = offload_artifact(
+            name="unsafe_directory",
+            data={"content": "x" * 10_000},
+            summary_fn=lambda _data: "stats",
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert "OFFLOAD HELD: unsafe_directory" in result
+
+    def test_permission_mode_failure_does_not_create_partial_publish(
+        self, tmp_path, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            "context_offloader.os.chmod",
+            lambda *_args: (_ for _ in ()).throw(OSError("unsupported")),
+        )
+
+        result = offload_artifact(
+            name="chmod_artifact",
+            data={"content": "x" * 10_000},
+            summary_fn=lambda _data: "stats",
+            threshold_tokens=1,
+            artha_dir=tmp_path,
+        )
+
+        assert "OFFLOADED: chmod_artifact" in result
+        assert (tmp_path / "tmp" / "chmod_artifact.json").exists()

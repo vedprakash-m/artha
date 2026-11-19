@@ -1513,6 +1513,53 @@ class ActionQueue:
                     self._conn.execute("UPDATE effect_operations SET status=?,receipt=? WHERE action_id=?",
                                        (new_status, result_data_json, action_id))
 
+    def recover_dispatch_unknown(
+        self,
+        action_id: str,
+        executed_at: str,
+        *,
+        require_consumed_dispatch: bool,
+    ) -> bool:
+        """Durably fence an attempted dispatch whose provider result was not persisted."""
+        with self._mutation_fence():
+            row = self._conn.execute(
+                "SELECT status FROM actions WHERE id=?", (action_id,)
+            ).fetchone()
+            if not row:
+                return False
+            current = row["status"]
+            if current == "unknown":
+                return True
+            if current != "executing":
+                return False
+            if require_consumed_dispatch and not self._conn.execute(
+                "SELECT 1 FROM action_dispatch_receipts WHERE action_id=?", (action_id,)
+            ).fetchone():
+                return False
+            message = "The provider result could not be committed; reconcile before retrying."
+            with self._conn:
+                changed = self._conn.execute(
+                    """UPDATE actions SET status='unknown', result_status='unknown',
+                       result_message=?, result_data=NULL, executed_at=?, updated_at=?
+                       WHERE id=? AND status='executing'""",
+                    (message, executed_at, self._now_utc(), action_id),
+                )
+                if changed.rowcount != 1:
+                    return False
+                self._audit(
+                    self._conn,
+                    action_id,
+                    "executing",
+                    "unknown",
+                    "system:executor",
+                    {"recovery": "result_persistence_failed"},
+                )
+                self._conn.execute(
+                    "UPDATE effect_operations SET status='unknown' WHERE action_id=?",
+                    (action_id,),
+                )
+            return True
+
     def get(
         self, action_id: str, privkey: str | None = None
     ) -> ActionProposal | None:

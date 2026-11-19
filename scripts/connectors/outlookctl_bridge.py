@@ -45,21 +45,24 @@ def _run_outlookctl(*args: str) -> dict | list:
     if not cmd:
         raise RuntimeError("[outlookctl_bridge] outlookctl not found on PATH")
     try:
-        result = subprocess.run(
+        from lib.bounded_process import run_bounded
+        result = run_bounded(
             [cmd, *args, "--output", "json"],
-            capture_output=True, text=True, timeout=OUTLOOK_TIMEOUT,
+            timeout=OUTLOOK_TIMEOUT,
         )
+        if result.stdout_truncated or result.stderr_truncated:
+            raise RuntimeError("[outlookctl_bridge] outlookctl output exceeded its bound")
         if result.returncode != 0:
             raise RuntimeError(
                 f"[outlookctl_bridge] outlookctl returned {result.returncode}"
             )
-        payload = json.loads(result.stdout)
+        payload = json.loads(result.stdout.decode("utf-8", errors="replace"))
     except FileNotFoundError as exc:
-        raise RuntimeError("[outlookctl_bridge] outlookctl executable disappeared") from exc
+        raise
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("[outlookctl_bridge] outlookctl timed out") from exc
+        raise
     except json.JSONDecodeError as exc:
-        raise RuntimeError("[outlookctl_bridge] outlookctl returned invalid JSON") from exc
+        raise
     if not isinstance(payload, (dict, list)):
         raise RuntimeError("[outlookctl_bridge] expected a JSON object or array")
     return payload
@@ -70,9 +73,11 @@ def _parse_event(raw: dict) -> dict:
     location = str(raw.get("location") or "")
     is_teams = bool(raw.get("is_teams")) or bool(TEAMS_LOCATION_PATTERN.search(location))
     return {
+        "id": str(raw.get("id") or raw.get("uid") or ""),
         "date": str(raw.get("start", ""))[:10],
         "start": str(raw.get("start", "")),
         "end": str(raw.get("end", "")),
+        "summary": str(raw.get("subject") or raw.get("title") or ""),
         "title": str(raw.get("subject") or raw.get("title") or ""),
         "organizer": str(raw.get("organizer") or ""),
         "location": location,
@@ -137,17 +142,18 @@ def health_check(auth_context: dict) -> bool:
         return False
 
     try:
-        result = subprocess.run(
+        from lib.bounded_process import run_bounded
+        result = run_bounded(
             [cmd, "--version"],
-            capture_output=True, text=True, timeout=5,
+            timeout=5,
         )
-        available = result.returncode == 0
+        available = result.returncode == 0 and not result.stdout_truncated and not result.stderr_truncated
         if not available:
             print(
                 f"[outlookctl_bridge] outlookctl --version returned {result.returncode}",
                 file=sys.stderr,
             )
         return available
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except Exception as exc:
         print(f"[outlookctl_bridge] health_check error: {exc}", file=sys.stderr)
         return False

@@ -15,6 +15,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
+import yaml
+
 from catchup_core.quarantine_fs_windows import WindowsQuarantineDirectory
 from catchup_core.renewal_inputs import SourceFile, SourceManifest
 from catchup_core.renewal_store import RenewalError, digest
@@ -23,7 +25,9 @@ _MAX_FILE = 16 * 1024 * 1024
 _SELECTION = ('scripts', 'tools', 'tests', '.github/workflows', 'pyproject.toml', 'artha.py', 'Makefile', '.githooks',
               '.github/copilot-instructions.md', 'config/workflow/development.md', '.gitattributes', '.gitignore',
               '.gitleaks.toml')
-_LOCAL_INPUTS = ('config/actions.yaml', 'config/user_profile.yaml', 'config/connectors.yaml')
+_LOCAL_INPUTS = (
+    'config/actions.yaml', 'config/user_profile.yaml', 'config/connectors.yaml',
+    'config/catchup_core.yaml')
 _MAX_SOURCE = 64 * 1024 * 1024
 
 
@@ -66,8 +70,9 @@ def context(root: Path | None = None) -> str:
                                    or key in ('PATH', 'LANG', 'LC_ALL', 'TZ', 'DEVELOPER_DIR', 'SDKROOT')}})
 
 
-def source_file(path: Path, relative: str, index_mode: str | None = None, *,
-                verify_mode: bool = True) -> SourceFile:
+def source_file(  # noqa: PLR0912
+        path: Path, relative: str, index_mode: str | None = None, *,
+        verify_mode: bool = True) -> SourceFile:
     for parent in (path, *path.parents):
         info = parent.lstat()
         if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
@@ -96,7 +101,21 @@ def source_file(path: Path, relative: str, index_mode: str | None = None, *,
     mode = '100755' if before.st_mode & stat.S_IXUSR else '100644'
     if index_mode is not None and verify_mode and mode != index_mode:
         raise RenewalError('source executable mode differs from the Git index')
-    return SourceFile(relative, hashlib.sha256(raw).hexdigest(), index_mode or mode)
+    digest_bytes = raw
+    if relative == 'config/catchup_core.yaml':
+        try:
+            data = yaml.safe_load(raw) or {}
+            if not isinstance(data, dict):
+                raise ValueError
+            release = data.get('release')
+            if isinstance(release, dict):
+                release = dict(release)
+                release.pop('renewal', None)
+                data = {**data, 'release': release}
+            digest_bytes = json.dumps(data, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        except (UnicodeError, ValueError, yaml.YAMLError):
+            raise RenewalError('release source configuration is invalid') from None
+    return SourceFile(relative, hashlib.sha256(digest_bytes).hexdigest(), index_mode or mode)
 
 
 class Workspace:

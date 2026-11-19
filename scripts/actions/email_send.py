@@ -10,7 +10,7 @@ SAFETY:
     before it is sent. The draft is visible in Gmail Drafts.
   - draft_first=false: direct send (only for pre-approved templates at Trust Level 2).
   - autonomy_floor: true in actions.yaml — ALWAYS requires human approval.
-  - Undo: Gmail messages.trash() within undo_window_sec (default 30s).
+  - No registered undo path: action results and policy are non-reversible.
 
 API: Gmail API messages.send / drafts.create / drafts.send
 Scope: gmail.send + gmail.readonly (already authorized in google_auth.py GMAIL_SCOPES)
@@ -31,7 +31,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from actions.base import ActionProposal, ActionResult
+from actions.base import ActionProposal, ActionResult, is_definite_provider_refusal
 
 # Module-level import so tests can patch actions.email_send.build_service
 try:
@@ -84,67 +84,18 @@ def validate(proposal: ActionProposal) -> tuple[bool, str]:
 
 
 def dry_run(proposal: ActionProposal) -> ActionResult:
-    """Create a Gmail draft (visible in Drafts folder) and return the draft URL.
-
-    Creates an ACTUAL draft via Gmail API so the user can preview the exact
-    email that will be sent. The draft must be manually deleted if not approved.
-    """
+    """Return a local preview without authenticating or mutating Gmail."""
     params = proposal.parameters
     to = params.get("to", "")
     subject = params.get("subject", "")
     body = params.get("body", "")
-    draft_first = params.get("draft_first", True)
-
-    if not draft_first:
-        # Direct-send mode: return preview without API call
-        return ActionResult(
-            status="success",
-            message=f"Preview: email to {to} | Subject: {subject!r} | Body: {len(body)} chars",
-            data={"preview_mode": True, "to": to, "subject": subject, "body_length": len(body)},
-            reversible=False,
-            reverse_action=None,
-        )
-
-    try:
-        service = build_service("gmail", "v1")
-
-        # Build the MIME message
-        mime_msg = _build_mime(to, subject, body, params)
-        raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
-
-        # Create draft
-        draft_body: dict[str, Any] = {"message": {"raw": raw}}
-        if params.get("thread_id"):
-            draft_body["message"]["threadId"] = params["thread_id"]
-
-        draft = service.users().drafts().create(userId="me", body=draft_body).execute()
-        draft_id = draft.get("id", "")
-
-        # Note: Gmail web URL for drafts
-        draft_url = f"https://mail.google.com/mail/u/0/#drafts/{draft_id}"
-
-        return ActionResult(
-            status="success",
-            message=f"Draft created: {draft_url}",
-            data={
-                "draft_id": draft_id,
-                "draft_url": draft_url,
-                "to": to,
-                "subject": subject,
-                "body_length": len(body),
-            },
-            reversible=False,
-            reverse_action=None,
-        )
-
-    except Exception as e:
-        return ActionResult(
-            status="failure",
-            message=f"Failed to create draft: {e}",
-            data={"error": str(e)},
-            reversible=False,
-            reverse_action=None,
-        )
+    return ActionResult(
+        status="success",
+        message=f"Preview: email to {to} | Subject: {subject!r} | Body: {len(body)} chars",
+        data={"preview_mode": True, "to": to, "subject": subject, "body_length": len(body)},
+        reversible=False,
+        reverse_action=None,
+    )
 
 
 def execute(proposal: ActionProposal) -> ActionResult:
@@ -163,26 +114,37 @@ def execute(proposal: ActionProposal) -> ActionResult:
     subject = params.get("subject", "")
     body = params.get("body", "")
     draft_id = params.get("draft_id")
+    dispatched = False
 
     try:
         service = build_service("gmail", "v1")
 
         if draft_id:
             # Send existing draft
-            result = service.users().drafts().send(
+            request = service.users().drafts().send(
                 userId="me",
                 body={"id": draft_id},
-            ).execute()
+            )
         else:
             # Direct send
             mime_msg = _build_mime(to, subject, body, params)
             raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
-            result = service.users().messages().send(
+            request = service.users().messages().send(
                 userId="me",
                 body={"raw": raw},
-            ).execute()
+            )
 
-        message_id = result.get("id", "")
+        dispatched = True
+        result = request.execute()
+        message_id = result.get("id") if isinstance(result, dict) else None
+        if not isinstance(message_id, str) or not message_id:
+            return ActionResult(
+                status="unknown",
+                message="Gmail returned no verified send receipt; reconcile before retrying.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
 
         # The undo_deadline is computed by ActionExecutor and injected into result.data
         return ActionResult(
@@ -196,15 +158,20 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 "draft_id": draft_id,
                 # undo_deadline is added by ActionExecutor after execute() returns
             },
-            reversible=True,
+            reversible=False,
             reverse_action=None,  # built by build_reverse_proposal()
         )
 
-    except Exception as e:
+    except Exception as error:
+        uncertain = dispatched and not is_definite_provider_refusal(error)
         return ActionResult(
-            status="failure",
-            message=f"Failed to send email: {e}",
-            data={"error": str(e), "to": to},
+            status="unknown" if uncertain else "failure",
+            message=(
+                "Gmail did not return a verified send receipt; reconcile before retrying."
+                if uncertain else
+                "Gmail refused or could not start the send; no provider effect was verified."
+            ),
+            data={"exception": type(error).__name__} if uncertain else None,
             reversible=False,
             reverse_action=None,
         )

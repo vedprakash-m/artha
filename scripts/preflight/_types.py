@@ -44,6 +44,10 @@ class CheckResult:
     fix_hint: str = ""
     auto_fixed: bool = False
 
+    @property
+    def ok(self) -> bool:
+        return self.passed
+
 
 _REQUIRED_DEPS: dict[str, str] = {
     "yaml":       "pyyaml",

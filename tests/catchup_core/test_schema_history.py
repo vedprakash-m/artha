@@ -58,6 +58,18 @@ def test_fresh_migrations_record_exact_files_and_are_idempotent(tmp_path, script
         assert [dict(row) for row in led.conn.execute('SELECT * FROM schema_history ORDER BY number')] == rows
 
 
+def test_0021_removes_duplicate_scope_bindings_and_freezes_new_e0_tables(tmp_path, scripts):
+    with lg.Ledger(tmp_path / 'scope-0021.db', id_key=KEY) as led:
+        led.migrate()
+    with closing(sqlite3.connect(tmp_path / 'scope-0021.db')) as db:
+        assert db.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' "
+            "AND name IN ('source_enrollments','coverage_holds')").fetchone()[0] == 2
+        index = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='scope_bindings_unique'").fetchone()
+        assert index is not None
+
+
 def test_legacy_adoption_verifies_shape_without_claiming_historical_execution(tmp_path, scripts):
     path = tmp_path / 'legacy.db'
     legacy(path)

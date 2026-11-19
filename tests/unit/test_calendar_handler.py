@@ -141,13 +141,33 @@ class TestCalendarCreateExecute:
 
         assert result.status == "success"
         assert result.data.get("event_id") == "event123"
-        assert result.reversible is True
+        assert result.reversible is False
 
     def test_execute_api_error_returns_failure(self):
         p = _make_create_proposal()
         with patch("actions.calendar_create.build_service", side_effect=Exception("auth")):
             result = calendar_create_handler.execute(p)
         assert result.status == "failure"
+
+    def test_execute_timeout_after_dispatch_returns_unknown(self):
+        p = _make_create_proposal()
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.side_effect = TimeoutError(
+            "synthetic timeout"
+        )
+        with patch("actions.calendar_create.build_service", return_value=mock_service):
+            result = calendar_create_handler.execute(p)
+        assert result.status == "unknown"
+        assert "reconcile" in result.message.lower()
+        assert "synthetic timeout" not in result.message
+
+    def test_execute_missing_provider_receipt_returns_unknown(self):
+        p = _make_create_proposal()
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.return_value = {}
+        with patch("actions.calendar_create.build_service", return_value=mock_service):
+            result = calendar_create_handler.execute(p)
+        assert result.status == "unknown"
 
 
 class TestCalendarCreateReverse:

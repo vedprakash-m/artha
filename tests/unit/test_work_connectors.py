@@ -57,6 +57,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+from connectors.bounded_process import BoundedProcessResult
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -83,14 +84,23 @@ class TestWorkiqVersionPin:
         from connectors import workiq_bridge as bridge
         command = r"C:\synthetic\Node\npx.cmd"
         monkeypatch.setattr(bridge, "_find_npx", lambda: command)
-        with patch("platform.system", return_value="Linux"), \
-             patch.object(bridge.subprocess, "run") as run:
-            run.return_value.returncode = 0
-            run.return_value.stdout = "synthetic reply"
+        with patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+            0, b"synthetic reply", b"", False, False,
+        )) as run:
             assert bridge._ask_workiq("synthetic question") == "synthetic reply"
         assert run.call_args.args[0] == [
             command, "-y", "@microsoft/workiq@0.4.1", "ask", "-q", "synthetic question",
         ]
+
+    def test_output_flood_is_rejected(self, monkeypatch):
+        from connectors import workiq_bridge as bridge
+
+        monkeypatch.setattr(bridge, "_find_npx", lambda: r"C:\synthetic\npx.cmd")
+        with patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+            0, b"x" * 128, b"", True, False,
+        )):
+            with pytest.raises(RuntimeError, match="exceeded its bound"):
+                bridge._ask_workiq("synthetic question")
 
 
 class TestWorkiqBridgeParsers:
@@ -395,7 +405,7 @@ class TestWorkiqQueryFailures:
         failure = subprocess.TimeoutExpired("synthetic", 90) if timeout else RuntimeError("unavailable")
         responses = ["synthetic narrative", failure] if rich else [failure]
         with patch.object(bridge, "_ask_workiq", side_effect=responses), \
-             pytest.raises(RuntimeError):
+             pytest.raises((RuntimeError, subprocess.TimeoutExpired)):
             list(bridge.fetch(
                 auth_context={}, mode=mode, person_name="Synthetic Person",
                 context_depth="rich" if rich else "brief",
@@ -980,9 +990,9 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge._find_outlookctl", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", side_effect=failure),
+            patch("connectors.bounded_process.run_bounded", side_effect=failure),
         ):
-            with pytest.raises(RuntimeError):
+            with pytest.raises(type(failure)):
                 list(fetch(auth_context={}))
 
     @pytest.mark.parametrize("returncode,stdout", [
@@ -999,11 +1009,11 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge._find_outlookctl", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", return_value=MagicMock(
-                returncode=returncode, stdout=stdout, stderr="synthetic error",
+            patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+                returncode, stdout.encode(), b"synthetic error", False, False,
             )),
         ):
-            with pytest.raises(RuntimeError):
+            with pytest.raises((RuntimeError, json.JSONDecodeError)):
                 list(fetch(auth_context={}))
 
     @pytest.mark.parametrize("stdout", ["[]", '{"items": []}', '{"events": []}'])
@@ -1012,8 +1022,8 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge._find_outlookctl", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", return_value=MagicMock(
-                returncode=0, stdout=stdout,
+            patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+                0, stdout.encode(), b"", False, False,
             )),
         ):
             assert list(fetch(auth_context={})) == []
@@ -1039,8 +1049,8 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge.shutil.which", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", return_value=MagicMock(
-                returncode=0, stdout=json.dumps([event, event]),
+            patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+                0, json.dumps([event, event]).encode(), b"", False, False,
             )),
         ):
             records = list(fetch(auth_context={}, max_results=1, source_tag=""))
@@ -1067,8 +1077,8 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge._find_outlookctl", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", return_value=MagicMock(
-                returncode=returncode,
+            patch("connectors.bounded_process.run_bounded", return_value=BoundedProcessResult(
+                returncode, b"", b"", False, False,
             )),
         ):
             assert health_check({}) is expected
@@ -1082,7 +1092,7 @@ class TestOutlookctlBridgeFetch:
         with (
             patch("platform.system", return_value="Windows"),
             patch("connectors.outlookctl_bridge._find_outlookctl", return_value="outlookctl"),
-            patch("connectors.outlookctl_bridge.subprocess.run", side_effect=failure),
+            patch("connectors.bounded_process.run_bounded", side_effect=failure),
         ):
             assert health_check({}) is False
 

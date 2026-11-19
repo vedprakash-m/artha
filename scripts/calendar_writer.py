@@ -54,7 +54,12 @@ CALENDAR_FILE = STATE_DIR / "calendar.md"
 _lib_dir = str(_SCRIPTS_DIR / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
-from state_writer import write as _state_write  # noqa: PLC0415
+from state_writer import (  # noqa: PLC0415
+    StateWriteConflict,
+    create_if_absent_token,
+    read_versioned,
+    write as _state_write,
+)
 
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
@@ -138,6 +143,16 @@ def _read_or_init_calendar() -> str:
     return _fresh_skeleton()
 
 
+def _read_calendar_versioned() -> tuple[str, object]:
+    """Read calendar with the exact token required for its eventual write."""
+    if CALENDAR_FILE.exists():
+        content, token = read_versioned(CALENDAR_FILE)
+        if _BOOTSTRAP_STUB_RE.search(content):
+            content = _fresh_skeleton()
+        return content, token
+    return _read_or_init_calendar(), create_if_absent_token(CALENDAR_FILE)
+
+
 def _fresh_skeleton() -> str:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return (
@@ -212,7 +227,11 @@ def run(
         print("[calendar_writer] No calendar events in pipeline output.", file=sys.stderr)
         return 0
 
-    content = _read_or_init_calendar()
+    try:
+        content, expected_token = _read_calendar_versioned()
+    except (OSError, StateWriteConflict) as exc:
+        print(f"[calendar_writer] ERROR reading {CALENDAR_FILE}: {exc}", file=sys.stderr)
+        return 1
     existing_keys = _existing_dedup_keys(content)
 
     new_entries: list[str] = []
@@ -271,6 +290,7 @@ def run(
             content,
             domain="calendar",
             source="calendar_writer",
+            expected_token=expected_token,
         )
         if not result.success:
             print(

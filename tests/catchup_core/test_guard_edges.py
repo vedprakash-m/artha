@@ -219,3 +219,43 @@ def test_everything_flag_means_the_deep_format_and_wins_over_an_explicit_format(
     cli.main(["catchup", "--shadow", "--everything", "--format", "flash"], deps_factory=factory,
              out=io.StringIO(), err=io.StringIO())
     assert seen == ["deep"]
+
+
+@pytest.mark.parametrize("entry", [["show", "everything"], ["show everything"]])
+def test_show_everything_is_a_real_deep_catchup_entry_point(entry):
+    seen = []
+
+    def factory(request):
+        seen.append(request.briefing_format.value)
+        raise cli.NotConfigured("stop here")
+
+    assert cli.main([*entry, "--shadow"], deps_factory=factory,
+                    out=io.StringIO(), err=io.StringIO()) == int(cli.ExitCode.USAGE_ERROR)
+    assert seen == ["deep"]
+
+
+def test_capture_argument_round_trips_quoted_unicode_text():
+    text = 'Call "Zoë — 東京" and say “ready”'
+    args = cli.parse_args(["capture", text])
+    assert args.text == text
+
+
+def test_catchup_json_preserves_structured_four_state_coverage(monkeypatch):
+    from catchup_core.contracts import (
+        CatchupResult, CoverageEntry, CoverageStatus, ExecutionMode, RunStatus,
+    )
+
+    coverage = CoverageEntry(
+        "calendar", "personal", CoverageStatus.COMPLETE, result_state="stale", record_count=0)
+    result = CatchupResult(
+        "cu_state", ExecutionMode.SHADOW, RunStatus.COMPLETE, coverage=(coverage,), briefing_text="text")
+    monkeypatch.setattr(cli, "run_catchup", lambda *_args: result)
+    out, err = io.StringIO(), io.StringIO()
+
+    assert cli.main(
+        ["catchup", "--shadow", "--json"],
+        deps_factory=lambda _request: types.SimpleNamespace(),
+        out=out, err=err) == 0
+    rendered = json.loads(out.getvalue())["coverage"][0]
+    assert rendered["result_state"] == "stale"
+    assert rendered["record_count"] == 0

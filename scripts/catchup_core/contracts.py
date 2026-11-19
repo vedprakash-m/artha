@@ -253,10 +253,19 @@ class CoverageEntry:
     last_verified: str | None = None
     blind_spots: tuple[str, ...] = ()
     detail: str = ""
+    result_state: str | None = None
+    record_count: int | None = None
 
     def __post_init__(self) -> None:
         _require(bool(self.connector), "connector is required")
         _require(bool(self.account_scope), "account_scope is required")
+        _require(
+            self.result_state is None or self.result_state in {"none", "unavailable", "held", "stale"},
+            "coverage result_state is invalid")
+        _require(
+            self.record_count is None
+            or (type(self.record_count) is int and self.record_count >= 0),
+            "coverage record_count requires a nonnegative integer")
 
 
 @dataclass(frozen=True)

@@ -254,11 +254,15 @@ class TestFetch:
             "client_id": "cid", "secret": "sec",
             "access_token": "bad_tok", "environment": "sandbox",
         }
-        err_body = json.dumps({"error_code": "INVALID_ACCESS_TOKEN", "error_message": "bad token"}).encode()
-        exc = urllib.error.HTTPError(url="", code=400, msg="Bad Request", hdrs=MagicMock(), fp=MagicMock(read=lambda: err_body))
+        exc = urllib.error.HTTPError(
+            url="", code=400, msg="Bad Request", hdrs=MagicMock(),
+            fp=MagicMock(read=lambda _size=-1: b'{"error_code":"INVALID_ACCESS_TOKEN","error_message":"bad token"}'),
+        )
         with patch("urllib.request.urlopen", side_effect=exc):
-            with pytest.raises(Exception, match=r"Plaid\ API\ error\ \[INVALID_ACCESS_TOKEN\]:\ bad\ token"):
+            with pytest.raises(urllib.error.HTTPError) as caught:
                 list(fetch(auth_context=auth_ctx))
+        assert caught.value is exc
+        assert "INVALID_ACCESS_TOKEN" in "\n".join(caught.value.__notes__)
 
 
 # ---------------------------------------------------------------------------

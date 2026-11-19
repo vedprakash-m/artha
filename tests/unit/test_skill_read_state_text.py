@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import sys
 import types
 
 from skills.base_skill import read_state_text

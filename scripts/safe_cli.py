@@ -7,24 +7,24 @@ Imports pii_guard.scan() directly — no subprocess to pii_guard.
 
 Usage:
     python scripts/safe_cli.py gemini "What is the current EB-2 India priority date?"
-    python scripts/safe_cli.py copilot "Review this script for security issues"
-    python scripts/safe_cli.py <any-cli> "<query>"
+    python scripts/safe_cli.py gemini "Review this public requirement"
 
 Safety model:
     - Pipes query through pii_guard.scan() BEFORE forwarding to external CLI
     - If PII detected: blocks the call, logs to audit.md, exits 1
-    - If clean: executes the CLI call, logs query length (not content) to audit.md
+    - If clean: executes one exact, bounded typed CLI call and logs only its length
 
 Exit codes:
     0 — success (CLI call completed)
     1 — PII detected in query (blocked)
-    2 — CLI not found in PATH
+    2 — invocation or CLI is unavailable
 
 Ref: TS §8.7, §3.7.7, standardization.md §7.6.2
 """
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -45,11 +45,15 @@ from pii_guard import scan as pii_scan  # noqa: E402
 # CLI routing: cli alias → argv prefix for subprocess
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CLI_MAP: dict[str, list[str]] = {
-    "gemini": ["gemini", "-p"],     # gemini -p "<query>"
-    "copilot": ["gh", "copilot", "suggest"],  # gh copilot suggest "<query>"
-    "gh": ["gh"],                   # gh "<query>"
-}
+_CLI_MAP: dict[str, list[str]] = {"gemini": ["gemini", "-p"]}
+_TIMEOUT_SECONDS = 120
+_MAX_QUERY_CHARS = 32_000
+_MAX_OUTPUT_BYTES = 1_000_000
+_ENV_KEYS = (
+    "PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME",
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME",
+    "LANG", "LC_ALL", "NO_COLOR", "TERM",
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,9 +75,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def _die(message: str, exit_code: int = 1) -> None:
-    print(f"ERROR: {message}", file=sys.stderr)
-    sys.exit(exit_code)
+def _minimal_environment() -> dict[str, str]:
+    environment = {key: value for key in _ENV_KEYS if (value := os.environ.get(key))}
+    environment["NO_COLOR"] = "1"
+    environment.setdefault("PYTHONUTF8", "1")
+    return environment
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -81,38 +87,35 @@ def _die(message: str, exit_code: int = 1) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 3:
+    if len(argv) != 3:
         print(
-            "Usage: safe_cli.py <cli> <query> [additional_args...]\n"
+            "Usage: safe_cli.py gemini <query>\n"
             "\n"
-            "  cli    — CLI to invoke (gemini, copilot, gh, etc.)\n"
-            "  query  — The query string to send (will be PII-scanned before sending)\n"
+            "Only the registered gemini invocation is supported; extra arguments are refused.\n"
             "\n"
-            "Examples:\n"
-            '  safe_cli.py gemini "What is the current EB-2 India priority date?"\n'
-            '  safe_cli.py copilot "Review this script for security issues"',
+            'Example: safe_cli.py gemini "What is the current EB-2 India priority date?"',
             file=sys.stderr,
         )
-        return 1
+        return 2
 
     cli = argv[1]
     query = argv[2]
-    extra_args = argv[3:]
 
-    # ── 1. Verify CLI is available ────────────────────────────────────────────
-    # Use _CLI_MAP to find the actual executable name; fall back to cli itself
-    exe_prefix = _CLI_MAP.get(cli, [cli])
-    executable = exe_prefix[0]
+    exe_prefix = _CLI_MAP.get(cli)
+    if exe_prefix is None:
+        _log(f"[{_now()}] CLI_UNAVAILABLE | reason: unsupported_typed_invocation")
+        print("ERROR: The requested CLI is unavailable or unsupported. No process was started.",
+              file=sys.stderr)
+        return 2
+    if not isinstance(query, str) or not query.strip() or len(query) > _MAX_QUERY_CHARS:
+        print("ERROR: Query is empty or exceeds the configured input limit.", file=sys.stderr)
+        return 1
 
-    if shutil.which(executable) is None:
-        _log(
-            f"[{_now()}] CLI_UNAVAILABLE | cli: {cli} | "
-            f"query_length: {len(query)}"
-        )
-        _die(f"CLI '{executable}' not found in PATH. Check installation.", exit_code=2)
-
-    # ── 2. PII scan ───────────────────────────────────────────────────────────
-    pii_found, pii_types = pii_scan(query)
+    try:
+        pii_found, pii_types = pii_scan(query)
+    except Exception:
+        _log(f"[{_now()}] OUTBOUND_GUARD_FAILED | cli: {cli} | reason: pii scanner unavailable")
+        return 1
 
     if pii_found:
         type_str = ",".join(sorted(pii_types.keys())) if pii_types else "unknown"
@@ -120,25 +123,57 @@ def main(argv: list[str]) -> int:
             f"[{_now()}] OUTBOUND_PII_BLOCK | cli: {cli} | "
             f"pii_types: {type_str} | reason: PII detected in outbound query"
         )
-        print("", file=sys.stderr)
-        print("━" * 42, file=sys.stderr)
-        print("BLOCKED: PII detected in outbound query", file=sys.stderr)
-        print(f"   CLI: {cli}", file=sys.stderr)
-        print(f"   Found: {type_str}", file=sys.stderr)
-        print("   Action: Query blocked. Logged to audit.md.", file=sys.stderr)
-        print("   Fix: Reformulate query without PII.", file=sys.stderr)
-        print("━" * 42, file=sys.stderr)
+        print("BLOCKED: PII detected in outbound query.", file=sys.stderr)
         return 1
 
-    # ── 3. Log approved call (query length only — no content) ─────────────────
+    # Only resolve an executable after every content-bearing input has passed.
+    executable = exe_prefix[0]
+    resolved = shutil.which(executable)
+
+    if resolved is None:
+        _log(
+            f"[{_now()}] CLI_UNAVAILABLE | cli: {cli} | "
+            f"query_length: {len(query)}"
+        )
+        print(f"ERROR: CLI '{executable}' not found in PATH. Check installation.", file=sys.stderr)
+        return 2
+
     _log(
         f"[{_now()}] CLI_CALL | cli: {cli} | "
         f"query_length: {len(query)} | status: approved"
     )
 
-    # ── 4. Execute the CLI ────────────────────────────────────────────────────
-    cmd = exe_prefix + [query] + extra_args
-    result = subprocess.run(cmd)
+    cmd = [resolved, *exe_prefix[1:], query]
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=str(_ARTHA_DIR),
+            env=_minimal_environment(),
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        _log(f"[{_now()}] CLI_RESULT | cli: {cli} | exit_code: timeout")
+        print(f"ERROR: CLI '{cli}' exceeded {_TIMEOUT_SECONDS}s and was terminated.", file=sys.stderr)
+        return 124
+    except OSError as exc:
+        _log(f"[{_now()}] CLI_RESULT | cli: {cli} | exit_code: launch_error:{type(exc).__name__}")
+        print(f"ERROR: CLI '{cli}' could not be started.", file=sys.stderr)
+        return 2
+
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if len(stdout.encode("utf-8")) > _MAX_OUTPUT_BYTES or len(stderr.encode("utf-8")) > _MAX_OUTPUT_BYTES:
+        _log(f"[{_now()}] CLI_RESULT | cli: {cli} | exit_code: output_limit")
+        print("ERROR: CLI output exceeded the configured limit.", file=sys.stderr)
+        return 1
+
+    if stdout:
+        print(stdout, end="" if stdout.endswith("\n") else "\n")
+    if result.returncode and not stdout:
+        print(f"ERROR: CLI '{cli}' exited with code {result.returncode}.", file=sys.stderr)
 
     _log(
         f"[{_now()}] CLI_RESULT | cli: {cli} | exit_code: {result.returncode}"

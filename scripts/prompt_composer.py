@@ -2,7 +2,8 @@
 
 Spec: §2.1.4 — Lean-Context Injection (Dynamic Few-Shotting).
 
-Retrieves the most recently accepted actions for a domain from state/audit.md
+Retrieves the most recently accepted actions for a domain from the operational
+audit log
 and formats them as few-shot examples for worker context.
 
 Design constraints:
@@ -16,16 +17,19 @@ Design constraints:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from collections.abc import Mapping
 from pathlib import Path
 from lib.local_paths import audit_log_path
+from lib.context_budget import chars_for_tokens, estimate_token_count
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
 _AUDIT_MD = audit_log_path()
+_MAX_FEW_SHOT_EXAMPLES = 3
+_MAX_TOKENS_PER_EXAMPLE = 200
+_MAX_FEW_SHOT_TOKENS = 600
 
 # audit.md row format (pipe-delimited Markdown table):
 #   | timestamp | session_id | domain | action_type | status | payload_summary |
@@ -41,12 +45,53 @@ _AUDIT_ROW_RE = re.compile(
     re.IGNORECASE,
 )
 
-# RD-50: Import from single source of truth (context_budget.py).
-# RD-21: Corrected estimate is 3.5 chars/token (was 4).
-try:
-    from lib.context_budget import CHARS_PER_TOKEN as _CHARS_PER_TOKEN
-except ImportError:
-    _CHARS_PER_TOKEN = 3.5  # fallback if lib not on path
+def _one_line(value: object, *, limit: int | None = None) -> str:
+    text = " ".join(str(value).split())
+    return text if limit is None else text[:limit]
+
+
+def _truncate_tokens(text: str, token_budget: int) -> str:
+    maximum = chars_for_tokens(max(0, int(token_budget)))
+    if len(text) <= maximum:
+        return text
+    if maximum == 0:
+        return ""
+    return text[: maximum - 1] + "…"
+
+
+def _bounded_examples(
+    examples: list[str],
+    *,
+    max_examples: int,
+    max_tokens_each: int,
+    total_tokens: int = _MAX_FEW_SHOT_TOKENS,
+) -> list[str]:
+    """Apply the fixed few-shot count, per-example and aggregate budgets."""
+    try:
+        count = min(max(0, int(max_examples)), _MAX_FEW_SHOT_EXAMPLES)
+        per_example = min(max(0, int(max_tokens_each)), _MAX_TOKENS_PER_EXAMPLE)
+        total = max(0, int(total_tokens))
+    except (TypeError, ValueError):
+        return []
+    if count == 0 or per_example == 0 or total == 0:
+        return []
+
+    bounded: list[str] = []
+    for value in list(examples)[-count:]:
+        row = _truncate_tokens(_one_line(value), per_example)
+        if not row:
+            continue
+        candidate = "\n".join([*bounded, row])
+        if estimate_token_count(candidate) <= total:
+            bounded.append(row)
+            continue
+        used = estimate_token_count("\n".join(bounded))
+        remaining = max(0, total - used)
+        row = _truncate_tokens(row, remaining)
+        if row and estimate_token_count("\n".join([*bounded, row])) <= total:
+            bounded.append(row)
+        break
+    return bounded
 
 
 # ---------------------------------------------------------------------------
@@ -67,13 +112,13 @@ def load_few_shot_examples(
       - column 3 (domain) matches ``domain`` (case-insensitive strip)
       - column 5 (status) == ``accepted`` (case-insensitive strip)
 
-    Each returned string is a single formatted row truncated to
-    ``max_tokens_each * _CHARS_PER_TOKEN`` characters.
+    Each returned string is a single formatted row truncated through the
+    canonical context-budget helper.
 
     Args:
         domain:         Domain key (e.g. ``"finance"``, ``"immigration"``).
         audit_path:     Override path to audit.md.  Defaults to
-                        ``state/audit.md`` relative to repo root.
+                        machine-local operational audit log.
         max_examples:   Maximum rows to return (default: 3).
         max_tokens_each: Per-example token cap (default: 200).
 
@@ -83,8 +128,6 @@ def load_few_shot_examples(
         Never raises; never fabricates examples.
     """
     path = audit_path or _AUDIT_MD
-    char_cap = max_tokens_each * _CHARS_PER_TOKEN
-
     try:
         if not path.exists():
             return []
@@ -104,7 +147,6 @@ def load_few_shot_examples(
                     continue
                 if m.group("status").strip().lower() != "accepted":
                     continue
-                # Truncate to char cap
                 row_text = (
                     f"| {m.group('timestamp').strip()} "
                     f"| {m.group('session_id').strip()} "
@@ -113,12 +155,14 @@ def load_few_shot_examples(
                     f"| {m.group('status').strip()} "
                     f"| {m.group('payload_summary').strip()} |"
                 )
-                if len(row_text) > char_cap:
-                    row_text = row_text[:char_cap - 3] + "..."
                 matching.append(row_text)
 
-        # Return the most recent max_examples (audit.md is append-only → last = newest)
-        return matching[-max_examples:]
+        # Audit is append-only, so bounding the tail preserves the newest evidence.
+        return _bounded_examples(
+            matching,
+            max_examples=max_examples,
+            max_tokens_each=max_tokens_each,
+        )
 
     except Exception:
         return []
@@ -165,19 +209,29 @@ def compose_worker_context(
                 max_examples=max_examples,
                 max_tokens_each=max_tokens_each,
             )
+        examples = _bounded_examples(
+            list(examples),
+            max_examples=max_examples,
+            max_tokens_each=max_tokens_each,
+        )
 
-        # 2. Signal summary (no PII — signal IDs and text fragments only)
+        # 2. Signal summary. Keep each bullet structurally on one line.
         signal_lines: list[str] = []
         for sig in signals[:20]:  # Cap at 20 signals per worker invocation
-            sid = str(sig.get("signal_id") or sig.get("id") or "?")[:32]
-            text = str(sig.get("text") or sig.get("summary") or "")[:120]
+            if not isinstance(sig, Mapping):
+                continue
+            sid = _one_line(sig.get("signal_id") or sig.get("id") or "?", limit=32)
+            text = _one_line(sig.get("text") or sig.get("summary") or "", limit=120)
             signal_lines.append(f"  - [{sid}] {text}")
 
         # 3. Assemble context block
+        domain_text = _one_line(domain)
+        session_text = _one_line(session_id)
+        state_text = str(state_delta).strip() if state_delta else "(no state delta)"
         parts: list[str] = [
-            f"## Domain: {domain}  |  Session: {session_id}\n",
+            f"## Domain: {domain_text}  |  Session: {session_text}\n",
             "### State Delta\n",
-            state_delta.strip() if state_delta else "(no state delta)",
+            state_text,
             "\n",
         ]
 
@@ -187,7 +241,15 @@ def compose_worker_context(
             parts.append("\n")
 
         if examples:
-            parts.append("### Few-Shot Examples (accepted actions for this domain)\n")
+            heading = "### Few-Shot Examples (accepted actions for this domain)\n"
+            heading_tokens = estimate_token_count(heading)
+            examples = _bounded_examples(
+                examples,
+                max_examples=max_examples,
+                max_tokens_each=max_tokens_each,
+                total_tokens=_MAX_FEW_SHOT_TOKENS - heading_tokens - 3,
+            )
+            parts.append(heading)
             for ex in examples:
                 parts.append(f"  {ex}")
             parts.append("\n")
@@ -196,4 +258,7 @@ def compose_worker_context(
 
     except Exception:
         # Always return something usable even if composition fails
-        return f"## Domain: {domain}  |  Session: {session_id}\n\n{state_delta or ''}"
+        return (
+            f"## Domain: {_one_line(domain)}  |  Session: {_one_line(session_id)}"
+            f"\n\n{str(state_delta or '')}"
+        )

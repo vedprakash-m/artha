@@ -253,8 +253,16 @@ def render(command: str, result: Mapping[str, Any], *, detail: bool = False) -> 
             identity = row.get("fact_id") or row.get("id") or row.get("catchup_id", "")
             label = row.get("description") or row.get("title") or row.get("predicate") or row.get("action_type", "")
             value = row.get("value", row.get("status", ""))
+            if command == "items":
+                due = row.get("deadline") or row.get("due_date") or row.get("due")
+                try:
+                    due_at = datetime.fromisoformat(str(due)).date() if due else None
+                except ValueError:
+                    due_at = None
+                if due_at is not None:
+                    value = f"{value}; due {due_at:%b} {due_at.day}, {due_at.year}"
             prefix = f"{identity}: " if command != "beliefs" or detail else ""
-            output.append(sanitize(f"{prefix}{label.replace('_', ' ')} — {value}", 500))
+            output.append(sanitize(f"{prefix}{str(label).replace('_', ' ')} — {value}", 500))
         if command == "goals":
             output.extend(sanitize(str(line), 500) for line in result.get("observations", []))
         gaps = result.get("gaps", [])

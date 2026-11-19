@@ -170,6 +170,23 @@ class TestExecute:
                 result = todoist_sync.execute(_make_proposal())
         assert result.status == "failure"
 
+    def test_execute_timeout_after_dispatch_returns_unknown(self):
+        projects_response = [{"id": "p1", "name": "Work"}]
+        call_count = 0
+
+        def dispatch(req, timeout=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _mock_urlopen(json.dumps(projects_response).encode())
+            raise TimeoutError("synthetic timeout")
+
+        with patch("urllib.request.urlopen", side_effect=dispatch), \
+             patch("keyring.get_password", return_value="test_token"):
+            result = todoist_sync.execute(_make_proposal())
+        assert result.status == "unknown"
+        assert "reconcile" in result.message.lower()
+
 
 # ---------------------------------------------------------------------------
 # health_check()

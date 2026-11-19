@@ -18,6 +18,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from lib.state_frontmatter import FrontmatterError, split_frontmatter
+except ImportError:  # legacy callers put scripts/lib directly on sys.path
+    from state_frontmatter import FrontmatterError, split_frontmatter
+
 # Threshold: block if proposed content removes more than this % of fields
 _MAX_LOSS_PCT = 20.0
 
@@ -32,7 +37,13 @@ def _count_yaml_fields(text: str) -> int:
     Only counts lines with a colon at position ≤ 4 indentation levels to
     capture top-level and first-nested fields.
     """
-    return len(_YAML_FIELD_RE.findall(text))
+    try:
+        parts = split_frontmatter(text)
+    except FrontmatterError:
+        return 0
+    if parts is None:
+        return 0
+    return len(_YAML_FIELD_RE.findall(parts.metadata))
 
 
 class WriteGuardMiddleware:
@@ -58,59 +69,36 @@ class WriteGuardMiddleware:
     ) -> str | None:
         """Check field-count delta and block the write if loss exceeds threshold.
 
-        Also validates required frontmatter fields via state_schema if the
-        proposed content loses any required field (Phase 7 hardening).
-
-        Snapshot is taken FIRST — before the loss-threshold check — so a
-        recoverable state is always available.  If the snapshot fails the
-        write is aborted (spec: AFW-6 §3.6 mandatory ordering).
+        Required frontmatter is always validated. Bootstrap metadata bypasses
+        only the net-negative field threshold, not its registered schema.
 
         Returns:
             ``proposed_content`` if the write is safe, or ``None`` to block.
         """
-        # ----------------------------------------------------------------- #
-        # FIRST: snapshot current content for undo support (AFW-6)          #
-        # Must precede all other checks so a snapshot always exists on fail. #
-        # ----------------------------------------------------------------- #
-        if current_content and current_content.strip():
-            try:
-                import sys as _sys  # noqa: PLC0415
-                from pathlib import Path as _Path  # noqa: PLC0415
+        try:
+            current_parts = split_frontmatter(current_content or "")
+            if current_parts is not None:
+                import yaml as _yaml
+                current_frontmatter = _yaml.safe_load(current_parts.metadata) or {}
+            else:
+                current_frontmatter = {}
+        except Exception:  # noqa: BLE001
+            current_frontmatter = {}
+        bootstrap = (
+            isinstance(current_frontmatter, dict)
+            and current_frontmatter.get("updated_by") == "bootstrap"
+        )
 
-                _lib = _Path(__file__).resolve().parents[1] / "lib"
-                if str(_lib) not in _sys.path:
-                    _sys.path.insert(0, str(_lib))
-                from state_snapshot import snapshot as _snapshot  # noqa: PLC0415
-
-                result = _snapshot(domain, current_content)
-                if result is None:
-                    print(
-                        f"[write_guard] ⛔ SNAPSHOT FAILED for {domain} — aborting write.",
-                        file=sys.stderr,
-                    )
-                    return None  # Abort: no snapshot → unsafe to proceed
-            except ImportError:
-                # state_snapshot not yet available (first-run / partial install)
-                # Log warning but allow write to proceed
-                print(
-                    f"[write_guard] ⚠ state_snapshot unavailable for {domain} — "
-                    "snapshot skipped.",
-                    file=sys.stderr,
-                )
-
-        # Exempt: bootstrap files have minimal data by design
-        if "updated_by: bootstrap" in (current_content or ""):
-            return proposed_content
-
-        # No existing content — run schema check and allow new file creation
+        # No existing content — require the new file's registered shape.
         if not current_content or not current_content.strip():
-            self._check_schema(domain, proposed_content)
-            return proposed_content
+            return proposed_content if self._check_schema(domain, proposed_content) else None
 
         current_fields = _count_yaml_fields(current_content)
         if current_fields == 0:
-            self._check_schema(domain, proposed_content)
-            return proposed_content  # Can't calculate loss — pass through
+            return proposed_content if self._check_schema(domain, proposed_content) else None
+
+        if bootstrap:
+            return proposed_content if self._check_schema(domain, proposed_content) else None
 
         proposed_fields = _count_yaml_fields(proposed_content)
         loss_pct = (
@@ -141,35 +129,11 @@ class WriteGuardMiddleware:
         Returns True if valid (or no schema registered), False if blocked.
         Emits a warning to stderr when required fields are missing.
         """
-        try:
-            import re as _re
-            from pathlib import Path as _Path
-            import sys as _sys2
-            _lib = _Path(__file__).resolve().parents[1] / "lib"
-            if str(_lib) not in _sys2.path:
-                _sys2.path.insert(0, str(_lib))
-            from state_schema import validate_frontmatter  # type: ignore[import]
-        except ImportError:
-            return True  # Schema module unavailable — pass through
-
-        # Parse frontmatter between --- markers
-        fm_match = _re.search(r"^---\s*\n(.*?)\n---", content, _re.DOTALL | _re.MULTILINE)
-        if not fm_match:
-            return True  # No frontmatter — nothing to validate
-
-        try:
-            import yaml as _yaml
-            frontmatter = _yaml.safe_load(fm_match.group(1)) or {}
-        except Exception:
-            return True  # Unparseable frontmatter — pass through
-
-        # Use the domain basename as filename (e.g. "health" → "health.md")
-        filename = domain if domain.endswith(".md") else f"{domain}.md"
-        missing = validate_frontmatter(filename, frontmatter)
-        if missing:
+        valid, detail = _validate_frontmatter(domain, content)
+        if not valid:
             print(
                 f"[write_guard] ⛔ SCHEMA VALIDATION FAILED — {domain}\n"
-                f"  Missing required frontmatter fields: {missing}\n"
+                f"  Detail: {detail}\n"
                 f"  Add these fields before writing.",
                 file=sys.stderr,
             )
@@ -192,3 +156,23 @@ class WriteGuardMiddleware:
 def count_yaml_fields(text: str) -> int:
     """Public alias for testing and external use."""
     return _count_yaml_fields(text)
+
+
+def _validate_frontmatter(domain: str, content: str) -> tuple[bool, str]:
+    try:
+        parts = split_frontmatter(content)
+        if parts is None:
+            return False, "missing frontmatter"
+        import yaml as _yaml
+        frontmatter = _yaml.safe_load(parts.metadata)
+        if not isinstance(frontmatter, dict):
+            return False, "frontmatter root must be a mapping"
+        from lib.state_schema import validate_frontmatter
+
+        filename = domain if domain.endswith(".md") else f"{domain}.md"
+        missing = validate_frontmatter(filename, frontmatter)
+        return (not missing, f"missing required fields: {missing}" if missing else "")
+    except (ImportError, FrontmatterError, ValueError, TypeError) as exc:
+        return False, f"frontmatter unavailable: {type(exc).__name__}"
+    except Exception as exc:  # noqa: BLE001
+        return False, f"frontmatter unavailable: {type(exc).__name__}"

@@ -29,6 +29,8 @@ if str(_SCRIPTS) not in sys.path:
 
 from actions.base import ActionProposal, ActionResult, VALID_RESULT_STATUSES
 
+_DEFAULT_RUNNER = subprocess.run
+
 PROVIDERS = {
     "actions.reminder_create": frozenset({"graph.microsoft.com", "login.microsoftonline.com"}),
     "actions.todo_sync_action": frozenset({"graph.microsoft.com", "login.microsoftonline.com"}),
@@ -56,7 +58,7 @@ def _child_failure_class(stderr: str) -> str:
     return match.group(1) if match else "no error class"
 
 
-def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subprocess.run,
+def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=_DEFAULT_RUNNER,
             operation: str = "execute", since: str = "", queue_path: Path | None = None) -> ActionResult:
     """Run one handler operation (``execute`` or ``reconcile``) in the bounded child.
 
@@ -102,20 +104,43 @@ def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subpr
     environment["ARTHA_NO_REEXEC"] = "1"          # the child already runs on the right interpreter; never re-exec into a venv
     envelope = {"module": module, "proposal": asdict(proposal), "parent": os.getpid(), "timeout": timeout,
                 "operation": operation, "since": since, "queue_path": str(queue_path), "credentials": credentials, "evidence": evidence}
+    encoded_envelope = json.dumps(envelope).encode("utf-8")
     try:
-        result = runner(
-            [sys.executable, str(Path(__file__).resolve())],
-            input=json.dumps(envelope),
-            capture_output=True,
-            text=True,
-            env=environment,
-            cwd=str(_SCRIPTS.parent),
-            timeout=timeout + 2,
-            check=False,
-        )
-        if result.returncode or len(result.stdout) > 1_000_000:
-            raise _NoReceipt(_child_failure_class(getattr(result, "stderr", "") or ""))
-        outcome = json.loads(result.stdout)
+        command = [sys.executable, str(Path(__file__).resolve())]
+        if runner is _DEFAULT_RUNNER:
+            from connectors.bounded_process import run_bounded
+            bounded = run_bounded(
+                command,
+                timeout=timeout + 2,
+                stdout_limit=1_000_000,
+                stderr_limit=128_000,
+                cleanup_grace=1.0,
+                input=encoded_envelope,
+                env=environment,
+                cwd=str(_SCRIPTS.parent),
+            )
+            stdout = bounded.stdout.decode("utf-8", errors="replace")
+            stderr = bounded.stderr.decode("utf-8", errors="replace")
+            if bounded.stdout_truncated:
+                raise _NoReceipt("action receipt output exceeded bound")
+            if bounded.returncode:
+                raise _NoReceipt(_child_failure_class(stderr))
+        else:
+            result = runner(
+                command,
+                input=encoded_envelope.decode("utf-8"),
+                capture_output=True,
+                text=True,
+                env=environment,
+                cwd=str(_SCRIPTS.parent),
+                timeout=timeout + 2,
+                check=False,
+            )
+            stdout = result.stdout
+            stderr = getattr(result, "stderr", "") or ""
+            if result.returncode or len(stdout) > 1_000_000:
+                raise _NoReceipt(_child_failure_class(stderr))
+        outcome = json.loads(stdout)
         if (not isinstance(outcome, dict) or not isinstance(outcome.get('status'), str)
                 or outcome['status'] not in VALID_RESULT_STATUSES or not isinstance(outcome.get('message'), str)
                 or type(outcome.get('reversible')) is not bool
@@ -124,7 +149,7 @@ def execute(module: str, proposal: ActionProposal, timeout: int, *, runner=subpr
         if isinstance(outcome.get("reverse_action"), dict):
             outcome["reverse_action"] = ActionProposal(**outcome["reverse_action"])
         return ActionResult(**outcome)
-    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError, subprocess.TimeoutExpired) as exc:
         why = exc.reason if isinstance(exc, _NoReceipt) else type(exc).__name__
         return ActionResult(
             "unknown",
@@ -139,6 +164,31 @@ class _NoReceipt(ValueError):
     def __init__(self, reason: str):
         super().__init__(reason)
         self.reason = reason
+
+
+class _BoundedDiagnosticSink:
+    """Discard child diagnostics without retaining an unbounded in-memory copy."""
+
+    encoding = "utf-8"
+
+    def write(self, value: str) -> int:
+        return len(value)
+
+    def flush(self) -> None:
+        return None
+
+
+class _BoundedReceiptSink:
+    def __init__(self, target: Any, limit: int) -> None:
+        self.target = target
+        self.remaining = limit
+
+    def write(self, value: str) -> int:
+        size = len(value.encode("utf-8"))
+        if size > self.remaining:
+            raise ValueError("action receipt output exceeded bound")
+        self.remaining -= size
+        return self.target.write(value)
 
 
 def _pre_dispatch_failure(queue_path: Path | None, proposal: ActionProposal, operation: str,
@@ -361,9 +411,9 @@ def _worker() -> None:
     restrict_network(PROVIDERS[module])
     # Handler diagnostics cannot corrupt the exact result protocol or leak to parent logs.
     from contextlib import redirect_stderr, redirect_stdout
-    import io
 
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+    diagnostics = _BoundedDiagnosticSink()
+    with redirect_stdout(diagnostics), redirect_stderr(diagnostics):
         if operation == 'execute':
             from lib.action_evidence import verify_provider
             verify_provider(proposal, module)
@@ -379,7 +429,11 @@ def _worker() -> None:
         except Exception:
             result = ActionResult('unknown', 'The handler returned no verified receipt; reconcile before retrying.',
                                   None, False, None)
-    print(json.dumps(redact(asdict(result), envelope['credentials'])))
+    json.dump(
+        redact(asdict(result), envelope["credentials"]),
+        _BoundedReceiptSink(sys.stdout, 1_000_000),
+        separators=(",", ":"),
+    )
 
 
 if __name__ == "__main__":

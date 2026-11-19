@@ -194,6 +194,59 @@ def test_process_has_minimal_environment_and_reads_exact_receipt(monkeypatch, di
     assert action_process.execute("unknown", proposal(), 5, queue_path=dispatch).status == "failure"
 
 
+def test_default_worker_uses_bounded_streaming_and_preserves_injected_runner(monkeypatch, dispatch):
+    from connectors import bounded_process
+
+    receipt = json.dumps({
+        "status": "success",
+        "message": "verified",
+        "data": None,
+        "reversible": False,
+        "reverse_action": None,
+    }).encode()
+    seen = {}
+
+    def bounded(command, **kwargs):
+        seen.update(kwargs)
+        return bounded_process.BoundedProcessResult(0, receipt, b"", False, False)
+
+    monkeypatch.setattr(bounded_process, "run_bounded", bounded)
+    result = action_process.execute("actions.reminder_create", proposal(), 5, queue_path=dispatch)
+    assert result.status == "success"
+    assert seen["stdout_limit"] == 1_000_000
+    assert "input" in seen
+
+    injected = {}
+
+    def runner(*_args, **kwargs):
+        injected.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout=receipt.decode())
+
+    action_process.execute("actions.reminder_create", proposal(), 5, queue_path=dispatch, runner=runner)
+    assert injected["capture_output"] is True
+    assert injected["text"] is True
+
+
+def test_bounded_process_cleanup_runtime_error_becomes_unknown(monkeypatch, dispatch):
+    from connectors import bounded_process
+
+    def cleanup_failure(*_args, **_kwargs):
+        raise RuntimeError("synthetic process cleanup failure")
+
+    monkeypatch.setattr(bounded_process, "run_bounded", cleanup_failure)
+
+    result = action_process.execute(
+        "actions.reminder_create",
+        proposal(),
+        5,
+        queue_path=dispatch,
+    )
+
+    assert result.status == "unknown"
+    assert "reconcile before retrying" in result.message
+    assert "synthetic process cleanup failure" not in result.message
+
+
 @pytest.mark.parametrize("kind", ["timeout", "crash", "malformed", "wrong_shape", "invalid_status"])
 def test_uncertain_child_never_claims_failure_or_authorizes_retry(kind, dispatch):
     def runner(*args, **kwargs):

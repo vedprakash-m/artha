@@ -93,7 +93,7 @@ def _fetch_hn_stories(
                 continue
             date_iso = item_dt.isoformat()
         else:
-            date_iso = datetime.now(timezone.utc).isoformat()
+            continue
 
         # AI relevance filter
         search_text = f"{title} {text} {item_url_link}".lower()
@@ -161,12 +161,15 @@ def _fetch_devto_articles(
             reactions = article.get("positive_reactions_count", 0)
             if reactions < min_reactions:
                 continue
+            published = article.get("published_at")
+            if not isinstance(published, str) or not published:
+                continue
 
             results.append({
                 "id": f"devto-{aid}",
                 "subject": article.get("title", ""),
                 "from": f"dev.to/{tag} <https://dev.to>",
-                "date_iso": article.get("published_at", datetime.now(timezone.utc).isoformat()),
+                "date_iso": published,
                 "body": (article.get("description", "") or "")[:1500],
                 "source": "api_discovery",
                 "feed_url": f"https://dev.to/t/{tag}",
@@ -230,12 +233,14 @@ def _fetch_github_trending(
             stars = repo.get("stargazers_count", 0)
             pushed = repo.get("pushed_at", "")
             lang = repo.get("language", "")
+            if not isinstance(pushed, str) or not pushed:
+                continue
 
             results.append({
                 "id": f"gh-{repo.get('id', 0)}",
                 "subject": full_name,
                 "from": f"GitHub Trending ({topic}) <https://github.com>",
-                "date_iso": pushed or datetime.now(timezone.utc).isoformat(),
+                "date_iso": pushed,
                 "body": f"{desc}\n\nLanguage: {lang} | ⭐ {stars} stars | github.com/{full_name}",
                 "source": "api_discovery",
                 "feed_url": f"https://github.com/topics/{topic}",
@@ -288,12 +293,14 @@ def _fetch_github_releases(
             tag_name = rel.get("tag_name", "")
             body = (rel.get("body") or "")[:1500]
             name = rel.get("name") or tag_name
+            if not isinstance(pub, str) or not pub:
+                continue
 
             results.append({
                 "id": f"gh-rel-{repo}-{tag_name}",
                 "subject": f"{repo} {name}",
                 "from": f"GitHub Release ({repo}) <https://github.com/{repo}>",
-                "date_iso": pub or datetime.now(timezone.utc).isoformat(),
+                "date_iso": pub,
                 "body": body,
                 "source": "api_discovery",
                 "feed_url": f"https://github.com/{repo}/releases",
@@ -355,7 +362,7 @@ def fetch(
             for s in stories:
                 if total >= max_results:
                     break
-                yield s
+                yield {**s, "source": source_tag or s.get("source", "api_discovery")}
                 total += 1
 
     # 2. dev.to
@@ -370,7 +377,7 @@ def fetch(
         for a in articles:
             if total >= max_results:
                 break
-            yield a
+            yield {**a, "source": source_tag or a.get("source", "api_discovery")}
             total += 1
 
     # 3. GitHub trending + releases
@@ -387,7 +394,7 @@ def fetch(
         for r in repos:
             if total >= max_results:
                 break
-            yield r
+            yield {**r, "source": source_tag or r.get("source", "api_discovery")}
             total += 1
 
         # Watched releases
@@ -399,7 +406,7 @@ def fetch(
         for r in releases:
             if total >= max_results:
                 break
-            yield r
+            yield {**r, "source": source_tag or r.get("source", "api_discovery")}
             total += 1
 
 

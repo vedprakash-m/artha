@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from catchup_core.rule_of_two import Broker, CallDeclaration, RuleOfTwoViolation, lint_configs
+from catchup_core.rule_of_two import (
+    Broker,
+    CallDeclaration,
+    RuleOfTwoViolation,
+    ToolCapabilityUnavailable,
+    lint_configs,
+)
 
 
 def D(name, u=False, p=False, c=False):
@@ -36,10 +42,15 @@ def test_broker_catches_private_data_attached_to_untrusted_effect_call():
 
 
 def test_broker_unknown_call_uses_actual_attachments_only():
-    broker = Broker()
+    broker = Broker(tool_capabilities={"read_fact": False})
     broker.check("adhoc", tools=["read_fact"], private_data=True)
     with pytest.raises(RuleOfTwoViolation):
         broker.check("adhoc", tools=["send_email"], private_data=True, untrusted_data=True)
+
+
+def test_broker_denies_an_unregistered_tool_instead_of_treating_it_as_effect_free():
+    with pytest.raises(ToolCapabilityUnavailable):
+        Broker().check("adhoc", tools=["new_provider_alias"], private_data=True, untrusted_data=True)
 
 
 def test_declaration_count():

@@ -23,7 +23,7 @@ HELD = frozenset({'cutover', 'viewer', 'consent_required', 'sources', 'subjects'
 _HANDLERS = {'gmail': 'google_email', 'outlook_email_personal': 'msgraph_email', 'icloud_email': 'imap_email',
              'google_calendar': 'google_calendar', 'outlook_calendar_personal': 'msgraph_calendar',
              'icloud_calendar': 'caldav_calendar'}
-_SOURCE_FIELDS = {'connector', 'account_scope', 'subjects', 'required', 'class', 'kwargs',
+_SOURCE_FIELDS = {'connector', 'account_scope', 'subjects', 'required', 'class', 'kwargs', 'admission',
                   'calendar_kinds', 'namespace'}
 _OPTIONS = {'google_email': {'query', 'label_filter'}, 'msgraph_email': {'folder'}, 'imap_email': {'folder'},
             'google_calendar': {'calendar_ids', 'window_days'},
@@ -31,7 +31,7 @@ _OPTIONS = {'google_email': {'query', 'label_filter'}, 'msgraph_email': {'folder
 _MAX_BYTES = 1_000_000
 
 
-class _UniqueLoader(yaml.SafeLoader):  # type: ignore[misc]
+class _UniqueLoader(yaml.SafeLoader):
     pass
 
 

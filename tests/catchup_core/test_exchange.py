@@ -17,6 +17,7 @@ from catchup_core import cli as cli_mod
 from catchup_core import coordinator as co
 from catchup_core import exchange as xc
 from catchup_core.contracts import ExitCode, RunStatus
+from catchup_core.resources import AdmissionStore, ResourcePolicy
 
 pytestmark = pytest.mark.usefixtures("admitted_personal_corpus")
 
@@ -69,6 +70,20 @@ def test_response_document_has_a_byte_bound_before_json_parsing(monkeypatch):
     monkeypatch.setattr(xc, '_MAX_DOCUMENT_BYTES', 8)
     with pytest.raises(ValueError, match='size limit'):
         xc.parse_response_document('x' * 9)
+
+
+def test_response_operation_and_catchup_bindings_are_strict_when_supplied():
+    identity = {'provider': 'synthetic', 'model': 'offline'}
+    expected = {'implementation': 'fixture', 'model': __import__('hashlib').sha256(
+        json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()}
+    base = {'responses': {'a': '{}'}, 'model_identity': identity, 'cohort': expected,
+            'protocol': xc.PROTOCOL, 'operation': 'extract', 'catchup_id': 'cu_bound'}
+    document = xc.parse_response_document(json.dumps(base))
+    assert xc.verify_response_identity(document, expected, required=True, catchup_id='cu_bound')
+    with pytest.raises(ValueError, match='another Catch-up'):
+        xc.verify_response_identity(document, expected, required=True, catchup_id='cu_other')
+    with pytest.raises(ValueError, match='operation'):
+        xc.parse_response_document(json.dumps({**base, 'operation': 'research'}))
 
 
 def test_run_pauses_then_resumes_with_answers_from_any_model(world):
@@ -132,6 +147,39 @@ def test_cli_prints_the_bundle_and_exits_40_then_resumes_from_stdin(world):
     assert code2 in (int(ExitCode.COMPLETE), int(ExitCode.DEGRADED))
     assert json.loads(out2.getvalue())["catchup_id"] == "cu_cli"
     assert published == []                                  # shadow runs never publish
+
+
+def test_cli_exit_40_keeps_one_reservation_across_pause_and_resume(world):
+    ledger, _blobs, make, _published = world
+    fetchers = {"school_email": email(), "calendar": cal()}
+    store = AdmissionStore(ledger, ResourcePolicy.from_mapping({
+        "max_requests_per_bundle": 2, "max_prompt_bytes_per_bundle": 100_000,
+        "max_requests_per_catchup": 2, "max_requests_per_month": 2,
+        "max_attempts_per_signal": 1, "max_pending_signals": 2, "max_priority_streak": 1,
+    }))
+
+    def factory(_request):
+        return make(fetchers, extractor=xc.ExchangeExtractor(), admissions=store,
+                    require_resource_policy=True)
+
+    first = io.StringIO()
+    assert cli_mod.main(["catchup", "--json", "--shadow", "--id", "cu_reserved"],
+                        deps_factory=factory, out=first, err=io.StringIO()) == 40
+    request = json.loads(first.getvalue())["requests"][0]
+    assert ledger.conn.execute("SELECT count(*) FROM resource_admissions "
+                               "WHERE catchup_id='cu_reserved'").fetchone()[0] == 1
+    answers = json.dumps({"responses": {request["request_id"]: EXTRACT(request["prompt"])}})
+
+    def resumed_factory(_request):
+        return make(fetchers, extractor=xc.ExchangeExtractor(
+            {request["request_id"]: EXTRACT(request["prompt"])}),
+            admissions=store, require_resource_policy=True)
+
+    assert cli_mod.main(["catchup", "--json", "--shadow", "--id", "cu_reserved", "--responses", "-"],
+                        deps_factory=resumed_factory, out=io.StringIO(), err=io.StringIO(),
+                        stdin=io.StringIO(answers)) == 0
+    assert ledger.conn.execute("SELECT count(*) FROM resource_admissions "
+                               "WHERE catchup_id='cu_reserved'").fetchone()[0] == 1
 
 
 def test_cli_rejects_malformed_responses_as_usage_error(world):

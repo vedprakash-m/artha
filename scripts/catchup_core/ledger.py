@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 from catchup_core import ids
 from catchup_core.contracts import (
     Confidentiality,
+    CoverageStatus,
     FactStatus,
     ProcessingState,
     Provenance,
@@ -44,13 +45,27 @@ from catchup_core.crypto import EnvelopeCipher
 from catchup_core.privacy_history import PrivacyCapsules
 
 __all__ = [
-    "FactInput", "FactView", "FileSealedStore", "ForgetReceipt", "Ledger", "LedgerError", "LedgerLocked",
-    "MemorySealedStore", "MigrationRefused", "PermissionDenied", "PersonalScopeUnavailable",
-    "SealedCheckpoint", "SealedStore",
-    "SignalInput", "Suppressed",
+    "APPROVED_SOURCE_ENROLLMENT_NAMES",
+    "FactInput",
+    "FactView",
+    "FileSealedStore",
+    "ForgetReceipt",
+    "Ledger",
+    "LedgerError",
+    "LedgerLocked",
+    "MemorySealedStore",
+    "MigrationRefused",
+    "PermissionDenied",
+    "PersonalScopeUnavailable",
+    "SealedCheckpoint",
+    "SealedStore",
+    "SignalInput",
+    "Suppressed",
+    "require_approved_source_enrollment",
 ]
 
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+APPROVED_SOURCE_ENROLLMENT_NAMES = frozenset({"home_email"})
 
 
 class LedgerError(RuntimeError):
@@ -75,6 +90,12 @@ class Suppressed(LedgerError):
 
 class LedgerLocked(LedgerError):
     """A restored ledger is older than the sealed deletion checkpoint."""
+
+
+def require_approved_source_enrollment(source_name: str) -> None:
+    if not isinstance(source_name, str) or source_name not in APPROVED_SOURCE_ENROLLMENT_NAMES:
+        raise PermissionDenied(
+            f"source enrollment is approved only for source_name 'home_email'; got {source_name!r}")
 
 
 def _utc_now() -> str:
@@ -122,6 +143,8 @@ def _instant(stamp: str) -> datetime:
 
 RETENTION_CONNECTOR = "retention"      # tombstone namespace for retention expiry of non-source artifacts
 RETENTION_REPLAY_SCOPE = "replay"
+_COVERAGE_HOLD_LIMIT = 1000
+_COVERAGE_HOLD_CAP_SPOT = "coverage_hold_limit"
 
 # ── sealed deletion checkpoint (outside the restorable set) ───────────────────
 
@@ -368,6 +391,7 @@ class Ledger:
         artifact_deleter: Callable[[Sequence[str]], None] | None = None,
     ):
         self._path = Path(path)
+        self.path_identity = ids.content_hmac(id_key, str(self._path.resolve()))
         self._id_key = id_key
         self._cipher = cipher
         self._sealed = sealed or MemorySealedStore()
@@ -385,6 +409,7 @@ class Ledger:
         self._read_only = False
         self.locked = False
         self._guard = ids.CollisionGuard()
+        self._source_enrollment_expectations: dict[str, dict[str, str | None]] = {}
         if isinstance(self._sealed, KeyringSealedStore):
             self._sealed.history = self.privacy_history
             if self._sealed._cipher is None:
@@ -646,8 +671,12 @@ class Ledger:
             access = db.execute("SELECT subjects FROM signal_access WHERE signal_id=?", (object_id,)).fetchone()
             source = db.execute("SELECT subjects FROM source_access WHERE connector=? AND account_scope=?",
                                 (row["connector"], row["account_scope"])).fetchone()
+            enrollment = db.execute(
+                "SELECT enrollment_id FROM signal_source_enrollments WHERE signal_id=?",
+                (object_id,)).fetchone()
             return {"subjects": sorted(json.loads(access[0])) if access else None,
-                    "source_subjects": sorted(json.loads(source[0])) if source else None}
+                    "source_subjects": sorted(json.loads(source[0])) if source else None,
+                    "enrollment_id": int(enrollment[0]) if enrollment else None}
         fact = db.execute("SELECT primary_subject_id,domain FROM facts WHERE fact_id=?", (object_id,)).fetchone()
         if fact is None or object_type not in ("fact", "fact_version"):
             raise LedgerError("unknown object")
@@ -696,6 +725,30 @@ class Ledger:
             return str(row["recorded_at"]), "ledger", self._owner, str(row["scope_hmac"])
         raise ValueError("scope review covers Signals and Facts only")
 
+    def _source_enrollment_current(
+            self, db: sqlite3.Connection, enrollment_id: object, generation: int) -> bool:
+        source = db.execute(
+            "SELECT source_name FROM source_enrollments WHERE enrollment_id=?",
+            (enrollment_id,)).fetchone()
+        if source is None or str(source["source_name"]) not in APPROVED_SOURCE_ENROLLMENT_NAMES:
+            return False
+        latest = db.execute(
+            "SELECT * FROM source_enrollments "
+            "WHERE source_name=(SELECT source_name FROM source_enrollments WHERE enrollment_id=?) "
+            "ORDER BY enrollment_id DESC LIMIT 1", (enrollment_id,)).fetchone()
+        if (latest is None or latest["enrollment_id"] != enrollment_id
+                or latest["action"] != "enroll"
+                or latest["permission_generation"] != generation
+                or latest["scope_epoch"] != self._scope_epoch()):
+            return False
+        enrollment_expectation = self._source_enrollment_expectations.get(
+            str(source["source_name"]))
+        return (
+            enrollment_expectation is not None
+            and enrollment_expectation["provider_account_id"] is not None
+            and all(latest[key] == value for key, value in enrollment_expectation.items())
+        )
+
     def _has_reviewed_binding(self, object_type: str, object_id: str, object_version: str, source_id: str,
                               account_id: str, content_hmac: str, *, generation: int | None = None,
                               db: sqlite3.Connection | None = None) -> bool:
@@ -715,9 +768,14 @@ class Ledger:
             inputs = self._authz_inputs(db, object_type, object_id, object_version)
         except LedgerError:
             return False
-        expected = self._reviewed_proof(self._id_key, object_type, object_id, object_version, source_id,
-                                        account_id, content_hmac, "personal", generation, self._authz_digest(inputs))
-        return hmac.compare_digest(str(row["proof"]), expected)
+        enrollment_id = inputs.get("enrollment_id") if object_type == "signal" else None
+        if enrollment_id is not None and not self._source_enrollment_current(
+                db, enrollment_id, generation):
+            return False
+        expected_proof = self._reviewed_proof(
+            self._id_key, object_type, object_id, object_version, source_id,
+            account_id, content_hmac, "personal", generation, self._authz_digest(inputs))
+        return hmac.compare_digest(str(row["proof"]), expected_proof)
 
     def _signal_reviewed(self, db: sqlite3.Connection, signal_id: str) -> bool:
         row = db.execute("SELECT upstream_version,connector,account_scope,content_hmac FROM signals "
@@ -754,7 +812,7 @@ class Ledger:
     def scope_review_item(self, object_type: str, object_id: str) -> dict[str, Any]:
         """Metadata and authorization inputs for owner review; never reads or decrypts a payload."""
         self._require_unlocked()
-        version, source, account, _content = self._review_identity(self.conn, object_type, object_id)
+        version, source, account, content = self._review_identity(self.conn, object_type, object_id)
         inputs = self._authz_inputs(self.conn, object_type, object_id, version)
         reviewed = (self._signal_reviewed(self.conn, object_id) if object_type == "signal"
                     else self._fact_reviewed(self.conn, object_id))
@@ -762,14 +820,25 @@ class Ledger:
             "SELECT scope FROM scope_bindings WHERE object_type=? AND object_id=? AND object_version=? "
             "AND permission_generation=? AND provenance='source_review'",
             (object_type, object_id, version, self._permission_generation())).fetchall()
-        return {"object_type": object_type, "object_id": object_id, "object_version": version,
-                "source_id": source, "account_id": account, "authz": inputs,
-                "authz_digest": self._authz_digest(inputs),
-                "current_scope": "personal" if reviewed else (
-                    str(current[0][0]) if len(current) == 1 and current[0][0] != "personal" else None)}
+        descriptor = {
+            "ledger_path": self.path_identity,
+            "object_type": object_type,
+            "object_id": object_id,
+            "object_version": version,
+            "source_id": source,
+            "account_id": account,
+            "content_hmac": content,
+            "authz_digest": self._authz_digest(inputs),
+            "permission_generation": self._permission_generation(),
+        }
+        return {
+            **descriptor, "review_descriptor": descriptor, "authz": inputs,
+            "current_scope": "personal" if reviewed else (
+                str(current[0][0]) if len(current) == 1 and current[0][0] != "personal" else None),
+        }
 
     def review_scope(self, object_type: str, object_id: str, scope: str, *, reviewer: str,
-                     expected_version: str, expected_authz: str) -> dict[str, Any]:
+                     expected_descriptor: Mapping[str, Any]) -> dict[str, Any]:
         """Bind the owner's reviewed scope to the exact object and authorization inputs they saw."""
         self._require_unlocked()
         if scope not in self._SCOPES:
@@ -779,8 +848,20 @@ class Ledger:
         with self.transaction() as db:
             version, source, account, content = self._review_identity(db, object_type, object_id)
             inputs = self._authz_inputs(db, object_type, object_id, version)
-            if (version != expected_version
-                    or not hmac.compare_digest(self._authz_digest(inputs), expected_authz)):
+            expected = {
+                "ledger_path": self.path_identity,
+                "object_type": object_type,
+                "object_id": object_id,
+                "object_version": version,
+                "source_id": source,
+                "account_id": account,
+                "content_hmac": content,
+                "authz_digest": self._authz_digest(inputs),
+                "permission_generation": self._permission_generation(),
+            }
+            if (not isinstance(expected_descriptor, Mapping)
+                    or set(expected_descriptor) != set(expected)
+                    or any(expected_descriptor[key] != value for key, value in expected.items())):
                 raise LedgerError("object changed since review")
             written = [(object_type, *self._write_reviewed_binding(
                 db, object_type, object_id, version, source, account, content, scope))]
@@ -816,7 +897,12 @@ class Ledger:
         if not current["evidence"] or not all(self._signal_reviewed(db, sid) for sid in current["evidence"]):
             return
         for kind in ("fact", "fact_version"):
-            self._write_reviewed_binding(db, kind, fact_id, version, "ledger", self._owner, content_hmac, "personal")
+            digest, old_scope = self._write_reviewed_binding(
+                db, kind, fact_id, version, "ledger", self._owner, content_hmac, "personal")
+            db.execute("INSERT INTO scope_reviews(object_type,object_id,object_version,old_scope,new_scope,"
+                       "permission_generation,reviewer,reviewed_at,authz_digest) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (kind, fact_id, version, old_scope, "personal", self._permission_generation(),
+                        "system:carry_forward", self._clock(), digest))
 
     def _signal_identity_matches(
         self, signal_id: object, connector: object, account_scope: object,
@@ -868,12 +954,25 @@ class Ledger:
             counts[key] = counts.get(key, 0) + 1
         for binding in bindings:
             key = (str(binding["object_type"]), str(binding["object_id"]), str(binding["object_version"]))
-            if (counts[key] == 1 and self._has_reviewed_binding(
-                    *key, str(binding["source_id"]), str(binding["account_id"]), str(binding["content_hmac"]),
-                    generation=previous_generation, db=db)
-                    and self._scope_binding_matches_object(db, binding)):
+            try:
+                reviewed_inputs = self._authz_inputs(db, *key)
+                reviewed_object_exists = self._scope_binding_matches_object(db, binding)
+            except LedgerError:
+                reviewed_inputs = None
+                reviewed_object_exists = False
+            if (counts[key] == 1
+                    and binding["provenance"] == "source_review"
+                    and str(binding["scope"]) in self._SCOPES
+                    and reviewed_inputs is not None
+                    and reviewed_object_exists
+                    and hmac.compare_digest(
+                        str(binding["proof"]),
+                        self._reviewed_proof(
+                            self._id_key, *key, str(binding["source_id"]), str(binding["account_id"]),
+                            str(binding["content_hmac"]), str(binding["scope"]), previous_generation,
+                            self._authz_digest(reviewed_inputs)))):
                 self._write_reviewed_binding(db, *key, str(binding["source_id"]), str(binding["account_id"]),
-                                             str(binding["content_hmac"]), "personal")
+                                             str(binding["content_hmac"]), str(binding["scope"]))
                 continue
             if (counts[key] != 1 or binding["scope"] != "personal"
                     or binding["provenance"] not in ("source_review", "trusted_writer")
@@ -888,6 +987,37 @@ class Ledger:
                 self._record_personal_binding(
                     db, *key, str(binding["source_id"]), str(binding["account_id"]),
                     str(binding["content_hmac"]), provenance=str(binding["provenance"]))
+
+    def require_scope_review_discovery(self, object_type: str, object_id: str, viewer: str) -> None:
+        """Authorize the existence and metadata of an object before scope-review display."""
+        from catchup_core.policy import authorize_source  # noqa: PLC0415
+        if object_type == "signal":
+            row = self.conn.execute(
+                "SELECT connector,account_scope FROM signals WHERE signal_id=?", (object_id,)).fetchone()
+            if row is None:
+                raise LedgerError("unknown object")
+            signal = self.conn.execute(
+                "SELECT subjects FROM signal_access WHERE signal_id=?", (object_id,)).fetchone()
+            source = self.conn.execute(
+                "SELECT subjects FROM source_access WHERE connector=? AND account_scope=?",
+                (row["connector"], row["account_scope"])).fetchone()
+            subjects = set(json.loads(signal[0])) if signal else set()
+            if source:
+                subjects.update(json.loads(source[0]))
+            if not subjects:
+                raise PermissionDenied("source subject provenance is unknown")
+            authorize_source(self, sorted(subjects), self._consent_subjects,
+                             f"{row['connector']}:{row['account_scope']}", viewer, operations=("view",))
+            return
+        if object_type == "fact":
+            refs = self.conn.execute(
+                "SELECT signal_id FROM fact_evidence WHERE fact_id=?", (object_id,)).fetchall()
+            if not refs:
+                raise PermissionDenied("Fact evidence provenance is unknown")
+            for ref in refs:
+                self.require_scope_review_discovery("signal", str(ref["signal_id"]), viewer)
+            return
+        raise ValueError("scope review covers Signals and Facts only")
 
     def require_personal_signal(self, signal_id: str, *, allow_obsolete: bool = False) -> sqlite3.Row:
         """Validate source-side scope metadata without opening the evidence blob."""
@@ -980,11 +1110,392 @@ class Ledger:
                 "signal", str(signal["signal_id"]), str(signal["upstream_version"]),
                 str(signal["connector"]), str(signal["account_scope"]), str(signal["content_hmac"]))
             for signal in signals)
-        if admitted or (provenance == Provenance.USER_CONFIRMED.value and not evidence_ids):
+        reviewed = bool(evidence_ids) and len(signals) == len(evidence_ids) and all(
+            signal is not None and self._has_reviewed_binding(
+                "signal", str(signal["signal_id"]), str(signal["upstream_version"]),
+                str(signal["connector"]), str(signal["account_scope"]), str(signal["content_hmac"]), db=db)
+            for signal in signals)
+        if reviewed:
+            for kind in ("fact", "fact_version"):
+                digest, old_scope = self._write_reviewed_binding(
+                    db, kind, fact_id, version, "ledger", self._owner, content_hmac, "personal")
+                db.execute(
+                    "INSERT INTO scope_reviews(object_type,object_id,object_version,old_scope,new_scope,"
+                    "permission_generation,reviewer,reviewed_at,authz_digest) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (kind, fact_id, version, old_scope, "personal", self._permission_generation(),
+                     "system:new_fact", self._clock(), digest))
+        elif admitted or (provenance == Provenance.USER_CONFIRMED.value and not evidence_ids):
             self._record_personal_binding(
                 db, "fact", fact_id, version, "ledger", self._owner, content_hmac)
             self._record_personal_binding(
                 db, "fact_version", fact_id, version, "ledger", self._owner, content_hmac)
+
+    @staticmethod
+    def _source_enrollment_material(
+            source_name: str, connector: str, provider_account_id: str, account_scope: str,
+            query_digest: str, policy_digest: str, subjects_json: str, action: str,
+            permission_generation: int, scope_epoch: int) -> dict[str, Any]:
+        return {
+            "v": 1,
+            "source_name": source_name,
+            "connector": connector,
+            "provider_account_id": provider_account_id,
+            "account_scope": account_scope,
+            "query_digest": query_digest,
+            "policy_digest": policy_digest,
+            "subjects": subjects_json,
+            "action": action,
+            "permission_generation": permission_generation,
+            "scope_epoch": scope_epoch,
+        }
+
+    def _scope_epoch(self) -> int:
+        row = self.conn.execute(
+            "SELECT epoch FROM scope_admission_state WHERE singleton=1").fetchone()
+        if row is None:
+            raise LedgerError("scope admission epoch is unavailable")
+        return int(row[0])
+
+    @staticmethod
+    def _canonical_source_definition(
+            source_name: str, connector: str, account_scope: str, query: str,
+            subjects: Sequence[str], policy: Mapping[str, Any]) -> tuple[str, str, str]:
+        if (not isinstance(source_name, str) or not source_name
+                or not isinstance(connector, str) or not connector
+                or not isinstance(account_scope, str) or not account_scope
+                or not isinstance(query, str) or not query
+                or len(source_name) > 256 or len(connector) > 256
+                or len(account_scope) > 256 or len(query) > 4096):
+            raise LedgerError("source enrollment requires a configured source identity and query")
+        resolved = sorted(set(subjects))
+        if not resolved or any(not isinstance(subject, str) or not subject for subject in resolved):
+            raise LedgerError("source enrollment requires resolved subjects")
+        if not isinstance(policy, Mapping):
+            raise LedgerError("source enrollment requires a classification policy")
+        canonical_policy = json.dumps(dict(policy), sort_keys=True, separators=(",", ":"))
+        if len(canonical_policy.encode("utf-8")) > 65_536 or len(resolved) > 100 \
+                or any(len(subject) > 256 for subject in resolved):
+            raise LedgerError("source enrollment policy or subject set exceeds its bound")
+        return (
+            hashlib.sha256(query.encode()).hexdigest(),
+            hashlib.sha256(canonical_policy.encode()).hexdigest(),
+            json.dumps(resolved, separators=(",", ":")),
+        )
+
+    def _provider_account_marker(self, connector: str, provider_account: str) -> str:
+        if (not isinstance(provider_account, str) or not provider_account.strip()
+                or len(provider_account.strip()) > 320 or "@" not in provider_account):
+            raise LedgerError("source enrollment requires the authenticated provider account")
+        return ids.content_hmac(self._id_key, f"provider-account:{connector}:{provider_account.strip()}")
+
+    def source_enrollment_item(
+            self, *, source_name: str, connector: str, provider_account: str,
+            account_scope: str, query: str, subjects: Sequence[str], policy: Mapping[str, Any]) -> dict[str, Any]:
+        require_approved_source_enrollment(source_name)
+        query_digest, policy_digest, subjects_json = self._canonical_source_definition(
+            source_name, connector, account_scope, query, subjects, policy)
+        unknown_subjects = (
+            set(subjects) - self._known_subjects if self._known_subjects is not None else set())
+        if unknown_subjects:
+            raise LedgerError("source enrollment contains unknown subjects")
+        return {
+            "source_name": source_name,
+            "connector": connector,
+            "provider_account_id": self._provider_account_marker(connector, provider_account),
+            "account_scope": account_scope,
+            "query": query,
+            "query_digest": query_digest,
+            "policy": dict(policy),
+            "policy_digest": policy_digest,
+            "subjects": sorted(set(subjects)),
+            "subjects_json": subjects_json,
+            "permission_generation": self._permission_generation(),
+        }
+
+    def expect_source_enrollment(
+            self, *, source_name: str, connector: str, account_scope: str, query: str,
+            subjects: Sequence[str], policy: Mapping[str, Any],
+            provider_account: str | None = None) -> None:
+        query_digest, policy_digest, subjects_json = self._canonical_source_definition(
+            source_name, connector, account_scope, query, subjects, policy)
+        self._source_enrollment_expectations[source_name] = {
+            "connector": connector,
+            "account_scope": account_scope,
+            "query_digest": query_digest,
+            "policy_digest": policy_digest,
+            "subjects_json": subjects_json,
+            "provider_account_id": (
+                self._provider_account_marker(connector, provider_account)
+                if provider_account is not None else None),
+        }
+
+    def _write_source_enrollment(
+            self, item: Mapping[str, Any], *, action: str, reviewer: str) -> dict[str, Any]:
+        if reviewer != self._owner:
+            raise PermissionDenied("only the owner can enroll a personal source")
+        generation = self._permission_generation()
+        scope_epoch = self._scope_epoch()
+        material = self._source_enrollment_material(
+            str(item["source_name"]), str(item["connector"]), str(item["provider_account_id"]),
+            str(item["account_scope"]), str(item["query_digest"]), str(item["policy_digest"]),
+            str(item["subjects_json"]), action, generation, scope_epoch)
+        proof = ids.content_hmac(
+            self._id_key, "enroll:v1:" + json.dumps(material, sort_keys=True, separators=(",", ":")))
+        with self.transaction() as db:
+            cursor = db.execute(
+                "INSERT INTO source_enrollments(source_name,connector,provider_account_id,account_scope,"
+                "query_digest,policy_digest,subjects_json,action,permission_generation,scope_epoch,"
+                "proof,reviewer,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (item["source_name"], item["connector"], item["provider_account_id"], item["account_scope"],
+                 item["query_digest"], item["policy_digest"], item["subjects_json"], action, generation, scope_epoch,
+                 proof, reviewer, self._clock()))
+            if cursor.lastrowid is None:
+                raise LedgerError("source enrollment row was not created")
+            enrollment_id = int(cursor.lastrowid)
+        return {**item, "action": action, "enrollment_id": enrollment_id, "proof": proof}
+
+    def enroll_source(
+            self, *, source_name: str, connector: str, provider_account: str, account_scope: str,
+            query: str, subjects: Sequence[str], policy: Mapping[str, Any], reviewer: str) -> dict[str, Any]:
+        self._require_unlocked()
+        require_approved_source_enrollment(source_name)
+        item = self.source_enrollment_item(
+            source_name=source_name, connector=connector, provider_account=provider_account,
+            account_scope=account_scope, query=query, subjects=subjects, policy=policy)
+        enrolled = self._write_source_enrollment(item, action="enroll", reviewer=reviewer)
+        self.expect_source_enrollment(
+            source_name=source_name, connector=connector, account_scope=account_scope,
+            query=query, subjects=subjects, policy=policy, provider_account=provider_account)
+        return enrolled
+
+    def revoke_source(self, source_name: str, *, reviewer: str) -> dict[str, Any]:
+        self._require_unlocked()
+        if reviewer != self._owner:
+            raise PermissionDenied("only the owner can revoke a personal source")
+        rows = self.source_enrollments(source_name)
+        if not rows:
+            raise LedgerError("source is not enrolled")
+        item = dict(rows[-1])
+        return self._write_source_enrollment(item, action="revoke", reviewer=reviewer)
+
+    def source_enrollments(self, source_name: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM source_enrollments WHERE source_name=? ORDER BY enrollment_id", (source_name,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def require_source_enrollment(
+            self, *, source_name: str, connector: str, provider_account: str, account_scope: str,
+            query: str, subjects: Sequence[str], policy: Mapping[str, Any]) -> dict[str, Any]:
+        item = self.source_enrollment_item(
+            source_name=source_name, connector=connector, provider_account=provider_account,
+            account_scope=account_scope, query=query, subjects=subjects, policy=policy)
+        rows = self.source_enrollments(source_name)
+        if not rows:
+            raise PersonalScopeUnavailable("personal source enrollment unavailable")
+        row = rows[-1]
+        if row["action"] != "enroll" or any(
+                row[key] != item[key] for key in (
+                    "connector", "provider_account_id", "account_scope", "query_digest",
+                    "policy_digest", "subjects_json", "permission_generation")):
+            raise PersonalScopeUnavailable("personal source enrollment is stale or revoked")
+        if row["scope_epoch"] != self._scope_epoch():
+            raise PersonalScopeUnavailable("personal source enrollment predates the current restore epoch")
+        self.expect_source_enrollment(
+            source_name=source_name, connector=connector, account_scope=account_scope,
+            query=query, subjects=subjects, policy=policy, provider_account=provider_account)
+        expected = self._source_enrollment_material(
+            source_name, row["connector"], row["provider_account_id"], row["account_scope"],
+            row["query_digest"], row["policy_digest"], row["subjects_json"], "enroll",
+            int(row["permission_generation"]), int(row["scope_epoch"]))
+        proof = ids.content_hmac(
+            self._id_key, "enroll:v1:" + json.dumps(expected, sort_keys=True, separators=(",", ":")))
+        if not hmac.compare_digest(str(row["proof"]), proof):
+            raise PersonalScopeUnavailable("personal source enrollment proof is invalid")
+        return row
+
+    def require_active_source_enrollment(self, source_name: str) -> dict[str, Any]:
+        require_approved_source_enrollment(source_name)
+        rows = self.source_enrollments(source_name)
+        if not rows:
+            raise PersonalScopeUnavailable("personal source enrollment unavailable")
+        row = rows[-1]
+        if (row["action"] != "enroll"
+                or row["permission_generation"] != self._permission_generation()
+                or row["scope_epoch"] != self._scope_epoch()):
+            raise PersonalScopeUnavailable("personal source enrollment is stale or revoked")
+        expected = self._source_enrollment_expectations.get(source_name)
+        if expected is None:
+            raise PersonalScopeUnavailable("personal source enrollment expectation is unavailable")
+        if any(row[key] != value for key, value in expected.items() if value is not None):
+            raise PersonalScopeUnavailable("personal source enrollment no longer matches its configuration")
+        expected = self._source_enrollment_material(
+            source_name, row["connector"], row["provider_account_id"], row["account_scope"],
+            row["query_digest"], row["policy_digest"], row["subjects_json"], "enroll",
+            int(row["permission_generation"]), int(row["scope_epoch"]))
+        proof = ids.content_hmac(
+            self._id_key, "enroll:v1:" + json.dumps(expected, sort_keys=True, separators=(",", ":")))
+        if not hmac.compare_digest(str(row["proof"]), proof):
+            raise PersonalScopeUnavailable("personal source enrollment proof is invalid")
+        return row
+
+    def bind_enrolled_signal(
+            self, signal_id: str, *, source_name: str, enrollment_id: int,
+            metadata_marker: str) -> None:
+        self._require_unlocked()
+        require_approved_source_enrollment(source_name)
+        if not isinstance(metadata_marker, str) or not metadata_marker:
+            raise LedgerError("Signal admission needs a metadata marker")
+        with self.transaction() as db:
+            enrollment = db.execute(
+                "SELECT * FROM source_enrollments WHERE enrollment_id=? AND source_name=? "
+                "ORDER BY enrollment_id DESC", (enrollment_id, source_name)).fetchone()
+            latest = db.execute(
+                "SELECT * FROM source_enrollments WHERE source_name=? ORDER BY enrollment_id DESC LIMIT 1",
+                (source_name,)).fetchone()
+            if (enrollment is None or latest is None or enrollment["enrollment_id"] != latest["enrollment_id"]
+                    or enrollment["action"] != "enroll"
+                    or enrollment["permission_generation"] != self._permission_generation()
+                    or enrollment["scope_epoch"] != self._scope_epoch()):
+                raise PersonalScopeUnavailable("personal source enrollment is stale or revoked")
+            signal = db.execute(
+                "SELECT connector,account_scope,upstream_version,content_hmac FROM signals WHERE signal_id=?",
+                (signal_id,)).fetchone()
+            if (signal is None
+                    or signal["connector"] not in (source_name, enrollment["connector"])
+                    or signal["account_scope"] != enrollment["account_scope"]):
+                raise LedgerError("Signal does not belong to the enrolled source")
+            db.execute(
+                "INSERT INTO signal_source_enrollments(signal_id,enrollment_id,metadata_marker) VALUES(?,?,?) "
+                "ON CONFLICT(signal_id) DO UPDATE SET enrollment_id=excluded.enrollment_id,"
+                "metadata_marker=excluded.metadata_marker",
+                (signal_id, enrollment_id, metadata_marker))
+            digest, old_scope = self._write_reviewed_binding(
+                db, "signal", signal_id, str(signal["upstream_version"]), str(signal["connector"]),
+                str(signal["account_scope"]), str(signal["content_hmac"]), "personal")
+            db.execute(
+                "INSERT INTO scope_reviews(object_type,object_id,object_version,old_scope,new_scope,"
+                "permission_generation,reviewer,reviewed_at,authz_digest) VALUES(?,?,?,?,?,?,?,?,?)",
+                ("signal", signal_id, signal["upstream_version"], old_scope, "personal",
+                 self._permission_generation(), "system:source_enrollment", self._clock(), digest))
+
+    def record_coverage_hold(
+            self, *, source_name: str, connector: str, account_scope: str, provider_account_id: str,
+            upstream_id: str, upstream_version: str, detail: str, state: str = "held") -> bool:
+        if state != "held":
+            raise LedgerError("new coverage holds must start held")
+        if any(not isinstance(value, str) or not value for value in (
+                source_name, connector, account_scope, provider_account_id, upstream_id, upstream_version)):
+            raise LedgerError("coverage hold identity is incomplete")
+        if (not isinstance(detail, str) or len(source_name) > 256 or len(connector) > 256
+                or len(account_scope) > 256
+                or len(provider_account_id) > 256 or len(upstream_id) > 512
+                or len(upstream_version) > 512 or len(detail) > 512
+                or any(ord(char) < 32 for char in detail)):
+            raise LedgerError("coverage hold identity or detail exceeds its bound")
+        with self.transaction() as db:
+            held = db.execute(
+                "SELECT COUNT(*) FROM coverage_holds "
+                "WHERE source_name=? AND state='held'",
+                (source_name,)).fetchone()[0]
+            prior = db.execute(
+                "SELECT hold_id FROM coverage_holds WHERE source_name=? AND provider_account_id=? "
+                "AND upstream_id=? AND upstream_version=? AND permission_generation=?",
+                (source_name, provider_account_id, upstream_id, upstream_version,
+                 self._permission_generation())).fetchone()
+            if prior is None and held >= _COVERAGE_HOLD_LIMIT:
+                self._record_coverage_hold_cap(db, source_name, connector, account_scope)
+                return False
+            now = self._clock()
+            db.execute(
+                "INSERT INTO coverage_holds(source_name,connector,account_scope,provider_account_id,"
+                "upstream_id,upstream_version,permission_generation,state,first_seen,last_seen,detail) "
+                "VALUES(?,?,?,?,?,?,?,'held',?,?,?) "
+                "ON CONFLICT(source_name,provider_account_id,upstream_id,upstream_version,"
+                "permission_generation) DO UPDATE SET state='held',last_seen=excluded.last_seen,"
+                "detail=excluded.detail",
+                (source_name, connector, account_scope, provider_account_id, upstream_id, upstream_version,
+                 self._permission_generation(), now, now, detail))
+        return True
+
+    @staticmethod
+    def _coverage_hold_cap_spot(source_name: str) -> str:
+        return f"{_COVERAGE_HOLD_CAP_SPOT}:{source_name}:{_COVERAGE_HOLD_LIMIT}"
+
+    def _record_coverage_hold_cap(
+            self, db: sqlite3.Connection, source_name: str, connector: str, account_scope: str) -> None:
+        row = db.execute(
+            "SELECT blind_spots FROM connector_coverage WHERE connector=? AND account_scope=?",
+            (connector, account_scope)).fetchone()
+        try:
+            blind_spots = list(json.loads(row[0])) if row is not None else []
+        except (TypeError, ValueError):
+            blind_spots = []
+        marker = self._coverage_hold_cap_spot(source_name)
+        if marker not in blind_spots:
+            blind_spots.append(marker)
+        db.execute(
+            "INSERT INTO connector_coverage("
+            "connector,account_scope,status,blind_spots,checked_at,record_count) "
+            "VALUES(?,?,'degraded',?,?,0) "
+            "ON CONFLICT(connector,account_scope) DO UPDATE SET status='degraded',"
+            "blind_spots=excluded.blind_spots,checked_at=excluded.checked_at",
+            (connector, account_scope, json.dumps(blind_spots), self._clock()))
+
+    def _coverage_hold_capped(self, db: sqlite3.Connection, source_name: str) -> bool:
+        if db.execute(
+                "SELECT COUNT(*) FROM coverage_holds WHERE source_name=? AND state='held'",
+                (source_name,)).fetchone()[0] < _COVERAGE_HOLD_LIMIT:
+            return False
+        marker = self._coverage_hold_cap_spot(source_name)
+        for row in db.execute(
+                "SELECT blind_spots FROM connector_coverage WHERE connector=?", (source_name,)):
+            try:
+                if marker in json.loads(row[0]):
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    def resolve_coverage_hold(
+            self, source_name: str, provider_account_id: str, upstream_id: str,
+            upstream_version: str, state: str, *, required: bool = True) -> bool:
+        if state not in ("admitted", "excluded", "tombstoned", "deleted"):
+            raise LedgerError("invalid coverage hold resolution")
+        with self.transaction() as db:
+            changed = db.execute(
+                "UPDATE coverage_holds SET state=?,last_seen=? WHERE source_name=? AND provider_account_id=? "
+                "AND upstream_id=? AND upstream_version=?",
+                (state, self._clock(), source_name, provider_account_id, upstream_id, upstream_version)).rowcount
+            if changed < 1:
+                if required:
+                    raise LedgerError("coverage hold is unknown or belongs to another permission generation")
+                return False
+        return True
+
+    def coverage_holds(
+            self, source_name: str, *, state: str | None = None,
+            permission_generation: int | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM coverage_holds WHERE source_name=?"
+        params: list[Any] = [source_name]
+        if state is not None:
+            sql += " AND state=?"
+            params.append(state)
+        if permission_generation is not None:
+            sql += " AND permission_generation=?"
+            params.append(permission_generation)
+        sql += " ORDER BY first_seen,hold_id"
+        rows = [dict(row) for row in self.conn.execute(sql, params).fetchall()]
+        if (state == "held" and permission_generation is not None and not rows
+                and self._coverage_hold_capped(self.conn, source_name)):
+            return [{
+                "hold_id": 0, "source_name": source_name, "connector": source_name,
+                "account_scope": "", "provider_account_id": "", "upstream_id": "",
+                "upstream_version": "", "permission_generation": permission_generation,
+                "state": "held", "first_seen": "", "last_seen": "",
+                "detail": self._coverage_hold_cap_spot(source_name), "capped": True,
+            }]
+        return rows
 
     def set_processing_state(self, signal_id: str, state: ProcessingState, reason: str | None = None) -> None:
         self._require_unlocked()
@@ -1423,10 +1934,10 @@ class Ledger:
 
     def replace_source_support(self, signal_id: str) -> None:
         """Withdraw obsolete versions only after complete interpretation; retain history."""
-        self.require_personal_fact_admission()
         row = self.signal_row(signal_id)
         if row is None:
             raise LedgerError("unknown Signal")
+        self.require_personal_signal(signal_id, allow_obsolete=True)
         if not self.source_head(signal_id):
             return
         older = self.conn.execute("SELECT signal_id FROM signals WHERE connector=? AND account_scope=? "
@@ -1630,8 +2141,31 @@ class Ledger:
     def set_coverage(self, connector: str, account_scope: str, status: str, blind_spots: Sequence[str] = (),
                      completed_at: str | None = None, catchup_id: str | None = None,
                      requested_from: str | None = None, requested_to: str | None = None,
-                     cursor_generation: str | None = None, reset_cursor: bool = False) -> None:
+                     cursor_generation: str | None = None, reset_cursor: bool = False,
+                     record_count: int = 0) -> None:
+        if type(record_count) is not int or record_count < 0:
+            raise LedgerError("coverage record_count requires a nonnegative integer")
         with self.transaction() as c:
+            spots = list(blind_spots)
+            cap_marker = self._coverage_hold_cap_spot(connector)
+            existing = c.execute(
+                "SELECT blind_spots FROM connector_coverage WHERE connector=? AND account_scope=?",
+                (connector, account_scope)).fetchone()
+            try:
+                recorded = list(json.loads(existing[0])) if existing is not None else []
+            except (TypeError, ValueError):
+                recorded = []
+            capped = (
+                cap_marker in recorded
+                and c.execute(
+                    "SELECT COUNT(*) FROM coverage_holds WHERE source_name=? AND state='held'",
+                    (connector,)).fetchone()[0] >= _COVERAGE_HOLD_LIMIT
+            )
+            if capped:
+                if cap_marker not in spots:
+                    spots.append(cap_marker)
+                status = CoverageStatus.DEGRADED.value
+                cursor_generation = None
             if reset_cursor:
                 cursor_clause = "NULL"
                 cursor_val = None
@@ -1640,14 +2174,15 @@ class Ledger:
                 cursor_val = cursor_generation
             c.execute(
                 f"INSERT INTO connector_coverage(connector,account_scope,status,blind_spots,completed_at,"
-                f"catchup_id,checked_at,requested_from,requested_to,cursor_generation) VALUES(?,?,?,?,?,?,?,?,?,?) "
+                f"catchup_id,checked_at,requested_from,requested_to,cursor_generation,record_count) "
+                f"VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                 f"ON CONFLICT(connector,account_scope) DO UPDATE SET status=excluded.status, "
                 f"blind_spots=excluded.blind_spots, completed_at=COALESCE(excluded.completed_at,"
                 f"connector_coverage.completed_at),catchup_id=excluded.catchup_id,checked_at=excluded.checked_at,"
                 f"requested_from=excluded.requested_from,requested_to=excluded.requested_to,"
-                f"cursor_generation={cursor_clause}",
-                (connector, account_scope, status, json.dumps(list(blind_spots)), completed_at,
-                 catchup_id, self._clock(), requested_from, requested_to, cursor_val))
+                f"cursor_generation={cursor_clause},record_count=excluded.record_count",
+                (connector, account_scope, status, json.dumps(spots), completed_at,
+                 catchup_id, self._clock(), requested_from, requested_to, cursor_val, record_count))
 
     def coverage_rows(self) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM connector_coverage ORDER BY connector, account_scope").fetchall()
@@ -2260,6 +2795,21 @@ class Ledger:
             former_host_quiesced=former_host_quiesced, credentials_revoked=credentials_revoked,
             retirement_receipt=retirement_receipt, former_host_key_fingerprint=former_host_key_fingerprint,
             profile=profile)
+
+
+def invalidate_restored_scope_admission(db: sqlite3.Connection) -> None:
+    """Invalidate admission authority restored from an older ledger image."""
+    tables = {str(row[0]) for row in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "scope_bindings" in tables:
+        db.execute("DELETE FROM scope_bindings WHERE provenance='source_review'")
+    if "signal_source_enrollments" in tables:
+        db.execute("DELETE FROM signal_source_enrollments")
+    if "scope_admission_state" in tables:
+        changed = db.execute(
+            "UPDATE scope_admission_state SET epoch=epoch+1 WHERE singleton=1").rowcount
+        if changed != 1:
+            raise LedgerError("restored scope admission epoch is invalid")
 
 
 def _split_statements(script: str) -> list[str]:

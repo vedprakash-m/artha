@@ -69,6 +69,7 @@ class TestCalendarWriterUnification:
         # Verify domain= kwarg was passed
         _, kwargs = call_kwargs
         assert kwargs.get("domain") == "calendar"
+        assert kwargs.get("expected_token") is not None
 
     def test_fails_loudly_when_state_write_none(self, tmp_path):
         """Post-Wave-0: fallback direct writes are removed.  When _state_write
@@ -147,6 +148,7 @@ class TestTrustEnforcerUnification:
         mock_write.assert_called_once()
         _, kwargs = mock_write.call_args
         assert kwargs.get("domain") == "health_check"
+        assert kwargs.get("expected_token") is not None
 
     def test_update_autonomy_uses_state_write(self, tmp_path):
         from trust_enforcer import TrustEnforcer
@@ -161,6 +163,7 @@ class TestTrustEnforcerUnification:
         mock_write.assert_called_once()
         _, kwargs = mock_write.call_args
         assert kwargs.get("domain") == "health_check"
+        assert kwargs.get("expected_token") is not None
 
     def test_fails_loudly_when_state_write_none(self, tmp_path):
         """Post-Wave-0: fallback direct writes are removed.  When _state_write
@@ -234,6 +237,39 @@ class TestFactExtractorUnification:
             fe.persist_facts([fact], tmp_path)
 
 
+class TestFactExtractorConflictToken:
+    def test_persist_facts_binds_the_original_memory_revision(self, tmp_path):
+        import fact_extractor as fe
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        memory = state_dir / "memory.md"
+        memory.write_text(
+            "---\ndomain: memory\nlast_updated: 2026-11-18\n"
+            "schema_version: '2.0'\nfacts: []\n---\nbody\n",
+            encoding="utf-8",
+        )
+        fact = fe.Fact(
+            id="synthetic-cas-fact",
+            type="preference",
+            domain="health",
+            statement="Synthetic fact.",
+            source="synthetic-session",
+        )
+        mock_write = MagicMock(return_value=MagicMock(success=True))
+        with (
+            patch("lib.memory_policy.extraction_allowed", return_value=True),
+            patch.object(fe, "_load_harness_flag", return_value=True),
+            patch.object(fe, "_load_harness_config", return_value={}),
+            patch.object(fe, "_state_write", mock_write),
+        ):
+            assert fe.persist_facts([fact], tmp_path) == 1
+
+        _, kwargs = mock_write.call_args
+        assert kwargs["domain"] == "memory"
+        assert kwargs["expected_token"] is not None
+
+
 # ---------------------------------------------------------------------------
 # checkpoint — write_atomic
 # ---------------------------------------------------------------------------
@@ -305,7 +341,15 @@ class TestMiddlewareInvokedForStateWrites:
 
         with patch("lib.state_writer._build_middleware_stack", return_value=mock_mw):
             target = tmp_path / "state.md"
-            write(target, "content", domain="test", source="test", snapshot=False)
+            from lib.state_writer import create_if_absent_token
+            write(
+                target,
+                "content",
+                domain="test",
+                source="test",
+                snapshot=False,
+                expected_token=create_if_absent_token(target),
+            )
 
         mock_mw.before_write.assert_called_once()
         args = mock_mw.before_write.call_args[0]

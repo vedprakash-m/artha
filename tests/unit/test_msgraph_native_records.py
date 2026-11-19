@@ -25,6 +25,25 @@ def test_calendar_preserves_real_timestamp_offsets(stamp):
         assert parsed.utcoffset().total_seconds() == 0
 
 
+def test_calendar_converts_supplied_windows_timezone_without_assuming_utc():
+    event = msgraph_calendar._parse_event({
+        "id": "synthetic",
+        "start": {"dateTime": "2026-11-03T09:00:00", "timeZone": "Pacific Standard Time"},
+        "end": {"dateTime": "2026-11-03T10:00:00", "timeZone": "Pacific Standard Time"},
+    })
+    assert event["start"] == "2026-11-03T09:00:00-08:00"
+    assert event["end"] == "2026-11-03T10:00:00-08:00"
+
+
+def test_calendar_refuses_unqualified_time_without_timezone_hint():
+    with pytest.raises(ValueError, match="timezone"):
+        msgraph_calendar._parse_event({
+            "id": "synthetic",
+            "start": {"dateTime": "2026-11-03T09:00:00"},
+            "end": {"dateTime": "2026-11-03T10:00:00"},
+        })
+
+
 @pytest.mark.parametrize("read", [True, False])
 def test_email_exposes_native_read_importance_folder_and_received_fields(read):
     record = msgraph_email._parse_message({

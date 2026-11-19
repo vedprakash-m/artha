@@ -19,7 +19,7 @@ Tests cover:
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -100,6 +100,66 @@ class TestExtractDocxBytes:
 
 
 # ---------------------------------------------------------------------------
+# Graph cursor URL safety
+# ---------------------------------------------------------------------------
+
+class TestGraphCursorUrlSafety:
+    _DELTA_PATH = "/v1.0/drives/drive-1/root/delta"
+
+    def test_rejects_foreign_origin_before_bearer_request(self):
+        from lib import msgraph
+
+        with patch("requests.get") as request:
+            with pytest.raises(ValueError, match="Graph URL"):
+                msgraph._graph_get_full_url(
+                    "synthetic-token",
+                    "https://attacker.invalid/v1.0/drives/drive-1/root/delta?token=x",
+                    allowed_paths={self._DELTA_PATH},
+                )
+        request.assert_not_called()
+
+    def test_rejects_graph_path_outside_exact_allowlist_before_request(self):
+        from lib import msgraph
+
+        with patch("requests.get") as request:
+            with pytest.raises(ValueError, match="Graph URL"):
+                msgraph._graph_get_full_url(
+                    "synthetic-token",
+                    "https://graph.microsoft.com/v1.0/drives/other-drive/root/delta?token=x",
+                    allowed_paths={self._DELTA_PATH},
+                )
+        request.assert_not_called()
+
+    def test_rejects_unsafe_redirect_before_attaching_bearer_to_it(self):
+        from lib import msgraph
+
+        redirect = Mock(
+            status_code=302,
+            headers={"Location": "https://attacker.invalid/collect"},
+            text="redirect",
+        )
+        with patch("requests.get", return_value=redirect) as request:
+            with pytest.raises(ValueError, match="Graph URL"):
+                msgraph._graph_get_full_url(
+                    "synthetic-token",
+                    f"https://graph.microsoft.com{self._DELTA_PATH}?token=x",
+                    allowed_paths={self._DELTA_PATH},
+                )
+        assert request.call_count == 1
+        assert request.call_args.kwargs["allow_redirects"] is False
+
+    def test_persisted_drive_cursor_is_checked_against_drive_path(self):
+        with patch("requests.get") as request:
+            with pytest.raises(ValueError, match="Graph URL"):
+                sp._fetch_delta(
+                    "synthetic-token",
+                    "https://graph.microsoft.com/v1.0/drives/other/root/delta?token=x",
+                    "drive-1",
+                )
+        request.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # _fetch_shared_with_me
 # ---------------------------------------------------------------------------
 
@@ -124,7 +184,7 @@ class TestFetchSharedWithMe:
         item = self._make_item("i1", "d1", "old.md", "2025-01-01T00:00:00Z")
         state = {"shared_with_me": {"last_seen_shared_at": "2026-01-01T00:00:00Z"}}
 
-        with patch("lib.msgraph._graph_get_paginated", return_value=[item]):
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
             results = list(sp._fetch_shared_with_me("tok", state))
 
         assert results == []
@@ -134,20 +194,25 @@ class TestFetchSharedWithMe:
         item = self._make_item("i2", "d1", "pii.md", "2027-01-01T00:00:00Z")
         state: dict = {}
 
-        with patch("lib.msgraph._graph_get_paginated", return_value=[item]):
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
             with patch("connectors.msgraph_sharepoint._download_content", return_value=b"SSN: 123-45-6789"):
                 with patch("connectors.msgraph_sharepoint._extract_text", return_value="SSN: 123-45-6789"):
                     with patch("pii_guard.scan", return_value=(True, {"ssn": 1})):
                         results = list(sp._fetch_shared_with_me("tok", state))
 
         assert results == []
+        assert "last_seen_shared_at" not in state.get("shared_with_me", {})
+        assert any(
+            held.get("reason") == "pii_detected"
+            for held in state.get("held_items", {}).values()
+        )
 
     def test_yields_clean_doc(self):
         item = self._make_item("i3", "d1", "notes.md", "2027-06-01T00:00:00Z")
         state: dict = {}
         body = b"# Clean notes\n\nNo PII here.\n"
 
-        with patch("lib.msgraph._graph_get_paginated", return_value=[item]):
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
             with patch("connectors.msgraph_sharepoint._download_content", return_value=body):
                 with patch("connectors.msgraph_sharepoint._extract_text", return_value=body.decode()):
                     with patch("pii_guard.scan", return_value=(False, {})):
@@ -155,14 +220,15 @@ class TestFetchSharedWithMe:
 
         assert len(results) == 1
         assert results[0]["name"] == "notes.md"
-        assert results[0]["source"] == "shared_with_me"
+        assert results[0]["source"] == "sharepoint"
+        assert results[0]["provider_source"] == "shared_with_me"
 
     def test_cursor_advances_after_run(self):
         item = self._make_item("i4", "d1", "new.md", "2027-07-01T00:00:00Z")
         state: dict = {}
         body = b"# New doc\n"
 
-        with patch("lib.msgraph._graph_get_paginated", return_value=[item]):
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
             with patch("connectors.msgraph_sharepoint._download_content", return_value=body):
                 with patch("connectors.msgraph_sharepoint._extract_text", return_value=body.decode()):
                     with patch("pii_guard.scan", return_value=(False, {})):
@@ -170,13 +236,44 @@ class TestFetchSharedWithMe:
 
         assert state["shared_with_me"]["last_seen_shared_at"] == "2027-07-01T00:00:00Z"
 
+    @pytest.mark.parametrize("failure", ["download", "extract"])
+    def test_cursor_does_not_advance_on_retryable_item_failure(self, failure):
+        item = self._make_item("retry", "d1", "retry.md", "2027-07-02T00:00:00Z")
+        state = {"shared_with_me": {"last_seen_shared_at": "2027-01-01T00:00:00Z"}}
+        download = patch.object(
+            sp,
+            "_download_content",
+            side_effect=RuntimeError("synthetic download failure")
+            if failure == "download"
+            else None,
+            return_value=b"# Retry\n" if failure != "download" else None,
+        )
+        extract = patch.object(
+            sp,
+            "_extract_text",
+            side_effect=RuntimeError("synthetic extraction failure")
+            if failure == "extract"
+            else None,
+            return_value="# Retry\n",
+        )
+
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
+            with download:
+                with extract:
+                    with patch("pii_guard.scan", return_value=(False, {})):
+                        results = list(sp._fetch_shared_with_me("tok", state))
+
+        assert results == []
+        assert state["shared_with_me"]["last_seen_shared_at"] == "2027-01-01T00:00:00Z"
+        assert state["held_items"]
+
     def test_remote_item_field_extraction(self):
         """drive_id and item_id must come from remoteItem, not top-level fields."""
         item = self._make_item("REMOTE_ID", "REMOTE_DRIVE", "doc.md", "2027-08-01T00:00:00Z")
         state: dict = {}
         body = b"# Doc\n"
 
-        with patch("lib.msgraph._graph_get_paginated", return_value=[item]):
+        with patch.object(sp, "_collect_graph_pages", return_value=([item], None)):
             with patch("connectors.msgraph_sharepoint._download_content") as mock_dl:
                 mock_dl.return_value = body
                 with patch("connectors.msgraph_sharepoint._extract_text", return_value=body.decode()):
@@ -268,6 +365,182 @@ class TestFetch:
         # (The exact key construction uses drive_id + item["id"])
         # We just verify no exception is raised and the function completes.
         assert isinstance(results, list)
+
+    @pytest.mark.parametrize("failure", ["download", "extract", "pii"])
+    def test_configured_cursor_does_not_advance_on_item_failure(self, failure):
+        item = {
+            "id": "retry-item",
+            "name": "retry.md",
+            "eTag": "v1",
+            "parentReference": {"path": "/drives/drive-1/root:/docs"},
+        }
+        old_cursor = "https://graph.microsoft.com/v1.0/drives/drive-1/root/delta?token=old"
+        new_cursor = "https://graph.microsoft.com/v1.0/drives/drive-1/root/delta?token=new"
+        state = {
+            "ingested_items": {},
+            "delta_links": {"site1:drive-1": old_cursor},
+        }
+        download = patch.object(
+            sp,
+            "_download_content",
+            side_effect=RuntimeError("synthetic download failure")
+            if failure == "download"
+            else None,
+            return_value=b"# Retry\n",
+        )
+        extract = patch.object(
+            sp,
+            "_extract_text",
+            side_effect=RuntimeError("synthetic extraction failure")
+            if failure == "extract"
+            else None,
+            return_value="# Retry\n",
+        )
+        with (
+            patch.object(sp, "_load_state", return_value=state),
+            patch.object(sp, "_save_connector_state_atomic"),
+            patch("lib.msgraph._graph_get", side_effect=[
+                {"id": "site1", "displayName": "Synthetic"},
+                {"value": [{"id": "drive-1", "name": "Documents"}]},
+            ]),
+            patch.object(sp, "_fetch_delta", return_value=([item], new_cursor)),
+            download,
+            extract,
+            patch(
+                "pii_guard.scan",
+                return_value=(True, {"ssn": 1}) if failure == "pii" else (False, {}),
+            ),
+        ):
+            assert list(sp.fetch(
+                {"access_token": "tok"},
+                {
+                    "sites": [{
+                        "site": "synthetic",
+                        "libraries": [{"name": "Documents"}],
+                    }],
+                    "include_shared_with_me": False,
+                },
+            )) == []
+
+        assert state["delta_links"]["site1:drive-1"] == old_cursor
+        assert state["held_items"]
+
+    def test_configured_cursor_waits_for_consumer_to_resume_after_yield(self):
+        item = {
+            "id": "admit-item",
+            "name": "admit.md",
+            "eTag": "v1",
+            "parentReference": {"path": "/drives/drive-1/root:/docs"},
+        }
+        old_cursor = "https://graph.microsoft.com/v1.0/drives/drive-1/root/delta?token=old"
+        new_cursor = "https://graph.microsoft.com/v1.0/drives/drive-1/root/delta?token=new"
+        state = {
+            "ingested_items": {},
+            "delta_links": {"site1:drive-1": old_cursor},
+        }
+        with (
+            patch.object(sp, "_load_state", return_value=state),
+            patch.object(sp, "_save_connector_state_atomic"),
+            patch("lib.msgraph._graph_get", side_effect=[
+                {"id": "site1", "displayName": "Synthetic"},
+                {"value": [{"id": "drive-1", "name": "Documents"}]},
+            ]),
+            patch.object(sp, "_fetch_delta", return_value=([item], new_cursor)),
+            patch.object(sp, "_download_content", return_value=b"# Admit\n"),
+            patch.object(sp, "_extract_text", return_value="# Admit\n"),
+            patch("pii_guard.scan", return_value=(False, {})),
+        ):
+            documents = sp.fetch(
+                {"access_token": "tok"},
+                {
+                    "sites": [{
+                        "site": "synthetic",
+                        "libraries": [{"name": "Documents"}],
+                    }],
+                    "include_shared_with_me": False,
+                },
+            )
+            assert next(documents)["name"] == "admit.md"
+            documents.close()
+
+        assert state["delta_links"]["site1:drive-1"] == old_cursor
+        assert "drive-1:admit-item" not in state["ingested_items"]
+
+    def test_configured_cursor_advances_after_all_listed_items_are_policy_resolved(self):
+        deleted = {
+            "id": "deleted-item",
+            "name": "gone.md",
+            "deleted": True,
+            "eTag": "v2",
+        }
+        admitted = {
+            "id": "admit-item",
+            "name": "admit.md",
+            "eTag": "v2",
+            "parentReference": {"path": "/drives/drive-1/root:/docs"},
+        }
+        new_cursor = "https://graph.microsoft.com/v1.0/drives/drive-1/root/delta?token=new"
+        state = {"ingested_items": {}, "delta_links": {}}
+        with (
+            patch.object(sp, "_load_state", return_value=state),
+            patch.object(sp, "_save_connector_state_atomic"),
+            patch("lib.msgraph._graph_get", side_effect=[
+                {"id": "site1", "displayName": "Synthetic"},
+                {"value": [{"id": "drive-1", "name": "Documents"}]},
+            ]),
+            patch.object(sp, "_fetch_initial", return_value=([deleted, admitted], new_cursor)),
+            patch.object(sp, "_download_content", return_value=b"# Admit\n"),
+            patch.object(sp, "_extract_text", return_value="# Admit\n"),
+            patch("pii_guard.scan", return_value=(False, {})),
+        ):
+            results = list(sp.fetch(
+                {"access_token": "tok"},
+                {
+                    "sites": [{
+                        "site": "synthetic",
+                        "libraries": [{"name": "Documents"}],
+                    }],
+                    "include_shared_with_me": False,
+                },
+            ))
+
+        assert [doc["name"] for doc in results] == ["admit.md"]
+        assert state["delta_links"]["site1:drive-1"] == new_cursor
+
+    def test_untrusted_delta_link_is_never_persisted(self):
+        item = {
+            "id": "admit-item",
+            "name": "admit.md",
+            "eTag": "v2",
+            "parentReference": {"path": "/drives/drive-1/root:/docs"},
+        }
+        bad_cursor = "https://attacker.invalid/v1.0/drives/drive-1/root/delta?token=stolen"
+        state = {"ingested_items": {}, "delta_links": {}}
+        with (
+            patch.object(sp, "_load_state", return_value=state),
+            patch.object(sp, "_save_connector_state_atomic"),
+            patch("lib.msgraph._graph_get", side_effect=[
+                {"id": "site1", "displayName": "Synthetic"},
+                {"value": [{"id": "drive-1", "name": "Documents"}]},
+            ]),
+            patch.object(sp, "_fetch_initial", return_value=([item], bad_cursor)),
+            patch.object(sp, "_download_content", return_value=b"# Admit\n"),
+            patch.object(sp, "_extract_text", return_value="# Admit\n"),
+            patch("pii_guard.scan", return_value=(False, {})),
+        ):
+            results = list(sp.fetch(
+                {"access_token": "tok"},
+                {
+                    "sites": [{
+                        "site": "synthetic",
+                        "libraries": [{"name": "Documents"}],
+                    }],
+                    "include_shared_with_me": False,
+                },
+            ))
+
+        assert [doc["name"] for doc in results] == ["admit.md"]
+        assert "site1:drive-1" not in state["delta_links"]
 
 
 # ---------------------------------------------------------------------------

@@ -282,7 +282,7 @@ def static_status(root: Path, cap: Capability) -> tuple[bool, bool]:
     return code, tests
 
 
-# How each requirement closes under the 2026-10-31 completion plan (re-artha.md). A route, not a status:
+# How each requirement closes under the owner-local re-Artha completion plan. A route, not a status:
 # acceptance is owner evidence recorded in the spec log, never claimed by this register.
 _LIVE = "recorded live run + owner acceptance"
 CLOSURE_ROUTES: Mapping[str, str] = {
@@ -322,13 +322,14 @@ def render_register(root: Path) -> str:
 def manifest(root: Path, previous: Mapping[str, object] | None = None) -> dict[str, object]:
     """§12.12 artifact manifest: acceptance IDs mapped to modules and tests (drift-checked in CI).
 
-    ``spec_sha256`` digests the local-only specification when it is present; a CI checkout does not
-    have it, so the previous value is kept and never compared.
+    ``spec_sha256`` digests the owner-local specification when it is present; a CI checkout does not
+    have it, so the previous value is kept and never compared. The tracked manifest labels that source
+    owner-local because it is intentionally absent from clean checkouts.
     """
     import hashlib  # noqa: PLC0415
 
     from catchup_core import CORE_CONTRACT_VERSION  # noqa: PLC0415
-    spec = root / "specs" / "re-artha.md"
+    spec = root / "specs" / "refix-artha.md"
     digest = hashlib.sha256(spec.read_bytes()).hexdigest() if spec.is_file() else (previous or {}).get("spec_sha256", "")
     paths = sorted({path for capability in CAPABILITIES for path in (*capability.modules, *capability.tests)}
                    | {_BOUNDARY_TESTS}
@@ -339,7 +340,8 @@ def manifest(root: Path, previous: Mapping[str, object] | None = None) -> dict[s
     implementation = "\n".join(path + ":" + hashlib.sha256((root / path).read_bytes().replace(b'\r\n', b'\n')).hexdigest()
                                 for path in paths if (root / path).is_file())
     return {
-        "spec": "specs/re-artha.md", "spec_version": "0.8.0", "spec_sha256": digest,
+        "spec": "specs/refix-artha.md", "spec_version": "0.5.1",
+        "spec_owner_local": True, "spec_sha256": digest,
         "contract_version": CORE_CONTRACT_VERSION,
         "implementation_sha256": hashlib.sha256(implementation.encode()).hexdigest(),
         "boundary_cases": {case: {"fixture": fixture if "::" in fixture else _BOUNDARY_TESTS + "::" + fixture, "evidence_type": "synthetic"}

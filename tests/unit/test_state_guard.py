@@ -135,6 +135,23 @@ def test_mirror_gfs_copies_new_files_only_and_never_deletes(tmp_path, monkeypatc
     assert (mirror / "daily" / "a.zip").exists() and (mirror / "daily" / "b.zip").exists()
 
 
+def test_mirror_keeps_a_timestamped_copy_when_a_same_named_file_changes(tmp_path, monkeypatch):
+    fake = tmp_path / "repo"
+    (fake / "backups" / "daily").mkdir(parents=True)
+    z = fake / "backups" / "daily" / "today.zip"
+    z.write_text("version one")
+    monkeypatch.setattr(sg, "ARTHA_DIR", fake)
+    mirror = tmp_path / "mirror"
+    assert sg.mirror_gfs(mirror)[0] == 0
+    assert sg.mirror_gfs(mirror)[1].startswith("gfs mirror: 0 new")          # unchanged: nothing copied
+    z.write_text("version two, rewritten later the same day")
+    code, msg = sg.mirror_gfs(mirror)
+    assert code == 0 and "1 changed files kept" in msg
+    copies = sorted(p.name for p in (mirror / "daily").iterdir())
+    assert "today.zip" in copies and len(copies) == 2
+    assert (mirror / "daily" / "today.zip").read_text() == "version one"       # the old copy is never overwritten
+
+
 def test_nested_files_are_snapshotted_restored_and_drilled_but_big_and_binary_files_are_not(env, tmp_path):
     (env / "work").mkdir()
     (env / "work" / "notes.md").write_text("---\ndomain: x\n---\nwork notes\n")

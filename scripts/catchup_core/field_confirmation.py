@@ -291,7 +291,7 @@ class FieldReviewStore:
                 'domain': binding.domain, 'predicate': binding.predicate, 'signal_version': binding.signal_version,
                 'provenance_hmac': binding.provenance_hmac, 'span_start': binding.span[0], 'span_end': binding.span[1],
                 'scope': _json(sorted(subjects)), 'reviewer': self.viewer}
-        proof = document_link_proof(db, link)
+        proof = document_link_proof(db, link, self.ledger._id_key)
         db.execute('INSERT OR REPLACE INTO document_field_links VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    (*link.values(), proof))
 

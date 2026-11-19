@@ -1,9 +1,26 @@
-## §5 Slash Commands
+## Canonical command matrix
 
-**Primary namespaces:** `/brief`, `/work`, `/items`, `/goals`, `/domain`, `/content`, `/guide`
-**System:** `/health`
-**Legacy aliases:** `/catch-up` → `/brief` · `/pr` → `/content` · `/stage` → `/content` ·
-`/eval` → `/health quality` · `/cost` → `/health cost` · `/privacy` → `/health privacy` · `/diff` → `/health changes`
+Bare words are primary. Use colon syntax for sub-commands (`brief:flash`,
+`items:done OI-001`), and use natural-language aliases where shown. Slash
+forms are deprecated compatibility aliases, not the documented command style.
+The detailed command reference below expands this matrix; this table is the
+single command-routing source.
+
+| Bare command / aliases | Colon sub-commands | Deprecated slash forms | Authority / scope | Execution |
+|---|---|---|---|---|
+| `brief`, `catch me up`, `morning briefing`, `SITREP` | `brief:flash`, `brief:deep`, `brief:standard`, `brief:digest`, `brief:everything` | `/brief`, `/catch-up`, `/catch-up <format>` | Personal Catch-up | Load `workflow/preflight.md` → `fetch.md` → `process.md` → `reason.md` → `finalize.md` → `catchup.md` |
+| `show everything` | — | `/brief everything` | Personal Catch-up | Run a deep Catch-up; retain overflowed Open Items and State entries |
+| `work`, `work briefing` | `work:prep`, `work:sprint`, `work:connect-prep`, `work:memo`, `work:people`, `work:remember` | `/work`, `/work <sub-command>` | Work-only authority; never Personal State | Read `config/commands.md` Work sections and authorized `state/work/` files |
+| `items`, `what's open`, `what's overdue` | `items:add`, `items:done`, `items:defer`, `items:quick` | `/items`, `/items <sub-command>` | Personal Open Items | Read and, only with an approved action, update `state/open_items.md` through its owner |
+| `goals`, `goal progress`, `sprint` | `goals:sprint new`, `goals:sprint pause`, `goals:sprint close`, `goals:leading` | `/goals`, `/goals <sub-command>` | Personal Goals | Read `state/goals.md`; distinguish authored and derived observations |
+| `domain <X>`, `<X> status` | — | `/domain <X>` | One Personal Domain | Read `prompts/<X>.md` and the authorized `state/<X>.md` |
+| `content`, `draft a post` | `content:calendar`, `content:draft`, `content:approve`, `content:posted`, `content:dismiss`, `content:voice`, `content:threads` | `/content`, `/pr`, `/stage` | Personal content; publication needs explicit approval | Read `state/pr_manager.md` and `state/gallery.yaml` |
+| `guide`, `show commands` | `guide:work`, `guide:system`, `guide:setup`, `guide:content` | `/guide` | Read-only command discovery | Show this matrix and the applicable detail section |
+| `health`, `system status`, `is everything OK` | `health:connections`, `health:quality`, `health:cost`, `health:privacy`, `health:changes` | `/health`, `/status`, `/eval`, `/cost`, `/privacy`, `/diff` | Read-only system health | Run `python scripts/preflight.py --read-only`; distinguish unavailable from failed |
+| `scope-review <source>` | `scope-review:<source> --object <id>`, `scope-review:<source> --enroll` | — | Owner terminal only; existing or enrolled Personal scope | Run `python scripts/catchup_core/cli.py scope-review ...`; TTY and configured-owner checks apply |
+| `implement`, `fix`, `test`, `specification audit` | — | — | Authorized engineering scope | Load `workflow/development.md`; preserve unrelated work and validate in isolation |
+
+## Detailed command reference
 
 ---
 

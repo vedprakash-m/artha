@@ -1,7 +1,7 @@
 """repository.py — Gallery I/O, atomic writes, event journal, GalleryMemory.
 
 Handles all file-system operations for gallery.yaml and gallery_memory.yaml:
-  - Atomic YAML writes (§4.4 — fsync + os.replace + fcntl lock)
+  - Atomic YAML writes (§4.4 — fsync + os.replace + native file lock)
   - Corruption recovery with fallback to .bak
   - Lazy loading (§8.1.1) — only deserializes required fields
   - 50-card hard cap enforcement (§8.1.1)
@@ -11,7 +11,7 @@ Spec: §4.4, §4.5, §4.6, §8.1.1
 """
 from __future__ import annotations
 
-import fcntl
+import errno
 import os
 import shutil
 import tempfile
@@ -36,16 +36,49 @@ SCHEMA_VERSION = "1.0"
 # Atomic write helper (§4.4)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _write_yaml_atomic(dest_path: Path, data: dict) -> None:
-    """Atomic YAML write: tempfile → fsync → os.replace() + fcntl lock.
+def _lock_file(lock_fd) -> None:
+    """Acquire an exclusive, interruptible process lock on *lock_fd*."""
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
 
-    Platform scope: macOS/Linux (fcntl). Windows users must use WSL2.
-    """
+        lock_fd.seek(0)
+        if not lock_fd.read(1):
+            lock_fd.write(b"\0")
+            lock_fd.flush()
+        lock_fd.seek(0)
+        while True:
+            try:
+                msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EDEADLK):
+                    raise
+                time.sleep(0.001)
+    else:
+        import fcntl  # noqa: PLC0415
+
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+
+def _unlock_file(lock_fd) -> None:
+    if os.name == "nt":
+        import msvcrt  # noqa: PLC0415
+
+        lock_fd.seek(0)
+        msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl  # noqa: PLC0415
+
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+
+
+def _write_yaml_atomic(dest_path: Path, data: dict) -> None:
+    """Atomic YAML write: lock → tempfile → fsync → os.replace()."""
     lock_path = dest_path.with_suffix(dest_path.suffix + ".lock")
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(lock_path, "w") as lock_fd:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    with open(lock_path, "a+b") as lock_fd:
+        _lock_file(lock_fd)
         try:
             fd, tmp_path = tempfile.mkstemp(
                 dir=dest_path.parent,
@@ -64,7 +97,7 @@ def _write_yaml_atomic(dest_path: Path, data: dict) -> None:
                     pass
                 raise
         finally:
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            _unlock_file(lock_fd)
 
 
 def _safe_read_yaml(path: Path) -> dict | None:

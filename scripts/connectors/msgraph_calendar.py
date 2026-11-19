@@ -59,6 +59,28 @@ def _parse_date_arg(date_str: str, end_of_day: bool = False) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _event_datetime(raw: dict, field: str) -> str:
+    value = str(raw.get("dateTime") or "")
+    if not value:
+        return value
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        return parsed.isoformat()
+    zone = str(raw.get("timeZone") or "").strip()
+    windows_zones = {
+        "Pacific Standard Time": "America/Los_Angeles",
+        "Mountain Standard Time": "America/Denver",
+        "Central Standard Time": "America/Chicago",
+        "Eastern Standard Time": "America/New_York",
+        "UTC": "UTC",
+    }
+    zone_name = windows_zones.get(zone, zone)
+    if not zone_name:
+        raise ValueError(f"calendar {field} timezone is missing")
+    import zoneinfo
+    return parsed.replace(tzinfo=zoneinfo.ZoneInfo(zone_name)).isoformat()
+
+
 def _parse_event(event: dict, calendar_name: str = "Calendar") -> dict:
     """Convert a raw MS Graph event object into the Artha canonical event dict."""
     summary = event.get("subject") or "(no title)"
@@ -69,13 +91,8 @@ def _parse_event(event: dict, calendar_name: str = "Calendar") -> dict:
         start_dt = (start_obj.get("dateTime") or "")[:10]
         end_dt = (end_obj.get("dateTime") or "")[:10]
     else:
-        start_dt = start_obj.get("dateTime", "")
-        end_dt = end_obj.get("dateTime", "")
-        # Normalise fractional seconds
-        if start_dt and not re.search(r"(Z|[+-]\d{2}:\d{2})$", start_dt):
-            start_dt = re.sub(r"\.\d+$", "", start_dt) + "Z"
-        if end_dt and not re.search(r"(Z|[+-]\d{2}:\d{2})$", end_dt):
-            end_dt = re.sub(r"\.\d+$", "", end_dt) + "Z"
+        start_dt = _event_datetime(start_obj, "start")
+        end_dt = _event_datetime(end_obj, "end")
     location_obj = event.get("location", {})
     location = location_obj.get("displayName", "") if isinstance(location_obj, dict) else ""
     description = (event.get("bodyPreview") or "")[:500]

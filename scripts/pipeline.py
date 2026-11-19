@@ -393,7 +393,6 @@ def _fetch_one(
     max_delay = retry_cfg.get("max_delay_seconds", 30.0)
 
     lines: list[str] = []
-    seen_lines: set[str] = set()
 
     # ── AFW-1: Tool guardrail check before fetch ──────────────────────────────
     if registry is not None and _GUARDRAILS_AVAILABLE and _TripwireResult is not None:
@@ -416,49 +415,58 @@ def _fetch_one(
     def _do_fetch() -> int:
         count = 0
         attempt_lines: list[str] = []
-        for record in handler.fetch(
-            since=since,
-            max_results=max_results,
-            auth_context=auth_ctx,
-            source_tag=source_tag,
-            **extra_kwargs,
-        ):
-            # Calendar deletion tombstones carry only an id (no start); they are not
-            # malformed events. Skip them as catchup_core.adapters does; id-less ones still
-            # fail. Full cancelled events (with start) keep flowing through validation.
-            if (isinstance(record, dict) and record.get("status") == "cancelled"
-                    and not record.get("start")
-                    and isinstance(record.get("id"), str) and record["id"].strip()):
-                continue
-            # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
-            # Malformed records are SKIPPED with a WARNING (never crash pipeline).
-            try:
-                _validated = _validate_connector_record(record)
-            except (TypeError, ValueError) as _vex:
-                _val_errors[0] += 1
-                if len(_val_reasons) < 5:
-                    _val_reasons.append(str(_vex)[:160])
-                _log.warning(
-                    "schema.validation_error",
-                    connector=name,
-                    error=str(_vex),
-                )
-                print(
-                    f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
-                    file=sys.stderr,
-                )
-                continue
-            # D-21: connectors keep native fields; consumers still get a derived date_iso.
-            if "date_iso" not in record:
-                record["date_iso"] = _validated.date_iso
-            line = json.dumps(record, ensure_ascii=False, default=str)
-            attempt_lines.append(line)
-            if line not in seen_lines:
-                lines.append(line)
-                seen_lines.add(line)
-            count += 1
-        # A completed retry supersedes failed prefixes; exhausted retries retain distinct partials.
-        lines[:] = attempt_lines
+        attempt_errors = 0
+        attempt_reasons: list[str] = []
+        if _tracker is not None:
+            _tracker.scopes.clear()
+            _tracker.collection_cursors.clear()
+            _tracker.full_listings.clear()
+            _tracker.deleted_collections.clear()
+            _tracker.cursor = None
+            _tracker.cursor_reset = False
+            _tracker.delta = False
+        try:
+            for record in handler.fetch(
+                since=since,
+                max_results=max_results,
+                auth_context=auth_ctx,
+                source_tag=source_tag,
+                **extra_kwargs,
+            ):
+                # Calendar deletion tombstones carry only an id (no start); they are not
+                # malformed events. Skip them as catchup_core.adapters does; id-less ones still
+                # fail. Full cancelled events (with start) keep flowing through validation.
+                if (isinstance(record, dict) and record.get("status") == "cancelled"
+                        and not record.get("start")
+                        and isinstance(record.get("id"), str) and record["id"].strip()):
+                    continue
+                # DEBT-009 / DEBT-SCHEMA-001: Schema-on-write validation at system boundary.
+                # Malformed records are SKIPPED with a WARNING (never crash pipeline).
+                try:
+                    _validated = _validate_connector_record(record)
+                except (TypeError, ValueError) as _vex:
+                    attempt_errors += 1
+                    if len(attempt_reasons) < 5:
+                        attempt_reasons.append(str(_vex)[:160])
+                    _log.warning(
+                        "schema.validation_error",
+                        connector=name,
+                        error=str(_vex),
+                    )
+                    print(
+                        f"[pipeline] SCHEMA WARN {name}: record skipped — {_vex}",
+                        file=sys.stderr,
+                    )
+                    continue
+                # D-21: connectors keep native fields; consumers still get a derived date_iso.
+                if "date_iso" not in record:
+                    record["date_iso"] = _validated.date_iso
+                attempt_lines.append(json.dumps(record, ensure_ascii=False, default=str))
+                count += 1
+        finally:
+            lines[:] = attempt_lines
+            _val_errors[0] = attempt_errors
+            _val_reasons[:] = attempt_reasons
         return count
 
     _tracker_cm = coverage.track(name) if coverage is not None else None
@@ -483,6 +491,7 @@ def _fetch_one(
             max_delay=max_delay,
             context=f"pipeline.{name}",
             label=name,
+            retryable_exceptions=(RuntimeError,),
         )
         elapsed = time.monotonic() - t0
         _finish(None, elapsed)
@@ -1359,9 +1368,11 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
 
     # ── Read existing events ───────────────────────────────────────────────
     existing_lines: list[str] = []
+    expected_token = None
     if state_path.exists():
         try:
-            content = state_path.read_text(encoding="utf-8")
+            from lib.state_writer import read_versioned
+            content, expected_token = read_versioned(state_path)
             # Strip YAML frontmatter
             if content.startswith("---"):
                 parts = content.split("---", 2)
@@ -1415,22 +1426,20 @@ def _merge_home_events_buffer(artha_dir: Path) -> None:
     body_text = frontmatter + "\n".join(kept) + ("\n" if kept else "")
 
     try:
-        from lib.state_writer import write as _sw_write  # type: ignore[import]
+        from lib.state_writer import create_if_absent_token, write as _sw_write  # type: ignore[import]
+        if expected_token is None:
+            expected_token = create_if_absent_token(state_path)
         result = _sw_write(
             state_path,
             body_text,
             domain="home",
             source="pipeline",
-            snapshot=False,
             pii_check=False,
+            expected_token=expected_token,
         )
         if not result.success:
             print('[pipeline] WARNING: home events were not persisted; buffer retained', file=sys.stderr)
             return
-    except ImportError:
-        # state_writer not available (e.g., running tests without full install)
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(body_text, encoding="utf-8")
     except Exception as exc:
         print(f"[pipeline] WARNING: state_writer failed for home_events.md: {exc}", file=sys.stderr)
         return

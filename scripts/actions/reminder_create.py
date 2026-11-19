@@ -9,7 +9,7 @@ SAFETY:
   - dry_run: returns task preview JSON; no API write.
   - execute: creates task in the specified To Do list.
   - No undo: task deletion is trivial for the user; undo window not applicable.
-  - autonomy_floor: false — can be auto-executed at Trust Level 2.
+  - Explicit human review is required; automatic approvals are refused.
 
 Ref: specs/act.md §8.3
 """
@@ -19,6 +19,7 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any, Optional
 
@@ -30,6 +31,13 @@ from actions.base import ActionProposal, ActionResult
 
 # Graph API base
 _GRAPH_TODO_BASE = "https://graph.microsoft.com/v1.0/me/todo/lists"
+
+
+class _NoGraphRedirect(urllib.request.HTTPRedirectHandler):
+    """A Graph bearer token must never follow a provider-selected redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
 
 # Priority mapping: Artha → Graph importance
 _IMPORTANCE_MAP = {"P0": "high", "P1": "normal", "P2": "low", "high": "high", "normal": "normal", "low": "low"}
@@ -223,6 +231,16 @@ def _graph_request(
     access_token: str = "",
 ) -> dict:
     """Make an authenticated Graph API request. Returns parsed JSON dict."""
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc != "graph.microsoft.com"
+        or not parsed.path.startswith("/v1.0/me/todo/")
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise ValueError("Graph destination is outside the approved To Do API")
     data = json.dumps(body).encode() if body else None
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -230,7 +248,8 @@ def _graph_request(
         "Accept": "application/json",
     }
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    opener = urllib.request.build_opener(_NoGraphRedirect())
+    with opener.open(req, timeout=15) as resp:
         return json.load(resp)
 
 

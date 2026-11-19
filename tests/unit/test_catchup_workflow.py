@@ -703,7 +703,6 @@ def test_core_owned_open_items_fence_names_alias_and_unknown_ownership():
 def test_identity_router_keeps_shadow_and_authoritative_publication_distinct():
     core = (_REPO / "config" / "Artha.core.md").read_text(encoding="utf-8")
     router = core.split("## §R — Command Router", 1)[1]
-    brief_row = next(line for line in router.splitlines() if line.startswith("| brief,"))
-
-    assert "shadow comparison" in brief_row
-    assert "authoritative core publication is separate and release-gated" in brief_row
+    assert "config/commands.md` is the single command matrix" in router
+    assert "shadow" in router
+    assert "release boundary" in router

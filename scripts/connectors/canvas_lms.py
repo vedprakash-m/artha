@@ -21,6 +21,9 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+_MAX_PAGES = 20
+_MAX_ITEMS = 1000
+
 
 # ---------------------------------------------------------------------------
 # Helpers (moved from canvas_fetch.py)
@@ -72,7 +75,11 @@ def _canvas_get(canvas_url: str, token: str, endpoint: str, params: Optional[dic
     url = f"{canvas_url}/api/v1{endpoint}"
     headers = {"Authorization": f"Bearer {token}"}
     results: list = []
+    seen: set[str] = set()
+    pages = 0
     while url:
+        if pages >= _MAX_PAGES or len(results) >= _MAX_ITEMS:
+            raise RuntimeError(f"Canvas pagination exceeded its bound for {endpoint}")
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         resp.raise_for_status()
         data = resp.json()
@@ -90,6 +97,13 @@ def _canvas_get(canvas_url: str, token: str, endpoint: str, params: Optional[dic
                     break
         url = next_url
         params = None
+        pages += 1
+        if url:
+            if url in seen:
+                raise RuntimeError(f"Canvas pagination repeated for {endpoint}")
+            seen.add(url)
+    if len(results) > _MAX_ITEMS:
+        raise RuntimeError(f"Canvas result count exceeded its bound for {endpoint}")
     return results
 
 
@@ -119,12 +133,17 @@ def _gpa_point(letter: str) -> float:
 def _fetch_student_data(canvas_url: str, student_name: str, token: str) -> dict:
     """Fetch courses, recent assignments and grades for one student."""
     now = datetime.now(timezone.utc)
+    profile = _canvas_get(canvas_url, token, "/users/self/profile")
+    profile_id = profile[0].get("id") if profile and isinstance(profile[0], dict) else None
+    if profile_id in (None, ""):
+        raise RuntimeError("Canvas profile did not provide a native user ID")
     courses = _canvas_get(canvas_url, token, "/courses", {
         "enrollment_state": "active",
         "include[]": ["term", "total_scores"],
         "per_page": 50,
     })
     student_data: dict = {
+        "id": str(profile_id),
         "name": student_name,
         "fetched_at": now.isoformat(),
         "courses": [],
@@ -227,7 +246,12 @@ def fetch(
         print("[canvas_lms] No Canvas students configured in user_profile.yaml", file=sys.stderr)
         return
 
+    if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+        raise ValueError("max_results must be a positive integer")
+    yielded = 0
     for student_name, cfg in students_cfg.items():
+        if yielded >= max_results:
+            break
         token = (
             auth_context.get("tokens", {}).get(student_name)
             or _get_token(student_name, cfg.get("key", ""))
@@ -237,10 +261,30 @@ def fetch(
             continue
         try:
             data = _fetch_student_data(canvas_url, student_name, token)
+            user_id = data.get("id")
+            fetched_at = data.get("fetched_at")
+            if not isinstance(user_id, str) or not user_id.strip() or not isinstance(fetched_at, str) \
+                    or not fetched_at.strip():
+                raise ValueError("Canvas student summary lacks native identity or observation time")
+            data["subject"] = f"{data.get('name', student_name)} Canvas summary"
+            course_names = [str(c.get("name", "")) for c in data.get("courses", []) if c.get("name")]
+            due_names = [
+                str(a.get("name", "")) for a in data.get("upcoming_assignments", []) if a.get("name")
+            ]
+            data["body"] = "\n".join(
+                part for part in (
+                    "Courses: " + ", ".join(course_names) if course_names else "",
+                    "Upcoming: " + ", ".join(due_names) if due_names else "",
+                ) if part
+            )
+            data["date_iso"] = fetched_at
             if source_tag:
                 data["source"] = source_tag
             yield data
+            yielded += 1
         except Exception as exc:
+            from lib.connector_coverage import report_scope  # type: ignore[import]
+            report_scope(f"canvas:{student_name}", "failed", reason=type(exc).__name__)
             print(f"[canvas_lms] Error fetching '{student_name}': {exc}", file=sys.stderr)
 
 

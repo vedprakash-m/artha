@@ -1,5 +1,19 @@
 # re-artha implementation status — 2026-11-18
 
+## Final synthetic refix candidate — 2026-11-18
+
+The refix engineering candidate is locally complete except for post-commit changed-line coverage and the
+owner-gated release steps. Deterministic isolated partitions covered the complete non-scale core with
+5,586 passes and 109 skips; timing-sensitive failures passed on serial rerun. All 108 recovery-access cases
+passed across four isolated node slices. The single 6,500-member scale case passed in 752.41 seconds under
+its 1,200-second timeout; its older ~490-second Windows guideline was not met.
+
+Merged focused evidence includes 309 B.8 cases, 366 SharePoint/release cases, 252 repaired public regression
+cases with two skips, and four final development canaries. Compile, Ruff, strict mypy, imports, state-write
+ratchet, test hygiene, generated registers, prompt lint, ownership, lint-debt and tracked/unpushed privacy
+scans passed. The owner-local specification records the same candidate evidence; no live migration, source
+enrollment, release re-sign, provider operation, Work recovery, or owner UAT was performed.
+
 ## Spec archived; open items handed off — 2026-11-18
 
 The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
@@ -14,6 +28,28 @@ The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` 
   - re-sign 21, a new D3 proposal and `enroll` → `specs/refix-artha.md §B.3`
   - native Work recovery (fresh generation-12 proposal) → `specs/refix-artha.md §B.4`
   - classification-review workflow and live UAT → `specs/refix-artha.md §B.2`
+
+`specs/refix-artha.md` is owner-local and ignored by Git; these tracked notes remain authoritative for status in a
+clean checkout. Do not treat a local pointer as evidence that the complete specification is part of hosted CI.
+
+## E0 documentation close-out — 2026-11-18
+
+- **Engineering (synthetic only):** the B.2 live-UAT step matrix is derived from the seven `tools/uat`
+  scenarios and `tools/uat/_harness.py` effect kinds. The Connector inventory is derived from the active
+  catchup-core source map and Domain-pack callers: `home_email` is the one supported-in-E1 but still Held source;
+  the other configured Personal sources remain Held, the uncalled `outlook_inbox` is retired from the E0 candidate,
+  and unconfigured `school_portal` remains disclosed as not fetched.
+- **Operational acceptance:** **Held** behind Track L, especially owner scope enrollment/review and owner
+  acceptance of the live matrix. RA-21 documentary scope and whole-snapshot export stay Held. D-05 (E5 budgets)
+  and D-08 (E4 appointment severity) remain owner decisions.
+- **Release:** **Held** behind `release_resign_21`, hosted evidence and explicit activation. Generated
+  registers/manifests record synthetic implementation bytes; they do not establish operational acceptance or release.
+
+Validation close-out: generated capability/test registers and identity validation passed; the example
+catchup-core configuration loaded; the focused isolated register, command, identity, workflow and UAT selection
+reported **138 passed, 1 skipped**. Skipped and unavailable checks remain non-results.
+
+This pass performs no migration, provider request, live UAT, release, commit or push.
 
 ## Repository completion audit — 2026-11-17
 

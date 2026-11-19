@@ -115,6 +115,9 @@ def _validate_release_evidence(request: CatchupRequest, config: Mapping[str, Any
             or not _count(result.get("live_cases"), positive=True) or result["live_cases"] != live_cases
             or not isinstance(result.get("owner_signed_at"), str) or not result["owner_signed_at"].strip()):
         raise PermissionDenied("release scorecard lacks passing consented live evidence")
+    if result.get("recorded_at", result["owner_signed_at"]) != result["owner_signed_at"]:
+        raise PermissionDenied("release recorded_at differs from the compatibility owner timestamp")
+    _validate_owner_decision_reference(result, release, "release scorecard")
     _validate_domains(result, domains)
     _validate_evaluation_cohort(result, cohort or evaluation_cohort(config, domains))
 
@@ -653,6 +656,17 @@ def _recovery_digest(value: Any) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(char in '0123456789abcdef' for char in value)
 
 
+def _validate_owner_decision_reference(
+        artifact: Any, release: Mapping[str, Any], label: str) -> None:
+    if not isinstance(artifact, Mapping):
+        raise PermissionDenied(f"{label} requires the approved authenticated owner decision reference")
+    approved = release.get("owner_decision_sha256")
+    reference = artifact.get("owner_decision_ref")
+    if (not _recovery_digest(approved) or not _recovery_digest(reference)
+            or reference != approved):
+        raise PermissionDenied(f"{label} requires the approved authenticated owner decision reference")
+
+
 def _validate_recovery_observation(value: Any, *, profile: str, os_name: str | None,
                                  digest: str, generation: str, reviewed_at: datetime) -> None:
     fields = {'profile', 'checkpoint_sha256', 'checkpoint_generation', 'observed_at',
@@ -677,12 +691,18 @@ def _validate_recovery_observation(value: Any, *, profile: str, os_name: str | N
         raise PermissionDenied('recovery requires explicit verified current privacy continuity and replay')
 
 
-def _validate_recovery_acceptance(rehearsal: Any, release: Mapping[str, Any],
+def _validate_recovery_acceptance(rehearsal: Any, release: Mapping[str, Any],  # noqa: PLR0912
                                   head: Mapping[str, Any], generation: str) -> None:
     sliced = _evidence_field(release) == 'slice_waiver'   # Windows Work recovery is a named waiver (SR-09)
-    receipt = _recovery_fields(rehearsal, {'schema', 'passed', 'reconciled', 'owner_signed_at',
-        'checkpoint_sha256', 'checkpoint_generation', 'cohort', 'observations'}
-        | (set() if sliced else {'work_checkpoint'}))
+    required = {'schema', 'passed', 'reconciled', 'owner_signed_at', 'owner_decision_ref',
+        'checkpoint_sha256', 'checkpoint_generation', 'cohort', 'observations'} \
+        | (set() if sliced else {'work_checkpoint'})
+    if isinstance(rehearsal, dict) and 'owner_decision_ref' not in rehearsal:
+        raise PermissionDenied('recovery acceptance requires the approved authenticated owner decision reference')
+    if not isinstance(rehearsal, dict) or not required <= set(rehearsal) \
+            or set(rehearsal) - required - {'recorded_at'}:
+        raise PermissionDenied('recovery acceptance requires the exact versioned observation schema')
+    receipt = rehearsal
     digest = release['rollback_snapshot']['sha256']
     if (receipt['schema'] != ('artha.recovery-rehearsal.slice.v1' if sliced else 'artha.recovery-rehearsal.v2')
             or receipt['passed'] is not True
@@ -690,6 +710,9 @@ def _validate_recovery_acceptance(rehearsal: Any, release: Mapping[str, Any],
             or receipt['checkpoint_sha256'] != digest or receipt['checkpoint_generation'] != generation
             or generation != head['generation']):
         raise PermissionDenied('recovery acceptance is unreviewed or not bound to the preservation generation')
+    if receipt.get('recorded_at', receipt['owner_signed_at']) != receipt['owner_signed_at']:
+        raise PermissionDenied('recovery recorded_at differs from the compatibility owner timestamp')
+    _validate_owner_decision_reference(receipt, release, "recovery acceptance")
     cohort = receipt['cohort']
     if (not isinstance(cohort, dict) or not cohort
             or any(not isinstance(key, str) or not key or not isinstance(value, str) or not value
@@ -816,7 +839,9 @@ class ReleaseEvidenceGuard:
         for field, label in (('stage1_clearance', 'Stage 1 clearance'), (evidence, 'release evidence')):
             data = _approved_file(release[field], label)
             if field == 'scorecard':
-                _validate_evaluation_cohort(json.loads(data), cohort)
+                scorecard = json.loads(data)
+                _validate_owner_decision_reference(scorecard, release, "release scorecard")
+                _validate_evaluation_cohort(scorecard, cohort)
             elif field == 'slice_waiver':
                 _validate_slice_waiver(data, release['domains'], cohort)
         identity = self._identity(release)

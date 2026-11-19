@@ -377,6 +377,21 @@ class TestQueueUncertaintyAndPayloadBinding:
                 hardened_queue.transition("p-bad", bad, actor="x")
         assert hardened_queue.transition("p-bad", "failed", actor="system:reconciler") == "unknown"
 
+    def test_consumed_dispatch_recovery_marks_stranded_execution_unknown(self, hardened_queue):
+        _to_executing(hardened_queue)
+        hardened_queue._conn.execute(
+            "INSERT INTO action_dispatch_receipts(operation_key,action_id) VALUES('operation','p-1')"
+        )
+        hardened_queue._conn.commit()
+
+        assert hardened_queue.recover_dispatch_unknown(
+            "p-1", "2026-10-12T00:00:00+00:00", require_consumed_dispatch=True
+        ) is True
+        row = hardened_queue.get_raw("p-1")
+        assert row["status"] == "unknown"
+        assert row["result_status"] == "unknown"
+        assert hardened_queue.find_live_duplicate(_hardened_proposal()) is not None
+
     def test_unknown_preserves_idempotency_while_failed_releases(self, hardened_queue):
         _to_executing(hardened_queue, "p-1")
         hardened_queue.record_result(

@@ -16,8 +16,12 @@ Ref: supercharge-reloaded.md §1.4, §3.2
 from __future__ import annotations
 
 from typing import Optional
+from urllib.parse import urljoin, urlsplit
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+_GRAPH_ORIGIN = "graph.microsoft.com"
+_GRAPH_PATH_PREFIX = "/v1.0/"
+_MAX_GRAPH_REDIRECTS = 5
 
 
 def _get_headers(access_token: str) -> dict:
@@ -26,6 +30,53 @@ def _get_headers(access_token: str) -> dict:
         "Authorization": f"Bearer {access_token}",
         "Accept": "application/json",
     }
+
+
+def _validate_graph_url(full_url: str, *, allowed_paths: Optional[set[str]] = None) -> str:
+    """Validate a provider URL before a Graph bearer token may be attached."""
+    if not isinstance(full_url, str) or not full_url or full_url != full_url.strip():
+        raise ValueError("Graph URL is invalid")
+    if any(ord(char) < 32 or ord(char) == 127 for char in full_url):
+        raise ValueError("Graph URL is invalid")
+    try:
+        parts = urlsplit(full_url)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Graph URL is invalid") from exc
+    if (
+        parts.scheme != "https"
+        or parts.netloc != _GRAPH_ORIGIN
+        or parts.username is not None
+        or parts.fragment
+        or "\\" in parts.path
+        or not parts.path.startswith(_GRAPH_PATH_PREFIX)
+    ):
+        raise ValueError("Graph URL is outside the allowed origin or API path")
+    if allowed_paths is not None and parts.path not in allowed_paths:
+        raise ValueError("Graph URL path is outside the exact allowlist")
+    if any(segment in {".", ".."} for segment in parts.path.split("/")):
+        raise ValueError("Graph URL path is not canonical")
+    return full_url
+
+
+def _raise_graph_response_error(resp) -> None:
+    """Raise the established MS Graph HTTP error with a bounded response."""
+    if resp.status_code == 429:
+        retry_after = resp.headers.get("Retry-After", "?")
+        raise Exception(
+            f"429 Too Many Requests (Retry-After: {retry_after}s): {resp.text[:200]}"
+        )
+    if resp.status_code >= 500:
+        raise Exception(f"{resp.status_code} Server Error: {resp.text[:200]}")
+    if resp.status_code == 401:
+        raise Exception(
+            "401 Unauthorized — token may be expired. "
+            "Run: python scripts/setup_msgraph_oauth.py --reauth"
+        )
+    if resp.status_code == 403:
+        raise Exception(
+            f"403 Forbidden — required scope may be missing. Response: {resp.text[:300]}"
+        )
+    resp.raise_for_status()
 
 
 def _graph_get(
@@ -80,22 +131,34 @@ def _graph_get(
     return resp.json()
 
 
-def _graph_get_full_url(access_token: str, full_url: str) -> dict:
-    """GET an arbitrary full URL (used for @odata.nextLink pagination)."""
+def _graph_get_full_url(
+    access_token: str,
+    full_url: str,
+    *,
+    allowed_paths: Optional[set[str]] = None,
+) -> dict:
+    """GET a validated Graph URL, validating every redirect before auth."""
     try:
         import requests as _req
     except ImportError as exc:
         raise RuntimeError("[msgraph] 'requests' package not installed") from exc
 
-    resp = _req.get(full_url, headers=_get_headers(access_token), timeout=30)
-
-    if resp.status_code == 429:
-        retry_after = resp.headers.get("Retry-After", "?")
-        raise Exception(f"429 Too Many Requests (Retry-After: {retry_after}s)")
-    if resp.status_code >= 500:
-        raise Exception(f"{resp.status_code} Server Error: {resp.text[:200]}")
-    resp.raise_for_status()
-    return resp.json()
+    current = _validate_graph_url(full_url, allowed_paths=allowed_paths)
+    headers = _get_headers(access_token)
+    for _ in range(_MAX_GRAPH_REDIRECTS + 1):
+        resp = _req.get(current, headers=headers, timeout=30, allow_redirects=False)
+        if resp.status_code in {301, 302, 303, 307, 308}:
+            location = resp.headers.get("Location")
+            if not isinstance(location, str) or not location:
+                raise ValueError("Graph redirect did not provide a valid Location")
+            current = _validate_graph_url(
+                urljoin(current, location),
+                allowed_paths=allowed_paths,
+            )
+            continue
+        _raise_graph_response_error(resp)
+        return resp.json()
+    raise RuntimeError("Graph redirect limit reached")
 
 
 def _graph_get_content(access_token: str, path: str) -> str:

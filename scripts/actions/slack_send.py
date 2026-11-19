@@ -37,13 +37,21 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from actions.base import ActionProposal, ActionResult
+from actions.base import ActionProposal, ActionResult, is_definite_provider_refusal
 
 log = logging.getLogger(__name__)
 
 _API_BASE = "https://slack.com/api"
 _MAX_TEXT_LENGTH = 40_000
 _DEFAULT_CREDENTIAL_KEY = "artha-slack-bot-token"
+
+
+class _SlackPreDispatchError(RuntimeError):
+    pass
+
+
+class _SlackRejected(RuntimeError):
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +87,9 @@ def _post_message(token: str, channel: str, text: str,
         try:
             payload["blocks"] = json.loads(blocks)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"slack_send: invalid JSON in 'blocks' parameter: {exc}") from exc
+            raise _SlackPreDispatchError(
+                f"slack_send: invalid JSON in 'blocks' parameter: {exc}"
+            ) from exc
 
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -95,11 +105,13 @@ def _post_message(token: str, channel: str, text: str,
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"slack_send: HTTP {exc.code} from chat.postMessage") from exc
+        if is_definite_provider_refusal(exc):
+            raise _SlackRejected(f"Slack refused chat.postMessage (HTTP {exc.code})") from exc
+        raise
 
     if not data.get("ok"):
         err = data.get("error", "unknown_error")
-        raise RuntimeError(f"slack_send: Slack API error: {err}")
+        raise _SlackRejected(f"slack_send: Slack API error: {err}")
     return data
 
 
@@ -195,6 +207,15 @@ def execute(proposal: ActionProposal) -> ActionResult:
     try:
         resp = _post_message(token, channel, text, thread_ts=thread_ts, blocks=blocks)
         msg_ts = resp.get("ts", "")
+        if not isinstance(msg_ts, str) or not msg_ts:
+            return ActionResult(
+                status="unknown",
+                message="Slack returned no verified message receipt; reconcile before retrying.",
+                data={"channel": channel},
+                reversible=False,
+                reverse_action=None,
+                undo_deadline=None,
+            )
         return ActionResult(
             status="success",
             message=f"Message sent to {channel} (ts: {msg_ts})",
@@ -203,12 +224,22 @@ def execute(proposal: ActionProposal) -> ActionResult:
             reverse_action=None,
             undo_deadline=None,
         )
-    except Exception as exc:
-        log.error("[slack_send] execute failed for proposal %s: %s", proposal.id, exc)
+    except (_SlackPreDispatchError, _SlackRejected) as exc:
         return ActionResult(
             status="failure",
-            message=f"Failed to send Slack message: {exc}",
+            message=str(exc)[:300],
             data={},
+            reversible=False,
+            reverse_action=None,
+            undo_deadline=None,
+        )
+    except Exception as exc:
+        log.error("[slack_send] uncertain outcome for proposal %s: %s",
+                  proposal.id, type(exc).__name__)
+        return ActionResult(
+            status="unknown",
+            message="Slack did not return a verified send receipt; reconcile before retrying.",
+            data={"exception": type(exc).__name__, "channel": channel},
             reversible=False,
             reverse_action=None,
             undo_deadline=None,

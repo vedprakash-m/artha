@@ -8,8 +8,8 @@ Conforms to ActionHandler protocol.
 SAFETY:
   - dry_run: returns event preview JSON; no API write.
   - execute: calls events.insert() on the requested calendar.
-  - Undo: events.delete() within undo_window_sec=300 (5 min).
-  - autonomy_floor: false — can be auto-executed at Trust Level 2.
+  - No registered undo path: action results and policy are non-reversible.
+  - Explicit human review is required; automatic approvals are refused.
 
 Ref: specs/act.md §8.2
 """
@@ -24,7 +24,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from actions.base import ActionProposal, ActionResult
+from actions.base import ActionProposal, ActionResult, is_definite_provider_refusal
 
 # Module-level import so tests can patch actions.calendar_create.build_service
 try:
@@ -101,16 +101,27 @@ def execute(proposal: ActionProposal) -> ActionResult:
     params = proposal.parameters
     calendar_id = params.get("calendar_id", "primary")
     event_body = _build_event_body(params)
+    dispatched = False
 
     try:
         service = build_service("calendar", "v3")
 
-        created = service.events().insert(
+        request = service.events().insert(
             calendarId=calendar_id,
             body=event_body,
-        ).execute()
+        )
+        dispatched = True
+        created = request.execute()
 
-        event_id = created.get("id", "")
+        event_id = created.get("id") if isinstance(created, dict) else None
+        if not isinstance(event_id, str) or not event_id:
+            return ActionResult(
+                status="unknown",
+                message="Calendar returned no verified event receipt; reconcile before retrying.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
         html_link = created.get("htmlLink", "")
 
         return ActionResult(
@@ -126,15 +137,20 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 # Original event body stored for undo
                 "_original_event_body": event_body,
             },
-            reversible=True,
+            reversible=False,
             reverse_action=None,
         )
 
-    except Exception as e:
+    except Exception as error:
+        uncertain = dispatched and not is_definite_provider_refusal(error)
         return ActionResult(
-            status="failure",
-            message=f"Failed to create calendar event: {e}",
-            data={"error": str(e), "calendar_id": calendar_id},
+            status="unknown" if uncertain else "failure",
+            message=(
+                "Calendar did not return a verified creation receipt; reconcile before retrying."
+                if uncertain else
+                "Calendar refused or could not start the event creation; no provider effect was verified."
+            ),
+            data={"exception": type(error).__name__, "calendar_id": calendar_id} if uncertain else None,
             reversible=False,
             reverse_action=None,
         )

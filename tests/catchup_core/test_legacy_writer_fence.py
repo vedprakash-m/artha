@@ -114,8 +114,17 @@ def test_connector_coverage_is_excluded_by_capture_and_restore(tmp_path):
 def test_calendar_writer_is_excluded_by_capture_and_restore(tmp_path):
     body = '''
     import calendar_writer as m
+    from pathlib import Path
+    import state_writer
     m.STATE_DIR = root / 'state'
     m.CALENDAR_FILE = root / 'state' / 'calendar.md'
+    state_writer._snapshot_current = lambda _path, _domain, _content: Path('synthetic.snap')
+    class Middleware:
+        def before_write(self, _domain, _current, proposed, _ctx):
+            return proposed
+        def after_write(self, _domain, _path):
+            return None
+    state_writer._build_middleware_stack = lambda **_kwargs: Middleware()
     sys.exit(m.main(['--input', str(root / 'in.jsonl')]))
     '''
     exercise(tmp_path, body, ['state/calendar.md'], seed=_calendar_seed,

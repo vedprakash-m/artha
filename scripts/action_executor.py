@@ -131,6 +131,11 @@ _CONTENT_PREVIEW_REQUIRED_TYPES = frozenset(
 )
 
 
+def _required_pii_scan(action_type: str, config: dict[str, Any]) -> bool:
+    """External action types cannot opt out of the outbound privacy guard."""
+    return action_type != "instruction_sheet" or config.get("pii_check", True) is True
+
+
 # ---------------------------------------------------------------------------
 # PII scanner (thin wrapper around pii_guard.py)
 # ---------------------------------------------------------------------------
@@ -156,16 +161,29 @@ def _pii_scan_params(
         from pii_guard import scan as _scan  # type: ignore[import]
 
         findings: list[str] = []
-        for key, value in parameters.items():
-            if key in pii_allowlist:
-                continue
-            if not isinstance(value, str) or not value.strip():
-                continue
-
-            pii_found, pii_types = _scan(value)
-            if pii_found:
-                types_str = ", ".join(sorted(pii_types.keys())) if pii_types else "unknown"
-                findings.append(f"field='{key}' types={types_str}")
+        stack: list[tuple[str, Any, int]] = [
+            (key, value, 0) for key, value in parameters.items()
+            if key not in pii_allowlist
+        ]
+        visited = 0
+        while stack:
+            field, value, depth = stack.pop()
+            visited += 1
+            if visited > 10_000 or depth > 20:
+                return False, ["action parameters exceed the PII scan bound"]
+            if isinstance(value, str) and value.strip():
+                pii_found, pii_types = _scan(value)
+                if pii_found:
+                    types_str = ", ".join(sorted(pii_types.keys())) if pii_types else "unknown"
+                    findings.append(f"field='{field}' types={types_str}")
+            elif isinstance(value, dict):
+                stack.extend(
+                    (f"{field}.{key}", item, depth + 1)
+                    for key, item in value.items() if key not in pii_allowlist
+                )
+            elif isinstance(value, list | tuple):
+                stack.extend((f"{field}[{index}]", item, depth + 1)
+                             for index, item in enumerate(value))
 
         return len(findings) == 0, findings
 
@@ -370,7 +388,7 @@ class ActionExecutor:
             self._read_only = not env_info.capabilities.get("filesystem_writable", True)
         except Exception as exc:
             _log.warning(f"detect_environment_failed error={exc}")
-            self._read_only = False
+            self._read_only = True
 
         self._queue = ActionQueue(artha_dir)
         self._trust = TrustEnforcer(artha_dir)
@@ -428,9 +446,13 @@ class ActionExecutor:
                 f"Must be one of: {sorted(_HANDLER_MAP.keys())}"
             )
 
-        # Check if enabled in config
-        config = self._action_configs.get(action_type, {})
-        if not config.get("enabled", True):
+        # Missing or malformed current policy is not permission to load a handler.
+        config = self._action_configs.get(action_type)
+        if not isinstance(config, dict):
+            raise ValueError(
+                f"Action type '{action_type}' is not registered in current action policy"
+            )
+        if config.get("enabled") is not True:
             raise ValueError(
                 f"Action type '{action_type}' is disabled in config/actions.yaml"
             )
@@ -472,6 +494,11 @@ class ActionExecutor:
         preview_required = proposal.preview_required or bool(
             config.get("preview_required", proposal.action_type in _CONTENT_PREVIEW_REQUIRED_TYPES)
         )
+        reversible = bool(config.get("reversible", False))
+        undo_window_sec = config.get("undo_window_sec") if reversible else None
+        if type(undo_window_sec) is not int or undo_window_sec <= 0:
+            reversible = False
+            undo_window_sec = None
         signal_subtype = proposal.signal_subtype or str(
             params.get("signal_subtype") or params.get("signal_type") or ""
         )
@@ -479,6 +506,8 @@ class ActionExecutor:
             _compute_idempotency_fields(proposal)
         )
         object.__setattr__(proposal, "preview_required", preview_required)
+        object.__setattr__(proposal, "reversible", reversible)
+        object.__setattr__(proposal, "undo_window_sec", undo_window_sec)
         object.__setattr__(proposal, "signal_subtype", signal_subtype)
         object.__setattr__(proposal, "confidence", confidence)
         if not proposal.normalized_entity:
@@ -618,7 +647,7 @@ class ActionExecutor:
 
         # PII scan (pre-enqueue)
         pii_allowlist = config.get("pii_allowlist", [])
-        if config.get("pii_check", True):
+        if _required_pii_scan(proposal.action_type, config):
             clean, findings = _pii_scan_params(parameters, pii_allowlist)
             if not clean:
                 raise ValueError(
@@ -812,7 +841,7 @@ class ActionExecutor:
 
         # 4. PII re-scan — BEFORE state transition
         pii_allowlist = config.get("pii_allowlist", [])
-        if config.get("pii_check", True):
+        if _required_pii_scan(proposal.action_type, config):
             clean, findings = _pii_scan_params(proposal.parameters, pii_allowlist)
             if not clean:
                 _audit_log(
@@ -922,7 +951,8 @@ class ActionExecutor:
         result = _execute_with_timeout(handler, proposal, timeout_sec, queue_path=self._queue._db_path)
 
         # Compute undo deadline if applicable
-        if result.status in ("success", "partial") and proposal.undo_window_sec:
+        if (result.status in ("success", "partial") and proposal.reversible
+                and proposal.undo_window_sec):
             undo_deadline = (
                 datetime.fromisoformat(executed_at) + timedelta(seconds=proposal.undo_window_sec)
             ).isoformat(timespec="seconds")
@@ -930,6 +960,10 @@ class ActionExecutor:
             if result.data is None:
                 result.data = {}
             result.data["undo_deadline"] = undo_deadline
+        if not (proposal.reversible and proposal.undo_window_sec):
+            result.reversible = False
+            result.reverse_action = None
+            result.undo_deadline = None
 
         # 7. Record result (atomic: status + result fields)
         try:
@@ -941,8 +975,24 @@ class ActionExecutor:
                 self._artha_dir,
                 f"ACTION_RESULT_SAVE_FAILED | id:{action_id} | error:{e}",
             )
-            return ActionResult(status="unknown", message="The provider may have acted, but its receipt "
-                "could not be committed. Reconcile before retrying.", data=None,
+            recovery_committed = False
+            try:
+                recovery_committed = self._queue.recover_dispatch_unknown(
+                    action_id, executed_at, require_consumed_dispatch=False
+                )
+            except Exception as recovery_error:
+                _audit_log(
+                    self._artha_dir,
+                    f"ACTION_RESULT_RECOVERY_FAILED | id:{action_id} | error:{recovery_error}",
+                )
+            message = (
+                "The provider may have acted, but its receipt could not be committed. "
+                "Reconcile before retrying."
+                if recovery_committed
+                else "The provider may have acted, and recovery could not be committed. "
+                "The consumed dispatch remains non-retriable; reconcile when queue writes recover."
+            )
+            return ActionResult(status="unknown", message=message, data=None,
                 reversible=False, reverse_action=None)
 
         # 7b. Bridge result write (executor machine only; no-op if bridge disabled)
@@ -1113,6 +1163,14 @@ class ActionExecutor:
                 reversible=False,
                 reverse_action=None,
             )
+        if not (proposal.reversible and proposal.undo_window_sec):
+            return ActionResult(
+                status="failure",
+                message=f"Action type '{proposal.action_type}' is advertised as non-reversible.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
 
         # Build and immediately execute the reverse action (always human-approved)
         # For now, the reverse is handler-specific — handlers return it in result.reverse_action
@@ -1162,8 +1220,15 @@ class ActionExecutor:
         return self.pending()
 
     def reconcile(self, action_id: str) -> ActionResult:
-        """Resolve an ``unknown`` action against the provider; only a provider-confirmed effect closes it (RA-05)."""
+        """Resolve an uncertain action against the provider; only confirmation closes it (RA-05)."""
         row = self._queue.get_raw(action_id)
+        if row and row["status"] == "executing":
+            self._queue.recover_dispatch_unknown(
+                action_id,
+                str(row.get("executed_at") or datetime.now(timezone.utc).isoformat()),
+                require_consumed_dispatch=True,
+            )
+            row = self._queue.get_raw(action_id)
         if not row or row["status"] != "unknown":
             return ActionResult(status="failure", message="Only an action in 'unknown' can be reconciled.",
                                 data=None, reversible=False, reverse_action=None)
@@ -1314,7 +1379,7 @@ class ActionExecutor:
         # Gate 3: PII scan
         config = self._action_configs.get(proposal.action_type, {})
         pii_allowlist = config.get("pii_allowlist", [])
-        if config.get("pii_check", True):
+        if _required_pii_scan(proposal.action_type, config):
             clean, findings = _pii_scan_params(proposal.parameters, pii_allowlist)
             if not clean:
                 return False, f"pii_blocked:{'; '.join(findings)[:120]}"
@@ -1368,8 +1433,10 @@ class ActionExecutor:
         """
         results: dict[str, bool] = {}
         for action_type, module_path in _HANDLER_MAP.items():
-            config = self._action_configs.get(action_type, {})
-            if not config.get("enabled", True):
+            config = self._action_configs.get(action_type)
+            if not isinstance(config, dict) or config.get("enabled") is not True:
+                continue
+            if action_type in self._held_types:
                 continue
             try:
                 handler = self._get_handler(action_type)

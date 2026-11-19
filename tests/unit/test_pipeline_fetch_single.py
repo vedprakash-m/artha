@@ -242,6 +242,7 @@ class TestWorkiqDisplayFetch:
         secret = "synthetic-sensitive-provider-text"
         response = {"status": "summary", "content": "synthetic narrative"}
         failure = RuntimeError(f"429 {secret}")
+        failure.status = 429
         fetch = MagicMock(side_effect=[failure, response] if recover else failure)
         handler = SimpleNamespace(__name__="connectors.workiq_bridge", fetch_display=fetch)
         monkeypatch.setattr(pipeline, "_load_handler", lambda _: handler)

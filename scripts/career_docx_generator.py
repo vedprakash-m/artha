@@ -72,6 +72,14 @@ def _spacing(p, *, before: float = 0, after: float = 0) -> None:
 
 
 def generate(cv_path: Path, output_path: Path) -> None:
+    if sys.platform == "win32":
+        stdout_reconfigure = getattr(sys.stdout, "reconfigure", None)
+        stderr_reconfigure = getattr(sys.stderr, "reconfigure", None)
+        if stdout_reconfigure is not None:
+            stdout_reconfigure(encoding="utf-8", errors="strict")
+        if stderr_reconfigure is not None:
+            stderr_reconfigure(encoding="utf-8", errors="strict")
+
     lines = cv_path.read_text(encoding="utf-8").splitlines()
     doc = Document()
 

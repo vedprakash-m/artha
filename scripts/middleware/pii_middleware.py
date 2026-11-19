@@ -44,7 +44,12 @@ class PIIMiddleware:
     ) -> str | None:
         """Run PII filter on proposed_content.  Returns filtered content."""
         if not self._pii_script.exists():
-            return proposed_content  # guard unavailable — pass through
+            print(
+                f"[pii_middleware] ⛔ PII guard unavailable for {domain}: "
+                f"{self._pii_script.name} is missing",
+                file=sys.stderr,
+            )
+            return None
 
         try:
             result = subprocess.run(
@@ -62,15 +67,34 @@ class PIIMiddleware:
                     f"redaction applied: {stderr_text.strip()}",
                     file=sys.stderr,
                 )
-                return stdout_text if stdout_text else proposed_content
+                if not stdout_text and proposed_content:
+                    print(
+                        f"[pii_middleware] ⛔ PII guard returned no filtered bytes for {domain}",
+                        file=sys.stderr,
+                    )
+                    return None
+                return stdout_text
             # Exit 0 = no PII found; stdout is the clean text
-            return stdout_text if stdout_text.strip() else proposed_content
-        except Exception as exc:  # noqa: BLE001
+            if result.returncode == 0:
+                if not stdout_text and proposed_content:
+                    print(
+                        f"[pii_middleware] ⛔ PII guard returned no verified bytes for {domain}",
+                        file=sys.stderr,
+                    )
+                    return None
+                return stdout_text
             print(
-                f"[pii_middleware] ⚠ PII guard failed for {domain}: {exc} — write passes through",
+                f"[pii_middleware] ⛔ PII guard failed for {domain}: "
+                f"exit={result.returncode}",
                 file=sys.stderr,
             )
-            return proposed_content
+            return None
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[pii_middleware] ⛔ PII guard failed for {domain}: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return None
 
     def after_write(self, domain: str, file_path: Path) -> None:
         pass  # PII guard is a before-write concern only

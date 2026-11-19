@@ -52,7 +52,7 @@ def fact(led, evidence, **kw):
 def review(led, object_type, object_id, scope="personal", reviewer=OWNER):
     item = led.scope_review_item(object_type, object_id)
     return led.review_scope(object_type, object_id, scope, reviewer=reviewer,
-                            expected_version=item["object_version"], expected_authz=item["authz_digest"])
+                            expected_descriptor=item["review_descriptor"])
 
 
 # ── hard stops are unchanged without a v2 review ──────────────────────────
@@ -127,13 +127,13 @@ def test_forged_v2_row_with_wrong_proof_is_denied(led):
 def test_duplicate_binding_rows_deny(led):
     sid = signal(led)
     review(led, "signal", sid)
-    led.conn.execute("INSERT INTO scope_bindings(object_type,object_id,object_version,source_id,account_id,"
-                     "content_hmac,scope,provenance,permission_generation,proof,created_at) "
-                     "SELECT object_type,object_id,object_version,source_id,account_id,content_hmac,scope,"
-                     "provenance,permission_generation,proof,created_at FROM scope_bindings WHERE object_id=?",
-                     (sid,))
-    with pytest.raises(lg.PermissionDenied):
-        led.require_personal_signal(sid)
+    with pytest.raises(sqlite3.IntegrityError):
+        led.conn.execute("INSERT INTO scope_bindings(object_type,object_id,object_version,source_id,account_id,"
+                         "content_hmac,scope,provenance,permission_generation,proof,created_at) "
+                         "SELECT object_type,object_id,object_version,source_id,account_id,content_hmac,scope,"
+                         "provenance,permission_generation,proof,created_at FROM scope_bindings WHERE object_id=?",
+                         (sid,))
+    assert led.require_personal_signal(sid)["signal_id"] == sid
 
 
 def test_signal_operation_admits_reviewed_signal(led):
@@ -163,7 +163,7 @@ def test_review_refuses_changed_authorization_inputs(led):
     led.set_signal_subjects(sid, ["adult_child"])
     with pytest.raises(lg.LedgerError, match="changed since review"):
         led.review_scope("signal", sid, "personal", reviewer=OWNER,
-                         expected_version=item["object_version"], expected_authz=item["authz_digest"])
+                         expected_descriptor=item["review_descriptor"])
 
 
 def test_review_refuses_changed_version(led):
@@ -171,7 +171,7 @@ def test_review_refuses_changed_version(led):
     item = led.scope_review_item("signal", sid)
     with pytest.raises(lg.LedgerError, match="changed since review"):
         led.review_scope("signal", sid, "personal", reviewer=OWNER,
-                         expected_version="other", expected_authz=item["authz_digest"])
+                         expected_descriptor={**item["review_descriptor"], "object_version": "other"})
 
 
 def test_invalid_scope_or_object_type_is_refused(led):
@@ -179,7 +179,7 @@ def test_invalid_scope_or_object_type_is_refused(led):
     item = led.scope_review_item("signal", sid)
     with pytest.raises(ValueError, match="scope must be"):
         led.review_scope("signal", sid, "everything", reviewer=OWNER,
-                         expected_version=item["object_version"], expected_authz=item["authz_digest"])
+                         expected_descriptor=item["review_descriptor"])
     with pytest.raises(ValueError, match="Signals and Facts only"):
         led.scope_review_item("curated", "goals")
     with pytest.raises(lg.LedgerError):
@@ -217,6 +217,37 @@ def test_review_item_lists_authorization_inputs(led):
     assert item["current_scope"] is None
     review(led, "signal", sid)
     assert led.scope_review_item("signal", sid)["current_scope"] == "personal"
+
+
+def test_review_descriptor_binds_content_marker_and_permission_generation(led):
+    sid = signal(led)
+    item = led.scope_review_item("signal", sid)
+    descriptor = item["review_descriptor"]
+    assert descriptor["content_hmac"] == led.signal_row(sid)["content_hmac"]
+    assert descriptor["permission_generation"] == led._permission_generation()
+    assert descriptor["ledger_path"] == led.path_identity
+
+
+def test_review_refuses_same_version_content_change_after_display(led):
+    sid = signal(led)
+    item = led.scope_review_item("signal", sid)
+    led.conn.execute("UPDATE signals SET content_hmac='h-changed' WHERE signal_id=?", (sid,))
+    with pytest.raises(lg.LedgerError, match="changed since review"):
+        led.review_scope("signal", sid, "personal", reviewer=OWNER,
+                         expected_descriptor=item["review_descriptor"])
+    assert led.conn.execute("SELECT COUNT(*) FROM scope_reviews").fetchone()[0] == 0
+
+
+def test_review_refuses_generation_change_after_display(led):
+    sid = signal(led)
+    item = led.scope_review_item("signal", sid)
+    consent = led.grant_consent("adult_child", "adult_child", "home", ("view",), OWNER)
+    led.revoke_consent(consent)
+    with pytest.raises(lg.LedgerError, match="changed since review"):
+        led.review_scope("signal", sid, "personal", reviewer=OWNER,
+                         expected_descriptor=item["review_descriptor"])
+    assert led.conn.execute(
+        "SELECT COUNT(*) FROM scope_reviews WHERE object_id=?", (sid,)).fetchone()[0] == 0
 
 
 # ── Facts ─────────────────────────────────────────────────────────────────
@@ -267,6 +298,10 @@ def test_new_version_with_unchanged_inputs_carries_review_forward(led):
     review(led, "fact", fid)
     led.put_fact(fact(led, [sid], value={"date": "2026-12-05"}), fact_id=fid)
     assert led.get_fact(fid, OWNER).value == {"date": "2026-12-05"}
+    audit = led.conn.execute(
+        "SELECT object_type,reviewer FROM scope_reviews WHERE reviewer='system:carry_forward' "
+        "ORDER BY review_id").fetchall()
+    assert [r["object_type"] for r in audit] == ["fact", "fact_version"]
 
 
 def test_new_version_with_new_subject_is_denied(led):
@@ -541,6 +576,17 @@ def test_status_change_of_reviewed_fact_carries_review_forward(led):
     assert led.get_fact(fid, OWNER).status == "disputed"
 
 
+def test_refresh_carries_nonpersonal_v2_review_forward(led):
+    sid = signal(led)
+    review(led, "signal", sid, "work")
+    consent = led.grant_consent("adult_child", "adult_child", "home", ("view",), OWNER)
+    led.revoke_consent(consent)
+    rows = led.conn.execute(
+        "SELECT scope FROM scope_bindings WHERE object_id=? AND permission_generation=?",
+        (sid, led._permission_generation())).fetchall()
+    assert [row["scope"] for row in rows] == ["work"]
+
+
 def test_added_reviewed_evidence_carries_review_forward(led):
     _, fid = reviewed_fact(led)
     extra = signal(led, "m2")
@@ -571,8 +617,7 @@ def test_writes_to_unreviewed_facts_stay_held(led, write):
 def test_ingest_paths_stay_held_after_review(led):
     from catchup_core import heldout
     sid, _ = reviewed_fact(led)
-    with pytest.raises(lg.PersonalScopeUnavailable):
-        led.replace_source_support(sid)
+    led.replace_source_support(sid)
     with pytest.raises(lg.PersonalScopeUnavailable):
         led.cancel_calendar("home_email", "acct", "m1")
     with pytest.raises(lg.PersonalScopeUnavailable):

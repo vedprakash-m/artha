@@ -45,3 +45,51 @@ def test_read_raw_enforces_vault_policy(tmp_path, monkeypatch):
     assert "All good." in reader.read_raw(goals)
     with pytest.raises(state_reader.VaultPolicyViolation, match="vault-required"):
         reader.read_raw(sealed)
+
+
+def test_read_raw_refuses_plaintext_counterpart_of_vault_required_file(tmp_path, monkeypatch):
+    plaintext = tmp_path / "finance.md"
+    plaintext.write_text("---\ndomain: finance\n---\n", encoding="utf-8")
+    sealed = tmp_path / "finance.md.age"
+    monkeypatch.setattr(
+        state_reader,
+        "_vault_required_paths",
+        lambda: frozenset({str(plaintext.resolve()), str(sealed.resolve())}),
+    )
+    with pytest.raises(state_reader.VaultPolicyViolation, match="vault-required"):
+        state_reader.StateReader().read_raw(plaintext)
+
+
+def test_nested_vault_domain_uses_its_actual_parent_directory(tmp_path, monkeypatch):
+    sealed = tmp_path / "state" / "work" / "work-career.md.age"
+    sealed.parent.mkdir(parents=True)
+    sealed.write_bytes(b"x")
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout="synthetic work body", stderr="")
+
+    monkeypatch.setattr(state_reader.subprocess, "run", fake_run)
+    assert state_reader.StateReader._decrypt("work-career", sealed) == "synthetic work body"
+    assert seen["argv"][-2:] == ["--state-dir", str(sealed.parent)]
+
+
+def test_registry_revision_is_reloaded_and_nested_values_are_isolated(tmp_path, monkeypatch):
+    registry = tmp_path / "domain_registry.yaml"
+    registry.write_text(
+        "domains:\n  goals:\n    state_file: state/goals.md\n"
+        "    nested:\n      values: [one]\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(state_reader, "_REGISTRY_PATH", registry)
+    monkeypatch.setattr(state_reader, "_REGISTRY_CACHE", None)
+    monkeypatch.setattr(state_reader, "_REGISTRY_REVISION", None)
+    first = state_reader._domain_cfg("goals")
+    first["nested"]["values"].append("private")
+    assert state_reader._domain_cfg("goals")["nested"]["values"] == ["one"]
+    registry.write_text(
+        "domains:\n  goals:\n    state_file: state/goals-v2.md\n",
+        encoding="utf-8",
+    )
+    assert state_reader._domain_cfg("goals")["state_file"] == "state/goals-v2.md"

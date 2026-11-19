@@ -122,14 +122,19 @@ class TestCacheInvalidation:
             yaml.dump(updated), encoding="utf-8"
         )
 
-        # Without invalidate, we still get cached v1
-        cfg_still_v1 = load_config("artha_config", _config_dir=str(tmp_config_dir))
-        assert cfg_still_v1.get("version") == "1.0"
-
-        # After invalidate, re-read picks up v2
-        invalidate()
+        # A relevant byte revision is observed without requiring a process restart.
         cfg_v2 = load_config("artha_config", _config_dir=str(tmp_config_dir))
         assert cfg_v2.get("version") == "2.0"
+
+    def test_nested_mutation_does_not_poison_cached_configuration(self, tmp_config_dir):
+        (tmp_config_dir / "artha_config.yaml").write_text(
+            yaml.dump({"nested": {"items": ["original"]}}), encoding="utf-8"
+        )
+        first = load_config("artha_config", _config_dir=str(tmp_config_dir))
+        first["nested"]["items"].append("private")
+        assert load_config("artha_config", _config_dir=str(tmp_config_dir)) == {
+            "nested": {"items": ["original"]}
+        }
 
     def test_invalidate_with_name_clears_entire_cache(self, tmp_config_dir):
         """invalidate(name) is documented to clear entire cache (lru_cache limitation)."""

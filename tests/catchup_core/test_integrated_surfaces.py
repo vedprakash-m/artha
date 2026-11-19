@@ -20,6 +20,7 @@ from catchup_core.triage import CalendarEvent
 from core_helpers import (
     CORE_KEY as KEY,
     FakeKeyring,
+    OWNER_DECISION_SHA256,
     REGRESSION_CIPHER as CIPHER,
     build_preservation_checkpoint,
     synthetic_recovery_acceptance,
@@ -125,6 +126,7 @@ def release_scorecard(config=None):
                     corpus_id='synthetic-release-corpus')
     result = {"schema": "artha.release.v4", 'cohort': cohort,
         "cases": len(cases), "live_cases": len(cases), "owner_signed_at": "reviewed",
+        "owner_decision_ref": OWNER_DECISION_SHA256,
         "evaluations": cases,
         "bounds": {"kids_school": {"minimum_precision": 0.8, "minimum_recall": 1,
             "max_source_age_hours": 48,
@@ -253,6 +255,7 @@ def test_read_and_review_commands_share_the_same_facts(app):
     assert states["RA-19"]["state"] == "disabled"                   # later-scope: built, not yet part of the pilot
     assert health["performance"]["verdict"] == "no finished runs recorded yet"
     assert health["performance"]["cost"]["estimate"].startswith("unavailable")
+    assert all("result_state" in row for row in health["coverage"])
     assert commands.execute(args("history"), deps, root) == {"briefings": []}
     response = commands.execute(args("feedback", obligation="exam", response="useful", reason="helped"), deps, root)
     assert response["feedback_id"] and b"helped" not in deps.ledger._path.read_bytes()
@@ -371,6 +374,7 @@ def test_release_checks_digest_live_evidence_host_and_identity(tmp_path):
     rehearsal.write_text(json.dumps(synthetic_recovery_acceptance(
         tmp_path, rollback, CIPHER, cohort=card['cohort'])))
     release = {"authority_host": "mac", "domains": ["kids_school"], "owner_approved_at": "2026-10-12",
+               "owner_decision_sha256": OWNER_DECISION_SHA256,
                "stage1_clearance": approved(clearance), "rollback_snapshot": rb_record,
                "independent_copy": {**approved(copy_path), "failure_domain": "cloud",
                                     "owner_verified_at": "2026-10-12T12:00:00Z",

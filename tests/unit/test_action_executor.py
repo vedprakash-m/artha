@@ -90,6 +90,17 @@ def test_checkpoint_fence_refuses_dispatch_without_claiming_the_action(executor)
     assert executor.queue.get_raw(proposal.id)['status'] == 'pending'
 
 
+def test_environment_capability_failure_keeps_execution_read_only(artha_dir):
+    with patch("detect_environment.detect", side_effect=RuntimeError("capability probe failed")):
+        guarded = ActionExecutor(artha_dir)
+    try:
+        assert guarded._read_only is True  # noqa: SLF001
+        guarded.queue.propose(_make_proposal())
+        assert guarded.approve(next(iter(guarded.pending())).id, "owner").status == "failure"
+    finally:
+        guarded.close()
+
+
 def _make_proposal(
     action_type: str = "email_send",
     domain: str = "test",
@@ -265,6 +276,72 @@ class TestApprove:
             reviewed = _review(executor, proposal)
             allowed = executor.approve(action_id, approved_by="user:test", reviewed_payload_hash=reviewed)
             assert allowed.status == "success"
+
+    def test_ambiguous_provider_result_is_persisted_as_unknown(self, executor):
+        handler = MagicMock()
+        handler.validate.return_value = (True, "")
+        handler.execute.return_value = ActionResult(
+            status="unknown",
+            message="Provider response was lost; reconcile before retrying.",
+            data={"exception": "TimeoutError"},
+            reversible=False,
+            reverse_action=None,
+        )
+        with patch.object(executor, "_get_handler", return_value=handler):
+            proposal = executor.propose(
+                action_type="email_send",
+                domain="test",
+                title="Ambiguous email",
+                parameters={"to": "a@b.com", "subject": "Hi", "body": "Hello"},
+            )
+            reviewed = _review(executor, proposal)
+            result = executor.approve(
+                proposal.id, approved_by="user:test", reviewed_payload_hash=reviewed
+            )
+
+        assert result.status == "unknown"
+        row = executor.queue.get_raw(proposal.id)
+        assert row["status"] == "unknown"
+        assert row["result_status"] == "unknown"
+
+    def test_result_persistence_failure_recovers_dispatched_action_to_unknown(
+        self, executor, monkeypatch
+    ):
+        handler = MagicMock()
+        handler.validate.return_value = (True, "")
+        handler.execute.return_value = ActionResult(
+            status="success",
+            message="Synthetic provider success",
+            data={"message_id": "synthetic-message"},
+            reversible=False,
+            reverse_action=None,
+        )
+
+        with patch.object(executor, "_get_handler", return_value=handler):
+            proposal = executor.propose(
+                action_type="email_send",
+                domain="test",
+                title="Synthetic email",
+                parameters={"to": "a@b.com", "subject": "Hi", "body": "Hello"},
+            )
+            reviewed = _review(executor, proposal)
+            monkeypatch.setattr(
+                executor.queue,
+                "record_result",
+                lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                    RuntimeError("synthetic result persistence failure")
+                ),
+            )
+            result = executor.approve(
+                proposal.id, approved_by="user:test", reviewed_payload_hash=reviewed
+            )
+
+        assert result.status == "unknown"
+        row = executor.queue.get_raw(proposal.id)
+        assert row["status"] == "unknown"
+        assert row["result_status"] == "unknown"
+        assert "reconcile" in (row["result_message"] or "").lower()
+        assert executor.queue.find_live_duplicate(proposal) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -521,6 +598,11 @@ class TestHandlerLoading:
             assert ".." not in v
             assert v.startswith("actions.")
 
+    def test_registered_handler_without_current_config_is_refused(self, executor):
+        executor._action_configs.pop("reminder_create")  # noqa: SLF001
+        with pytest.raises(ValueError, match="not registered in current action policy"):
+            executor._get_handler("reminder_create")
+
 
 class TestPolicyGuardWiring:
     def test_a_policy_refusal_stops_execution_before_any_state_change(self, executor, monkeypatch):
@@ -560,6 +642,32 @@ class TestUnknownReconciliation:
         with patch.object(executor, "_get_handler", return_value=handler):
             result = executor.reconcile(proposal.id)
         assert result.status == "success" and executor._queue.get_raw(proposal.id)["status"] == "succeeded"
+
+    def test_reconcile_recovers_a_consumed_dispatch_left_executing(self, executor):
+        from actions.base import ActionResult
+        proposal = self._unknown(executor)
+        with executor.queue._conn:  # noqa: SLF001
+            executor.queue._conn.execute(  # noqa: SLF001
+                "UPDATE actions SET status='executing' WHERE id=?", (proposal.id,)
+            )
+            executor.queue._conn.execute(  # noqa: SLF001
+                "INSERT INTO action_dispatch_receipts(operation_key,action_id) VALUES(?,?)",
+                ("synthetic-consumed-operation", proposal.id),
+            )
+        handler = MagicMock()
+        handler.reconcile.return_value = ActionResult(
+            status="success",
+            message="Confirmed after recovery",
+            data={"task_id": "synthetic-task"},
+            reversible=False,
+            reverse_action=None,
+        )
+
+        with patch.object(executor, "_get_handler", return_value=handler):
+            result = executor.reconcile(proposal.id)
+
+        assert result.status == "success"
+        assert executor.queue.get_raw(proposal.id)["status"] == "succeeded"
 
     def test_absence_or_a_handler_without_reconcile_stays_unknown(self, executor):
         from actions.base import ActionResult
@@ -657,9 +765,15 @@ def test_live_trial_hold_blocks_outbound_communication(tmp_path, monkeypatch):
     repo_cfg = yaml.safe_load((Path(__file__).resolve().parents[2] / "config" / "actions.yaml").read_text())
     held = set(repo_cfg["live_trial"]["held"])
     assert "reminder_create" in repo_cfg["live_trial"]["trial"]
-    assert {"email_send", "email_reply", "whatsapp_send", "slack_send"} <= held
+    assert {
+        "email_send", "email_reply", "calendar_create", "calendar_modify",
+        "todo_sync", "todoist_sync", "instruction_sheet", "whatsapp_send",
+        "slack_send", "apple_reminders_sync",
+    } <= held
     assert "reminder_create" not in held
     assert repo_cfg["actions"]["reminder_create"]["autonomy_floor"] is True
+    assert repo_cfg["actions"]["reminder_create"]["reversible"] is False
+    assert repo_cfg["actions"]["reminder_create"].get("undo_window_sec") is None
     assert all(t in repo_cfg["actions"] for t in held)
 
     monkeypatch.setenv("ARTHA_LOCAL_DB", str(tmp_path / "actions.db"))
@@ -693,6 +807,71 @@ def test_composite_key_signal_type_scoped_to_instruction_sheet():
     assert CompositeKey.compute("payee", "transfer", "financial", signal_type="some_signal") == CompositeKey.compute(
         "payee", "transfer", "financial", signal_type=""
     )
+
+
+def test_external_effect_cannot_disable_required_pii_scan(executor):
+    executor._action_configs["reminder_create"]["pii_check"] = False  # noqa: SLF001
+    with patch.object(executor, "_get_handler") as provider, \
+         patch("action_executor._pii_scan_params", return_value=(False, ["field='body' types=SSN"])) as scan:
+        provider.return_value.validate.return_value = (True, "")
+        with pytest.raises(ValueError, match="PII detected"):
+            executor.propose(
+                "reminder_create", "health", "Synthetic reminder",
+                {"title": "Reminder", "body": "synthetic sensitive value"},
+            )
+    scan.assert_called_once()
+    assert executor.pending() == []
+
+
+def test_external_effect_scans_nested_parameter_values(executor):
+    def scan(value):
+        return (value == "synthetic sensitive value"), ({"SSN": 1} if value == "synthetic sensitive value" else {})
+
+    with patch.object(executor, "_get_handler") as provider, \
+         patch("pii_guard.scan", side_effect=scan):
+        provider.return_value.validate.return_value = (True, "")
+        with pytest.raises(ValueError, match="PII detected"):
+            executor.propose(
+                "reminder_create", "home", "Nested reminder",
+                {"title": "Reminder", "metadata": {"note": "synthetic sensitive value"}},
+            )
+
+
+def test_health_checks_do_not_touch_held_handlers(executor):
+    executor._held_types = {"reminder_create"}  # noqa: SLF001
+    with patch.object(executor, "_get_handler", side_effect=AssertionError("held handler loaded")):
+        results = executor.run_health_checks()
+    assert "reminder_create" not in results
+
+
+def test_nonreversible_policy_overrides_handler_claim_and_refuses_undo(executor):
+    proposal = _make_proposal(
+        action_type="reminder_create",
+        title="Synthetic reminder",
+        parameters={"title": "Synthetic reminder"},
+    )
+    handler = MagicMock()
+    handler.validate.return_value = (True, "")
+    handler.execute.return_value = ActionResult(
+        status="success",
+        message="synthetic provider success",
+        data={"task_id": "synthetic-task"},
+        reversible=True,
+        reverse_action=None,
+    )
+    with patch.object(executor, "_get_handler", return_value=handler):
+        proposal_id = executor.propose_direct(proposal)
+        reviewed_hash = _review(executor, proposal, "owner")
+        result = executor.approve(proposal_id, approved_by="owner",
+                                  reviewed_payload_hash=reviewed_hash)
+
+    assert result.status == "success"
+    assert result.reversible is False
+    assert executor.queue.get_raw(proposal_id)["reversible"] == 0
+    with patch.object(executor, "_get_handler", side_effect=AssertionError("undo handler loaded")):
+        undone = executor.undo(proposal_id)
+    assert undone.status == "failure"
+    assert "non-reversible" in undone.message
 
 
 def test_propose_direct_invokes_pre_enqueue_gate(executor):

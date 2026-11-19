@@ -33,12 +33,12 @@ def env(tmp_path, admitted_personal_sources):
 
 
 def put(ledger, predicate, value, subject="kid1", status=FactStatus.CURRENT, prov=Provenance.VERIFIED_SOURCE,
-        connector="school_email"):
+        connector="school_email", domain="kids_school", valid_to=None):
     sid, _ = ledger.upsert_signal(lg.SignalInput(connector, "acct", f"u-{predicate}-{value}-{subject}", "v1", "t",
                                                  f"h-{predicate}-{value}-{subject}", "b"))
     return ledger.put_fact(lg.FactInput(
-        domain="kids_school", predicate=predicate, value=value, primary_subject_id=subject, observed_at="t",
-        status=status, provenance=prov, evidence=((sid, 0, 4),))), sid
+        domain=domain, predicate=predicate, value=value, primary_subject_id=subject, observed_at="t",
+        status=status, provenance=prov, evidence=((sid, 0, 4),), valid_to=valid_to)), sid
 
 
 def fresh(hours=1):
@@ -177,6 +177,160 @@ def test_appointment_vs_school_schedule(env):
     assert run(env, calendar=[]).cross_domain == ()
 
 
+def test_health_appointment_is_visible_in_the_local_horizon_with_a_draft_p2_window(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-13T06:30:00.123456+00:00",
+        subject="owner", connector="health_email", domain="health")
+
+    result = run(env, pack=pack, freshness={signal_id: NOW, "health_email": NOW})
+
+    appointment = next(a for a in result.alerts if a.fact_id == fact_id)
+    assert appointment.severity is Severity.P2
+    assert appointment.deadline == date(2026, 10, 12)
+    assert appointment.days_until == 0
+    assert appointment.starts_at.isoformat() == "2026-10-12T23:30:00.123456-07:00"
+    assert appointment in result.horizon
+
+
+def test_later_appointment_stays_visible_without_inventing_severity(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-18T15:30:00-07:00",
+        subject="owner", connector="health_email", domain="health")
+
+    result = run(env, pack=pack, freshness={signal_id: NOW})
+
+    assert not any(a.fact_id == fact_id for a in result.alerts)
+    appointment = next(a for a in result.horizon if a.fact_id == fact_id)
+    assert appointment.severity is None and appointment.state == "actionable"
+
+
+@pytest.mark.parametrize(("stamp", "now", "local"), [
+    ("2026-11-01T08:30:00+00:00", "2026-10-31T18:00:00+00:00",
+     "2026-11-01T01:30:00-07:00"),
+    ("2026-11-01T09:30:00+00:00", "2026-10-31T18:00:00+00:00",
+     "2026-11-01T01:30:00-08:00"),
+    ("2026-03-08T02:30:00-08:00", "2026-03-07T18:00:00+00:00",
+     "2026-03-08T03:30:00-07:00"),
+])
+def test_datetime_appointments_preserve_dst_fold_gap_and_offset(env, stamp, now, local):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", stamp, subject="owner", connector="health_email", domain="health")
+    instant = datetime.fromisoformat(now)
+
+    result = triage(
+        env, pack, instant, viewer="ved", freshness={signal_id: instant},
+        connector_of=conn_of(env))
+
+    appointment = next(a for a in result.horizon if a.fact_id == fact_id)
+    assert appointment.starts_at.isoformat() == local
+
+
+def test_ongoing_appointment_uses_an_explicit_aware_end_time(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-12T15:00:00+00:00",
+        subject="owner", connector="health_email", domain="health",
+        valid_to="2026-10-12T17:00:00+00:00")
+
+    result = run(env, pack=pack, freshness={signal_id: NOW})
+
+    appointment = next(a for a in result.horizon if a.fact_id == fact_id)
+    assert appointment.ends_at.isoformat() == "2026-10-12T10:00:00-07:00"
+    assert appointment.days_until == 0
+
+
+@pytest.mark.parametrize("status", [FactStatus.DISPUTED, FactStatus.UNKNOWN])
+def test_uncertain_datetime_appointments_remain_visible(env, status):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-14T15:00:00-07:00",
+        subject="owner", connector="health_email", domain="health", status=status)
+
+    result = run(env, pack=pack, freshness={signal_id: NOW})
+
+    assert any(a.fact_id == fact_id for a in result.alerts)
+    appointment = next(a for a in result.alerts if a.fact_id == fact_id)
+    assert appointment.starts_at is not None
+    assert appointment.state in {"disputed", "unknown_stale"}
+    assert fact_id in {a.fact_id for a in result.horizon}
+
+
+def test_naive_datetime_is_visible_as_ambiguous_and_does_not_claim_quiet(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-14T15:00:00",
+        subject="owner", connector="health_email", domain="health")
+
+    result = run(env, pack=pack, freshness={signal_id: NOW})
+
+    appointment = next(a for a in result.alerts if a.fact_id == fact_id)
+    assert appointment.state == "no_deadline"
+    assert "timezone" in appointment.uncertainty
+
+
+def test_past_appointment_does_not_reenter_the_future_horizon(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-10T15:00:00-07:00",
+        subject="owner", connector="health_email", domain="health")
+
+    result = run(env, pack=pack, freshness={signal_id: NOW})
+
+    assert not any(a.fact_id == fact_id for a in (*result.alerts, *result.horizon))
+
+
+def test_past_appointment_with_explicit_followup_leaves_horizon_but_stays_visible(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-10T15:00:00-07:00",
+        subject="owner", connector="health_email", domain="health")
+    key = "health:owner:doctor_appointment"
+
+    result = run(
+        env, pack=pack, freshness={signal_id: NOW},
+        obligation_states={key: "outstanding"})
+
+    assert not any(a.fact_id == fact_id for a in result.horizon)
+    followup = next(a for a in result.alerts if a.fact_id == fact_id)
+    assert "follow-up remains outstanding" in followup.uncertainty
+
+
+def test_stale_appointment_keeps_its_time_severity_and_uncertainty(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-14T15:00:00-07:00",
+        subject="owner", connector="health_email", domain="health")
+
+    result = run(
+        env, pack=pack,
+        freshness={signal_id: NOW - timedelta(hours=100), "health_email": NOW - timedelta(hours=100)})
+
+    appointment = next(a for a in result.alerts if a.fact_id == fact_id)
+    assert appointment.severity is Severity.P2
+    assert appointment.state == "unknown_stale"
+    assert appointment.starts_at is not None and "old" in appointment.uncertainty
+
+
+def test_resolved_or_retracted_appointment_does_not_surface(env):
+    pack = dp.load_pack_file(Path(dp.__file__).parent / "packs" / "health.yaml")
+    fact_id, signal_id = put(
+        env, "doctor_appointment", "2026-10-14T15:00:00-07:00",
+        subject="owner", connector="health_email", domain="health")
+    key = "health:owner:doctor_appointment"
+    env.upsert_alert(
+        key, domain="health", primary_subject_id="owner", severity="P2",
+        deadline="2026-10-14", fact_ids=(fact_id,))
+    with env.transaction() as db:
+        db.execute("UPDATE alerts SET status='resolved' WHERE obligation_key=?", (key,))
+
+    assert not run(env, pack=pack, freshness={signal_id: NOW}).alerts
+    env.set_fact_status(fact_id, FactStatus.RETRACTED)
+    assert not run(env, pack=pack, freshness={signal_id: NOW}).alerts
+
+
 @pytest.mark.parametrize("provenance", [Provenance.DISPUTED, Provenance.USER_CONFIRMED])
 def test_disputed_datetime_appointment_does_not_create_actionable_cross_domain_conflict(env, provenance):
     fact_id, signal_id = put(
@@ -202,7 +356,8 @@ def test_unparsable_values_are_skipped_safely(env):
     put(env, EXAM, "sometime soon")
     put(env, "appointment_time", "later")
     r = run(env)
-    assert [a.state for a in r.alerts] == ["no_deadline"]       # unknown stays visible, never guessed
+    assert [a.state for a in r.alerts] == ["no_deadline", "no_deadline"]
+    assert {a.predicate for a in r.alerts} == {EXAM, "appointment_time"}
 
 
 def test_goal_relevance_is_a_tie_break_only():

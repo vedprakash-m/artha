@@ -709,8 +709,17 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
           opened: Callable[[dict[str, Any]], None] | None = None, *,
           audit: Callable[[bytes], None] | None = None,
           ended: Callable[[], None] | None = None, verify_ledgers: bool = False,
-          format_guard: Callable[[bytes], None] | None = None) -> dict[str, Any]:
+          format_guard: Callable[[bytes], None] | None = None,
+          max_member_bytes: int | None = None, max_total_bytes: int | None = None,
+          max_members: int | None = None) -> dict[str, Any]:
     """Authenticate and re-hash the whole stream; returns the manifest. Raises on any inconsistency."""
+    limits = {
+        'max_member_bytes': max_member_bytes,
+        'max_total_bytes': max_total_bytes,
+        'max_members': max_members,
+    }
+    if any(value is not None and (type(value) is not int or value <= 0) for value in limits.values()):
+        raise ValueError('checkpoint stream bounds must be positive integers')
     hashes: dict[str, Any] = {}
     open_member = False
     manifest: dict[str, Any] | None = None
@@ -731,6 +740,8 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
     quarantine_chunk_count = 0
     quarantine_overflow = False
     work_format = False
+    member_count = 0
+    completed_bytes = 0
 
     def observe_format(magic: bytes) -> None:
         nonlocal work_format
@@ -743,6 +754,9 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
         if kind == "member":
             if open_member or manifest is not None:
                 raise CheckpointError('checkpoint member is out of order')
+            member_count += 1
+            if max_members is not None and member_count > max_members:
+                raise CheckpointError('checkpoint member count exceeds its bound')
             if header.get('kind') == 'stream':
                 member = _work_stream_header(header)
                 owner = member['owner']
@@ -784,6 +798,10 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
             (chunk,) = chunks
             hashes["digest"].update(chunk)
             hashes["size"] += len(chunk)
+            if max_member_bytes is not None and hashes["size"] > max_member_bytes:
+                raise CheckpointError('checkpoint member exceeds its byte bound')
+            if max_total_bytes is not None and completed_bytes + hashes["size"] > max_total_bytes:
+                raise CheckpointError('checkpoint aggregate exceeds its byte bound')
             if work_format and not quarantine_overflow and member_chunks is not None:
                 full, remainder = divmod(len(chunk), quarantine.CHUNK_BYTES)
                 count = full + bool(remainder)
@@ -825,6 +843,7 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
             if ledger_image is not None:
                 _verify_ledger_image(ledger_image)
                 ledger_image = None
+            completed_bytes += hashes["size"]
             open_member = False
             if ended:
                 ended()
@@ -856,9 +875,11 @@ def _scan(  # noqa: PLR0912, PLR0915 - explicit stream state machine
     return manifest
 
 
-def verify(path: Path, cipher: EnvelopeCipher) -> dict[str, Any]:
+def verify(path: Path, cipher: EnvelopeCipher, *, max_member_bytes: int | None = None,
+           max_total_bytes: int | None = None, max_members: int | None = None) -> dict[str, Any]:
     """Decrypt and re-hash every member; any mismatch, missing, extra, reordered or truncated part fails."""
-    manifest = _scan(path, cipher)
+    manifest = _scan(path, cipher, max_member_bytes=max_member_bytes, max_total_bytes=max_total_bytes,
+                     max_members=max_members)
     return manifest
 
 

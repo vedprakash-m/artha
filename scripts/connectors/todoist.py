@@ -31,6 +31,7 @@ _API_BASE = "https://api.todoist.com/rest/v2"
 _SYNC_BASE = "https://api.todoist.com/sync/v9"
 _REQUEST_TIMEOUT = 20
 _RETRY_AFTER_DEFAULT = 5.0
+_REQUEST_DEADLINE_SECONDS = 75
 
 # ---------------------------------------------------------------------------
 # Low-level HTTP helpers
@@ -53,19 +54,19 @@ def _todoist_get(
         url,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
-    retries = 3
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode())
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                retry_after = float(exc.headers.get("Retry-After", _RETRY_AFTER_DEFAULT))
-                if attempt < retries - 1:
-                    time.sleep(retry_after)
-                    continue
-            raise
-    return None  # unreachable — raise above exits
+    from lib.retry import with_retry  # type: ignore[import]
+
+    def request_once():
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+
+    return with_retry(
+        request_once,
+        max_retries=2,
+        max_delay=_RETRY_AFTER_DEFAULT,
+        deadline=time.monotonic() + _REQUEST_DEADLINE_SECONDS,
+        context=f"todoist.{endpoint}",
+    )
 
 
 def _load_token(auth_context: dict, credential_key: str = "artha-todoist-token") -> str | None:
@@ -226,6 +227,8 @@ def fetch(
         tasks = _todoist_get(token, "tasks", params) or []
     except Exception as exc:
         import logging  # noqa: PLC0415
+        from lib.connector_coverage import report_scope  # type: ignore[import]
+        report_scope("todoist:active", "failed", reason=type(exc).__name__)
         logging.getLogger(__name__).error("todoist: fetch active tasks failed: %s", exc)
         tasks = []
 
@@ -253,6 +256,8 @@ def fetch(
         completed_items = completed_data.get("items", [])
     except Exception as exc:
         import logging  # noqa: PLC0415
+        from lib.connector_coverage import report_scope  # type: ignore[import]
+        report_scope("todoist:completed", "failed", reason=type(exc).__name__)
         logging.getLogger(__name__).warning("todoist: completed tasks fetch failed: %s", exc)
         completed_items = []
 

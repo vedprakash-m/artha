@@ -8,7 +8,7 @@ Conforms to ActionHandler protocol.
 SAFETY:
   - dry_run: fetches the existing event and shows a diff preview; no write.
   - execute: verifies the reviewed ETag and uses If-Match for the exact update.
-  - Undo: re-patches with the original field values within undo_window_sec=300.
+  - No registered undo path: action results and policy are non-reversible.
   - Requires explicit review; the action type remains held until live acceptance.
 
 Ref: specs/act.md §8.2
@@ -200,7 +200,7 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 # Stored for undo: original field values to restore
                 "_original_values": original_values,
             },
-            reversible=True,
+            reversible=False,
             reverse_action=None,
         )
 

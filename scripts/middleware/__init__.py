@@ -221,7 +221,9 @@ class _ComposedMiddleware:
                 pass
 
 
-def compose_middleware(middlewares: list) -> "_ComposedMiddleware | _PassthroughMiddleware":
+def compose_middleware(
+    middlewares: list, *, mandatory: bool = False
+) -> "_ComposedMiddleware | _PassthroughMiddleware":
     """Chain multiple middleware objects into a single pipeline.
 
     Execution order:
@@ -238,7 +240,7 @@ def compose_middleware(middlewares: list) -> "_ComposedMiddleware | _Passthrough
     """
     from context_offloader import load_harness_flag  # noqa: PLC0415
 
-    if not load_harness_flag("middleware.enabled"):
+    if not mandatory and not load_harness_flag("middleware.enabled"):
         return _PassthroughMiddleware()
 
     return _ComposedMiddleware(middlewares)

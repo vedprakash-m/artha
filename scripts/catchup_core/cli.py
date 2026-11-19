@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import sqlite3
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -40,7 +41,7 @@ from catchup_core.exchange import (  # noqa: E402
     ResponseDocument,
     render_bundle,
 )
-from catchup_core.ledger import LedgerError  # noqa: E402
+from catchup_core.ledger import LedgerError, PermissionDenied  # noqa: E402
 
 __all__ = ["main", "parse_args"]
 
@@ -91,6 +92,16 @@ def _add_bundle_commands(sub: Any) -> None:
     export.add_argument("--days", type=int, default=30, help="history window for this export")
 
 
+def _command_args(argv: Sequence[str]) -> list[str]:
+    values = list(argv)
+    if values and values[0].strip().casefold() == "show everything":
+        return ["catchup", "--everything", *values[1:]]
+    if len(values) >= 2 and tuple(value.strip().casefold() for value in values[:2]) == (
+            "show", "everything"):
+        return ["catchup", "--everything", *values[2:]]
+    return values
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR0915 - flat command grammar
     parser = argparse.ArgumentParser(prog="catchup_core", add_help=True)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -114,7 +125,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
                  "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve",
                  "ingest", "review", "complete", "transfer-authority", "retire-authority", "field-review", "retention",
                  "cancel-extraction", "interchange", "emergency", "configure", "usage", "consent",
-                 "scope-review"):
+                 "scope-review", "migrate"):
         command = sub.add_parser(name)
         command.add_argument("--json", action="store_true")
         command.add_argument("--shadow", action="store_true")
@@ -145,6 +156,17 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
             command.add_argument("--days", type=int, default=90)
         elif name == "scope-review":
             command.add_argument("source", help="connector whose Signals to review, e.g. home_email")
+            command.add_argument("--object", help="re-review one exact Signal already in the ledger")
+            action = command.add_mutually_exclusive_group()
+            action.add_argument("--enroll", action="store_true",
+                                help="enroll the exact configured source for new Personal ingest")
+            action.add_argument("--revoke", action="store_true",
+                                help="revoke the current source enrollment")
+            action.add_argument("--enrollments", action="store_true",
+                                help="list the append-only enrollment history")
+        elif name == "migrate":
+            command.add_argument("--apply", metavar="DIGEST",
+                                 help="apply the exact preview digest in the owner's terminal")
         elif name == 'field-review':
             command.add_argument('fact_id')
             command.add_argument('--apply')
@@ -207,7 +229,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
             command.add_argument("new_host")
             command.add_argument("--checkpoint", required=True, help="checkpoint the new host will restore")
             command.add_argument("--output", required=True, help="where to write the signed receipt")
-    return parser.parse_args(list(argv))
+    return parser.parse_args(_command_args(argv))
 
 
 def _read_responses(source: str | None, stdin: TextIO) -> ResponseDocument | None:
@@ -253,6 +275,7 @@ def _actor(args: argparse.Namespace, factory: DepsFactory) -> str:
 
 def _catchup(args: argparse.Namespace, deps_factory: DepsFactory,
              stdout: TextIO, stderr: TextIO, stdin: TextIO) -> int:
+    import json  # noqa: PLC0415
     try:
         request = CatchupRequest(
             catchup_id=args.id or f"cu_{uuid.uuid4().hex[:12]}", actor=_actor(args, deps_factory), channel=args.channel,
@@ -293,7 +316,11 @@ def _catchup(args: argparse.Namespace, deps_factory: DepsFactory,
         if deps is not None and deps_factory is _default_factory:
             deps.ledger.close()
     if args.json:
-        print(result.to_json(), file=stdout)
+        payload = result.to_dict()
+        for entry, rendered in zip(result.coverage, payload["coverage"], strict=True):
+            rendered["result_state"] = entry.result_state
+            rendered["record_count"] = entry.record_count
+        print(json.dumps(payload, sort_keys=True), file=stdout)
     else:
         if result.briefing_text:
             print(result.briefing_text, file=stdout, end="")
@@ -317,9 +344,10 @@ def _mutates(args: argparse.Namespace) -> bool:
     mutations = {"correct", "forget", "feedback", "capture", "ingest", "pause", "resume",
                  "reconcile", "resolve", "complete", "transfer-authority", "retire-authority", "field-review",
                  "cancel-extraction",
-                 "configure", "usage", "scope-review"}
+                 "configure", "usage", "scope-review", "migrate"}
     return ((args.command in mutations
-             and (args.command not in {"correct", "complete", "configure"} or args.apply is not None))
+             and (args.command != "scope-review" or not getattr(args, "enrollments", False))
+             and (args.command not in {"correct", "complete", "configure", "migrate"} or args.apply is not None))
             or (args.command == "review" and args.label is not None)
             or (args.command == "consent" and args.action == "grant"))
 
@@ -339,6 +367,8 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[2]
     deps = None
     try:
+        if args.command == "migrate":
+            return _run_migration(args, root)
         config = load_runtime_config(root / "config" / "catchup_core.yaml")
         request = CatchupRequest(f"view_{uuid.uuid4().hex[:12]}", args.actor or config.viewer, "cli",
             mode=ExecutionMode.SHADOW if args.shadow else ExecutionMode.AUTHORITATIVE,
@@ -360,6 +390,73 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         if deps is not None:
             deps.ledger.close()
+
+
+def _run_migration(args: argparse.Namespace, root: Path) -> dict[str, Any]:
+    import hashlib  # noqa: PLC0415
+    from tempfile import TemporaryDirectory  # noqa: PLC0415
+
+    from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, system_keyring  # noqa: PLC0415
+    from catchup_core.ledger import KeyringSealedStore, Ledger  # noqa: PLC0415
+    from catchup_core.migration_cli import apply, preview  # noqa: PLC0415
+    from catchup_core.runtime import (  # noqa: PLC0415
+        _id_key,
+        load_runtime_config,
+        local_root,
+    )
+    from catchup_core.session_lock import installation_fence, require_active_installation, session_lock  # noqa: PLC0415
+
+    config = load_runtime_config(root / "config" / "catchup_core.yaml")
+    local = local_root()
+    require_active_installation(root, local.parent)
+    ledger_path = local / "ledger.db"
+    if not ledger_path.is_file():
+        raise LedgerError("no authority ledger exists to migrate")
+    backend = system_keyring()
+    cipher_provider = KeyringKeyProvider("artha-ledger", backend=backend, create=False)
+    id_provider = KeyringKeyProvider("artha-ledger-ids", backend=backend, create=False)
+    cipher = EnvelopeCipher(cipher_provider)
+    id_key = _id_key(id_provider)
+    if args.apply is not None and not (sys.stdin.isatty() and sys.stdout.isatty()):
+        raise PermissionDenied("ledger migration apply must run in the owner's terminal")
+    with installation_fence(local.parent), session_lock(ledger_path.with_suffix(".session.lock")):
+        ledger = Ledger(
+            ledger_path, id_key=id_key, cipher=cipher, owner_id=config.viewer,
+            known_subjects=frozenset(config.subjects),
+            sealed=KeyringSealedStore(
+                backend, "authoritative", cipher=cipher))
+        try:
+            ledger.open(read_only=args.apply is None)
+            if args.apply is None:
+                return preview(ledger)
+
+            def encrypted_backup(path: Path) -> Path:
+                from catchup_core.backup import atomic_bytes, database_bytes  # noqa: PLC0415
+                data = database_bytes(path)
+                envelope, _ = cipher.encrypt(data, aad=b"migration-backup")
+                destination = local / (
+                    f"{path.name}.pre-migration-{hashlib.sha256(data).hexdigest()[:12]}.ae1")
+                if (destination.exists()
+                        and cipher.decrypt(destination.read_bytes(), aad=b"migration-backup") != data):
+                    raise LedgerError("migration backup identity collision")
+                if not destination.exists():
+                    atomic_bytes(destination, envelope)
+                return destination
+
+            def verify_encrypted(path: Path) -> None:
+                data = cipher.decrypt(path.read_bytes(), aad=b"migration-backup")
+                with TemporaryDirectory(prefix="artha-migrate-") as scratch:
+                    copy = Path(scratch) / "ledger.db"
+                    copy.write_bytes(data)
+                    with sqlite3.connect(copy) as restored:
+                        if restored.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                            raise LedgerError("encrypted migration backup restore verification failed")
+
+            return apply(ledger, args.apply, backup=encrypted_backup,
+                         verify_backup=verify_encrypted)
+        finally:
+            if ledger._conn is not None:
+                ledger.close()
 
 
 def _inspect(args: argparse.Namespace, stdout: TextIO, stderr: TextIO) -> int:

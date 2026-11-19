@@ -109,3 +109,32 @@ def test_snapshot_roundtrip_with_old_restore_locks_ledger(tmp_path):
     again = lg.Ledger(tmp_path / "l.db", id_key=KEY, cipher=CIPHER, sealed=sealed).open()
     assert again.check_restore() is False and again.locked
     again.close()
+
+
+def test_restore_invalidates_owner_reviews_and_source_enrollments(populated):
+    ledger, _curated, tmp = populated
+    sid, _ = ledger.upsert_signal(lg.SignalInput(
+        "home_email", "acct", "m1", "v1", "2026-11-18T00:00:00Z", "h1", "blob"))
+    ledger.set_signal_subjects(sid, ["ved"])
+    ledger.set_source_subjects("home_email", "acct", ["ved"])
+    item = ledger.scope_review_item("signal", sid)
+    ledger.review_scope(
+        "signal", sid, "personal", reviewer=ledger._owner,
+        expected_descriptor=item["review_descriptor"])
+    ledger.enroll_source(
+        source_name="home_email", connector="gmail",
+        provider_account="owner@example.invalid", account_scope="personal",
+        query="from:pse.com", subjects=["ved"], policy={
+            "allowed_sender_domains": ["pse.com"], "work_label_ids": [],
+            "work_recipient_domains": [], "unknown_metadata": "hold",
+        }, reviewer=ledger._owner)
+    manifest = sn.take_snapshot(tmp / "ledger.db", tmp / "snap", generation=1)
+    ledger.close()
+    sn.restore_snapshot(manifest, tmp / "ledger.db")
+    restored = lg.Ledger(tmp / "ledger.db", id_key=KEY, cipher=CIPHER, owner_id="ved",
+                         known_subjects=frozenset({"ved"})).open()
+    assert restored.conn.execute(
+        "SELECT COUNT(*) FROM scope_bindings WHERE provenance='source_review'").fetchone()[0] == 0
+    with pytest.raises(lg.PersonalScopeUnavailable):
+        restored.require_active_source_enrollment("home_email")
+    restored.close()

@@ -317,6 +317,7 @@ def triage_conn_of(ledger):
 
 # ── Release / cutover / scorecard helpers ──────────────────────────────────
 CUTOVER_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
+OWNER_DECISION_SHA256 = "a" * 64
 CUTOVER_ESCROW = {
     "age-key/artha": b"AGE-SECRET-KEY-1SYNTHETIC",
     "artha-ledger/key.1": b"k" * 32,
@@ -356,6 +357,7 @@ def release_scorecard(config=None, *, cohort=None):
         "cases": len(cases),
         "live_cases": len(cases),
         "owner_signed_at": "reviewed",
+        "owner_decision_ref": OWNER_DECISION_SHA256,
         "evaluations": cases,
         "bounds": {
             "kids_school": {
@@ -558,6 +560,7 @@ def synthetic_recovery_acceptance(tmp_path: Path, personal: Path, cipher: Envelo
         "passed": True,
         "reconciled": True,
         "owner_signed_at": stamp,
+        "owner_decision_ref": OWNER_DECISION_SHA256,
         "checkpoint_sha256": personal_digest,
         "checkpoint_generation": personal_generation,
         "cohort": cohort or {"implementation": "synthetic-only"},
@@ -612,6 +615,7 @@ def build_cutover_configured(tmp_path: Path, monkeypatch):
             "authority_host": "authority",
             "domains": ["kids_school"],
             "owner_approved_at": "reviewed",
+            "owner_decision_sha256": OWNER_DECISION_SHA256,
             "stage1_clearance": artifact("clearance.json", {"passed": True, "owner_signed_at": "reviewed"}),
             "scorecard": None,
             "rollback_snapshot": rollback_record,

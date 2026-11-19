@@ -70,6 +70,12 @@ class ConnectorRecord:
     incomplete: bool = False
     calendar: CalendarEvent | None = None
     document_method: str | None = None
+    raw_content_hmac: str | None = None
+    source_name: str | None = None
+    enrollment_id: int | None = None
+    metadata_marker: str | None = None
+    access_subjects: tuple[str, ...] = ()
+    provider_account_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.document_method is not None and self.document_method not in ("text", "ocr", "unknown"):
@@ -94,8 +100,23 @@ class ConnectorFetch:
     deleted_collections: tuple[str, ...] = ()
     # (collection, window start, window end): that collection's listing was complete; None bounds = unbounded.
     full_listings: tuple[tuple[str, str | None, str | None], ...] = ()
+    # None preserves legacy complete-status acknowledgments; degraded hold cursors require explicit True.
+    listing_complete: bool | None = None
+    listing_truncation: str | None = None
     # Set only by runtime after an authorized provider fetch under this consent generation.
     provider_permission_generation: int | None = None
+    holds: tuple[ConnectorHold, ...] = ()
+
+
+@dataclass(frozen=True)
+class ConnectorHold:
+    source_name: str
+    connector: str
+    account_scope: str
+    provider_account_id: str
+    upstream_id: str
+    upstream_version: str
+    reason: str
 
 
 class StageFault(RuntimeError):
@@ -142,6 +163,7 @@ class Deps:
     #: Domains of active Goals; used only as a ranking tie-break (never lifts an ineligible Alert).
     goal_domains: Callable[[], Collection[str]] = lambda: ()
     input_version: str = ""
+    cohort: Mapping[str, str] = field(default_factory=dict)
     subjects_for: Callable[[str, str], Sequence[str]] | None = None
     #: Strictest subject set recorded for access checks when ``subjects_for`` names nobody; never grants extraction.
     access_subjects_for: Callable[[str, str], Sequence[str]] | None = None
@@ -233,7 +255,10 @@ class _Run:
     def _fetch_one(self, name: str, fetcher: Callable[[], ConnectorFetch]) -> list[str]:
         d = self.deps
         d.validate_inputs()
-        self.led.require_personal_connector_admission()
+        if not getattr(fetcher, "__artha_enrolled_source__", False):
+            self.led.require_personal_connector_admission()
+        else:
+            self.led.require_active_source_enrollment(name)
         try:
             got = fetcher()
         except PersonalScopeUnavailable:
@@ -259,7 +284,7 @@ class _Run:
         with self.led.transaction():
             return self._store_fetch_in_transaction(got, name)
 
-    def _store_fetch_in_transaction(self, got: ConnectorFetch, name: str) -> list[str]:  # noqa: PLR0912
+    def _store_fetch_in_transaction(self, got: ConnectorFetch, name: str) -> list[str]:  # noqa: PLR0912,PLR0915
         d = self.deps
         self.led.set_source_subjects(got.connector, got.account_scope, d.scope_subjects.get(name, d.subjects))
         if got.error is not None:
@@ -267,10 +292,15 @@ class _Run:
         created: list[str] = []
         observed: list[str] = []
         calendars: list[tuple[ConnectorRecord, str]] = []
+        for hold in got.holds:
+            self.led.record_coverage_hold(
+                source_name=hold.source_name, connector=hold.connector,
+                account_scope=hold.account_scope, provider_account_id=hold.provider_account_id,
+                upstream_id=hold.upstream_id, upstream_version=hold.upstream_version, detail=hold.reason)
         for upstream in got.cancelled:
             self.led.cancel_calendar(got.connector, got.account_scope, upstream)
         for rec in got.records:
-            chmac = self._source_hmac(got, rec)
+            chmac = rec.raw_content_hmac or self._source_hmac(got, rec)
             if chmac is None:
                 continue
             if self.led.is_tombstoned(got.connector, got.account_scope, rec.upstream_id, chmac):
@@ -287,7 +317,19 @@ class _Run:
                 d.blobs.delete(ref)                  # forgotten: leave nothing behind
                 continue
             access = d.access_subjects_for or d.subjects_for
-            self.led.set_signal_subjects(sid, access(got.connector, rec.text) if access else d.subjects)
+            subjects = (list(rec.access_subjects) if rec.access_subjects
+                        else access(got.connector, rec.text) if access else d.subjects)
+            self.led.set_signal_subjects(sid, subjects)
+            if rec.source_name is not None and rec.enrollment_id is not None and rec.metadata_marker is not None:
+                if rec.source_name != got.connector:
+                    d.blobs.delete(ref)
+                    raise LedgerError("enrolled record source does not match its fetch scope")
+                self.led.bind_enrolled_signal(
+                    sid, source_name=rec.source_name, enrollment_id=rec.enrollment_id,
+                    metadata_marker=rec.metadata_marker)
+                self.led.resolve_coverage_hold(
+                    rec.source_name, str(rec.provider_account_id or ""), rec.upstream_id,
+                    str(rec.provider_version or rec.upstream_id), "admitted", required=False)
             if got.connector == "documents":
                 self.led.set_document_method(sid, rec.document_method or "unknown")
             if is_new:
@@ -311,14 +353,20 @@ class _Run:
                 self.led.withdraw_unlisted_calendar_occurrences(
                     got.connector, got.account_scope, coll_id, listed, window_start, window_end)
         reset_cursor = got.cursor_reset
-        cursor_to_commit = got.cursor if not reset_cursor and got.cursor and got.status is CoverageStatus.COMPLETE \
-            else None
+        hold_only_degradation = bool(got.holds) and got.status is CoverageStatus.DEGRADED and got.error is None
+        acknowledged_complete = (
+            got.status is CoverageStatus.COMPLETE and got.listing_complete is not False)
+        acknowledged_hold_listing = hold_only_degradation and got.listing_complete is True
+        cursor_to_commit = got.cursor if (
+            not reset_cursor and got.cursor
+            and (acknowledged_complete or acknowledged_hold_listing)
+        ) else None
         self.led.set_coverage(got.connector, got.account_scope, got.status.value, got.blind_spots,
                               completed_at=(got.completed_at or _iso(self.now))
                               if got.status is CoverageStatus.COMPLETE else None,
                               catchup_id=self.request.catchup_id,
                               cursor_generation=cursor_to_commit,
-                              reset_cursor=reset_cursor)
+                              reset_cursor=reset_cursor, record_count=len(got.records))
         self._record_provider_generations(got.provider_permission_generation, observed)
         return created
 
@@ -388,6 +436,10 @@ class _Run:
             return False
         return True
 
+    def _signal_text(self, row: sqlite3.Row) -> str:
+        from catchup_core.admitted_ingest import decode_signal_text  # noqa: PLC0415
+        return decode_signal_text(self.deps.blobs.get(row["evidence_blob_ref"]))
+
     # ── NORMALIZE ────────────────────────────────────────────────────────────
     def _stage_normalize(self) -> tuple[str, ...]:
         out: list[str] = []
@@ -399,7 +451,7 @@ class _Run:
                 self.failures.append(FailureClass.PERMISSION)
                 continue
             try:
-                text = self.deps.blobs.get(row["evidence_blob_ref"])
+                text = self._signal_text(row)
             except PersonalScopeUnavailable:
                 raise
             except Exception:
@@ -460,7 +512,7 @@ class _Run:
         d, sid = self.deps, row["signal_id"]
         if not self._extract_ready(sid):
             return False
-        text = d.blobs.get(row["evidence_blob_ref"])
+        text = self._signal_text(row)
         subjects = d.subjects_for(row["connector"], text) if d.subjects_for else d.subjects
         if not subjects:
             return self._extract_permission_failure(sid)
@@ -623,7 +675,6 @@ class _Run:
         return parsed if parsed.ok else ex.ExtractionResult((), complete=False)
 
     def _stage_extract(self) -> tuple[str, ...]:
-        self.led.require_personal_signal_admission()
         for row in self.led.conn.execute("SELECT signal_id FROM signal_failures WHERE stage='extract' "
                                          "AND retry_eligible=1 AND attempts<3").fetchall():
             self.led.set_processing_state(row[0], ProcessingState.NORMALIZED)
@@ -696,7 +747,7 @@ class _Run:
                     for s in (stamp, row["completed_at"]))
         result = triage(
             self.led, self.deps.pack, self.now, viewer=self.deps.viewer, freshness=freshness,
-            calendar=(*self.led.calendar_for(self.deps.viewer), *self.deps.calendar()),
+            calendar=(*self._ledger_calendar(), *self.deps.calendar()),
             obligation_states=self.deps.obligation_states(), goal_domains=self.deps.goal_domains(),
             connector_of=self._connector_of,
             source_class_of=lambda sid: self.deps.source_class.get(self._connector_of(sid), self._connector_of(sid)))
@@ -747,15 +798,37 @@ class _Run:
 
     def _coverage(self) -> list[CoverageEntry]:
         d = self.deps
-        entries = [
-            CoverageEntry(r["connector"], r["account_scope"],
-                          CoverageStatus(r["status"]) if r["catchup_id"] == self.request.catchup_id
-                          else CoverageStatus.UNAVAILABLE,
-                          required=next((s.required for s in d.pack.sources if s.connector == r["connector"]), False),
-                          last_verified=r["completed_at"], blind_spots=tuple(json.loads(r["blind_spots"])))
-            for r in self.led.visible_coverage(d.viewer)
-            if not d.expected_scopes or d.expected_scopes.get(r['connector']) == r['account_scope']
-        ]
+        entries = []
+        for row in self.led.visible_coverage(d.viewer):
+            if d.expected_scopes and d.expected_scopes.get(row["connector"]) != row["account_scope"]:
+                continue
+            source = next((item for item in d.pack.sources if item.connector == row["connector"]), None)
+            status = CoverageStatus(row["status"]) if row["catchup_id"] == self.request.catchup_id \
+                else CoverageStatus.UNAVAILABLE
+            holds = self.led.coverage_holds(
+                str(row["connector"]), state="held",
+                permission_generation=self.led._permission_generation())
+            state = None
+            if holds:
+                state = "held"
+            elif status in (CoverageStatus.UNAVAILABLE, CoverageStatus.NOTIFIED_NOT_FETCHED,
+                            CoverageStatus.DEGRADED, CoverageStatus.ANOMALY):
+                state = "unavailable"
+            elif status is CoverageStatus.COMPLETE and int(row["record_count"]) == 0:
+                state = "none"
+            elif source and row["completed_at"]:
+                try:
+                    last = datetime.fromisoformat(str(row["completed_at"]).replace("Z", "+00:00"))
+                    if (self.deps.now() - last.astimezone(self.deps.now().tzinfo)).total_seconds() \
+                            > source.freshness_hours * 3600:
+                        state = "stale"
+                except (TypeError, ValueError):
+                    state = "stale"
+            entries.append(CoverageEntry(
+                row["connector"], row["account_scope"], status,
+                required=source.required if source else False,
+                last_verified=row["completed_at"], blind_spots=tuple(json.loads(row["blind_spots"])),
+                result_state=state, record_count=int(row["record_count"])))
         present = {e.connector for e in entries}
         for source in d.pack.sources:
             if source.required and source.connector not in present:
@@ -776,11 +849,17 @@ class _Run:
         today = self.now.date()
         horizon = today + timedelta(days=7)
         days = sorted({(e.start.date() if isinstance(e.start, datetime) else e.start)
-                       for e in self.led.calendar_for(self.deps.viewer)
+                       for e in self._ledger_calendar()
                        if today <= (e.start.date() if isinstance(e.start, datetime) else e.start) <= horizon})
         if not days:
             return f"Calendar: nothing in the next 7 days.{note}"
         return f"Calendar: {len(days)} day(s) with events in the next 7 days; next {days[0]:%a %b} {days[0].day}.{note}"
+
+    def _ledger_calendar(self) -> tuple[Any, ...]:
+        try:
+            return tuple(self.led.calendar_for(self.deps.viewer))
+        except PersonalScopeUnavailable:
+            return ()
 
     def _sources_without_mail(self) -> list[str]:
         """Mail sources that have never delivered a Signal: a complete fetch of nothing is not a verified quiet."""
@@ -1119,6 +1198,7 @@ def _record_metrics(deps: Deps, run: _Run | None, request: CatchupRequest, statu
             'metric_sequence': run.metric_sequence if run else None,
             "catchup_id": request.catchup_id, "mode": request.mode.value, "status": status,
             'implementation_version': deps.input_version, 'pack_version': deps.pack.version,
+            'cohort': dict(deps.cohort),
             'policy_version': request.policy_version,
             "at": _iso(run.now if run else deps.now()), 'ended_at': _iso(deps.now()),
             "total_seconds": round(deps.perf() - started, 3) if started is not None else 0.0,

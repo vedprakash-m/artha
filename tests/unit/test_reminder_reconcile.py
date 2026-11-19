@@ -59,3 +59,47 @@ def test_token_comes_from_the_refreshing_loader_and_fails_loudly(monkeypatch):
     monkeypatch.setitem(sys.modules, "lib.auth", types.SimpleNamespace(load_msgraph_token=lambda: {}))
     with pytest.raises(RuntimeError, match="setup_msgraph_oauth"):
         rc._get_token()
+
+
+@pytest.mark.parametrize("destination", [
+    "https://evil.example/v1.0/me/todo/lists",
+    "http://graph.microsoft.com/v1.0/me/todo/lists",
+    "https://graph.microsoft.com.evil.example/v1.0/me/todo/lists",
+    "https://graph.microsoft.com/v1.0/me/drive",
+])
+def test_graph_credentials_never_attach_to_unapproved_destination(monkeypatch, destination):
+    opener = SimpleNamespace(open=lambda *_args, **_kwargs: pytest.fail("request reached opener"))
+    monkeypatch.setattr(rc.urllib.request, "build_opener", lambda *_args: opener)
+    with pytest.raises(ValueError, match="Graph destination"):
+        rc._graph_request(destination, access_token="synthetic-token")
+
+
+def test_graph_request_refuses_redirects_before_reusing_authorization():
+    handler = rc._NoGraphRedirect()
+    assert handler.redirect_request(
+        SimpleNamespace(), SimpleNamespace(), 302, "Found", {}, "https://evil.example/receive",
+    ) is None
+
+
+def test_approved_graph_url_uses_one_bounded_nonredirecting_opener(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"value": []}'
+
+    class Opener:
+        def open(self, request, *, timeout):
+            assert request.full_url == f"{rc._GRAPH_TODO_BASE}?$top=10"
+            assert request.get_header("Authorization") == "Bearer synthetic-token"
+            assert timeout == 15
+            return Response()
+
+    monkeypatch.setattr(rc.urllib.request, "build_opener",
+                        lambda handler: Opener() if isinstance(handler, rc._NoGraphRedirect) else None)
+    assert rc._graph_request(f"{rc._GRAPH_TODO_BASE}?$top=10",
+                             access_token="synthetic-token") == {"value": []}

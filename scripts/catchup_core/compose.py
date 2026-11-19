@@ -96,14 +96,34 @@ def _fmt_date(d: date | None) -> str:
     return f"{d:%a %b} {d.day}" if d else "date unknown"
 
 
+def _fmt_datetime(moment: datetime) -> str:
+    clock = moment.strftime("%I:%M").lstrip("0")
+    if moment.second or moment.microsecond:
+        precision = f".{moment.microsecond:06d}".rstrip("0") if moment.microsecond else ""
+        clock += moment.strftime(":%S") + precision
+    clock += moment.strftime(" %p")
+    offset = moment.strftime("%z")
+    utc_offset = f"UTC{offset[:3]}:{offset[3:]}" if len(offset) == 5 else "UTC"
+    zone = moment.tzname() or "local"
+    zone_label = "" if zone == utc_offset else f" {zone}"
+    return f"{moment:%a %b} {moment.day}, {clock}{zone_label} ({utc_offset})"
+
+
 def _alert_line(a: AlertDraft, cite: str, labels: Mapping[str, str]) -> str:
     label = a.predicate.replace("_", " ")
     who = sanitize(labels.get(a.subject_id, a.subject_id), 40)
     sev = a.severity.value if a.severity else "unscored"
+    scheduled = ""
+    if a.starts_at is not None:
+        scheduled = f" at {_fmt_datetime(a.starts_at)}"
+        if a.ends_at is not None:
+            scheduled += f"; ends {_fmt_datetime(a.ends_at)}"
     if a.state == "disputed":
-        core = f"{who}: {label} — sources disagree; confirm before acting"
+        core = f"{who}: {label}{scheduled} — sources disagree; confirm before acting"
     elif a.state == "no_deadline":
         core = f"{who}: {label} — no usable date; unknown"
+    elif scheduled:
+        core = f"{who}: {label}{scheduled}"
     elif a.deadline is None:
         core = f"{who}: {label}"
     else:
@@ -137,7 +157,7 @@ def _open_item_section(items: Sequence[OpenItemLine], today: date, fmt: Briefing
     limit = _OPEN_ITEM_LIMIT[fmt]
     head = f"OPEN ITEMS ({len(items)}" + (f", {overdue} overdue" if overdue else "") + ")"
     if fmt in (BriefingFormat.FLASH, BriefingFormat.DIGEST):
-        return [head + " — `items` lists them"] if overdue else []
+        return [head + " — say `show everything` to list them.", ""]
     lines = [head] + [f"• {sanitize(i.text, 200)}" for i in ordered[:limit]]
     if len(ordered) > limit:
         lines.append(f"  …and {len(ordered) - limit} more — say `show everything`")
@@ -150,11 +170,14 @@ def _trim_words(lines: list[str], limit: int) -> list[str]:
     out: list[str] = []
     for line in lines:
         words += len(line.split())
-        if words > limit and not line.startswith(("Next check", "Coverage", "No alerts", "Nothing urgent")):
+        consequential = line.startswith("• [P1") or line.startswith("• [P2") or "appointment" in line
+        continuation = "show everything" in line
+        if (words > limit and not consequential and not continuation
+                and not line.startswith(("Next check", "Coverage", "No alerts", "Nothing urgent"))):
             continue
         out.append(line)
     if len(out) < len(lines):
-        out.insert(max(0, len(out) - 1), "(digest trimmed — say `brief` for the full Briefing)")
+        out.insert(max(0, len(out) - 1), "(digest trimmed — say `show everything` for the full Briefing)")
     return out
 
 
@@ -207,11 +230,11 @@ def _planning_section(fmt: BriefingFormat, goals: Sequence[ContextText], plans: 
     commitments = [*plans, *responsibilities, *household]
     lines = _bullets("COMMITMENTS", commitments[:2], cite)
     if len(commitments) > 2:
-        lines.append(f"{len(commitments) - 2} more — say `brief` for the full Briefing.")
+        lines.append(f"{len(commitments) - 2} more — say `show everything` for the full Briefing.")
     return lines
 
 
-def compose(
+def compose(  # noqa: PLR0912, PLR0915 - one typed Briefing projection with explicit mode branches
     now: datetime,
     result: TriageResult,
     *,
@@ -255,24 +278,39 @@ def compose(
     rendered: dict[str, str] = {}
     def alert_line(alert: AlertDraft) -> str:
         text = _alert_line(alert, cite(alert), labels)
-        if alert.severity is not None and alert.severity.value in {'P1', 'P2'}:
+        if (alert.starts_at is not None
+                or (alert.severity is not None and alert.severity.value in {'P1', 'P2'})):
             rendered[alert.obligation_key] = text
         return text
 
-    one = result.alerts[0] if result.alerts else None
     has_gaps = bool(coverage_gaps) or unresolved_signals > 0 or bool(result.uncertain)
     commitments = (len(plan_lines) + len(responsibility_lines) + len(coordination_lines)
-                   if commitment_count is None else commitment_count)
+                   if commitment_count is None else commitment_count) + len(open_items)
     quiet = not (result.alerts or result.horizon or has_gaps or commitments)
 
+    visible = list({item.obligation_key: item for item in (*result.alerts, *result.horizon)}.values())
+    one = result.alerts[0] if result.alerts else (visible[0] if visible else None)
     if one is not None:
         lines += ["ONE THING", alert_line(one), ""]
     brief = fmt in (BriefingFormat.FLASH, BriefingFormat.DIGEST)
-    extra = result.alerts[1:] if fmt is not BriefingFormat.FLASH else ()
-    if fmt is BriefingFormat.DIGEST:
-        extra = extra[:3]
+    short_limit = 3 if fmt is BriefingFormat.FLASH else 4
+    if brief:
+        selected = [one] if one is not None else []
+        appointments = [item for item in visible if item.starts_at is not None and item not in selected]
+        for item in (*appointments, *(item for item in visible if item not in selected)):
+            if len(selected) >= short_limit:
+                break
+            if item not in selected:
+                selected.append(item)
+        extra = selected[1:]
+        omitted = len(visible) - len(selected)
+    else:
+        extra = list(result.alerts[1:])
+        omitted = 0
     if extra:
         lines += ["ALERTS"] + [alert_line(a) for a in extra] + [""]
+    if omitted:
+        lines += [f"{omitted} more consequential item(s) not shown — say `show everything`.", ""]
     upcoming = [h for h in result.horizon if h.obligation_key not in {a.obligation_key for a in result.alerts}]
     if upcoming and not brief:
         lines += ["COMING UP"] + [alert_line(h) for h in upcoming] + [""]

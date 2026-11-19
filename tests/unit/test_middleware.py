@@ -21,6 +21,7 @@ import pytest
 
 from middleware import StateMiddleware, _PassthroughMiddleware, compose_middleware
 from middleware.audit_middleware import AuditMiddleware
+from middleware.pii_middleware import PIIMiddleware
 from middleware.rate_limiter import RateLimiter, RateLimitExceeded
 from middleware.write_guard import WriteGuardMiddleware, count_yaml_fields
 from middleware.write_verify import WriteVerifyMiddleware, verify_file
@@ -212,6 +213,65 @@ class TestWriteGuardMiddleware:
         result = guard.before_write("test", "# Markdown only\n", "---\ndomain: x\n---\n")
         assert result is not None
 
+    def test_bootstrap_token_in_body_does_not_bypass_guard(self):
+        current = "---\ndomain: test\n" + "\n".join(
+            f"field{i}: value{i}" for i in range(10)
+        ) + "\n---\nbody\n"
+        proposed = (
+            "---\ndomain: test\n---\n"
+            "This body mentions updated_by: bootstrap but is not metadata.\n"
+        )
+        guard = WriteGuardMiddleware(max_loss_pct=20.0)
+        assert guard.before_write("test", current, proposed) is None
+
+    def test_required_schema_failure_blocks_instead_of_passing(self, monkeypatch):
+        from middleware import write_guard
+
+        monkeypatch.setattr(
+            write_guard,
+            "_validate_frontmatter",
+            lambda *_args, **_kwargs: (False, "synthetic schema failure"),
+        )
+        assert (
+            WriteGuardMiddleware().before_write(
+                "test", "", "---\ndomain: test\n---\nbody\n"
+            )
+            is None
+        )
+
+
+class TestPIIMiddlewareFailsClosed:
+    def test_missing_guard_blocks(self, tmp_path):
+        middleware = PIIMiddleware(artha_dir=tmp_path)
+        assert middleware.before_write("finance", "", "proposed") is None
+
+    @pytest.mark.parametrize("returncode", [0, 1, 2])
+    def test_missing_output_blocks_nonempty_content(self, tmp_path, monkeypatch, returncode):
+        script = tmp_path / "scripts" / "pii_guard.py"
+        script.parent.mkdir()
+        script.write_text("synthetic", encoding="utf-8")
+        middleware = PIIMiddleware(artha_dir=tmp_path)
+        monkeypatch.setattr(
+            "middleware.pii_middleware.subprocess.run",
+            lambda *_args, **_kwargs: type(
+                "Result", (), {"returncode": returncode, "stdout": b"", "stderr": b""}
+            )(),
+        )
+        assert middleware.before_write("finance", "", "proposed") is None
+
+    def test_guard_crash_blocks_without_reconstructing_exception(self, tmp_path, monkeypatch):
+        script = tmp_path / "scripts" / "pii_guard.py"
+        script.parent.mkdir()
+        script.write_text("synthetic", encoding="utf-8")
+        middleware = PIIMiddleware(artha_dir=tmp_path)
+        monkeypatch.setattr(
+            "middleware.pii_middleware.subprocess.run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("synthetic-private-marker")
+            ),
+        )
+        assert middleware.before_write("finance", "", "proposed") is None
+
 
 class TestCountYamlFields:
     def test_counts_simple_fields(self):
@@ -276,6 +336,27 @@ class TestWriteVerifyMiddleware:
         failures = verify_file("tiny", path)
         # The file is tiny — should catch size failure
         assert len(failures) >= 1
+
+    def test_delimiter_like_body_text_does_not_define_frontmatter_end(self, tmp_path):
+        path = tmp_path / "state" / "finance.md"
+        path.parent.mkdir()
+        content = (
+            "---\r\ndomain: finance\r\n"
+            "last_updated: 2026-11-18T00:00:00Z\r\n"
+            "---\r\n" + ("body line\r\n" * 20) + "---\r\nnot metadata\r\n"
+        )
+        path.write_bytes(content.encode("utf-8"))
+        assert verify_file("finance", path) == []
+
+    def test_closing_delimiter_at_eof_is_not_a_body_merge(self, tmp_path):
+        path = tmp_path / "state" / "finance.md"
+        path.parent.mkdir()
+        path.write_text(
+            "---\ndomain: finance\nlast_updated: 2026-11-18T00:00:00Z\n"
+            + ("padding" * 20) + "\n---",
+            encoding="utf-8",
+        )
+        assert verify_file("finance", path) == []
 
     def test_after_write_logs_failure(self, tmp_path):
         state_dir = tmp_path / "state"

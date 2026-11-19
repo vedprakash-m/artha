@@ -29,7 +29,11 @@ import sys
 _lib_dir = str(Path(__file__).resolve().parent / "lib")
 if _lib_dir not in sys.path:
     sys.path.insert(0, _lib_dir)
-from state_writer import write as _state_write  # noqa: PLC0415
+from state_writer import (  # noqa: PLC0415
+    create_if_absent_token,
+    read_versioned,
+    write as _state_write,
+)
 from action_queue import ActionQueue
 from lib.local_paths import audit_log_path
 
@@ -332,16 +336,26 @@ class TrustEnforcer:
 
     def _mirror_autonomy_to_health_check(self, autonomy: dict[str, Any], source: str) -> None:
         """Mirror DB trust authority back to health-check.md for briefing visibility."""
-        content = ""
         if self._health_check_path.exists():
-            content = self._health_check_path.read_text(encoding="utf-8")
+            content, expected_token = read_versioned(self._health_check_path)
+        else:
+            content = ""
+            expected_token = create_if_absent_token(self._health_check_path)
         updated = _replace_autonomy_block(content, autonomy)
+        from lib.state_frontmatter import with_frontmatter_fields  # noqa: PLC0415
+        updated = with_frontmatter_fields(updated, {
+            "schema_version": "'1.1'",
+            "domain": "health-check",
+            "last_updated": f"'{datetime.now(timezone.utc).isoformat(timespec='seconds')}'",
+        })
         _state_write(
             self._health_check_path,
             updated,
             domain="health_check",
             source=source,
             pii_check=False,
+            snapshot=False,
+            expected_token=expected_token,
         )
 
     def set_trust_level(self, level: int, actor: str, justification: str = "") -> dict[str, Any]:

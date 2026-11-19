@@ -3,17 +3,20 @@
 Wave 1 verification suite (specs/agent-fw.md §AFW-6).
 
 Coverage:
-  - snapshot(): creates .snap file, returns Path, handles empty content → None
+  - snapshot(): creates .snap file, returns Path, retains all snapshots
   - snapshot(): filesystem errors return None without raising
   - list_snapshots(): returns newest-first, empty dir → empty list
   - restore_latest(): returns content string, no snapshots → None
-  - prune(): max_keep limit, max_age_hours pruning, returns deleted count
+  - prune(): requires explicit authorization, max_keep and max_age_hours limits
   - _safe_domain: special chars replaced with underscore in filenames
 """
 from __future__ import annotations
 
+import base64
+import os
 import re
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -29,12 +32,34 @@ from lib.state_snapshot import (
 )
 
 
+class _FakeSnapshotVault:
+    def encrypt_artifact(self, text):
+        return b"sealed:" + base64.b64encode(text.encode("utf-8"))
+
+    def read_artifact(self, path):
+        raw = path.read_bytes()
+        assert raw.startswith(b"sealed:")
+        return base64.b64decode(raw[len(b"sealed:"):]).decode("utf-8")
+
+
+@pytest.fixture(autouse=True)
+def encrypted_local_storage(tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "ARTHA_LOCAL_DIR", str(tmp_path.parent / f"{tmp_path.name}-local")
+    )
+    monkeypatch.setattr(
+        state_snapshot_mod,
+        "_vault_for_snapshots",
+        lambda _directory: _FakeSnapshotVault(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _snap_dir(tmp_path: Path) -> Path:
-    return tmp_path / "tmp" / "state_snapshots"
+    return state_snapshot_mod._snap_dir(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -47,13 +72,14 @@ class TestSnapshot:
         result = snapshot("finance", "content here", artha_dir=tmp_path)
         assert result is not None
         assert result.exists()
-        assert result.suffix == ".snap"
+        assert result.name.endswith(".snap.age")
 
     def test_file_contains_content(self, tmp_path):
         """Snapshot file content matches the input content."""
         result = snapshot("finance", "hello world", artha_dir=tmp_path)
         assert result is not None
-        assert result.read_text(encoding="utf-8") == "hello world"
+        assert "hello world" not in result.read_text(encoding="utf-8", errors="replace")
+        assert restore_latest("finance", artha_dir=tmp_path) == "hello world"
 
     def test_returns_path_object(self, tmp_path):
         """Return value is a pathlib.Path."""
@@ -77,7 +103,7 @@ class TestSnapshot:
         """Snapshot filename starts with the sanitized domain name."""
         result = snapshot("immigration", "content", artha_dir=tmp_path)
         assert result is not None
-        assert result.name.startswith("immigration_")
+        assert "immigration" not in result.name
 
     def test_special_chars_sanitized(self, tmp_path):
         """Special characters in domain name are replaced with underscores."""
@@ -86,7 +112,10 @@ class TestSnapshot:
         # Sanitized name should have no / or :
         assert "/" not in result.stem
         assert ":" not in result.stem
-        assert re.match(r"^[a-zA-Z0-9_\-]+_\d{8}T\d{6}$", result.stem)
+        assert re.match(
+            r"^[0-9a-f]{32}_\d{8}T\d{6}_[0-9a-f]{32}\.snap\.age$",
+            result.name,
+        )
 
     def test_filename_matches_pattern(self, tmp_path):
         """Snapshot filename matches expected _SNAP_RE pattern."""
@@ -101,18 +130,76 @@ class TestSnapshot:
         r2 = snapshot("finance", "v2", artha_dir=tmp_path)
         assert r1 != r2
 
+    def test_frozen_clock_does_not_overwrite_same_second_snapshot(self, tmp_path, monkeypatch):
+        with patch.object(state_snapshot_mod, "_ts_now", return_value="20261118T120000"):
+            first = snapshot("finance", "first", artha_dir=tmp_path)
+            second = snapshot("finance", "second", artha_dir=tmp_path)
+        assert first != second
+        assert restore_latest("finance", artha_dir=tmp_path) == "second"
+
+    def test_snapshot_retains_every_published_snapshot(self, tmp_path):
+        snapshots = [
+            snapshot("finance", f"version {index}", artha_dir=tmp_path)
+            for index in range(8)
+        ]
+
+        assert all(path is not None for path in snapshots)
+        assert set(list_snapshots("finance", artha_dir=tmp_path)) == set(snapshots)
+
     def test_returns_none_on_io_error(self, tmp_path, monkeypatch):
-        """IO error during write returns None rather than raising."""
-        original_write = Path.write_text
-
-        def fail_snap_write(self_path, *args, **kwargs):
-            if str(self_path).endswith(".snap"):
-                raise OSError("simulated disk full")
-            return original_write(self_path, *args, **kwargs)
-
-        monkeypatch.setattr(Path, "write_text", fail_snap_write)
+        """IO error during durable staging returns None rather than raising."""
+        monkeypatch.setattr(
+            "catchup_core.blobs.private_atomic_bytes",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                OSError("simulated disk full")
+            ),
+        )
         result = snapshot("finance", "content", artha_dir=tmp_path)
         assert result is None
+
+    def test_verification_failure_retains_published_snapshot(self, tmp_path, monkeypatch):
+        class FailedVerificationVault(_FakeSnapshotVault):
+            def read_artifact(self, path):
+                raise ValueError("synthetic verification failure")
+
+        monkeypatch.setattr(
+            state_snapshot_mod,
+            "_vault_for_snapshots",
+            lambda _directory: FailedVerificationVault(),
+        )
+
+        assert snapshot("finance", "content", artha_dir=tmp_path) is None
+        published = list(_snap_dir(tmp_path).glob("*.snap.age"))
+        assert len(published) == 1
+
+    def test_snapshot_is_encrypted_and_never_written_plaintext(self, tmp_path):
+        content = "synthetic private body OI-999"
+        result = snapshot("finance", content, artha_dir=tmp_path)
+        assert result is not None
+        assert content.encode() not in result.read_bytes()
+        assert restore_latest("finance", artha_dir=tmp_path) == content
+        assert not (tmp_path / "tmp" / "state_snapshots").exists()
+
+    def test_unavailable_encryption_refuses_without_plaintext_fallback(
+        self, tmp_path, monkeypatch
+    ):
+        from catchup_core.vault import VaultUnavailable
+
+        monkeypatch.setattr(
+            state_snapshot_mod,
+            "_vault_for_snapshots",
+            lambda _directory: (_ for _ in ()).throw(
+                VaultUnavailable("synthetic unavailable key")
+            ),
+        )
+        assert snapshot("finance", "synthetic private", artha_dir=tmp_path) is None
+        local = Path(os.environ["ARTHA_LOCAL_DIR"])
+        assert not list(local.rglob("*.snap*"))
+
+    def test_repository_local_storage_is_refused(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ARTHA_LOCAL_DIR", str(tmp_path))
+        assert snapshot("finance", "synthetic private", artha_dir=tmp_path) is None
+        assert not (tmp_path / "state-snapshots").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -144,8 +231,8 @@ class TestListSnapshots:
         snapshot("health", "h", artha_dir=tmp_path)
         finance_snaps = list_snapshots("finance", artha_dir=tmp_path)
         health_snaps = list_snapshots("health", artha_dir=tmp_path)
-        assert all("finance" in p.name for p in finance_snaps)
-        assert all("health" in p.name for p in health_snaps)
+        assert all(p not in health_snaps for p in finance_snaps)
+        assert all(p not in finance_snaps for p in health_snaps)
         assert len(finance_snaps) == 1
         assert len(health_snaps) == 1
 
@@ -191,6 +278,20 @@ class TestRestoreLatest:
 # ---------------------------------------------------------------------------
 
 class TestPrune:
+    def test_pruning_requires_explicit_authorization(self, tmp_path):
+        snapshot("finance", "v1", artha_dir=tmp_path)
+        snapshot("finance", "v2", artha_dir=tmp_path)
+
+        with pytest.raises(PermissionError, match="authorization"):
+            prune(
+                "finance",
+                artha_dir=tmp_path,
+                max_keep=0,
+                max_age_hours=9999.0,
+            )
+
+        assert len(list_snapshots("finance", artha_dir=tmp_path)) == 2
+
     def test_prunes_beyond_max_keep(self, tmp_path):
         """Excess snapshots beyond max_keep are deleted."""
         snap_dir = _snap_dir(tmp_path)
@@ -198,8 +299,17 @@ class TestPrune:
         # Create 6 files with distinct second-resolution timestamps
         for i in range(6):
             ts = f"2026010{i + 1}T100000"
-            (snap_dir / f"finance_{ts}.snap").write_text(f"v{i}", encoding="utf-8")
-        deleted = prune("finance", artha_dir=tmp_path, max_keep=3, max_age_hours=9999.0)
+            prefix = state_snapshot_mod._snapshot_prefix("finance", tmp_path)
+            (snap_dir / f"{prefix}_{ts}_{i:032x}.snap.age").write_bytes(
+                f"v{i}".encode()
+            )
+        deleted = prune(
+            "finance",
+            artha_dir=tmp_path,
+            max_keep=3,
+            max_age_hours=9999.0,
+            authorized=True,
+        )
         remaining = list_snapshots("finance", artha_dir=tmp_path)
         assert deleted == 3
         assert len(remaining) == 3
@@ -208,37 +318,63 @@ class TestPrune:
         """Prune keeps the most recent snapshots."""
         monkeypatch.setattr(state_snapshot_mod, "datetime", PatchedDateTime())
         for i in range(4):
-            snapshot("finance", f"v{i}", artha_dir=tmp_path, max_keep=10)
+            snapshot("finance", f"v{i}", artha_dir=tmp_path)
         snaps_before = list_snapshots("finance", artha_dir=tmp_path)
-        prune("finance", artha_dir=tmp_path, max_keep=2, max_age_hours=9999.0)
+        prune(
+            "finance",
+            artha_dir=tmp_path,
+            max_keep=2,
+            max_age_hours=9999.0,
+            authorized=True,
+        )
         remaining = list_snapshots("finance", artha_dir=tmp_path)
         # The 2 newest should be retained
         for snap in remaining:
             assert snap in snaps_before[:2]
 
     def test_prune_by_age(self, tmp_path):
-        """snapshot() calls prune() ; prune() removes age-expired snapshots."""
+        """Explicitly authorized prune removes age-expired snapshots."""
         # Create a snapshot and manually backdate its timestamp by renaming
-        r = snapshot("health", "old content", artha_dir=tmp_path, max_keep=100)
+        r = snapshot("health", "old content", artha_dir=tmp_path)
         if r is None:
             pytest.skip("snapshot() returned None unexpectedly")
         snap_dir = _snap_dir(tmp_path)
         # Rename to a timestamp 48 hours ago
         from datetime import datetime, timezone, timedelta
         old_ts = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y%m%dT%H%M%S")
-        old_path = snap_dir / f"health_{old_ts}.snap"
+        old_path = snap_dir / (
+            f"{state_snapshot_mod._snapshot_prefix('health', tmp_path)}_"
+            f"{old_ts}_{'a' * 32}.snap.age"
+        )
         r.rename(old_path)
-        deleted = prune("health", artha_dir=tmp_path, max_keep=100, max_age_hours=24.0)
+        deleted = prune(
+            "health",
+            artha_dir=tmp_path,
+            max_keep=100,
+            max_age_hours=24.0,
+            authorized=True,
+        )
         assert deleted == 1
         assert not old_path.exists()
 
     def test_no_snapshots_returns_zero(self, tmp_path):
         """prune() on empty domain returns 0 deleted."""
-        assert prune("finance", artha_dir=tmp_path, max_keep=5) == 0
+        assert prune(
+            "finance",
+            artha_dir=tmp_path,
+            max_keep=5,
+            authorized=True,
+        ) == 0
 
     def test_max_keep_zero_deletes_all(self, tmp_path):
         """max_keep=0 deletes all snapshots for the domain."""
-        snapshot("finance", "v1", artha_dir=tmp_path, max_keep=10)
-        snapshot("finance", "v2", artha_dir=tmp_path, max_keep=10)
-        prune("finance", artha_dir=tmp_path, max_keep=0, max_age_hours=9999.0)
+        snapshot("finance", "v1", artha_dir=tmp_path)
+        snapshot("finance", "v2", artha_dir=tmp_path)
+        prune(
+            "finance",
+            artha_dir=tmp_path,
+            max_keep=0,
+            max_age_hours=9999.0,
+            authorized=True,
+        )
         assert list_snapshots("finance", artha_dir=tmp_path) == []

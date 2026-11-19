@@ -12,7 +12,7 @@ SAFETY:
     before send.
   - autonomy_floor: true — always requires human approval.
   - reply_all: default False (only reply to the top-level sender).
-  - Undo: messages.trash() within undo_window_sec.
+  - No registered undo path: action results and policy are non-reversible.
 
 Ref: specs/act.md §8.1
 """
@@ -29,7 +29,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from actions.base import ActionProposal, ActionResult
+from actions.base import ActionProposal, ActionResult, is_definite_provider_refusal
 
 
 # ---------------------------------------------------------------------------
@@ -59,75 +59,23 @@ def validate(proposal: ActionProposal) -> tuple[bool, str]:
 
 
 def dry_run(proposal: ActionProposal) -> ActionResult:
-    """Fetch thread headers and create a Gmail draft reply.  Returns draft URL."""
+    """Return a local preview without authenticating or mutating Gmail."""
     params = proposal.parameters
     thread_id: str = params.get("thread_id", "")
     body: str = params.get("body", "")
     reply_all: bool = params.get("reply_all", False)
-    draft_first: bool = params.get("draft_first", True)
-
-    try:
-        from google_auth import build_service  # noqa: PLC0415
-        service = build_service("gmail", "v1")
-
-        # Fetch thread to get reply headers
-        reply_to, subject, in_reply_to, references, cc_list = _extract_reply_headers(
-            service, thread_id, include_all=reply_all,
-        )
-
-        if not draft_first:
-            return ActionResult(
-                status="success",
-                message=(
-                    f"Preview: reply to {reply_to} | Subject: {subject!r} | "
-                    f"Body: {len(body)} chars"
-                ),
-                data={
-                    "preview_mode": True,
-                    "to": reply_to,
-                    "subject": subject,
-                    "thread_id": thread_id,
-                },
-                reversible=False,
-                reverse_action=None,
-            )
-
-        # Build MIME reply
-        mime_msg = _build_reply_mime(
-            service, reply_to, subject, body, in_reply_to, references,
-            thread_id, cc_list if reply_all else "",
-        )
-        raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
-
-        draft_body: dict[str, Any] = {
-            "message": {"raw": raw, "threadId": thread_id},
-        }
-        draft = service.users().drafts().create(userId="me", body=draft_body).execute()
-        draft_id = draft.get("id", "")
-        draft_url = f"https://mail.google.com/mail/u/0/#drafts/{draft_id}"
-
-        return ActionResult(
-            status="success",
-            message=f"Draft reply created: {draft_url}",
-            data={
-                "draft_id": draft_id,
-                "draft_url": draft_url,
-                "to": reply_to,
-                "subject": subject,
-                "thread_id": thread_id,
-            },
-            reversible=False,
-            reverse_action=None,
-        )
-
-    except Exception as e:
-        return ActionResult(
-            status="failure",
-            message=f"Failed to create reply draft: {e}",
-            data={"error": str(e), "thread_id": thread_id},
-            reversible=False,
-            reverse_action=None,
-        )
+    return ActionResult(
+        status="success",
+        message=f"Preview: reply in thread {thread_id!r} | Body: {len(body)} chars",
+        data={
+            "preview_mode": True,
+            "thread_id": thread_id,
+            "body_length": len(body),
+            "reply_all": bool(reply_all),
+        },
+        reversible=False,
+        reverse_action=None,
+    )
 
 
 def execute(proposal: ActionProposal) -> ActionResult:
@@ -137,16 +85,17 @@ def execute(proposal: ActionProposal) -> ActionResult:
     body: str = params.get("body", "")
     reply_all: bool = params.get("reply_all", False)
     draft_id: str = params.get("draft_id", "")
+    dispatched = False
 
     try:
         from google_auth import build_service  # noqa: PLC0415
         service = build_service("gmail", "v1")
 
         if draft_id:
-            result = service.users().drafts().send(
+            request = service.users().drafts().send(
                 userId="me",
                 body={"id": draft_id},
-            ).execute()
+            )
         else:
             reply_to, subject, in_reply_to, references, cc_list = _extract_reply_headers(
                 service, thread_id, include_all=reply_all,
@@ -156,12 +105,22 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 thread_id, cc_list if reply_all else "",
             )
             raw = base64.urlsafe_b64encode(mime_msg.as_bytes()).decode("utf-8")
-            result = service.users().messages().send(
+            request = service.users().messages().send(
                 userId="me",
                 body={"raw": raw, "threadId": thread_id},
-            ).execute()
+            )
 
-        message_id = result.get("id", "")
+        dispatched = True
+        result = request.execute()
+        message_id = result.get("id") if isinstance(result, dict) else None
+        if not isinstance(message_id, str) or not message_id:
+            return ActionResult(
+                status="unknown",
+                message="Gmail returned no verified reply receipt; reconcile before retrying.",
+                data=None,
+                reversible=False,
+                reverse_action=None,
+            )
 
         return ActionResult(
             status="success",
@@ -171,15 +130,20 @@ def execute(proposal: ActionProposal) -> ActionResult:
                 "thread_id": result.get("threadId", thread_id),
                 "draft_id": draft_id,
             },
-            reversible=True,
+            reversible=False,
             reverse_action=None,
         )
 
-    except Exception as e:
+    except Exception as error:
+        uncertain = dispatched and not is_definite_provider_refusal(error)
         return ActionResult(
-            status="failure",
-            message=f"Failed to send reply: {e}",
-            data={"error": str(e), "thread_id": thread_id},
+            status="unknown" if uncertain else "failure",
+            message=(
+                "Gmail did not return a verified reply receipt; reconcile before retrying."
+                if uncertain else
+                "Gmail refused or could not start the reply; no provider effect was verified."
+            ),
+            data={"exception": type(error).__name__, "thread_id": thread_id} if uncertain else None,
             reversible=False,
             reverse_action=None,
         )

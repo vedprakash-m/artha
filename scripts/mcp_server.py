@@ -9,11 +9,11 @@ Protocol:   MCP SDK 1.x (FastMCP)
 Security invariants (§3.9):
   1. Local-only transport — stdio only; FastMCP called with transport="stdio"
   2. PII guard on all artha_read_state responses (configurable, default True)
-  3. Write tools require approved=True — rejected immediately if False/missing
+  3. Legacy effect tools are inert previews; they never enqueue or execute
   4. No raw vault key or token exposure in params or responses
   5. Audit logging — every invocation appended to state/audit.md
   6. Handler path validation — only connectors.* modules accepted in fetch pipeline
-  7. Domain validation — artha_write_state only accepts known state/ domains
+  7. Legacy State writes are not registered as MCP tools
 
 Tools — Phase F1 (read-only):
   artha_fetch_data      Fetch from enabled connectors, returns structured records
@@ -22,12 +22,11 @@ Tools — Phase F1 (read-only):
   artha_pii_scan        Scan text for PII patterns without modifying it
   artha_preflight       Run pre-catch-up health gate
   artha_list_connectors List configured connectors from connectors.yaml
-  artha_run_skills      Run data fidelity skills via skill_runner
+  artha_run_skills      Fixed denial until each skill has a reviewed capability
 
-Tools — Phase F2 (write, require approved=True):
-  artha_write_state     Write to a domain state file (auto-encrypt sensitive domains)
-  artha_send_email      Send email via Gmail API
-  artha_todo_sync       Sync open_items.md ↔ Microsoft To Do
+Tools — Phase F2 (inert proposals):
+  artha_send_email      Return a local preview only
+  artha_todo_sync       Return a local preview only
 
 Ref: supercharge-reloaded.md §3.4–3.11
 """
@@ -137,23 +136,6 @@ def _audit(tool: str, params: dict[str, Any], status: str) -> None:
     except OSError as exc:
         _log.warning("audit_write_failed error=%s", exc)
         pass  # audit log not writable; don't crash the server
-
-
-# ---------------------------------------------------------------------------
-# Write-gate (§3.9.3) — all write tools call this first
-# ---------------------------------------------------------------------------
-def _require_approval(approved: bool, tool: str, params: dict[str, Any]) -> str | None:
-    """Return error JSON if not approved or rate-limited; None to proceed."""
-    rl = _check_rate_limit(tool, is_write=True)
-    if rl:
-        return rl
-    if not approved:
-        _audit(tool, params, "rejected:approval_required")
-        return json.dumps({
-            "error": "Write operation requires approved=True.",
-            "tool": tool,
-        })
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +301,9 @@ def artha_health_check(source: str | None = None) -> str:
 
     Returns JSON object mapping connector name → {healthy: bool, error?: str}.
     """
+    rejection = _check_rate_limit("artha_health_check")
+    if rejection:
+        return rejection
     params: dict[str, Any] = {"source": source}
     try:
         from pipeline import (  # type: ignore[import]
@@ -346,14 +331,14 @@ def artha_health_check(source: str | None = None) -> str:
                 auth_ctx = load_auth_context(conn)
                 ok = handler.health_check(auth_ctx)
                 out[name] = {"healthy": bool(ok)}
-            except Exception as exc:
-                out[name] = {"healthy": False, "error": str(exc)}
+            except Exception:
+                out[name] = {"healthy": False, "error": "connector health check failed"}
 
         _audit("artha_health_check", params, "ok")
         return json.dumps(out, ensure_ascii=False)
-    except Exception as exc:
-        _audit("artha_health_check", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        _audit("artha_health_check", params, "error")
+        return json.dumps({"error": "connector health checks unavailable"})
 
 
 @mcp.tool()
@@ -371,15 +356,20 @@ def artha_pii_scan(text: str) -> str:
 
     Returns JSON: {"found": bool, "types": {type_name: count}}.
     """
+    rejection = _check_rate_limit("artha_pii_scan")
+    if rejection:
+        return rejection
     params: dict[str, Any] = {"text_length": len(text)}
+    if len(text) > 100_000:
+        return json.dumps({"error": "input exceeds the configured limit"})
     try:
         from pii_guard import scan  # type: ignore[import]
         found, type_counts = scan(text)
         _audit("artha_pii_scan", params, f"ok:found={found}")
         return json.dumps({"found": found, "types": type_counts})
-    except Exception as exc:
-        _audit("artha_pii_scan", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        _audit("artha_pii_scan", params, "error")
+        return json.dumps({"error": "PII scanner unavailable"})
 
 
 @mcp.tool()
@@ -392,6 +382,9 @@ def artha_preflight(quiet: bool = True) -> str:
     Returns JSON array of check results:
         [{name, severity, passed, message, fix_hint?}]
     """
+    rejection = _check_rate_limit("artha_preflight")
+    if rejection:
+        return rejection
     params: dict[str, Any] = {"quiet": quiet}
     try:
         from preflight import run_preflight  # type: ignore[import]
@@ -410,9 +403,9 @@ def artha_preflight(quiet: bool = True) -> str:
         failed_count = sum(1 for r in results if not r.passed)
         _audit("artha_preflight", params, f"ok:{failed_count}_failed")
         return json.dumps(out, ensure_ascii=False)
-    except Exception as exc:
-        _audit("artha_preflight", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        _audit("artha_preflight", params, "error")
+        return json.dumps({"error": "preflight unavailable"})
 
 
 @mcp.tool()
@@ -421,6 +414,9 @@ def artha_list_connectors() -> str:
 
     Returns JSON array of connector descriptors.
     """
+    rejection = _check_rate_limit("artha_list_connectors")
+    if rejection:
+        return rejection
     try:
         from pipeline import load_connectors_config  # type: ignore[import]
         cfg = load_connectors_config()
@@ -437,115 +433,22 @@ def artha_list_connectors() -> str:
             out.append(item)
         _audit("artha_list_connectors", {}, f"ok:{len(out)}_connectors")
         return json.dumps(out, ensure_ascii=False)
-    except Exception as exc:
-        _audit("artha_list_connectors", {}, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    except Exception:
+        _audit("artha_list_connectors", {}, "error")
+        return json.dumps({"error": "connector discovery unavailable"})
 
 
 @mcp.tool()
 def artha_run_skills(skill_name: str | None = None) -> str:
-    """Run data fidelity skills (USCIS case status, visa bulletin, etc.).
-
-    Args:
-        skill_name: Optional specific skill to run. If omitted, runs all skills
-                    that are due per their cadence configuration.
-
-    Returns JSON mapping skill name → {status, data?, error?}.
-    """
-    params: dict[str, Any] = {"skill_name": skill_name}
-    try:
-        from skill_runner import (  # type: ignore[import]
-            load_config,
-            load_cache,
-            should_run,
-            run_skill,
-            CACHE_FILE as _SR_CACHE_FILE,
-        )
-
-        # Import shared health-tracking library (non-blocking if unavailable)
-        try:
-            from lib.skill_health import (
-                is_zero_value as _mcp_is_zero,
-                is_stable_value as _mcp_is_stable,
-                update_health_counters as _mcp_update_health,
-                atomic_write_json as _mcp_write_json,
-            )
-            _health_available = True
-        except ImportError:
-            _health_available = False
-
-        config = load_config()
-        cache = load_cache()  # reads state/skills_cache.json (migrated path)
-
-        import time as _time
-
-        def _run_and_update_health(name: str, cfg: dict, existing_cache: dict) -> Any:
-            """Run a skill and update health counters in the persistent cache."""
-            prev_entry = existing_cache.get(name, {})
-            t0 = _time.monotonic()
-            res = run_skill(name, _REPO_ROOT)
-            wall_ms = round((_time.monotonic() - t0) * 1000)
-
-            # Update cache entry with health counters
-            base_entry = {
-                "last_run": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
-                "current": res,
-                "previous": prev_entry.get("current"),
-                "changed": True,
-            }
-            if "health" in prev_entry:
-                base_entry["health"] = prev_entry["health"]
-
-            if _health_available:
-                try:
-                    zero = _mcp_is_zero(name, res, prev_entry.get("current"), config)
-                    stable = _mcp_is_stable(res, prev_entry.get("current"))
-                    base_entry = _mcp_update_health(base_entry, zero, stable, wall_ms)
-                except Exception:
-                    pass
-
-            # Persist updated cache atomically
-            updated_cache = dict(existing_cache)
-            updated_cache[name] = base_entry
-            try:
-                if _health_available:
-                    _mcp_write_json(_SR_CACHE_FILE, updated_cache)
-                else:
-                    from lib.state_writer import write_atomic as _atomic  # noqa: PLC0415
-                    _atomic(_SR_CACHE_FILE, __import__('json').dumps(updated_cache, indent=2))
-            except Exception:
-                pass
-
-            return res
-
-        if skill_name:
-            result = _run_and_update_health(skill_name, config, cache)
-            _audit("artha_run_skills", params, f"ok:{skill_name}={result.get('status')}")
-            return json.dumps({skill_name: result}, ensure_ascii=False, default=str)
-
-        # Run all skills that are due
-        due = [
-            name for name in config.get("skills", {})
-            if should_run(name, config, cache)
-        ]
-        results: dict[str, Any] = {}
-        for name in due:
-            results[name] = _run_and_update_health(name, config, cache)
-            # Reload cache so each skill sees the updated health counters from prior skills
-            cache = load_cache()
-
-        _audit("artha_run_skills", params, f"ok:{len(results)}_skills")
-        return json.dumps(results, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_run_skills", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    """Return a fixed denial until every skill has a reviewed capability."""
+    _audit("artha_run_skills", {"skill_name": skill_name}, "denied:capability_held")
+    return json.dumps({"error": "skill execution is held"})
 
 
 # ===========================================================================
-# Phase F2 — Write tools (all require approved=True, §3.9.3)
+# Phase F2 — inert legacy effect previews (no queue write or execution)
 # ===========================================================================
 
-@mcp.tool()
 def artha_write_state(
     domain: str,
     content: str,
@@ -563,36 +466,26 @@ def artha_send_email(
     approved: bool = False,
     archive: bool = False,
 ) -> str:
-    """Send an email via Gmail API.
-
-    ⚠️  WRITE OPERATION — set approved=True to confirm.
+    """Return an inert local email preview; MCP never enqueues or sends it.
 
     Args:
         to:       Recipient email address(es), comma-separated.
         subject:  Subject line.
         body:     Plain-text body.
-        approved: Must be True to proceed.
-        archive:  Save body to briefings/YYYY-MM-DD.md (default False).
+        approved: Retained only for caller compatibility; it grants no MCP effect.
+        archive: Retained in the preview payload; previewing never writes it.
 
-    Returns JSON with status and message_id.
+    The owner applies the preview through the ActionQueue CLI review path.
     """
-    params: dict[str, Any] = {
-        "to": to, "subject": subject,
-        "body_length": len(body), "archive": archive,
-    }
-    rejection = _require_approval(approved, "artha_send_email", params)
-    if rejection:
-        return rejection
-
-    try:
-        from gmail_send import send_email  # type: ignore[import]
-        result = send_email(to=to, subject=subject, body_text=body, archive=archive)
-        _audit("artha_send_email", params,
-               f"ok:message_id={result.get('message_id', '?')}")
-        return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_send_email", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    payload = {"to": to, "subject": subject, "body": body, "archive": archive}
+    _audit("artha_send_email", {"to": to, "body_length": len(body), "archive": archive}, "preview")
+    return json.dumps({
+        "status": "preview",
+        "action_type": "email_send",
+        "effect": "none",
+        "payload": payload,
+        "to_apply": "Use the ActionQueue CLI review path; MCP never enqueues or executes this effect.",
+    }, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -600,38 +493,22 @@ def artha_todo_sync(
     approved: bool = False,
     dry_run: bool = False,
 ) -> str:
-    """Sync open_items.md with Microsoft To Do (push new items + pull completions).
-
-    ⚠️  WRITE OPERATION — set approved=True to confirm.
+    """Return an inert To Do sync preview; MCP never enqueues or executes it.
 
     Args:
-        approved: Must be True to proceed.
-        dry_run:  Validate auth without performing actual sync (default False).
+        approved: Retained only for caller compatibility; it grants no MCP effect.
+        dry_run: Retained in the preview payload; previewing never contacts a provider.
 
-    Returns JSON with push/pull result counts.
+    The owner applies the preview through the ActionQueue CLI review path.
     """
-    params: dict[str, Any] = {"dry_run": dry_run}
-    rejection = _require_approval(approved, "artha_todo_sync", params)
-    if rejection:
-        return rejection
-
-    try:
-        from todo_sync import push_items, pull_completions  # type: ignore[import]
-
-        access_token = ""
-        if not dry_run:
-            from setup_msgraph_oauth import ensure_valid_token  # type: ignore[import]
-            token_data = ensure_valid_token()
-            access_token = token_data["access_token"]
-
-        push_result = push_items(access_token=access_token, dry_run=dry_run)
-        pull_result = pull_completions(access_token=access_token, dry_run=dry_run)
-        result = {"pushed": push_result, "pulled": pull_result, "dry_run": dry_run}
-        _audit("artha_todo_sync", params, "ok")
-        return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_todo_sync", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_todo_sync", {"dry_run": dry_run}, "preview")
+    return json.dumps({
+        "status": "preview",
+        "action_type": "todo_sync",
+        "effect": "none",
+        "payload": {"dry_run": dry_run},
+        "to_apply": "Use the ActionQueue CLI review path; MCP never enqueues or executes this effect.",
+    })
 
 
 # ===========================================================================
@@ -643,23 +520,14 @@ def artha_kb_query(
     entity_id: str,
     token_budget: int = 950,
 ) -> str:
-    """Return full context for a KB entity (2-hop BFS, capped at token_budget).
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         entity_id: The stable entity ID (e.g. 'infrastructure-armada-platform').
         token_budget: Approximate token limit for the returned context block.
     """
-    params = {"entity_id": entity_id, "token_budget": token_budget}
-    _check_rate_limit("artha_kb_query")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        ctx = kg.context_for(entity_id, token_budget=token_budget)
-        _audit("artha_kb_query", params, "ok")
-        return json.dumps(ctx, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_query", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_query", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
@@ -668,28 +536,15 @@ def artha_kb_context(
     depth: int = 2,
     token_budget: int = 950,
 ) -> str:
-    """Resolve an entity by name and return its neighbourhood context.
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         entity_name: Human-readable name to search for (case-insensitive).
         depth: BFS hop depth (1–3 recommended).
         token_budget: Approximate token limit for the returned context block.
     """
-    params = {"entity_name": entity_name, "depth": depth, "token_budget": token_budget}
-    _check_rate_limit("artha_kb_context")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        entity_id = kg.resolve_entity(entity_name)
-        if entity_id is None:
-            _audit("artha_kb_context", params, "not_found")
-            return json.dumps({"error": f"Entity not found: {entity_name!r}"})
-        ctx = kg.context_for(entity_id, depth=depth, token_budget=token_budget)
-        _audit("artha_kb_context", params, "ok")
-        return json.dumps(ctx, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_context", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_context", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
@@ -698,46 +553,15 @@ def artha_kb_search(
     domain: str = "",
     limit: int = 10,
 ) -> str:
-    """Full-text search over KB entities and summaries.
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         query: Search terms (FTS5 — supports phrase and prefix queries).
         domain: Filter results to this domain (leave empty for all domains).
         limit: Maximum results to return.
     """
-    params = {"query": query, "domain": domain or None, "limit": limit}
-    _check_rate_limit("artha_kb_search")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        results = kg.search(query, domain=domain or None, limit=min(limit, 50))
-        _audit("artha_kb_search", params, "ok")
-        serialized = [
-            r.__dict__ if hasattr(r, "__dict__") else r for r in results
-        ]
-        # §4.14 append to LLM search log (no PII — entity IDs + scores only)
-        try:
-            _audit_dir = Path(__file__).resolve().parent.parent / "state" / "audit"
-            _audit_dir.mkdir(parents=True, exist_ok=True)
-            _log_entry = {
-                "ts": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "query": query,
-                "n_results": len(results),
-                "entity_ids": [r.entity_id if hasattr(r, "entity_id") else r.get("entity_id", "") for r in results[:20]],
-                "top_confidence": float(results[0].score) if results and hasattr(results[0], "score") else None,
-                "lifecycle_stages": [
-                    getattr(r, "lifecycle_stage", None) or (r.get("lifecycle_stage") if isinstance(r, dict) else None)
-                    for r in results[:20]
-                ],
-            }
-            with open(_audit_dir / "kb_search_log.jsonl", "a", encoding="utf-8") as _lf:
-                _lf.write(json.dumps(_log_entry, ensure_ascii=False) + "\n")
-        except Exception:
-            pass  # observability must never block the search response
-        return json.dumps(serialized, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_search", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_search", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
@@ -745,45 +569,27 @@ def artha_kb_recent_changes(
     domain: str = "",
     days: int = 30,
 ) -> str:
-    """List entities that changed in the past N days.
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         domain: Filter to a specific domain (empty = all).
         days: Look-back window in days.
     """
-    params = {"domain": domain or None, "days": days}
-    _check_rate_limit("artha_kb_recent_changes")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        changes = kg.recent_changes(domain=domain or None, days=days)
-        _audit("artha_kb_recent_changes", params, "ok")
-        return json.dumps(changes, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_recent_changes", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_recent_changes", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
 def artha_kb_stale(
     domain: str = "",
 ) -> str:
-    """Return entities whose information may be outdated.
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         domain: Filter to a specific domain (empty = all).
     """
-    params = {"domain": domain or None}
-    _check_rate_limit("artha_kb_stale")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        stale = kg.stale_entities(domain=domain or None)
-        _audit("artha_kb_stale", params, "ok")
-        return json.dumps(stale, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_stale", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_stale", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
@@ -791,26 +597,12 @@ def artha_kb_global(
     question: str,
     max_tokens: int = 800,
 ) -> str:
-    """Global context search: community summaries + FTS across all domains.
+    """Return a fixed denial because no authorized MCP viewer is available.
 
-    Best for high-level questions that span multiple entities. For targeted
-    entity lookups, prefer artha_kb_context or artha_kb_query.
-
-    Args:
-        question: The question or topic to retrieve context for.
-        max_tokens: Approximate token limit for the returned block.
+    No question, token budget or result is processed.
     """
-    params = {"question": question, "max_tokens": max_tokens}
-    _check_rate_limit("artha_kb_global")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        result = kg.global_context_for(question, max_tokens=max_tokens)
-        _audit("artha_kb_global", params, "ok")
-        return json.dumps(result, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_global", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_global", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 @mcp.tool()
@@ -818,24 +610,14 @@ def artha_kb_episodes(
     entity_mentions: str = "",
     since_days: int = 30,
 ) -> str:
-    """Retrieve recent KB episodes (ingested events / briefings / meetings).
+    """Return a fixed denial because no authorized MCP viewer is available.
 
     Args:
         entity_mentions: Optional comma-separated entity IDs to filter by.
         since_days: How many days back to look.
     """
-    params = {"entity_mentions": entity_mentions, "since_days": since_days}
-    _check_rate_limit("artha_kb_episodes")
-    try:
-        from lib.knowledge_graph import get_kb  # noqa: PLC0415
-        kg = get_kb()
-        mentions = [m.strip() for m in entity_mentions.split(",") if m.strip()] or None
-        episodes = kg.recent_episodes(entity_ids=mentions, days=since_days)
-        _audit("artha_kb_episodes", params, "ok")
-        return json.dumps(episodes, ensure_ascii=False, default=str)
-    except Exception as exc:
-        _audit("artha_kb_episodes", params, f"error:{exc}")
-        return json.dumps({"error": str(exc)})
+    _audit("artha_kb_episodes", {}, "denied:viewer_unavailable")
+    return json.dumps({"error": "knowledge graph read authorization unavailable"})
 
 
 # ===========================================================================

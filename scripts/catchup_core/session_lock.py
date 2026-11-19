@@ -1,6 +1,7 @@
 """OS-owned, process-lifetime lock. Crashes release it without unsafe TTL takeover."""
 from __future__ import annotations
 
+import hashlib
 import importlib
 import os
 import os as _real_os
@@ -250,4 +251,22 @@ def writer_fence(*paths: Path) -> Iterator[None]:
     local = default_installation_dir()
     require_active_installation(*paths, local)
     with installation_fence(local):
+        yield
+
+
+@contextmanager
+def publication_fence(path: Path, *, shared: bool = False) -> Iterator[None]:
+    """Serialize one target under the installation fence; capture still excludes the transaction.
+
+    Lock order is intentionally fixed: installation fence, then the target lock
+    derived from the absolute target identity.  Target locks live machine-locally
+    so OS lock sidecars are not copied with mutable State Files.
+    """
+    target = Path(path)
+    local = default_installation_dir()
+    require_active_installation(target, local)
+    identity = os.path.normcase(str(target.absolute()))
+    lock_name = hashlib.sha256(identity.encode("utf-8")).hexdigest() + ".lock"
+    with installation_fence(local), session_lock(local / "state-publication-locks" / lock_name,
+                                                  shared=shared):
         yield

@@ -13,6 +13,9 @@ from preflight._types import (
     _SUBPROCESS_ENV, _rel, CheckResult, _REQUIRED_DEPS,
 )
 
+_READ_ONLY = False
+
+
 def check_bridge_health() -> CheckResult:
     """P1 non-blocking bridge health check.
 
@@ -46,6 +49,11 @@ def check_bridge_health() -> CheckResult:
 
         # Check bridge directory accessible + writable
         if not bridge_dir.exists():
+            if _READ_ONLY:
+                return CheckResult(
+                    "Bridge", "P1", False,
+                    "Bridge directory missing; creation suppressed in --read-only mode",
+                )
             try:
                 bridge_dir.mkdir(parents=True, exist_ok=True)
                 (bridge_dir / "proposals").mkdir(exist_ok=True)
@@ -159,6 +167,15 @@ def check_workiq() -> CheckResult:
         # Auth is valid if we got a meaningful response (not an error message)
         auth_valid = available and "error" not in result.stdout.lower()[:100]
         # Persist only technical flags; provider stdout can contain a private identity.
+        if _READ_ONLY:
+            return CheckResult(
+                "WorkIQ Calendar",
+                "P1",
+                available and auth_valid,
+                "Live WorkIQ probe completed; receipt write suppressed in --read-only mode"
+                if available and auth_valid
+                else "WorkIQ unavailable; receipt write suppressed in --read-only mode",
+            )
         try:
             write_receipt(cache_path, available=available, auth_valid=auth_valid)
         except (OSError, ValueError, RuntimeError):
@@ -445,7 +462,7 @@ def check_action_handlers() -> CheckResult:
         executor = ActionExecutor(Path(ARTHA_DIR))
 
         # Sweep expired stale actions
-        expired_count = executor.expire_stale()
+        expired_count = 0 if _READ_ONLY else executor.expire_stale()
 
         # Run handler health checks
         health: dict[str, bool] = executor.run_health_checks()

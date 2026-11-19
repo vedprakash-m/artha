@@ -203,8 +203,8 @@ def _detect_conflict_files_direct(state_dir: str) -> list[str]:
 
 class TestOneDriveConflictDetection:
     def test_conflict_patterns_and_wiring(self, tmp_path):
-        src = (_SCRIPTS_DIR / "preflight.py").read_text(encoding="utf-8")
-        assert "def _detect_conflict_files" in src and "def check_onedrive_conflicts" in src
+        assert callable(pf._detect_conflict_files)
+        assert callable(pf.check_onedrive_conflicts)
         for name in ("finance-DESKTOP-PC.md", "health (1).md", "estate-conflict.md", "contacts.md", "goals.md"):
             (tmp_path / name).write_text("x", encoding="utf-8")
         found = {os.path.basename(p) for p in _detect_conflict_files_direct(str(tmp_path))}

@@ -10,7 +10,7 @@ from catchup_core import policy
 from catchup_core.contracts import CatchupRequest
 from catchup_core.ledger import PermissionDenied
 from catchup_core.policy import _validate_domains
-from core_helpers import release_scorecard
+from core_helpers import OWNER_DECISION_SHA256, release_scorecard
 
 
 def verify(result):
@@ -264,6 +264,7 @@ def validate_serialized_scorecard(tmp_path, monkeypatch):
         release = {key: 'synthetic' for key in
                    ('owner_approved_at', 'rollback_snapshot', 'independent_copy', 'recovery_rehearsal')}
         release.update(authority_host='test-host', domains=['kids_school'],
+                       owner_decision_sha256=OWNER_DECISION_SHA256,
                        stage1_clearance=approved('clearance.json',
                            {'passed': True, 'owner_signed_at': 'reviewed'} if clearance is ... else clearance),
                        scorecard=approved('scorecard.json', result))
@@ -324,6 +325,31 @@ def test_scorecard_owner_review_requires_nonempty_text(validate_serialized_score
     result['owner_signed_at'] = bad
     with pytest.raises(PermissionDenied):
         validate_serialized_scorecard(result)
+
+
+@pytest.mark.parametrize('bad', [None, True, 1, '', 'invalid', 'A' * 64, 'b' * 64])
+def test_scorecard_owner_review_requires_the_bound_authenticated_decision(
+        validate_serialized_scorecard, bad):
+    result = release_scorecard()
+    result['owner_decision_ref'] = bad
+    with pytest.raises(PermissionDenied, match='owner decision'):
+        validate_serialized_scorecard(result)
+
+
+def test_scorecard_owner_review_cannot_omit_the_authenticated_decision(
+        validate_serialized_scorecard):
+    result = release_scorecard()
+    result.pop('owner_decision_ref')
+    with pytest.raises(PermissionDenied, match='owner decision'):
+        validate_serialized_scorecard(result)
+
+
+@pytest.mark.parametrize('bad', [None, '', 'invalid', 'A' * 64, 'b' * 64])
+def test_release_owner_decision_requires_a_valid_approved_reference(
+        validate_serialized_scorecard, bad):
+    with pytest.raises(PermissionDenied, match='owner decision'):
+        validate_serialized_scorecard(
+            release_scorecard(), release_overrides={'owner_decision_sha256': bad})
 
 
 @pytest.mark.parametrize('bad', [None, True, 1, 'kids_school', {}, [None], [True], [1], [{}],

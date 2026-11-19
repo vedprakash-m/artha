@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from catchup_core.ids import HmacKey
     from catchup_core.ledger import Ledger
 
 
@@ -144,7 +145,8 @@ def require_metadata(conn: sqlite3.Connection, policy: AccessPolicy, fact_id: st
     return FactMetadata(**values)
 
 
-def document_link_proof(conn: sqlite3.Connection, link: dict[str, Any]) -> str:
+def document_link_proof(
+        conn: sqlite3.Connection, link: dict[str, Any], key: HmacKey | None = None) -> str:
     require_documentary_scope()
     material: list[Any] = [{name: value for name, value in link.items() if name != 'proof'}]
     queries = (
@@ -163,7 +165,10 @@ def document_link_proof(conn: sqlite3.Connection, link: dict[str, Any]) -> str:
                 'upstream_id', 'upstream_version', 'content_hmac', 'evidence_blob_ref', 'span_unit')})
         else:
             material.append(dict(row))
-    return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    if key is None:
+        raise PermissionError("document link proof needs the owning ledger key")
+    canonical = json.dumps(material, sort_keys=True, separators=(',', ':')).encode()
+    return hmac.new(key.secret, b"artha.doclink:v2\0" + canonical, hashlib.sha256).hexdigest()
 
 
 def document_fact_state(conn: sqlite3.Connection, policy: AccessPolicy, row: sqlite3.Row,  # noqa: PLR0912
@@ -230,6 +235,6 @@ def document_fact_state(conn: sqlite3.Connection, policy: AccessPolicy, row: sql
                for operation in ('view', 'correct')
                for scope in (link['domain'], f"documents:{source['account_scope']}")):
             continue
-        if hmac.compare_digest(link['proof'], document_link_proof(conn, link)):
+        if hmac.compare_digest(link['proof'], document_link_proof(conn, link, authority._id_key)):
             return 'current', 'verified_source'
     return 'unknown', 'model_hypothesis'

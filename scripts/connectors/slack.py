@@ -69,6 +69,8 @@ _MAX_RETRY_SLEEP_SEC = 60
 
 # Maximum retry attempts on transient errors
 _MAX_RETRIES = 3
+_MAX_PAGES = 20
+_REQUEST_DEADLINE_SECONDS = 75
 
 # Module-level user display-name cache (avoids repeated users.info calls)
 _USER_CACHE: dict[str, str] = {}
@@ -101,44 +103,27 @@ def _slack_get(
         method="GET",
     )
 
-    delay = 1.0
-    last_exc: Exception | None = None
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            if not body.get("ok"):
-                err = body.get("error", "unknown_error")
-                # auth errors are not retryable
-                if err in ("invalid_auth", "not_authed", "account_inactive", "token_revoked"):
-                    raise RuntimeError(f"Slack API [{method}] auth error: {err}")
-                raise RuntimeError(f"Slack API [{method}] error: {err}")
-            return body
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429:
-                retry_after = int(exc.headers.get("Retry-After", max(delay, 5)))
-                wait = min(retry_after, _MAX_RETRY_SLEEP_SEC)
-                log.warning("[slack] %s rate-limited (429) — sleeping %ds", method, wait)
-                last_exc = exc
-                if attempt < _MAX_RETRIES:
-                    time.sleep(wait)
-                    delay = min(delay * 2, 30.0)
-                    continue
-            raise RuntimeError(f"Slack API [{method}] HTTP {exc.code}: {exc.reason}") from exc
-        except (urllib.error.URLError, OSError, TimeoutError) as exc:
-            last_exc = exc
-            if attempt < _MAX_RETRIES:
-                wait = min(delay, 30.0)
-                log.warning("[slack] %s attempt %d/%d failed: %s — retry in %.0fs",
-                            method, attempt + 1, _MAX_RETRIES, exc, wait)
-                time.sleep(wait)
-                delay = min(delay * 2, 30.0)
-                continue
-            raise RuntimeError(
-                f"Slack API [{method}] failed after {_MAX_RETRIES + 1} attempts: {last_exc}"
-            ) from last_exc
+    from lib.retry import with_retry  # type: ignore[import]
 
-    raise RuntimeError(f"Slack API [{method}] failed: {last_exc}")  # unreachable guard
+    deadline = time.monotonic() + _REQUEST_DEADLINE_SECONDS
+
+    def request_once():
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    body = with_retry(
+        request_once,
+        max_retries=_MAX_RETRIES,
+        max_delay=_MAX_RETRY_SLEEP_SEC,
+        deadline=deadline,
+        context=f"slack.{method}",
+    )
+    if not isinstance(body, dict):
+        raise RuntimeError(f"Slack API [{method}] returned an invalid response")
+    if not body.get("ok"):
+        err = str(body.get("error", "unknown_error"))
+        raise RuntimeError(f"Slack API [{method}] error: {err}")
+    return body
 
 
 def _resolve_channels(
@@ -160,8 +145,9 @@ def _resolve_channels(
 
     results: dict[str, str] = {}
     cursor: str = ""
+    seen: set[str] = set()
 
-    while True:
+    for _ in range(_MAX_PAGES):
         params: dict[str, Any] = {
             "types": "public_channel,private_channel",
             "exclude_archived": "true",
@@ -172,7 +158,9 @@ def _resolve_channels(
 
         try:
             resp = _slack_get(token, "conversations.list", params)
-        except RuntimeError as exc:
+        except Exception as exc:
+            from lib.connector_coverage import report_scope  # type: ignore[import]
+            report_scope("slack:channels", "failed", reason=type(exc).__name__)
             log.error("[slack] conversations.list failed: %s", exc)
             break
 
@@ -189,6 +177,10 @@ def _resolve_channels(
         cursor = meta.get("next_cursor", "")
         if not cursor:
             break
+        if not isinstance(cursor, str) or cursor in seen:
+            log.warning("[slack] conversations.list pagination is invalid or repeated")
+            break
+        seen.add(cursor)
 
     return results
 
@@ -208,8 +200,11 @@ def _fetch_channel_history(
     """
     all_messages: list[dict[str, Any]] = []
     cursor: str = ""
+    seen: set[str] = set()
 
-    while len(all_messages) < limit:
+    for _ in range(_MAX_PAGES):
+        if len(all_messages) >= limit:
+            break
         params: dict[str, Any] = {
             "channel": channel_id,
             "limit": min(_PAGE_LIMIT, limit - len(all_messages)),
@@ -221,7 +216,9 @@ def _fetch_channel_history(
 
         try:
             resp = _slack_get(token, "conversations.history", params)
-        except RuntimeError as exc:
+        except Exception as exc:
+            from lib.connector_coverage import report_scope  # type: ignore[import]
+            report_scope(f"slack:channel:{channel_id}", "failed", reason=type(exc).__name__)
             log.warning("[slack] conversations.history(%s) failed: %s", channel_id, exc)
             break
 
@@ -237,6 +234,10 @@ def _fetch_channel_history(
         has_more = resp.get("has_more", False)
         if not cursor or not has_more:
             break
+        if not isinstance(cursor, str) or cursor in seen:
+            log.warning("[slack] conversations.history pagination is invalid or repeated")
+            break
+        seen.add(cursor)
 
         # Throttle between page requests
         time.sleep(0.5)
@@ -461,10 +462,12 @@ def fetch(
 
             record: dict[str, Any] = {
                 "id": f"slack_{channel_id}_{ts_ms}",
+                "subject": text[:80],
                 "title": f"#{channel_name}: {text[:80]}",
                 "body": text,
                 "author": display_name,
                 "ts": ts_iso,
+                "date_iso": ts_iso,
                 "url": url,
                 "source": source_tag,
                 "channel": f"#{channel_name}",

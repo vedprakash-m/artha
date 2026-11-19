@@ -14,6 +14,8 @@ from preflight._types import (
 )
 from lib.local_paths import audit_log_path
 
+_READ_ONLY = False
+
 
 def check_stuck_items() -> CheckResult:
     """ST-05: unavailable recurrence evidence is a nonblocking P2 failure."""
@@ -30,6 +32,16 @@ def check_state_directory() -> CheckResult:
             "state directory", "P0", False,
             f"State directory missing: {_rel(STATE_DIR)}",
             fix_hint="Run: python scripts/preflight.py --fix",
+        )
+    if _READ_ONLY:
+        if not os.access(STATE_DIR, os.R_OK):
+            return CheckResult(
+                "state directory", "P0", False,
+                f"{_rel(STATE_DIR)} is not readable",
+            )
+        return CheckResult(
+            "state directory", "P0", True,
+            f"{_rel(STATE_DIR)} present; write probe suppressed in --read-only mode",
         )
     test_path = os.path.join(STATE_DIR, ".preflight_write_test")
     try:
@@ -64,6 +76,8 @@ def _is_bootstrap_stub(path: str) -> bool:
 
 def check_state_templates(auto_fix: bool = False) -> CheckResult:
     """P1: Populate missing state files from state/templates/ on first run."""
+    if _READ_ONLY:
+        auto_fix = False
     templates_dir = os.path.join(STATE_DIR, "templates")
     if not os.path.isdir(templates_dir):
         return CheckResult(
@@ -133,6 +147,8 @@ def check_state_templates(auto_fix: bool = False) -> CheckResult:
 
 def check_open_items(auto_fix: bool = False) -> CheckResult:
     """P1: Verify open_items.md exists and is readable. Auto-creates from template with --fix."""
+    if _READ_ONLY:
+        auto_fix = False
     path = os.path.join(STATE_DIR, "open_items.md")
     if not os.path.exists(path):
         template_path = os.path.join(STATE_DIR, "templates", "open_items.md")
@@ -215,6 +231,16 @@ def check_planning_signals() -> CheckResult:
 def check_briefings_directory() -> CheckResult:
     """P1: Verify briefings/ directory is writable for archiving."""
     briefings_dir = os.path.join(ARTHA_DIR, "briefings")
+    if _READ_ONLY:
+        if not os.path.isdir(briefings_dir):
+            return CheckResult(
+                "briefings directory", "P1", False,
+                "briefings/ missing; creation suppressed in --read-only mode",
+            )
+        return CheckResult(
+            "briefings directory", "P1", True,
+            f"{_rel(briefings_dir)} present; write probe suppressed in --read-only mode",
+        )
     if not os.path.isdir(briefings_dir):
         try:
             os.makedirs(briefings_dir, exist_ok=True)
@@ -316,6 +342,8 @@ def check_briefings_archive_coverage() -> CheckResult:
 
 def _write_audit_event_sc(event: str, fields: dict) -> None:
     """Best-effort audit.md append (avoids importing briefing_archive from state_checks)."""
+    if _READ_ONLY:
+        return
     try:
         audit_log = audit_log_path(ARTHA_DIR)
         from datetime import timezone

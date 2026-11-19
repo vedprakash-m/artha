@@ -223,12 +223,12 @@ def _capability_index(root: Path) -> dict[str, set[str]]:
 
 
 def _tracked_test_paths(root: Path) -> list[str]:
-    """List tracked public ``test_*.py`` paths (never picking up gitignored private Work/lib tests)."""
+    """List tracked and candidate public tests, excluding ignored Work/private files."""
     import subprocess  # noqa: PLC0415
 
     if (root / ".git").exists():
         res = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "tests"],
+            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard", "-z", "tests"],
             capture_output=True,
             check=False,
         )

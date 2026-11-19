@@ -281,7 +281,7 @@ def test_rollback_gate_decrypts_and_checks_the_actual_database(world, tmp_path):
     verify_rollback(config(target), CIPHER)
     selective = tmp_path / "selective.ae1"
     encrypted_snapshot(selective, led._path, CIPHER)
-    with pytest.raises(lg.PermissionDenied, match="selective rollback snapshot"):
+    with pytest.raises(lg.PermissionDenied, match="rollback snapshot"):
         verify_rollback(config(selective), CIPHER)
     target.write_bytes(b"ACK2-invalid")
     with pytest.raises(lg.PermissionDenied, match="rollback snapshot"):

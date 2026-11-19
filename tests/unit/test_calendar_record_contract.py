@@ -69,6 +69,7 @@ def _graph(payload):
 
 
 def _caldav(ics):
+    pytest.importorskip("vobject")
     import connectors.caldav_calendar as m  # noqa: PLC0415
     return m._parse_event(_FakeCalDavEvent(ics), "Home")
 

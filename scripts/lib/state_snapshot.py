@@ -1,32 +1,14 @@
 #!/usr/bin/env python3
 # pii-guard: ignore-file — infrastructure module, no personal data
-"""
-scripts/lib/state_snapshot.py — Pre-write state snapshots and undo for Artha.
-
-Before each ``state/*.md`` write, ``WriteGuardMiddleware`` calls
-:func:`snapshot` to persist the current file content into
-``tmp/state_snapshots/``.  The ``undo`` command calls :func:`restore_latest`
-to roll back the most recent write to a domain.
-
-Filename convention::
-
-    tmp/state_snapshots/<domain>_<UTC-YYYYMMDDTHHmmss>.snap
-
-Retention policy:
-- Keep the last 5 snapshots per domain (``max_keep=5``).
-- Auto-prune snapshots older than 24 hours (``max_age_hours=24.0``).
-- ``tmp/`` is gitignored — snapshots are never committed.
-
-Encrypted files (``*.md.age``) MUST only be snapshotted in their encrypted
-form.  This module operates on the pre-write content string regardless of
-whether the file is encrypted downstream — the caller is responsible for
-passing only encrypted bytes for vault-protected domains.
-
-Spec: specs/agent-fw.md §AFW-6 — Session Rewind / Undo
-"""
+"""Encrypted, machine-local pre-write snapshots for State Files."""
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import stat
+import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -40,29 +22,80 @@ from lib.common import ARTHA_DIR
 _DEFAULT_MAX_KEEP: int = 5
 _DEFAULT_MAX_AGE_HOURS: float = 24.0
 
-# Snapshot filename pattern: <safe_domain>_<YYYYMMDDTHHmmss>.snap
+# Opaque domain/workspace prefix, UTC timestamp and write-once identity.
 _TS_FORMAT = "%Y%m%dT%H%M%S"
-_SNAP_RE = re.compile(r"^(.+)_(\d{8}T\d{6})\.snap$")
-
-# Characters allowed in domain name component of filename
-_SAFE_DOMAIN_RE = re.compile(r"[^a-zA-Z0-9_\-]")
+_SNAP_RE = re.compile(
+    r"^([0-9a-f]{32})_(\d{8}T\d{6})_([0-9a-f]{32})\.snap\.age$"
+)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _workspace_root(artha_dir: Optional[Path] = None) -> Path:
+    return (artha_dir or ARTHA_DIR).resolve()
+
+
+def _machine_local_root(artha_dir: Optional[Path] = None) -> Path:
+    from lib.local_paths import local_dir  # noqa: PLC0415
+
+    root = local_dir().resolve()
+    workspace = _workspace_root(artha_dir)
+    home = Path.home().resolve()
+    forbidden = [
+        workspace,
+        home / "OneDrive",
+        home / "Dropbox",
+        home / "Library" / "CloudStorage",
+        home / "Library" / "Mobile Documents",
+    ]
+    for name in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        value = os.environ.get(name)
+        if value:
+            forbidden.append(Path(value).expanduser().resolve())
+    if any(root == candidate or root.is_relative_to(candidate.resolve())
+           for candidate in forbidden):
+        raise ValueError("State snapshot storage must be machine-local and outside the workspace")
+    return root
+
+
 def _snap_dir(artha_dir: Optional[Path] = None) -> Path:
-    root = artha_dir if artha_dir is not None else ARTHA_DIR
-    return root / "tmp" / "state_snapshots"
+    local = _machine_local_root(artha_dir)
+    workspace = hashlib.sha256(str(_workspace_root(artha_dir)).encode("utf-8")).hexdigest()[:16]
+    return local / "state-snapshots" / workspace
 
 
-def _safe_domain(domain: str) -> str:
-    return _SAFE_DOMAIN_RE.sub("_", domain)
+def _ensure_private_directory(path: Path) -> None:
+    if sys.platform == "win32":
+        from catchup_core.quarantine_fs_windows import ensure_private_directory
+
+        ensure_private_directory(path)
+        return
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or stat.S_ISLNK(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) & 0o077
+    ):
+        raise ValueError("State snapshot directory is not owner-private")
+
+
+def _snapshot_prefix(domain: str, artha_dir: Optional[Path] = None) -> str:
+    identity = f"{_workspace_root(artha_dir)}\0{domain}".encode("utf-8")
+    return hashlib.sha256(identity).hexdigest()[:32]
 
 
 def _ts_now() -> str:
     return datetime.now(timezone.utc).strftime(_TS_FORMAT)
+
+
+def _vault_for_snapshots(directory: Path):
+    from foundation import get_age_vault  # noqa: PLC0415
+
+    return get_age_vault(state_dir=directory)
 
 
 # ---------------------------------------------------------------------------
@@ -73,32 +106,49 @@ def snapshot(
     domain: str,
     content: str,
     artha_dir: Optional[Path] = None,
-    max_keep: int = _DEFAULT_MAX_KEEP,
 ) -> Optional[Path]:
-    """Create a timestamped snapshot of *content* for *domain*.
+    """Encrypt *content* in owner-private machine-local snapshot storage.
 
-    Prunes excess/expired snapshots after writing.
+    Every successful publication is retained and write-once. Retention changes
+    require an explicit authorized call to :func:`prune`.
 
     Args:
-        domain: Domain name (e.g. ``"finance"``).  Used as the filename prefix.
+        domain: Domain name, bound into an opaque filename prefix.
         content: Current file content to preserve.  Must be non-empty.
         artha_dir: Artha project root (default: :data:`~lib.common.ARTHA_DIR`).
-        max_keep: Maximum snapshots to retain per domain.
-
     Returns:
-        Path to the new snapshot, or ``None`` if *content* is empty or on any
-        filesystem error.
+        Path to new ciphertext, or ``None`` if unavailable. No plaintext
+        fallback is written.
     """
     if not content or not content.strip():
         return None
+    snap_path: Path | None = None
+    phase = "root"
     try:
         sdir = _snap_dir(artha_dir)
-        sdir.mkdir(parents=True, exist_ok=True)
-        snap_path = sdir / f"{_safe_domain(domain)}_{_ts_now()}.snap"
-        snap_path.write_text(content, encoding="utf-8")
-        prune(domain, artha_dir=artha_dir, max_keep=max_keep)
+        phase = "directory"
+        _ensure_private_directory(sdir)
+        phase = "vault"
+        vault = _vault_for_snapshots(sdir)
+        ciphertext = vault.encrypt_artifact(content)
+        snap_path = sdir / (
+            f"{_snapshot_prefix(domain, artha_dir)}_{_ts_now()}_"
+            f"{uuid.uuid4().hex}.snap.age"
+        )
+        from catchup_core.blobs import private_atomic_bytes  # noqa: PLC0415
+
+        phase = "publish"
+        private_atomic_bytes(snap_path, ciphertext)
+        phase = "verify"
+        if vault.read_artifact(snap_path) != content:
+            raise ValueError("encrypted State snapshot verification failed")
         return snap_path
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[state_snapshot] encrypted snapshot unavailable: "
+            f"{phase}:{type(exc).__name__}",
+            file=sys.stderr,
+        )
         return None
 
 
@@ -116,13 +166,23 @@ def list_snapshots(
         Sorted list of snapshot paths, newest first.  Empty list if the
         snapshot directory does not exist.
     """
-    sdir = _snap_dir(artha_dir)
+    try:
+        sdir = _snap_dir(artha_dir)
+    except (OSError, ValueError):
+        return []
     if not sdir.exists():
         return []
-    prefix = _safe_domain(domain)
-    matches = [p for p in sdir.glob(f"{prefix}_*.snap") if _SNAP_RE.match(p.name)]
-    # Lexicographic sort on filename works because timestamp is zero-padded ISO
-    return sorted(matches, key=lambda p: p.name, reverse=True)
+    prefix = _snapshot_prefix(domain, artha_dir)
+    matches = [p for p in sdir.glob(f"{prefix}_*.snap.age") if _SNAP_RE.match(p.name)]
+    return sorted(
+        matches,
+        key=lambda p: (
+            _SNAP_RE.match(p.name).group(2),
+            p.stat().st_mtime_ns,
+            p.name,
+        ),
+        reverse=True,
+    )
 
 
 def restore_latest(
@@ -142,8 +202,9 @@ def restore_latest(
     if not snaps:
         return None
     try:
-        return snaps[0].read_text(encoding="utf-8")
-    except OSError:
+        vault = _vault_for_snapshots(snaps[0].parent)
+        return vault.read_artifact(snaps[0])
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -152,8 +213,13 @@ def prune(
     artha_dir: Optional[Path] = None,
     max_keep: int = _DEFAULT_MAX_KEEP,
     max_age_hours: float = _DEFAULT_MAX_AGE_HOURS,
+    *,
+    authorized: bool = False,
 ) -> int:
     """Delete excess and expired snapshots for *domain*.
+
+    This is an explicitly invoked maintenance operation. A caller must pass
+    ``authorized=True`` after obtaining the applicable retention authority.
 
     A snapshot is deleted if it is beyond position ``max_keep`` in the
     newest-first list, OR if its embedded timestamp is older than
@@ -164,10 +230,17 @@ def prune(
         artha_dir: Artha project root.
         max_keep: Maximum snapshots to retain.
         max_age_hours: Age limit in hours.
+        authorized: Must be explicitly true for any deletion to occur.
 
     Returns:
         Number of snapshots deleted.
+
+    Raises:
+        PermissionError: If pruning was not explicitly authorized.
     """
+    if authorized is not True:
+        raise PermissionError("State snapshot pruning requires explicit authorization")
+
     snaps = list_snapshots(domain, artha_dir=artha_dir)
     now = datetime.now(timezone.utc)
     deleted = 0

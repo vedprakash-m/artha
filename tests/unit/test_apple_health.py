@@ -137,7 +137,7 @@ class TestIsoToStr:
     def test_converts_apple_format(self):
         raw = "2026-03-14 08:30:00 -0700"
         result = _iso_to_str(raw)
-        assert result == "2026-03-14T08:30:00-0700"
+        assert result == "2026-03-14T08:30:00-07:00"
 
     def test_empty_string_passthrough(self):
         assert _iso_to_str("") == ""

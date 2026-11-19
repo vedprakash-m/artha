@@ -15,9 +15,11 @@ Validates: AFW-6 (Session Rewind / Undo)
 """
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
+import pytest
 
 from _fixtures import PatchedDateTime
 
@@ -34,7 +36,32 @@ for _p in (_SCRIPTS, _SCRIPTS_LIB):
 # ---------------------------------------------------------------------------
 
 def _snap_dir(artha_dir: Path) -> Path:
-    return artha_dir / "tmp" / "state_snapshots"
+    from lib.state_snapshot import _snap_dir as snapshot_dir
+
+    return snapshot_dir(artha_dir)
+
+
+class _FakeSnapshotVault:
+    def encrypt_artifact(self, text):
+        return b"sealed:" + base64.b64encode(text.encode("utf-8"))
+
+    def read_artifact(self, path):
+        raw = path.read_bytes()
+        return base64.b64decode(raw[len(b"sealed:"):]).decode("utf-8")
+
+
+@pytest.fixture(autouse=True)
+def encrypted_snapshot_storage(tmp_path, monkeypatch):
+    import lib.state_snapshot as state_snapshot
+
+    monkeypatch.setenv(
+        "ARTHA_LOCAL_DIR", str(tmp_path.parent / f"{tmp_path.name}-local")
+    )
+    monkeypatch.setattr(
+        state_snapshot,
+        "_vault_for_snapshots",
+        lambda _directory: _FakeSnapshotVault(),
+    )
 
 
 def _write_state(path: Path, content: str) -> None:
@@ -76,8 +103,8 @@ class TestUndoStateChange:
         snap_path = snapshot("finance", ORIGINAL, artha_dir=tmp_path)
         assert snap_path is not None, "snapshot() must return a Path on success"
         assert snap_path.exists(), "Snapshot file must exist on disk"
-        assert snap_path.suffix == ".snap"
-        assert snap_path.read_text(encoding="utf-8") == ORIGINAL
+        assert snap_path.name.endswith(".snap.age")
+        assert ORIGINAL not in snap_path.read_text(encoding="utf-8", errors="replace")
 
         # --- Step 3: Second write (state update with v2) ---
         _write_state(state_file, UPDATED)
@@ -96,7 +123,7 @@ class TestUndoStateChange:
         assert final == ORIGINAL, "State file after undo must match original v1 content"
 
     def test_snapshot_directory_created(self, tmp_path):
-        """snapshot() creates tmp/state_snapshots/ when it does not exist."""
+        """snapshot() creates owner-private machine-local storage."""
         from lib.state_snapshot import snapshot
 
         snap_dir = _snap_dir(tmp_path)
