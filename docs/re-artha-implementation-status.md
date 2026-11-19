@@ -16,6 +16,9 @@ Owner-authorized on the authority Mac. **Operational acceptance and release stay
   hides sources instead of failing while Signals are unreviewed.
 - The current plain signed release was re-bound after both fingerprinted fixes. L6 remains explicitly
   owner-disposed: the old delegation is revoked and `release.renewal` is removed.
+- Owner decision: narrow the next live release to the authenticated `home_email` path and the `home` Domain only.
+  A fresh one-Domain cohort bind/re-sign and positive `home_email` E1 UAT are required; the other five Domains
+  remain Held.
 - An authoritative Catch-up was blocked by design (`personal Connector scope unavailable`) before any fetch. Live
   UAT could not be accepted. Open gates: Connector admission for non-`home_email` sources or a narrower release,
   shadow-ledger migration (schema 20), Work B.4, and owner decisions D-05, D-08, B.5.
