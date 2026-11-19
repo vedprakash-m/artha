@@ -9,8 +9,8 @@ class NHTSARecallSkill(BaseSkill):
     Skill to check for vehicle recalls using the NHTSA API.
     """
     
-    VIN_URL = "https://api.nhtsa.dot.gov/recalls/recallsByVIN/{vin}?format=json"
-    VEHICLE_URL = "https://api.nhtsa.dot.gov/recalls/recallsByVehicle?make={make}&model={model}&modelYear={year}&format=json"
+    VIN_URL = "https://api.nhtsa.gov/recalls/recallsByVIN/{vin}?format=json"
+    VEHICLE_URL = "https://api.nhtsa.gov/recalls/recallsByVehicle?make={make}&model={model}&modelYear={year}&format=json"
     
     def __init__(self, vehicles: List[Dict[str, str]]):
         super().__init__(name="nhtsa_recalls", priority="P1")

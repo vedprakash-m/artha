@@ -8,6 +8,12 @@ Applies to every coding agent. Prefer caution over speed; use judgment for trivi
 - Verify the checkout path and current branch before editing. If launched elsewhere, stop and continue in a session using the canonical checkout on `main`; do not edit another copy.
 - Preserve unique work and unrelated changes. Never discard work or force-switch a dirty checkout to satisfy this rule.
 
+## Protect live data
+
+- `state/`, `briefings/`, `summaries/` and `backups/` hold the user's live, irreplaceable data and are ignored by git, so git cannot restore them. Never delete, move, truncate or reset them: no `rm`/`rmtree`/`git clean`/`git checkout -- .`/`git reset --hard`/`git stash -u` that can reach them, and no test or script that runs in place against the real checkout. Run tests only through `tools/run_tests_isolated.py` (see `make check`).
+- Before any command that can remove or rewrite ignored files, run `python3 scripts/state_guard.py snapshot` and confirm it succeeds. If `python3 scripts/state_guard.py check` reports `NO STATE BACKUP` or `STATE SHRANK`, stop and tell the user; do not continue the task.
+- Off-repo snapshots live in `~/.artha-local/state-backups/`. Restore from them; never delete them.
+
 ## Load and route
 
 - Before responding, read and follow `config/Artha.md`; use `config/glossary.md` terms. At session start, load `state/lessons.md` fully.
