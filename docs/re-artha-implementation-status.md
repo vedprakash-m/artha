@@ -14,6 +14,8 @@ Owner-authorized on the authority Mac. **Operational acceptance and release stay
   `scope_hmac`/subjects and cannot be reviewed).
 - Two fixes (unit-tested): legacy protection refuses only alerts without encrypted dates; inspection freshness
   hides sources instead of failing while Signals are unreviewed.
+- The current plain signed release was re-bound after both fingerprinted fixes. L6 remains explicitly
+  owner-disposed: the old delegation is revoked and `release.renewal` is removed.
 - An authoritative Catch-up was blocked by design (`personal Connector scope unavailable`) before any fetch. Live
   UAT could not be accepted. Open gates: Connector admission for non-`home_email` sources or a narrower release,
   shadow-ledger migration (schema 20), Work B.4, and owner decisions D-05, D-08, B.5.

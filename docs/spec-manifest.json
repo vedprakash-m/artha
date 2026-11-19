@@ -969,9 +969,9 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "6d82dae4f30241e237e49c849313dc7615b992fd3a4ecc03cccb90f468c891e6",
+  "implementation_sha256": "52ca935314a152b7a9d07cda83f890931b79581a5ba373ac57ed3235e55fc4db",
   "spec": "specs/refix-artha.md",
   "spec_owner_local": true,
-  "spec_sha256": "5769ddad4be458b6d9b11d24d81f58afec611f9b3cb9b6758853a1ddd5e4853d",
+  "spec_sha256": "fc3479a6e06935be3651c370f07fa6a1324c9e140cd04ba57737701481cafb06",
   "spec_version": "0.5.1"
 }
