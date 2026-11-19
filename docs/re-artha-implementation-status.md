@@ -47,6 +47,22 @@ The authority Mac verified the existing schema-21 application and the owner acce
 
 No migration apply was run; it would have been a no-op. L3–L7 remain Held.
 
+### L3 read-only cohort preparation — 2026-11-19
+
+The authority Mac prepared
+`~/.artha-local/refix-evidence/L3/cohort-review.json` for the pushed candidate
+`b6662657175c92a26204ef88b01460884b1e0c21`. Exact-SHA CI and PII Check were green.
+The package records the release-fingerprinted source hashes, current config/model/
+profile/dependency hashes, schema-21 receipt digest, migration 0020/0021 hashes,
+workflow definitions and the task-only `routine: []` renewal disposition.
+
+The current implementation and configuration cohort do not match the older signed
+six-Domain cohort, which is the expected reason `release_resign_21` is required.
+No signature, release authority write, source enrollment or provider action was
+performed. The Mac agent could not identify or invent the existing owner re-sign
+command; the owner must name and perform it in their own terminal against this
+exact reviewed cohort. L3 remains Held pending that owner action.
+
 ## Spec archived; open items handed off — 2026-11-18
 
 The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
