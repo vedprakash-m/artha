@@ -581,10 +581,14 @@ def inspection_freshness(ledger: Ledger, now: datetime) -> dict[str, Any]:
         age = max(0.0, (now - datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds() / 3600)
     except (ValueError, TypeError, AttributeError):
         age = None
+    try:
+        visible = ledger.visible_coverage(ledger._owner)
+    except PersonalScopeUnavailable:
+        visible = []  # unreviewed Signals stay held: show no source rather than fail the whole command
     return {"last_catch_up": stamp, "age_hours": round(age, 2) if age is not None else None,
             "unseen_since": stamp or "unknown", "stale": age is None or age > 48,
             "sources": [{"connector": r["connector"], "status": r["status"], "last_verified": r["completed_at"]}
-                        for r in ledger.visible_coverage(ledger._owner)]}
+                        for r in visible]}
 
 
 def _runtime_preflight(ledger: Ledger, *, footprint: Callable[[], Any] | None = None) -> None:

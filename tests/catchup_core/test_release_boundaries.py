@@ -382,6 +382,17 @@ def test_inspection_freshness_never_claims_current_without_a_completed_catchup(w
     assert metadata["last_catch_up"] is None and metadata["unseen_since"] == "unknown"
 
 
+def test_inspection_freshness_hides_sources_while_signals_are_unreviewed(world):
+    from catchup_core.ledger import PersonalScopeUnavailable
+    from catchup_core.runtime import inspection_freshness
+    led, _, _, _ = world
+
+    def unavailable(_viewer):
+        raise PersonalScopeUnavailable("personal Signal scope unavailable")
+    led.visible_coverage = unavailable
+    assert inspection_freshness(led, NOW)["sources"] == []
+
+
 def test_preflight_failure_returns_blocked_without_fetching(world):
     _, _, deps, _ = world
     d = deps()
