@@ -1536,7 +1536,7 @@ class Ledger:
                               "AND confidentiality<>'ordinary' LIMIT 1").fetchone()
                 or self.conn.execute("SELECT 1 FROM fact_versions v JOIN facts f USING(fact_id) "
                                      "WHERE v.value_encrypted=0 AND f.confidentiality<>'ordinary' LIMIT 1").fetchone()
-                or self.conn.execute("SELECT 1 FROM alerts LIMIT 1").fetchone()):
+                or self.conn.execute("SELECT 1 FROM alerts WHERE dates_encrypted IS NULL LIMIT 1").fetchone()):
             raise PermissionDenied("legacy personal data requires reviewed migration")
         return 0
 

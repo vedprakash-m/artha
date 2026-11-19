@@ -424,6 +424,14 @@ def test_legacy_protection_refuses_before_reading_unreviewed_payload(led, legacy
     assert payload_reads == []
 
 
+def test_legacy_protection_admits_alerts_with_only_encrypted_dates(led):
+    led.conn.execute(
+        "INSERT INTO alerts(alert_id,obligation_key,domain,primary_subject_id,severity,status,"
+        "first_seen,last_seen,dates_encrypted,dates_key_version) "
+        "VALUES('a','o','health','ved','P1','open','t','t','ciphertext',1)")
+    assert led.protect_legacy_values() == 0
+
+
 def test_restricted_fact_is_stored_only_as_ciphertext(led):
     fid = led.put_fact(fact(predicate="accommodation_status", value="approved",
                             confidentiality=Confidentiality.RESTRICTED,
