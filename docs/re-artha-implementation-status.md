@@ -19,6 +19,17 @@ Local engineering commit `00241b5` passed the complete isolated core coverage ru
 The initial coverage report was disposable-workspace-only, so the spec's separate 95% changed-line policy
 has not yet been observed locally and remains for hosted CI/exact-report follow-up.
 
+## Live Track L host result — 2026-11-19
+
+Engineering close-out remains green at `44dd939`; the documentation close-out is `f5fda36`. A safe
+read-only `catchup_core migrate --json` preview on this Windows host returned exit 20:
+`no authority ledger exists to migrate`. The host contains the shadow ledger but no authoritative
+`~/.artha-local/catchup_core/ledger.db`. Work privacy status, reconciliation preview and stream-policy
+preview also returned Held because the current Work authority/keyring state is unavailable here.
+No backup, migration, enrollment, re-sign, provider call, Work proposal, recovery or UAT result was produced.
+L2–L7 therefore require the authority-holding machine and the exact owner actions in
+`specs/refix-artha.md` §11 and B.4.
+
 ## Spec archived; open items handed off — 2026-11-18
 
 The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
