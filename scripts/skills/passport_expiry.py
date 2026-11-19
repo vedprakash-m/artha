@@ -32,7 +32,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .base_skill import BaseSkill
+from .base_skill import BaseSkill, read_state_text
 
 # Days-to-expiry thresholds
 _CRITICAL_DAYS = 60    # <60 days: many countries deny entry
@@ -141,11 +141,8 @@ class PassportExpirySkill(BaseSkill):
         self._state_file = artha_dir / "state" / "immigration.md"
 
     def pull(self) -> str:
-        """Read the decrypted immigration state file."""
-        if not self._state_file.exists():
-            # State file not present — either vault locked or domain not bootstrapped
-            return ""
-        return self._state_file.read_text(encoding="utf-8")
+        """Read the immigration state (plaintext if present, else decrypted in memory)."""
+        return read_state_text(self._artha_dir, "immigration")
 
     def parse(self, raw_data: str) -> dict[str, Any]:
         """Extract passport expiry records from the state file content."""
@@ -153,6 +150,14 @@ class PassportExpirySkill(BaseSkill):
             return {"passports": [], "vault_required": True, "message": "immigration.md not found (vault may be locked)"}
 
         passports = _extract_passports(raw_data)
+        if not passports:
+            # Finding nothing is not the same as "ok": say so, instead of giving false assurance.
+            return {
+                "passports": [],
+                "expiring_soon_count": 0,
+                "highest_alert": "unknown",
+                "message": "no passport expiry dates recognized in the immigration state; check travel state or the passports",
+            }
         expiring_soon = [p for p in passports if p["alert_level"] != "ok"]
         any_critical = any(p["alert_level"] == "critical" for p in passports)
         any_urgent = any(p["alert_level"] == "urgent" for p in passports)

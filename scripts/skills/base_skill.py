@@ -2,6 +2,34 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
+import importlib
+import sys
+
+
+def read_state_text(artha_dir: Path, domain: str) -> str:
+    """Return a domain's State File text, or "" when it is unavailable.
+
+    Uses a plaintext ``state/<domain>.md`` if one exists; otherwise decrypts ``state/<domain>.md.age`` in memory
+    (the vault never writes plaintext to disk), so skills keep working with the in-memory vault model.
+    """
+    plain = Path(artha_dir) / "state" / f"{domain}.md"
+    try:
+        if plain.exists():
+            return plain.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    if not (Path(artha_dir) / "state" / f"{domain}.md.age").exists():
+        return ""
+    try:
+        scripts = str(Path(artha_dir) / "scripts")
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        foundation = importlib.import_module("foundation")   # loaded lazily: importing it can re-exec into the venv
+        return foundation.get_age_vault(state_dir=Path(artha_dir) / "state").read(domain)
+    except BaseException:  # noqa: BLE001 - a missing key or vault must degrade, never crash the sweep
+        return ""
+
 
 class BaseSkill(ABC):
     """

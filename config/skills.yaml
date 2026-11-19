@@ -167,7 +167,7 @@ skills:
   # ── CONNECT v1.0.0 Phase 2 Skills ───────────────────────────────────────
 
   mental_health_utilization:
-    enabled: true
+    enabled: false  # 2026-11-18: module has no get_skill() factory, so the runner failed it every run
     priority: P1
     cadence: weekly
     class: background
@@ -221,7 +221,7 @@ skills:
 
   work_background_refresh:
     class: "scripts.skills.work_background_refresh.WorkBackgroundRefreshSkill"
-    enabled: true
+    enabled: false  # 2026-11-18: not on the skill_runner allowlist, so it failed as "Unknown skill" (P0) every run
     priority: P0
     cadence: daily
     requires_vault: false
@@ -397,7 +397,7 @@ skills:
 
   watch_monitor:
     class: "scripts.skills.watch_monitor.WatchMonitorSkill"
-    enabled: true
+    enabled: false  # 2026-11-18: not on the skill_runner allowlist; it also relies on the retired Telegram push
     priority: P1
     cadence: every_run
     class_label: operational
@@ -418,7 +418,7 @@ skills:
 
   fitness_coach:
     class: "scripts.skills.fitness_coach.FitnessCoachSkill"
-    enabled: true
+    enabled: false  # 2026-11-18: not on the skill_runner allowlist, so it failed as "Unknown skill" every run
     priority: P1
     cadence: every_run
     class_label: operational

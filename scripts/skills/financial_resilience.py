@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .base_skill import BaseSkill
+from .base_skill import BaseSkill, read_state_text
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
@@ -176,13 +176,8 @@ class FinancialResilienceSkill(BaseSkill):
         self._state_file = artha_dir / "state" / "finance.md"
 
     def pull(self) -> str:
-        """Read the (decrypted) finance state file. Returns empty string if absent."""
-        if not self._state_file.exists():
-            return ""
-        try:
-            return self._state_file.read_text(encoding="utf-8")
-        except OSError:
-            return ""
+        """Read the finance state (plaintext if present, else decrypted in memory). Empty string if unavailable."""
+        return read_state_text(self._artha_dir, "finance")
 
     def parse(self, raw_data: str) -> dict[str, Any]:
         """

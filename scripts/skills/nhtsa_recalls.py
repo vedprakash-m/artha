@@ -36,8 +36,16 @@ class NHTSARecallSkill(BaseSkill):
                     )
                 
                 response = requests.get(url, timeout=10)
-                if response.status_code == 200:
-                    results[v_id] = response.json()
+                body = None
+                try:
+                    body = response.json()
+                except ValueError:
+                    pass
+                # NHTSA answers HTTP 400 with {"Count": 0, ...} when a vehicle/model year has no recalls on file.
+                no_recalls_reply = (response.status_code == 400 and isinstance(body, dict)
+                                    and body.get("Count") == 0 and "results" in body)
+                if response.status_code == 200 or no_recalls_reply:
+                    results[v_id] = body
                 else:
                     results[v_id] = {"error": f"HTTP {response.status_code}"}
             except Exception as e:

@@ -713,6 +713,17 @@ def main() -> None:
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
+    # The config-driven rules load lazily and import foundation, which re-execs into the Artha venv when the
+    # interpreter is not the venv one. A re-exec after stdin has been read would hand the new process an empty
+    # stream, so the filter would print nothing and exit 0. Re-exec first, while stdin is still unread.
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("scan", "filter"):
+        try:
+            from _bootstrap import reexec_in_venv  # noqa: PLC0415
+        except ImportError:
+            reexec_in_venv = None
+        if reexec_in_venv is not None:
+            reexec_in_venv()
+
     if len(sys.argv) < 2:
         print(
             "Usage: pii_guard.py {scan|filter|test|version} [file]\n"

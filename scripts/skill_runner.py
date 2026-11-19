@@ -204,6 +204,8 @@ def _cadence_elapsed(skill_name: str, cadence: str, cache: Dict[str, Any]) -> bo
     """Return True if the skill is due to run under the given cadence."""
     if cadence == "every_run":
         return True
+    if cadence in ("on_demand", "on-demand"):
+        return False  # invoked by its own command (e.g. /career pdf), never by the catch-up sweep; --force still runs it
 
     last_run_str = cache.get(skill_name, {}).get("last_run")
     if not last_run_str:
