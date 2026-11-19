@@ -15,6 +15,10 @@ Commands (all exit non-zero on a problem so callers cannot miss it):
                        loud health check: FAIL when no snapshot exists, the newest is too old,
                        or the live state lost files against it.  With --snapshot-if-stale a healthy
                        but stale state is snapshotted first (self-healing, no scheduler needed).
+  restore DEST         restore the newest snapshot into an EMPTY folder (never overwrites).
+  drill [--no-decrypt] restore into a scratch folder, hash-verify, decrypt every .age, compare with
+                       live state, then discard; fails loudly on any problem.
+  mirror-gfs           copy the in-repo GFS catalog (backups/) to ~/.artha-local/gfs-mirror (no deletes).
   status               one-line summary.
 
 Backup root: $ARTHA_STATE_BACKUP_DIR or ~/.artha-local/state-backups (outside the checkout, 0700).
@@ -37,9 +41,11 @@ STATE_DIR = ARTHA_DIR / "state"
 SHRINK_LIMIT = 0.20          # refuse/alarm when live file count drops by more than this
 DEFAULT_MAX_AGE_HOURS = 48
 KEEP_SNAPSHOTS = 30
-_INCLUDE_SUFFIXES = {".md", ".age", ".yaml", ".yml", ".json"}
+_INCLUDE_SUFFIXES = {".md", ".age", ".yaml", ".yml", ".json", ".txt", ".csv"}
 _EXCLUDE_NAMES = {"telemetry.jsonl", "checkpoint.json", ".DS_Store", ".gitkeep"}
 _EXCLUDE_PREFIXES = ("skills_cache.json",)
+_EXCLUDE_DIRS = {"traces", "connectors", "templates", "__pycache__"}   # regenerated, or tracked in git
+MAX_FILE_BYTES = 3 * 1024 * 1024    # keeps decks, images and other large work files out of every snapshot
 
 
 def backup_root() -> Path:
@@ -48,15 +54,27 @@ def backup_root() -> Path:
 
 
 def _state_files(state_dir: Path) -> list[Path]:
+    """State Files at any depth: text-type, at most MAX_FILE_BYTES, outside excluded folders."""
     if not state_dir.is_dir():
         return []
     out = []
-    for p in sorted(state_dir.iterdir()):
+    for p in sorted(state_dir.rglob("*")):
+        rel = p.relative_to(state_dir)
         if not p.is_file() or p.name in _EXCLUDE_NAMES or p.name.startswith(_EXCLUDE_PREFIXES):
             continue
-        if p.suffix in _INCLUDE_SUFFIXES:
-            out.append(p)
+        if _EXCLUDE_DIRS & set(rel.parts[:-1]) or p.suffix not in _INCLUDE_SUFFIXES:
+            continue
+        try:
+            if p.stat().st_size > MAX_FILE_BYTES:
+                continue
+        except OSError:
+            continue
+        out.append(p)
     return out
+
+
+def _rel(p: Path, base: Path) -> str:
+    return p.relative_to(base).as_posix()
 
 
 def _sha256(p: Path) -> str:
@@ -103,10 +121,12 @@ def snapshot(state_dir: Path = STATE_DIR, *, force: bool = False) -> tuple[int, 
     entries = {}
     try:
         for p in files:
-            dest = tmp / p.name
+            rel = _rel(p, state_dir)
+            dest = tmp / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, dest)
             os.chmod(dest, 0o600)
-            entries[p.name] = {"sha256": _sha256(dest), "size": dest.stat().st_size}
+            entries[rel] = {"sha256": _sha256(dest), "size": dest.stat().st_size}
         write_atomic(tmp / "manifest.json", json.dumps({
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "source": str(state_dir), "files": entries,
@@ -132,7 +152,11 @@ def _decrypt_ok(path: Path) -> tuple[bool, str]:
                        input=(key.rstrip() + "\n").encode(), capture_output=True, timeout=60)
     if r.returncode != 0:
         return False, "decrypt failed"
-    return (r.stdout.startswith(b"---"), "ok" if r.stdout.startswith(b"---") else "no frontmatter")
+    # Only domain Markdown carries YAML frontmatter; the audit log and YAML stores do not.
+    needs_frontmatter = path.name.endswith(".md.age") and not path.name.startswith("audit.")
+    if needs_frontmatter and not r.stdout.startswith(b"---"):
+        return False, "no frontmatter"
+    return True, "ok"
 
 
 def verify(*, decrypt: bool = True) -> tuple[int, str]:
@@ -154,6 +178,75 @@ def verify(*, decrypt: bool = True) -> tuple[int, str]:
     return 0, f"verified {snap.name}: {len(man['files'])} files" + (" (hashes + decrypt)" if decrypt else " (hashes)")
 
 
+def restore(dest: Path, *, snapshot_name: str | None = None) -> tuple[int, str]:
+    """Copy a snapshot (default: newest) into an EMPTY destination folder, verifying every hash."""
+    snaps = list_snapshots()
+    snap = next((s for s in snaps if s.name == snapshot_name), None) if snapshot_name else (snaps[-1] if snaps else None)
+    if snap is None:
+        return 1, "NO SNAPSHOT to restore"
+    dest = Path(dest)
+    if dest.exists() and any(dest.iterdir()):
+        return 1, f"REFUSED: {dest} is not empty; restore never overwrites existing files"
+    dest.mkdir(parents=True, exist_ok=True)
+    man, bad = _manifest(snap), []
+    for name, meta in man["files"].items():
+        (dest / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(snap / name, dest / name)
+        if _sha256(dest / name) != meta["sha256"]:
+            bad.append(name)
+    if bad:
+        return 1, f"RESTORE FAILED hash check for: {', '.join(bad[:5])}"
+    return 0, f"restored {len(man['files'])} files from {snap.name} to {dest}"
+
+
+def drill(state_dir: Path = STATE_DIR, *, decrypt: bool = True) -> tuple[int, str]:
+    """Restore the newest snapshot into a scratch folder, verify it, and compare it with live state."""
+    import tempfile
+    scratch = Path(tempfile.mkdtemp(prefix="artha-restore-drill-"))
+    try:
+        code, msg = restore(scratch / "restored")
+        if code:
+            return 1, "🔴 RESTORE DRILL FAILED: " + msg
+        restored = scratch / "restored"
+        files = sorted(p for p in restored.rglob("*") if p.is_file())
+        bad = []
+        if decrypt:
+            for p in files:
+                if p.name.endswith(".age"):
+                    ok, why = _decrypt_ok(p)
+                    if not ok:
+                        bad.append(f"{_rel(p, restored)}: {why}")
+        if bad:
+            return 1, "🔴 RESTORE DRILL FAILED: " + "; ".join(bad[:5])
+        live = {_rel(p, state_dir): p for p in _state_files(state_dir)}
+        rels = {p: _rel(p, restored) for p in files}
+        changed = sorted(r for p, r in rels.items() if r in live and _sha256(p) != _sha256(live[r]))
+        gone = sorted(r for r in rels.values() if r not in live)
+        note = f"; {len(changed)} changed and {len(gone)} absent in live state since the snapshot"
+        return 0, f"restore drill OK: {len(files)} files restored and verified{' (decrypted)' if decrypt else ''}{note}"
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def mirror_gfs(dest: Path | None = None) -> tuple[int, str]:
+    """Copy the in-repo GFS catalog (backups/) to an off-repo mirror. Never deletes from the mirror."""
+    src = ARTHA_DIR / "backups"
+    dest = dest or (backup_root().parent / "gfs-mirror")
+    if not src.is_dir():
+        return 1, "🔴 no backups/ catalog to mirror"
+    dest.mkdir(parents=True, exist_ok=True)
+    os.chmod(dest, 0o700)
+    copied = 0
+    for p in src.rglob("*"):
+        if p.is_file() and not p.name.endswith((".lock", ".tmp")):
+            target = dest / p.relative_to(src)
+            if not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(p, target)
+                copied += 1
+    return 0, f"gfs mirror: {copied} new files copied to {dest}"
+
+
 def check(state_dir: Path = STATE_DIR, *, max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
           snapshot_if_stale: bool = False) -> tuple[int, str]:
     snaps = list_snapshots()
@@ -166,7 +259,7 @@ def check(state_dir: Path = STATE_DIR, *, max_age_hours: float = DEFAULT_MAX_AGE
     man = _manifest(snaps[-1])
     prev_n = len(man["files"])
     if prev_n and len(live) < prev_n * (1 - SHRINK_LIMIT):
-        missing = sorted(set(man["files"]) - {p.name for p in live})
+        missing = sorted(set(man["files"]) - {_rel(p, state_dir) for p in live})
         return 1, (f"🔴 STATE SHRANK: {len(live)} files now vs {prev_n} in snapshot {snaps[-1].name}; "
                    f"missing e.g. {', '.join(missing[:6])}. Do NOT proceed; restore from "
                    f"{snaps[-1]}")
@@ -190,6 +283,15 @@ def main(argv: list[str]) -> int:
         if "--max-age-hours" in argv:
             hours = float(argv[argv.index("--max-age-hours") + 1])
         code, msg = check(max_age_hours=hours, snapshot_if_stale="--snapshot-if-stale" in argv)
+    elif cmd == "drill":
+        code, msg = drill(decrypt="--no-decrypt" not in argv)
+    elif cmd == "restore":
+        if len(argv) < 2:
+            print("usage: state_guard.py restore EMPTY_DEST_DIR")
+            return 2
+        code, msg = restore(Path(argv[1]))
+    elif cmd == "mirror-gfs":
+        code, msg = mirror_gfs()
     elif cmd == "status":
         code, msg = check()
     else:

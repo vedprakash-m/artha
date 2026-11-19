@@ -22,6 +22,21 @@ def check_state_backup(read_only: bool = False) -> CheckResult:
                            f"🔴 state_guard failed: {type(exc).__name__}: {str(exc)[:100]}",
                            fix_hint="python3 scripts/state_guard.py check")
     if code == 0:
+        # A stale GFS registry makes every snapshot abort on the first missing source, so catch it here.
+        try:
+            import backup
+            missing = [e["name"] for e in backup.load_backup_registry() if not e["source_path"].exists()]
+        except Exception as exc:
+            return CheckResult("state backup", "P0", False,
+                               f"🔴 GFS backup registry unreadable: {type(exc).__name__}: {str(exc)[:100]}",
+                               fix_hint="python3 scripts/backup.py snapshot")
+        if missing:
+            return CheckResult(
+                "state backup", "P0", False,
+                f"🔴 GFS BACKUP WILL ABORT: registry sources missing on disk: {', '.join(missing[:6])}",
+                fix_hint="Fix config/user_profile.yaml -> backup.state_files (encrypted domains need sensitive: true), "
+                         "then run: python3 scripts/backup.py snapshot",
+            )
         return CheckResult("state backup", "P0", True, msg)
     return CheckResult(
         "state backup", "P0", False, msg,

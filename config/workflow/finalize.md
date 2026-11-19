@@ -408,6 +408,26 @@ Also clear the checkpoint programmatically (belt-and-suspenders):
 python -c "from scripts.checkpoint import clear_checkpoint; from pathlib import Path; clear_checkpoint(Path('.'))"
 ```
 
+### Step 18a — Backup and restore drill (MANDATORY — fails loudly)
+
+**SKIP in read-only mode** → log `⏭️ Step 18a skipped — read-only mode`
+
+```bash
+python3 scripts/backup.py snapshot        # GFS catalog; exits non-zero on any abort
+python3 scripts/state_guard.py snapshot   # off-repo copy with hashes (refuses if state shrank)
+python3 scripts/state_guard.py drill      # restores it to a scratch folder, hashes, decrypts, compares
+python3 scripts/state_guard.py mirror-gfs # copies backups/ off-repo; never deletes
+```
+
+Any non-zero exit, `🔴` line or `ABORT` means the backup is NOT good. Put this at the very top of the briefing,
+above the ONE THING, and do not report the catch-up as complete:
+
+`🔴 BACKUP FAILED — <exact message>. State is not protected. Run python3 scripts/state_guard.py check`
+
+On success, add one footer line: `💾 Backup: <state_guard check output>`. An intended large deletion needs
+`python3 scripts/state_guard.py snapshot --force` afterwards. Never delete or overwrite anything under
+`~/.artha-local/state-backups/`.
+
 ### Step 18b — Write Session Recap (S-03)
 Write a session recap so the next session can orient quickly:
 ```python

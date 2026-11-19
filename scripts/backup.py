@@ -592,7 +592,9 @@ def _validate_content(source_type: str, restore_path: str, content: bytes) -> No
             text = content.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ValueError("markdown payload is not UTF-8") from exc
-        if not text.lstrip().startswith("---"):
+        # The machine audit log and learned procedures are plain Markdown by design (no YAML frontmatter).
+        frontmatter_exempt = logical_path == "state/audit.md" or logical_path.startswith("state/learned_procedures/")
+        if not frontmatter_exempt and not text.lstrip().startswith("---"):
             raise ValueError("YAML frontmatter missing")
         if len(text.split()) < 30:
             raise ValueError("SHORT markdown payload")
