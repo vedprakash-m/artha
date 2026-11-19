@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,10 +17,21 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import mcp_sharepoint_server as server
 
 
+def test_permitted_posix_native_identity_is_consistent(monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "os", SimpleNamespace(name="posix", environ=os.environ))
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    _permit(monkeypatch, tmp_path)
+
+    assert server._configured_subject() == "synthetic-work-user"
+
+
 def _permit(monkeypatch, root: Path, *, subject: str = "synthetic-work-user") -> None:
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("OneDriveCommercial", str(root))
     monkeypatch.setenv("USERNAME", subject)
+    monkeypatch.setenv("USER", subject)
+    monkeypatch.setenv("LOGNAME", subject)
     monkeypatch.setenv("ARTHA_WORK_PROFILE", "work")
     monkeypatch.setenv("ARTHA_WORK_SUBJECT", subject)
     monkeypatch.setattr(server, "_load_work_redaction_policy", lambda: ())

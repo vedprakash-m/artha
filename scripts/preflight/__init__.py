@@ -482,6 +482,7 @@ def main() -> None:
 
     args = parser.parse_args()
     global _READ_ONLY
+    previous_read_only = _READ_ONLY
     _READ_ONLY = bool(args.read_only)
     setattr(sys.modules[__name__], "_READ_ONLY", _READ_ONLY)
 
@@ -538,6 +539,7 @@ def main() -> None:
         _clear_stale_pipeline_checkpoint()
         _compact_health_check()
         _write_device_context()
+    setattr(sys.modules[__name__], "_READ_ONLY", previous_read_only)
     sys.exit(0 if all_ok else 1)
 
 

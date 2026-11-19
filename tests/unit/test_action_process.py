@@ -227,6 +227,61 @@ def test_default_worker_uses_bounded_streaming_and_preserves_injected_runner(mon
     assert injected["text"] is True
 
 
+@pytest.mark.parametrize("invalid", [
+    {"status": "success", "message": 7, "data": None, "reversible": False, "reverse_action": None},
+    {"status": "success", "message": "verified", "data": [], "reversible": False, "reverse_action": None},
+    {"status": "success", "message": "verified", "data": None, "reversible": 1, "reverse_action": None},
+])
+def test_parent_refuses_structurally_invalid_child_receipts(dispatch, invalid):
+    result = action_process.execute(
+        "actions.reminder_create",
+        proposal(),
+        5,
+        queue_path=dispatch,
+        runner=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=json.dumps(invalid)),
+    )
+    assert result.status == "unknown"
+    assert "ValueError" in result.message
+    assert "reconcile before retrying" in result.message
+
+
+@pytest.mark.parametrize(("returncode", "truncated", "stderr", "reason"), [
+    (0, True, b"", "action receipt output exceeded bound"),
+    (1, False, b"PermissionError: synthetic/private/path", "PermissionError"),
+])
+def test_default_runner_refuses_oversized_or_failed_bounded_output(
+        monkeypatch, dispatch, returncode, truncated, stderr, reason):
+    from connectors import bounded_process
+
+    monkeypatch.setattr(
+        bounded_process,
+        "run_bounded",
+        lambda *args, **kwargs: bounded_process.BoundedProcessResult(
+            returncode, b"", stderr, truncated, False
+        ),
+    )
+
+    result = action_process.execute(
+        "actions.reminder_create", proposal(), 5, queue_path=dispatch
+    )
+
+    assert result.status == "unknown"
+    assert reason in result.message
+    assert "synthetic/private/path" not in result.message
+
+
+def test_bounded_receipt_sink_preserves_exact_bytes_and_refuses_overflow():
+    import io
+
+    target = io.StringIO()
+    sink = action_process._BoundedReceiptSink(target, 4)
+    assert sink.write("é") == 1
+    assert sink.write("é") == 1
+    with pytest.raises(ValueError, match="action receipt output exceeded bound"):
+        sink.write("é")
+    assert target.getvalue() == "éé"
+
+
 def test_bounded_process_cleanup_runtime_error_becomes_unknown(monkeypatch, dispatch):
     from connectors import bounded_process
 
@@ -573,8 +628,8 @@ def test_worker_installs_scope_before_handler_and_never_returns_secret_diagnosti
         from lib.credentials import CredentialStore
         assert CredentialStore().read('msgraph.personal')['access_token'] == 'synthetic-probe-secret'
         assert CredentialStore().read('msgraph.work') is None
-        print('synthetic-probe-secret')
-        print('synthetic-probe-secret', file=sys.stderr)
+        print('synthetic-probe-secret', flush=True)
+        print('synthetic-probe-secret', file=sys.stderr, flush=True)
         if error:
             raise RuntimeError('synthetic-probe-secret')
         return ActionResult('success', 'Result: synthetic-probe-secret', {'checked': True}, False, None)

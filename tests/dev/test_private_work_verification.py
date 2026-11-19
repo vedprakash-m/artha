@@ -109,12 +109,21 @@ def test_private_work_never_reads_or_copies_state_files(source, tmp_path, monkey
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('synthetic state sentinel')
     source_hash = runner._source_hash
+    copy2 = runner.shutil.copy2
 
     def checked(root, rel):
         assert not rel.casefold().startswith('state/'), 'State File fingerprinted by private Work runner'
         return source_hash(root, rel)
 
+    def checked_copy(src, dst, *args, **kwargs):
+        relative_source = Path(src).relative_to(source)
+        assert not relative_source.as_posix().casefold().startswith('state/'), (
+            'State File copied by private Work runner'
+        )
+        return copy2(src, dst, *args, **kwargs)
+
     monkeypatch.setattr(runner, '_source_hash', checked)
+    monkeypatch.setattr(runner.shutil, 'copy2', checked_copy)
     manifest = runner._private_manifest(source)
     destination = tmp_path / 'isolated'
     runner._build_private_workspace(source, destination, manifest)
@@ -691,9 +700,11 @@ def test_new_source_during_copy_is_not_unfingerprinted(source, tmp_path, monkeyp
     manifest = runner._private_manifest(source)
     original = runner.build_workspace
 
-    def build(root, dest, *, synthetic_only=False):
+    def build(root, dest, *, synthetic_only=False, private_work=False):
         (root / "late.py").write_text("LATE = 1\n")
-        return original(root, dest, synthetic_only=synthetic_only)
+        return original(
+            root, dest, synthetic_only=synthetic_only, private_work=private_work,
+        )
 
     monkeypatch.setattr(runner, "build_workspace", build)
     with pytest.raises(ValueError, match=r"unfingerprinted\ copied\ source"):

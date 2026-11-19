@@ -81,6 +81,23 @@ def test_snapshot_authorization_does_not_whole_buffer_large_file(tmp_path, monke
     assert authorized == [(12 << 20, expected.hexdigest())]
 
 
+def test_snapshot_artifact_refuses_changed_or_oversized_chunks():
+    correct = backup.SnapshotArtifact(
+        3, hashlib.sha256(b"old").hexdigest(), lambda: iter((b"new",)))
+    with pytest.raises(LedgerError, match="changed after capture"):
+        correct.read_bounded(3)
+
+    known_oversize = backup.SnapshotArtifact(
+        4, hashlib.sha256(b"four").hexdigest(), lambda: iter((b"four",)))
+    with pytest.raises(LedgerError, match="authorization byte bound"):
+        known_oversize.read_bounded(3)
+
+    growing = backup.SnapshotArtifact(
+        3, hashlib.sha256(b"abc").hexdigest(), lambda: iter((b"ab", b"cd")))
+    with pytest.raises(LedgerError, match="authorization byte bound"):
+        growing.read_bounded(3)
+
+
 def test_snapshot_refuses_low_space_before_staging_and_publishing(tmp_path, monkeypatch):
     ledger = tmp_path / "ledger.db"
     _ledger(ledger)
@@ -212,6 +229,84 @@ def test_old_single_envelope_reader_remains_compatible(tmp_path):
     target = tmp_path / "old.ae1"
     target.write_bytes(envelope)
     assert backup.read_snapshot(target, CIPHER) == {"ledger.db": b"old-image"}
+
+
+def legacy_snapshot(payload):
+    envelope, _ = CIPHER.encrypt(
+        json.dumps(payload, sort_keys=True).encode(), aad=b"artha.snapshot.v1")
+    return envelope
+
+
+@pytest.mark.parametrize(
+    ("payload", "match"),
+    [
+        ({"schema": "other", "dispatchable": False, "files": {}},
+         "unsupported or dispatchable"),
+        ({"schema": "artha.snapshot.v1", "dispatchable": True, "files": {}},
+         "unsupported or dispatchable"),
+        ({"schema": "artha.snapshot.v1", "dispatchable": False, "files": []},
+         "member count"),
+        ({"schema": "artha.snapshot.v1", "dispatchable": False, "files": {"x": 4}},
+         "member is malformed"),
+    ],
+)
+def test_legacy_snapshot_reader_rejects_invalid_manifest_boundaries(payload, match):
+    with pytest.raises(LedgerError, match=match):
+        backup.read_snapshot_bytes(legacy_snapshot(payload), CIPHER)
+
+
+def test_legacy_snapshot_reader_enforces_member_and_total_limits():
+    payload = {
+        "schema": "artha.snapshot.v1",
+        "dispatchable": False,
+        "files": {"first": base64.b64encode(b"ab").decode()},
+    }
+    envelope = legacy_snapshot(payload)
+    with pytest.raises(LedgerError, match="aggregate compatibility"):
+        backup.read_snapshot_bytes(envelope, CIPHER, max_total_bytes=len(envelope) - 1)
+    with pytest.raises(LedgerError, match="member exceeds"):
+        backup.read_snapshot_bytes(envelope, CIPHER, max_member_bytes=1)
+
+    payload["files"]["second"] = base64.b64encode(b"cd").decode()
+    with pytest.raises(LedgerError, match="aggregate compatibility"):
+        backup.read_snapshot_bytes(
+            legacy_snapshot(payload), CIPHER,
+            max_member_bytes=2, max_total_bytes=3)
+
+
+@pytest.mark.parametrize(
+    ("manifest", "match"),
+    [
+        ({"profile": "work", "context": {}, "entries": []}, "portable snapshot"),
+        ({
+            "profile": "personal", "context": {"snapshot": "artha.snapshot.v1"},
+            "entries": [None],
+        }, "manifest is malformed"),
+        ({
+            "profile": "personal", "context": {"snapshot": "artha.snapshot.v1"},
+            "entries": [{"path": "snapshot/x", "size": True}],
+        }, "member size is malformed"),
+        ({
+            "profile": "personal", "context": {"snapshot": "artha.snapshot.v1"},
+            "entries": [{"path": "other/x", "size": 1}],
+        }, "portable snapshot"),
+        ({
+            "profile": "personal", "context": {"snapshot": "artha.snapshot.v1"},
+            "entries": [{"path": "snapshot/x", "size": 2}],
+        }, "member exceeds"),
+        ({
+            "profile": "personal", "context": {"snapshot": "artha.snapshot.v1"},
+            "entries": [
+                {"path": "snapshot/x", "size": 1},
+                {"path": "snapshot/y", "size": 1},
+            ],
+        }, "aggregate exceeds"),
+    ],
+)
+def test_snapshot_manifest_enforces_portable_backup_boundaries(manifest, match):
+    with pytest.raises(LedgerError, match=match):
+        backup._snapshot_manifest(
+            manifest, max_member_bytes=1, max_total_bytes=1, max_members=10)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX mode assertion")

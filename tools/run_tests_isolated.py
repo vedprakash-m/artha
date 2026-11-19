@@ -100,7 +100,10 @@ def _source_hash(root: Path, rel: str) -> str:
 
 
 def _private_manifest(root: Path) -> dict[str, str]:
-    public = [rel for rel in _git_files(root, _git_env()) if _wanted(rel, synthetic_only=True)]
+    public = [
+        rel for rel in _git_files(root, _git_env())
+        if _wanted(rel, synthetic_only=True, private_work=True)
+    ]
     return {rel: _source_hash(root, rel) for rel in sorted(set(public) | set(PRIVATE_WORK_FILES))}
 
 
@@ -112,7 +115,7 @@ def _check_sources(root: Path, manifest: dict[str, str]) -> None:
 
 def _build_private_workspace(root: Path, dest: Path, manifest: dict[str, str]) -> None:
     _check_sources(root, manifest)
-    build_workspace(root, dest, synthetic_only=True)
+    build_workspace(root, dest, synthetic_only=True, private_work=True)
     for rel in PRIVATE_WORK_FILES:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -411,7 +414,11 @@ def _synthetic_path_parts(rel: str) -> tuple[str, ...] | None:
     return tuple(parts)
 
 
-def _wanted(rel: str, *, synthetic_only: bool = False) -> bool:
+def _wanted(rel: str, *, synthetic_only: bool = False, private_work: bool = False) -> bool:
+    if private_work:
+        parts = _synthetic_path_parts(rel)
+        if parts is None or (parts and parts[0] == "state"):
+            return False
     if synthetic_only:
         parts = _synthetic_path_parts(rel)
         normalized = "/".join(parts) if parts is not None else None
@@ -430,12 +437,13 @@ def _wanted(rel: str, *, synthetic_only: bool = False) -> bool:
 
 def build_workspace(
     root: Path, dest: Path, env: dict[str, str] | None = None, *, synthetic_only: bool = False,
+    private_work: bool = False,
 ) -> int:
     env = env or _git_env()
     dest.mkdir(parents=True, exist_ok=True)
     pairs: list[tuple[Path, Path]] = []
     for rel in _git_files(root, env):
-        if not _wanted(rel, synthetic_only=synthetic_only):
+        if not _wanted(rel, synthetic_only=synthetic_only, private_work=private_work):
             continue
         src = root / rel
         if synthetic_only:

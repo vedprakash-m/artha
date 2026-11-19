@@ -31,11 +31,10 @@ _OPTIONS = {'google_email': {'query', 'label_filter'}, 'msgraph_email': {'folder
 _MAX_BYTES = 1_000_000
 
 
-class _UniqueLoader(yaml.SafeLoader):
-    pass
+_UniqueLoader: Any = type('_UniqueLoader', (yaml.SafeLoader,), {})
 
 
-def _mapping(loader: _UniqueLoader, node: yaml.MappingNode) -> dict[Any, Any]:
+def _mapping(loader: Any, node: yaml.MappingNode) -> dict[Any, Any]:
     result: dict[Any, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node)

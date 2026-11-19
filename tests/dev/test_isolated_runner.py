@@ -99,6 +99,19 @@ def test_synthetic_only_workspace_excludes_live_state_files(checkout, tmp_path):
     assert (dest / "scripts" / "tracked.py").read_text() == "X = 99\n"
 
 
+def test_synthetic_only_keeps_templates_and_state_keep_file(checkout, tmp_path):
+    template = checkout / "state" / "templates" / "example.md"
+    template.write_text("synthetic template\n")
+    keep = checkout / "state" / ".gitkeep"
+    keep.write_text("")
+    dest = tmp_path / "ws"
+
+    runner.build_workspace(checkout, dest, env=_git_env(), synthetic_only=True)
+
+    assert (dest / "state" / "templates" / "example.md").read_text() == "synthetic template\n"
+    assert (dest / "state" / ".gitkeep").exists()
+
+
 def test_synthetic_only_excludes_normalized_case_insensitive_state_paths(checkout, tmp_path, monkeypatch):
     state = checkout / "state"
     state.mkdir(exist_ok=True)

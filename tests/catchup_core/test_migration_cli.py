@@ -64,6 +64,18 @@ def test_apply_is_idempotent_after_commit(old_ledger):
     assert second["already_applied"] is True
 
 
+def test_apply_rejects_invalid_or_changed_preview_digest(old_ledger):
+    with lg.Ledger(old_ledger, id_key=KEY, cipher=CIPHER) as led:
+        digest = migration_cli.preview(led)["digest"]
+        with pytest.raises(lg.LedgerError, match="exact preview digest"):
+            migration_cli.apply(
+                led, "not-a-digest", backup=lambda _path: pytest.fail("invalid plans do not back up"))
+        with pytest.raises(lg.LedgerError, match="sources changed"):
+            migration_cli.apply(
+                led, "0" * 64 if digest != "0" * 64 else "1" * 64,
+                backup=lambda _path: pytest.fail("changed plans do not back up"))
+
+
 def test_resume_finishes_post_commit_verification_without_remigrating(old_ledger):
     with lg.Ledger(old_ledger, id_key=KEY, cipher=CIPHER) as led:
         digest = migration_cli.preview(led)["digest"]
@@ -76,6 +88,62 @@ def test_resume_finishes_post_commit_verification_without_remigrating(old_ledger
         resumed = migration_cli.apply(
             led, digest, backup=lambda _path: pytest.fail("committed schema must not remigrate"))
     assert resumed["already_applied"] is True and seals == [True]
+
+
+def test_resume_refuses_a_missing_migration_receipt_state(old_ledger):
+    with lg.Ledger(old_ledger, id_key=KEY, cipher=CIPHER) as led:
+        digest = migration_cli.preview(led)["digest"]
+        migration_cli.apply(led, digest, backup=_backup)
+        led.conn.execute("DELETE FROM scope_admission_state WHERE singleton=1")
+        with pytest.raises(lg.LedgerError, match="receipt state is unavailable"):
+            migration_cli.apply(
+                led, digest, backup=lambda _path: pytest.fail("resume must not remigrate"))
+
+
+def test_migration_verifies_required_resumable_tables(old_ledger, monkeypatch):
+    with lg.Ledger(old_ledger, id_key=KEY, cipher=CIPHER) as led:
+        digest = migration_cli.preview(led)["digest"]
+        migrate = led.migrate
+
+        def migrate_without_coverage_hold_table(*args, **kwargs):
+            result = migrate(*args, **kwargs)
+            led.conn.execute("DROP TABLE coverage_holds")
+            return result
+
+        monkeypatch.setattr(led, "migrate", migrate_without_coverage_hold_table)
+        with pytest.raises(lg.LedgerError, match="did not create coverage_holds"):
+            migration_cli.apply(led, digest, backup=_backup)
+
+
+def test_migration_refuses_copied_source_enrollment_state(old_ledger, monkeypatch):
+    with lg.Ledger(old_ledger, id_key=KEY, cipher=CIPHER) as led:
+        digest = migration_cli.preview(led)["digest"]
+        migrate = led.migrate
+
+        def migrate_with_stale_enrollment(*args, **kwargs):
+            result = migrate(*args, **kwargs)
+            led.conn.execute(
+                "INSERT INTO source_enrollments("
+                "source_name,connector,provider_account_id,account_scope,query_digest,"
+                "policy_digest,subjects_json,action,permission_generation,scope_epoch,"
+                "proof,reviewer,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("home_email", "gmail", "account", "personal", "query", "policy", "[\"ved\"]",
+                 "enroll", 1, 1, "proof", "ved", "2026-11-18T00:00:00Z"),
+            )
+            return result
+
+        monkeypatch.setattr(led, "migrate", migrate_with_stale_enrollment)
+        with pytest.raises(lg.LedgerError, match="copied source enrollment"):
+            migration_cli.apply(led, digest, backup=_backup)
+
+
+def test_sqlite_backup_verification_refuses_missing_or_empty_file(tmp_path):
+    missing = tmp_path / "missing.db"
+    with pytest.raises(lg.LedgerError, match="missing or empty"):
+        migration_cli.verify_sqlite_backup(missing)
+    missing.write_bytes(b"")
+    with pytest.raises(lg.LedgerError, match="missing or empty"):
+        migration_cli.verify_sqlite_backup(missing)
 
 
 def test_migration_cli_parser_and_mutation_gate():

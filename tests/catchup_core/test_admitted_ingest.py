@@ -100,6 +100,50 @@ def enroll(led, gmail):
             "source_name", "connector", "account_scope", "query", "subjects")})
 
 
+@pytest.mark.parametrize(
+    ("metadata", "policy", "provider_account", "reason"),
+    [
+        ({"from": "billing@pse.com"}, SOURCE["admission"], "owner@example.invalid",
+         "metadata_ambiguous"),
+        ({
+            "from": "billing@pse.com", "to": "other@example.invalid", "labels": ["INBOX"],
+        }, SOURCE["admission"], "owner@example.invalid", "recipient_not_owner_account"),
+        ({
+            "from": "billing@pse.com", "to": "owner@example.invalid", "labels": ["INBOX"],
+        }, {
+            **SOURCE["admission"], "work_recipient_domains": ["example.invalid"],
+        }, "owner@example.invalid", "work_recipient"),
+        ({
+            "from": "billing@pse.com", "to": "owner@example.invalid", "labels": ["INBOX"],
+        }, {"allowed_sender_domains": ["pse.com"]}, "owner@example.invalid", "policy_incomplete"),
+    ],
+)
+def test_metadata_classification_refuses_ambiguous_and_unapproved_boundaries(
+        metadata, policy, provider_account, reason):
+    assert admitted_ingest.classify_metadata(metadata, policy, provider_account) == reason
+
+
+def test_gmail_record_decoder_preserves_safe_fallbacks_and_plain_text():
+    assert admitted_ingest.decode_gmail_record("plain text") == {"text": "plain text"}
+    assert admitted_ingest.decode_gmail_record('{"schema":"other"}') == {"text": '{"schema":"other"}'}
+
+    raw = (
+        b"From: billing@pse.com\r\n"
+        b"To: owner@example.invalid\r\n"
+        b"Subject: Utility bill\r\n"
+        b"MIME-Version: 1.0\r\n"
+        b'Content-Type: multipart/alternative; boundary="x"\r\n\r\n'
+        b"--x\r\nContent-Type: text/html\r\n\r\n<p>Bill HTML</p>\r\n"
+        b"--x\r\nContent-Type: text/plain\r\n\r\nBill plain text\r\n"
+        b"--x--\r\n"
+    )
+    envelope = admitted_ingest.gmail_raw_record(
+        raw, {"id": "m1"}, "marker")
+    decoded = admitted_ingest.decode_gmail_record(envelope)
+    assert decoded["subject"] == "Utility bill"
+    assert "Bill plain text" in decoded["body"]
+
+
 def test_admitted_fetch_requests_raw_only_for_classification_safe_messages(led):
     gmail = FakeGmail()
     enrollment = enroll(led, gmail)
@@ -141,6 +185,42 @@ def test_truncated_listing_remains_structured_incomplete_even_when_cursor_exists
     assert result.listing_complete is False
     assert result.listing_truncation == "max_results"
     assert "listing:max_results" in result.blind_spots
+
+
+def test_nonstandard_listing_metadata_is_structured_as_unknown(led):
+    class LegacyListing(FakeGmail):
+        def list_message_ids(self, _auth, *, query, since, max_results, deadline=None):
+            return SimpleNamespace(
+                message_ids=["m1"], cursor="100", complete=1,
+                truncation_reason=42)
+
+    gmail = LegacyListing()
+    enrollment = enroll(led, gmail)
+    result = admitted_ingest.fetch_gmail(
+        led, KEY, gmail, {}, source=SOURCE, enrollment=enrollment,
+        since="2026-11-01T00:00:00Z", max_results=1)
+
+    assert result.listing_complete is None
+    assert result.listing_truncation is None
+    assert result.cursor == "100"
+
+
+def test_unusable_message_identity_or_raw_payload_is_held_before_admission(led):
+    class InvalidPayload(FakeGmail):
+        def message_metadata(self, auth, message_id, *, deadline=None):
+            value = super().message_metadata(auth, message_id, deadline=deadline)
+            if message_id == "m1":
+                value["id"] = "different"
+            return value
+
+    gmail = InvalidPayload()
+    enrollment = enroll(led, gmail)
+    result = admitted_ingest.fetch_gmail(
+        led, KEY, gmail, {}, source=SOURCE, enrollment=enrollment,
+        since="2026-11-01T00:00:00Z", max_results=1)
+    assert result.records == ()
+    assert result.holds[0].reason == "metadata_identity_changed"
+    assert gmail.raw_reads == []
 
 
 def test_changed_metadata_between_requests_holds_before_raw_use(led):
