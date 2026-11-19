@@ -14,6 +14,11 @@ ratchet, test hygiene, generated registers, prompt lint, ownership, lint-debt an
 scans passed. The owner-local specification records the same candidate evidence; no live migration, source
 enrollment, release re-sign, provider operation, Work recovery, or owner UAT was performed.
 
+Local engineering commit `00241b5` passed the complete isolated core coverage run with 5,838 passes and
+120 skips in 4,424.31 seconds. Combined line/branch coverage was 91.88%, above the configured 85% floor.
+The initial coverage report was disposable-workspace-only, so the spec's separate 95% changed-line policy
+has not yet been observed locally and remains for hosted CI/exact-report follow-up.
+
 ## Spec archived; open items handed off — 2026-11-18
 
 The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
