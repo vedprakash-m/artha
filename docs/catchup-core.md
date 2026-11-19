@@ -447,6 +447,20 @@ unreviewed Facts and say how many they held: `beliefs` adds a gap line, and inte
 Connector ingest, calendar projections, documents, the corpus, held-out evaluation and the retention inventory
 stay unavailable.
 
+**Approved new-source enrollment.** The only approved B.8 source is `home_email`. The owner can inspect the exact
+source definition and run `scope-review home_email --enroll`, `--revoke` or `--enrollments` in their own terminal.
+The enrollment binds the connector, authenticated provider account, account scope, exact query digest, policy
+digest and subjects. Gmail lists IDs first, requests metadata before raw MIME, checks Work/recipient/sender
+classification, fetches bounded raw bytes, rechecks metadata and enrollment, and writes only a finalized v2
+Signal binding. A changed query/policy/account/subject definition, revocation, stale permission generation or
+restore epoch holds the source on the next read, including after process restart. A sibling Gmail source is not
+implicitly enrolled. Live provider enrollment and UAT remain Held until the owner performs them.
+
+**Schema migration 21.** `cli.py migrate` previews the exact target ledger, schema, size and digest. `--apply`
+requires the owner's terminal, creates and verifies the encrypted backup, applies the migration atomically,
+checks integrity/counts, and produces a receipt; a post-commit rerun resumes receipt work without replaying the
+schema change. Code and tests do not apply this migration to a live ledger.
+
 `cli.py ingest <file.pdf> --subject <name> --shadow` and saved-document fetch are currently unavailable before file
 access because trusted personal source classification is not established. A subject label or `documents:manual`
 consent is not that classification. The bounded local document interpreter remains in the code, but its existence

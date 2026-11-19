@@ -21,9 +21,9 @@ policy with repeated primary hashes and mandatory stream byte verification.
 
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.52.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.53.0 | **Status**: Active Development | **Date**: November 19, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.31.0
+> **Implements**: PRD v7.32.0
 
 > **⚠ Note on Example Data:** Personal names (Raj, Priya, Arjun, Ananya)
 > and other identifiers in examples throughout this document are **fictional**.
@@ -31,6 +31,7 @@ policy with repeated primary hashes and mandatory stream byte verification.
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.53.0 | 2026-11-19 | **Refix Artha engineering contracts** — Add frozen schema migration 21 (`scope_reviews`, unique scope bindings, source enrollment, Signal enrollment, coverage holds), owner migration/rescope verbs, metadata-before-raw Gmail admission, exact source/query/account/policy/subject enrollment, post-raw rechecks, Fact v2 binding, `home_email` source allowlist and read-time enrollment expectations. State CAS binds native identity, action and connector children are bounded to complete process-tree cleanup, ambiguous action outcomes remain `UNKNOWN`, checkpoints/snapshots stream through private staging without plaintext fallback, SharePoint URLs and cursors are exact-origin bound, and release evidence requires measured repetition and authenticated owner-decision references. Hosted CI and privacy gates pass. Live activation remains Held. |
 | v3.52.0 | 2026-11-05 | **Legacy completion privacy** — Entirely unscoped personal Open Items retain conservative whole-file subjects in completion Facts and linked Goal comparisons. Preview tokens bind co-subjects; receipt replay refuses changed subject scope. No authored State File rewrite, consent grant or authority change. |
 | v3.51.0 | 2026-11-05 | **Primary-user Open Item accountability** — Personal Open Item confirmations use the trusted ledger primary user, not per-item owner assignments. Preserve authored permission scope and content keys; include a distinct authored privacy owner in completion co-subjects. Linked primary-owned milestones reuse the exact completion. Preview/items responses name the accountable identity. No State File migration, new setting or live completion. |
 | v3.50.0 | 2026-11-05 | **Slice closure and audit hardening** — Approved re-artha slice closed under re-sign 17 (full-profile work since reopened on a proposed contract). Hosted Windows contracts launch via `CreateProcessAsUserW`. Session-start vault warning covers plaintext copies of vaulted domains; stale-source banner distinguishes per-machine coverage from a Catch-up on another machine; preflight treats held action types as informational; advisory release-drift pre-commit check; CI concurrency, force-push-safe changed-line base, non-gating Windows metadata diagnostic. See §"2026-11-05 audit hardening". |

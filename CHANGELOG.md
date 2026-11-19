@@ -9,6 +9,12 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Added — Refix Artha engineering contracts, 2026-11-19
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Complete the synthetic engineering scope in `specs/refix-artha.md`: immutable source-review admission, schema migration 0021 and owner migration CLI, metadata-first `home_email` enrollment, four-state coverage and cursor handling, bounded connector/action execution, transactional State and snapshot publication, conflict-aware Work boundaries, constrained reads/effects/tools, streaming backup/authorization, release-evidence hardening, and command/preflight/connector contract reconciliation. The B.8 exception is enforced for `home_email` only; ordinary and restored read paths revalidate source expectations. The owner-local feature spec remains active because its live migration, enrollment, re-sign, recovery and UAT gates are unresolved. | `scripts/catchup_core/**`, `scripts/connectors/**`, `scripts/lib/**`, action/preflight/pipeline surfaces, generated registers, `docs/**`, `tests/**`, `tools/**`, `config/**`, `specs/artha-{prd,tech-spec,ux-spec}.md`; owner-local `specs/refix-artha.md` | Commits `00241b5`, `f93d0e8` and `44dd939` pushed to `main`. Hosted [CI run 44486591579](https://github.com/vedprakash-m/artha/actions/runs/44486591579) and [PII Check 44486591497](https://github.com/vedprakash-m/artha/actions/runs/44486591497) passed. Local committed core coverage: 5,838 passed, 120 skipped, 91.88% combined line/branch. No live migration, enrollment, provider call, release re-sign, Work recovery or owner UAT is claimed. |
+
 ### Changed — Open re-artha specs merged into `specs/refix-artha.md`, 2026-11-18
 
 | Change | Modified files | Validation |

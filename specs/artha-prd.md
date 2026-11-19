@@ -22,7 +22,7 @@ with authenticated disclosure of the omitted metadata and its recovery limitatio
 No claim of lossless all-stream recovery or release acceptance follows.
 
 <!-- pii-guard: ignore-file -->
-## Product Requirements Document · v7.31.0
+## Product Requirements Document · v7.32.0
 
 **Author:** [Author]
 **Date:** November 5, 2026
@@ -37,6 +37,7 @@ No claim of lossless all-stream recovery or release acceptance follows.
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v7.32.0 | 2026-11-19 | **Refix Artha engineering contracts delivered** — New Personal Gmail intake is limited to the approved `home_email` source enrollment; exact query, account, policy and subject definitions gate metadata-first admission and become invalid on configuration change, restore, revocation or stale generation. Existing ledger objects use owner `scope-review`. Writes/actions/retries remain fail-closed and uncertainty-preserving. Schema migration 21, bounded connector/process behavior, streaming checkpoints, Work/Personal publication isolation and release-evidence binding are implemented. Hosted CI and PII Check pass. Live migration, enrollment, re-sign, recovery and owner UAT remain separate owner-gated operations. |
 | v7.31.0 | 2026-11-05 | **Primary-user Open Item accountability** — The owner approved full-completion engineering and explicitly owns all personal Open Items. Per-item accountable-owner enrollment is unnecessary. Confirmation remains previewed, evidence-backed and permission-scoped; authored privacy identities, Work ownership and full-profile acceptance gates are unchanged. |
 | v7.30.0 | 2026-11-05 | **re-artha slice closure and quality hardening** — The approved reduced slice (six Domains, `reminder_create` only, Goals with the incumbent) is closed and live under owner re-sign 17; full-profile completion was reopened the same day on a proposed contract (not approved; full-v4 gates unchanged). Quality audit fixes: credentials only in the OS store, no plaintext copies of vaulted State in the synced workspace, honest per-machine freshness lines, held action types not reported as degraded, release-drift advisory, extractor-model enforcement at entry points. |
 | v7.29.0 | 2026-05-03 | **Work-Health Dashboard Intelligence (FR-42)** — Integrates operational Kusto dashboards as a live data source within Work OS. New `work work-health` command produces a 5-section on-call handoff brief: active incidents, repair pipeline, job queue, deployment blockers, and scope area status. Q4-telemetry block in `reflect-protocol.md` replaces partial incident path with live KQL queries; fallback path retained. Q4-incident-autoclose auto-closes mitigated tracked-items on every work refresh (circuit breaker: 10 max). Step 2c injects morning work-health signal (06:00–11:00 window). `work prep` auto-injects work-health context for meetings tagged with relevant keywords. Sub-commands: `work work-health scenarios`, `config-svc`, `fleet-mgr`, `data-pipeline`, `deploy`, `weekly`. Integration: `scripts/work/xhealth_signal.py` (10 query methods). Feature flag: `work_health_dashboards.enabled` in `work_connector_policy.yaml`. Preflight: `check_work_health_kusto_auth()` (P1 non-blocking). 12 unit tests. See Tech Spec v3.44.0 §42 + UX Spec §35. |

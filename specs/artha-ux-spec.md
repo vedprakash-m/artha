@@ -11,9 +11,9 @@ restored or that recovered files are approved for export. Originals stay intact.
 
 <!-- pii-guard: ignore-file -->
 
-> **Version**: 3.26.0 | **Status**: Active Development | **Date**: November 5, 2026
+> **Version**: 3.27.0 | **Status**: Active Development | **Date**: November 19, 2026
 > **Author**: [Author] | **Classification**: Personal & Confidential
-> **Implements**: PRD v7.31.0, Tech Spec v3.51.0
+> **Implements**: PRD v7.32.0, Tech Spec v3.53.0
 
 > **⚠ Note on Example Data:** All personal names, schools, account numbers,
 > and addresses in this document are **fictional examples** used to illustrate
@@ -22,6 +22,7 @@ restored or that recovered files are approved for export. Originals stay intact.
 
 | Version | Date | Summary |
 |---------|------|----------|
+| v3.27.0 | 2026-11-19 | **Refix Artha interaction rules** — Scope review and source enrollment run only in the owner's own interactive terminal and never over MCP. Migration preview/apply shows exact ledger/schema/digest and an encrypted-backup receipt; any uncertain or bounded ingestion is shown as held/degraded, never as a quiet success. `home_email` is the only approved source-enrollment UX. Re-authored source definitions, revocation, restore and stale generations hold affected objects at the next read. Action uncertainty is shown as `UNKNOWN` with reconciliation required. Engineering CI passed; live migration, enrollment, provider parity, recovery and owner UAT remain explicit Held states. |
 | v3.26.0 | 2026-11-05 | **Simplified Open Item accountability** — The primary user owns all personal Open Items without per-item assignment prompts. Item and completion-preview responses name the accountable identity while retaining the unchanged source record and current privacy/consent checks. |
 | v3.25.0 | 2026-11-05 | **Honest session-start lines** — The stale-source banner says when per-source freshness was recorded on another machine instead of listing sources as unfetched; the vault warning names plaintext backup/conflict copies; preflight marks held action types "held, not checked". |
 | v3.24.0 | 2026-11-03 | **Planning Signal Freshness** — The planning-buffer health indicator treats missing, invalid, future-dated, or stale freshness metadata as unavailable and directs the user to confirm Step 8t ran. An explicit successful save records its write date when the date was missing. Implements Tech Spec v3.46.0–v3.47.0. |
