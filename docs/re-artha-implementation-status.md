@@ -1,5 +1,23 @@
 # re-artha implementation status — 2026-11-18
 
+## Mac live gates — 2026-11-19
+
+Owner-authorized on the authority Mac. **Operational acceptance and release stay Held.**
+
+- Schema 21 migration receipt and encrypted pre-migration backups verified and owner-accepted.
+- `release_resign_21` applied by the owner's authorization (cohort re-signed after each fingerprinted fix below),
+  with an owner decision record bound as `owner_decision_sha256` / `owner_decision_ref`.
+- Release renewal delegation revoked and the `release.renewal` pointer removed by owner decision; the delivery
+  evaluator cannot cross a schema-21 ledger (L6 waived, not evidenced).
+- `home_email` enrolled by the owner in their own terminal. 39 legacy Signals (calendar, school, finance, vehicle)
+  reviewed; the 245 retired `outlook_inbox` Signals and all 15 legacy Facts remain Held (legacy Facts lack
+  `scope_hmac`/subjects and cannot be reviewed).
+- Two fixes (unit-tested): legacy protection refuses only alerts without encrypted dates; inspection freshness
+  hides sources instead of failing while Signals are unreviewed.
+- An authoritative Catch-up was blocked by design (`personal Connector scope unavailable`) before any fetch. Live
+  UAT could not be accepted. Open gates: Connector admission for non-`home_email` sources or a narrower release,
+  shadow-ledger migration (schema 20), Work B.4, and owner decisions D-05, D-08, B.5.
+
 ## Final synthetic refix candidate — 2026-11-18
 
 The refix engineering candidate is locally complete except for post-commit changed-line coverage and the
