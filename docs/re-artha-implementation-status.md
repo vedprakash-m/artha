@@ -30,6 +30,23 @@ No backup, migration, enrollment, re-sign, provider call, Work proposal, recover
 L2–L7 therefore require the authority-holding machine and the exact owner actions in
 `specs/refix-artha.md` §11 and B.4.
 
+### Accepted L2 receipt — 2026-11-19
+
+The authority Mac verified the existing schema-21 application and the owner accepted it:
+
+- live `integrity_check`: `ok`;
+- schema: 21; nothing pending; 0 duplicate binding groups/rows;
+- `verified_migration`: 21;
+- receipt digest matches preview digest
+  `b76d22d28760b8a32d569fa2fcd1d0e50bfca203c290ce5f95e38270c58e1425`;
+- encrypted backup `ledger.db.pre-migration-1b683cbfeebb.ae1` restores at schema 20
+  with digest `1b683cbfeebb89054a99f7435da0571547149d18b058ba78da47c7c6e3da427d`;
+- encrypted backup `ledger.pre-migration.20261118T003731Z.ae1` restores at schema 19
+  with digest `d2575fb29a56ffb8cee331f454f80e9ed048de72a3ff824a09889c7d84f10337`;
+- both decrypted scratch copies passed `integrity_check=ok` and were deleted.
+
+No migration apply was run; it would have been a no-op. L3–L7 remain Held.
+
 ## Spec archived; open items handed off — 2026-11-18
 
 The owner reviewed each remaining gate and chose to archive `specs/re-artha.md` as
