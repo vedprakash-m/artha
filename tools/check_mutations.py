@@ -77,13 +77,6 @@ def main(argv: list[str]) -> int:
             r"from\s+catchup_core\s+import\b[^#\n]*\b(?:policy|coordinator|triage)\b"
         )
         excluded_files = {
-            "test_renewal_e2e.py",
-            "test_renewal_runtime.py",
-            "test_release_evidence_tools.py",
-            "test_release_boundaries.py",
-            "test_release_acceptance_v4.py",
-            "test_release_artifact_coherence.py",
-            "test_release_regressions.py",
             "test_runtime.py",
             "test_runtime_closure.py",
             "test_runtime_paths.py",

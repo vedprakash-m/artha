@@ -7790,23 +7790,11 @@ monotonic retry budget for BUSY/LOCKED only, verifies WAL, then restores the ord
 closes its connection. Filesystem latency is not a hard process deadline. Real barrier-controlled upgrades and injected
 transient/persistent/non-lock/unsupported-mode cases cover this path. Local code `b71047d`; no live UAT/upgrade occurred.
 
-### Cutover fencing inside the kernel — 2026-10-22
+### Cutover fencing inside the kernel — superseded 2026-11-20
 
-validate_release rejects non-shadow requests unless config.cutover is literally true. Runtime construction also rejects
-ARTHA_CUTOVER=0 for ordinary authority/mutations; ARTHA_CUTOVER=1 cannot bypass configured false/missing state. The guard
-precedes key/store construction. Effective read-only inspection uses shadow authorization, and owner safety controls
-continue through local-authority validation independently of pilot cutover/quality. _validate_release_evidence is a
-private quality-read helper for health metadata and does not authorize execution. Synthetic fixtures for evidence
-validation explicitly enable cutover so they still exercise their intended evidence failures. Code `deeec6a`.
-
-### Release artifact lifetime — 2026-10-22
-
-Runtime ReleaseEvidenceGuard validates approved clearance/scorecard byte digests at execution boundaries. Snapshot
-verification decodes the one approved byte string. Its expensive verification is cached by approved path/digest and
-local device/inode/size/mtime/ctime, with revision checks before and after validation. Changed/deleted evidence fails
-closed through COMMIT; read-only inspection and owner safety retain their independent authority. This trusts local
-filesystem metadata and does not defend against malicious filesystem/root rewriting. Evaluation cohort/model binding
-is separate open work. Code `81d7355`; synthetic actual-runtime/publication cases passed.
+Light mode is the only mode. `validate_release` accepts shadow requests only and rejects every other mode;
+owner safety controls continue through `validate_local_authority`. The release-evidence validators,
+`ReleaseEvidenceGuard`, `verify_rollback` and the release scorecard path were removed.
 
 ### Dispatch policy lifetime and atomic limits — 2026-10-22
 
@@ -8405,26 +8393,11 @@ and detector exceptions produce fixed bounded P2 failures, without payload-beari
 exception text. These advisories do not block P0 gating. No new telemetry schema,
 State rewrite, Personal admission, migration or release activation is introduced.
 
-### Automatic release renewal engineering — 2026-11-17
+### Release renewal and authority transfer — removed 2026-11-20
 
-Feature spec: `specs/refix-artha.md §B.3` (active until separately authorized adoption/UAT).
-Opt-in only: without a `release.renewal` pointer (`{schema: artha.release.renewal.v1, delegation: <digest>}`)
-in `config/catchup_core.yaml`, release validation is unchanged and native renewal authority is never opened.
-
-| Module | Contract |
-|---|---|
-| `renewal_inputs.py` | Strict bounded source manifest; cumulative comparison against the approved root. Unknown, protected, added, deleted or executable-mode changes are held. |
-| `renewal_ci.py` | Exact repository, commit, workflow definition, `main` push event, freshness, required jobs and latest attempt. Known prior failures stay held. |
-| `renewal_authority.py` | Native head in credential store entry `release.renewal`; fenced by `installation_fence` plus `release-renewal.lock`. Enroll, replace, revoke, task approval, activation, recovery and journal. Local storage must lie outside the checkout and synced folders. |
-| `renewal_metadata.py` | Read-only ledger/privacy metadata: schema version, pending erasure, authority host, deletion checkpoint and consent/tombstone history compared with the native capsule. Never opens Signals, Facts, State Files or provider payloads. |
-| `renewal_delivery.py` | PREPARED → LOCAL_VALIDATED → COMMITTED → PUSHED → CI_VERIFIED → ELIGIBLE → ACTIVATING → VERIFIED. One foreground delivery per installation (`release-delivery.lock`); 24h local gate receipts; 30 CI requests. A delivery that changes no runtime input never reports an all-clear when the existing approval is invalid. |
-| `renewal_runtime.py` | `resolve` maps the current cohort to the approved base cohort; `RenewalLease` rechecks native epoch and current privacy authority on each use without a source rescan. Used by `policy.validate_release` and `ReleaseEvidenceGuard`; shadow runs never read it. |
-| `renewal_entry.py`, `tools/release_renewal.py` | `proposal`, `enroll`, `replace`, `attach`, `plan`, `approve`, `deliver`, `status`, `recover`, `revoke`. Effects require `--quiescent` and isolated Python; after enrollment only the preserved evaluator copy runs delivery. Top-level CLI failures emit fixed bounded action-oriented hold reasons (`REASONS[error.reason]`, evidence/config/input/IO diagnostics) without disclosing exception text. |
-
-Renewal never re-signs historical observations, lifts migration/admission/recovery holds or grants waivers.
-It is cooperating-writer exclusion, not OS confinement. Decided 2026-11-16: path A (exact task-approved
-candidates via `plan`/`approve`; `proposal` routine scope may stay empty), D1 accepted, D2 adopted. Open: re-signed
-release for the current cohort, D3 approval of a concrete `proposal` digest, native enrollment, live adoption/UAT.
+The `renewal_*.py` modules, `tools/release_renewal.py`, `tools/release_evidence.py`, `authority_transfer.py`, the
+`transfer-authority`/`retire-authority` commands, `Ledger.transfer_authority` and the queue transfer/dispatch
+fence were deleted with their tests. Light mode has one active laptop and an owner-attested `handoff.py` handoff.
 
 ### Hermetic test-suite architecture, ownership register and CI sharding — 2026-11-16
 

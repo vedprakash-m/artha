@@ -63,7 +63,6 @@ from catchup_core.ledger import (
     require_approved_source_enrollment,
 )
 from catchup_core.policy import (
-    ReleaseEvidenceGuard,
     authorize_source,
     evaluation_cohort,
     validate_local_authority,
@@ -438,7 +437,7 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
     else:
         if effective.mode is ExecutionMode.AUTHORITATIVE and env.get('ARTHA_CUTOVER') == '0':
             raise PermissionDenied('authoritative cutover is disabled by the runtime environment; use --shadow')
-        validate_release(effective, config.policy, viewer=config.viewer, domains=domains, cohort=cohort)
+        validate_release(effective, config.policy, viewer=config.viewer, domains=domains)
     source_class = {**{name: str(spec.get("class", name)) for name, spec in config.sources.items()},
                     "capture": "parent_note", "documents": "official_document"}
     validate_source_classes(pack, source_class)
@@ -451,11 +450,6 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
     cipher_provider.key(cipher_provider.current_version())
     cipher = EnvelopeCipher(cipher_provider)
     id_key = _id_key(id_provider)
-    release_guard = None
-    if not safety_control and effective.mode is ExecutionMode.AUTHORITATIVE:
-        release_guard = ReleaseEvidenceGuard(config.policy, cipher, cohort, viewer=config.viewer,
-                                             runtime_inputs_checked=True)
-        release_guard.validate()
     if config.policy.get("household_from_profile") is True and (not safety_control or configuration_control):
         _bind_household(config, root, id_key, (now or (lambda: datetime.now(UTC)))().astimezone(pack.timezone).date(),
                         enroll=not inspection and not configuration_control)
@@ -465,8 +459,6 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
                                  read_only=(inspection and not mutation) or configuration_control)
 
     try:
-        if release_guard is not None:
-            release_guard.bind_authority_connection(ledger.conn)
         if not safety_control and effective.mode is ExecutionMode.AUTHORITATIVE:
             ledger.ensure_authority_host(request.host)
         required = {s.connector: s.required for s in pack.sources}
@@ -516,8 +508,6 @@ def _build_deps(  # noqa: PLR0912, PLR0915 - explicit environment boundary and d
                 raise LedgerError('runtime inputs unavailable; start a new Catch-up') from None
             if current != frozen_inputs:
                 raise LedgerError('runtime inputs changed; start a new Catch-up')
-            if release_guard is not None:
-                release_guard.validate()
         return Deps(
             mode=request.mode,
             ledger=ledger, pack=pack, blobs=blobs, id_key=id_key,

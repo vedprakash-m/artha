@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 import pytest
 from core_helpers import COORDINATOR_CIPHER as CIPHER, CORE_KEY as KEY
 
-from catchup_core import corpus, heldout, policy
+from catchup_core import corpus, heldout
 from catchup_core import ledger as lg
 from catchup_core.contracts import FactStatus, Provenance
 
@@ -167,23 +167,6 @@ def outcome_for(sid):
 def assemble(led, **kw):
     sid = kw.pop('sid')
     return heldout.assemble(led, corpus.load_labels(led), outcome_for(sid), as_of=AS_OF, **kw)
-
-
-def test_assembled_evidence_passes_the_unchanged_release_validators(led):
-    sid = signal(led)
-    label(led, sid)
-    put(led, sid, 'bill_due_date', '2026-11-03')
-    put(led, sid, 'statement_balance', '1234.50')
-    put(led, sid, 'account_holder', 'asha rao')
-    declare(led)
-    evidence = assemble(led, sid=sid, min_fields=1)
-    result = {'cohort': COHORT, **evidence}
-    policy._validate_acceptance_corpus(result)
-    policy._validate_document_accuracy(result)
-    assert evidence['corpus']['independently_labeled'] and evidence['corpus']['held_out']
-    assert evidence['corpus']['basis'] == 'blind-owner' and evidence['corpus']['labeled_by'] == 'ved'
-    assert evidence['evaluations'][0]['split'] == 'held_out'
-    assert evidence['evaluations'][0]['obligation_ids'] == [] and evidence['evaluations'][0]['thread_ids'] == ['case_a']
 
 
 def test_assembly_refuses_below_the_field_floor_and_says_what_is_missing(led):

@@ -588,16 +588,6 @@ def test_real_worker_checks_evidence_before_and_after_provider_only_install(case
         assert db.execute('SELECT count(*) FROM action_dispatch_receipts').fetchone()[0] == 1
 
 
-def test_real_worker_refuses_pending_authority_without_consuming_dispatch(case):
-    dispatch_queue(case)
-    with closing(sqlite3.connect(case.queue)) as db, db:
-        db.execute('UPDATE queue_authority SET transfer_pending=1')
-    result = run_worker(worker_input(case))
-    assert result.returncode != 0
-    with closing(sqlite3.connect(case.queue)) as db:
-        assert db.execute('SELECT count(*) FROM action_dispatch_receipts').fetchone()[0] == 0
-
-
 def bind_calendar(case):
     case.pre['provider_versions'] = {'event1': '"v1"'}
     case.proposal = replace(case.proposal, action_type='calendar_modify', parameters={

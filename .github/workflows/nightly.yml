@@ -1,6 +1,6 @@
 name: Nightly Full Matrix, Order Randomization & Mutation Check
 
-# Strictly separate from ci.yml so scheduled runs never become latest in renewal_ci.py.
+# Strictly separate from ci.yml.
 on:
   schedule:
     - cron: "17 9 * * *"

@@ -13,7 +13,6 @@ import pytest
 from catchup_core import checkpoint, policy
 from catchup_core.crypto import EnvelopeCipher, StaticKeyProvider
 from catchup_core.ledger import PermissionDenied
-from core_helpers import OWNER_DECISION_SHA256, synthetic_recovery_acceptance
 
 CIPHER = EnvelopeCipher(StaticKeyProvider({1: b'p' * 32}))
 SCOPE = {'schema': 'artha.installation-preservation.v1', 'repository_root': 'repo', 'runtime_root': 'local',
@@ -46,28 +45,6 @@ def approved(path):
     return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
-@pytest.mark.parametrize('missing', ['all', 'mac_personal', 'windows_work', 'personal_cloud_copy', 'privacy'])
-def test_generic_recovery_receipt_without_required_native_observations_is_refused(tmp_path, missing):
-    cp = make_checkpoint(tmp_path)
-    second = tmp_path / 'independent.ack'
-    second.write_bytes(cp.read_bytes())
-    digest = approved(cp)['sha256']
-    receipt = {'passed': True, 'owner_signed_at': '2026-10-24T12:00:00Z',
-               'reconciled': True, 'checkpoint_sha256': digest}
-    if missing != 'all':
-        receipt['observations'] = {name: {'passed': True} for name in
-                                   ('mac_personal', 'windows_work', 'personal_cloud_copy', 'privacy')
-                                   if name != missing}
-    rehearsal = tmp_path / 'synthetic-rehearsal.json'
-    rehearsal.write_text(json.dumps(receipt))
-    release = {'rollback_snapshot': approved(cp),
-               'independent_copy': {**approved(second), 'failure_domain': 'cloud',
-                                    'owner_verified_at': '2026-10-24T12:00:00Z', 'recovered_sha256': digest},
-               'recovery_rehearsal': approved(rehearsal)}
-    with pytest.raises(PermissionDenied, match='recovery'):
-        policy._validate_preservation_evidence(release)
-
-
 def test_generic_ack2_does_not_claim_full_installation_preservation(tmp_path):
     cp = make_checkpoint(tmp_path, scope=None)
     with pytest.raises(PermissionDenied, match='rollback snapshot'):
@@ -85,16 +62,6 @@ def test_scope_descriptor_cannot_hide_selective_or_ambiguous_coverage(tmp_path, 
         policy.verify_preservation_checkpoint(cp.read_bytes(), CIPHER)
 
 
-def test_streamed_path_accepts_canonical_shadow_scope_without_read_bytes(tmp_path, monkeypatch):
-    cp = make_checkpoint(tmp_path)
-    digest = approved(cp)['sha256']
-    original = Path.read_bytes
-    monkeypatch.setattr(Path, 'read_bytes', lambda path: pytest.fail('whole checkpoint read') if path == cp else original(path))
-    manifest = policy.verify_preservation_checkpoint(cp, CIPHER, expected_sha256=digest)
-    assert manifest['context']['preservation'] == SCOPE
-    policy.verify_rollback({'release': {'rollback_snapshot': {'path': str(cp), 'sha256': digest}}}, CIPHER)
-
-
 def test_cryptographically_valid_but_unapproved_checkpoint_is_refused(tmp_path):
     cp = make_checkpoint(tmp_path)
     with pytest.raises(PermissionDenied, match='approved'):
@@ -104,12 +71,6 @@ def test_cryptographically_valid_but_unapproved_checkpoint_is_refused(tmp_path):
 def test_unavailable_checkpoint_is_a_policy_refusal(tmp_path):
     with pytest.raises(PermissionDenied, match='rollback snapshot'):
         policy.verify_preservation_checkpoint(tmp_path / 'withdrawn.ack', CIPHER)
-
-
-@pytest.mark.parametrize('path', ['', 'bad\x00path'])
-def test_invalid_approved_path_is_a_policy_refusal(path):
-    with pytest.raises(PermissionDenied):
-        policy.verify_rollback({'release': {'rollback_snapshot': {'path': path, 'sha256': '0' * 64}}}, CIPHER)
 
 
 @pytest.mark.parametrize('damage', ['physical', 'foreign-key'])
@@ -152,40 +113,6 @@ def test_sqlite_verification_enforces_its_memory_bound_by_spilling(tmp_path, mon
     cp = make_checkpoint(tmp_path)
     monkeypatch.setattr(policy, '_VERIFY_IN_MEMORY', 1)
     assert policy.verify_preservation_checkpoint(cp, CIPHER)['profile'] == 'personal'
-
-
-def test_distinct_same_disk_copy_needs_explicit_cloud_recovery_evidence(tmp_path):
-    cp = make_checkpoint(tmp_path)
-    second = tmp_path / 'copy.ack'
-    second.write_bytes(cp.read_bytes())
-    rehearsal = tmp_path / 'rehearsal.json'
-    rehearsal.write_text(json.dumps(synthetic_recovery_acceptance(tmp_path, cp, CIPHER)))
-    release = {'owner_decision_sha256': OWNER_DECISION_SHA256,
-               'rollback_snapshot': approved(cp), 'independent_copy': approved(second),
-               'recovery_rehearsal': approved(rehearsal)}
-    with pytest.raises(PermissionDenied, match='independent'):
-        policy._validate_preservation_evidence(release)
-    release['independent_copy'].update(failure_domain='cloud', owner_verified_at='2026-10-24T12:00:00Z',
-                                       recovered_sha256=approved(cp)['sha256'])
-    policy._validate_preservation_evidence(release)
-    release['independent_copy']['recovered_sha256'] = '0' * 64
-    with pytest.raises(PermissionDenied, match='independent'):
-        policy._validate_preservation_evidence(release)
-
-
-def test_hardlinked_copy_is_not_independent_even_with_cloud_declaration(tmp_path):
-    cp = make_checkpoint(tmp_path)
-    second = tmp_path / 'hardlink.ack'
-    second.hardlink_to(cp)
-    rehearsal = tmp_path / 'rehearsal.json'
-    rehearsal.write_text(json.dumps(synthetic_recovery_acceptance(tmp_path, cp, CIPHER)))
-    record = {**approved(second), 'failure_domain': 'cloud', 'owner_verified_at': '2026-10-24T12:00:00Z',
-              'recovered_sha256': approved(cp)['sha256']}
-    with pytest.raises(PermissionDenied, match='independent'):
-        policy._validate_preservation_evidence(
-            {'owner_decision_sha256': OWNER_DECISION_SHA256,
-             'rollback_snapshot': approved(cp), 'independent_copy': record,
-             'recovery_rehearsal': approved(rehearsal)})
 
 
 def _spill_files(tmp_path):

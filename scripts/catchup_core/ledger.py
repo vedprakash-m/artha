@@ -2782,20 +2782,6 @@ class Ledger:
             )
         return state
 
-    def transfer_authority(
-        self, new_host: str, *, actor: str, checkpoint_path: Path | str, workspace: Path,
-        expected_generation: int, cipher: EnvelopeCipher | None = None,
-        former_host_quiesced: bool = False, credentials_revoked: bool = False,
-        retirement_receipt: Path | str | None = None, former_host_key_fingerprint: str | None = None,
-        profile: str = 'personal',
-    ) -> dict[str, Any]:
-        from catchup_core.authority_transfer import transfer_authority  # noqa: PLC0415
-        return transfer_authority(self, new_host, actor=actor, checkpoint_path=checkpoint_path,
-            workspace=workspace, expected_generation=expected_generation, cipher=cipher,
-            former_host_quiesced=former_host_quiesced, credentials_revoked=credentials_revoked,
-            retirement_receipt=retirement_receipt, former_host_key_fingerprint=former_host_key_fingerprint,
-            profile=profile)
-
 
 def invalidate_restored_scope_admission(db: sqlite3.Connection) -> None:
     """Invalidate admission authority restored from an older ledger image."""

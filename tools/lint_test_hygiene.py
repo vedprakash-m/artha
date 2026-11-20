@@ -13,11 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # Tests where time.sleep is intrinsic to real child-process concurrency/timeouts
 # or already gated behind @pytest.mark.slow.
 SLEEP_ALLOWLIST = frozenset({
-    "tests/catchup_core/test_authority_transfer_protocol.py",
     "tests/catchup_core/test_checkpoint_restore_integrity.py",
     "tests/catchup_core/test_crypto.py",
     "tests/catchup_core/test_recovery_registry.py",
-    "tests/catchup_core/test_renewal_runner.py",
     "tests/catchup_core/test_schema_history.py",
     "tests/catchup_core/test_state_checkpoint.py",
     "tests/catchup_core/test_work_member_mutations.py",

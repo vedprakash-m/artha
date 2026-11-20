@@ -67,7 +67,7 @@ def test_completion_controls_are_part_of_the_release_implementation_cohort():
     assert {
         'scripts/lib/action_evidence.py', 'scripts/catchup_core/fact_access.py',
         'scripts/catchup_core/resources.py', 'scripts/catchup_core/retention.py',
-        'scripts/catchup_core/authority_transfer.py', 'scripts/catchup_core/field_confirmation.py',
+        'scripts/catchup_core/field_confirmation.py',
         'scripts/catchup_core/interchange.py', 'scripts/catchup_core/user_config.py',
         'scripts/connectors/google_email.py', 'scripts/connectors/msgraph_email.py',
         'scripts/connectors/imap_email.py', 'scripts/catchup_core/quarantine_fs_windows.py',

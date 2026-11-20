@@ -1197,89 +1197,8 @@ class ActionQueue:
                     transfer=json.loads(row['transfer_json']) if row['transfer_json'] is not None else None,
                     retirement=json.loads(row['retirement_json']) if row['retirement_json'] is not None else None)
 
-    def transfer_authority(self, new_host: str, generation: int, **kwargs: Any) -> dict[str, Any]:
-        raise ValueError('uncoordinated authority transfer is disabled; use the owner transfer-authority command')
-
-    def prepare_authority_transfer(self, receipt: dict[str, Any]) -> dict[str, Any]:
-        from catchup_core.authority_transfer import validate_receipt
-        validate_receipt(receipt)
-        generation, clean_host, stamp = receipt['generation'], receipt['host'], receipt['promoted_at']
-        with self._mutation_fence():
-            self._conn.execute('BEGIN IMMEDIATE')
-            try:
-                current = self.authority_state()
-                if current['transfer'] == receipt:
-                    self._conn.commit()
-                    return current
-                if (current['transfer_pending'] or current['generation'] != receipt['former_generation']
-                        or current['host'] not in (None, receipt['former_host'])):
-                    raise ValueError('conflicting pending or stale authority transfer')
-                if receipt['proof_kind'] != 'unverified_owner_attestation_credential_revocation' and self._conn.execute(
-                        "SELECT 1 FROM actions WHERE status='executing' LIMIT 1").fetchone():
-                    raise ValueError('executing actions contradict quiescence; reconcile or attest credential revocation')
-                self._conn.execute('UPDATE queue_authority SET generation=?,host=?,promoted_at=?, '
-                    'former_host_revoked_at=?,transfer_pending=1,transfer_json=? WHERE singleton_key=1',
-                    (generation, clean_host, stamp, receipt['former_host_revoked_at'], json.dumps(receipt,sort_keys=True)))
-                for row in self._conn.execute(
-                    "SELECT id, status FROM actions WHERE status IN ('approved', 'executing') AND authority_generation < ?",
-                    (generation,),
-                ).fetchall():
-                    if row["status"] == "approved":
-                        self._conn.execute(
-                            "UPDATE actions SET status='pending', approved_at=NULL, approved_by=NULL, "
-                            "approved_payload_hash=NULL, preview_shown_at=NULL, preview_shown_by=NULL, "
-                            "preview_payload_hash=NULL, updated_at=? WHERE id=?",
-                            (stamp, row["id"]),
-                        )
-                        self._audit(
-                            self._conn,
-                            row["id"],
-                            "approved",
-                            "pending",
-                            "system:authority_transfer",
-                            {"generation": generation, "host": clean_host},
-                        )
-                    else:
-                        self._conn.execute(
-                            "UPDATE actions SET status='unknown', result_status='unknown', "
-                            "result_message='Authority transferred during execution; reconcile before retrying.', "
-                            "updated_at=? WHERE id=?",
-                            (stamp, row["id"]),
-                        )
-                        self._audit(
-                            self._conn,
-                            row["id"],
-                            "executing",
-                            "unknown",
-                            "system:authority_transfer",
-                            {"generation": generation, "host": clean_host},
-                        )
-                self._conn.commit()
-            except BaseException:
-                self._conn.rollback()
-                raise
-        return self.authority_state()
-
-    def finalize_authority_transfer(self, receipt: dict[str, Any]) -> None:
-        from catchup_core.authority_transfer import validate_receipt
-        validate_receipt(receipt)
-        from contextlib import closing
-        path = Path(receipt['ledger_path'])
-        with self._mutation_fence(), self._conn:
-            if self.authority_state()['transfer'] != receipt:
-                raise ValueError('authority transfer receipt changed')
-            with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as ledger:
-                row = ledger.execute('SELECT generation,host,promoted_at,former_host_revoked_at '
-                                     'FROM authority_generation ORDER BY generation DESC LIMIT 1').fetchone()
-            if row is None or tuple(row) != tuple(receipt[k] for k in
-                    ('generation','host','promoted_at','former_host_revoked_at')):
-                raise ValueError('authority transfer ledger epoch is incomplete')
-            self._conn.execute('UPDATE queue_authority SET transfer_pending=0 WHERE singleton_key=1')
-
     def _verify_dispatch_authority(self, action_id: str) -> int:
         import socket  # noqa: PLC0415
-        from catchup_core.authority_transfer import require_dispatch_authority
-        require_dispatch_authority(self._conn)
         auth = self.authority_state()
         row = self._conn.execute(
             "SELECT authority_generation, authority_host FROM actions WHERE id = ?",
@@ -1376,8 +1295,6 @@ class ActionQueue:
             auth = self.authority_state()
             updates: dict[str, Any] = {"status": to_status, "updated_at": now}
             if to_status == "approved":
-                from catchup_core.authority_transfer import require_dispatch_authority
-                require_dispatch_authority(self._conn)
                 import socket  # noqa: PLC0415
                 from lib.action_policy import require_action_preconditions  # noqa: PLC0415
                 current_host = (os.environ.get("ARTHA_HOST") or socket.gethostname().split(".")[0]).strip()

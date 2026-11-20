@@ -152,7 +152,6 @@ DIR_DEFAULTS: dict[str, tuple[str, ...]] = {
 
 # Specific filename prefix rules for legacy tests before falling back to DIR_DEFAULTS.
 PREFIX_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("tests/catchup_core/test_renewal_", tuple(f"AR-{n:02d}" for n in range(1, 27))),
     ("tests/dev/test_isolat", ("INFRA-ISOLATION",)),
     ("tests/dev/test_privacy_gate", ("TR-1", "RA-09")),
     ("tests/dev/test_pii_doc_scan", ("TR-1",)),

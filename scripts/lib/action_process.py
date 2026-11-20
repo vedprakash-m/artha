@@ -225,8 +225,6 @@ def _authorize(queue_path: Path | None, proposal: ActionProposal, operation: str
     with closing(sqlite3.connect(Path(queue_path).resolve().as_uri() + f"?mode={mode}", uri=True)) as db:
         if consume and operation == 'execute':
             db.execute('BEGIN IMMEDIATE')
-        from catchup_core.authority_transfer import require_dispatch_authority
-        require_dispatch_authority(db)
         expected = compute_payload_hash(proposal)
         row = db.execute("SELECT a.status,a.payload_hash,a.approved_payload_hash,o.operation_key "
             "FROM actions a JOIN effect_operations o ON o.action_id=a.id "

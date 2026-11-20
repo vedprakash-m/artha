@@ -230,12 +230,12 @@ class ScratchRunner:
         except SystemExit:
             return Outcome(int(ExitCode.USAGE_ERROR), stderr="usage error")
         mutations = {"correct", "forget", "feedback", "capture", "ingest", "pause", "resume", "reconcile",
-                     "resolve", "complete", "transfer-authority", "retire-authority", "field-review",
+                     "resolve", "complete", "field-review",
                      "cancel-extraction", "configure", "usage"}
         mutation = ((args.command in mutations
                      and (args.command not in {"correct", "complete", "configure"} or args.apply is not None))
                     or (args.command == "review" and args.label is not None))
-        controls = {"pause", "forget", "transfer-authority", "retire-authority", "configure"}
+        controls = {"pause", "forget", "configure"}
         deps = None
         try:
             deps = self.build("shadow" if args.shadow else "authoritative", actor=args.actor, inspection=True,

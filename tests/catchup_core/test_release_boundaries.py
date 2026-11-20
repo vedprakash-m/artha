@@ -26,7 +26,6 @@ from core_helpers import (
     build_regression_world,
     raw_cal_rec as cal,
     regression_request as request,
-    release_scorecard,
     write_cfg,
 )
 
@@ -294,25 +293,6 @@ def test_emergency_authority_does_not_require_quality_scorecard():
     with pytest.raises(PermissionDenied):
         validate_local_authority(replace(request(), host="other"), {"release": {"authority_host": "host"}},
                                  viewer="owner", hostname="other")
-
-
-@pytest.mark.parametrize("missing", ["P1", "P2", "negative", "cross_domain", "goal_correction"])
-def test_release_requires_each_consequential_review_cohort(missing):
-    from catchup_core.policy import _validate_domains
-    data = release_scorecard()
-    data["evaluations"] = [case for case in data["evaluations"]
-                           if case.get("severity") != missing and case.get("case_type") != missing]
-    with pytest.raises(PermissionDenied):
-        _validate_domains(data, ["kids_school"])
-
-
-@pytest.mark.parametrize("value", [False, True, -1, float("nan"), float("inf")])
-def test_release_bounds_reject_nonfinite_and_boolean_measurements(value):
-    from catchup_core.policy import _validate_domains
-    data = release_scorecard()
-    data["measurements"]["kids_school"]["monthly_usd"] = value
-    with pytest.raises(PermissionDenied):
-        _validate_domains(data, ["kids_school"])
 
 
 def test_enum_grounding_checks_the_sentence_around_a_selective_quote():

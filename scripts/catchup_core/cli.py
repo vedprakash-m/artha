@@ -128,7 +128,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
     sub.add_parser("mcp", help="read-only MCP server over stdio (launched by your assistant; no listener)")
     for name in ("beliefs", "why", "forget", "feedback", "correct", "health", "history", "items",
                  "goals", "capture", "export", "restore", "activity", "pause", "resume", "reconcile", "resolve",
-                 "ingest", "review", "complete", "transfer-authority", "retire-authority", "field-review", "retention",
+                 "ingest", "review", "complete", "field-review", "retention",
                  "cancel-extraction", "interchange", "emergency", "configure", "usage", "consent",
                  "scope-review", "migrate"):
         command = sub.add_parser(name)
@@ -220,20 +220,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:  # noqa: PLR0912, PLR
             command.add_argument("path")
             if name == "restore":
                 command.add_argument("destination")
-        elif name == "transfer-authority":
-            command.add_argument("new_host")
-            command.add_argument("--expected-generation", type=int, required=True)
-            command.add_argument("--checkpoint", required=True, help="path to verified ACK2 full-state checkpoint")
-            command.add_argument("--retirement-receipt", help="receipt file issued by the former host")
-            command.add_argument("--former-host-key", help="key fingerprint printed by the former host")
-            command.add_argument("--former-quiesced", action="store_true",
-                                 help="UNVERIFIED: owner says the former executor is quiesced (use when it is lost)")
-            command.add_argument("--credentials-revoked", action="store_true",
-                                 help="UNVERIFIED: owner says former host write credentials are revoked")
-        elif name == "retire-authority":
-            command.add_argument("new_host")
-            command.add_argument("--checkpoint", required=True, help="checkpoint the new host will restore")
-            command.add_argument("--output", required=True, help="where to write the signed receipt")
     return parser.parse_args(_command_args(argv))
 
 
@@ -347,7 +333,7 @@ def _pause_actions(request: CatchupRequest, config: Any, root: Path) -> dict[str
 def _mutates(args: argparse.Namespace) -> bool:
     """Whether this command writes the live ledger, so storage must open read-write."""
     mutations = {"correct", "forget", "feedback", "capture", "ingest", "pause", "resume",
-                 "reconcile", "resolve", "complete", "transfer-authority", "retire-authority", "field-review",
+                 "reconcile", "resolve", "complete", "field-review",
                  "cancel-extraction",
                  "configure", "usage", "scope-review", "migrate"}
     return ((args.command in mutations
@@ -388,11 +374,10 @@ def _run_inspection(args: argparse.Namespace) -> dict[str, Any]:
             return _pause_actions(request, config, root)
         mutation = _mutates(args)
         deps = build_deps(request, inspection=True, mutation=mutation,
-                          safety_control=args.command in {"pause", "forget", "transfer-authority", "retire-authority",
-                                                              "configure"},
+                          safety_control=args.command in {"pause", "forget", "configure"},
                           configuration_control=args.command == "configure")
         with deps.maintenance(), session_lock(deps.ledger._path.with_suffix(".session.lock")):
-            if args.command not in {"pause", "forget", "transfer-authority", "retire-authority", "configure"}:
+            if args.command not in {"pause", "forget", "configure"}:
                 check = deps.preflight if mutation else (deps.inspection_preflight or deps.preflight)
                 check()
             result = execute(args, deps, root)

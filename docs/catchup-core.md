@@ -63,11 +63,9 @@ either. Current canonical identity remains required. The owner may enter an exis
 shared recovery passphrase or a new one directly in the terminal; distinctness from
 the Personal passphrase is not required. Plaintext export and release remain separate.
 
-Release validation continuation, 2026-10-27: v4 total/live case counters require literal matching integers,
-the outer precision floor must be a finite probability, and release Domains are a distinct explicit list.
-Stage 1 clearance must be a reviewed passing JSON object; owner-review fields require nonempty text.
-Malformed artifacts refuse with `PermissionDenied` rather than raw container/coercion exceptions.
-These checks do not establish that reviewed observations occurred or authorize cutover.
+Light mode (2026-11-20) is the only operating mode. Authoritative cutover is permanently disabled:
+`validate_release` accepts shadow requests only, and the release-evidence, renewal and authority-transfer
+machinery (`renewal_*.py`, `authority_transfer.py`, `transfer-authority`/`retire-authority`) was removed.
 
 Corpus labels describe expectations, not live-data provenance or model outcomes. Labeling does not
 set `consented_live`; unsupported historical claims are not exported. Malformed or source-rebound
@@ -153,12 +151,9 @@ sync destination. `verify PATH --profile work` verifies with the host's Work che
 `recovery PATH --inspection-only` needs no OS keys. Normal Work restore remains blocked without current privacy
 proof, including old checkpoints passed as personal. This does not prove native Windows or live-vault recovery.
 
-Release evidence (2026-10-24) uses `artha.release.v4`. Each case and workload measurement must match the current
-implementation/prompt/pack/configuration/contract/model cohort; changing only the cutover flag or release approval
-does not create a cohort hash cycle. `artha.extract.v2` bundles include the expected cohort. Responses may include
-`model_identity` (provider, model, revision, retention_policy) and `cohort` beside `responses`; authoritative resumes
-require an exact match. Legacy anonymous answers remain accepted in shadow mode and their frozen output is marked
-unverified for release. Matching host-reported metadata does not independently attest the provider or host isolation.
+`artha.extract.v2` bundles include the expected evaluation cohort. Responses may include `model_identity` (provider,
+model, revision, retention_policy) and `cohort` beside `responses`. Legacy anonymous answers remain accepted in
+shadow mode. Matching host-reported metadata does not independently attest the provider or host isolation.
 
 `python -m catchup_core.checkpoint_cli recovery CHECKPOINT --inspection-only` verifies a checkpoint using its
 passphrase and in-memory escrow keys without requiring or installing host keys. It reports structural counts,
@@ -166,18 +161,9 @@ keeps privacy history unverified, and cannot activate or dispatch. Normal restor
 consent/deletion history. The owner explicitly retained ES1 scrypt/AES-GCM escrow; its ciphertext digest is bound
 inside the authenticated manifest. Old checkpoints without that binding require recovery review, not an implicit pass.
 
-Local integration continuation (2026-10-24): release preservation requires an approved full-installation ACK2
-checkpoint, a non-aliasing independent copy and a checkpoint-bound recovery rehearsal. A same-device copy needs
-explicit reviewed cloud-recovery evidence; merely copying ciphertext does not establish an independent failure
-domain. Selective AE1 snapshots cannot satisfy this requirement. Restore authenticates the requested profile/tree
-before plaintext output and verifies physical files/databases before privacy transformations. Native key inventory,
-current fresh-host privacy continuity and owner/platform recovery acceptance remain unfinished.
-
-Authority transfer journals a paused queue intent before ledger promotion, then confirms matching epochs; interrupted
-steps remain non-dispatching and resume against the same receipt. Owner-attested quiescence/credential revocation
-is recorded as an attestation, not a native observation or a remote kill switch. Core-derived action review binds
-Fact versions, subjects, current export permission and freshness through claim/worker checks. Unsupported fresh
-provider-version verification refuses. Neither mechanism lifts held action types or authorizes live promotion.
+Restore authenticates the requested profile/tree before plaintext output and verifies physical files/databases
+before privacy transformations. Core-derived action review binds Fact versions, subjects, current export
+permission and freshness through claim/worker checks. Unsupported fresh provider-version verification refuses.
 
 CalDAV now preserves date-only all-day values and exclusive ends, retains valid siblings with degraded coverage
 after parsing failures and discloses unmatched explicit calendar selections. Full provider cursor/reset/deletion

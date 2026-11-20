@@ -183,7 +183,6 @@
         "tests/catchup_core/test_corpus.py",
         "tests/catchup_core/test_corpus_boundaries.py",
         "tests/catchup_core/test_corpus_provenance.py",
-        "tests/catchup_core/test_release_acceptance_v4.py",
         "tests/dev/test_isolated_runner.py",
         "tests/dev/test_private_work_verification.py"
       ]
@@ -332,7 +331,6 @@
         "scripts/catchup_core/checkpoint_cli.py",
         "scripts/catchup_core/session_lock.py",
         "scripts/catchup_core/recovery_registry.py",
-        "scripts/catchup_core/authority_transfer.py",
         "scripts/catchup_core/interchange.py",
         "scripts/catchup_core/recovery_quarantine.py",
         "scripts/catchup_core/quarantine_review.py",
@@ -353,7 +351,6 @@
         "tests/catchup_core/test_checkpoint_restore_integrity.py",
         "tests/catchup_core/test_recovery_registry.py",
         "tests/unit/test_recovery_registry_writers.py",
-        "tests/catchup_core/test_authority_retirement.py",
         "tests/catchup_core/test_spend_continuity_registry.py",
         "tests/catchup_core/test_legacy_writer_fence.py",
         "tests/catchup_core/test_recovery_quarantine.py",
@@ -470,18 +467,6 @@
     "RA-01.AC1.graph-malformed-page": {
       "evidence_type": "synthetic",
       "fixture": "tests/unit/test_calendar_handlers_coverage.py::test_graph_malformed_later_page_keeps_valid_positives"
-    },
-    "RA-01.AC1.kernel-cutover-fence": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_cutover_fence.py::test_direct_runtime_cannot_bypass_configured_false_with_environment_opt_in"
-    },
-    "RA-01.AC1.live-release-artifacts": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_real_runtime_rechecks_approved_artifacts_after_construction"
-    },
-    "RA-01.AC1.release-withdrawal-publication": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_actual_publication_stops_when_release_evidence_is_withdrawn_at_commit"
     },
     "RA-02.AC1.cancel-independent": {
       "evidence_type": "synthetic",
@@ -619,10 +604,6 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_corpus_boundaries.py::test_actual_returned_briefing_is_scored_separately_from_labels"
     },
-    "RA-10.AC1.release-runtime-cohort": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_approved_scorecard_from_a_different_runtime_cohort_cannot_enable_cutover"
-    },
     "RA-11.AC1.completion-version": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_release_boundaries.py::test_goal_completion_version_changes_invalidate_identical_resumed_prose"
@@ -755,10 +736,6 @@
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_runtime_resources.py::test_interrupted_inner_ledger_setup_closes_its_handle"
     },
-    "RA-18.AC1.authority-transfer-fence": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_cutover_fence.py::test_authority_transfer_requires_quiescence_or_revocation_and_checkpoint_and_fences_old_host"
-    },
     "RA-18.AC1.credential-migration-death": {
       "evidence_type": "synthetic",
       "fixture": "tests/unit/test_credential_migration.py::test_migration_process_death_retains_recoverable_generations"
@@ -782,10 +759,6 @@
     "RA-18.AC1.windows-hook-protocol": {
       "evidence_type": "synthetic",
       "fixture": "tests/unit/test_hook_portability.py::test_supported_windows_and_copilot_tool_spellings_keep_real_denials"
-    },
-    "RA-20.AC1.approved-rollback-bytes": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_release_artifact_coherence.py::test_rollback_verification_decodes_the_one_approved_read"
     },
     "RA-20.AC1.capture-database-generation": {
       "evidence_type": "synthetic",
@@ -830,10 +803,6 @@
     "RA-20.AC1.passphrase-inspection": {
       "evidence_type": "synthetic",
       "fixture": "tests/catchup_core/test_state_checkpoint_cli.py::test_passphrase_only_inspection_needs_no_host_keys_and_cannot_activate"
-    },
-    "RA-20.AC1.preservation-gate": {
-      "evidence_type": "synthetic",
-      "fixture": "tests/catchup_core/test_cutover_fence.py::test_incomplete_preservation_or_recovery_evidence_blocks_activation"
     },
     "RA-20.AC1.privacy-competing-writers": {
       "evidence_type": "synthetic",
@@ -969,7 +938,7 @@
     }
   },
   "contract_version": "0.8.0",
-  "implementation_sha256": "df3551d49da5a3e85b44ae2e2caea3ab23ea323643279b6e671af3efc27d474e",
+  "implementation_sha256": "bdd8c23a751b61f6b36147098f5fbcb9b733d4eb4f40b1d2f94bbbaa77ea9e7c",
   "spec": "specs/refix-artha.md",
   "spec_owner_local": true,
   "spec_sha256": "fc3479a6e06935be3651c370f07fa6a1324c9e140cd04ba57737701481cafb06",

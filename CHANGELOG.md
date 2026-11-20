@@ -9,11 +9,17 @@ Version numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+### Removed — dormant heavy-governance Engine code, 2026-11-20
+
+| Change | Modified files | Validation |
+|---|---|---|
+| Deleted release renewal (`renewal_*.py`, `tools/release_renewal.py`), release evidence (`tools/release_evidence.py`, release scorecard validators, `ReleaseEvidenceGuard`, `verify_rollback`) and authority transfer (`authority_transfer.py`, `transfer-authority`/`retire-authority` commands, ledger and queue transfer fences) with their tests. `validate_release` is shadow-only; `health` reports nothing as release-measured. Pruned the capability register, Makefile, CI, mutation/hygiene/ownership tools and test helpers. | `scripts/catchup_core/{policy,runtime,commands,cli,ledger,capabilities}.py`, `scripts/action_queue.py`, `scripts/lib/action_process.py`, `tools/*`, `Makefile`, `.github/workflows/*`, `docs/catchup-core.md`, `specs/artha-tech-spec.md` | See gates in the commit. |
+
 ### Removed — heavy multi-laptop governance surfaces, 2026-11-20
 
 | Change | Modified files | Validation |
 |---|---|---|
-| Light mode is the default and only mode. Removed the release-drift pre-commit advisory and tool, the Engine rollback runbook and re-artha handoff docs, the renewal/release steps in the development workflow, and the stale local `release:` evidence block; shrank the implementation status to current state. Closed specs `light-artha`, `dual-authority` and `signal-admission` moved to `.archive/specs/`. Deleted regenerable local artifacts (coverage reports, caches, scratch scripts, `.DS_Store`, a stale lock). The dormant Engine code (renewal, authority transfer, release evidence) remains and is a separate removal. | `.githooks/pre-commit`, `tools/check_release_drift.py` (deleted), `tests/dev/test_check_release_drift.py` (deleted), `docs/{catchup-core-rollback-runbook,re-artha-handoff}.md` (deleted), `docs/re-artha-implementation-status.md`, `config/workflow/development.md`, `README.md`, `specs/artha-tech-spec.md` | Static gates and 6,205 non-core tests pass; privacy scan clean; preflight GO. |
+| Light mode is the default and only mode. Removed the release-drift pre-commit advisory and tool, the Engine rollback runbook and re-artha handoff docs, the renewal/release steps in the development workflow, and the stale local `release:` evidence block; shrank the implementation status to current state. Closed specs `light-artha`, `dual-authority` and `signal-admission` moved to `.archive/specs/`. Deleted regenerable local artifacts (coverage reports, caches, scratch scripts, `.DS_Store`, a stale lock). The dormant Engine code was removed in the entry above. | `.githooks/pre-commit`, `tools/check_release_drift.py` (deleted), `tests/dev/test_check_release_drift.py` (deleted), `docs/{catchup-core-rollback-runbook,re-artha-handoff}.md` (deleted), `docs/re-artha-implementation-status.md`, `config/workflow/development.md`, `README.md`, `specs/artha-tech-spec.md` | Static gates and 6,205 non-core tests pass; privacy scan clean; preflight GO. |
 
 ### Added — Light Artha file-mode engineering, 2026-11-19
 

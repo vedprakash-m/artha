@@ -7,7 +7,6 @@ import json
 import os
 import sqlite3
 import struct
-import subprocess
 import tempfile
 from contextlib import closing
 from dataclasses import replace
@@ -26,8 +25,6 @@ from catchup_core.crypto import EnvelopeCipher, KeyringKeyProvider, StaticKeyPro
 from catchup_core.ids import HmacKey
 from catchup_core.ledger import Ledger
 from catchup_core.recovery_access import RecoveryAccess
-from catchup_core.renewal_inputs import SourceFile
-from catchup_core.renewal_store import RenewalError, digest
 
 
 class FakeKeyring:
@@ -938,94 +935,6 @@ def stream_public_tree(tmp_path: Path):
     return root, document
 
 
-RENEWAL_NOW = datetime(2026, 1, 2, tzinfo=UTC)
-RENEWAL_COHORT = {name: "a" * 64 for name in ("implementation", "configuration", "prompts", "packs", "model", "contract")}
-RENEWAL_EVALUATOR = {"scripts/policy.py": b"synthetic evaluator", "scripts/presentation.py": b"presentation a"}
-RENEWAL_BINDING = {"owner": "owner", "host": "synthetic", "repository": "example/project", "profile": "personal"}
-
-
-def renewal_private_directory(path: Path) -> None:
-    if os.name == "nt":
-        from catchup_core.quarantine_fs_windows import ensure_private_directory
-
-        ensure_private_directory(path)
-    else:
-        path.mkdir(mode=0o700, exist_ok=True)
-
-
-def renewal_manifest(value: str = "a") -> dict:
-    from dataclasses import asdict
-
-    return {
-        "schema": "artha.renewal-source.v1",
-        "files": [
-            asdict(SourceFile("scripts/presentation.py", hashlib.sha256(("presentation " + value).encode()).hexdigest(), "100644")),
-            asdict(SourceFile("scripts/policy.py", hashlib.sha256(b"synthetic evaluator").hexdigest(), "100644")),
-            asdict(SourceFile(".github/workflows/ci.yml", "a" * 64, "100644")),
-        ],
-    }
-
-
-def renewal_target() -> dict:
-    return {
-        "source": renewal_manifest("b"),
-        "cohort": {**RENEWAL_COHORT, "implementation": "b" * 64},
-        "tree": "c" * 40,
-        "context": "d" * 64,
-        "authority": "0" * 64,
-    }
-
-
-def renewal_approve(authority, value=None):
-    value = value or renewal_target()
-    return authority.approve(value, expected_digest=digest(value), reviewed=True)
-
-
-class SyntheticRemote:
-    def __init__(self) -> None:
-        self.commit = ""
-        self.tip = "0" * 40
-        self.effects: list[str] = []
-        self.ambiguous = False
-
-    def remote(self, repository: str) -> None:
-        assert repository == "example/project"
-
-    def tree(self) -> str:
-        return "c" * 40
-
-    def git(self, *args: str) -> None:
-        self.effects.append(args[0])
-        if args[0] == "commit":
-            self.commit = "e" * 40
-        elif args[0] == "push":
-            self.tip = self.commit
-            if self.ambiguous:
-                raise RenewalError("Git delivery operation unavailable")
-
-
-def renewal_git(root: Path, *args: str) -> str:
-    return subprocess.run(
-        [
-            "git",
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=" + str(root / "synthetic-empty-hooks"),
-            "-c",
-            "user.name=Synthetic",
-            "-c",
-            "user.email=synthetic@example.invalid",
-            "-C",
-            str(root),
-            *args,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-
-
 def lifecycle_req(cid: str = "c1") -> CatchupRequest:
     return CatchupRequest(cid, actor="ved", channel="full", mode=ExecutionMode.AUTHORITATIVE, host="localhost")
 
@@ -1066,39 +975,6 @@ def build_lifecycle_env(tmp_path: Path):
 
     yield ledger, blobs, make, published
     ledger.close()
-
-
-def build_renewal_authority_world(tmp_path: Path):
-    """Build synthetic ``(authority, delegation, credentials)`` for renewal tests."""
-    from catchup_core.renewal_authority import Authority
-    from lib.credentials import CredentialStore
-
-    local = tmp_path / "local"
-    credentials = CredentialStore(backend=Keyring(), local=local)
-    authority = Authority(local, RENEWAL_BINDING, credentials=credentials, now=lambda: RENEWAL_NOW, checkout=tmp_path / "repo")
-    delegation = {
-        "schema": "artha.renewal-delegation.v1",
-        "binding": RENEWAL_BINDING,
-        "base_source": renewal_manifest(),
-        "base_cohort": RENEWAL_COHORT,
-        "base_release": {"profile": "slice", "domains": ["kids_school"], "owner_approved_at": "original"},
-        "protected": ["scripts/policy.py", ".github/workflows/ci.yml"],
-        "dependencies": {"quality": ["scripts/policy.py"], "recovery": ["scripts/policy.py"]},
-        "context": "d" * 64,
-        "expires_at": None,
-        "gates": [{"workflow": ".github/workflows/ci.yml", "definition_sha256": "a" * 64, "jobs": ["test"]}],
-        "domains": ["kids_school"],
-        "routine": ["scripts/presentation.py"],
-        "evaluator": {path: hashlib.sha256(raw).hexdigest() for path, raw in RENEWAL_EVALUATOR.items()},
-    }
-    authority.enroll(
-        delegation,
-        expected_digest=digest(delegation),
-        reviewed=True,
-        validate_base=lambda _: None,
-        evaluator=RENEWAL_EVALUATOR,
-    )
-    return authority, delegation, credentials
 
 
 def build_integrated_app(tmp_path: Path):
@@ -1263,39 +1139,5 @@ class FileBackend:
 
     def set_password(self, service: str, account: str, value: str) -> None:
         self._path(service, account).write_text(value)
-
-
-class RenewalWorkspace:
-    """Synthetic git workspace stand-in for renewal delivery/entry/process tests."""
-
-    def __init__(self) -> None:
-        self.commit = ""
-        self.tip = "0" * 40
-        self.effects: list[str] = []
-        self.ambiguous = False
-
-    def remote(self, repository: str) -> None:
-        assert repository == "example/project"
-
-    def tree(self) -> str:
-        return "c" * 40
-
-    def git(self, *args: str) -> str:
-        self.effects.append(args[0])
-        if args[0] == "commit":
-            self.commit = "e" * 40
-        elif args[0] == "push":
-            self.tip = self.commit
-            if self.ambiguous:
-                raise RenewalError("Git delivery operation unavailable")
-        return ""
-
-    def clean_commit(self) -> str:
-        if not self.commit:
-            raise RenewalError("not committed")
-        return self.commit
-
-    def remote_tip(self) -> str:
-        return self.tip
 
 

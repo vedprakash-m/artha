@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
 
-# Main push runs never cancel in-flight main verification runs (renewal_ci.py contract).
+# Main push runs never cancel in-flight main verification runs.
 concurrency:
   group: ci-main-${{ github.run_id }}
   cancel-in-progress: false
@@ -691,14 +691,12 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value $bin
           $env:PATH = "$bin;$env:PATH"
           Get-Command age, age-keygen -ErrorAction Stop
-      - name: Windows-native, renewal & credential contracts
+      - name: Windows-native & credential contracts
         run: >-
           python tools/run_windows_contracts.py
           tests/dev/test_windows_contract_launcher.py
           tests/catchup_core/test_quarantine_fs_windows.py
           tests/catchup_core/test_storage_adoption.py
-          tests/catchup_core/test_renewal_workspace.py
-          tests/catchup_core/test_renewal_process.py
           tests/unit/test_credentials_providers.py
           tests/unit/test_recovery_registry_writers.py
           tests/unit/test_action_process.py

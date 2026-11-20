@@ -93,8 +93,7 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
     led, viewer = deps.ledger, deps.viewer
     from catchup_core.contracts import ExecutionMode  # noqa: PLC0415
     shadow = getattr(args, "shadow", False) or getattr(deps, "mode", None) is ExecutionMode.SHADOW
-    if shadow and args.command in ("pause", "resume", "reconcile", "resolve", "activity", "transfer-authority",
-                                   "retire-authority"):
+    if shadow and args.command in ("pause", "resume", "reconcile", "resolve", "activity"):
         raise LedgerError("shadow mode cannot access or change live action controls")
     if args.command == "consent":
         from catchup_core import consent_cli  # noqa: PLC0415
@@ -412,40 +411,9 @@ def execute(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:  # 
         if args.command == "pause":
             atomic_bytes(path, b"Actions paused by the local owner.\n")
         else:
-            from catchup_core.authority_transfer import resume_effects  # noqa: PLC0415
-            resume_effects(led, workspace, actor=viewer)
+            path.unlink(missing_ok=True)
         return {"actions_paused": path.exists()}
-    if args.command == "transfer-authority":
-        return _transfer_authority(args, deps, workspace)
-    if args.command == "retire-authority":
-        return _retire_authority(args, deps, workspace)
     raise ValueError("unsupported command")
-
-
-def _transfer_authority(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:
-    led, viewer = deps.ledger, deps.viewer
-    return led.transfer_authority(
-        args.new_host, actor=viewer, checkpoint_path=Path(args.checkpoint).expanduser(),
-        workspace=workspace, expected_generation=args.expected_generation, cipher=led._cipher,
-        former_host_quiesced=getattr(args, "former_quiesced", False),
-        credentials_revoked=getattr(args, "credentials_revoked", False),
-        retirement_receipt=getattr(args, "retirement_receipt", None),
-        former_host_key_fingerprint=getattr(args, "former_host_key", None),
-    )
-
-
-def _retire_authority(args: Namespace, deps: Deps, workspace: Path) -> dict[str, Any]:
-    import base64  # noqa: PLC0415
-
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey  # noqa: PLC0415
-
-    from catchup_core.authority_transfer import issue_retirement_receipt, key_fingerprint  # noqa: PLC0415
-    from catchup_core.backup import atomic_bytes as write_bytes  # noqa: PLC0415
-    receipt = issue_retirement_receipt(deps.ledger, workspace, actor=deps.viewer, new_host=args.new_host,
-                                       checkpoint_path=Path(args.checkpoint).expanduser())
-    write_bytes(Path(args.output).expanduser(), json.dumps(receipt, sort_keys=True).encode("utf-8"))
-    key = Ed25519PublicKey.from_public_bytes(base64.b64decode(receipt["public_key"]))
-    return {"retired": True, "former_host_key_fingerprint": key_fingerprint(key), "receipt": str(args.output)}
 
 
 def _completion_record(args: Namespace, deps: Deps, workspace: Path) -> tuple[str, dict[str, Any], dict[str, Any]]:
@@ -550,32 +518,14 @@ def _confirm_completion(args: Namespace, deps: Deps, workspace: Path) -> dict[st
 def _capability_states(led: Any, workspace: Path, deps: Deps) -> list[dict[str, str]]:
     """RA-10: disabled / not configured / unknown / last succeeded / degraded, plus whether measured."""
     from catchup_core.capabilities import runtime_states  # noqa: PLC0415
-    from catchup_core.contracts import CatchupRequest, ExecutionMode  # noqa: PLC0415
-    from catchup_core.policy import _validate_release_evidence  # noqa: PLC0415
     from catchup_core.runtime import RuntimeConfigError, load_runtime_config  # noqa: PLC0415
     try:
         config = load_runtime_config(workspace / "config" / "catchup_core.yaml")
     except RuntimeConfigError:
         return runtime_states(_CODE_ROOT, {}, led.conn, False, extractor_configured=False)
-    try:
-        _validate_release_evidence(
-            CatchupRequest('health_probe', config.viewer, 'cli', mode=ExecutionMode.AUTHORITATIVE,
-                           host=str(config.policy.get('release', {}).get('authority_host', ''))),
-            config.policy, domains=config.domains, cohort=deps.evaluation_cohort)
-        measured = True
-        from catchup_core.policy import _approved_file, verify_rollback  # noqa: PLC0415
-        verify_rollback(config.policy, led._cipher)
-        scorecard = json.loads(_approved_file(config.policy["release"]["scorecard"], "scorecard"))
-        reviewed = [cap for cap, review in scorecard.get("capability_reviews", {}).items()
-                    if review.get("owner_signed_at") and review.get("outcome") == "passed"
-                    and review.get("case_ids") and set(review["case_ids"]) <= {
-                        c["case_id"] for c in scorecard["evaluations"] if c.get("consented_live") is True}]
-    except Exception:
-        measured = False
-        reviewed = []
-    return runtime_states(_CODE_ROOT, {"domains": list(config.domains), "reviewed_capabilities": reviewed},
-                          led.conn, measured,
-                          extractor_configured=True)
+    # Light mode runs shadow only: nothing is release-measured.
+    return runtime_states(_CODE_ROOT, {"domains": list(config.domains), "reviewed_capabilities": []},
+                          led.conn, False, extractor_configured=True)
 
 
 def _action_resolution(args: Namespace, viewer: str, workspace: Path) -> dict[str, Any]:

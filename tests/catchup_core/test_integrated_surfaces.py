@@ -1,7 +1,6 @@
 """Real command paths over isolated encrypted storage; no external effects."""
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import sqlite3
@@ -22,8 +21,6 @@ from core_helpers import (
     FakeKeyring,
     OWNER_DECISION_SHA256,
     REGRESSION_CIPHER as CIPHER,
-    build_preservation_checkpoint,
-    synthetic_recovery_acceptance,
     write_cfg,
 )
 from catchup_core.blobs import EncryptedBlobStore
@@ -34,25 +31,6 @@ NOW = datetime(2026, 10, 12, tzinfo=timezone.utc)
 PACK = dp.load_pack_file(Path(dp.__file__).parent / "packs/kids_school.yaml")
 MODEL_IDENTITY = {'provider': 'synthetic', 'model': 'offline-extractor', 'revision': 'fixture-1',
                   'retention_policy': 'synthetic-no-retention'}
-
-
-@pytest.mark.parametrize('dependency', ['user_profile.yaml', 'connectors.yaml'])
-def test_release_cohort_rejects_changed_effective_workspace_inputs(tmp_path, dependency):
-    directory = tmp_path / 'config'
-    directory.mkdir()
-    (directory / 'user_profile.yaml').write_text('household: {type: single}\n')
-    (directory / 'connectors.yaml').write_text('connectors: {}\n')
-    config = {'model_identity': MODEL_IDENTITY, 'household_from_profile': True}
-    before = policy.evaluation_cohort(config, ['kids_school'], workspace=tmp_path)
-    result = {'cohort': before, 'evaluations': [{'cohort': before, 'catchup_id': 'synthetic'}],
-              'measurements': {'kids_school': {'cohort': before}}}
-    policy._validate_evaluation_cohort(result, before)
-    path = directory / dependency
-    path.write_text(path.read_text() + '# changed effective dependency\n')
-    after = policy.evaluation_cohort(config, ['kids_school'], workspace=tmp_path)
-    assert before['configuration'] != after['configuration']
-    with pytest.raises(PermissionDenied, match='cohort'):
-        policy._validate_evaluation_cohort(result, after)
 
 
 @pytest.mark.parametrize('dependency', ['connectors.yaml', 'user_profile.yaml'])
@@ -361,92 +339,6 @@ def test_cli_inspection_closes_storage_and_keeps_errors_on_stderr(app, monkeypat
     assert cli.main(["health"], out=stdout, err=stderr) == 20 and "locked" in stderr.getvalue()
 
 
-def test_release_checks_digest_live_evidence_host_and_identity(tmp_path):
-    path = tmp_path / "score.json"
-    card = release_scorecard()
-    path.write_text(json.dumps(card))
-    clearance = tmp_path / "clearance.json"
-    clearance.write_text('{"passed":true,"owner_signed_at":"2026-10-12"}')
-    rollback = build_preservation_checkpoint(tmp_path, CIPHER)
-    copy_path = tmp_path / "independent_copy.ack"
-    copy_path.write_bytes(rollback.read_bytes())
-    def approved(file):
-        return {"path": str(file), "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
-    rb_record = approved(rollback)
-    rehearsal = tmp_path / "rehearsal.json"
-    rehearsal.write_text(json.dumps(synthetic_recovery_acceptance(
-        tmp_path, rollback, CIPHER, cohort=card['cohort'])))
-    release = {"authority_host": "mac", "domains": ["kids_school"], "owner_approved_at": "2026-10-12",
-               "owner_decision_sha256": OWNER_DECISION_SHA256,
-               "stage1_clearance": approved(clearance), "rollback_snapshot": rb_record,
-               "independent_copy": {**approved(copy_path), "failure_domain": "cloud",
-                                    "owner_verified_at": "2026-10-12T12:00:00Z",
-                                    "recovered_sha256": rb_record["sha256"]},
-               "recovery_rehearsal": approved(rehearsal),
-               "scorecard": approved(path)}
-    request = CatchupRequest("c", "owner", "cli", host="mac")
-    policy.validate_release(request, {"cutover": True, "release": release, 'model_identity': MODEL_IDENTITY},
-                            viewer="owner", domains=["kids_school"], hostname="mac")
-    for changed in (replace(request, actor="other"), replace(request, channel="telegram"),
-                    replace(request, host="windows"), replace(request, pilot_domains=("health",))):
-        with pytest.raises(PermissionDenied):
-            policy.validate_release(changed, {"cutover": True, "release": release}, viewer="owner",
-                                    domains=changed.pilot_domains or ["kids_school"], hostname="mac")
-    path.write_text('{}')
-    with pytest.raises(PermissionDenied, match="differs"):
-        policy.validate_release(request, {"cutover": True, "release": release},
-                                viewer="owner", domains=["kids_school"], hostname="mac")
-
-
-@pytest.mark.parametrize("change", ["missing_field", "missing_path", "missing_file", "clearance_failed",
-    "plaintext_rollback", "selective_rollback", "empty_cases", "low_precision", "no_signature", "bad_json",
-    "missing_evaluations"])
-def test_release_rejects_unreviewed_or_failed_evidence(tmp_path, change):
-    import struct
-    def artifact(name, value):
-        path = tmp_path / name
-        data = value if isinstance(value, bytes) else json.dumps(value).encode()
-        path.write_bytes(data)
-        return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest()}
-    evaluation = release_scorecard()
-    clearance = {"passed": True, "owner_signed_at": "reviewed"}
-    if change == "clearance_failed":
-        clearance["passed"] = False
-    if change == "empty_cases":
-        evaluation.update(cases=0, evaluations=[])
-    if change == "low_precision":
-        evaluation["evaluations"][0]["surfaced"] = ["a", "b", "c"]
-    if change == "no_signature":
-        evaluation.pop("owner_signed_at")
-    if change == "missing_evaluations":
-        evaluation.pop("evaluations")
-    ack_bytes = b"ACK2" + struct.pack(">H", 12) + b"ck_synthetic" + struct.pack(">I", 32) + b"ES1" + b"0" * 29
-    rb_bytes = b"plaintext" if change == "plaintext_rollback" else (
-        b"AE1-selective" if change == "selective_rollback" else ack_bytes
-    )
-    rb_record = artifact("rollback", rb_bytes)
-    copy_record = artifact("independent_copy", rb_bytes)
-    rehearsal_record = artifact(
-        "recovery_rehearsal",
-        {"passed": True, "owner_signed_at": "reviewed", "reconciled": True, "checkpoint_sha256": rb_record["sha256"]},
-    )
-    release = {"authority_host": "mac", "domains": ["kids_school"], "owner_approved_at": "reviewed",
-        "stage1_clearance": artifact("clearance", clearance),
-        "rollback_snapshot": rb_record,
-        "independent_copy": copy_record,
-        "recovery_rehearsal": rehearsal_record,
-        "scorecard": artifact("scorecard", b"not json" if change == "bad_json" else evaluation)}
-    if change == "missing_field":
-        release.pop("owner_approved_at")
-    if change == "missing_path":
-        release["scorecard"] = {}
-    if change == "missing_file":
-        (tmp_path / "scorecard").unlink()
-    with pytest.raises(PermissionDenied):
-        policy.validate_release(CatchupRequest("c", "owner", "cli", host="mac"), {"cutover": True, "release": release},
-                                 viewer="owner", domains=["kids_school"], hostname="mac")
-
-
 def test_ambiguous_household_subjects_are_never_assigned_by_list_order():
     config = runtime.RuntimeConfig({"school": {"subjects": ["kid1", "kid2"]}}, ["kid1", "kid2"], "owner",
                                     policy={"subject_aliases": {"kid1": ["Synthetic Alex"]}})
@@ -455,26 +347,6 @@ def test_ambiguous_household_subjects_are_never_assigned_by_list_order():
     assert runtime._subjects_for(config, "school", "for an unnamed student") == []
     scoped = runtime.RuntimeConfig({"school": {"subjects": ["kid2"]}}, ["kid1", "kid2"], "owner")
     assert runtime._subjects_for(scoped, "school", "generic school notice") == ["kid2"]
-
-
-@pytest.mark.parametrize("problem", ["version", "bounds", "missing_domain", "no_live", "precision", "latency"])
-def test_global_green_score_cannot_hide_an_unmeasured_domain(problem):
-    result = release_scorecard()
-    if problem == "version":
-        result.pop("schema")
-    elif problem == "bounds":
-        result["bounds"]["kids_school"].pop("normal_workload")
-    elif problem == "missing_domain":
-        result["evaluations"][0]["domain"] = "finance"
-    elif problem == "no_live":
-        for case in result["evaluations"]:
-            case["consented_live"] = False
-    elif problem == "precision":
-        result["evaluations"][0]["surfaced"] = ["a", "extra", "noise"]
-    elif problem == "latency":
-        result["measurements"]["kids_school"]["p95_seconds"] = 200
-    with pytest.raises(PermissionDenied):
-        policy._validate_domains(result, ["kids_school"])
 
 
 def test_forget_purges_historical_claims_but_preserves_a_user_correction(app):

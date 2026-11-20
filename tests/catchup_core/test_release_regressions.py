@@ -200,12 +200,6 @@ def test_publisher_encrypts_restricted_text(tmp_path):
     publish("cu_a", "PRIVATE-SYNTHETIC-CONTENT", 1)  # idempotent despite randomized encryption
 
 
-def test_release_switch_cannot_bypass_the_evidence_gate():
-    from catchup_core.policy import validate_release
-    with pytest.raises(lg.PermissionDenied, match="release evidence"):
-        validate_release(request(), {"cutover": True}, viewer="owner", domains=["kids_school"])
-
-
 def test_no_adult_source_content_before_ingest_consent(world):
     from catchup_core.policy import authorize_source
     led, _, _, _ = world
@@ -291,3 +285,26 @@ def test_yearless_date_requires_a_matching_observation_year(value, observed, acc
     got = parse_output(json.dumps({"complete": True, "candidates": [raw]}), PACK,
         NormalizedSignal("s", "school_email", text, observed_at=observed), ["kid1"])
     assert bool(got.candidates) is accepted
+
+
+def test_only_shadow_requests_pass_release_validation():
+    from catchup_core import policy
+    from catchup_core.contracts import ExecutionMode
+    from catchup_core.ledger import PermissionDenied
+    shadow = CatchupRequest("c", "owner", "cli", mode=ExecutionMode.SHADOW)
+    policy.validate_release(shadow, {}, viewer="owner", domains=())
+    with pytest.raises(PermissionDenied, match="shadow only"):
+        policy.validate_release(CatchupRequest("c", "owner", "cli", mode=ExecutionMode.AUTHORITATIVE, host="h"), {},
+                                viewer="owner", domains=())
+
+
+def test_capability_health_never_claims_release_measurement(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from catchup_core import capabilities, commands, runtime
+    seen = {}
+    monkeypatch.setattr(runtime, "load_runtime_config", lambda _path: SimpleNamespace(domains=("kids_school",)))
+    monkeypatch.setattr(capabilities, "runtime_states",
+                        lambda _root, cfg, _conn, measured, **kw: seen.update(cfg=cfg, measured=measured) or [])
+    commands._capability_states(SimpleNamespace(conn=None), tmp_path, SimpleNamespace())
+    assert seen == {"cfg": {"domains": ["kids_school"], "reviewed_capabilities": []}, "measured": False}

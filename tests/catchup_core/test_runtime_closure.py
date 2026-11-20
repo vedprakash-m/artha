@@ -19,7 +19,6 @@ from core_helpers import (
     coord_cal as cal,
     coord_email as email,
     coord_req as req,
-    release_scorecard,
 )
 import pytest
 import json
@@ -234,60 +233,6 @@ def test_old_briefing_gets_notice_without_rewriting_history(world):
     assert led.conn.execute("SELECT reason FROM correction_notices WHERE catchup_id=?", (req().catchup_id,)).fetchone()
 
 
-def test_rollback_gate_decrypts_and_checks_the_actual_database(world, tmp_path):
-    import hashlib
-    import sqlite3
-    from catchup_core import checkpoint
-    from catchup_core.backup import encrypted_snapshot
-    from catchup_core.policy import verify_rollback
-
-    led, _b, _make, _p = world
-    local_root = tmp_path / "local_src"
-    core_dir = local_root / "catchup_core"
-    core_dir.mkdir(parents=True)
-    with sqlite3.connect(core_dir / "ledger.db") as dst:
-        led.conn.backup(dst)
-    repo_dir = tmp_path / "repo_src"
-    state_dir = repo_dir / "state"
-    state_dir.mkdir(parents=True)
-    (repo_dir / "config").mkdir()
-    (repo_dir / "config/catchup_core.yaml").write_text("cutover: false\n")
-    (state_dir / "open_items.md").write_text("- id: OI-1\n  status: open\n  description: Synthetic\n")
-    target = checkpoint.create(
-        "personal",
-        {"local": local_root, "repo": repo_dir},
-        tmp_path / "checkpoints",
-        CIPHER,
-        {
-            "age-key/artha": b"AGE-SECRET-KEY-1SYNTHETIC",
-            "artha-ledger/key.1": CIPHER._provider.key(1),
-            "artha-ledger-ids/key.1": KEY.secret,
-        },
-        "synthetic-passphrase-1234",
-        now=NOW,
-        lock_path=tmp_path / "ck.lock",
-        context={'preservation': {'schema': 'artha.installation-preservation.v1', 'repository_root': 'repo',
-                                 'runtime_root': 'local', 'root_names': ['local', 'repo'],
-                                 'inventory': 'recursive-fail-closed'}},
-    )
-
-    def config(path):
-        return {
-            "release": {
-                "rollback_snapshot": {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-            }
-        }
-
-    verify_rollback(config(target), CIPHER)
-    selective = tmp_path / "selective.ae1"
-    encrypted_snapshot(selective, led._path, CIPHER)
-    with pytest.raises(lg.PermissionDenied, match="rollback snapshot"):
-        verify_rollback(config(selective), CIPHER)
-    target.write_bytes(b"ACK2-invalid")
-    with pytest.raises(lg.PermissionDenied, match="rollback snapshot"):
-        verify_rollback(config(target), CIPHER)
-
-
 def test_parental_consent_does_not_survive_adulthood(world):
     led, _b, _make, _p = world
     led.grant_consent("minor", "ved", "health", ["view"], "ved")
@@ -381,16 +326,3 @@ def test_feedback_statistics_disappear_when_access_is_revoked(world):
     assert views.class_precision(led) == [] and views.precision(led) == []
 
 
-@pytest.mark.parametrize("changed", ["precedence", "workload", "freshness"])
-def test_release_bounds_match_runtime_and_measured_inputs(changed):
-    from catchup_core.policy import _validate_domains
-
-    data = release_scorecard()
-    if changed == "precedence":
-        data["bounds"]["kids_school"]["source_precedence"] = ["incorrect_source"]
-    elif changed == "workload":
-        data["measurements"]["kids_school"]["workload"] = {"signals": 1}
-    else:
-        data["measurements"]["kids_school"]["source_age_hours"]["calendar"] = 1000
-    with pytest.raises(lg.PermissionDenied):
-        _validate_domains(data, ["kids_school"])
