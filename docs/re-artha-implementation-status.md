@@ -1,5 +1,15 @@
 # re-artha implementation status — 2026-11-18
 
+## Live `home` release and first Gmail fetch — 2026-11-19 (evening)
+
+Owner narrowed the live release to Domain `home` (source `home_email`) and re-signed; implementation `cc9c5738…`.
+Two unit-tested fixes: a Domain run builds fetchers only for its pack's sources, and the authoritative Catch-up
+command wires provider loaders for enrolled sources. The enrolled metadata-first Gmail fetch ran live for the first
+time: coverage `complete`, 0 Signals, 0 holds (no message matched the reviewed query in the window). The run stops
+at extraction (`personal Signal scope unavailable`): `AdmissionStore.select_pending` holds unconditionally and its
+tests assert that hold is designed. Extraction, Fact and Alert for new Signals stay **Held** until Signal admission
+is specified. Operational acceptance and release remain Held.
+
 ## Mac live gates — 2026-11-19
 
 Owner-authorized on the authority Mac. **Operational acceptance and release stay Held.**
